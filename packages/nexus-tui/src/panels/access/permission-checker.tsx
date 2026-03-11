@@ -1,6 +1,9 @@
 /**
  * Permission checker form: evaluate a tool permission against a manifest.
  *
+ * Shows structured evaluation result with the manifest's entries,
+ * highlighting which glob pattern matched the tool name (first-match-wins semantics).
+ *
  * Tab cycles between Manifest ID and Tool Name fields.
  * Enter evaluates using the store's checkPermission().
  * Escape cancels and returns to normal mode.
@@ -8,7 +11,7 @@
 
 import React, { useState, useCallback } from "react";
 import { useAccessStore } from "../../stores/access-store.js";
-import type { PermissionCheck } from "../../stores/access-store.js";
+import type { PermissionCheck, ManifestEntry } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 
@@ -21,6 +24,19 @@ interface PermissionCheckerProps {
   readonly onClose: () => void;
 }
 
+/** Simple glob match (fnmatch-style) for display purposes — mirrors evaluator.py semantics. */
+function globMatches(pattern: string, name: string): boolean {
+  const regex = new RegExp(
+    "^" +
+      pattern
+        .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*/g, ".*")
+        .replace(/\?/g, ".") +
+      "$",
+  );
+  return regex.test(name);
+}
+
 export function PermissionChecker({
   initialManifestId,
   lastResult,
@@ -29,6 +45,7 @@ export function PermissionChecker({
 }: PermissionCheckerProps): React.ReactNode {
   const client = useApi();
   const checkPermission = useAccessStore((s) => s.checkPermission);
+  const manifests = useAccessStore((s) => s.manifests);
 
   const [manifestId, setManifestId] = useState(initialManifestId);
   const [toolName, setToolName] = useState("");
@@ -79,6 +96,28 @@ export function PermissionChecker({
   const manifestCursor = activeField === "manifestId" ? "\u2588" : "";
   const toolCursor = activeField === "toolName" ? "\u2588" : "";
 
+  // Look up the manifest entries to show decision trace
+  const matchedManifest = lastResult
+    ? manifests.find((m) => m.manifest_id === lastResult.manifest_id)
+    : null;
+
+  // Find which entry matched (first-match-wins)
+  const findMatchedEntry = (
+    entries: readonly ManifestEntry[],
+    tool: string,
+  ): ManifestEntry | null => {
+    for (const entry of entries) {
+      if (globMatches(entry.tool_pattern, tool)) {
+        return entry;
+      }
+    }
+    return null;
+  };
+
+  const matchedEntry = matchedManifest && lastResult
+    ? findMatchedEntry(matchedManifest.entries, lastResult.tool_name)
+    : null;
+
   return (
     <box height="100%" width="100%" flexDirection="column">
       {/* Form fields */}
@@ -104,17 +143,64 @@ export function PermissionChecker({
         </box>
       )}
 
-      {/* Result display */}
+      {/* Structured result display */}
       {lastResult && !loading && (
-        <box height={3} width="100%" flexDirection="column">
-          <box height={1} width="100%">
-            <text>{"--- Result ---"}</text>
-          </box>
+        <box flexGrow={1} width="100%" flexDirection="column">
+          {/* Decision banner */}
           <box height={1} width="100%">
             <text>
-              {`tool=${lastResult.tool_name}  permission=${lastResult.permission}  agent=${lastResult.agent_id}  manifest=${lastResult.manifest_id}`}
+              {lastResult.permission === "allow"
+                ? `[ALLOW] ${lastResult.tool_name} -> agent=${lastResult.agent_id}`
+                : `[DENY]  ${lastResult.tool_name} -> agent=${lastResult.agent_id}`}
             </text>
           </box>
+
+          {/* Matched pattern */}
+          {matchedEntry && (
+            <box height={1} width="100%">
+              <text>
+                {`Matched: pattern="${matchedEntry.tool_pattern}" permission=${matchedEntry.permission}${matchedEntry.max_calls_per_minute ? ` rate=${matchedEntry.max_calls_per_minute}/min` : ""}`}
+              </text>
+            </box>
+          )}
+
+          {!matchedEntry && matchedManifest && (
+            <box height={1} width="100%">
+              <text>{"No entry matched (default: deny)"}</text>
+            </box>
+          )}
+
+          {/* Manifest entry table (decision trace) */}
+          {matchedManifest && matchedManifest.entries.length > 0 && (
+            <>
+              <box height={1} width="100%">
+                <text>{"--- Manifest Entries (first-match-wins) ---"}</text>
+              </box>
+              {matchedManifest.entries.map((entry, i) => {
+                const isMatch = matchedEntry === entry;
+                const prefix = isMatch ? ">> " : "   ";
+                const rateStr = entry.max_calls_per_minute
+                  ? `  rate=${entry.max_calls_per_minute}/min`
+                  : "";
+                return (
+                  <box key={`${entry.tool_pattern}-${i}`} height={1} width="100%">
+                    <text>
+                      {`${prefix}${entry.tool_pattern.padEnd(30)} ${entry.permission.padEnd(6)}${rateStr}`}
+                    </text>
+                  </box>
+                );
+              })}
+            </>
+          )}
+
+          {/* Manifest metadata */}
+          {matchedManifest && (
+            <box height={1} width="100%">
+              <text>
+                {`Manifest: ${matchedManifest.name}  status=${matchedManifest.status}  zone=${matchedManifest.zone_id}`}
+              </text>
+            </box>
+          )}
         </box>
       )}
 

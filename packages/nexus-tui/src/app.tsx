@@ -14,13 +14,17 @@ import { useKeyboard } from "./shared/hooks/use-keyboard.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
+const VersionsPanel = lazy(() => import("./panels/versions/versions-panel.js"));
+const AgentsPanel = lazy(() => import("./panels/agents/agents-panel.js"));
 const ApiConsolePanel = lazy(() => import("./panels/api-console/api-console-panel.js"));
 const EventsPanel = lazy(() => import("./panels/events/events-panel.js"));
 
 const TABS: readonly Tab[] = [
   { id: "files", label: "Files", shortcut: "1" },
-  { id: "console", label: "Console", shortcut: "2" },
-  { id: "infrastructure", label: "Events", shortcut: "3" },
+  { id: "versions", label: "Versions", shortcut: "2" },
+  { id: "agents", label: "Agents", shortcut: "3" },
+  { id: "console", label: "Console", shortcut: "4" },
+  { id: "infrastructure", label: "Events", shortcut: "5" },
 ];
 
 function PanelRouter(): React.ReactNode {
@@ -29,6 +33,10 @@ function PanelRouter(): React.ReactNode {
   switch (activePanel) {
     case "files":
       return <FileExplorerPanel />;
+    case "versions":
+      return <VersionsPanel />;
+    case "agents":
+      return <AgentsPanel />;
     case "console":
       return <ApiConsolePanel />;
     case "infrastructure":
@@ -36,7 +44,7 @@ function PanelRouter(): React.ReactNode {
     default:
       return (
         <box height="100%" width="100%" justifyContent="center" alignItems="center">
-          <text>{`Panel "${activePanel}" — coming in Phase 2+`}</text>
+          <text>{`Panel "${activePanel}" — coming in Phase 3+`}</text>
         </box>
       );
   }
@@ -48,8 +56,10 @@ export function App(): React.ReactNode {
 
   useKeyboard({
     "1": () => setActivePanel("files"),
-    "2": () => setActivePanel("console"),
-    "3": () => setActivePanel("infrastructure"),
+    "2": () => setActivePanel("versions"),
+    "3": () => setActivePanel("agents"),
+    "4": () => setActivePanel("console"),
+    "5": () => setActivePanel("infrastructure"),
     "q": () => process.exit(0),
   });
 

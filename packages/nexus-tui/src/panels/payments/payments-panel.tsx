@@ -108,15 +108,15 @@ export default function PaymentsPanel(): React.ReactNode {
     c: () => {
       if (activeTab !== "reservations" || !client) return;
       const selected = reservations[selectedReservationIndex];
-      if (selected && selected.status === "active") {
-        commitReservation(selected.reservation_id, client);
+      if (selected && selected.status === "pending") {
+        commitReservation(selected.id, client);
       }
     },
     x: () => {
       if (activeTab !== "reservations" || !client) return;
       const selected = reservations[selectedReservationIndex];
-      if (selected && selected.status === "active") {
-        releaseReservation(selected.reservation_id, client);
+      if (selected && selected.status === "pending") {
+        releaseReservation(selected.id, client);
       }
     },
   });

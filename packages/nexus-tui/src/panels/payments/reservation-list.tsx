@@ -1,5 +1,5 @@
 /**
- * Reservation list with status badges, amounts, and descriptions.
+ * Reservation list with status badges, amounts, and purposes.
  */
 
 import React from "react";
@@ -12,10 +12,9 @@ interface ReservationListProps {
 }
 
 const STATUS_BADGES: Readonly<Record<Reservation["status"], string>> = {
-  active: "●",
+  pending: "◐",
   committed: "✓",
   released: "○",
-  expired: "✗",
 };
 
 function shortId(id: string): string {
@@ -57,7 +56,7 @@ export function ReservationList({
     <scrollbox height="100%" width="100%">
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  ST  ID          AMOUNT       STATUS      DESCRIPTION          EXPIRES"}</text>
+        <text>{"  ST  ID          AMOUNT       STATUS      PURPOSE              EXPIRES"}</text>
       </box>
       <box height={1} width="100%">
         <text>{"  --  ----------  -----------  ----------  -------------------  -------"}</text>
@@ -67,17 +66,15 @@ export function ReservationList({
       {reservations.map((r, i) => {
         const isSelected = i === selectedIndex;
         const badge = STATUS_BADGES[r.status] ?? "?";
-        const desc = r.description
-          ? r.description.length > 19
-            ? `${r.description.slice(0, 16)}...`
-            : r.description
-          : "-";
+        const purpose = r.purpose.length > 19
+          ? `${r.purpose.slice(0, 16)}...`
+          : r.purpose;
         const prefix = isSelected ? "> " : "  ";
 
         return (
-          <box key={r.reservation_id} height={1} width="100%">
+          <box key={r.id} height={1} width="100%">
             <text>
-              {`${prefix}${badge}   ${shortId(r.reservation_id).padEnd(10)}  ${r.amount.padEnd(11)}  ${r.status.padEnd(10)}  ${desc.padEnd(19)}  ${formatTimestamp(r.expires_at)}`}
+              {`${prefix}${badge}   ${shortId(r.id).padEnd(10)}  ${r.amount.padEnd(11)}  ${r.status.padEnd(10)}  ${purpose.padEnd(19)}  ${formatTimestamp(r.expires_at)}`}
             </text>
           </box>
         );

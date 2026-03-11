@@ -54,6 +54,7 @@ export interface GlobalState {
   readonly setActivePanel: (panel: PanelId) => void;
   readonly setConnectionStatus: (status: ConnectionStatus, error?: string) => void;
   readonly setServerInfo: (info: { version?: string; zoneId?: string; uptime?: number }) => void;
+  readonly setIdentity: (identity: { agentId?: string; subject?: string; zoneId?: string }) => void;
 }
 
 export const useGlobalStore = create<GlobalState>((set, get) => ({
@@ -119,5 +120,17 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       zoneId: info.zoneId ?? get().zoneId,
       uptime: info.uptime ?? get().uptime,
     });
+  },
+
+  setIdentity: (identity) => {
+    const currentConfig = get().config;
+    const config: NexusClientOptions = {
+      ...currentConfig,
+      agentId: identity.agentId ?? currentConfig.agentId,
+      subject: identity.subject ?? currentConfig.subject,
+      zoneId: identity.zoneId ?? currentConfig.zoneId,
+    };
+    const client = config.apiKey ? new FetchClient(config) : null;
+    set({ config, client });
   },
 }));

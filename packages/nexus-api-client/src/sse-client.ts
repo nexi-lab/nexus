@@ -58,6 +58,12 @@ export interface SseClientOptions {
   readonly bufferCapacity?: number;
   readonly flushIntervalMs?: number;
   readonly fetch?: typeof globalThis.fetch;
+  /** Agent identity sent as X-Agent-ID header. */
+  readonly agentId?: string;
+  /** Subject identity sent as X-Nexus-Subject header. */
+  readonly subject?: string;
+  /** Zone ID sent as X-Nexus-Zone-ID header. */
+  readonly zoneId?: string;
 }
 
 export type SseEventHandler = (events: readonly SseEvent[]) => void;
@@ -70,6 +76,9 @@ export class SseClient {
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly buffer: RingBuffer<SseEvent>;
   private readonly flushIntervalMs: number;
+  private readonly agentId: string | undefined;
+  private readonly subject: string | undefined;
+  private readonly zoneId: string | undefined;
 
   private abortController: AbortController | null = null;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
@@ -87,6 +96,9 @@ export class SseClient {
     this.fetchFn = options.fetch ?? globalThis.fetch;
     this.buffer = new RingBuffer(options.bufferCapacity ?? DEFAULT_BUFFER_CAPACITY);
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
+    this.agentId = options.agentId;
+    this.subject = options.subject;
+    this.zoneId = options.zoneId;
   }
 
   onEvent(handler: SseEventHandler): void {
@@ -120,6 +132,7 @@ export class SseClient {
     this.stopFlushTimer();
     this.connected = false;
     this.reconnectAttempt = 0;
+    this.lastFlushedCount = 0;
   }
 
   getBufferedEvents(): readonly SseEvent[] {
@@ -128,6 +141,7 @@ export class SseClient {
 
   clearBuffer(): void {
     this.buffer.clear();
+    this.lastFlushedCount = 0;
   }
 
   // ===========================================================================
@@ -158,6 +172,10 @@ export class SseClient {
       Authorization: `Bearer ${this.apiKey}`,
       Accept: "text/event-stream",
     };
+
+    if (this.agentId) headers["X-Agent-ID"] = this.agentId;
+    if (this.subject) headers["X-Nexus-Subject"] = this.subject;
+    if (this.zoneId) headers["X-Nexus-Zone-ID"] = this.zoneId;
 
     if (this.lastEventId) {
       headers["Last-Event-ID"] = this.lastEventId;
@@ -244,11 +262,18 @@ export class SseClient {
     return { parsed, remaining };
   }
 
+  /** Tracks how many events have been flushed so far to avoid re-sending the entire buffer. */
+  private lastFlushedCount = 0;
+
   private startFlushTimer(): void {
+    this.lastFlushedCount = this.buffer.size;
     this.flushTimer = setInterval(() => {
-      const events = this.buffer.toArray();
-      if (events.length > 0) {
-        this.eventHandler?.(events);
+      const currentSize = this.buffer.size;
+      if (currentSize > this.lastFlushedCount) {
+        const all = this.buffer.toArray();
+        const newEvents = all.slice(this.lastFlushedCount);
+        this.lastFlushedCount = currentSize;
+        this.eventHandler?.(newEvents);
       }
     }, this.flushIntervalMs);
   }

@@ -18,6 +18,7 @@ export function StatusBar(): React.ReactNode {
   const serverVersion = useGlobalStore((s) => s.serverVersion);
   const zoneId = useGlobalStore((s) => s.zoneId);
   const activePanel = useGlobalStore((s) => s.activePanel);
+  const userInfo = useGlobalStore((s) => s.userInfo);
 
   const icon = STATUS_ICONS[status] ?? "?";
   const baseUrl = config.baseUrl ?? "localhost:2026";
@@ -27,8 +28,22 @@ export function StatusBar(): React.ReactNode {
     baseUrl,
   ];
 
+  // Identity: prefer userInfo from /auth/me, fall back to config headers
+  if (userInfo?.display_name ?? userInfo?.username) {
+    parts.push(userInfo.display_name ?? userInfo.username!);
+  } else if (config.agentId) {
+    parts.push(`agent:${config.agentId}`);
+  }
+  if (config.subject && config.subject !== config.agentId) {
+    parts.push(`sub:${config.subject}`);
+  }
+
   if (serverVersion) parts.push(`v${serverVersion}`);
-  if (zoneId) parts.push(`zone:${zoneId}`);
+  if (config.zoneId) {
+    parts.push(`zone:${config.zoneId}`);
+  } else if (zoneId) {
+    parts.push(`zone:${zoneId}`);
+  }
   parts.push(`[${activePanel}]`);
 
   return (

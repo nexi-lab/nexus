@@ -20,6 +20,15 @@ export interface NexusClientOptions {
 
   /** Disable automatic snake_case → camelCase key transformation. Default: true */
   readonly transformKeys?: boolean;
+
+  /** Agent identity sent as X-Agent-ID header. */
+  readonly agentId?: string;
+
+  /** Subject identity sent as X-Nexus-Subject header. */
+  readonly subject?: string;
+
+  /** Zone ID sent as X-Nexus-Zone-ID header. */
+  readonly zoneId?: string;
 }
 
 export interface RequestOptions {

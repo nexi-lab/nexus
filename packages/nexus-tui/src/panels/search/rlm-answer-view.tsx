@@ -1,25 +1,30 @@
 /**
- * RLM Q&A answer view: displays the result from POST /api/v2/rlm/infer.
+ * RLM Q&A answer view: progressive streaming display.
+ *
+ * Shows iteration steps as they arrive via SSE, then the final answer.
+ * Status bar shows model, tokens, duration, and iteration count.
  */
 
 import React from "react";
-import type { RlmAnswer } from "../../stores/search-store.js";
+import type { RlmAnswer, RlmStep } from "../../stores/search-store.js";
 
 interface RlmAnswerViewProps {
   readonly answer: RlmAnswer | null;
   readonly loading: boolean;
 }
 
-export function RlmAnswerView({ answer, loading }: RlmAnswerViewProps): React.ReactNode {
-  if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Thinking...</text>
-      </box>
-    );
-  }
+function formatStep(step: RlmStep): string {
+  const code = step.code_executed.length > 80
+    ? `${step.code_executed.slice(0, 77)}...`
+    : step.code_executed;
+  const output = step.output_summary.length > 80
+    ? `${step.output_summary.slice(0, 77)}...`
+    : step.output_summary;
+  return `[${step.step}] ${code}\n    → ${output}  (${step.tokens_used} tok, ${step.duration_seconds.toFixed(1)}s)`;
+}
 
-  if (!answer) {
+export function RlmAnswerView({ answer, loading }: RlmAnswerViewProps): React.ReactNode {
+  if (!answer && !loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
         <text>Press / to ask a question, then Enter to submit</text>
@@ -27,25 +32,60 @@ export function RlmAnswerView({ answer, loading }: RlmAnswerViewProps): React.Re
     );
   }
 
+  if (!answer) {
+    return (
+      <box height="100%" width="100%" justifyContent="center" alignItems="center">
+        <text>Connecting to RLM...</text>
+      </box>
+    );
+  }
+
+  const statusLabel =
+    answer.status === "streaming" ? "Streaming..."
+      : answer.status === "completed" ? "Completed"
+        : answer.status === "budget_exceeded" ? "Budget Exceeded"
+          : "Error";
+
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Status line */}
+      {/* Status bar */}
       <box height={1} width="100%">
         <text>
-          {`Status: ${answer.status}  Iterations: ${answer.iterations}  Tokens: ${answer.total_tokens}  Time: ${answer.total_duration_seconds.toFixed(1)}s`}
+          {`${statusLabel}  ${answer.model ? `Model: ${answer.model}  ` : ""}Iterations: ${answer.iterations}  Tokens: ${answer.total_tokens}${answer.total_duration_seconds > 0 ? `  Time: ${answer.total_duration_seconds.toFixed(1)}s` : ""}`}
         </text>
       </box>
 
-      {/* Error message if any */}
+      {/* Error / budget message */}
       {answer.error_message && (
         <box height={1} width="100%">
-          <text>{`Error: ${answer.error_message}`}</text>
+          <text>
+            {answer.status === "budget_exceeded"
+              ? `Budget exceeded: ${answer.error_message}`
+              : `Error: ${answer.error_message}`}
+          </text>
         </box>
       )}
 
-      {/* Answer content */}
+      {/* Main content: answer or streaming steps */}
       <scrollbox flexGrow={1} width="100%">
-        <text>{answer.answer ?? "(no answer)"}</text>
+        {answer.answer ? (
+          <text>{answer.answer}</text>
+        ) : answer.steps.length > 0 ? (
+          <box flexDirection="column">
+            {answer.steps.map((step) => (
+              <box key={step.step} height={2} width="100%">
+                <text>{formatStep(step)}</text>
+              </box>
+            ))}
+            {answer.status === "streaming" && (
+              <box height={1} width="100%">
+                <text>{"Thinking..."}</text>
+              </box>
+            )}
+          </box>
+        ) : (
+          <text>{answer.status === "streaming" ? "Starting inference..." : "(no answer)"}</text>
+        )}
       </scrollbox>
     </box>
   );

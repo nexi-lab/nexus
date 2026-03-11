@@ -7,6 +7,7 @@
 
 import React, { useState, useCallback } from "react";
 import { useSearchStore } from "../../stores/search-store.js";
+import { useGlobalStore } from "../../stores/global-store.js";
 import type { SearchTab, SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -33,6 +34,7 @@ const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
 
 export default function SearchPanel(): React.ReactNode {
   const client = useApi();
+  const configZoneId = useGlobalStore((s) => s.config.zoneId);
   const [inputMode, setInputMode] = useState(false);
   const [inputBuffer, setInputBuffer] = useState("");
 
@@ -95,10 +97,10 @@ export default function SearchPanel(): React.ReactNode {
       } else if (activeTab === "playbooks") {
         fetchPlaybooks(query.trim(), client);
       } else if (activeTab === "ask") {
-        askRlm(query.trim(), client);
+        askRlm(query.trim(), client, configZoneId);
       }
     },
-    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, setSearchQuery],
+    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, setSearchQuery, configZoneId],
   );
 
   // Refresh current view based on active tab
@@ -114,9 +116,9 @@ export default function SearchPanel(): React.ReactNode {
     } else if (activeTab === "playbooks") {
       fetchPlaybooks(searchQuery || "", client);
     } else if (activeTab === "ask" && searchQuery) {
-      askRlm(searchQuery, client);
+      askRlm(searchQuery, client, configZoneId);
     }
-  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm]);
+  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, configZoneId]);
 
   // In input mode, capture printable characters via onUnhandled
   const handleUnhandledKey = useCallback(

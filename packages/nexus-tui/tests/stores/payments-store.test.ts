@@ -487,6 +487,26 @@ describe("PaymentsStore", () => {
       expect(calledUrl).toContain("cursor=my-cursor");
     });
 
+    it("clears cursor stack on first-page refresh (no cursor)", async () => {
+      usePaymentsStore.setState({
+        transactionsCursorStack: ["cursor-a", "cursor-b"],
+      });
+
+      const client = mockClient({
+        "/api/v2/audit/transactions": {
+          transactions: [],
+          limit: 50,
+          has_more: false,
+          total: 0,
+          next_cursor: null,
+        },
+      });
+
+      // Refresh without cursor = first page
+      await usePaymentsStore.getState().fetchTransactions(client);
+      expect(usePaymentsStore.getState().transactionsCursorStack).toHaveLength(0);
+    });
+
     it("sets error on failure", async () => {
       const client = {
         get: mock(async () => {

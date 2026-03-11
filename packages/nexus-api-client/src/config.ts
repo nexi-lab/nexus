@@ -3,8 +3,10 @@
  *
  * 1. Explicit overrides (constructor args / CLI flags)
  * 2. NEXUS_URL / NEXUS_API_KEY environment variables
- * 3. ~/.nexus/config.yaml (minimal YAML parser — top-level key: value only)
+ * 3. Config file (./nexus.yaml → ./nexus.yml → ~/.nexus/config.yaml)
  * 4. Defaults
+ *
+ * File search order matches the Python CLI (`config.py:_auto_discover`).
  */
 
 import type { NexusClientOptions } from "./types.js";
@@ -20,7 +22,7 @@ const DEFAULT_BASE_URL = "http://localhost:2026";
 export function resolveConfig(
   overrides?: Partial<NexusClientOptions>,
 ): NexusClientOptions {
-  // Layer 3: Read ~/.nexus/config.yaml (best effort)
+  // Layer 3: Config file — check ./nexus.yaml, ./nexus.yml, then ~/.nexus/config.yaml
   const yamlConfig = readYamlConfig();
 
   // Layer 2: Environment variables
@@ -60,7 +62,10 @@ interface YamlConfig {
 }
 
 /**
- * Minimal YAML reader for ~/.nexus/config.yaml.
+ * Minimal YAML reader matching the Python CLI search order:
+ *   1. ./nexus.yaml
+ *   2. ./nexus.yml
+ *   3. ~/.nexus/config.yaml
  *
  * Only reads top-level `url:` and `api_key:` fields via regex.
  * Avoids pulling in a full YAML parser dependency.
@@ -73,13 +78,25 @@ function readYamlConfig(): YamlConfig {
     const os = require("node:os") as typeof import("node:os");
     const path = require("node:path") as typeof import("node:path");
 
-    const configPath = path.join(os.homedir(), ".nexus", "config.yaml");
-    const content = fs.readFileSync(configPath, "utf-8");
+    // Search order: local dir first, then home dir (matches config.py:_auto_discover)
+    const candidates = [
+      path.resolve("nexus.yaml"),
+      path.resolve("nexus.yml"),
+      path.join(os.homedir(), ".nexus", "config.yaml"),
+    ];
 
-    const url = extractYamlValue(content, "url");
-    const apiKey = extractYamlValue(content, "api_key");
+    for (const configPath of candidates) {
+      try {
+        const content = fs.readFileSync(configPath, "utf-8");
+        const url = extractYamlValue(content, "url");
+        const apiKey = extractYamlValue(content, "api_key");
+        return { url: url ?? undefined, apiKey: apiKey ?? undefined };
+      } catch {
+        // File doesn't exist or isn't readable, try next candidate
+      }
+    }
 
-    return { url: url ?? undefined, apiKey: apiKey ?? undefined };
+    return {};
   } catch {
     return {};
   }

@@ -11,6 +11,12 @@ export interface EventFilters {
   readonly search: string | null;
 }
 
+export interface SseIdentity {
+  readonly agentId?: string;
+  readonly subject?: string;
+  readonly zoneId?: string;
+}
+
 export interface EventsState {
   readonly events: readonly SseEvent[];
   readonly connected: boolean;
@@ -22,7 +28,7 @@ export interface EventsState {
   readonly sseClient: SseClient | null;
 
   // Actions
-  readonly connect: (baseUrl: string, apiKey: string) => void;
+  readonly connect: (baseUrl: string, apiKey: string, identity?: SseIdentity) => void;
   readonly disconnect: () => void;
   readonly setFilter: (filters: Partial<EventFilters>) => void;
   readonly clearEvents: () => void;
@@ -36,11 +42,17 @@ export const useEventsStore = create<EventsState>((set, get) => ({
   filteredEvents: [],
   sseClient: null,
 
-  connect: (baseUrl, apiKey) => {
+  connect: (baseUrl, apiKey, identity) => {
     // Disconnect existing
     get().sseClient?.disconnect();
 
-    const client = new SseClient({ baseUrl, apiKey });
+    const client = new SseClient({
+      baseUrl,
+      apiKey,
+      agentId: identity?.agentId,
+      subject: identity?.subject,
+      zoneId: identity?.zoneId,
+    });
 
     client.onEvent((newEvents) => {
       set((state) => {

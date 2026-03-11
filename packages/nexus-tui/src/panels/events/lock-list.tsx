@@ -6,10 +6,9 @@ import React from "react";
 import type { Lock } from "../../stores/infra-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
 
-const STATUS_ICON: Record<string, string> = {
-  held: "🔒",
-  released: "🔓",
-  expired: "○",
+const MODE_ICON: Record<string, string> = {
+  mutex: "🔒",
+  semaphore: "🔗",
 };
 
 export function LockList({
@@ -33,20 +32,20 @@ export function LockList({
     <scrollbox height="100%" width="100%">
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  St  Resource                 Holder               TTL(s)  Expires"}</text>
+        <text>{"  Mode  Resource                 Holder               Fence   Expires"}</text>
       </box>
 
       {locks.map((lock, i) => {
         const prefix = i === selectedIndex ? "> " : "  ";
-        const icon = STATUS_ICON[lock.status] ?? "?";
+        const icon = MODE_ICON[lock.mode] ?? "?";
         const resource = lock.resource.padEnd(24).slice(0, 24);
-        const holder = lock.holder.padEnd(20).slice(0, 20);
-        const ttl = String(lock.ttl_seconds).padStart(6);
-        const expires = lock.expires_at.slice(11, 19);
+        const holder = lock.holder_info.padEnd(20).slice(0, 20);
+        const fence = String(lock.fence_token).padStart(6);
+        const expires = new Date(lock.expires_at * 1000).toISOString().slice(11, 19);
 
         return (
           <box key={lock.lock_id} height={1} width="100%">
-            <text>{`${prefix}${icon} ${resource} ${holder} ${ttl}  ${expires}`}</text>
+            <text>{`${prefix}${icon} ${resource} ${holder} ${fence}  ${expires}`}</text>
           </box>
         );
       })}

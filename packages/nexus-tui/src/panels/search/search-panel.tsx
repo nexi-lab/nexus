@@ -1,6 +1,6 @@
 /**
  * Search & Knowledge panel: tabbed layout with search, knowledge graph,
- * memories, and playbooks views.
+ * and memories views.
  */
 
 import React, { useEffect } from "react";
@@ -11,14 +11,12 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { SearchResults } from "./search-results.js";
 import { KnowledgeView } from "./knowledge-view.js";
 import { MemoryList } from "./memory-list.js";
-import { PlaybookList } from "./playbook-list.js";
 
-const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories", "playbooks"];
+const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories"];
 const TAB_LABELS: Readonly<Record<SearchTab, string>> = {
   search: "Search",
   knowledge: "Knowledge",
   memories: "Memories",
-  playbooks: "Playbooks",
 };
 
 export default function SearchPanel(): React.ReactNode {
@@ -29,15 +27,13 @@ export default function SearchPanel(): React.ReactNode {
   const searchTotal = useSearchStore((s) => s.searchTotal);
   const selectedResultIndex = useSearchStore((s) => s.selectedResultIndex);
   const searchLoading = useSearchStore((s) => s.searchLoading);
-  const entities = useSearchStore((s) => s.entities);
   const selectedEntity = useSearchStore((s) => s.selectedEntity);
   const neighbors = useSearchStore((s) => s.neighbors);
+  const knowledgeSearchResult = useSearchStore((s) => s.knowledgeSearchResult);
   const knowledgeLoading = useSearchStore((s) => s.knowledgeLoading);
   const memories = useSearchStore((s) => s.memories);
   const selectedMemoryIndex = useSearchStore((s) => s.selectedMemoryIndex);
   const memoriesLoading = useSearchStore((s) => s.memoriesLoading);
-  const playbooks = useSearchStore((s) => s.playbooks);
-  const playbooksLoading = useSearchStore((s) => s.playbooksLoading);
   const activeTab = useSearchStore((s) => s.activeTab);
   const error = useSearchStore((s) => s.error);
 
@@ -46,7 +42,6 @@ export default function SearchPanel(): React.ReactNode {
   const fetchNeighbors = useSearchStore((s) => s.fetchNeighbors);
   const searchKnowledge = useSearchStore((s) => s.searchKnowledge);
   const fetchMemories = useSearchStore((s) => s.fetchMemories);
-  const fetchPlaybooks = useSearchStore((s) => s.fetchPlaybooks);
   const setActiveTab = useSearchStore((s) => s.setActiveTab);
   const setSelectedResultIndex = useSearchStore((s) => s.setSelectedResultIndex);
   const setSelectedMemoryIndex = useSearchStore((s) => s.setSelectedMemoryIndex);
@@ -61,9 +56,7 @@ export default function SearchPanel(): React.ReactNode {
     } else if (activeTab === "knowledge" && searchQuery) {
       searchKnowledge(searchQuery, client);
     } else if (activeTab === "memories") {
-      fetchMemories(client);
-    } else if (activeTab === "playbooks") {
-      fetchPlaybooks(client);
+      fetchMemories("", client);
     }
   };
 
@@ -130,13 +123,19 @@ export default function SearchPanel(): React.ReactNode {
       if (activeTab === "search") {
         const result = searchResults[selectedResultIndex];
         if (result) {
-          fetchEntity(result.id, client);
-          fetchNeighbors(result.id, client);
+          // Navigate to knowledge view using the path from the search result
+          fetchEntity(result.path, client);
+          fetchNeighbors(result.path, client);
           setActiveTab("knowledge");
         }
       } else if (activeTab === "knowledge") {
         if (selectedEntity) {
-          fetchNeighbors(selectedEntity.entity_id, client);
+          const entityId = String(
+            (selectedEntity as Record<string, unknown>).entity_id ?? "",
+          );
+          if (entityId) {
+            fetchNeighbors(entityId, client);
+          }
         }
       }
     },
@@ -180,7 +179,7 @@ export default function SearchPanel(): React.ReactNode {
           <KnowledgeView
             entity={selectedEntity}
             neighbors={neighbors}
-            entities={entities}
+            knowledgeSearchResult={knowledgeSearchResult}
             loading={knowledgeLoading}
           />
         )}
@@ -189,12 +188,6 @@ export default function SearchPanel(): React.ReactNode {
             memories={memories}
             selectedIndex={selectedMemoryIndex}
             loading={memoriesLoading}
-          />
-        )}
-        {activeTab === "playbooks" && (
-          <PlaybookList
-            playbooks={playbooks}
-            loading={playbooksLoading}
           />
         )}
       </box>

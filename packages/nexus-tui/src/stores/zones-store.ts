@@ -1,8 +1,8 @@
 /**
  * Zustand store for Zones & Federation panel.
  *
- * Manages brick/zone lifecycle (list, health, mounts, drift, sync)
- * and per-brick detail views.
+ * Manages zone listing, brick health, individual brick detail,
+ * drift reconciliation reports, and brick lifecycle operations.
  */
 
 import { create } from "zustand";
@@ -12,117 +12,140 @@ import type { FetchClient } from "@nexus/api-client";
 // Types (snake_case matching API wire format)
 // =============================================================================
 
-export interface Brick {
-  readonly brick_id: string;
-  readonly zone_id: string;
-  readonly brick_type: string;
-  readonly status: "online" | "offline" | "degraded" | "syncing";
-  readonly address: string;
-  readonly capacity_bytes: number;
-  readonly used_bytes: number;
-  readonly last_seen: string | null;
-}
-
-export interface HealthCheck {
+export interface BrickStatusResponse {
   readonly name: string;
-  readonly status: "pass" | "fail" | "warn";
-  readonly message: string;
+  readonly state: string;
+  readonly protocol_name: string;
+  readonly error: string | null;
+  readonly started_at: number | null;
+  readonly stopped_at: number | null;
+  readonly unmounted_at: number | null;
 }
 
-export interface BrickHealth {
-  readonly brick_id: string;
-  readonly status: "healthy" | "degraded" | "unhealthy" | "unknown";
-  readonly latency_ms: number;
-  readonly error_rate: number;
-  readonly last_check: string;
-  readonly checks: readonly HealthCheck[];
+export interface DriftReportItem {
+  readonly brick_name: string;
+  readonly spec_state: string;
+  readonly actual_state: string;
+  readonly action: string;
+  readonly detail: string;
 }
 
-export interface MountPoint {
-  readonly path: string;
-  readonly brick_id: string;
-  readonly zone_id: string;
-  readonly mount_type: "read" | "write" | "readwrite";
-  readonly mounted_at: string;
-}
-
-export interface DriftReport {
-  readonly brick_id: string;
-  readonly has_drift: boolean;
-  readonly drift_count: number;
-  readonly last_checked: string;
-  readonly drifted_paths: readonly string[];
-}
-
-interface BrickListResponse {
-  readonly bricks: readonly Brick[];
+export interface BricksHealthResponse {
   readonly total: number;
+  readonly active: number;
+  readonly failed: number;
+  readonly bricks: readonly BrickStatusResponse[];
 }
 
-interface MountListResponse {
-  readonly mounts: readonly MountPoint[];
+export interface DriftReportResponse {
+  readonly total_bricks: number;
+  readonly drifted: number;
+  readonly actions_taken: number;
+  readonly errors: number;
+  readonly drifts: readonly DriftReportItem[];
+  readonly last_reconcile_at: number | null;
+  readonly reconcile_count: number;
+}
+
+export interface ZoneResponse {
+  readonly zone_id: string;
+  readonly name: string;
+  readonly domain: string | null;
+  readonly description: string | null;
+  readonly phase: string;
+  readonly finalizers: readonly string[];
+  readonly is_active: boolean;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly limits: Record<string, unknown> | null;
+}
+
+interface ZonesListResponse {
+  readonly zones: readonly ZoneResponse[];
+  readonly total: number;
 }
 
 // =============================================================================
 // Tab type
 // =============================================================================
 
-export type ZoneTab = "overview" | "health" | "mounts" | "drift";
+export type ZoneTab = "zones" | "bricks" | "drift";
 
 // =============================================================================
 // Store
 // =============================================================================
 
 export interface ZonesState {
-  // Brick list
-  readonly bricks: readonly Brick[];
-  readonly selectedBrick: Brick | null;
+  // Zone list
+  readonly zones: readonly ZoneResponse[];
+  readonly zonesLoading: boolean;
+
+  // Brick list (from health endpoint)
+  readonly bricksHealth: BricksHealthResponse | null;
+  readonly bricks: readonly BrickStatusResponse[];
   readonly selectedIndex: number;
   readonly isLoading: boolean;
   readonly error: string | null;
 
-  // Active detail tab
+  // Active tab
   readonly activeTab: ZoneTab;
 
-  // Detail views
-  readonly brickHealth: BrickHealth | null;
-  readonly healthLoading: boolean;
-  readonly mountPoints: readonly MountPoint[];
-  readonly mountsLoading: boolean;
-  readonly driftReport: DriftReport | null;
+  // Brick detail
+  readonly brickDetail: BrickStatusResponse | null;
+  readonly detailLoading: boolean;
+
+  // Drift report (global, not per-brick)
+  readonly driftReport: DriftReportResponse | null;
   readonly driftLoading: boolean;
 
   // Actions
+  readonly fetchZones: (client: FetchClient) => Promise<void>;
   readonly fetchBricks: (client: FetchClient) => Promise<void>;
-  readonly fetchBrickHealth: (brickId: string, client: FetchClient) => Promise<void>;
-  readonly fetchMounts: (brickId: string, client: FetchClient) => Promise<void>;
-  readonly fetchDrift: (brickId: string, client: FetchClient) => Promise<void>;
-  readonly triggerSync: (brickId: string, client: FetchClient) => Promise<void>;
+  readonly fetchBrickDetail: (name: string, client: FetchClient) => Promise<void>;
+  readonly fetchDrift: (client: FetchClient) => Promise<void>;
+  readonly remountBrick: (name: string, client: FetchClient) => Promise<void>;
+  readonly resetBrick: (name: string, client: FetchClient) => Promise<void>;
   readonly setSelectedIndex: (index: number) => void;
   readonly setActiveTab: (tab: ZoneTab) => void;
 }
 
 export const useZonesStore = create<ZonesState>((set, get) => ({
+  zones: [],
+  zonesLoading: false,
+  bricksHealth: null,
   bricks: [],
-  selectedBrick: null,
   selectedIndex: 0,
   isLoading: false,
   error: null,
-  activeTab: "overview",
-  brickHealth: null,
-  healthLoading: false,
-  mountPoints: [],
-  mountsLoading: false,
+  activeTab: "zones",
+  brickDetail: null,
+  detailLoading: false,
   driftReport: null,
   driftLoading: false,
+
+  fetchZones: async (client) => {
+    set({ zonesLoading: true, error: null });
+
+    try {
+      const response = await client.get<ZonesListResponse>("/api/zones");
+      set({ zones: response.zones ?? [], zonesLoading: false });
+    } catch (err) {
+      set({
+        zonesLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch zones",
+      });
+    }
+  },
 
   fetchBricks: async (client) => {
     set({ isLoading: true, error: null });
 
     try {
-      const response = await client.get<BrickListResponse>("/api/v2/bricks");
+      const response = await client.get<BricksHealthResponse>(
+        "/api/v2/bricks/health",
+      );
       const bricks = response.bricks ?? [];
-      set({ bricks, isLoading: false });
+      set({ bricksHealth: response, bricks, isLoading: false });
     } catch (err) {
       set({
         isLoading: false,
@@ -131,46 +154,29 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     }
   },
 
-  fetchBrickHealth: async (brickId, client) => {
-    set({ healthLoading: true, error: null });
+  fetchBrickDetail: async (name, client) => {
+    set({ detailLoading: true, error: null });
 
     try {
-      const health = await client.get<BrickHealth>(
-        `/api/v2/bricks/${encodeURIComponent(brickId)}/health`,
+      const detail = await client.get<BrickStatusResponse>(
+        `/api/v2/bricks/${encodeURIComponent(name)}`,
       );
-      set({ brickHealth: health, healthLoading: false });
+      set({ brickDetail: detail, detailLoading: false });
     } catch (err) {
       set({
-        brickHealth: null,
-        healthLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch brick health",
+        brickDetail: null,
+        detailLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch brick detail",
       });
     }
   },
 
-  fetchMounts: async (brickId, client) => {
-    set({ mountsLoading: true, error: null });
-
-    try {
-      const response = await client.get<MountListResponse>(
-        `/api/v2/bricks/${encodeURIComponent(brickId)}/mount`,
-      );
-      set({ mountPoints: response.mounts ?? [], mountsLoading: false });
-    } catch (err) {
-      set({
-        mountPoints: [],
-        mountsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch mounts",
-      });
-    }
-  },
-
-  fetchDrift: async (brickId, client) => {
+  fetchDrift: async (client) => {
     set({ driftLoading: true, error: null });
 
     try {
-      const report = await client.get<DriftReport>(
-        `/api/v2/bricks/${encodeURIComponent(brickId)}/drift`,
+      const report = await client.get<DriftReportResponse>(
+        "/api/v2/bricks/drift",
       );
       set({ driftReport: report, driftLoading: false });
     } catch (err) {
@@ -182,31 +188,42 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     }
   },
 
-  triggerSync: async (brickId, client) => {
+  remountBrick: async (name, client) => {
     set({ error: null });
 
     try {
       await client.post<void>(
-        `/api/v2/bricks/${encodeURIComponent(brickId)}/sync`,
+        `/api/v2/bricks/${encodeURIComponent(name)}/remount`,
         {},
       );
       await get().fetchBricks(client);
     } catch (err) {
       set({
-        error: err instanceof Error ? err.message : "Failed to trigger sync",
+        error: err instanceof Error ? err.message : "Failed to remount brick",
+      });
+    }
+  },
+
+  resetBrick: async (name, client) => {
+    set({ error: null });
+
+    try {
+      await client.post<void>(
+        `/api/v2/bricks/${encodeURIComponent(name)}/reset`,
+        {},
+      );
+      await get().fetchBricks(client);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to reset brick",
       });
     }
   },
 
   setSelectedIndex: (index) => {
-    const { bricks } = get();
-    const brick = bricks[index] ?? null;
     set({
       selectedIndex: index,
-      selectedBrick: brick,
-      brickHealth: null,
-      mountPoints: [],
-      driftReport: null,
+      brickDetail: null,
     });
   },
 

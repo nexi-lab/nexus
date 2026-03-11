@@ -20,6 +20,17 @@ export type PanelId =
   | "infrastructure"
   | "console";
 
+/** Response from GET /auth/me */
+export interface UserInfo {
+  readonly user_id: string;
+  readonly email: string;
+  readonly username: string | null;
+  readonly display_name: string | null;
+  readonly avatar_url: string | null;
+  readonly is_global_admin: boolean;
+  readonly primary_auth_method: string | null;
+}
+
 export interface GlobalState {
   // Connection
   readonly connectionStatus: ConnectionStatus;
@@ -35,9 +46,11 @@ export interface GlobalState {
   readonly serverVersion: string | null;
   readonly zoneId: string | null;
   readonly uptime: number | null;
+  readonly userInfo: UserInfo | null;
 
   // Actions
   readonly initConfig: (overrides?: Partial<NexusClientOptions>) => void;
+  readonly testConnection: () => Promise<void>;
   readonly setActivePanel: (panel: PanelId) => void;
   readonly setConnectionStatus: (status: ConnectionStatus, error?: string) => void;
   readonly setServerInfo: (info: { version?: string; zoneId?: string; uptime?: number }) => void;
@@ -54,11 +67,37 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   serverVersion: null,
   zoneId: null,
   uptime: null,
+  userInfo: null,
 
   initConfig: (overrides) => {
     const config = resolveConfig(overrides);
     const client = config.apiKey ? new FetchClient(config) : null;
     set({ config, client, connectionStatus: client ? "connecting" : "disconnected" });
+
+    if (client) {
+      get().testConnection();
+    }
+  },
+
+  testConnection: async () => {
+    const client = get().client;
+    if (!client) {
+      set({ connectionStatus: "disconnected", connectionError: null, userInfo: null });
+      return;
+    }
+
+    set({ connectionStatus: "connecting", connectionError: null });
+
+    try {
+      const userInfo = await client.get<UserInfo>("/auth/me");
+      set({ connectionStatus: "connected", connectionError: null, userInfo });
+    } catch (err) {
+      set({
+        connectionStatus: "error",
+        connectionError: err instanceof Error ? err.message : "Connection test failed",
+        userInfo: null,
+      });
+    }
   },
 
   setActivePanel: (panel) => {

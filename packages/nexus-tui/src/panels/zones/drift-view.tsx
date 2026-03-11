@@ -1,20 +1,25 @@
 /**
- * Drift view: shows drift report with has_drift flag, count, and drifted paths.
+ * Drift view: shows the global drift reconciliation report
+ * from GET /api/v2/bricks/drift.
+ *
+ * Displays: total_bricks, drifted count, actions_taken, errors,
+ * last_reconcile_at, reconcile_count, and a table of drifted items.
  */
 
 import React from "react";
-import type { DriftReport } from "../../stores/zones-store.js";
+import type { DriftReportResponse } from "../../stores/zones-store.js";
 
 interface DriftViewProps {
-  readonly drift: DriftReport | null;
+  readonly drift: DriftReportResponse | null;
   readonly loading: boolean;
 }
 
-function formatTimestamp(ts: string): string {
+function formatEpoch(epoch: number | null): string {
+  if (epoch === null) return "never";
   try {
-    return new Date(ts).toLocaleString();
+    return new Date(epoch * 1000).toLocaleString();
   } catch {
-    return ts;
+    return String(epoch);
   }
 }
 
@@ -30,36 +35,62 @@ export function DriftView({ drift, loading }: DriftViewProps): React.ReactNode {
   if (!drift) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Select a brick to view drift</text>
+        <text>No drift data available</text>
       </box>
     );
   }
 
-  const driftLabel = drift.has_drift ? "YES - drift detected" : "No drift";
+  const hasDrifts = drift.drifts.length > 0;
 
   return (
     <scrollbox height="100%" width="100%">
       <box height={1} width="100%">
-        <text>{`Drift:        ${driftLabel}`}</text>
+        <text>--- Drift Reconciliation Report ---</text>
       </box>
       <box height={1} width="100%">
-        <text>{`Drift count:  ${drift.drift_count}`}</text>
+        <text>{`Total bricks:     ${drift.total_bricks}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{`Last checked: ${formatTimestamp(drift.last_checked)}`}</text>
+        <text>{`Drifted:          ${drift.drifted}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`Actions taken:    ${drift.actions_taken}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`Errors:           ${drift.errors}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`Reconcile count:  ${drift.reconcile_count}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`Last reconcile:   ${formatEpoch(drift.last_reconcile_at)}`}</text>
       </box>
 
-      {drift.drifted_paths.length > 0 && (
+      {hasDrifts && (
         <>
           <box height={1} width="100%" marginTop={1}>
-            <text>--- Drifted Paths ---</text>
+            <text>--- Drifted Items ---</text>
           </box>
-          {drift.drifted_paths.map((path, i) => (
+          <box height={1} width="100%">
+            <text>{"  BRICK NAME         SPEC STATE   ACTUAL STATE  ACTION       DETAIL"}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{"  -----------------  -----------  ------------  -----------  -------------------------"}</text>
+          </box>
+          {drift.drifts.map((item, i) => (
             <box key={`drift-${i}`} height={1} width="100%">
-              <text>{`  ${i + 1}. ${path}`}</text>
+              <text>
+                {`  ${item.brick_name.padEnd(17)}  ${item.spec_state.padEnd(11)}  ${item.actual_state.padEnd(12)}  ${item.action.padEnd(11)}  ${item.detail}`}
+              </text>
             </box>
           ))}
         </>
+      )}
+
+      {!hasDrifts && (
+        <box height={1} width="100%" marginTop={1}>
+          <text>No drift detected - all bricks in spec.</text>
+        </box>
       )}
     </scrollbox>
   );

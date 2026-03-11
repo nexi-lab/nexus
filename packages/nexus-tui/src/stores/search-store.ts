@@ -2,7 +2,7 @@
  * Zustand store for Search & Knowledge panel.
  *
  * Manages unified search, knowledge graph exploration,
- * agent memories, and playbooks.
+ * and agent memories.
  */
 
 import { create } from "zustand";
@@ -13,66 +13,59 @@ import type { FetchClient } from "@nexus/api-client";
 // =============================================================================
 
 export interface SearchResult {
-  readonly id: string;
-  readonly type: string;
-  readonly path: string | null;
-  readonly title: string;
-  readonly snippet: string;
+  readonly path: string;
+  readonly chunk_text: string;
   readonly score: number;
-  readonly zone_id: string | null;
+  readonly chunk_index: number;
+  readonly line_start: number;
+  readonly line_end: number;
+  readonly keyword_score: number | null;
+  readonly vector_score: number | null;
 }
 
 export interface KnowledgeEntity {
-  readonly entity_id: string;
-  readonly type: string;
-  readonly name: string;
-  readonly properties: Record<string, unknown>;
-  readonly created_at: string;
-  readonly updated_at: string;
+  readonly [key: string]: unknown;
+}
+
+export interface NeighborEntry {
+  readonly entity: KnowledgeEntity;
+  readonly depth: number;
+  readonly path: readonly string[];
 }
 
 export interface Memory {
-  readonly memory_id: string;
-  readonly agent_id: string;
-  readonly type: string;
-  readonly content: string;
-  readonly tags: readonly string[];
-  readonly version: number;
-  readonly created_at: string;
-  readonly updated_at: string;
+  readonly [key: string]: unknown;
 }
 
-export interface Playbook {
-  readonly playbook_id: string;
-  readonly name: string;
-  readonly description: string;
-  readonly steps: number;
-  readonly last_run: string | null;
-  readonly status: "active" | "draft" | "archived";
-}
-
-export type SearchTab = "search" | "knowledge" | "memories" | "playbooks";
+export type SearchTab = "search" | "knowledge" | "memories";
 
 interface SearchQueryResponse {
+  readonly query: string;
+  readonly search_type: string;
+  readonly graph_mode: string;
   readonly results: readonly SearchResult[];
   readonly total: number;
+  readonly latency_ms: number;
+}
+
+interface EntityResponse {
+  readonly entity: KnowledgeEntity | null;
 }
 
 interface NeighborsResponse {
-  readonly neighbors: readonly KnowledgeEntity[];
+  readonly neighbors: readonly NeighborEntry[];
 }
 
 interface KnowledgeSearchResponse {
-  readonly entities: readonly KnowledgeEntity[];
+  readonly entity: KnowledgeEntity | null;
 }
 
-interface MemoryListResponse {
+interface MemorySearchResponse {
   readonly memories: readonly Memory[];
-  readonly total: number;
 }
 
-interface PlaybookListResponse {
-  readonly playbooks: readonly Playbook[];
+interface MemoryDetailResponse {
+  readonly memory: Memory;
 }
 
 // =============================================================================
@@ -88,19 +81,15 @@ export interface SearchState {
   readonly searchLoading: boolean;
 
   // Knowledge graph
-  readonly entities: readonly KnowledgeEntity[];
   readonly selectedEntity: KnowledgeEntity | null;
-  readonly neighbors: readonly KnowledgeEntity[];
+  readonly neighbors: readonly NeighborEntry[];
+  readonly knowledgeSearchResult: KnowledgeEntity | null;
   readonly knowledgeLoading: boolean;
 
   // Memories
   readonly memories: readonly Memory[];
   readonly selectedMemoryIndex: number;
   readonly memoriesLoading: boolean;
-
-  // Playbooks
-  readonly playbooks: readonly Playbook[];
-  readonly playbooksLoading: boolean;
 
   // Shared
   readonly activeTab: SearchTab;
@@ -110,10 +99,9 @@ export interface SearchState {
   readonly search: (query: string, client: FetchClient) => Promise<void>;
   readonly fetchEntity: (id: string, client: FetchClient) => Promise<void>;
   readonly fetchNeighbors: (id: string, client: FetchClient) => Promise<void>;
-  readonly searchKnowledge: (query: string, client: FetchClient) => Promise<void>;
-  readonly fetchMemories: (client: FetchClient) => Promise<void>;
+  readonly searchKnowledge: (name: string, client: FetchClient) => Promise<void>;
+  readonly fetchMemories: (query: string, client: FetchClient) => Promise<void>;
   readonly fetchMemoryDetail: (id: string, client: FetchClient) => Promise<void>;
-  readonly fetchPlaybooks: (client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: SearchTab) => void;
   readonly setSelectedResultIndex: (index: number) => void;
   readonly setSelectedMemoryIndex: (index: number) => void;
@@ -127,17 +115,14 @@ export const useSearchStore = create<SearchState>((set) => ({
   selectedResultIndex: 0,
   searchLoading: false,
 
-  entities: [],
   selectedEntity: null,
   neighbors: [],
+  knowledgeSearchResult: null,
   knowledgeLoading: false,
 
   memories: [],
   selectedMemoryIndex: 0,
   memoriesLoading: false,
-
-  playbooks: [],
-  playbooksLoading: false,
 
   activeTab: "search",
   error: null,
@@ -146,9 +131,13 @@ export const useSearchStore = create<SearchState>((set) => ({
     set({ searchLoading: true, error: null, searchQuery: query });
 
     try {
-      const response = await client.post<SearchQueryResponse>(
-        "/api/v2/search/query",
-        { query },
+      const params = new URLSearchParams({
+        q: query,
+        type: "hybrid",
+        limit: "10",
+      });
+      const response = await client.get<SearchQueryResponse>(
+        `/api/v2/search/query?${params.toString()}`,
       );
 
       const results = response.results ?? [];
@@ -170,10 +159,10 @@ export const useSearchStore = create<SearchState>((set) => ({
     set({ knowledgeLoading: true, error: null });
 
     try {
-      const entity = await client.get<KnowledgeEntity>(
-        `/api/v2/knowledge/entity/${encodeURIComponent(id)}`,
+      const response = await client.get<EntityResponse>(
+        `/api/v2/graph/entity/${encodeURIComponent(id)}`,
       );
-      set({ selectedEntity: entity, knowledgeLoading: false });
+      set({ selectedEntity: response.entity ?? null, knowledgeLoading: false });
     } catch (err) {
       set({
         knowledgeLoading: false,
@@ -187,7 +176,7 @@ export const useSearchStore = create<SearchState>((set) => ({
 
     try {
       const response = await client.get<NeighborsResponse>(
-        `/api/v2/knowledge/entity/${encodeURIComponent(id)}/neighbors`,
+        `/api/v2/graph/entity/${encodeURIComponent(id)}/neighbors?hops=1&direction=both`,
       );
       set({
         neighbors: response.neighbors ?? [],
@@ -202,32 +191,35 @@ export const useSearchStore = create<SearchState>((set) => ({
     }
   },
 
-  searchKnowledge: async (query, client) => {
+  searchKnowledge: async (name, client) => {
     set({ knowledgeLoading: true, error: null });
 
     try {
-      const response = await client.post<KnowledgeSearchResponse>(
-        "/api/v2/knowledge/search",
-        { query },
+      const params = new URLSearchParams({ name, fuzzy: "false" });
+      const response = await client.get<KnowledgeSearchResponse>(
+        `/api/v2/graph/search?${params.toString()}`,
       );
       set({
-        entities: response.entities ?? [],
+        knowledgeSearchResult: response.entity ?? null,
         knowledgeLoading: false,
       });
     } catch (err) {
       set({
-        entities: [],
+        knowledgeSearchResult: null,
         knowledgeLoading: false,
         error: err instanceof Error ? err.message : "Failed to search knowledge graph",
       });
     }
   },
 
-  fetchMemories: async (client) => {
+  fetchMemories: async (query, client) => {
     set({ memoriesLoading: true, error: null });
 
     try {
-      const response = await client.get<MemoryListResponse>("/api/v2/memory");
+      const response = await client.post<MemorySearchResponse>(
+        "/api/v2/memories/search",
+        { query },
+      );
       set({
         memories: response.memories ?? [],
         selectedMemoryIndex: 0,
@@ -245,13 +237,15 @@ export const useSearchStore = create<SearchState>((set) => ({
     set({ memoriesLoading: true, error: null });
 
     try {
-      const memory = await client.get<Memory>(
-        `/api/v2/memory/${encodeURIComponent(id)}`,
+      const response = await client.get<MemoryDetailResponse>(
+        `/api/v2/memories/${encodeURIComponent(id)}`,
       );
+      const memory = response.memory;
 
       set((state) => {
+        const memoryId = (memory as Record<string, unknown>).memory_id;
         const updated = state.memories.map((m) =>
-          m.memory_id === memory.memory_id ? memory : m,
+          (m as Record<string, unknown>).memory_id === memoryId ? memory : m,
         );
         return { memories: updated, memoriesLoading: false };
       });
@@ -259,23 +253,6 @@ export const useSearchStore = create<SearchState>((set) => ({
       set({
         memoriesLoading: false,
         error: err instanceof Error ? err.message : "Failed to fetch memory detail",
-      });
-    }
-  },
-
-  fetchPlaybooks: async (client) => {
-    set({ playbooksLoading: true, error: null });
-
-    try {
-      const response = await client.get<PlaybookListResponse>("/api/v2/playbooks");
-      set({
-        playbooks: response.playbooks ?? [],
-        playbooksLoading: false,
-      });
-    } catch (err) {
-      set({
-        playbooksLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch playbooks",
       });
     }
   },

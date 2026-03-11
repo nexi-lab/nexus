@@ -1,5 +1,5 @@
 /**
- * Search results list: type badge, title, snippet (truncated), score.
+ * Search results list: path, chunk_text (truncated), score, line range.
  */
 
 import React from "react";
@@ -12,21 +12,18 @@ interface SearchResultsProps {
   readonly loading: boolean;
 }
 
-const TYPE_BADGES: Readonly<Record<string, string>> = {
-  file: "[FIL]",
-  entity: "[ENT]",
-  memory: "[MEM]",
-  playbook: "[PLY]",
-  agent: "[AGT]",
-};
-
-function truncateSnippet(snippet: string, maxLen: number): string {
-  if (snippet.length <= maxLen) return snippet;
-  return `${snippet.slice(0, maxLen - 3)}...`;
+function truncateText(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen - 3)}...`;
 }
 
 function formatScore(score: number): string {
   return score.toFixed(2);
+}
+
+function formatLineRange(start: number, end: number): string {
+  if (start === end) return `L${start}`;
+  return `L${start}-${end}`;
 }
 
 export function SearchResults({
@@ -58,10 +55,10 @@ export function SearchResults({
         <text>{`Results: ${total} found`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  TYPE   SCORE  TITLE                          SNIPPET"}</text>
+        <text>{"  SCORE  LINES      PATH                           CHUNK"}</text>
       </box>
       <box height={1} width="100%">
-        <text>{"  -----  -----  -----------------------------  --------------------------------"}</text>
+        <text>{"  -----  ---------  -----------------------------  --------------------------------"}</text>
       </box>
 
       {/* Result rows */}
@@ -69,16 +66,15 @@ export function SearchResults({
         {results.map((result, i) => {
           const isSelected = i === selectedIndex;
           const prefix = isSelected ? "> " : "  ";
-          const badge = TYPE_BADGES[result.type] ?? `[${result.type.slice(0, 3).toUpperCase()}]`;
-          const title = result.title.length > 29
-            ? `${result.title.slice(0, 26)}...`
-            : result.title;
-          const snippet = truncateSnippet(result.snippet, 32);
+          const score = formatScore(result.score).padEnd(5);
+          const lines = formatLineRange(result.line_start, result.line_end).padEnd(9);
+          const path = truncateText(result.path, 29).padEnd(29);
+          const chunk = truncateText(result.chunk_text, 32);
 
           return (
-            <box key={result.id} height={1} width="100%">
+            <box key={`${result.path}:${result.chunk_index}`} height={1} width="100%">
               <text>
-                {`${prefix}${badge}  ${formatScore(result.score).padEnd(5)}  ${title.padEnd(29)}  ${snippet}`}
+                {`${prefix}${score}  ${lines}  ${path}  ${chunk}`}
               </text>
             </box>
           );

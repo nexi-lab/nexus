@@ -26,15 +26,13 @@ function resetStore(): void {
     searchTotal: 0,
     selectedResultIndex: 0,
     searchLoading: false,
-    entities: [],
     selectedEntity: null,
     neighbors: [],
+    knowledgeSearchResult: null,
     knowledgeLoading: false,
     memories: [],
     selectedMemoryIndex: 0,
     memoriesLoading: false,
-    playbooks: [],
-    playbooksLoading: false,
     activeTab: "search",
     error: null,
   });
@@ -56,9 +54,6 @@ describe("SearchStore", () => {
     it("cycles through all tabs", () => {
       useSearchStore.getState().setActiveTab("memories");
       expect(useSearchStore.getState().activeTab).toBe("memories");
-
-      useSearchStore.getState().setActiveTab("playbooks");
-      expect(useSearchStore.getState().activeTab).toBe("playbooks");
 
       useSearchStore.getState().setActiveTab("search");
       expect(useSearchStore.getState().activeTab).toBe("search");
@@ -93,41 +88,55 @@ describe("SearchStore", () => {
   });
 
   describe("search", () => {
-    it("searches and stores results", async () => {
+    it("uses GET with query string and stores results", async () => {
       const client = mockClient({
         "/api/v2/search/query": {
+          query: "test",
+          search_type: "hybrid",
+          graph_mode: "none",
           results: [
             {
-              id: "r1",
-              type: "file",
               path: "/data/test.txt",
-              title: "Test File",
-              snippet: "This is a test file content",
+              chunk_text: "This is a test file content",
               score: 0.95,
-              zone_id: "zone-1",
+              chunk_index: 0,
+              line_start: 1,
+              line_end: 10,
+              keyword_score: 0.8,
+              vector_score: 0.9,
             },
             {
-              id: "r2",
-              type: "entity",
-              path: null,
-              title: "Test Entity",
-              snippet: "An entity matching the query",
+              path: "/data/another.py",
+              chunk_text: "Another matching chunk",
               score: 0.82,
-              zone_id: null,
+              chunk_index: 2,
+              line_start: 15,
+              line_end: 25,
+              keyword_score: null,
+              vector_score: 0.82,
             },
           ],
           total: 2,
+          latency_ms: 42,
         },
       });
 
       await useSearchStore.getState().search("test", client);
       const state = useSearchStore.getState();
 
+      // Verify GET was called (not POST)
+      expect(client.get).toHaveBeenCalled();
+      expect(client.post).not.toHaveBeenCalled();
+
       expect(state.searchResults).toHaveLength(2);
-      expect(state.searchResults[0]!.id).toBe("r1");
-      expect(state.searchResults[0]!.type).toBe("file");
+      expect(state.searchResults[0]!.path).toBe("/data/test.txt");
+      expect(state.searchResults[0]!.chunk_text).toBe("This is a test file content");
       expect(state.searchResults[0]!.score).toBe(0.95);
-      expect(state.searchResults[1]!.title).toBe("Test Entity");
+      expect(state.searchResults[0]!.line_start).toBe(1);
+      expect(state.searchResults[0]!.line_end).toBe(10);
+      expect(state.searchResults[0]!.keyword_score).toBe(0.8);
+      expect(state.searchResults[1]!.path).toBe("/data/another.py");
+      expect(state.searchResults[1]!.chunk_index).toBe(2);
       expect(state.searchTotal).toBe(2);
       expect(state.selectedResultIndex).toBe(0);
       expect(state.searchQuery).toBe("test");
@@ -135,9 +144,30 @@ describe("SearchStore", () => {
       expect(state.error).toBeNull();
     });
 
+    it("includes q, type, and limit params in GET url", async () => {
+      const client = mockClient({
+        "/api/v2/search/query": {
+          query: "hello",
+          search_type: "hybrid",
+          graph_mode: "none",
+          results: [],
+          total: 0,
+          latency_ms: 5,
+        },
+      });
+
+      await useSearchStore.getState().search("hello", client);
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("q=hello");
+      expect(calledUrl).toContain("type=hybrid");
+      expect(calledUrl).toContain("limit=10");
+    });
+
     it("sets error on failure", async () => {
       const client = {
-        post: mock(async () => { throw new Error("Search service unavailable"); }),
+        get: mock(async () => { throw new Error("Search service unavailable"); }),
+        post: mock(async () => { throw new Error("unexpected"); }),
       } as unknown as FetchClient;
 
       await useSearchStore.getState().search("fail", client);
@@ -148,15 +178,15 @@ describe("SearchStore", () => {
   });
 
   describe("fetchEntity", () => {
-    it("fetches and stores entity detail", async () => {
+    it("fetches from /api/v2/graph/entity/ and unwraps entity field", async () => {
       const client = mockClient({
-        "/api/v2/knowledge/entity/ent-1": {
-          entity_id: "ent-1",
-          type: "concept",
-          name: "Machine Learning",
-          properties: { domain: "AI", level: "advanced" },
-          created_at: "2025-01-01T00:00:00Z",
-          updated_at: "2025-06-01T00:00:00Z",
+        "/api/v2/graph/entity/ent-1": {
+          entity: {
+            entity_id: "ent-1",
+            type: "concept",
+            name: "Machine Learning",
+            properties: { domain: "AI", level: "advanced" },
+          },
         },
       });
 
@@ -164,12 +194,23 @@ describe("SearchStore", () => {
       const state = useSearchStore.getState();
 
       expect(state.selectedEntity).not.toBeNull();
-      expect(state.selectedEntity!.entity_id).toBe("ent-1");
-      expect(state.selectedEntity!.name).toBe("Machine Learning");
-      expect(state.selectedEntity!.type).toBe("concept");
-      expect(state.selectedEntity!.properties).toEqual({ domain: "AI", level: "advanced" });
+      expect((state.selectedEntity as Record<string, unknown>).entity_id).toBe("ent-1");
+      expect((state.selectedEntity as Record<string, unknown>).name).toBe("Machine Learning");
       expect(state.knowledgeLoading).toBe(false);
       expect(state.error).toBeNull();
+    });
+
+    it("stores null when entity is null in response", async () => {
+      const client = mockClient({
+        "/api/v2/graph/entity/missing": {
+          entity: null,
+        },
+      });
+
+      await useSearchStore.getState().fetchEntity("missing", client);
+      const state = useSearchStore.getState();
+      expect(state.selectedEntity).toBeNull();
+      expect(state.knowledgeLoading).toBe(false);
     });
 
     it("sets error on failure", async () => {
@@ -185,25 +226,19 @@ describe("SearchStore", () => {
   });
 
   describe("fetchNeighbors", () => {
-    it("fetches and stores neighbors", async () => {
+    it("fetches from /api/v2/graph/entity/{id}/neighbors with depth info", async () => {
       const client = mockClient({
-        "/api/v2/knowledge/entity/ent-1/neighbors": {
+        "/api/v2/graph/entity/ent-1/neighbors": {
           neighbors: [
             {
-              entity_id: "ent-2",
-              type: "concept",
-              name: "Deep Learning",
-              properties: {},
-              created_at: "2025-01-01T00:00:00Z",
-              updated_at: "2025-02-01T00:00:00Z",
+              entity: { entity_id: "ent-2", type: "concept", name: "Deep Learning" },
+              depth: 1,
+              path: ["ent-1", "ent-2"],
             },
             {
-              entity_id: "ent-3",
-              type: "tool",
-              name: "TensorFlow",
-              properties: { version: "2.0" },
-              created_at: "2025-01-15T00:00:00Z",
-              updated_at: "2025-03-01T00:00:00Z",
+              entity: { entity_id: "ent-3", type: "tool", name: "TensorFlow" },
+              depth: 1,
+              path: ["ent-1", "ent-3"],
             },
           ],
         },
@@ -213,11 +248,26 @@ describe("SearchStore", () => {
       const state = useSearchStore.getState();
 
       expect(state.neighbors).toHaveLength(2);
-      expect(state.neighbors[0]!.entity_id).toBe("ent-2");
-      expect(state.neighbors[0]!.name).toBe("Deep Learning");
-      expect(state.neighbors[1]!.name).toBe("TensorFlow");
+      expect(state.neighbors[0]!.entity.entity_id).toBe("ent-2");
+      expect(state.neighbors[0]!.depth).toBe(1);
+      expect(state.neighbors[0]!.path).toEqual(["ent-1", "ent-2"]);
+      expect(state.neighbors[1]!.entity.name).toBe("TensorFlow");
       expect(state.knowledgeLoading).toBe(false);
       expect(state.error).toBeNull();
+    });
+
+    it("includes hops and direction params in url", async () => {
+      const client = mockClient({
+        "/api/v2/graph/entity/ent-1/neighbors": {
+          neighbors: [],
+        },
+      });
+
+      await useSearchStore.getState().fetchNeighbors("ent-1", client);
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("hops=1");
+      expect(calledUrl).toContain("direction=both");
     });
 
     it("sets error on failure", async () => {
@@ -234,85 +284,100 @@ describe("SearchStore", () => {
   });
 
   describe("searchKnowledge", () => {
-    it("searches knowledge graph and stores entities", async () => {
+    it("uses GET on /api/v2/graph/search and returns single entity", async () => {
       const client = mockClient({
-        "/api/v2/knowledge/search": {
-          entities: [
-            {
-              entity_id: "ent-10",
-              type: "service",
-              name: "Auth Service",
-              properties: { port: 8080 },
-              created_at: "2025-01-01T00:00:00Z",
-              updated_at: "2025-04-01T00:00:00Z",
-            },
-          ],
+        "/api/v2/graph/search": {
+          entity: {
+            entity_id: "ent-10",
+            type: "service",
+            name: "Auth Service",
+            properties: { port: 8080 },
+          },
         },
       });
 
-      await useSearchStore.getState().searchKnowledge("auth", client);
+      await useSearchStore.getState().searchKnowledge("Auth Service", client);
       const state = useSearchStore.getState();
 
-      expect(state.entities).toHaveLength(1);
-      expect(state.entities[0]!.entity_id).toBe("ent-10");
-      expect(state.entities[0]!.name).toBe("Auth Service");
+      // Verify GET was called (not POST)
+      expect(client.get).toHaveBeenCalled();
+      expect(client.post).not.toHaveBeenCalled();
+
+      expect(state.knowledgeSearchResult).not.toBeNull();
+      expect((state.knowledgeSearchResult as Record<string, unknown>).entity_id).toBe("ent-10");
+      expect((state.knowledgeSearchResult as Record<string, unknown>).name).toBe("Auth Service");
       expect(state.knowledgeLoading).toBe(false);
       expect(state.error).toBeNull();
     });
 
+    it("includes name and fuzzy params in GET url", async () => {
+      const client = mockClient({
+        "/api/v2/graph/search": { entity: null },
+      });
+
+      await useSearchStore.getState().searchKnowledge("test", client);
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("name=test");
+      expect(calledUrl).toContain("fuzzy=false");
+    });
+
+    it("stores null when entity not found", async () => {
+      const client = mockClient({
+        "/api/v2/graph/search": { entity: null },
+      });
+
+      await useSearchStore.getState().searchKnowledge("nonexistent", client);
+      const state = useSearchStore.getState();
+      expect(state.knowledgeSearchResult).toBeNull();
+      expect(state.knowledgeLoading).toBe(false);
+    });
+
     it("sets error on failure", async () => {
       const client = {
-        post: mock(async () => { throw new Error("Knowledge search failed"); }),
+        get: mock(async () => { throw new Error("Knowledge search failed"); }),
       } as unknown as FetchClient;
 
       await useSearchStore.getState().searchKnowledge("fail", client);
       const state = useSearchStore.getState();
-      expect(state.entities).toEqual([]);
+      expect(state.knowledgeSearchResult).toBeNull();
       expect(state.knowledgeLoading).toBe(false);
       expect(state.error).toBe("Knowledge search failed");
     });
   });
 
   describe("fetchMemories", () => {
-    it("fetches and stores memories", async () => {
+    it("uses POST to /api/v2/memories/search with query body", async () => {
       const client = mockClient({
-        "/api/v2/memory": {
+        "/api/v2/memories/search": {
           memories: [
             {
               memory_id: "mem-1",
               agent_id: "agent-1",
               type: "episodic",
               content: "User asked about deployment steps",
-              tags: ["deployment", "docs"],
-              version: 2,
-              created_at: "2025-01-01T00:00:00Z",
-              updated_at: "2025-01-02T00:00:00Z",
             },
             {
               memory_id: "mem-2",
               agent_id: "agent-2",
               type: "semantic",
               content: "API rate limits are 100 req/s",
-              tags: ["api"],
-              version: 1,
-              created_at: "2025-01-03T00:00:00Z",
-              updated_at: "2025-01-03T00:00:00Z",
             },
           ],
-          total: 2,
         },
       });
 
-      await useSearchStore.getState().fetchMemories(client);
+      await useSearchStore.getState().fetchMemories("deployment", client);
       const state = useSearchStore.getState();
 
+      // Verify POST was called (not GET)
+      expect(client.post).toHaveBeenCalled();
+      expect(client.get).not.toHaveBeenCalled();
+
       expect(state.memories).toHaveLength(2);
-      expect(state.memories[0]!.memory_id).toBe("mem-1");
-      expect(state.memories[0]!.agent_id).toBe("agent-1");
-      expect(state.memories[0]!.type).toBe("episodic");
-      expect(state.memories[0]!.tags).toEqual(["deployment", "docs"]);
-      expect(state.memories[0]!.version).toBe(2);
-      expect(state.memories[1]!.content).toBe("API rate limits are 100 req/s");
+      expect((state.memories[0] as Record<string, unknown>).memory_id).toBe("mem-1");
+      expect((state.memories[0] as Record<string, unknown>).type).toBe("episodic");
+      expect((state.memories[1] as Record<string, unknown>).content).toBe("API rate limits are 100 req/s");
       expect(state.selectedMemoryIndex).toBe(0);
       expect(state.memoriesLoading).toBe(false);
       expect(state.error).toBeNull();
@@ -320,10 +385,10 @@ describe("SearchStore", () => {
 
     it("sets error on failure", async () => {
       const client = {
-        get: mock(async () => { throw new Error("Memory service down"); }),
+        post: mock(async () => { throw new Error("Memory service down"); }),
       } as unknown as FetchClient;
 
-      await useSearchStore.getState().fetchMemories(client);
+      await useSearchStore.getState().fetchMemories("test", client);
       const state = useSearchStore.getState();
       expect(state.memoriesLoading).toBe(false);
       expect(state.error).toBe("Memory service down");
@@ -331,7 +396,7 @@ describe("SearchStore", () => {
   });
 
   describe("fetchMemoryDetail", () => {
-    it("fetches detail and updates matching memory in list", async () => {
+    it("fetches from /api/v2/memories/{id} (plural) and unwraps memory field", async () => {
       useSearchStore.setState({
         memories: [
           {
@@ -339,34 +404,46 @@ describe("SearchStore", () => {
             agent_id: "agent-1",
             type: "episodic",
             content: "short",
-            tags: [],
-            version: 1,
-            created_at: "2025-01-01T00:00:00Z",
-            updated_at: "2025-01-01T00:00:00Z",
           },
         ],
       });
 
       const client = mockClient({
-        "/api/v2/memory/mem-1": {
-          memory_id: "mem-1",
-          agent_id: "agent-1",
-          type: "episodic",
-          content: "Full detailed content of the memory",
-          tags: ["updated"],
-          version: 2,
-          created_at: "2025-01-01T00:00:00Z",
-          updated_at: "2025-01-05T00:00:00Z",
+        "/api/v2/memories/mem-1": {
+          memory: {
+            memory_id: "mem-1",
+            agent_id: "agent-1",
+            type: "episodic",
+            content: "Full detailed content of the memory",
+            tags: ["updated"],
+            version: 2,
+          },
         },
       });
 
       await useSearchStore.getState().fetchMemoryDetail("mem-1", client);
       const state = useSearchStore.getState();
 
-      expect(state.memories[0]!.content).toBe("Full detailed content of the memory");
-      expect(state.memories[0]!.version).toBe(2);
-      expect(state.memories[0]!.tags).toEqual(["updated"]);
+      expect((state.memories[0] as Record<string, unknown>).content).toBe("Full detailed content of the memory");
+      expect((state.memories[0] as Record<string, unknown>).version).toBe(2);
+      expect((state.memories[0] as Record<string, unknown>).tags).toEqual(["updated"]);
       expect(state.memoriesLoading).toBe(false);
+    });
+
+    it("uses GET to /api/v2/memories/ (plural path)", async () => {
+      useSearchStore.setState({ memories: [] });
+
+      const client = mockClient({
+        "/api/v2/memories/some-id": {
+          memory: { memory_id: "some-id", content: "detail" },
+        },
+      });
+
+      await useSearchStore.getState().fetchMemoryDetail("some-id", client);
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("/api/v2/memories/");
+      expect(calledUrl).not.toContain("/api/v2/memory/");
     });
 
     it("sets error on failure", async () => {
@@ -381,66 +458,6 @@ describe("SearchStore", () => {
     });
   });
 
-  describe("fetchPlaybooks", () => {
-    it("fetches and stores playbooks", async () => {
-      const client = mockClient({
-        "/api/v2/playbooks": {
-          playbooks: [
-            {
-              playbook_id: "pb-1",
-              name: "Deploy Pipeline",
-              description: "Automated deployment workflow",
-              steps: 5,
-              last_run: "2025-06-01T12:00:00Z",
-              status: "active",
-            },
-            {
-              playbook_id: "pb-2",
-              name: "Onboarding",
-              description: "New agent onboarding steps",
-              steps: 3,
-              last_run: null,
-              status: "draft",
-            },
-            {
-              playbook_id: "pb-3",
-              name: "Old Cleanup",
-              description: "Legacy cleanup procedure",
-              steps: 8,
-              last_run: "2024-12-01T00:00:00Z",
-              status: "archived",
-            },
-          ],
-        },
-      });
-
-      await useSearchStore.getState().fetchPlaybooks(client);
-      const state = useSearchStore.getState();
-
-      expect(state.playbooks).toHaveLength(3);
-      expect(state.playbooks[0]!.playbook_id).toBe("pb-1");
-      expect(state.playbooks[0]!.name).toBe("Deploy Pipeline");
-      expect(state.playbooks[0]!.steps).toBe(5);
-      expect(state.playbooks[0]!.status).toBe("active");
-      expect(state.playbooks[1]!.status).toBe("draft");
-      expect(state.playbooks[1]!.last_run).toBeNull();
-      expect(state.playbooks[2]!.status).toBe("archived");
-      expect(state.playbooksLoading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => { throw new Error("Playbook service unavailable"); }),
-      } as unknown as FetchClient;
-
-      await useSearchStore.getState().fetchPlaybooks(client);
-      const state = useSearchStore.getState();
-      expect(state.playbooksLoading).toBe(false);
-      expect(state.error).toBe("Playbook service unavailable");
-    });
-  });
-
   describe("error handling", () => {
     it("clears error when switching tabs", () => {
       useSearchStore.setState({ error: "previous error" });
@@ -452,7 +469,14 @@ describe("SearchStore", () => {
       useSearchStore.setState({ error: "old error" });
 
       const client = mockClient({
-        "/api/v2/search/query": { results: [], total: 0 },
+        "/api/v2/search/query": {
+          query: "test",
+          search_type: "hybrid",
+          graph_mode: "none",
+          results: [],
+          total: 0,
+          latency_ms: 1,
+        },
       });
 
       await useSearchStore.getState().search("test", client);
@@ -463,13 +487,12 @@ describe("SearchStore", () => {
       useSearchStore.setState({ error: "stale error" });
 
       const client = mockClient({
-        "/api/v2/knowledge/entity/ent-1": {
-          entity_id: "ent-1",
-          type: "concept",
-          name: "Test",
-          properties: {},
-          created_at: "2025-01-01T00:00:00Z",
-          updated_at: "2025-01-01T00:00:00Z",
+        "/api/v2/graph/entity/ent-1": {
+          entity: {
+            entity_id: "ent-1",
+            type: "concept",
+            name: "Test",
+          },
         },
       });
 

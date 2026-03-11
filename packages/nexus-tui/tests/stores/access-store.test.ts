@@ -28,8 +28,6 @@ function resetStore(): void {
     permissionCheckLoading: false,
     alerts: [],
     alertsLoading: false,
-    scores: [],
-    scoresLoading: false,
     leaderboard: [],
     leaderboardLoading: false,
     credentials: [],
@@ -72,29 +70,49 @@ describe("AccessStore", () => {
   describe("fetchManifests", () => {
     it("fetches and stores access manifests", async () => {
       const client = mockClient({
-        "/api/v2/access/manifests": {
+        "/api/v2/access-manifests": {
           manifests: [
             {
               manifest_id: "m-1",
-              subject: "agent-alice",
-              relation: "can_read",
-              object: "file:/data/reports",
+              agent_id: "agent-alice",
               zone_id: "zone-1",
-              granted_at: "2025-01-01T00:00:00Z",
-              expires_at: "2025-12-31T23:59:59Z",
-              granted_by: "admin",
+              name: "read-access",
+              entries: [
+                {
+                  tool_pattern: "file:read:*",
+                  permission: "allow",
+                  max_calls_per_minute: 100,
+                },
+              ],
+              status: "active",
+              valid_from: "2025-01-01T00:00:00Z",
+              valid_until: "2025-12-31T23:59:59Z",
             },
             {
               manifest_id: "m-2",
-              subject: "agent-bob",
-              relation: "can_write",
-              object: "file:/data/logs",
-              zone_id: null,
-              granted_at: "2025-02-01T00:00:00Z",
-              expires_at: null,
-              granted_by: "agent-alice",
+              agent_id: "agent-bob",
+              zone_id: "zone-2",
+              name: "write-access",
+              entries: [
+                {
+                  tool_pattern: "file:write:*",
+                  permission: "allow",
+                  max_calls_per_minute: null,
+                },
+                {
+                  tool_pattern: "file:delete:*",
+                  permission: "deny",
+                  max_calls_per_minute: null,
+                },
+              ],
+              status: "expired",
+              valid_from: "2025-02-01T00:00:00Z",
+              valid_until: "2025-03-01T00:00:00Z",
             },
           ],
+          offset: 0,
+          limit: 50,
+          count: 2,
         },
       });
 
@@ -103,19 +121,39 @@ describe("AccessStore", () => {
 
       expect(state.manifests).toHaveLength(2);
       expect(state.manifests[0]!.manifest_id).toBe("m-1");
-      expect(state.manifests[0]!.subject).toBe("agent-alice");
-      expect(state.manifests[0]!.relation).toBe("can_read");
-      expect(state.manifests[0]!.object).toBe("file:/data/reports");
+      expect(state.manifests[0]!.agent_id).toBe("agent-alice");
       expect(state.manifests[0]!.zone_id).toBe("zone-1");
-      expect(state.manifests[1]!.zone_id).toBeNull();
+      expect(state.manifests[0]!.name).toBe("read-access");
+      expect(state.manifests[0]!.entries).toHaveLength(1);
+      expect(state.manifests[0]!.entries[0]!.tool_pattern).toBe("file:read:*");
+      expect(state.manifests[0]!.entries[0]!.permission).toBe("allow");
+      expect(state.manifests[0]!.entries[0]!.max_calls_per_minute).toBe(100);
+      expect(state.manifests[0]!.status).toBe("active");
+      expect(state.manifests[1]!.entries).toHaveLength(2);
+      expect(state.manifests[1]!.status).toBe("expired");
       expect(state.manifestsLoading).toBe(false);
       expect(state.selectedManifestIndex).toBe(0);
       expect(state.error).toBeNull();
     });
 
+    it("calls correct API path with hyphens", async () => {
+      const getMock = mock(async () => ({
+        manifests: [],
+        offset: 0,
+        limit: 50,
+        count: 0,
+      }));
+      const client = { get: getMock, post: mock() } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchManifests(client);
+      expect(getMock).toHaveBeenCalledWith("/api/v2/access-manifests");
+    });
+
     it("sets error on failure", async () => {
       const client = {
-        get: mock(async () => { throw new Error("Access service unavailable"); }),
+        get: mock(async () => {
+          throw new Error("Access service unavailable");
+        }),
       } as unknown as FetchClient;
 
       await useAccessStore.getState().fetchManifests(client);
@@ -127,7 +165,12 @@ describe("AccessStore", () => {
     it("resets selectedManifestIndex on refetch", async () => {
       useAccessStore.setState({ selectedManifestIndex: 5 });
       const client = mockClient({
-        "/api/v2/access/manifests": { manifests: [] },
+        "/api/v2/access-manifests": {
+          manifests: [],
+          offset: 0,
+          limit: 50,
+          count: 0,
+        },
       });
 
       await useAccessStore.getState().fetchManifests(client);
@@ -136,64 +179,87 @@ describe("AccessStore", () => {
   });
 
   describe("checkPermission", () => {
-    it("checks permission and stores result", async () => {
+    it("evaluates permission and stores result", async () => {
       const client = mockClient({
-        "/api/v2/access/check": {
-          allowed: true,
-          reason: "Direct grant via manifest m-1",
+        "/api/v2/access-manifests/m-1/evaluate": {
+          tool_name: "file:read:reports",
+          permission: "allow",
+          agent_id: "agent-alice",
+          manifest_id: "m-1",
         },
       });
 
       await useAccessStore.getState().checkPermission(
-        "agent-alice",
-        "can_read",
-        "file:/data/reports",
+        "m-1",
+        "file:read:reports",
         client,
       );
       const state = useAccessStore.getState();
 
       expect(state.lastPermissionCheck).not.toBeNull();
-      expect(state.lastPermissionCheck!.allowed).toBe(true);
-      expect(state.lastPermissionCheck!.reason).toBe("Direct grant via manifest m-1");
-      expect(state.lastPermissionCheck!.checked_at).toBeTruthy();
+      expect(state.lastPermissionCheck!.tool_name).toBe("file:read:reports");
+      expect(state.lastPermissionCheck!.permission).toBe("allow");
+      expect(state.lastPermissionCheck!.agent_id).toBe("agent-alice");
+      expect(state.lastPermissionCheck!.manifest_id).toBe("m-1");
       expect(state.permissionCheckLoading).toBe(false);
       expect(state.error).toBeNull();
     });
 
-    it("stores denied permission check", async () => {
+    it("stores denied permission evaluation", async () => {
       const client = mockClient({
-        "/api/v2/access/check": {
-          allowed: false,
-          reason: "No matching manifest found",
+        "/api/v2/access-manifests/m-2/evaluate": {
+          tool_name: "file:delete:critical",
+          permission: "deny",
+          agent_id: "agent-bob",
+          manifest_id: "m-2",
         },
       });
 
       await useAccessStore.getState().checkPermission(
-        "agent-bob",
-        "can_delete",
-        "file:/data/critical",
+        "m-2",
+        "file:delete:critical",
         client,
       );
       const state = useAccessStore.getState();
 
-      expect(state.lastPermissionCheck!.allowed).toBe(false);
-      expect(state.lastPermissionCheck!.reason).toBe("No matching manifest found");
+      expect(state.lastPermissionCheck!.permission).toBe("deny");
+      expect(state.lastPermissionCheck!.tool_name).toBe("file:delete:critical");
+    });
+
+    it("posts to correct evaluate endpoint", async () => {
+      const postMock = mock(async () => ({
+        tool_name: "test",
+        permission: "allow",
+        agent_id: "a",
+        manifest_id: "m-1",
+      }));
+      const client = {
+        get: mock(),
+        post: postMock,
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().checkPermission("m-1", "test", client);
+      expect(postMock).toHaveBeenCalledWith(
+        "/api/v2/access-manifests/m-1/evaluate",
+        { tool_name: "test" },
+      );
     });
 
     it("sets error on failure", async () => {
       const client = {
-        post: mock(async () => { throw new Error("Permission check failed"); }),
+        post: mock(async () => {
+          throw new Error("Permission evaluation failed");
+        }),
       } as unknown as FetchClient;
 
       await useAccessStore.getState().checkPermission(
-        "agent-alice",
-        "can_read",
-        "file:/data",
+        "m-1",
+        "file:read:data",
         client,
       );
       const state = useAccessStore.getState();
       expect(state.permissionCheckLoading).toBe(false);
-      expect(state.error).toBe("Permission check failed");
+      expect(state.error).toBe("Permission evaluation failed");
     });
   });
 
@@ -239,7 +305,9 @@ describe("AccessStore", () => {
 
     it("sets error on failure", async () => {
       const client = {
-        get: mock(async () => { throw new Error("Governance service down"); }),
+        get: mock(async () => {
+          throw new Error("Governance service down");
+        }),
       } as unknown as FetchClient;
 
       await useAccessStore.getState().fetchAlerts(client);
@@ -249,59 +317,37 @@ describe("AccessStore", () => {
     });
   });
 
-  describe("fetchScores", () => {
-    it("fetches and stores reputation scores", async () => {
+  describe("fetchLeaderboard", () => {
+    it("fetches and stores leaderboard entries from reputation endpoint", async () => {
       const client = mockClient({
-        "/api/v2/governance/reputation/scores": {
-          scores: [
+        "/api/v2/reputation/leaderboard": {
+          entries: [
             {
               agent_id: "agent-alice",
-              score: 92,
-              trust_level: "high",
-              last_updated: "2025-01-15T12:00:00Z",
+              context: "default",
+              window: "30d",
+              composite_score: 0.92,
+              composite_confidence: 0.85,
+              total_interactions: 150,
+              positive_interactions: 140,
+              negative_interactions: 10,
+              global_trust_score: 0.88,
+              zone_id: "zone-1",
+              updated_at: "2025-01-15T12:00:00Z",
             },
             {
               agent_id: "agent-bob",
-              score: 45,
-              trust_level: "medium",
-              last_updated: "2025-01-14T08:00:00Z",
+              context: "default",
+              window: "30d",
+              composite_score: 0.45,
+              composite_confidence: 0.60,
+              total_interactions: 50,
+              positive_interactions: 25,
+              negative_interactions: 25,
+              global_trust_score: null,
+              zone_id: "zone-2",
+              updated_at: "2025-01-14T08:00:00Z",
             },
-          ],
-        },
-      });
-
-      await useAccessStore.getState().fetchScores(client);
-      const state = useAccessStore.getState();
-
-      expect(state.scores).toHaveLength(2);
-      expect(state.scores[0]!.agent_id).toBe("agent-alice");
-      expect(state.scores[0]!.score).toBe(92);
-      expect(state.scores[0]!.trust_level).toBe("high");
-      expect(state.scores[1]!.score).toBe(45);
-      expect(state.scoresLoading).toBe(false);
-      expect(state.error).toBeNull();
-    });
-
-    it("sets error on failure", async () => {
-      const client = {
-        get: mock(async () => { throw new Error("Reputation service unavailable"); }),
-      } as unknown as FetchClient;
-
-      await useAccessStore.getState().fetchScores(client);
-      const state = useAccessStore.getState();
-      expect(state.scoresLoading).toBe(false);
-      expect(state.error).toBe("Reputation service unavailable");
-    });
-  });
-
-  describe("fetchLeaderboard", () => {
-    it("fetches and stores leaderboard entries", async () => {
-      const client = mockClient({
-        "/api/v2/governance/leaderboard": {
-          entries: [
-            { rank: 1, agent_id: "agent-alice", score: 92, trust_level: "high" },
-            { rank: 2, agent_id: "agent-charlie", score: 88, trust_level: "high" },
-            { rank: 3, agent_id: "agent-bob", score: 45, trust_level: "medium" },
           ],
         },
       });
@@ -309,18 +355,33 @@ describe("AccessStore", () => {
       await useAccessStore.getState().fetchLeaderboard(client);
       const state = useAccessStore.getState();
 
-      expect(state.leaderboard).toHaveLength(3);
-      expect(state.leaderboard[0]!.rank).toBe(1);
+      expect(state.leaderboard).toHaveLength(2);
       expect(state.leaderboard[0]!.agent_id).toBe("agent-alice");
-      expect(state.leaderboard[2]!.rank).toBe(3);
-      expect(state.leaderboard[2]!.trust_level).toBe("medium");
+      expect(state.leaderboard[0]!.composite_score).toBe(0.92);
+      expect(state.leaderboard[0]!.composite_confidence).toBe(0.85);
+      expect(state.leaderboard[0]!.total_interactions).toBe(150);
+      expect(state.leaderboard[0]!.positive_interactions).toBe(140);
+      expect(state.leaderboard[0]!.negative_interactions).toBe(10);
+      expect(state.leaderboard[0]!.global_trust_score).toBe(0.88);
+      expect(state.leaderboard[0]!.zone_id).toBe("zone-1");
+      expect(state.leaderboard[1]!.global_trust_score).toBeNull();
       expect(state.leaderboardLoading).toBe(false);
       expect(state.error).toBeNull();
     });
 
+    it("calls correct reputation leaderboard path", async () => {
+      const getMock = mock(async () => ({ entries: [] }));
+      const client = { get: getMock, post: mock() } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchLeaderboard(client);
+      expect(getMock).toHaveBeenCalledWith("/api/v2/reputation/leaderboard");
+    });
+
     it("sets error on failure", async () => {
       const client = {
-        get: mock(async () => { throw new Error("Leaderboard unavailable"); }),
+        get: mock(async () => {
+          throw new Error("Leaderboard unavailable");
+        }),
       } as unknown as FetchClient;
 
       await useAccessStore.getState().fetchLeaderboard(client);
@@ -331,61 +392,78 @@ describe("AccessStore", () => {
   });
 
   describe("fetchCredentials", () => {
-    it("fetches and stores credentials", async () => {
+    it("fetches credentials for a specific agent", async () => {
       const client = mockClient({
-        "/api/v2/credentials": {
+        "/api/v2/agents/agent-alice/credentials": {
+          agent_id: "agent-alice",
+          count: 2,
           credentials: [
             {
               credential_id: "cred-1",
-              type: "api_key",
-              issuer: "nexus-ca",
-              subject: "agent-alice",
-              issued_at: "2025-01-01T00:00:00Z",
+              issuer_did: "did:nexus:ca-1",
+              subject_did: "did:nexus:agent-alice",
+              subject_agent_id: "agent-alice",
+              is_active: true,
+              created_at: "2025-01-01T00:00:00Z",
               expires_at: "2025-12-31T23:59:59Z",
-              status: "active",
+              revoked_at: null,
+              delegation_depth: 0,
             },
             {
               credential_id: "cred-2",
-              type: "x509_cert",
-              issuer: "nexus-ca",
-              subject: "agent-bob",
-              issued_at: "2024-06-01T00:00:00Z",
+              issuer_did: "did:nexus:ca-2",
+              subject_did: "did:nexus:agent-alice",
+              subject_agent_id: "agent-alice",
+              is_active: false,
+              created_at: "2024-06-01T00:00:00Z",
               expires_at: "2024-12-31T23:59:59Z",
-              status: "expired",
-            },
-            {
-              credential_id: "cred-3",
-              type: "jwt",
-              issuer: "auth-service",
-              subject: "agent-charlie",
-              issued_at: "2025-01-10T00:00:00Z",
-              expires_at: null,
-              status: "revoked",
+              revoked_at: "2024-10-15T00:00:00Z",
+              delegation_depth: 1,
             },
           ],
         },
       });
 
-      await useAccessStore.getState().fetchCredentials(client);
+      await useAccessStore.getState().fetchCredentials("agent-alice", client);
       const state = useAccessStore.getState();
 
-      expect(state.credentials).toHaveLength(3);
+      expect(state.credentials).toHaveLength(2);
       expect(state.credentials[0]!.credential_id).toBe("cred-1");
-      expect(state.credentials[0]!.type).toBe("api_key");
-      expect(state.credentials[0]!.status).toBe("active");
-      expect(state.credentials[1]!.status).toBe("expired");
-      expect(state.credentials[2]!.status).toBe("revoked");
-      expect(state.credentials[2]!.expires_at).toBeNull();
+      expect(state.credentials[0]!.issuer_did).toBe("did:nexus:ca-1");
+      expect(state.credentials[0]!.subject_did).toBe("did:nexus:agent-alice");
+      expect(state.credentials[0]!.subject_agent_id).toBe("agent-alice");
+      expect(state.credentials[0]!.is_active).toBe(true);
+      expect(state.credentials[0]!.revoked_at).toBeNull();
+      expect(state.credentials[0]!.delegation_depth).toBe(0);
+      expect(state.credentials[1]!.is_active).toBe(false);
+      expect(state.credentials[1]!.revoked_at).toBe("2024-10-15T00:00:00Z");
+      expect(state.credentials[1]!.delegation_depth).toBe(1);
       expect(state.credentialsLoading).toBe(false);
       expect(state.error).toBeNull();
     });
 
+    it("calls agent-specific credentials endpoint", async () => {
+      const getMock = mock(async () => ({
+        agent_id: "agent-bob",
+        count: 0,
+        credentials: [],
+      }));
+      const client = { get: getMock, post: mock() } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchCredentials("agent-bob", client);
+      expect(getMock).toHaveBeenCalledWith(
+        "/api/v2/agents/agent-bob/credentials",
+      );
+    });
+
     it("sets error on failure", async () => {
       const client = {
-        get: mock(async () => { throw new Error("Credentials service down"); }),
+        get: mock(async () => {
+          throw new Error("Credentials service down");
+        }),
       } as unknown as FetchClient;
 
-      await useAccessStore.getState().fetchCredentials(client);
+      await useAccessStore.getState().fetchCredentials("agent-alice", client);
       const state = useAccessStore.getState();
       expect(state.credentialsLoading).toBe(false);
       expect(state.error).toBe("Credentials service down");
@@ -403,7 +481,12 @@ describe("AccessStore", () => {
       useAccessStore.setState({ error: "old error" });
 
       const client = mockClient({
-        "/api/v2/access/manifests": { manifests: [] },
+        "/api/v2/access-manifests": {
+          manifests: [],
+          offset: 0,
+          limit: 50,
+          count: 0,
+        },
       });
 
       await useAccessStore.getState().fetchManifests(client);

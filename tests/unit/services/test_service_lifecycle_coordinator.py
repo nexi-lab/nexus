@@ -337,3 +337,79 @@ class TestHookSpec:
         spec = HookSpec()
         with pytest.raises(AttributeError):
             spec.read_hooks = (MagicMock(),)
+
+
+# ---------------------------------------------------------------------------
+# swap with multi-channel HookSpec (Issue #1452 Phase 4)
+# ---------------------------------------------------------------------------
+
+
+class TestSwapWithFullHookSpec:
+    """Verify swap_service() correctly handles multi-channel HookSpecs."""
+
+    @pytest.mark.asyncio()
+    async def test_swap_unregisters_old_hooks_registers_new(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+        dispatch: KernelDispatch,
+    ) -> None:
+        """Multi-channel spec: old hooks removed, new hooks installed on same channels."""
+        svc1 = _FakeService()
+        old_read = MagicMock()
+        old_write = MagicMock()
+        old_observer = MagicMock()
+        spec1 = HookSpec(
+            read_hooks=(old_read,),
+            write_hooks=(old_write,),
+            observers=(old_observer,),
+        )
+        coordinator.register_service("rebac", svc1, hook_spec=spec1)
+        await coordinator.mount_service("rebac")
+
+        assert dispatch.read_hook_count == 1
+        assert dispatch.write_hook_count == 1
+        assert dispatch.observer_count == 1
+
+        svc2 = _FakeServiceV2()
+        new_read = MagicMock()
+        new_write = MagicMock()
+        new_observer = MagicMock()
+        spec2 = HookSpec(
+            read_hooks=(new_read,),
+            write_hooks=(new_write,),
+            observers=(new_observer,),
+        )
+        await coordinator.swap_service("rebac", svc2, hook_spec=spec2)
+
+        # Counts unchanged (old removed, new added)
+        assert dispatch.read_hook_count == 1
+        assert dispatch.write_hook_count == 1
+        assert dispatch.observer_count == 1
+
+        # Identity check — new hooks, not old
+        assert new_read in dispatch._read_hooks
+        assert old_read not in dispatch._read_hooks
+        assert new_write in dispatch._write_hooks
+        assert old_write not in dispatch._write_hooks
+
+    @pytest.mark.asyncio()
+    async def test_swap_with_no_new_spec_clears_old(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        dispatch: KernelDispatch,
+    ) -> None:
+        """Swap without new hook_spec should unregister old hooks and leave none."""
+        svc1 = _FakeService()
+        old_hook = MagicMock()
+        spec1 = HookSpec(read_hooks=(old_hook,))
+        coordinator.register_service("parser", svc1, hook_spec=spec1)
+        await coordinator.mount_service("parser")
+        assert dispatch.read_hook_count == 1
+
+        svc2 = _FakeServiceV2()
+        await coordinator.swap_service("parser", svc2)
+
+        # Old hook removed, no new hook registered
+        assert dispatch.read_hook_count == 0
+        assert old_hook not in dispatch._read_hooks

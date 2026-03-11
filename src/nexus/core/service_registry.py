@@ -44,6 +44,12 @@ class ServiceRef:
 
     Callers see no difference — ``nx.service("search").glob(...)`` works
     identically whether ``glob`` is sync or async.
+
+    Note: A ``with nx.use_service()`` context manager is intentionally **not**
+    provided.  Ref-counting happens automatically on every method call via
+    ``__getattr__``, so callers never need to manually acquire/release.
+    All 118+ call-sites in ``src/`` are fire-and-forget with no long-lived
+    references — the proxy pattern handles everything transparently.
     """
 
     __slots__ = ("_instance", "_name", "_refcounts", "_drain_events")

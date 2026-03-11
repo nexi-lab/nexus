@@ -82,7 +82,7 @@ async def test_coalescing_same_key() -> None:
 
     # Queue should now be empty — no more items
     assert len(q) == 0
-    assert q._queue.empty()
+    assert q._buf._core.is_empty()
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ async def test_requeue_on_done() -> None:
 
     # Now truly empty
     assert len(q) == 0
-    assert q._queue.empty()
+    assert q._buf._core.is_empty()
 
 
 # ---------------------------------------------------------------------------

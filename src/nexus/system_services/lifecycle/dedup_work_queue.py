@@ -127,7 +127,7 @@ class DedupWorkQueue(Generic[T]):
             seq = self._seq
             self._seq += 1
             self._items[seq] = key
-            self._buf.write_nowait(seq.to_bytes(8, "little"))
+            self._buf.write_u64_nowait(seq)
 
     async def get(self) -> T:
         """Get the next key to process (blocks until available).
@@ -146,13 +146,11 @@ class DedupWorkQueue(Generic[T]):
                 raise ShutdownError("DedupWorkQueue has been shut down")
 
             try:
-                data = await asyncio.wait_for(self._buf.read(), timeout=0.5)
+                seq = await asyncio.wait_for(self._buf.read_u64(), timeout=0.5)
             except (TimeoutError, PipeClosedError):
                 if self._shutting_down:
                     raise ShutdownError("DedupWorkQueue has been shut down") from None
                 continue
-
-            seq = int.from_bytes(data, "little")
             key = self._items.pop(seq)
 
             async with self._lock:
@@ -186,7 +184,7 @@ class DedupWorkQueue(Generic[T]):
                 seq = self._seq
                 self._seq += 1
                 self._items[seq] = key
-                self._buf.write_nowait(seq.to_bytes(8, "little"))
+                self._buf.write_u64_nowait(seq)
             except (PipeClosedError, PipeFullError):
                 # Shutting down or buffer full — item stays in dirty
                 # and will be picked up if queue restarts

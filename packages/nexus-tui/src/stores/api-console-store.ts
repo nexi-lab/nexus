@@ -237,34 +237,23 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
     const start = performance.now();
 
     try {
-      const fetchFn = (globalThis as Record<string, unknown>)["fetch"] as typeof globalThis.fetch;
-      const baseUrl = (client as unknown as { baseUrl?: string })?.baseUrl ?? "http://localhost:2026";
+      const body = request.body && request.method !== "GET" && request.method !== "HEAD"
+        ? request.body
+        : undefined;
 
-      const headers: Record<string, string> = {
-        Accept: "application/json",
-        ...request.headers,
-      };
-
-      const init: RequestInit = {
-        method: request.method,
-        headers,
-      };
-
-      if (request.body && request.method !== "GET" && request.method !== "HEAD") {
-        init.body = request.body;
-        headers["Content-Type"] = "application/json";
-      }
-
-      const resp = await fetchFn(`${baseUrl}${resolvedPath}`, init);
+      // Use FetchClient.rawRequest — auth and identity headers injected automatically
+      const resp = await client.rawRequest(request.method, resolvedPath, body, {
+        headers: request.headers,
+      });
       const timeMs = performance.now() - start;
 
-      let body: string;
+      let respBody: string;
       const contentType = resp.headers.get("Content-Type") ?? "";
       if (contentType.includes("json")) {
         const json = await resp.json();
-        body = JSON.stringify(json, null, 2);
+        respBody = JSON.stringify(json, null, 2);
       } else {
-        body = await resp.text();
+        respBody = await resp.text();
       }
 
       const responseHeaders: Record<string, string> = {};
@@ -276,7 +265,7 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
         status: resp.status,
         statusText: resp.statusText,
         headers: responseHeaders,
-        body,
+        body: respBody,
         timeMs,
       };
 

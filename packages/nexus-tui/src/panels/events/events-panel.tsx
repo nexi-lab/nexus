@@ -5,6 +5,7 @@
 import React, { useEffect } from "react";
 import { useEventsStore } from "../../stores/events-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
+import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 
 export default function EventsPanel(): React.ReactNode {
   const config = useGlobalStore((s) => s.config);
@@ -13,6 +14,17 @@ export default function EventsPanel(): React.ReactNode {
   const reconnectCount = useEventsStore((s) => s.reconnectCount);
   const connect = useEventsStore((s) => s.connect);
   const disconnect = useEventsStore((s) => s.disconnect);
+  const clearEvents = useEventsStore((s) => s.clearEvents);
+
+  useKeyboard({
+    "c": () => clearEvents(),
+    "r": () => {
+      if (config.apiKey && config.baseUrl) {
+        disconnect();
+        connect(config.baseUrl, config.apiKey);
+      }
+    },
+  });
 
   // Auto-connect on mount
   useEffect(() => {

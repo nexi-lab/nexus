@@ -5,6 +5,11 @@
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 
+/** Minimal OpenAPI 3.x spec shape — only what we parse. */
+interface OpenApiSpec {
+  readonly paths?: Readonly<Record<string, Record<string, unknown>>>;
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -78,6 +83,7 @@ export interface ApiConsoleState {
   readonly setTagFilter: (tag: string | null) => void;
   readonly setSearchQuery: (q: string) => void;
   readonly executeRequest: (client: FetchClient) => Promise<void>;
+  readonly fetchOpenApiSpec: (client: FetchClient) => Promise<void>;
   readonly clearResponse: () => void;
 }
 
@@ -215,6 +221,32 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
       };
 
       set({ response: responseState, isLoading: false });
+    }
+  },
+
+  fetchOpenApiSpec: async (client) => {
+    try {
+      const spec = await client.get<OpenApiSpec>("/openapi.json");
+      const endpoints: EndpointInfo[] = [];
+
+      for (const [path, methods] of Object.entries(spec.paths ?? {})) {
+        for (const [method, operation] of Object.entries(methods ?? {})) {
+          if (method === "parameters" || typeof operation !== "object" || operation === null) continue;
+          const op = operation as { summary?: string; tags?: string[] };
+          endpoints.push({
+            method: method.toUpperCase(),
+            path,
+            summary: op.summary ?? "",
+            tags: op.tags ?? [],
+          });
+        }
+      }
+
+      // Sort: by path, then by method
+      endpoints.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
+      get().setEndpoints(endpoints);
+    } catch {
+      // OpenAPI spec not available — leave endpoints empty
     }
   },
 

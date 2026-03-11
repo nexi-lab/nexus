@@ -60,6 +60,11 @@ export function nextStatusFilter(current: string | null): string | null {
 // Store
 // =============================================================================
 
+export interface DiffContent {
+  readonly old: string;
+  readonly new: string;
+}
+
 export interface VersionsState {
   // Transaction list
   readonly transactions: readonly Transaction[];
@@ -73,12 +78,22 @@ export interface VersionsState {
   readonly entries: readonly SnapshotEntry[];
   readonly entriesLoading: boolean;
 
+  // Diff viewer
+  readonly diffContent: DiffContent | null;
+  readonly diffLoading: boolean;
+
   // Actions
   readonly fetchTransactions: (client: FetchClient) => Promise<void>;
   readonly selectTransaction: (txn: Transaction) => void;
   readonly setSelectedIndex: (index: number) => void;
   readonly setStatusFilter: (status: string | null) => void;
   readonly fetchEntries: (txnId: string, client: FetchClient) => Promise<void>;
+  readonly fetchDiff: (
+    path: string,
+    version1: string,
+    version2: string,
+    client: FetchClient,
+  ) => Promise<void>;
   readonly beginTransaction: (
     client: FetchClient,
     description?: string,
@@ -97,6 +112,8 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
   error: null,
   entries: [],
   entriesLoading: false,
+  diffContent: null,
+  diffLoading: false,
 
   fetchTransactions: async (client) => {
     set({ isLoading: true, error: null });
@@ -153,6 +170,35 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         entries: [],
         entriesLoading: false,
         error: err instanceof Error ? err.message : "Failed to fetch entries",
+      });
+    }
+  },
+
+  fetchDiff: async (path, version1, version2, client) => {
+    set({ diffLoading: true, diffContent: null, error: null });
+
+    try {
+      const [oldResponse, newResponse] = await Promise.all([
+        client.get<{ content: string }>(
+          `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version1)}&include_metadata=false`,
+        ),
+        client.get<{ content: string }>(
+          `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version2)}&include_metadata=false`,
+        ),
+      ]);
+
+      set({
+        diffContent: {
+          old: oldResponse.content ?? "",
+          new: newResponse.content ?? "",
+        },
+        diffLoading: false,
+      });
+    } catch (err) {
+      set({
+        diffContent: null,
+        diffLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch diff",
       });
     }
   },

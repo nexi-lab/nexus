@@ -2,9 +2,12 @@
  * Infrastructure & Events panel.
  *
  * Tabbed layout: Events (SSE stream) | Connectors | Subscriptions | Locks | Secrets
+ *
+ * Press 'f' to enter event type filter mode, 's' to enter search filter mode.
+ * In filter mode, type the filter value, Enter to apply, Escape to cancel.
  */
 
-import React, { useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useEventsStore } from "../../stores/events-store.js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import type { InfraTab } from "../../stores/infra-store.js";
@@ -15,6 +18,8 @@ import { ConnectorList } from "./connector-list.js";
 import { SubscriptionList } from "./subscription-list.js";
 import { LockList } from "./lock-list.js";
 import { SecretsAudit } from "./secrets-audit.js";
+
+type FilterMode = "none" | "type" | "search";
 
 type PanelTab = "events" | InfraTab;
 
@@ -38,13 +43,19 @@ export default function EventsPanel(): React.ReactNode {
   const apiClient = useApi();
   const config = useGlobalStore((s) => s.config);
 
+  // Filter input state
+  const [filterMode, setFilterMode] = useState<FilterMode>("none");
+  const [filterBuffer, setFilterBuffer] = useState("");
+
   // Events store (SSE)
   const connected = useEventsStore((s) => s.connected);
   const events = useEventsStore((s) => s.filteredEvents);
   const reconnectCount = useEventsStore((s) => s.reconnectCount);
+  const filters = useEventsStore((s) => s.filters);
   const connect = useEventsStore((s) => s.connect);
   const disconnect = useEventsStore((s) => s.disconnect);
   const clearEvents = useEventsStore((s) => s.clearEvents);
+  const setFilter = useEventsStore((s) => s.setFilter);
 
   // Infra store
   const infraTab = useInfraStore((s) => s.activeTab);
@@ -141,44 +152,94 @@ export default function EventsPanel(): React.ReactNode {
     }
   };
 
-  useKeyboard({
-    j: () => {
-      const max = currentItemCount() - 1;
-      if (max >= 0) setCurrentSelectedIndex(Math.min(currentSelectedIndex() + 1, max));
-    },
-    down: () => {
-      const max = currentItemCount() - 1;
-      if (max >= 0) setCurrentSelectedIndex(Math.min(currentSelectedIndex() + 1, max));
-    },
-    k: () => {
-      setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
-    },
-    up: () => {
-      setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
-    },
-    tab: () => {
-      const idx = TAB_ORDER.indexOf(activeTab);
-      const next = TAB_ORDER[(idx + 1) % TAB_ORDER.length];
-      if (next) setActiveTab(next);
-    },
-    c: () => clearEvents(),
-    r: () => refresh(),
-    d: () => {
-      if (activeTab === "subscriptions" && apiClient) {
-        const sub = subscriptions[selectedSubscriptionIndex];
-        if (sub) deleteSubscription(sub.subscription_id, apiClient);
-      } else if (activeTab === "locks" && apiClient) {
-        const lock = locks[selectedLockIndex];
-        if (lock) releaseLock(lock.resource, lock.lock_id, apiClient);
+  // Handle unhandled keys in filter input mode
+  const handleUnhandledKey = useCallback(
+    (keyName: string) => {
+      if (filterMode === "none") return;
+      if (keyName.length === 1) {
+        setFilterBuffer((b) => b + keyName);
+      } else if (keyName === "space") {
+        setFilterBuffer((b) => b + " ");
       }
     },
-    t: () => {
-      if (activeTab === "subscriptions" && apiClient) {
-        const sub = subscriptions[selectedSubscriptionIndex];
-        if (sub) testSubscription(sub.subscription_id, apiClient);
-      }
-    },
-  });
+    [filterMode],
+  );
+
+  useKeyboard(
+    filterMode !== "none"
+      ? {
+          // Filter input mode: capture keystrokes
+          return: () => {
+            const value = filterBuffer.trim() || null;
+            if (filterMode === "type") {
+              setFilter({ eventType: value });
+            } else {
+              setFilter({ search: value });
+            }
+            setFilterMode("none");
+            setFilterBuffer("");
+          },
+          escape: () => {
+            setFilterMode("none");
+            setFilterBuffer("");
+          },
+          backspace: () => {
+            setFilterBuffer((b) => b.slice(0, -1));
+          },
+        }
+      : {
+          // Normal mode
+          j: () => {
+            const max = currentItemCount() - 1;
+            if (max >= 0) setCurrentSelectedIndex(Math.min(currentSelectedIndex() + 1, max));
+          },
+          down: () => {
+            const max = currentItemCount() - 1;
+            if (max >= 0) setCurrentSelectedIndex(Math.min(currentSelectedIndex() + 1, max));
+          },
+          k: () => {
+            setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
+          },
+          up: () => {
+            setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
+          },
+          tab: () => {
+            const idx = TAB_ORDER.indexOf(activeTab);
+            const next = TAB_ORDER[(idx + 1) % TAB_ORDER.length];
+            if (next) setActiveTab(next);
+          },
+          c: () => clearEvents(),
+          r: () => refresh(),
+          f: () => {
+            if (activeTab === "events") {
+              setFilterMode("type");
+              setFilterBuffer(filters.eventType ?? "");
+            }
+          },
+          s: () => {
+            if (activeTab === "events") {
+              setFilterMode("search");
+              setFilterBuffer(filters.search ?? "");
+            }
+          },
+          d: () => {
+            if (activeTab === "subscriptions" && apiClient) {
+              const sub = subscriptions[selectedSubscriptionIndex];
+              if (sub) deleteSubscription(sub.subscription_id, apiClient);
+            } else if (activeTab === "locks" && apiClient) {
+              const lock = locks[selectedLockIndex];
+              if (lock) releaseLock(lock.resource, lock.lock_id, apiClient);
+            }
+          },
+          t: () => {
+            if (activeTab === "subscriptions" && apiClient) {
+              const sub = subscriptions[selectedSubscriptionIndex];
+              if (sub) testSubscription(sub.subscription_id, apiClient);
+            }
+          },
+        },
+    handleUnhandledKey,
+  );
 
   return (
     <box height="100%" width="100%" flexDirection="column">
@@ -191,6 +252,19 @@ export default function EventsPanel(): React.ReactNode {
           }).join(" ")}
         </text>
       </box>
+
+      {/* Filter bar (events tab only) */}
+      {activeTab === "events" && (
+        <box height={1} width="100%">
+          <text>
+            {filterMode === "type"
+              ? `Filter type: ${filterBuffer}\u2588`
+              : filterMode === "search"
+                ? `Filter search: ${filterBuffer}\u2588`
+                : `Filter: type=${filters.eventType ?? "*"} search=${filters.search ?? "*"}`}
+          </text>
+        </box>
+      )}
 
       {/* Error display */}
       {infraError && activeTab !== "events" && (
@@ -264,8 +338,10 @@ export default function EventsPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         <text>
-          {activeTab === "events"
-            ? "c:clear  r:reconnect  Tab:switch tab  q:quit"
+          {activeTab === "events" && filterMode !== "none"
+            ? "Type filter, Enter:apply, Escape:cancel, Backspace:delete"
+            : activeTab === "events"
+            ? "f:filter type  s:filter search  c:clear  r:reconnect  Tab:switch tab  q:quit"
             : activeTab === "subscriptions"
               ? "j/k:navigate  d:delete  t:test  r:refresh  Tab:switch tab"
               : activeTab === "locks"

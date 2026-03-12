@@ -313,6 +313,15 @@ class TestFullWorkflow:
             )
             assert "Seeding" in demo_result.stdout or "Files" in demo_result.stdout
 
+            # Verify printed commands use correct CLI syntax
+            # grep takes path as positional arg (not --path) and must include --remote-url
+            assert "--path" not in demo_result.stdout, (
+                "grep command should use positional path, not --path"
+            )
+            assert "--remote-url" in demo_result.stdout, (
+                "demo init should print --remote-url for shared/demo presets"
+            )
+
             # Verify manifest was created and permissions were seeded
             data_dir = cfg.get("data_dir", str(initialized_project / "nexus-data"))
             manifest_path = Path(data_dir) / ".demo-manifest.json"

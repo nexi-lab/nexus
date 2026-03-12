@@ -39,6 +39,16 @@ def test_add_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     assert router._backends["/workspace"].backend == temp_backend
 
 
+def test_add_runtime_mount_does_not_persist_metadata(
+    router: PathRouter, metastore: DictMetastore, temp_backend: CASLocalBackend
+) -> None:
+    """Runtime mounts should only populate the in-memory mount table."""
+    router.add_runtime_mount("/workspace", temp_backend)
+
+    assert "/workspace" in router._backends
+    assert metastore.get("/workspace") is None
+
+
 def test_add_mount_normalizes_path(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that mount points are normalized."""
     router.add_mount("/workspace/", temp_backend)  # Trailing slash
@@ -135,6 +145,19 @@ def test_route_prefix_match(router: PathRouter, temp_backend: CASLocalBackend) -
 def test_route_root_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test routing with root mount."""
     router.add_mount("/", temp_backend)
+
+    result = router.route("/anything/goes/here.txt")
+
+    assert result.backend == temp_backend
+    assert result.backend_path == "anything/goes/here.txt"
+    assert result.mount_point == "/"
+
+
+def test_route_runtime_mount_without_metastore_entry(
+    router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
+    """Route fallback should work for ephemeral runtime mounts."""
+    router.add_runtime_mount("/", temp_backend)
 
     result = router.route("/anything/goes/here.txt")
 

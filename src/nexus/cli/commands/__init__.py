@@ -1,19 +1,8 @@
-"""Nexus CLI Commands - Modular command structure.
-
-This package contains all CLI commands organized by functionality:
-- file_ops: File operations (init, cat, write, cp, mv, sync, rm)
-- directory: Directory operations (ls, mkdir, rmdir, tree)
-- search: Search and discovery (glob, grep, find-duplicates)
-- permissions: Permission management (chmod, chown, chgrp, getfacl, setfacl)
-- rebac: Relationship-based access control
-- versions: Version tracking and rollback
-- inspect: File inspection (info, version, size)
-- mounts: Connector mount management
-- plugins: Plugin management
-- workflows: Workflow automation system
-"""
+"""Nexus CLI Commands - modular command structure with lazy top-level loading."""
 
 import importlib
+from dataclasses import dataclass
+from typing import Any
 
 import click
 
@@ -24,35 +13,45 @@ import click
 # ---------------------------------------------------------------------------
 
 # Modules that expose register_commands(cli)
-_REGISTER_COMMANDS = [
-    "file_ops",
-    "directory",
-    "search",
-    "rebac",
-    "versions",
-    "workspace",
-    "inspect",
-    "plugins",
-    "operations",
-    "workflows",
-    "mounts",
-    "connectors",
-    "llm",
-    "mcp",
-    "cache",
-    "migrate",
-    "context",
-    "network",
-    "tls",
-    "cluster",
-    "skills",
-    "status",  # status [--watch] [--json]
-    "doctor",  # doctor [--json] [--fix]
+_REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
+    "file_ops": (
+        "init",
+        "cat",
+        "write",
+        "append",
+        "write-batch",
+        "cp",
+        "copy",
+        "move",
+        "sync",
+        "rm",
+    ),
+    "directory": ("ls", "mkdir", "rmdir", "tree"),
+    "search": ("glob", "grep", "search"),
+    "rebac": ("rebac",),
+    "versions": ("versions",),
+    "workspace": ("workspace",),
+    "inspect": ("info", "version", "size"),
+    "plugins": ("plugins",),
+    "operations": ("ops", "undo"),
+    "workflows": ("workflows",),
+    "mounts": ("mounts",),
+    "connectors": ("connectors",),
+    "llm": ("llm",),
+    "mcp": ("mcp",),
+    "cache": ("cache",),
+    "migrate": ("migrate",),
+    "context": ("context",),
+    "network": ("network",),
+    "tls": ("tls",),
+    "cluster": ("join",),
+    "status": ("status",),  # status [--watch] [--json]
+    "doctor": ("doctor",),  # doctor [--json] [--fix]
     # Issue #2809: Profile management
-    "profile",  # profile list/add/use/delete/show/rename
-    "connect_cmd",  # Interactive connection setup
-    "config_cmd",  # Config show/set/get/reset
-]
+    "profile": ("profile",),  # profile list/add/use/delete/show/rename
+    "connect_cmd": ("connect",),  # Interactive connection setup
+    "config_cmd": ("config",),  # Config show/set/get/reset
+}
 
 # Modules that expose a single Click command/group to add via cli.add_command
 _ADD_COMMAND: dict[str, str] = {
@@ -87,6 +86,63 @@ _ADD_COMMAND: dict[str, str] = {
 }
 
 
+@dataclass(frozen=True)
+class _LazyCommandSpec:
+    module_name: str
+    attr_name: str | None = None
+
+
+class LazyCommandGroup(click.Group):
+    """Click group that imports only the requested top-level command module."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._lazy_commands: dict[str, _LazyCommandSpec] = {}
+        self._loaded_modules: set[str] = set()
+
+    def add_lazy_module(self, module_name: str, command_names: tuple[str, ...]) -> None:
+        """Register a module that exposes register_commands(cli)."""
+        spec = _LazyCommandSpec(module_name=module_name)
+        for command_name in command_names:
+            self._lazy_commands[command_name] = spec
+
+    def add_lazy_command_attr(self, module_name: str, command_name: str, attr_name: str) -> None:
+        """Register a module that exposes a single Click command/group attribute."""
+        self._lazy_commands[command_name] = _LazyCommandSpec(
+            module_name=module_name,
+            attr_name=attr_name,
+        )
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        names = set(super().list_commands(ctx))
+        names.update(self._lazy_commands)
+        return sorted(names)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        command = super().get_command(ctx, cmd_name)
+        if command is not None:
+            return command
+
+        self._load_command_module(cmd_name)
+        return super().get_command(ctx, cmd_name)
+
+    def _load_command_module(self, cmd_name: str) -> None:
+        spec = self._lazy_commands.get(cmd_name)
+        if spec is None or spec.module_name in self._loaded_modules:
+            return
+
+        try:
+            mod = importlib.import_module(f"nexus.cli.commands.{spec.module_name}")
+            if spec.attr_name is None:
+                mod.register_commands(self)
+            else:
+                self.add_command(getattr(mod, spec.attr_name))
+        except (ImportError, Exception):
+            return
+
+        self._loaded_modules.add(spec.module_name)
+
+
 def register_all_commands(cli: click.Group) -> None:
     """Register all commands from all modules to the main CLI group.
 
@@ -96,9 +152,16 @@ def register_all_commands(cli: click.Group) -> None:
     Args:
         cli: The main Click group to register commands to
     """
-    for name in _REGISTER_COMMANDS:
+    if isinstance(cli, LazyCommandGroup):
+        for module_name, command_names in _REGISTER_COMMANDS.items():
+            cli.add_lazy_module(module_name, command_names)
+        for module_name, command_name in _ADD_COMMAND.items():
+            cli.add_lazy_command_attr(module_name, command_name, command_name)
+        return
+
+    for module_name in _REGISTER_COMMANDS:
         try:
-            mod = importlib.import_module(f"nexus.cli.commands.{name}")
+            mod = importlib.import_module(f"nexus.cli.commands.{module_name}")
             mod.register_commands(cli)
         except (ImportError, Exception):
             pass
@@ -112,5 +175,6 @@ def register_all_commands(cli: click.Group) -> None:
 
 
 __all__ = [
+    "LazyCommandGroup",
     "register_all_commands",
 ]

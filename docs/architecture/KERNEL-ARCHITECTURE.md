@@ -396,7 +396,8 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 Two-layer architecture: VFS metadata (inode) in MetastoreABC, data (bytes) in
 process heap ring buffer (like Linux `kmalloc`'d pipe buffer).
 
-- **PipeManager** — VFS named pipe lifecycle (`mkpipe` / `destroy` / `pipe_read`),
+- **PipeManager** — VFS named pipe lifecycle (created via `sys_setattr` upsert,
+  read/write via `sys_read`/`sys_write`, destroyed via `sys_unlink`),
   per-pipe lock for MPMC safety
 - **RingBuffer** — Lock-free SPSC kernel primitive (`kfifo` analogue), GIL-atomic.
   PipeManager wraps with `asyncio.Lock` for MPMC
@@ -538,7 +539,7 @@ FileEvent §4.3). Not kernel-owned, but bottom-layer infrastructure.
 
 | Tier | Nexus | Built on | Topology |
 |------|-------|----------|----------|
-| **Kernel** | Native Pipe (§4.2) | RingBuffer (kernel primitive) | Intra-process |
+| **Kernel** | Native Pipe (§4.2) | RingBuffer (kernel primitive) | Local or distributed (transparent) |
 | **System** | gRPC + IPC | PipeManager, consensus proto | Point-to-point |
 | **User Space** | EventBus | CacheStoreABC pub/sub + FileEvent (§4.3) | Fan-out (1:N) |
 

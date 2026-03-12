@@ -120,21 +120,15 @@ class TestResolvePorts:
     def test_auto_strategy_picks_next(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Auto strategy should pick the next free port."""
 
-        # Port 2026 occupied, 2027 free
+        # Port 2026 occupied, 2027+ free
         def mock_available(port: int, host: str = "127.0.0.1") -> bool:
             return port != 2026
 
         monkeypatch.setattr("nexus.cli.port_utils.check_port_available", mock_available)
 
-        # Also mock find_free_port to return deterministic result
-        monkeypatch.setattr(
-            "nexus.cli.port_utils.find_free_port",
-            lambda preferred, host="127.0.0.1": preferred,  # 2027
-        )
-
         ports = {"http": 2026}
         resolved, messages = resolve_ports(ports, strategy="auto")
-        assert resolved["http"] == 2027  # preferred + 1
+        assert resolved["http"] == 2027  # next free after 2026
         assert len(messages) == 1
         assert "2026" in messages[0]
 
@@ -166,6 +160,25 @@ class TestResolvePorts:
         assert 5432 not in call_log
         # All ports should be in the result (non-checked passed through)
         assert resolved == ports
+
+    def test_auto_no_self_conflict(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Two services conflicting on different ports should not resolve to the same port."""
+        # Both 2026 and 2028 occupied, 2027 and 2029 free
+        occupied = {2026, 2028}
+
+        def mock_available(port: int, host: str = "127.0.0.1") -> bool:
+            return port not in occupied
+
+        monkeypatch.setattr("nexus.cli.port_utils.check_port_available", mock_available)
+
+        ports = {"http": 2026, "grpc": 2028}
+        resolved, messages = resolve_ports(ports, strategy="auto")
+        # Each resolved port must be unique
+        assert resolved["http"] != resolved["grpc"]
+        assert len(messages) == 2
+        # Both should get the next free ports after their preferred
+        assert resolved["http"] == 2027
+        assert resolved["grpc"] == 2029  # 2028 occupied, 2027 already claimed → 2029
 
     def test_valid_strategies_constant(self) -> None:
         assert VALID_STRATEGIES == ("auto", "prompt", "fail")

@@ -1,20 +1,16 @@
-# Nexus Stack — Single Source of Truth
-# =====================================
-# Unified Docker Compose file for all Nexus deployment presets.
+# Nexus Stack — Portable Compose File
+# ====================================
+# Bundled version of nexus-stack.yml for use outside the repo root.
+# Uses pre-built images only (no build: context).
 # Services are activated via Docker Compose profiles:
 #
 #   Preset "shared":  --profile core --profile cache --profile search
 #   Preset "demo":    --profile core --profile cache --profile search
 #   Add-on "nats":    --profile events
 #   Add-on "mcp":     --profile mcp
-#   Add-on "frontend": --profile frontend
-#   Add-on "langgraph": --profile langgraph
 #
 # Usage (via nexus CLI — recommended):
 #   nexus init --preset shared && nexus up
-#
-# Usage (direct docker compose):
-#   docker compose -f nexus-stack.yml --profile core --profile cache --profile search up -d
 #
 # Issue #2915: https://github.com/nexi-lab/nexus/issues/2915
 
@@ -63,9 +59,6 @@ services:
   # Nexus RPC Server
   # ============================================================================
   nexus:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: nexus-server:latest
     restart: unless-stopped
     profiles:
@@ -96,8 +89,6 @@ services:
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
       NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
-      # Config
-      NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
       # Cache
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
@@ -121,7 +112,6 @@ services:
       NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
     volumes:
       - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/app/data
-      - ./configs:/app/configs:ro
       - /var/run/docker.sock:/var/run/docker.sock
     user: root
     ports:
@@ -256,78 +246,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ============================================================================
-  # LangGraph Agent Server (optional add-on)
-  # ============================================================================
-  langgraph:
-    build:
-      context: ../nexus-langgraph
-      dockerfile: ../nexus/dockerfiles/langgraph.Dockerfile
-    image: nexus-langgraph:latest
-    restart: unless-stopped
-    profiles:
-      - langgraph
-    depends_on:
-      nexus:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      LANGGRAPH_PORT: "2024"
-      LANGGRAPH_HOST: "0.0.0.0"
-      NEXUS_SERVER_URL: http://nexus:2026
-    ports:
-      - "${LANGGRAPH_PORT:-2024}:2024"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2024/ok"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ============================================================================
-  # Frontend — React UI (optional add-on)
-  # ============================================================================
-  frontend:
-    build:
-      context: ../nexus-frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:2026}
-        VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
-    image: nexus-frontend:latest
-    restart: unless-stopped
-    profiles:
-      - frontend
-    depends_on:
-      nexus:
-        condition: service_healthy
-    environment:
-      VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:2026}
-      VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
-    ports:
-      - "${FRONTEND_PORT:-5173}:80"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     networks:
       - nexus-network
     logging:

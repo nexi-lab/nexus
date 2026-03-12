@@ -530,6 +530,16 @@ def _revoke_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     if not api_key:
         return 0
 
+    # Set TLS env vars so admin RPC uses mTLS when TLS is enabled
+    if config.get("tls"):
+        tls_cert = config.get("tls_cert", "")
+        tls_key = config.get("tls_key", "")
+        tls_ca = config.get("tls_ca", "")
+        if tls_cert and tls_key and tls_ca:
+            os.environ["NEXUS_TLS_CERT"] = tls_cert
+            os.environ["NEXUS_TLS_KEY"] = tls_key
+            os.environ["NEXUS_TLS_CA"] = tls_ca
+
     try:
         from nexus.cli.commands.admin import get_admin_rpc
 

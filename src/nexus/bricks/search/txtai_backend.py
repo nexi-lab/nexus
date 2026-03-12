@@ -248,12 +248,14 @@ class TxtaiBackend:
 
     async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
         """Index documents (full rebuild for zone_id)."""
-        if not self._embeddings or not documents:
+        if not documents:
             return 0
 
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
         async with self._lock:
+            if not self._embeddings:
+                return 0
             await asyncio.to_thread(self._embeddings.index, rows)
         return len(rows)
 
@@ -263,7 +265,7 @@ class TxtaiBackend:
         Falls back to ``index()`` on first call when the ANN backend
         hasn't been initialized yet.
         """
-        if not self._embeddings or not documents:
+        if not documents:
             return 0
 
         stamped = _stamp_zone_id(documents, zone_id)
@@ -272,6 +274,8 @@ class TxtaiBackend:
         # txtai requires index() for the first batch to initialize the ANN.
         # After that, upsert() works for incremental updates.
         async with self._lock:
+            if not self._embeddings:
+                return 0
             if getattr(self._embeddings, "ann", None) is None:
                 await asyncio.to_thread(self._embeddings.index, rows)
             else:
@@ -280,10 +284,12 @@ class TxtaiBackend:
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:  # noqa: ARG002
         """Delete documents by id."""
-        if not self._embeddings or not ids:
+        if not ids:
             return 0
 
         async with self._lock:
+            if not self._embeddings:
+                return 0
             await asyncio.to_thread(self._embeddings.delete, ids)
         return len(ids)
 
@@ -299,9 +305,6 @@ class TxtaiBackend:
         path_filter: str | None = None,
     ) -> list[BaseSearchResult]:
         """Search with mandatory zone_id isolation via txtai SQL WHERE clause."""
-        if not self._embeddings:
-            return []
-
         self.last_rerank_ms = 0.0
 
         # Over-fetch when reranker is available so it has enough candidates.
@@ -310,6 +313,8 @@ class TxtaiBackend:
 
         sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit)
         async with self._lock:
+            if not self._embeddings:
+                return []
             raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
@@ -352,6 +357,8 @@ class TxtaiBackend:
 
         # txtai Similarity returns [(index, score), ...] sorted by score desc
         async with self._lock:
+            if not self._reranker:
+                return results[:limit]
             scored: list[tuple[int, float]] = await asyncio.to_thread(self._reranker, query, texts)
 
         reranked: list[BaseSearchResult] = []
@@ -376,10 +383,9 @@ class TxtaiBackend:
         limit: int = 10,
     ) -> list[BaseSearchResult]:
         """Graph-augmented search using txtai's semantic graph."""
-        if not self._embeddings or not getattr(self._embeddings, "graph", None):
-            return []
-
         async with self._lock:
+            if not self._embeddings or not getattr(self._embeddings, "graph", None):
+                return []
             raw = await asyncio.to_thread(self._embeddings.graph.search, query, limit=limit)
 
         results: list[BaseSearchResult] = []

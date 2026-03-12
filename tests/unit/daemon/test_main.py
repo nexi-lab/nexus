@@ -124,14 +124,19 @@ class TestIsNexusdProcess:
         # PID above kernel max — guaranteed not to exist
         assert _is_nexusd_process(4194305) is False
 
-    def test_current_process_without_proc_fs(self, monkeypatch) -> None:
-        # On macOS (no /proc), should fall back to os.kill and return True
-        # because the process exists and /proc read raises FileNotFoundError
-        result = _is_nexusd_process(os.getpid())
-        # On Linux the cmdline won't contain "nexusd" (it's pytest), but
-        # on macOS the /proc fallback returns True conservatively.
-        # Either way, just verify it doesn't crash.
-        assert isinstance(result, bool)
+    def test_proc_fs_unavailable_returns_true(self) -> None:
+        """Without /proc (macOS, BSD), fall back conservatively to True."""
+        pid = os.getpid()
+        with patch.object(Path, "read_bytes", side_effect=FileNotFoundError):
+            assert _is_nexusd_process(pid) is True
+
+    def test_linux_cmdline_without_nexusd_returns_false(self) -> None:
+        """On Linux, a live PID whose cmdline doesn't mention nexusd is stale."""
+        pid = os.getpid()
+        # Simulate /proc/<pid>/cmdline for a pytest process
+        fake_cmdline = b"/usr/bin/python3\x00-m\x00pytest\x00tests/\x00"
+        with patch.object(Path, "read_bytes", return_value=fake_cmdline):
+            assert _is_nexusd_process(pid) is False
 
     def test_pid_reuse_different_process(self, tmp_path: Path) -> None:
         # Simulate /proc/<pid>/cmdline pointing to a non-nexusd process
@@ -204,10 +209,15 @@ class TestManagePidFile:
         nexus_dir = tmp_path / ".nexus"
         nexus_dir.mkdir(parents=True, exist_ok=True)
         pid_file = nexus_dir / "nexusd.pid"
-        # Use the current process PID — guaranteed to be running
+        # Use the current process PID — guaranteed to be running.
+        # Patch _is_nexusd_process so the test works identically on Linux
+        # (where /proc/<pid>/cmdline would show "pytest", not "nexusd").
         pid_file.write_text(str(os.getpid()))
 
-        with pytest.raises(SystemExit) as exc_info:
+        with (
+            patch("nexus.daemon.main._is_nexusd_process", return_value=True),
+            pytest.raises(SystemExit) as exc_info,
+        ):
             _manage_pid_file()
 
         assert exc_info.value.code == 78  # CONFIG_ERROR

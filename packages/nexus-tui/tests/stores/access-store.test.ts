@@ -982,6 +982,39 @@ describe("AccessStore", () => {
       expect(state.delegationsLoading).toBe(false);
     });
 
+    it("preserves create result when list refresh fails", async () => {
+      let callCount = 0;
+      const client = {
+        post: mock(async () => ({
+          delegation_id: "del-ok",
+          worker_agent_id: "worker-1",
+          api_key: "key123",
+          mount_table: [],
+          expires_at: null,
+          delegation_mode: "clean",
+        })),
+        get: mock(async () => {
+          callCount++;
+          throw new Error("List refresh failed");
+        }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().createDelegation(
+        { worker_id: "w", worker_name: "n", namespace_mode: "clean", intent: "i", can_sub_delegate: false },
+        client,
+      );
+      const state = useAccessStore.getState();
+
+      // POST succeeded — result must be visible
+      expect(state.lastDelegationCreate).not.toBeNull();
+      expect(state.lastDelegationCreate!.delegation_id).toBe("del-ok");
+      // Error must NOT be set (GET failure is non-critical)
+      expect(state.error).toBeNull();
+      expect(state.delegationsLoading).toBe(false);
+      // GET was attempted
+      expect(callCount).toBe(1);
+    });
+
     it("sets error on failure", async () => {
       const client = {
         post: mock(async () => { throw new Error("Insufficient trust"); }),

@@ -7,8 +7,10 @@ Mocked unit tests verifying:
 - Path filter generation
 - Error propagation
 - Graph search methods
+- Thread-safety lock serialisation (#2919)
 """
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -330,3 +332,57 @@ class TestTxtaiBackendGraph:
 
         results = await backend.graph_search("test", zone_id="z")
         assert results == []
+
+
+# =============================================================================
+# Thread-safety lock tests (#2919)
+# =============================================================================
+
+
+class TestTxtaiBackendConcurrency:
+    """Verify that the asyncio.Lock serialises access to _embeddings.
+
+    faiss is NOT thread-safe for concurrent search+write operations.
+    asyncio.to_thread() dispatches to a thread pool, so without the lock
+    multiple coroutines can hit the C++ layer concurrently → segfault.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_search_and_upsert_are_serialised(self) -> None:
+        """Search and upsert must not overlap in the thread pool."""
+        backend = TxtaiBackend()
+        mock_emb = MagicMock()
+        mock_emb.ann = MagicMock()  # non-None so upsert path is taken
+        mock_emb.search.return_value = []
+        backend._embeddings = mock_emb
+
+        # Track whether operations overlap
+        active = 0
+        max_active = 0
+
+        original_to_thread = asyncio.to_thread
+
+        async def tracking_to_thread(func, *args, **kwargs):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                return await original_to_thread(func, *args, **kwargs)
+            finally:
+                active -= 1
+
+        with patch("nexus.bricks.search.txtai_backend.asyncio.to_thread", tracking_to_thread):
+            await asyncio.gather(
+                backend.search("q1", zone_id="z"),
+                backend.search("q2", zone_id="z"),
+                backend.upsert([{"id": "1", "text": "t", "path": "/a"}], zone_id="z"),
+            )
+
+        # With the lock, at most 1 to_thread call should be active at a time
+        assert max_active == 1, f"Operations overlapped: max_active={max_active}"
+
+    @pytest.mark.asyncio
+    async def test_lock_exists_on_backend(self) -> None:
+        backend = TxtaiBackend()
+        assert hasattr(backend, "_lock")
+        assert isinstance(backend._lock, asyncio.Lock)

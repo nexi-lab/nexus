@@ -111,6 +111,11 @@ class TxtaiBackend:
         self._embeddings: Any = None
         self._reranker: Any = None
         self.last_rerank_ms: float = 0.0
+        # Serialise all access to _embeddings / _reranker across coroutines.
+        # faiss (used by txtai) is NOT thread-safe for concurrent search+write
+        # operations. Since asyncio.to_thread() dispatches to a thread pool,
+        # concurrent coroutines without this lock cause native segfaults.
+        self._lock = asyncio.Lock()
 
     async def startup(self) -> None:
         """Initialize txtai Embeddings with pgvector backend (with fallback).
@@ -232,10 +237,11 @@ class TxtaiBackend:
 
     async def shutdown(self) -> None:
         """Release txtai resources."""
-        self._reranker = None
-        if self._embeddings is not None:
-            await asyncio.to_thread(self._embeddings.close)
-            self._embeddings = None
+        async with self._lock:
+            self._reranker = None
+            if self._embeddings is not None:
+                await asyncio.to_thread(self._embeddings.close)
+                self._embeddings = None
         logger.info("txtai backend shut down")
 
     # ----- Index operations ---------------------------------------------------
@@ -247,7 +253,8 @@ class TxtaiBackend:
 
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
-        await asyncio.to_thread(self._embeddings.index, rows)
+        async with self._lock:
+            await asyncio.to_thread(self._embeddings.index, rows)
         return len(rows)
 
     async def upsert(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
@@ -264,10 +271,11 @@ class TxtaiBackend:
 
         # txtai requires index() for the first batch to initialize the ANN.
         # After that, upsert() works for incremental updates.
-        if getattr(self._embeddings, "ann", None) is None:
-            await asyncio.to_thread(self._embeddings.index, rows)
-        else:
-            await asyncio.to_thread(self._embeddings.upsert, rows)
+        async with self._lock:
+            if getattr(self._embeddings, "ann", None) is None:
+                await asyncio.to_thread(self._embeddings.index, rows)
+            else:
+                await asyncio.to_thread(self._embeddings.upsert, rows)
         return len(rows)
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:  # noqa: ARG002
@@ -275,7 +283,8 @@ class TxtaiBackend:
         if not self._embeddings or not ids:
             return 0
 
-        await asyncio.to_thread(self._embeddings.delete, ids)
+        async with self._lock:
+            await asyncio.to_thread(self._embeddings.delete, ids)
         return len(ids)
 
     # ----- Search -------------------------------------------------------------
@@ -300,7 +309,8 @@ class TxtaiBackend:
         fetch_limit = limit * 2 if self._reranker else limit
 
         sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit)
-        raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
+        async with self._lock:
+            raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
         for r in raw:
@@ -341,7 +351,8 @@ class TxtaiBackend:
             return results[:limit]
 
         # txtai Similarity returns [(index, score), ...] sorted by score desc
-        scored: list[tuple[int, float]] = await asyncio.to_thread(self._reranker, query, texts)
+        async with self._lock:
+            scored: list[tuple[int, float]] = await asyncio.to_thread(self._reranker, query, texts)
 
         reranked: list[BaseSearchResult] = []
         for idx, score in scored:
@@ -368,7 +379,8 @@ class TxtaiBackend:
         if not self._embeddings or not getattr(self._embeddings, "graph", None):
             return []
 
-        raw = await asyncio.to_thread(self._embeddings.graph.search, query, limit=limit)
+        async with self._lock:
+            raw = await asyncio.to_thread(self._embeddings.graph.search, query, limit=limit)
 
         results: list[BaseSearchResult] = []
         for r in raw:

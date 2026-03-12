@@ -538,23 +538,29 @@ class DelegationService:
                 e,
             )
 
+    # Sentinel for "clear this field" vs "leave unchanged"
+    _CLEAR: str = "__CLEAR__"
+
     def update_namespace_config(
         self,
         delegation_id: str,
         *,
         scope_prefix: str | None = None,
+        clear_scope_prefix: bool = False,
         remove_grants: list[str] | None = None,
         add_grants: list[str] | None = None,
         readonly_paths: list[str] | None = None,
     ) -> DelegationRecord:
-        """Update mutable namespace config fields on an active delegation.
+        """Update namespace config and re-materialize effective access.
 
-        Only scope_prefix, removed_grants, added_grants, and readonly_paths
-        are editable. delegation_mode is immutable (set at creation).
+        Updates the record, re-derives grants from the parent's current
+        permissions, replaces the worker's ReBAC tuples, and invalidates
+        the namespace cache so the mount_table reflects the new state.
 
         Args:
             delegation_id: The delegation to update.
             scope_prefix: New scope prefix (None = leave unchanged).
+            clear_scope_prefix: Set True to clear scope_prefix to None.
             remove_grants: New removed grants list (None = leave unchanged).
             add_grants: New added grants list (None = leave unchanged).
             readonly_paths: New readonly paths list (None = leave unchanged).
@@ -565,7 +571,11 @@ class DelegationService:
         Raises:
             DelegationNotFoundError: If delegation_id not found.
             DelegationError: If delegation is not ACTIVE.
+            InvalidPrefixError: If scope_prefix is empty or malformed.
+            EscalationError: If add_grants exceed parent's permissions.
         """
+        from nexus.bricks.delegation.derivation import validate_scope_prefix
+
         record = self._load_delegation_record(delegation_id)
         if record is None:
             raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
@@ -575,34 +585,74 @@ class DelegationService:
                 f"Delegation {delegation_id} is not active (status={record.status.value})"
             )
 
+        # Compute effective new values (merge unchanged fields from record)
+        new_scope_prefix: str | None
+        if clear_scope_prefix:
+            new_scope_prefix = None
+        elif scope_prefix is not None:
+            new_scope_prefix = scope_prefix
+        else:
+            new_scope_prefix = record.scope_prefix
+
+        new_remove = (
+            list(remove_grants) if remove_grants is not None else list(record.removed_grants)
+        )
+        new_add = list(add_grants) if add_grants is not None else list(record.added_grants)
+        new_readonly = (
+            list(readonly_paths) if readonly_paths is not None else list(record.readonly_paths)
+        )
+
+        # Validate scope_prefix at system boundary
+        validate_scope_prefix(new_scope_prefix)
+
+        # 1. Re-derive grants from parent's current permissions
+        parent_grants = self._enumerate_parent_grants(record.parent_agent_id, record.zone_id)
+        child_grants = derive_grants(
+            parent_grants=parent_grants,
+            mode=record.delegation_mode,
+            remove_grants=new_remove if new_remove else None,
+            add_grants=new_add if new_add else None,
+            readonly_paths=new_readonly if new_readonly else None,
+            scope_prefix=new_scope_prefix,
+        )
+
+        # 2. Delete old ReBAC tuples for the worker
+        self._delete_worker_tuples(record.agent_id, record.zone_id)
+
+        # 3. Create new ReBAC tuples from re-derived grants
+        self._create_grant_tuples(
+            worker_id=record.agent_id,
+            grants=child_grants,
+            zone_id=record.zone_id,
+            coordinator_agent_id=record.parent_agent_id,
+            expires_at=record.lease_expires_at,
+        )
+
+        # 4. Update the DB record
         from sqlalchemy import update as sa_update
 
         from nexus.storage.models.agents import DelegationRecordModel
-
-        values: dict[str, str | None] = {}
-        if scope_prefix is not None:
-            values["scope_prefix"] = scope_prefix
-        if remove_grants is not None:
-            values["removed_grants"] = json.dumps(remove_grants)
-        if add_grants is not None:
-            values["added_grants"] = json.dumps(add_grants)
-        if readonly_paths is not None:
-            values["readonly_paths"] = json.dumps(readonly_paths)
-
-        if not values:
-            return record
 
         with self._session() as session:
             session.execute(
                 sa_update(DelegationRecordModel)
                 .where(DelegationRecordModel.delegation_id == delegation_id)
-                .values(**values)
+                .values(
+                    scope_prefix=new_scope_prefix,
+                    removed_grants=json.dumps(new_remove),
+                    added_grants=json.dumps(new_add),
+                    readonly_paths=json.dumps(new_readonly),
+                )
             )
 
+        # 5. Invalidate namespace cache so mount_table reflects new state
+        if self._namespace_manager is not None:
+            self._namespace_manager.invalidate(("agent", record.agent_id))
+
         logger.info(
-            "[Delegation] Updated namespace config for delegation=%s fields=%s",
+            "[Delegation] Updated namespace config for delegation=%s grants=%d",
             delegation_id,
-            list(values.keys()),
+            len(child_grants),
         )
 
         updated = self._load_delegation_record(delegation_id)

@@ -367,50 +367,102 @@ def _seed_directories(nx: Any) -> int:
     return created
 
 
-def _seed_permissions(nx: Any, manifest: dict[str, Any]) -> int:
-    """Seed demo ReBAC permissions via the internal rebac_write API.
+def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> int:
+    """Seed demo ReBAC permissions.
+
+    For remote presets (shared/demo), uses the ``admin_write_permission``
+    RPC so that tuples are written server-side where the rebac_manager
+    lives.  For local presets, accesses the rebac_manager directly.
 
     Writes relationship tuples for the demo workspace:
     - admin gets direct_owner on /workspace/demo
     - demo_user gets viewer on /workspace/demo
     - demo_agent gets editor on /workspace/demo
-
-    The NexusFS also auto-grants direct_owner on mkdir/write when a user
-    context is present, so the admin tuple may already exist.
     """
     if manifest.get("permissions_seeded"):
         return 0
 
-    created = 0
     tuples = [
-        (("user", "admin"), "direct_owner", ("file", "/workspace/demo")),
-        (("user", "demo_user"), "viewer", ("file", "/workspace/demo")),
-        (("agent", "demo_agent"), "editor", ("file", "/workspace/demo")),
+        {
+            "subject": ["user", "admin"],
+            "relation": "direct_owner",
+            "object": ["file", "/workspace/demo"],
+            "zone_id": "root",
+        },
+        {
+            "subject": ["user", "demo_user"],
+            "relation": "viewer",
+            "object": ["file", "/workspace/demo"],
+            "zone_id": "root",
+        },
+        {
+            "subject": ["agent", "demo_agent"],
+            "relation": "editor",
+            "object": ["file", "/workspace/demo"],
+            "zone_id": "root",
+        },
     ]
 
-    # Access the internal rebac_manager if available
-    rebac = getattr(nx, "_rebac_manager", None) or getattr(nx, "rebac_manager", None)
-    if rebac is None:
-        logger.debug("No rebac_manager available — skipping permission seeding")
-        manifest["permissions_seeded"] = True
-        manifest["permissions_count"] = 0
-        return 0
+    preset = config.get("preset", "local")
 
-    for subject, relation, obj in tuples:
-        try:
-            rebac.rebac_write(
-                subject=subject,
-                relation=relation,
-                object=obj,
-                zone_id="root",
-            )
-            created += 1
-        except Exception as e:
-            logger.debug("Could not seed permission %s %s %s: %s", subject, relation, obj, e)
+    if preset in ("shared", "demo"):
+        # Remote path — use admin RPC to write permissions server-side
+        created = _seed_permissions_rpc(config, tuples)
+    else:
+        # Local path — direct rebac_manager access
+        rebac = getattr(nx, "_rebac_manager", None) or getattr(nx, "rebac_manager", None)
+        if rebac is None:
+            logger.debug("No rebac_manager available — skipping permission seeding")
+            manifest["permissions_seeded"] = True
+            manifest["permissions_count"] = 0
+            return 0
+
+        created = 0
+        for t in tuples:
+            try:
+                rebac.rebac_write(
+                    subject=tuple(t["subject"]),
+                    relation=t["relation"],
+                    object=tuple(t["object"]),
+                    zone_id=t["zone_id"],
+                )
+                created += 1
+            except Exception as e:
+                logger.debug("Could not seed permission %s: %s", t, e)
 
     manifest["permissions_seeded"] = True
     manifest["permissions_count"] = created
     return created
+
+
+def _seed_permissions_rpc(config: dict[str, Any], tuples: list[dict[str, Any]]) -> int:
+    """Write permission tuples via the admin_write_permission RPC."""
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    grpc_port = ports.get("grpc", 2028)
+
+    api_key = config.get("api_key", "")
+    if not api_key:
+        data_dir = config.get("data_dir", "./nexus-data")
+        key_file = Path(data_dir) / ".admin-api-key"
+        if key_file.exists():
+            api_key = key_file.read_text().strip()
+
+    if not api_key:
+        logger.debug("No admin API key — skipping permission seeding via RPC")
+        return 0
+
+    try:
+        from nexus.cli.commands.admin import get_admin_rpc
+
+        os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
+        call_rpc = get_admin_rpc(f"http://localhost:{http_port}", api_key)
+        result = call_rpc("admin_write_permission", {"tuples": tuples})
+        created: int = result.get("created", 0) if isinstance(result, dict) else 0
+        return created
+    except Exception as e:
+        logger.debug("Could not seed permissions via RPC: %s", e)
+        return 0
 
 
 def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
@@ -658,7 +710,7 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     identities_created = _seed_identities(config, manifest)
 
     # 5. Seed permissions (best-effort)
-    perms_created = _seed_permissions(nx, manifest)
+    perms_created = _seed_permissions(nx, config, manifest)
 
     # 6. Record seed metadata
     manifest["seeded_at"] = datetime.now(tz=UTC).isoformat()

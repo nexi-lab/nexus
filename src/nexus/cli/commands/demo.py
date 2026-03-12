@@ -199,6 +199,28 @@ DEMO_DIRS = [
     "/workspace/demo/restricted",
 ]
 
+# ReBAC permission tuples seeded by demo init (used by both seed and reset)
+DEMO_PERMISSION_TUPLES = [
+    {
+        "subject": ["user", "admin"],
+        "relation": "direct_owner",
+        "object": ["file", "/workspace/demo"],
+        "zone_id": "root",
+    },
+    {
+        "subject": ["user", "demo_user"],
+        "relation": "viewer",
+        "object": ["file", "/workspace/demo"],
+        "zone_id": "root",
+    },
+    {
+        "subject": ["agent", "demo_agent"],
+        "relation": "editor",
+        "object": ["file", "/workspace/demo"],
+        "zone_id": "root",
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -386,27 +408,7 @@ def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any])
     if manifest.get("permissions_seeded"):
         return 0
 
-    tuples = [
-        {
-            "subject": ["user", "admin"],
-            "relation": "direct_owner",
-            "object": ["file", "/workspace/demo"],
-            "zone_id": "root",
-        },
-        {
-            "subject": ["user", "demo_user"],
-            "relation": "viewer",
-            "object": ["file", "/workspace/demo"],
-            "zone_id": "root",
-        },
-        {
-            "subject": ["agent", "demo_agent"],
-            "relation": "editor",
-            "object": ["file", "/workspace/demo"],
-            "zone_id": "root",
-        },
-    ]
-
+    tuples = DEMO_PERMISSION_TUPLES
     preset = config.get("preset", "local")
 
     if preset in ("shared", "demo"):
@@ -745,6 +747,134 @@ def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     return removed
 
 
+# Python script executed inside the Docker container to delete permission tuples.
+_DOCKER_DELETE_PERMS_SCRIPT = """\
+import json, os, sys
+sys.path.insert(0, '/app/src')
+db_url = os.environ.get('NEXUS_DATABASE_URL', '')
+if not db_url:
+    print('0')
+    sys.exit(0)
+try:
+    from sqlalchemy import create_engine, text
+    engine = create_engine(db_url)
+    deleted = 0
+    for s, r, o, z in json.loads(sys.stdin.read()):
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        "DELETE FROM rebac_tuples "
+                        "WHERE subject_type = :st AND subject_id = :si "
+                        "AND relation = :rel "
+                        "AND object_type = :ot AND object_id = :oi "
+                        "AND zone_id = :zid"
+                    ),
+                    {"st": s[0], "si": s[1], "rel": r, "ot": o[0], "oi": o[1], "zid": z},
+                )
+                conn.commit()
+                deleted += result.rowcount
+        except Exception:
+            pass
+    print(deleted)
+except Exception:
+    print('0')
+"""
+
+
+def _delete_permissions_docker(config: dict[str, Any]) -> int:
+    """Delete demo permission tuples via docker compose exec.
+
+    Returns the number of tuples deleted, or -1 if docker exec is unavailable.
+    """
+    compose_file = config.get("compose_file", "")
+    if not compose_file or not Path(compose_file).exists():
+        return -1
+
+    compose_cmd = _find_compose_cmd()
+    if compose_cmd is None:
+        return -1
+
+    from nexus.cli.commands.stack import _derive_project_env
+
+    compose_env = _derive_project_env(config)
+
+    tuples = DEMO_PERMISSION_TUPLES
+    payload = json.dumps(
+        [[t["subject"], t["relation"], t["object"], t.get("zone_id", "root")] for t in tuples]
+    )
+
+    cmd = [
+        *compose_cmd,
+        "-f",
+        compose_file,
+        "exec",
+        "-T",
+        "nexus",
+        "python3",
+        "-c",
+        _DOCKER_DELETE_PERMS_SCRIPT,
+    ]
+    env = {**os.environ, **compose_env}
+
+    try:
+        result = subprocess.run(
+            cmd,
+            input=payload,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.strip())
+        logger.debug(
+            "docker exec (delete perms) failed (rc=%d): %s", result.returncode, result.stderr
+        )
+        return -1
+    except (subprocess.TimeoutExpired, ValueError, OSError) as e:
+        logger.debug("docker exec (delete perms) error: %s", e)
+        return -1
+
+
+def _delete_permissions(nx: Any, config: dict[str, Any]) -> int:
+    """Delete demo ReBAC permission tuples. Returns count deleted."""
+    preset = config.get("preset", "local")
+
+    if preset in ("shared", "demo"):
+        deleted = _delete_permissions_docker(config)
+        return max(deleted, 0)
+
+    # Local path — direct rebac_manager access
+    rebac = getattr(nx, "_rebac_manager", None) or getattr(nx, "rebac_manager", None)
+    if rebac is None:
+        return 0
+
+    deleted = 0
+    for t in DEMO_PERMISSION_TUPLES:
+        try:
+            # Use the sync delete_tuple if available (ReBACManager)
+            if hasattr(rebac, "delete_tuple"):
+                if rebac.delete_tuple(
+                    subject=tuple(t["subject"]),
+                    relation=t["relation"],
+                    object=tuple(t["object"]),
+                    zone_id=t["zone_id"],
+                ):
+                    deleted += 1
+            elif hasattr(rebac, "rebac_delete_by_subject"):
+                # Fallback: delete by subject (coarser)
+                deleted += rebac.rebac_delete_by_subject(
+                    subject_type=t["subject"][0],
+                    subject_id=t["subject"][1],
+                    zone_id=t["zone_id"],
+                )
+        except Exception as e:
+            logger.debug("Could not delete permission %s: %s", t, e)
+
+    return deleted
+
+
 # ---------------------------------------------------------------------------
 # Click commands
 # ---------------------------------------------------------------------------
@@ -795,6 +925,9 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
             revoked = _revoke_identities(config, old_manifest)
             if revoked:
                 console.print(f"  Revoked {revoked} identity API keys.")
+            perms_del = _delete_permissions(nx, config)
+            if perms_del:
+                console.print(f"  Deleted {perms_del} permission tuples.")
             removed = _delete_demo_files(nx, old_manifest)
             console.print(f"  Removed {removed} files.")
         manifest: dict[str, Any] = {}
@@ -851,14 +984,24 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print("  Semantic:     skipped")
     console.print("  Grep corpus:  ready")
 
-    # Print suggested commands
+    # Print suggested commands — include --remote-url for shared/demo presets
+    # so the CLI connects to the running stack instead of the local filesystem.
+    preset = config.get("preset", "local")
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    remote_flag = (
+        f" --remote-url http://localhost:{http_port}" if preset in ("shared", "demo") else ""
+    )
+
     console.print()
     console.print("[bold]Try these commands:[/bold]")
-    console.print("  nexus ls /workspace/demo")
-    console.print("  nexus cat /workspace/demo/README.md")
-    console.print("  nexus versions history /workspace/demo/plan.md")
-    console.print('  nexus grep "vector index" --path /workspace/demo')
-    console.print('  nexus search query "How does the demo authentication flow work?"')
+    console.print(f"  nexus ls /workspace/demo{remote_flag}")
+    console.print(f"  nexus cat /workspace/demo/README.md{remote_flag}")
+    console.print(f"  nexus versions history /workspace/demo/plan.md{remote_flag}")
+    console.print(f'  nexus grep "vector index" /workspace/demo{remote_flag}')
+    console.print(
+        f'  nexus search query "How does the demo authentication flow work?"{remote_flag}'
+    )
 
 
 @demo.command(name="reset")
@@ -884,14 +1027,26 @@ def demo_reset() -> None:
     if revoked:
         console.print(f"[green]✓[/green] Revoked {revoked} identity API keys.")
 
-    # Connect and delete demo files
+    # Delete permission tuples (best-effort, before file deletion)
     try:
         nx = _get_nexus_client(config)
-        removed = _delete_demo_files(nx, manifest)
-        nx.close()
-        console.print(f"[green]✓[/green] Removed {removed} demo files.")
     except Exception as e:
-        console.print(f"[yellow]Warning:[/yellow] Could not connect to remove files: {e}")
+        console.print(f"[yellow]Warning:[/yellow] Could not connect to Nexus: {e}")
+        nx = None
+
+    perms_deleted = _delete_permissions(nx, config) if nx else 0
+    if perms_deleted > 0:
+        console.print(f"[green]✓[/green] Deleted {perms_deleted} permission tuples.")
+
+    # Delete demo files
+    if nx is not None:
+        try:
+            removed = _delete_demo_files(nx, manifest)
+            console.print(f"[green]✓[/green] Removed {removed} demo files.")
+        except Exception as e:
+            console.print(f"[yellow]Warning:[/yellow] Could not remove files: {e}")
+        with contextlib.suppress(Exception):
+            nx.close()
 
     # Remove manifest
     mp = _manifest_path(data_dir)

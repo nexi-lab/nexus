@@ -9,10 +9,12 @@ from nexus.cli.commands.demo import (
     DEMO_AGENTS,
     DEMO_DIRS,
     DEMO_FILES,
+    DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
     MANIFEST_FILENAME,
     PLAN_VERSIONS,
     _delete_demo_files,
+    _delete_permissions,
     _load_manifest,
     _revoke_identities,
     _save_manifest,
@@ -350,3 +352,60 @@ class TestRevokeIdentities:
             revoked = _revoke_identities(config, manifest)
 
         assert revoked == 1
+
+
+# ---------------------------------------------------------------------------
+# Permission deletion tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeletePermissions:
+    def test_permission_tuples_constant(self) -> None:
+        """DEMO_PERMISSION_TUPLES should have 3 entries matching seed logic."""
+        assert len(DEMO_PERMISSION_TUPLES) == 3
+        subjects = [(t["subject"][0], t["subject"][1]) for t in DEMO_PERMISSION_TUPLES]
+        assert ("user", "admin") in subjects
+        assert ("user", "demo_user") in subjects
+        assert ("agent", "demo_agent") in subjects
+
+    def test_delete_permissions_local_with_rebac(self) -> None:
+        """Local preset should call delete_tuple for each permission tuple."""
+        mock_rebac = MagicMock()
+        mock_rebac.delete_tuple.return_value = True
+        mock_nx = MagicMock()
+        mock_nx._rebac_manager = mock_rebac
+        config: dict = {"preset": "local"}
+
+        deleted = _delete_permissions(mock_nx, config)
+        assert deleted == 3
+        assert mock_rebac.delete_tuple.call_count == 3
+
+    def test_delete_permissions_local_no_rebac(self) -> None:
+        """When no rebac_manager is available, should return 0."""
+        mock_nx = MagicMock()
+        mock_nx._rebac_manager = None
+        mock_nx.rebac_manager = None
+        config: dict = {"preset": "local"}
+
+        deleted = _delete_permissions(mock_nx, config)
+        assert deleted == 0
+
+    @patch("nexus.cli.commands.demo._delete_permissions_docker", return_value=3)
+    def test_delete_permissions_shared_uses_docker(self, mock_docker: MagicMock) -> None:
+        """Shared/demo presets should use docker exec to delete permissions."""
+        mock_nx = MagicMock()
+        config: dict = {"preset": "shared"}
+
+        deleted = _delete_permissions(mock_nx, config)
+        assert deleted == 3
+        mock_docker.assert_called_once_with(config)
+
+    @patch("nexus.cli.commands.demo._delete_permissions_docker", return_value=-1)
+    def test_delete_permissions_shared_docker_unavailable(self, mock_docker: MagicMock) -> None:
+        """When docker exec is unavailable, should return 0 (best-effort)."""
+        mock_nx = MagicMock()
+        config: dict = {"preset": "demo"}
+
+        deleted = _delete_permissions(mock_nx, config)
+        assert deleted == 0
+        mock_docker.assert_called_once()

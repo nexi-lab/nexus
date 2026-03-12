@@ -112,7 +112,7 @@ services:
       ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
       # Sandbox
       NEXUS_SERVER_URL: http://nexus:2026
-      NEXUS_DOCKER_NETWORK: nexus_nexus-network
+      NEXUS_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-nexus}_nexus-network
       # OAuth
       NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
       NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
@@ -364,5 +364,4 @@ volumes:
 # ============================================================================
 networks:
   nexus-network:
-    name: nexus_nexus-network
     driver: bridge

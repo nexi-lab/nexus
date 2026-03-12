@@ -262,6 +262,18 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
             if key_file.exists():
                 api_key = key_file.read_text().strip()
 
+        # When TLS is enabled, set env vars so nexus.connect() builds
+        # an RPCTransport with mTLS credentials (dev certs double as
+        # both server and client certs).
+        if config.get("tls"):
+            tls_cert = config.get("tls_cert", "")
+            tls_key = config.get("tls_key", "")
+            tls_ca = config.get("tls_ca", "")
+            if tls_cert and tls_key and tls_ca:
+                os.environ["NEXUS_TLS_CERT"] = tls_cert
+                os.environ["NEXUS_TLS_KEY"] = tls_key
+                os.environ["NEXUS_TLS_CA"] = tls_ca
+
         try:
             nx = nexus.connect(
                 config={
@@ -444,7 +456,7 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
         return 0
 
     created = 0
-    identity_keys: dict[str, str] = {}
+    identity_keys: dict[str, dict[str, str]] = {}
 
     # Provision users (skip "admin" — already created by entrypoint)
     for user in DEMO_USERS:
@@ -461,7 +473,10 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
                     "subject_type": "user",
                 },
             )
-            identity_keys[user["id"]] = result.get("api_key", "")
+            identity_keys[user["id"]] = {
+                "api_key": result.get("api_key", ""),
+                "key_id": result.get("key_id", ""),
+            }
             created += 1
         except Exception as e:
             logger.debug("Could not create user %s: %s", user["id"], e)
@@ -479,7 +494,10 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
                     "subject_type": "agent",
                 },
             )
-            identity_keys[agent["id"]] = result.get("api_key", "")
+            identity_keys[agent["id"]] = {
+                "api_key": result.get("api_key", ""),
+                "key_id": result.get("key_id", ""),
+            }
             created += 1
         except Exception as e:
             logger.debug("Could not create agent %s: %s", agent["id"], e)
@@ -487,6 +505,51 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     manifest["identities_seeded"] = True
     manifest["identity_keys"] = identity_keys
     return created
+
+
+def _revoke_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
+    """Revoke API keys created by ``_seed_identities``.
+
+    Reads ``key_id`` values from the manifest's ``identity_keys`` and
+    calls ``admin_revoke_key`` via the admin RPC.
+    """
+    identity_keys = manifest.get("identity_keys", {})
+    if not identity_keys:
+        return 0
+
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    grpc_port = ports.get("grpc", 2028)
+
+    api_key = config.get("api_key", "")
+    if not api_key:
+        data_dir = config.get("data_dir", "./nexus-data")
+        key_file = Path(data_dir) / ".admin-api-key"
+        if key_file.exists():
+            api_key = key_file.read_text().strip()
+    if not api_key:
+        return 0
+
+    try:
+        from nexus.cli.commands.admin import get_admin_rpc
+
+        os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
+        call_rpc = get_admin_rpc(f"http://localhost:{http_port}", api_key)
+    except Exception:
+        return 0
+
+    revoked = 0
+    for _identity_id, key_info in identity_keys.items():
+        key_id = key_info.get("key_id", "") if isinstance(key_info, dict) else ""
+        if not key_id:
+            continue
+        try:
+            call_rpc("admin_revoke_key", {"key_id": key_id})
+            revoked += 1
+        except Exception as e:
+            logger.debug("Could not revoke key %s: %s", key_id, e)
+
+    return revoked
 
 
 def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
@@ -640,6 +703,11 @@ def demo_reset() -> None:
     if not manifest:
         console.print("[yellow]No demo data found (no manifest).[/yellow]")
         raise SystemExit(0)
+
+    # Revoke identity API keys (best-effort)
+    revoked = _revoke_identities(config, manifest)
+    if revoked:
+        console.print(f"[green]✓[/green] Revoked {revoked} identity API keys.")
 
     # Connect and delete demo files
     try:

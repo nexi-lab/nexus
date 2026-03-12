@@ -316,16 +316,30 @@ def up(
         config["ports"] = resolved_ports
         _save_project_config(config)
 
+    # Resolve data_dir to an absolute path — Docker Compose treats bare
+    # directory names (e.g. "nexus-data") as *named volumes*, not bind
+    # mounts.  An absolute path is always interpreted as a bind mount.
+    data_dir = str(Path(config.get("data_dir", "./nexus-data")).resolve())
+
+    # Derive a stable, per-directory project name so that Compose stacks
+    # from different project directories never collide on networks/volumes.
+    import hashlib
+
+    project_hash = hashlib.md5(data_dir.encode()).hexdigest()[:8]
+    project_name = f"nexus-{project_hash}"
+
     # Build environment variables for compose — nexus.yaml is the SSOT
     compose_env: dict[str, str] = {
+        # Project isolation
+        "COMPOSE_PROJECT_NAME": project_name,
         # Ports
         "NEXUS_PORT": str(resolved_ports.get("http", 2026)),
         "NEXUS_GRPC_PORT": str(resolved_ports.get("grpc", 2028)),
         "POSTGRES_PORT": str(resolved_ports.get("postgres", 5432)),
         "DRAGONFLY_PORT": str(resolved_ports.get("dragonfly", 6379)),
         "ZOEKT_PORT": str(resolved_ports.get("zoekt", 6070)),
-        # Data directory (host path for volume mount)
-        "NEXUS_HOST_DATA_DIR": str(config.get("data_dir", "./nexus-data")),
+        # Data directory (host path for volume mount — must be absolute)
+        "NEXUS_HOST_DATA_DIR": data_dir,
         # Admin user
         "NEXUS_ADMIN_USER": str(config.get("admin_user", "admin")),
     }

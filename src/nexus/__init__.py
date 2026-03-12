@@ -217,12 +217,29 @@ def connect(
 
         tls_config = ZoneTlsConfig.from_env()
 
+        # TLS: honour NEXUS_TLS_CERT / KEY / CA env vars (same convention
+        # as the gRPC server) so that `nexus connect` works against a
+        # server started with --tls.
+        _tls_config = None
+        _tls_cert = os.getenv("NEXUS_TLS_CERT")
+        _tls_key = os.getenv("NEXUS_TLS_KEY")
+        _tls_ca = os.getenv("NEXUS_TLS_CA")
+        if _tls_cert and _tls_key and _tls_ca:
+            from nexus.security.tls.config import ZoneTlsConfig
+
+            _tls_config = ZoneTlsConfig(
+                ca_cert_path=Path(_tls_ca),
+                node_cert_path=Path(_tls_cert),
+                node_key_path=Path(_tls_key),
+                known_zones_path=Path(_tls_ca).parent / "known_zones",
+            )
+
         transport = RPCTransport(
             server_address=grpc_address,
             auth_token=api_key,
             timeout=float(timeout),
             connect_timeout=float(connect_timeout),
-            tls_config=tls_config,
+            tls_config=_tls_config,
         )
 
         # RemoteBackend + RemoteMetastore — stateless proxies, server is SSOT.

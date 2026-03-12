@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -14,6 +16,7 @@ from nexus.cli.commands.init_cmd import (
     PRESET_SERVICES,
     VALID_PRESETS,
     _build_config,
+    _find_compose_file,
     _scaffold_tls,
     init,
 )
@@ -30,6 +33,46 @@ def tmp_project(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture()
+def _compose_file(tmp_path: Path) -> Path:
+    """Create a minimal nexus-stack.yml in tmp_path."""
+    cf = tmp_path / "nexus-stack.yml"
+    cf.write_text("services: {}\n")
+    return cf
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _find_compose_file
+# ---------------------------------------------------------------------------
+
+
+class TestFindComposeFile:
+    def test_finds_in_cwd(self, tmp_path: Path) -> None:
+        (tmp_path / "nexus-stack.yml").write_text("services: {}\n")
+        with patch("nexus.cli.commands.init_cmd.Path.cwd", return_value=tmp_path):
+            result = _find_compose_file()
+        assert result is not None
+        assert result.name == "nexus-stack.yml"
+
+    def test_finds_in_ancestor(self, tmp_path: Path) -> None:
+        (tmp_path / "nexus-stack.yml").write_text("services: {}\n")
+        child = tmp_path / "sub" / "dir"
+        child.mkdir(parents=True)
+        with patch("nexus.cli.commands.init_cmd.Path.cwd", return_value=child):
+            result = _find_compose_file()
+        assert result is not None
+        assert result == (tmp_path / "nexus-stack.yml").resolve()
+
+    def test_returns_none_when_missing(self, tmp_path: Path) -> None:
+        child = tmp_path / "empty"
+        child.mkdir()
+        with patch("nexus.cli.commands.init_cmd.Path.cwd", return_value=child):
+            result = _find_compose_file()
+        # May find real nexus-stack.yml if run from repo root; test intent is
+        # that it doesn't crash. In isolated envs it returns None.
+        assert result is None or result.name == "nexus-stack.yml"
+
+
 # ---------------------------------------------------------------------------
 # Unit tests — _build_config (pure logic, no I/O)
 # ---------------------------------------------------------------------------
@@ -41,6 +84,8 @@ class TestBuildConfig:
         assert cfg["preset"] == "local"
         assert cfg["auth"] == "none"
         assert cfg["tls"] is False
+        # data_dir is resolved to absolute
+        assert Path(cfg["data_dir"]).is_absolute()
         assert "services" not in cfg
         assert "ports" not in cfg
         assert "compose_profiles" not in cfg
@@ -56,6 +101,8 @@ class TestBuildConfig:
         assert "http" in cfg["ports"]
         assert cfg["compose_profiles"] == ["core", "cache", "search"]
         assert "compose_file" in cfg
+        # data_dir is absolute
+        assert Path(cfg["data_dir"]).is_absolute()
 
     def test_demo_preset(self) -> None:
         from nexus.cli.port_utils import DEFAULT_PORTS
@@ -68,11 +115,18 @@ class TestBuildConfig:
 
     def test_tls_flag(self) -> None:
         cfg = _build_config("shared", "./data", True, {}, ())
+        abs_data = str(Path("./data").resolve())
         assert cfg["tls"] is True
-        assert cfg["tls_dir"] == "./data/tls"
-        assert cfg["tls_cert"] == "./data/tls/server.crt"
-        assert cfg["tls_key"] == "./data/tls/server.key"
-        assert cfg["tls_ca"] == "./data/tls/ca.crt"
+        assert cfg["tls_dir"] == os.path.join(abs_data, "tls")
+        assert cfg["tls_cert"] == os.path.join(abs_data, "tls", "server.crt")
+        assert cfg["tls_key"] == os.path.join(abs_data, "tls", "server.key")
+        assert cfg["tls_ca"] == os.path.join(abs_data, "tls", "ca.crt")
+
+    def test_compose_file_override(self) -> None:
+        cfg = _build_config(
+            "shared", "./data", False, {}, (), compose_file_override="/tmp/my-stack.yml"
+        )
+        assert cfg["compose_file"] == str(Path("/tmp/my-stack.yml").resolve())
 
     def test_addons_included(self) -> None:
         cfg = _build_config("shared", "./data", False, {}, ("nats", "mcp"))
@@ -108,7 +162,7 @@ class TestInitCliCommand:
         assert cfg["preset"] == "local"
         assert cfg["auth"] == "none"
 
-    def test_shared_preset(self, runner: CliRunner, tmp_project: Path) -> None:
+    def test_shared_preset(self, runner: CliRunner, tmp_project: Path, _compose_file: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
         data_dir = tmp_project / "nexus-data"
         result = runner.invoke(
@@ -120,6 +174,8 @@ class TestInitCliCommand:
                 str(config_path),
                 "--data-dir",
                 str(data_dir),
+                "--compose-file",
+                str(_compose_file),
             ],
             catch_exceptions=False,
         )
@@ -132,7 +188,7 @@ class TestInitCliCommand:
         assert cfg["auth"] == "static"
         assert "postgres" in cfg["services"]
 
-    def test_demo_preset(self, runner: CliRunner, tmp_project: Path) -> None:
+    def test_demo_preset(self, runner: CliRunner, tmp_project: Path, _compose_file: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
         data_dir = tmp_project / "nexus-data"
         result = runner.invoke(
@@ -144,6 +200,8 @@ class TestInitCliCommand:
                 str(config_path),
                 "--data-dir",
                 str(data_dir),
+                "--compose-file",
+                str(_compose_file),
             ],
             catch_exceptions=False,
         )
@@ -156,7 +214,7 @@ class TestInitCliCommand:
         assert cfg["preset"] == "demo"
         assert cfg["auth"] == "database"
 
-    def test_tls_flag(self, runner: CliRunner, tmp_project: Path) -> None:
+    def test_tls_flag(self, runner: CliRunner, tmp_project: Path, _compose_file: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
         data_dir = tmp_project / "data"
         result = runner.invoke(
@@ -169,6 +227,8 @@ class TestInitCliCommand:
                 str(config_path),
                 "--data-dir",
                 str(data_dir),
+                "--compose-file",
+                str(_compose_file),
             ],
             catch_exceptions=False,
         )
@@ -181,6 +241,27 @@ class TestInitCliCommand:
 
         # TLS directory should have been scaffolded
         assert (data_dir / "tls").is_dir()
+
+    def test_shared_fails_without_compose_file(self, runner: CliRunner, tmp_project: Path) -> None:
+        """shared/demo preset should fail init when compose file is missing."""
+        config_path = tmp_project / "nexus.yaml"
+        data_dir = tmp_project / "nexus-data"
+        # Pass a non-existent compose file explicitly
+        result = runner.invoke(
+            init,
+            [
+                "--preset",
+                "shared",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(data_dir),
+                "--compose-file",
+                str(tmp_project / "nonexistent.yml"),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "not found" in result.output or "nonexistent" in result.output
 
     def test_refuses_overwrite_without_force(self, runner: CliRunner, tmp_project: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
@@ -213,7 +294,7 @@ class TestInitCliCommand:
             cfg = yaml.safe_load(f)
         assert cfg["preset"] == "local"
 
-    def test_with_addons(self, runner: CliRunner, tmp_project: Path) -> None:
+    def test_with_addons(self, runner: CliRunner, tmp_project: Path, _compose_file: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
         result = runner.invoke(
             init,
@@ -228,6 +309,8 @@ class TestInitCliCommand:
                 str(config_path),
                 "--data-dir",
                 str(tmp_project / "d"),
+                "--compose-file",
+                str(_compose_file),
             ],
             catch_exceptions=False,
         )

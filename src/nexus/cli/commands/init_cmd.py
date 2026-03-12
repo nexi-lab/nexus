@@ -57,36 +57,66 @@ PRESET_PORT_KEYS: dict[str, list[str]] = {
 }
 
 
+def _find_compose_file() -> Path | None:
+    """Locate ``nexus-stack.yml`` by searching the CWD and ancestor directories."""
+    candidate = Path.cwd()
+    for _ in range(10):  # avoid infinite walk
+        f = candidate / "nexus-stack.yml"
+        if f.exists():
+            return f.resolve()
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    return None
+
+
 def _build_config(
     preset: str,
     data_dir: str,
     tls: bool,
     ports: dict[str, int],
     addons: tuple[str, ...],
+    compose_file_override: str | None = None,
 ) -> dict[str, Any]:
-    """Build the materialized nexus.yaml config dict."""
+    """Build the materialized nexus.yaml config dict.
+
+    All filesystem paths (data_dir, compose_file, tls_*) are stored as
+    **absolute** paths so that ``nexus up`` works regardless of the
+    working directory at runtime.
+    """
+    abs_data_dir = str(Path(data_dir).resolve())
     config: dict[str, Any] = {
         "preset": preset,
-        "data_dir": data_dir,
+        "data_dir": abs_data_dir,
         "auth": PRESET_AUTH[preset],
         "tls": tls,
     }
 
     if preset != "local":
-        # Only include services/ports/compose for non-local presets
         config["services"] = list(PRESET_SERVICES[preset])
         config["ports"] = {k: v for k, v in ports.items() if k in PRESET_PORT_KEYS[preset]}
         config["compose_profiles"] = list(PRESET_COMPOSE_PROFILES[preset])
-        config["compose_file"] = "./nexus-stack.yml"
+
+        # Compose file: CLI override → search CWD + ancestors → error
+        if compose_file_override:
+            config["compose_file"] = str(Path(compose_file_override).resolve())
+        else:
+            found = _find_compose_file()
+            if found is not None:
+                config["compose_file"] = str(found)
+            else:
+                # Placeholder — init will check and fail below
+                config["compose_file"] = str(Path("nexus-stack.yml").resolve())
 
     if addons:
         config.setdefault("addons", []).extend(addons)
 
     if tls:
-        config["tls_dir"] = os.path.join(data_dir, "tls")
-        config["tls_cert"] = os.path.join(data_dir, "tls", "server.crt")
-        config["tls_key"] = os.path.join(data_dir, "tls", "server.key")
-        config["tls_ca"] = os.path.join(data_dir, "tls", "ca.crt")
+        config["tls_dir"] = os.path.join(abs_data_dir, "tls")
+        config["tls_cert"] = os.path.join(abs_data_dir, "tls", "server.crt")
+        config["tls_key"] = os.path.join(abs_data_dir, "tls", "server.key")
+        config["tls_ca"] = os.path.join(abs_data_dir, "tls", "ca.crt")
 
     return config
 
@@ -282,6 +312,12 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     help="Path for the generated config file.",
 )
 @click.option(
+    "--compose-file",
+    type=click.Path(),
+    default=None,
+    help="Path to nexus-stack.yml (auto-detected from CWD by default).",
+)
+@click.option(
     "--force",
     is_flag=True,
     default=False,
@@ -293,6 +329,7 @@ def init(
     tls: bool,
     addons: tuple[str, ...],
     config_path: str,
+    compose_file: str | None,
     force: bool,
 ) -> None:
     """Initialize a new Nexus project with a preset.
@@ -321,19 +358,21 @@ def init(
     ports = dict(DEFAULT_PORTS)
 
     # Build and write config
-    config = _build_config(preset, str(d_dir), tls, ports, addons)
+    config = _build_config(preset, str(d_dir), tls, ports, addons, compose_file)
+
+    # Validate compose file exists for non-local presets (fail, don't warn)
+    if preset != "local":
+        compose_file = config.get("compose_file", "")
+        if not Path(compose_file).exists():
+            console.print(f"[red]Error:[/red] Compose file not found: {compose_file}")
+            console.print("  Run `nexus init` from the Nexus repo root, or pass")
+            console.print("  --compose-file /absolute/path/to/nexus-stack.yml")
+            raise SystemExit(1)
+
     _write_config(config, cfg_path)
 
     # Create data directories (and TLS certs when --tls is passed)
     _create_data_dirs(d_dir, tls=tls)
-
-    # Validate compose file exists for non-local presets
-    if preset != "local":
-        compose_file = config.get("compose_file", "./nexus-stack.yml")
-        if not Path(compose_file).exists():
-            console.print(f"[yellow]Warning:[/yellow] Compose file not found: {compose_file}")
-            console.print("  The stack requires nexus-stack.yml in the project root.")
-            console.print("  If you cloned the Nexus repo, run `nexus init` from the repo root.")
 
     # Initialize local Nexus workspace for 'local' preset
     if preset == "local":

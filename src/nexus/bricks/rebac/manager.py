@@ -2760,27 +2760,30 @@ class ReBACManager:
             cursor = self._create_cursor(conn)
             cursor.execute(query, params)
 
+            def _safe_get(row: Any, key: str) -> Any:
+                """Read a nullable column from any row type (dict, sqlite3.Row, etc.)."""
+                try:
+                    return row[key]
+                except (KeyError, IndexError):
+                    return None
+
             results = []
             for row in cursor.fetchall():
-                try:
-                    zone_id_val = row["zone_id"]
-                except (KeyError, IndexError):
-                    zone_id_val = None
                 results.append(
                     {
                         "tuple_id": row["tuple_id"],
                         "subject_type": row["subject_type"],
                         "subject_id": row["subject_id"],
-                        "subject_relation": row.get("subject_relation"),
+                        "subject_relation": _safe_get(row, "subject_relation"),
                         "relation": row["relation"],
                         "object_type": row["object_type"],
                         "object_id": row["object_id"],
                         "created_at": row["created_at"],
-                        "expires_at": row["expires_at"],
-                        "conditions": row.get("conditions"),
-                        "zone_id": zone_id_val,
-                        "subject_zone_id": row.get("subject_zone_id"),
-                        "object_zone_id": row.get("object_zone_id"),
+                        "expires_at": _safe_get(row, "expires_at"),
+                        "conditions": _safe_get(row, "conditions"),
+                        "zone_id": _safe_get(row, "zone_id"),
+                        "subject_zone_id": _safe_get(row, "subject_zone_id"),
+                        "object_zone_id": _safe_get(row, "object_zone_id"),
                     }
                 )
 

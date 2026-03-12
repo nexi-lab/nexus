@@ -546,10 +546,8 @@ def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
     """
     from nexus.raft.federation_content_resolver import FederationContentResolver
 
-    root_route = nx_fs.router.route("/", is_admin=True, check_write=False)
     resolver = FederationContentResolver(
         metastore=nx_fs.metadata,
-        backend=root_route.backend,
         self_address=zone_mgr.advertise_addr,
         tls_config=zone_mgr.tls_config,
     )

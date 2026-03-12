@@ -222,10 +222,9 @@ class TestFullWorkflow:
         """nexus up should start Docker Compose services."""
         config_path = initialized_project / "nexus.yaml"
 
-        # Read config to get compose file and profiles
+        # Verify compose file exists before starting
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
-
         compose_file = cfg.get("compose_file", "")
         assert Path(compose_file).exists(), f"compose file missing: {compose_file}"
 
@@ -242,6 +241,11 @@ class TestFullWorkflow:
             assert result.returncode == 0, (
                 f"nexus up failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
             )
+
+            # Re-read config — nexus up may have resolved port conflicts
+            # and persisted new ports back to nexus.yaml
+            with open(config_path) as f:
+                cfg = yaml.safe_load(f)
 
             # Verify health endpoint is reachable
             import urllib.request
@@ -268,9 +272,6 @@ class TestFullWorkflow:
         """
         config_path = initialized_project / "nexus.yaml"
 
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
-
         # Step 1: nexus up
         up_result = subprocess.run(
             ["nexus", "up"],
@@ -282,6 +283,10 @@ class TestFullWorkflow:
         assert up_result.returncode == 0, (
             f"nexus up failed:\nstdout: {up_result.stdout}\nstderr: {up_result.stderr}"
         )
+
+        # Re-read config after up — ports may have been reassigned
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
 
         try:
             # Wait a moment for services to stabilize

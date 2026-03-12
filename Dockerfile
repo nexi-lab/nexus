@@ -88,8 +88,8 @@ RUN maturin build --release --out /build/dist && \
 
 # Build nexus_raft
 WORKDIR /build/rust/nexus_raft
-RUN maturin build --release --features full && \
-    pip install --no-cache-dir target/wheels/nexus_raft-*-manylinux*.whl
+RUN maturin build --release --features full --out /build/dist && \
+    pip install --no-cache-dir /build/dist/nexus_raft-*.whl
 
 WORKDIR /build
 

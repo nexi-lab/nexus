@@ -39,6 +39,9 @@ function resetStore(): void {
     fraudScores: [],
     fraudScoresLoading: false,
     selectedFraudIndex: 0,
+    delegations: [],
+    delegationsLoading: false,
+    selectedDelegationIndex: 0,
     activeTab: "manifests",
     error: null,
   });
@@ -326,43 +329,60 @@ describe("AccessStore", () => {
   });
 
   describe("fetchAlerts", () => {
-    it("fetches and stores governance alerts", async () => {
+    it("fetches and stores governance alerts with zone_id", async () => {
       const client = mockClient({
         "/api/v2/governance/alerts": {
           alerts: [
             {
               alert_id: "a-1",
-              severity: "critical",
-              category: "access_violation",
-              message: "Unauthorized access attempt detected",
               agent_id: "agent-rogue",
-              created_at: "2025-01-15T10:00:00Z",
+              zone_id: "zone-1",
+              severity: "critical",
+              alert_type: "access_violation",
+              details: { reason: "Unauthorized access attempt detected" },
               resolved: false,
+              created_at: "2025-01-15T10:00:00Z",
             },
             {
               alert_id: "a-2",
-              severity: "info",
-              category: "audit",
-              message: "New manifest created",
               agent_id: null,
-              created_at: "2025-01-15T09:00:00Z",
+              zone_id: "zone-1",
+              severity: "info",
+              alert_type: "audit",
+              details: "New manifest created",
               resolved: true,
+              created_at: "2025-01-15T09:00:00Z",
             },
           ],
         },
       });
 
-      await useAccessStore.getState().fetchAlerts(client);
+      await useAccessStore.getState().fetchAlerts("zone-1", client);
       const state = useAccessStore.getState();
 
       expect(state.alerts).toHaveLength(2);
       expect(state.alerts[0]!.alert_id).toBe("a-1");
       expect(state.alerts[0]!.severity).toBe("critical");
+      expect(state.alerts[0]!.alert_type).toBe("access_violation");
       expect(state.alerts[0]!.resolved).toBe(false);
       expect(state.alerts[1]!.agent_id).toBeNull();
       expect(state.alerts[1]!.resolved).toBe(true);
       expect(state.alertsLoading).toBe(false);
       expect(state.error).toBeNull();
+
+      // Verify zone_id passed as query param
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("zone_id=zone-1");
+    });
+
+    it("fetches without zone_id when undefined", async () => {
+      const client = mockClient({
+        "/api/v2/governance/alerts": { alerts: [] },
+      });
+
+      await useAccessStore.getState().fetchAlerts(undefined, client);
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toBe("/api/v2/governance/alerts");
     });
 
     it("sets error on failure", async () => {
@@ -372,7 +392,7 @@ describe("AccessStore", () => {
         }),
       } as unknown as FetchClient;
 
-      await useAccessStore.getState().fetchAlerts(client);
+      await useAccessStore.getState().fetchAlerts("zone-1", client);
       const state = useAccessStore.getState();
       expect(state.alertsLoading).toBe(false);
       expect(state.error).toBe("Governance service down");
@@ -680,17 +700,18 @@ describe("AccessStore", () => {
   });
 
   describe("resolveAlert", () => {
-    it("resolves an alert and updates local state", async () => {
+    it("resolves an alert with zone_id and updates local state", async () => {
       useAccessStore.setState({
         alerts: [
           {
             alert_id: "a-1",
-            severity: "critical" as const,
-            category: "access_violation",
-            message: "Unauthorized",
             agent_id: "agent-rogue",
-            created_at: "2025-01-15T10:00:00Z",
+            zone_id: "zone-1",
+            severity: "critical",
+            alert_type: "access_violation",
+            details: { reason: "Unauthorized" },
             resolved: false,
+            created_at: "2025-01-15T10:00:00Z",
           },
         ],
       });
@@ -703,12 +724,16 @@ describe("AccessStore", () => {
         },
       });
 
-      await useAccessStore.getState().resolveAlert("a-1", "tui-operator", client);
+      await useAccessStore.getState().resolveAlert("a-1", "tui-operator", "zone-1", client);
       const state = useAccessStore.getState();
 
       expect(state.alerts[0]!.resolved).toBe(true);
       expect(state.alertsLoading).toBe(false);
       expect(state.error).toBeNull();
+
+      // Verify zone_id passed as query param
+      const calledUrl = (client.post as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("zone_id=zone-1");
     });
 
     it("sets error on failure", async () => {
@@ -716,7 +741,7 @@ describe("AccessStore", () => {
         post: mock(async () => { throw new Error("Not authorized"); }),
       } as unknown as FetchClient;
 
-      await useAccessStore.getState().resolveAlert("a-1", "op", client);
+      await useAccessStore.getState().resolveAlert("a-1", "op", undefined, client);
       expect(useAccessStore.getState().error).toBe("Not authorized");
     });
   });
@@ -831,6 +856,79 @@ describe("AccessStore", () => {
     it("sets the selected fraud index", () => {
       useAccessStore.getState().setSelectedFraudIndex(3);
       expect(useAccessStore.getState().selectedFraudIndex).toBe(3);
+    });
+  });
+
+  describe("fetchDelegations", () => {
+    it("fetches and stores delegations", async () => {
+      const client = mockClient({
+        "/api/v2/agents/delegate": {
+          delegations: [
+            {
+              delegation_id: "del-1",
+              agent_id: "agent-child",
+              parent_agent_id: "agent-parent",
+              delegation_mode: "supervised",
+              status: "active",
+              scope_prefix: "files/reports/",
+              lease_expires_at: "2025-12-31T23:59:59Z",
+              zone_id: "zone-1",
+              intent: "Read reports",
+              depth: 1,
+              can_sub_delegate: false,
+              created_at: "2025-01-01T00:00:00Z",
+            },
+            {
+              delegation_id: "del-2",
+              agent_id: "agent-sub",
+              parent_agent_id: "agent-child",
+              delegation_mode: "autonomous",
+              status: "expired",
+              scope_prefix: null,
+              lease_expires_at: null,
+              zone_id: null,
+              intent: "General access",
+              depth: 2,
+              can_sub_delegate: true,
+              created_at: "2025-02-01T00:00:00Z",
+            },
+          ],
+          count: 2,
+        },
+      });
+
+      await useAccessStore.getState().fetchDelegations(client);
+      const state = useAccessStore.getState();
+
+      expect(state.delegations).toHaveLength(2);
+      expect(state.delegations[0]!.delegation_id).toBe("del-1");
+      expect(state.delegations[0]!.agent_id).toBe("agent-child");
+      expect(state.delegations[0]!.parent_agent_id).toBe("agent-parent");
+      expect(state.delegations[0]!.scope_prefix).toBe("files/reports/");
+      expect(state.delegations[0]!.delegation_mode).toBe("supervised");
+      expect(state.delegations[0]!.can_sub_delegate).toBe(false);
+      expect(state.delegations[0]!.depth).toBe(1);
+      expect(state.delegations[1]!.scope_prefix).toBeNull();
+      expect(state.delegations[1]!.can_sub_delegate).toBe(true);
+      expect(state.delegationsLoading).toBe(false);
+      expect(state.selectedDelegationIndex).toBe(0);
+      expect(state.error).toBeNull();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("Delegation service down"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchDelegations(client);
+      expect(useAccessStore.getState().error).toBe("Delegation service down");
+    });
+  });
+
+  describe("setSelectedDelegationIndex", () => {
+    it("sets the selected delegation index", () => {
+      useAccessStore.getState().setSelectedDelegationIndex(2);
+      expect(useAccessStore.getState().selectedDelegationIndex).toBe(2);
     });
   });
 

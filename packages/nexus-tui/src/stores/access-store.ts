@@ -36,14 +36,32 @@ export interface PermissionCheck {
   readonly manifest_id: string;
 }
 
+/** Matches backend anomaly alert from governance.py:128-139. */
 export interface GovernanceAlert {
   readonly alert_id: string;
-  readonly severity: "info" | "warning" | "critical";
-  readonly category: string;
-  readonly message: string;
-  readonly agent_id: string | null;
-  readonly created_at: string;
+  readonly agent_id: string;
+  readonly zone_id: string;
+  readonly severity: string;
+  readonly alert_type: string;
+  readonly details: unknown;
   readonly resolved: boolean;
+  readonly created_at: string | null;
+}
+
+/** Matches backend DelegationListItem from delegation.py:135-149. */
+export interface DelegationItem {
+  readonly delegation_id: string;
+  readonly agent_id: string;
+  readonly parent_agent_id: string;
+  readonly delegation_mode: string;
+  readonly status: string;
+  readonly scope_prefix: string | null;
+  readonly lease_expires_at: string | null;
+  readonly zone_id: string | null;
+  readonly intent: string;
+  readonly depth: number;
+  readonly can_sub_delegate: boolean;
+  readonly created_at: string;
 }
 
 export interface LeaderboardEntry {
@@ -106,7 +124,8 @@ export type AccessTab =
   | "reputation"
   | "credentials"
   | "disputes"
-  | "fraud";
+  | "fraud"
+  | "delegations";
 
 // =============================================================================
 // Store
@@ -145,6 +164,11 @@ export interface AccessState {
   readonly fraudScoresLoading: boolean;
   readonly selectedFraudIndex: number;
 
+  // Delegations
+  readonly delegations: readonly DelegationItem[];
+  readonly delegationsLoading: boolean;
+  readonly selectedDelegationIndex: number;
+
   // UI state
   readonly activeTab: AccessTab;
   readonly error: string | null;
@@ -159,8 +183,8 @@ export interface AccessState {
   ) => Promise<void>;
 
   // Actions — alerts
-  readonly fetchAlerts: (client: FetchClient) => Promise<void>;
-  readonly resolveAlert: (alertId: string, resolvedBy: string, client: FetchClient) => Promise<void>;
+  readonly fetchAlerts: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
+  readonly resolveAlert: (alertId: string, resolvedBy: string, zoneId: string | undefined, client: FetchClient) => Promise<void>;
 
   // Actions — reputation
   readonly fetchLeaderboard: (client: FetchClient) => Promise<void>;
@@ -183,12 +207,16 @@ export interface AccessState {
   readonly fetchFraudScores: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
   readonly computeFraudScores: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
 
+  // Actions — delegations
+  readonly fetchDelegations: (client: FetchClient) => Promise<void>;
+
   // Actions — UI
   readonly setActiveTab: (tab: AccessTab) => void;
   readonly setSelectedManifestIndex: (index: number) => void;
   readonly setSelectedAlertIndex: (index: number) => void;
   readonly setSelectedDisputeIndex: (index: number) => void;
   readonly setSelectedFraudIndex: (index: number) => void;
+  readonly setSelectedDelegationIndex: (index: number) => void;
 }
 
 export const useAccessStore = create<AccessState>((set) => ({
@@ -210,6 +238,9 @@ export const useAccessStore = create<AccessState>((set) => ({
   fraudScores: [],
   fraudScoresLoading: false,
   selectedFraudIndex: 0,
+  delegations: [],
+  delegationsLoading: false,
+  selectedDelegationIndex: 0,
   activeTab: "manifests",
   error: null,
 
@@ -287,12 +318,13 @@ export const useAccessStore = create<AccessState>((set) => ({
 
   // ── Alerts ─────────────────────────────────────────────────────────────
 
-  fetchAlerts: async (client) => {
+  fetchAlerts: async (zoneId, client) => {
     set({ alertsLoading: true, error: null });
     try {
+      const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
       const response = await client.get<{
         readonly alerts: readonly GovernanceAlert[];
-      }>("/api/v2/governance/alerts");
+      }>(`/api/v2/governance/alerts${params}`);
       set({
         alerts: response.alerts,
         alertsLoading: false,
@@ -306,14 +338,15 @@ export const useAccessStore = create<AccessState>((set) => ({
     }
   },
 
-  resolveAlert: async (alertId, resolvedBy, client) => {
+  resolveAlert: async (alertId, resolvedBy, zoneId, client) => {
     set({ alertsLoading: true, error: null });
     try {
+      const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
       await client.post<{
         readonly alert_id: string;
         readonly resolved: boolean;
         readonly resolved_by: string;
-      }>(`/api/v2/governance/alerts/${encodeURIComponent(alertId)}/resolve`, {
+      }>(`/api/v2/governance/alerts/${encodeURIComponent(alertId)}/resolve${params}`, {
         resolved_by: resolvedBy,
       });
       set((state) => ({
@@ -502,5 +535,31 @@ export const useAccessStore = create<AccessState>((set) => ({
 
   setSelectedFraudIndex: (index) => {
     set({ selectedFraudIndex: index });
+  },
+
+  // ── Delegations ─────────────────────────────────────────────────────────
+
+  fetchDelegations: async (client) => {
+    set({ delegationsLoading: true, error: null });
+    try {
+      const response = await client.get<{
+        readonly delegations: readonly DelegationItem[];
+        readonly count: number;
+      }>("/api/v2/agents/delegate");
+      set({
+        delegations: response.delegations,
+        delegationsLoading: false,
+        selectedDelegationIndex: 0,
+      });
+    } catch (err) {
+      set({
+        delegationsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch delegations",
+      });
+    }
+  },
+
+  setSelectedDelegationIndex: (index) => {
+    set({ selectedDelegationIndex: index });
   },
 }));

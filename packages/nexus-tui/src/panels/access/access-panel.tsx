@@ -26,6 +26,7 @@ import { ReputationView } from "./reputation-view.js";
 import { CredentialList } from "./credential-list.js";
 import { DisputeList } from "./dispute-list.js";
 import { FraudScoreView } from "./fraud-score-view.js";
+import { DelegationList } from "./delegation-list.js";
 import { PermissionChecker } from "./permission-checker.js";
 import { DisputeFiler } from "./dispute-filer.js";
 import { DisputeLookup } from "./dispute-lookup.js";
@@ -37,6 +38,7 @@ const TAB_ORDER: readonly AccessTab[] = [
   "credentials",
   "disputes",
   "fraud",
+  "delegations",
 ];
 const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
   manifests: "Manifests",
@@ -45,6 +47,7 @@ const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
   credentials: "Credentials",
   disputes: "Disputes",
   fraud: "Fraud",
+  delegations: "Delegations",
 };
 
 type OverlayMode = "none" | "permissionChecker" | "disputeFiler" | "disputeLookup";
@@ -76,6 +79,9 @@ export default function AccessPanel(): React.ReactNode {
   const fraudScores = useAccessStore((s) => s.fraudScores);
   const fraudScoresLoading = useAccessStore((s) => s.fraudScoresLoading);
   const selectedFraudIndex = useAccessStore((s) => s.selectedFraudIndex);
+  const delegations = useAccessStore((s) => s.delegations);
+  const delegationsLoading = useAccessStore((s) => s.delegationsLoading);
+  const selectedDelegationIndex = useAccessStore((s) => s.selectedDelegationIndex);
   const activeTab = useAccessStore((s) => s.activeTab);
   const error = useAccessStore((s) => s.error);
 
@@ -89,11 +95,13 @@ export default function AccessPanel(): React.ReactNode {
   const resolveDispute = useAccessStore((s) => s.resolveDispute);
   const fetchFraudScores = useAccessStore((s) => s.fetchFraudScores);
   const computeFraudScores = useAccessStore((s) => s.computeFraudScores);
+  const fetchDelegations = useAccessStore((s) => s.fetchDelegations);
   const setActiveTab = useAccessStore((s) => s.setActiveTab);
   const setSelectedManifestIndex = useAccessStore((s) => s.setSelectedManifestIndex);
   const setSelectedAlertIndex = useAccessStore((s) => s.setSelectedAlertIndex);
   const setSelectedDisputeIndex = useAccessStore((s) => s.setSelectedDisputeIndex);
   const setSelectedFraudIndex = useAccessStore((s) => s.setSelectedFraudIndex);
+  const setSelectedDelegationIndex = useAccessStore((s) => s.setSelectedDelegationIndex);
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
@@ -102,7 +110,7 @@ export default function AccessPanel(): React.ReactNode {
     if (activeTab === "manifests") {
       fetchManifests(client);
     } else if (activeTab === "alerts") {
-      fetchAlerts(client);
+      fetchAlerts(effectiveZoneId, client);
     } else if (activeTab === "reputation") {
       fetchLeaderboard(client);
     } else if (activeTab === "credentials") {
@@ -116,6 +124,8 @@ export default function AccessPanel(): React.ReactNode {
       }
     } else if (activeTab === "fraud") {
       fetchFraudScores(effectiveZoneId, client);
+    } else if (activeTab === "delegations") {
+      fetchDelegations(client);
     }
   };
 
@@ -135,6 +145,8 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedDisputeIndex(Math.min(selectedDisputeIndex + 1, disputes.length - 1));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.min(selectedFraudIndex + 1, fraudScores.length - 1));
+      } else if (activeTab === "delegations") {
+        setSelectedDelegationIndex(Math.min(selectedDelegationIndex + 1, delegations.length - 1));
       }
     },
     down: () => {
@@ -146,6 +158,8 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedDisputeIndex(Math.min(selectedDisputeIndex + 1, disputes.length - 1));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.min(selectedFraudIndex + 1, fraudScores.length - 1));
+      } else if (activeTab === "delegations") {
+        setSelectedDelegationIndex(Math.min(selectedDelegationIndex + 1, delegations.length - 1));
       }
     },
     k: () => {
@@ -157,6 +171,8 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedDisputeIndex(Math.max(selectedDisputeIndex - 1, 0));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
+      } else if (activeTab === "delegations") {
+        setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
       }
     },
     up: () => {
@@ -168,6 +184,8 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedDisputeIndex(Math.max(selectedDisputeIndex - 1, 0));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
+      } else if (activeTab === "delegations") {
+        setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
       }
     },
     tab: () => {
@@ -219,7 +237,7 @@ export default function AccessPanel(): React.ReactNode {
       } else if (activeTab === "alerts") {
         const selected = alerts[selectedAlertIndex];
         if (selected && !selected.resolved) {
-          resolveAlert(selected.alert_id, "tui-operator", client);
+          resolveAlert(selected.alert_id, "tui-operator", effectiveZoneId, client);
         }
       }
     },
@@ -280,6 +298,7 @@ export default function AccessPanel(): React.ReactNode {
     credentials: "Tab:tab  r:refresh  q:quit",
     disputes: "j/k:navigate  f:file  g:lookup  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
     fraud: "j/k:navigate  c:compute  Tab:tab  r:refresh  q:quit",
+    delegations: "j/k:navigate  Tab:tab  r:refresh  q:quit",
   };
 
   return (
@@ -350,6 +369,13 @@ export default function AccessPanel(): React.ReactNode {
             scores={fraudScores}
             selectedIndex={selectedFraudIndex}
             loading={fraudScoresLoading}
+          />
+        )}
+        {activeTab === "delegations" && (
+          <DelegationList
+            delegations={delegations}
+            selectedIndex={selectedDelegationIndex}
+            loading={delegationsLoading}
           />
         )}
       </box>

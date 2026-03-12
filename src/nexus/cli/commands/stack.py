@@ -8,6 +8,7 @@ port conflict detection, parallel health polling, and rich status output.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import shutil
 import subprocess
 import time
@@ -54,6 +55,39 @@ def _save_project_config(config: dict[str, Any], path: str | None = None) -> Non
         target = Path(CONFIG_SEARCH_PATHS[0])
     with open(target, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
+    """Build the compose environment from nexus.yaml config.
+
+    Returns a dict with COMPOSE_PROJECT_NAME, NEXUS_HOST_DATA_DIR,
+    port vars, auth type, and TLS settings — everything compose
+    commands need to target the correct project.
+    """
+    data_dir = str(Path(config.get("data_dir", "./nexus-data")).resolve())
+    project_hash = hashlib.md5(data_dir.encode()).hexdigest()[:8]
+    project_name = f"nexus-{project_hash}"
+
+    ports = config.get("ports", {})
+    env: dict[str, str] = {
+        "COMPOSE_PROJECT_NAME": project_name,
+        "NEXUS_PORT": str(ports.get("http", 2026)),
+        "NEXUS_GRPC_PORT": str(ports.get("grpc", 2028)),
+        "POSTGRES_PORT": str(ports.get("postgres", 5432)),
+        "DRAGONFLY_PORT": str(ports.get("dragonfly", 6379)),
+        "ZOEKT_PORT": str(ports.get("zoekt", 6070)),
+        "NEXUS_HOST_DATA_DIR": data_dir,
+        "NEXUS_ADMIN_USER": str(config.get("admin_user", "admin")),
+        "NEXUS_AUTH_TYPE": config.get("auth", "none"),
+    }
+
+    if config.get("tls"):
+        env["NEXUS_TLS_ENABLED"] = "true"
+        env["NEXUS_TLS_CERT"] = "/app/data/tls/server.crt"
+        env["NEXUS_TLS_KEY"] = "/app/data/tls/server.key"
+        env["NEXUS_TLS_CA"] = "/app/data/tls/ca.crt"
+
+    return env
 
 
 # ---------------------------------------------------------------------------
@@ -316,44 +350,17 @@ def up(
         config["ports"] = resolved_ports
         _save_project_config(config)
 
-    # Resolve data_dir to an absolute path — Docker Compose treats bare
-    # directory names (e.g. "nexus-data") as *named volumes*, not bind
-    # mounts.  An absolute path is always interpreted as a bind mount.
-    data_dir = str(Path(config.get("data_dir", "./nexus-data")).resolve())
+    # Build environment from config (project name, ports, data dir, auth, TLS)
+    compose_env = _derive_project_env(config)
 
-    # Derive a stable, per-directory project name so that Compose stacks
-    # from different project directories never collide on networks/volumes.
-    import hashlib
+    # Override ports with resolved values (may differ from config if conflicts)
+    compose_env["NEXUS_PORT"] = str(resolved_ports.get("http", 2026))
+    compose_env["NEXUS_GRPC_PORT"] = str(resolved_ports.get("grpc", 2028))
+    compose_env["POSTGRES_PORT"] = str(resolved_ports.get("postgres", 5432))
+    compose_env["DRAGONFLY_PORT"] = str(resolved_ports.get("dragonfly", 6379))
+    compose_env["ZOEKT_PORT"] = str(resolved_ports.get("zoekt", 6070))
 
-    project_hash = hashlib.md5(data_dir.encode()).hexdigest()[:8]
-    project_name = f"nexus-{project_hash}"
-
-    # Build environment variables for compose — nexus.yaml is the SSOT
-    compose_env: dict[str, str] = {
-        # Project isolation
-        "COMPOSE_PROJECT_NAME": project_name,
-        # Ports
-        "NEXUS_PORT": str(resolved_ports.get("http", 2026)),
-        "NEXUS_GRPC_PORT": str(resolved_ports.get("grpc", 2028)),
-        "POSTGRES_PORT": str(resolved_ports.get("postgres", 5432)),
-        "DRAGONFLY_PORT": str(resolved_ports.get("dragonfly", 6379)),
-        "ZOEKT_PORT": str(resolved_ports.get("zoekt", 6070)),
-        # Data directory (host path for volume mount — must be absolute)
-        "NEXUS_HOST_DATA_DIR": data_dir,
-        # Admin user
-        "NEXUS_ADMIN_USER": str(config.get("admin_user", "admin")),
-    }
-
-    # Auth config — always forward so the entrypoint honours the preset's choice
-    compose_env["NEXUS_AUTH_TYPE"] = config.get("auth", "none")
-
-    # TLS config — paths must be container-relative (/app/data/tls/...)
-    # since the host data_dir is mounted at /app/data inside the container.
-    if config.get("tls"):
-        compose_env["NEXUS_TLS_ENABLED"] = "true"
-        compose_env["NEXUS_TLS_CERT"] = "/app/data/tls/server.crt"
-        compose_env["NEXUS_TLS_KEY"] = "/app/data/tls/server.key"
-        compose_env["NEXUS_TLS_CA"] = "/app/data/tls/ca.crt"
+    data_dir = compose_env["NEXUS_HOST_DATA_DIR"]
 
     # Start compose
     compose_args: list[str] = ["up"]
@@ -472,8 +479,10 @@ def down(volumes: bool) -> None:
     if volumes:
         args.append("--volumes")
 
+    compose_env = _derive_project_env(config)
+
     console.print(f"[bold]Stopping Nexus preset: {preset}[/bold]")
-    result = _run_compose(cf, profiles, *args)
+    result = _run_compose(cf, profiles, *args, extra_env=compose_env)
     if result.returncode == 0:
         console.print("[green]✓[/green] Stack stopped.")
     else:
@@ -498,6 +507,7 @@ def logs(follow: bool, tail: int, service: str | None) -> None:
     config = _load_project_config()
     cf = config.get("compose_file", "./nexus-stack.yml")
     profiles = list(config.get("compose_profiles", []))
+    compose_env = _derive_project_env(config)
 
     args: list[str] = ["logs", "--tail", str(tail)]
     if follow:
@@ -505,7 +515,7 @@ def logs(follow: bool, tail: int, service: str | None) -> None:
     if service:
         args.append(service)
 
-    _run_compose(cf, profiles, *args)
+    _run_compose(cf, profiles, *args, extra_env=compose_env)
 
 
 @click.command()
@@ -528,14 +538,15 @@ def restart(build: bool) -> None:
 
     cf = config.get("compose_file", "./nexus-stack.yml")
     profiles = list(config.get("compose_profiles", []))
+    compose_env = _derive_project_env(config)
 
     console.print(f"[bold]Restarting Nexus preset: {preset}[/bold]")
-    _run_compose(cf, profiles, "down")
+    _run_compose(cf, profiles, "down", extra_env=compose_env)
 
     args: list[str] = ["up", "-d"]
     if build:
         args.append("--build")
-    result = _run_compose(cf, profiles, *args)
+    result = _run_compose(cf, profiles, *args, extra_env=compose_env)
     if result.returncode == 0:
         console.print("[green]✓[/green] Stack restarted.")
     else:

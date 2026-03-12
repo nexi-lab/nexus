@@ -239,30 +239,27 @@ class TestFullWorkflow:
         )
 
         try:
-            # Verify it started (or at least attempted)
-            # Note: may fail if images aren't built, which is OK for CI
-            if result.returncode == 0:
-                # Verify health endpoint
-                health_port = cfg.get("ports", {}).get("http", 2026)
-                import urllib.request
+            assert result.returncode == 0, (
+                f"nexus up failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+            )
 
-                try:
-                    resp = urllib.request.urlopen(
-                        f"http://localhost:{health_port}/health", timeout=5
-                    )
-                    assert resp.status == 200
-                except Exception:
-                    pass  # Health check is best-effort in E2E
+            # Verify health endpoint is reachable
+            import urllib.request
+
+            health_port = cfg.get("ports", {}).get("http", 2026)
+            resp = urllib.request.urlopen(f"http://localhost:{health_port}/health", timeout=10)
+            assert resp.status == 200, f"health check returned {resp.status}"
 
         finally:
             # Always clean up — run nexus down
-            subprocess.run(
+            down_result = subprocess.run(
                 ["nexus", "down"],
                 capture_output=True,
                 text=True,
                 timeout=60,
                 cwd=str(initialized_project),
             )
+            assert down_result.returncode == 0, f"nexus down failed: {down_result.stderr}"
 
     def test_full_init_up_demo_down(self, initialized_project: Path) -> None:
         """Complete first-run workflow: init → up → demo init → down.
@@ -282,9 +279,9 @@ class TestFullWorkflow:
             timeout=300,
             cwd=str(initialized_project),
         )
-
-        if up_result.returncode != 0:
-            pytest.skip(f"nexus up failed (images may not be built): {up_result.stderr[:200]}")
+        assert up_result.returncode == 0, (
+            f"nexus up failed:\nstdout: {up_result.stdout}\nstderr: {up_result.stderr}"
+        )
 
         try:
             # Wait a moment for services to stabilize
@@ -320,11 +317,12 @@ class TestFullWorkflow:
             assert not manifest_path.exists(), "manifest should be removed after reset"
 
         finally:
-            # Step 4: nexus down
-            subprocess.run(
+            # Step 4: nexus down — must succeed and actually remove the stack
+            down_result = subprocess.run(
                 ["nexus", "down"],
                 capture_output=True,
                 text=True,
                 timeout=60,
                 cwd=str(initialized_project),
             )
+            assert down_result.returncode == 0, f"nexus down failed: {down_result.stderr}"

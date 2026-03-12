@@ -108,6 +108,14 @@ auth:
 enforce_permissions: true            # Enable permission enforcement by default (use --no-permissions to disable)
 enforce_zone_isolation: true         # Enable zone isolation by default (use --no-zone-isolation to disable)
 
+# Features — must match FeaturesConfig field names (extra="forbid")
+features:
+  search: false           # Disabled for demo (no embedding model)
+  llm: false              # Disabled for demo (no LLM provider)
+  agent_registry: true
+  scheduler: false        # Disabled for demo
+  sandbox: false          # Disabled for demo
+
 # Monitoring
 monitoring:
   logging:

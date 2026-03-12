@@ -114,3 +114,11 @@ def test_lazy_registration_defers_command_module_import(monkeypatch) -> None:
     assert command is not None
     assert "nexus.cli.commands.directory" in imported
     assert "nexus.cli.commands.oauth" not in imported
+
+
+def test_lazy_registration_supports_hyphenated_add_command_groups() -> None:
+    """Lazy top-level registration should preserve hyphenated Click command names."""
+    command = main.get_command(click.Context(main), "secrets-audit")
+
+    assert command is not None
+    assert command.name == "secrets-audit"

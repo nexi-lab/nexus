@@ -33,3 +33,31 @@ def test_local_connect_falls_back_when_full_federation_build_is_unavailable(
         assert nx.sys_read("/hello.txt") == b"hello"
     finally:
         nx.close()
+
+
+def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
+    monkeypatch,
+) -> None:
+    """Remote clients should avoid local parser bootstrap and mount writes."""
+    from nexus.bricks.parsers.providers.registry import ProviderRegistry
+    from nexus.bricks.parsers.registry import ParserRegistry
+    from nexus.storage.remote_metastore import RemoteMetastore
+
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("remote connect should not perform this bootstrap step")
+
+    monkeypatch.setattr(RemoteMetastore, "put", _unexpected)
+    monkeypatch.setattr(ParserRegistry, "register", _unexpected)
+    monkeypatch.setattr(ProviderRegistry, "auto_discover", _unexpected)
+
+    nx = nexus.connect(
+        config={
+            "profile": "remote",
+            "url": "http://127.0.0.1:2027",
+        }
+    )
+    try:
+        assert nx.parser_registry.get_parsers() == []
+        assert nx.provider_registry.get_all_providers() == []
+    finally:
+        nx.close()

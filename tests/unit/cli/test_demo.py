@@ -14,6 +14,7 @@ from nexus.cli.commands.demo import (
     PLAN_VERSIONS,
     _delete_demo_files,
     _load_manifest,
+    _revoke_identities,
     _save_manifest,
     _seed_identities,
 )
@@ -210,7 +211,7 @@ class TestSeedIdentities:
         key_file = tmp_path / ".admin-api-key"
         key_file.write_text("test-admin-key")
 
-        mock_rpc = MagicMock(return_value={"api_key": "new-key", "user_id": "x"})
+        mock_rpc = MagicMock(return_value={"api_key": "new-key", "key_id": "kid-1", "user_id": "x"})
         mock_get_rpc = MagicMock(return_value=mock_rpc)
 
         config = {
@@ -230,9 +231,88 @@ class TestSeedIdentities:
         assert created == 2
         assert manifest["identities_seeded"] is True
         assert "identity_keys" in manifest
+        # identity_keys stores dicts with api_key and key_id
+        for _id, key_info in manifest["identity_keys"].items():
+            assert isinstance(key_info, dict)
+            assert "api_key" in key_info
+            assert "key_id" in key_info
 
     def test_skips_when_no_api_key(self) -> None:
         config = {"preset": "demo", "auth": "database", "data_dir": "/nonexistent"}
         manifest: dict = {}
         created = _seed_identities(config, manifest)
         assert created == 0
+
+
+# ---------------------------------------------------------------------------
+# Revoke identity tests
+# ---------------------------------------------------------------------------
+
+
+class TestRevokeIdentities:
+    def test_noop_when_no_keys(self) -> None:
+        config = {"preset": "demo", "auth": "database"}
+        manifest: dict = {}
+        assert _revoke_identities(config, manifest) == 0
+
+    def test_noop_when_no_api_key(self) -> None:
+        config = {"preset": "demo", "auth": "database", "data_dir": "/nonexistent"}
+        manifest = {
+            "identity_keys": {
+                "demo_user": {"api_key": "k1", "key_id": "kid1"},
+            },
+        }
+        assert _revoke_identities(config, manifest) == 0
+
+    def test_revokes_via_rpc(self, tmp_path: Path) -> None:
+        key_file = tmp_path / ".admin-api-key"
+        key_file.write_text("test-admin-key")
+
+        mock_rpc = MagicMock(return_value={})
+        mock_get_rpc = MagicMock(return_value=mock_rpc)
+
+        config = {
+            "preset": "demo",
+            "auth": "database",
+            "data_dir": str(tmp_path),
+            "ports": {"http": 2026, "grpc": 2028},
+        }
+        manifest = {
+            "identity_keys": {
+                "demo_user": {"api_key": "k1", "key_id": "kid1"},
+                "demo_agent": {"api_key": "k2", "key_id": "kid2"},
+            },
+        }
+
+        mock_admin_module = MagicMock(get_admin_rpc=mock_get_rpc)
+        with patch.dict("sys.modules", {"nexus.cli.commands.admin": mock_admin_module}):
+            revoked = _revoke_identities(config, manifest)
+
+        assert revoked == 2
+        assert mock_rpc.call_count == 2
+
+    def test_skips_entries_without_key_id(self, tmp_path: Path) -> None:
+        key_file = tmp_path / ".admin-api-key"
+        key_file.write_text("test-admin-key")
+
+        mock_rpc = MagicMock(return_value={})
+        mock_get_rpc = MagicMock(return_value=mock_rpc)
+
+        config = {
+            "preset": "demo",
+            "auth": "database",
+            "data_dir": str(tmp_path),
+            "ports": {"http": 2026, "grpc": 2028},
+        }
+        manifest = {
+            "identity_keys": {
+                "demo_user": {"api_key": "k1", "key_id": ""},
+                "demo_agent": {"api_key": "k2", "key_id": "kid2"},
+            },
+        }
+
+        mock_admin_module = MagicMock(get_admin_rpc=mock_get_rpc)
+        with patch.dict("sys.modules", {"nexus.cli.commands.admin": mock_admin_module}):
+            revoked = _revoke_identities(config, manifest)
+
+        assert revoked == 1

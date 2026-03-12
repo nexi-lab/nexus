@@ -76,7 +76,7 @@ Follows Linux's monolithic kernel model, not microkernel:
 |------|-----------|-------|----------------|
 | Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
 | Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
-| Services | Init-time DI (Phase 1); runtime hot-swap planned (Phase 2) | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
+| Services | Init-time DI + runtime hot-swap | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
 The kernel operates with zero services loaded.
@@ -86,10 +86,9 @@ The kernel operates with zero services loaded.
 
 ### Service Lifecycle
 
-**Phase 1 — Init-time DI (current).** `factory/` acts as the init system
-(like systemd): creates selected services and injects them via DI.
-Different distros select different service sets at startup — `nexus-server`
-loads all 22+, `nexus-embedded` loads zero.
+`factory/` acts as the init system (like systemd): creates selected services
+and injects them via DI. Different distros select different service sets at
+startup — `nexus-server` loads all 22+, `nexus-embedded` loads zero.
 
 Factory boot sequence (3 tiers, strictly ordered):
 
@@ -103,10 +102,35 @@ Services needing kernel syscalls declare `KERNEL_DEPS` in `brick_factory.py`;
 `ServiceRegistry` resolves via kernel symbol table (`EXPORT_SYMBOL()` pattern).
 `DeploymentProfile` gates which bricks are constructed (see §7).
 
-**Phase 2 — Runtime hot-swap (planned).** `ServiceRegistry` will manage services
-following the Loadable Kernel Module pattern: lifecycle protocol
-(`init`→`start`→`stop`→`cleanup`), dependency graph enforcement, reference
-counting, and hook auto-registration/unregistration at load/unload time.
+#### Service Lifecycle Protocols
+
+Two `@runtime_checkable` protocols classify services into a 2×2 matrix.
+Services satisfy the contract by implementing the methods — no inheritance
+required (structural typing).
+
+```
+                  Invocation-only          Persistent-required
+             ┌─────────────────────┬─────────────────────────┐
+  Static     │ Q1: register only   │ Q3: auto start()/stop() │
+             │ (SearchService)     │ (EventDeliveryWorker)   │
+             ├─────────────────────┼─────────────────────────┤
+  HotSwap    │ Q2: auto hooks +   │ Q4: hooks + activate +  │
+             │     activate()      │     start()/stop()      │
+             │ (ReBACService)      │ (future)                │
+             └─────────────────────┴─────────────────────────┘
+```
+
+| Protocol | Methods | Kernel auto-manages |
+|----------|---------|---------------------|
+| `HotSwappable` | `hook_spec()`, `drain()`, `activate()` | Hook registration into KernelDispatch + activate on bootstrap; drain + unregister on shutdown |
+| `PersistentService` | `start()`, `stop()` | `start()` on bootstrap (dependency order); `stop()` on shutdown (reverse order) |
+
+One-click contract: implement protocol → `coordinator.register_service()` →
+kernel handles the rest. `ServiceLifecycleCoordinator` (optional, injected by
+factory) scans the registry and auto-calls the appropriate methods during
+`NexusFS.bootstrap()` / `NexusFS.aclose()`.
+
+**Source of truth:** `contracts/protocols/service_lifecycle.py`
 
 ### Entry Point: `connect()`
 

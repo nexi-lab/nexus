@@ -302,6 +302,11 @@ class NexusFS(  # type: ignore[misc]
             self.initialize()
         for cb in self._bootstrap_callbacks:
             await cb()
+        # Auto-lifecycle: activate HotSwappable hooks, start PersistentService (Issue #1580)
+        coord = self.service_coordinator
+        if coord is not None:
+            await coord.activate_hot_swappable_services()
+            await coord.start_persistent_services()
         self._bootstrapped = True
 
     # -- Service registry accessors (Issue #1452) ---------------------------
@@ -4178,6 +4183,19 @@ class NexusFS(  # type: ignore[misc]
             raise BackendError(str(exc)) from exc
 
         return {"path": path, "capacity": capacity}
+
+    async def aclose(self) -> None:
+        """Async shutdown: stop PersistentService + deactivate HotSwappable, then close.
+
+        Preferred over close() when an event loop is available.
+        Calls coordinator lifecycle methods first (async), then
+        delegates to close() for sync resource cleanup.
+        """
+        coord = self.service_coordinator
+        if coord is not None:
+            await coord.stop_persistent_services()
+            await coord.deactivate_hot_swappable_services()
+        self.close()
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

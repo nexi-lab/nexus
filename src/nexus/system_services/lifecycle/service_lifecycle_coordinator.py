@@ -305,6 +305,144 @@ class ServiceLifecycleCoordinator:
         return hot, static
 
     # ------------------------------------------------------------------
+    # Auto-lifecycle — four-quadrant "one-click" management (Issue #1580)
+    # ------------------------------------------------------------------
+
+    async def start_persistent_services(self, *, timeout: float = 30.0) -> list[str]:
+        """Auto-start all PersistentService instances in dependency order.
+
+        Scans ServiceRegistry for services implementing PersistentService,
+        calls start() in BLM dependency order.  Services only need to
+        implement the protocol — kernel handles the rest.
+
+        Idempotent — PersistentService.start() is idempotent by contract.
+
+        Returns list of started service names.
+        """
+        started: list[str] = []
+        for name in self._ordered_names():
+            info = self._registry.service_info(name)
+            if info is None:
+                continue
+            if not isinstance(info.instance, PersistentService):
+                continue
+            try:
+                await asyncio.wait_for(info.instance.start(), timeout=timeout)
+                started.append(name)
+                logger.info("[COORDINATOR] auto-started persistent service %r", name)
+            except TimeoutError:
+                logger.error("[COORDINATOR] timeout starting %r after %.1fs", name, timeout)
+            except Exception as exc:
+                logger.error("[COORDINATOR] failed to start %r: %s", name, exc)
+        if started:
+            logger.info("[COORDINATOR] started %d persistent services: %s", len(started), started)
+        return started
+
+    async def stop_persistent_services(self, *, timeout: float = 10.0) -> list[str]:
+        """Auto-stop all PersistentService instances in reverse dependency order.
+
+        Called during shutdown.  Mirrors start_persistent_services().
+        """
+        stopped: list[str] = []
+        for name in self._ordered_names(reverse=True):
+            info = self._registry.service_info(name)
+            if info is None:
+                continue
+            if not isinstance(info.instance, PersistentService):
+                continue
+            try:
+                await asyncio.wait_for(info.instance.stop(), timeout=timeout)
+                stopped.append(name)
+                logger.info("[COORDINATOR] auto-stopped persistent service %r", name)
+            except TimeoutError:
+                logger.error("[COORDINATOR] timeout stopping %r after %.1fs", name, timeout)
+            except Exception as exc:
+                logger.error("[COORDINATOR] failed to stop %r: %s", name, exc)
+        if stopped:
+            logger.info("[COORDINATOR] stopped %d persistent services: %s", len(stopped), stopped)
+        return stopped
+
+    async def activate_hot_swappable_services(self) -> list[str]:
+        """Auto-activate all HotSwappable services: register hooks + activate().
+
+        Scans ServiceRegistry for HotSwappable instances, registers their
+        hook_spec() into KernelDispatch, then calls activate().  Services
+        only need to implement the protocol — kernel handles the rest.
+
+        Idempotent — activate() is idempotent by contract.
+
+        Returns list of activated service names.
+        """
+        activated: list[str] = []
+        for name in self._ordered_names():
+            info = self._registry.service_info(name)
+            if info is None:
+                continue
+            if not isinstance(info.instance, HotSwappable):
+                continue
+            try:
+                # Auto-capture hook_spec from protocol if not already set
+                spec = self._hook_specs.get(name)
+                if spec is None:
+                    spec = info.instance.hook_spec()
+                    if spec is not None and not spec.is_empty:
+                        self._hook_specs[name] = spec
+                # Register hooks into dispatch
+                self._register_hooks(name)
+                # Activate service
+                await info.instance.activate()
+                activated.append(name)
+                logger.info("[COORDINATOR] auto-activated hot-swappable service %r", name)
+            except Exception as exc:
+                logger.error("[COORDINATOR] failed to activate %r: %s", name, exc)
+        if activated:
+            logger.info(
+                "[COORDINATOR] activated %d hot-swappable services: %s",
+                len(activated),
+                activated,
+            )
+        return activated
+
+    async def deactivate_hot_swappable_services(self) -> list[str]:
+        """Auto-deactivate all HotSwappable services: drain + unregister hooks.
+
+        Called during shutdown.  Mirrors activate_hot_swappable_services().
+        """
+        deactivated: list[str] = []
+        for name in self._ordered_names(reverse=True):
+            info = self._registry.service_info(name)
+            if info is None:
+                continue
+            if not isinstance(info.instance, HotSwappable):
+                continue
+            try:
+                await info.instance.drain()
+                self._unregister_hooks(name)
+                deactivated.append(name)
+                logger.info("[COORDINATOR] auto-deactivated hot-swappable service %r", name)
+            except Exception as exc:
+                logger.error("[COORDINATOR] failed to deactivate %r: %s", name, exc)
+        if deactivated:
+            logger.info(
+                "[COORDINATOR] deactivated %d hot-swappable services: %s",
+                len(deactivated),
+                deactivated,
+            )
+        return deactivated
+
+    def _ordered_names(self, *, reverse: bool = False) -> list[str]:
+        """Return service names in BLM dependency order (or reverse for shutdown)."""
+        try:
+            if reverse:
+                levels = self._blm.compute_shutdown_order()
+            else:
+                levels = self._blm.compute_startup_order()
+            return [name for level in levels for name in level]
+        except Exception:
+            # Fallback: no ordering guarantee
+            return [info.name for info in self._registry.list_all()]
+
+    # ------------------------------------------------------------------
     # Hook spec management (retroactive spec capture for existing services)
     # ------------------------------------------------------------------
 

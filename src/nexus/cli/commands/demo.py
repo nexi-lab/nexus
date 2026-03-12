@@ -620,6 +620,9 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
         old_manifest = _load_manifest(data_dir)
         if old_manifest:
             console.print("[yellow]Resetting demo data...[/yellow]")
+            revoked = _revoke_identities(config, old_manifest)
+            if revoked:
+                console.print(f"  Revoked {revoked} identity API keys.")
             removed = _delete_demo_files(nx, old_manifest)
             console.print(f"  Removed {removed} files.")
         manifest: dict[str, Any] = {}

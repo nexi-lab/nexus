@@ -16,6 +16,7 @@ from nexus.cli.commands.init_cmd import (
     PRESET_SERVICES,
     VALID_PRESETS,
     _build_config,
+    _bundled_compose_file,
     _find_compose_file,
     _scaffold_tls,
     init,
@@ -71,6 +72,23 @@ class TestFindComposeFile:
         # May find real nexus-stack.yml if run from repo root; test intent is
         # that it doesn't crash. In isolated envs it returns None.
         assert result is None or result.name == "nexus-stack.yml"
+
+
+class TestBundledComposeFile:
+    def test_bundled_file_exists(self) -> None:
+        """The package should ship a bundled nexus-stack.yml."""
+        result = _bundled_compose_file()
+        assert result is not None
+        assert result.name == "nexus-stack.yml"
+        assert result.exists()
+
+    def test_bundled_file_has_services(self) -> None:
+        """The bundled compose file should define services."""
+        bundled = _bundled_compose_file()
+        assert bundled is not None
+        content = bundled.read_text()
+        assert "services:" in content
+        assert "postgres:" in content
 
 
 # ---------------------------------------------------------------------------
@@ -242,11 +260,43 @@ class TestInitCliCommand:
         # TLS directory should have been scaffolded
         assert (data_dir / "tls").is_dir()
 
-    def test_shared_fails_without_compose_file(self, runner: CliRunner, tmp_project: Path) -> None:
-        """shared/demo preset should fail init when compose file is missing."""
+    def test_shared_copies_bundled_compose_file(self, runner: CliRunner, tmp_project: Path) -> None:
+        """shared/demo preset copies bundled compose file when not found locally."""
         config_path = tmp_project / "nexus.yaml"
         data_dir = tmp_project / "nexus-data"
-        # Pass a non-existent compose file explicitly
+
+        # Patch _find_compose_file to return None (simulates clean temp dir)
+        with patch("nexus.cli.commands.init_cmd._find_compose_file", return_value=None):
+            result = runner.invoke(
+                init,
+                [
+                    "--preset",
+                    "shared",
+                    "--config-path",
+                    str(config_path),
+                    "--data-dir",
+                    str(data_dir),
+                ],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0
+        assert "bundled" in result.output.lower() or "copied" in result.output.lower()
+
+        # Verify compose file was copied next to nexus.yaml
+        import yaml as _yaml
+
+        with open(config_path) as f:
+            cfg = _yaml.safe_load(f)
+        compose_file = cfg.get("compose_file", "")
+        assert compose_file
+        assert Path(compose_file).exists()
+
+    def test_shared_fails_without_compose_file(self, runner: CliRunner, tmp_project: Path) -> None:
+        """shared/demo preset should fail init when compose file is missing and no bundle."""
+        config_path = tmp_project / "nexus.yaml"
+        data_dir = tmp_project / "nexus-data"
+        # Pass a non-existent compose file explicitly (bypasses bundled fallback)
         result = runner.invoke(
             init,
             [

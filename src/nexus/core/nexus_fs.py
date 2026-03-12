@@ -2387,6 +2387,11 @@ class NexusFS(  # type: ignore[misc]
                         f"write: Failed to grant direct_owner permission for {path}: {e}"
                     )
 
+        # Auto-parse file if enabled and format is supported
+        if self.auto_parse:
+            content_bytes = content if isinstance(content, bytes) else content.encode()
+            self._auto_parse_file(path, content_bytes)
+
         # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
         # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
         if self._snapshot_service is not None:
@@ -3095,7 +3100,95 @@ class NexusFS(  # type: ignore[misc]
             f"per_file_avg={(_hierarchy_elapsed + _rebac_elapsed) / len(validated_files):.1f}ms"
         )
 
+        # Auto-parse files if enabled
+        if self.auto_parse:
+            for path, file_content in validated_files:
+                self._auto_parse_file(path, file_content)
+
         return results
+
+    def _auto_parse_file(self, path: str, content: bytes) -> None:
+        """Auto-parse a file in the background (fire-and-forget).
+
+        Args:
+            path: Virtual path to the file
+            content: Raw file content
+        """
+        try:
+            # Check if parser is available for this file type
+            self.parser_registry.get_parser(path)
+
+            # Run parsing in a background thread
+            # CRITICAL: Use daemon=False to prevent abrupt termination during DB writes
+            # Threads are tracked for graceful shutdown in close()
+            thread = threading.Thread(
+                target=self._parse_in_thread,
+                args=(content, path),
+                daemon=False,  # Changed from True to prevent DB corruption on shutdown
+                name=f"parser-{path}",  # Named for debugging
+            )
+            # Track thread for graceful shutdown
+            with self._parser_threads_lock:
+                # Clean up finished threads before adding new one
+                self._parser_threads = [t for t in self._parser_threads if t.is_alive()]
+                self._parser_threads.append(thread)
+            thread.start()
+        except Exception as e:
+            # Log if no parser available (expected) but don't fail the write operation
+            logger.debug(f"Auto-parse skipped for {path}: {type(e).__name__}: {e}")
+
+    def _parse_in_thread(self, content: bytes, path: str) -> None:
+        """Parse file in a background thread.
+
+        Args:
+            content: Raw file content
+            path: Virtual path to the file
+        """
+        try:
+            # Use the virtual view parse function if available, otherwise skip
+            parse_fn = getattr(self, "_virtual_view_parse_fn", None)
+            if parse_fn is not None:
+                parse_fn(content, path)
+                return
+            logger.debug(f"Auto-parse skipped for {path}: no parse function available")
+        except Exception as e:
+            # Log parsing errors for visibility but don't crash
+            # IMPORTANT: Log with enough detail to debug issues
+            import traceback
+
+            error_type = type(e).__name__
+            error_msg = str(e)
+
+            # Categorize errors for better logging
+            if "disk" in error_msg.lower() or "space" in error_msg.lower():
+                logger.error(
+                    f"Auto-parse FAILED for {path}: Disk error - {error_type}: {error_msg}"
+                )
+            elif "database" in error_msg.lower() or "connection" in error_msg.lower():
+                logger.error(
+                    f"Auto-parse FAILED for {path}: Database error - {error_type}: {error_msg}"
+                )
+            elif "memory" in error_msg.lower() or isinstance(e, MemoryError):
+                logger.error(
+                    f"Auto-parse FAILED for {path}: Memory error - {error_type}: {error_msg}"
+                )
+            elif "permission" in error_msg.lower() or isinstance(e, PermissionError | OSError):
+                logger.warning(
+                    f"Auto-parse FAILED for {path}: Permission/OS error - {error_type}: {error_msg}"
+                )
+            elif (
+                "unsupported" in error_msg.lower()
+                or "not supported" in error_msg.lower()
+                or error_type == "UnsupportedFormatException"
+            ):
+                # Expected for files that don't need parsing - log at debug level
+                logger.debug(f"Auto-parse skipped for {path}: Unsupported format - {error_msg}")
+            else:
+                # Unknown error - log with stack trace for debugging
+                logger.warning(
+                    f"Auto-parse FAILED for {path}: {error_type}: {error_msg}\n"
+                    f"Stack trace:\n{traceback.format_exc()}"
+                )
 
     @rpc_expose(description="Delete file")
     def sys_unlink(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:

@@ -1,0 +1,439 @@
+/**
+ * Zustand store for Payments & Credits panel.
+ *
+ * Manages balance queries, credit transfers, reservations (hold/commit/release),
+ * transaction audit feed, and spending policies / budget.
+ *
+ * Reservations are tracked locally (from createReservation responses) because
+ * the backend has no reservation list endpoint.
+ */
+
+import { create } from "zustand";
+import type { FetchClient } from "@nexus/api-client";
+
+// =============================================================================
+// Types (snake_case matching API wire format)
+// =============================================================================
+
+export interface BalanceInfo {
+  readonly available: string;
+  readonly reserved: string;
+  readonly total: string;
+}
+
+/** Matches backend ReceiptResponse from pay.py. */
+export interface TransferReceipt {
+  readonly id: string;
+  readonly method: string;
+  readonly amount: string;
+  readonly from_agent: string;
+  readonly to_agent: string;
+  readonly memo: string | null;
+  readonly timestamp: string | null;
+  readonly tx_hash: string | null;
+}
+
+/** Matches backend ReservationResponse from pay.py. */
+export interface Reservation {
+  readonly id: string;
+  readonly amount: string;
+  readonly purpose: string;
+  readonly expires_at: string | null;
+  readonly status: "pending" | "committed" | "released";
+}
+
+/** Matches backend audit transaction record. */
+export interface TransactionRecord {
+  readonly id: string;
+  readonly record_hash: string;
+  readonly created_at: string;
+  readonly protocol: string;
+  readonly buyer_agent_id: string;
+  readonly seller_agent_id: string;
+  readonly amount: string;
+  readonly currency: string;
+  readonly status: string;
+  readonly zone_id: string;
+  readonly trace_id: string | null;
+  readonly metadata_hash: string | null;
+  readonly transfer_id: string | null;
+}
+
+/** Matches backend PolicyResponse from pay.py:541. All limit fields are nullable. */
+export interface PolicyRecord {
+  readonly policy_id: string;
+  readonly zone_id: string;
+  readonly agent_id: string | null;
+  readonly daily_limit: string | null;
+  readonly weekly_limit: string | null;
+  readonly monthly_limit: string | null;
+  readonly per_tx_limit: string | null;
+  readonly auto_approve_threshold: string | null;
+  readonly max_tx_per_hour: number | null;
+  readonly max_tx_per_day: number | null;
+  readonly rules: readonly unknown[] | null;
+  readonly priority: number;
+  readonly enabled: boolean;
+}
+
+/** Matches backend budget summary. */
+export interface BudgetSummary {
+  readonly has_policy: boolean;
+  readonly policy_id: string | null;
+  readonly limits: {
+    readonly daily: string;
+    readonly weekly: string;
+    readonly monthly: string;
+  };
+  readonly spent: {
+    readonly daily: string;
+    readonly weekly: string;
+    readonly monthly: string;
+  };
+  readonly remaining: {
+    readonly daily: string;
+    readonly weekly: string;
+    readonly monthly: string;
+  };
+  readonly rate_limits: unknown;
+  readonly has_rules: boolean;
+}
+
+/** Integrity verification result. */
+export interface IntegrityResult {
+  readonly record_id: string;
+  readonly is_valid: boolean;
+  readonly record_hash: string;
+}
+
+export type PaymentsTab = "balance" | "reservations" | "transactions" | "policies";
+
+// =============================================================================
+// Wire response shapes
+// =============================================================================
+
+interface TransactionsResponse {
+  readonly transactions: readonly TransactionRecord[];
+  readonly limit: number;
+  readonly has_more: boolean;
+  readonly total: number;
+  readonly next_cursor: string | null;
+}
+
+// Note: GET /api/v2/pay/policies returns a bare list[PolicyResponse] (pay.py:641),
+// not a wrapper object. We type the response as PolicyRecord[] directly.
+
+// =============================================================================
+// Store
+// =============================================================================
+
+export interface PaymentsState {
+  // Balance
+  readonly balance: BalanceInfo | null;
+  readonly balanceLoading: boolean;
+
+  // Reservations (tracked locally from create responses)
+  readonly reservations: readonly Reservation[];
+  readonly selectedReservationIndex: number;
+  readonly reservationsLoading: boolean;
+
+  // Transactions (audit feed with cursor-based pagination)
+  readonly transactions: readonly TransactionRecord[];
+  readonly transactionsLoading: boolean;
+  readonly selectedTransactionIndex: number;
+  readonly transactionsHasMore: boolean;
+  readonly transactionsNextCursor: string | null;
+  readonly transactionsCursorStack: readonly string[];
+  readonly transactionsTotal: number | null;
+  readonly integrityResult: IntegrityResult | null;
+
+  // Policies & budget
+  readonly policies: readonly PolicyRecord[];
+  readonly policiesLoading: boolean;
+  readonly budget: BudgetSummary | null;
+  readonly budgetLoading: boolean;
+
+  // UI state
+  readonly activeTab: PaymentsTab;
+  readonly error: string | null;
+
+  // Actions
+  readonly fetchBalance: (client: FetchClient) => Promise<void>;
+  readonly transfer: (
+    to: string,
+    amount: string,
+    memo: string,
+    client: FetchClient,
+  ) => Promise<void>;
+  readonly createReservation: (
+    amount: string,
+    purpose: string,
+    timeout: number,
+    client: FetchClient,
+  ) => Promise<void>;
+  readonly commitReservation: (id: string, client: FetchClient) => Promise<void>;
+  readonly releaseReservation: (id: string, client: FetchClient) => Promise<void>;
+  readonly fetchTransactions: (client: FetchClient, cursor?: string) => Promise<void>;
+  readonly fetchNextTransactions: (client: FetchClient) => Promise<void>;
+  readonly fetchPrevTransactions: (client: FetchClient) => Promise<void>;
+  readonly fetchPolicies: (client: FetchClient) => Promise<void>;
+  readonly fetchBudget: (client: FetchClient) => Promise<void>;
+  readonly deletePolicy: (policyId: string, client: FetchClient) => Promise<void>;
+  readonly verifyIntegrity: (recordId: string, client: FetchClient) => Promise<IntegrityResult | null>;
+  readonly setActiveTab: (tab: PaymentsTab) => void;
+  readonly setSelectedReservationIndex: (index: number) => void;
+  readonly setSelectedTransactionIndex: (index: number) => void;
+}
+
+export const usePaymentsStore = create<PaymentsState>((set, get) => ({
+  balance: null,
+  balanceLoading: false,
+  reservations: [],
+  selectedReservationIndex: 0,
+  reservationsLoading: false,
+  transactions: [],
+  transactionsLoading: false,
+  selectedTransactionIndex: 0,
+  transactionsHasMore: false,
+  transactionsNextCursor: null,
+  transactionsCursorStack: [],
+  transactionsTotal: null,
+  integrityResult: null,
+  policies: [],
+  policiesLoading: false,
+  budget: null,
+  budgetLoading: false,
+  activeTab: "balance",
+  error: null,
+
+  fetchBalance: async (client) => {
+    set({ balanceLoading: true, error: null });
+
+    try {
+      const balance = await client.get<BalanceInfo>("/api/v2/pay/balance");
+      set({ balance: balance ?? null, balanceLoading: false });
+    } catch (err) {
+      set({
+        balanceLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch balance",
+      });
+    }
+  },
+
+  transfer: async (to, amount, memo, client) => {
+    set({ error: null });
+
+    try {
+      await client.post<TransferReceipt>("/api/v2/pay/transfer", {
+        to,
+        amount,
+        memo,
+      });
+      await get().fetchBalance(client);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to transfer credits",
+      });
+    }
+  },
+
+  createReservation: async (amount, purpose, timeout, client) => {
+    set({ error: null });
+
+    try {
+      const reservation = await client.post<Reservation>("/api/v2/pay/reserve", {
+        amount,
+        purpose,
+        timeout,
+      });
+      set((state) => ({
+        reservations: [...state.reservations, reservation],
+      }));
+    } catch (err) {
+      set({
+        error:
+          err instanceof Error ? err.message : "Failed to create reservation",
+      });
+    }
+  },
+
+  commitReservation: async (id, client) => {
+    set({ error: null });
+
+    try {
+      await client.postNoContent(
+        `/api/v2/pay/reserve/${encodeURIComponent(id)}/commit`,
+      );
+      set((state) => ({
+        reservations: state.reservations.map((r) =>
+          r.id === id ? { ...r, status: "committed" as const } : r,
+        ),
+      }));
+    } catch (err) {
+      set({
+        error:
+          err instanceof Error ? err.message : "Failed to commit reservation",
+      });
+    }
+  },
+
+  releaseReservation: async (id, client) => {
+    set({ error: null });
+
+    try {
+      await client.postNoContent(
+        `/api/v2/pay/reserve/${encodeURIComponent(id)}/release`,
+      );
+      set((state) => ({
+        reservations: state.reservations.map((r) =>
+          r.id === id ? { ...r, status: "released" as const } : r,
+        ),
+      }));
+    } catch (err) {
+      set({
+        error:
+          err instanceof Error ? err.message : "Failed to release reservation",
+      });
+    }
+  },
+
+  fetchTransactions: async (client, cursor) => {
+    // Reset pagination state when fetching first page (no cursor = fresh load)
+    const resetPagination = !cursor ? { transactionsCursorStack: [] as readonly string[] } : {};
+    set({ transactionsLoading: true, error: null, ...resetPagination });
+
+    try {
+      const params = new URLSearchParams({ limit: "50", include_total: "true" });
+      if (cursor) {
+        params.set("cursor", cursor);
+      }
+      const data = await client.get<TransactionsResponse>(
+        `/api/v2/audit/transactions?${params.toString()}`,
+      );
+      set({
+        transactions: data.transactions,
+        transactionsHasMore: data.has_more,
+        transactionsNextCursor: data.next_cursor ?? null,
+        transactionsTotal: data.total ?? null,
+        selectedTransactionIndex: 0,
+        transactionsLoading: false,
+        integrityResult: null,
+      });
+    } catch (err) {
+      set({
+        transactionsLoading: false,
+        error:
+          err instanceof Error ? err.message : "Failed to fetch transactions",
+      });
+    }
+  },
+
+  fetchNextTransactions: async (client) => {
+    const { transactionsNextCursor, transactionsHasMore } = get();
+    if (!transactionsHasMore || !transactionsNextCursor) return;
+
+    // Push current page's next_cursor onto stack before navigating forward
+    set((state) => ({
+      transactionsCursorStack: [...state.transactionsCursorStack, transactionsNextCursor],
+    }));
+
+    await get().fetchTransactions(client, transactionsNextCursor);
+  },
+
+  fetchPrevTransactions: async (client) => {
+    const { transactionsCursorStack } = get();
+    if (transactionsCursorStack.length === 0) return;
+
+    // Pop the current cursor (it brought us to this page)
+    const stack = [...transactionsCursorStack];
+    stack.pop();
+
+    // The previous cursor (or undefined for first page)
+    const prevCursor = stack.length > 0 ? stack[stack.length - 1] : undefined;
+    set({ transactionsCursorStack: stack });
+
+    await get().fetchTransactions(client, prevCursor);
+  },
+
+  fetchPolicies: async (client) => {
+    set({ policiesLoading: true, error: null });
+
+    try {
+      // Backend returns bare list[PolicyResponse], not a wrapper object
+      const policies = await client.get<readonly PolicyRecord[]>("/api/v2/pay/policies");
+      set({
+        policies,
+        policiesLoading: false,
+      });
+    } catch (err) {
+      set({
+        policiesLoading: false,
+        error:
+          err instanceof Error ? err.message : "Failed to fetch policies",
+      });
+    }
+  },
+
+  fetchBudget: async (client) => {
+    set({ budgetLoading: true, error: null });
+
+    try {
+      const budget = await client.get<BudgetSummary>("/api/v2/pay/budget");
+      set({ budget: budget ?? null, budgetLoading: false });
+    } catch (err) {
+      set({
+        budgetLoading: false,
+        error:
+          err instanceof Error ? err.message : "Failed to fetch budget",
+      });
+    }
+  },
+
+  deletePolicy: async (policyId, client) => {
+    set({ error: null });
+
+    try {
+      await client.deleteNoContent(
+        `/api/v2/pay/policies/${encodeURIComponent(policyId)}`,
+      );
+      set((state) => ({
+        policies: state.policies.filter((p) => p.policy_id !== policyId),
+      }));
+    } catch (err) {
+      set({
+        error:
+          err instanceof Error ? err.message : "Failed to delete policy",
+      });
+    }
+  },
+
+  verifyIntegrity: async (recordId, client) => {
+    set({ error: null, integrityResult: null });
+
+    try {
+      const result = await client.get<IntegrityResult>(
+        `/api/v2/audit/integrity/${encodeURIComponent(recordId)}`,
+      );
+      set({ integrityResult: result });
+      return result;
+    } catch (err) {
+      set({
+        error:
+          err instanceof Error ? err.message : "Failed to verify integrity",
+      });
+      return null;
+    }
+  },
+
+  setActiveTab: (tab) => {
+    set({ activeTab: tab, error: null });
+  },
+
+  setSelectedReservationIndex: (index) => {
+    set({ selectedReservationIndex: index });
+  },
+
+  setSelectedTransactionIndex: (index) => {
+    set({ selectedTransactionIndex: index });
+  },
+}));

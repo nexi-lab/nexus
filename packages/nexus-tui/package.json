@@ -1,0 +1,40 @@
+{
+  "name": "@nexus/tui",
+  "version": "0.1.0",
+  "description": "Terminal UI for Nexus — file explorer, API inspector, and monitoring dashboard",
+  "type": "module",
+  "bin": {
+    "nexus-tui": "./src/index.tsx"
+  },
+  "scripts": {
+    "dev": "bun run src/index.tsx",
+    "start": "bun run src/index.tsx",
+    "test": "bun test",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@nexus/api-client": "file:../nexus-api-client",
+    "@opentui/core": "latest",
+    "@opentui/react": "latest",
+    "react": "^19.0.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.5.0"
+  },
+  "keywords": [
+    "nexus",
+    "tui",
+    "terminal",
+    "opentui"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nexi-lab/nexus",
+    "directory": "packages/nexus-tui"
+  }
+}

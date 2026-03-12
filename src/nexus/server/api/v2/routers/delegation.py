@@ -404,6 +404,177 @@ async def get_delegation_chain(
     return DelegationChainResponse(chain=items, total_depth=len(chain) - 1)
 
 
+class NamespaceDetailResponse(BaseModel):
+    """Namespace configuration for a delegation."""
+
+    delegation_id: str
+    agent_id: str
+    delegation_mode: str
+    scope_prefix: str | None
+    removed_grants: list[str]
+    added_grants: list[str]
+    readonly_paths: list[str]
+    mount_table: list[str]
+    zone_id: str | None
+
+
+@router.get("/{delegation_id}/namespace", response_model=NamespaceDetailResponse)
+async def get_delegation_namespace(
+    delegation_id: str,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    service: Any = Depends(_get_delegation_service),
+) -> NamespaceDetailResponse:
+    """Get the namespace configuration for a delegation.
+
+    Returns the delegation's namespace mode, scope constraints, grant
+    modifications, and the current mount table (visible paths).
+    """
+    subject_type = auth_result.get("subject_type", "")
+    if subject_type != "agent":
+        raise HTTPException(
+            status_code=403,
+            detail="Only agents can view delegation namespace details.",
+        )
+
+    record = service.get_delegation_by_id(delegation_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
+
+    # Ownership check: only the parent agent can inspect namespace config
+    agent_id = auth_result.get("subject_id", "")
+    if record.parent_agent_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the parent agent can view a delegation's namespace config.",
+        )
+
+    # Get current mount table for the worker agent
+    mount_table: list[str] = []
+    ns_manager = getattr(service, "_namespace_manager", None)
+    if ns_manager is not None:
+        try:
+            entries = ns_manager.get_mount_table(
+                subject=("agent", record.agent_id),
+                zone_id=record.zone_id,
+            )
+            mount_table = [entry.virtual_path for entry in entries]
+        except Exception:
+            logger.warning(
+                "[Delegation] Failed to get mount table for namespace detail: %s",
+                delegation_id,
+            )
+
+    return NamespaceDetailResponse(
+        delegation_id=record.delegation_id,
+        agent_id=record.agent_id,
+        delegation_mode=record.delegation_mode.value,
+        scope_prefix=record.scope_prefix,
+        removed_grants=list(record.removed_grants),
+        added_grants=list(record.added_grants),
+        readonly_paths=list(record.readonly_paths),
+        mount_table=mount_table,
+        zone_id=record.zone_id,
+    )
+
+
+class UpdateNamespaceRequest(BaseModel):
+    """Request to update mutable namespace config fields.
+
+    All fields default to None (leave unchanged). To clear scope_prefix,
+    send empty string "". To set a new prefix, send a non-empty string.
+    """
+
+    scope_prefix: str | None = Field(
+        default=None, description="New scope prefix (null = leave unchanged, empty = clear)"
+    )
+    remove_grants: list[str] | None = Field(
+        default=None, description="New removed grants list (null = leave unchanged)"
+    )
+    add_grants: list[str] | None = Field(
+        default=None, description="New added grants list (null = leave unchanged)"
+    )
+    readonly_paths: list[str] | None = Field(
+        default=None, description="New readonly paths list (null = leave unchanged)"
+    )
+
+
+@router.patch("/{delegation_id}/namespace", response_model=NamespaceDetailResponse)
+async def update_delegation_namespace(
+    delegation_id: str,
+    body: UpdateNamespaceRequest,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    service: Any = Depends(_get_delegation_service),
+) -> NamespaceDetailResponse:
+    """Update mutable namespace config fields on an active delegation.
+
+    Only scope_prefix, removed_grants, added_grants, and readonly_paths
+    are editable. delegation_mode is immutable (set at creation).
+    """
+    subject_type = auth_result.get("subject_type", "")
+    if subject_type != "agent":
+        raise HTTPException(
+            status_code=403,
+            detail="Only agents can update delegation namespace config.",
+        )
+
+    record = service.get_delegation_by_id(delegation_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
+
+    # Ownership check: only the parent agent can update namespace config
+    agent_id = auth_result.get("subject_id", "")
+    if record.parent_agent_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the parent agent can update a delegation's namespace config.",
+        )
+
+    # Interpret scope_prefix: None = leave unchanged, "" = clear, else = set
+    clear_prefix = body.scope_prefix is not None and body.scope_prefix == ""
+    effective_prefix = None if (body.scope_prefix is None or clear_prefix) else body.scope_prefix
+
+    try:
+        updated = service.update_namespace_config(
+            delegation_id,
+            scope_prefix=effective_prefix,
+            clear_scope_prefix=clear_prefix,
+            remove_grants=body.remove_grants,
+            add_grants=body.add_grants,
+            readonly_paths=body.readonly_paths,
+        )
+    except Exception as e:
+        _handle_delegation_error(e)
+        raise  # unreachable
+
+    # Get current mount table
+    mount_table: list[str] = []
+    ns_manager = getattr(service, "_namespace_manager", None)
+    if ns_manager is not None:
+        try:
+            entries = ns_manager.get_mount_table(
+                subject=("agent", updated.agent_id),
+                zone_id=updated.zone_id,
+            )
+            mount_table = [entry.virtual_path for entry in entries]
+        except Exception:
+            logger.warning(
+                "[Delegation] Failed to get mount table after namespace update: %s",
+                delegation_id,
+            )
+
+    return NamespaceDetailResponse(
+        delegation_id=updated.delegation_id,
+        agent_id=updated.agent_id,
+        delegation_mode=updated.delegation_mode.value,
+        scope_prefix=updated.scope_prefix,
+        removed_grants=list(updated.removed_grants),
+        added_grants=list(updated.added_grants),
+        readonly_paths=list(updated.readonly_paths),
+        mount_table=mount_table,
+        zone_id=updated.zone_id,
+    )
+
+
 @router.post("/{delegation_id}/complete")
 async def complete_delegation(
     delegation_id: str,

@@ -237,24 +237,42 @@ async def evaluate_tool(
     auth_result: dict[str, Any] = Depends(require_auth),
     manifest_service: Any = Depends(_get_manifest_service),
 ) -> dict:
-    """Evaluate whether a tool is allowed for a manifest's agent."""
+    """Evaluate whether a tool is allowed for a manifest's agent.
+
+    Returns a full evaluation trace (proof tree) showing which manifest
+    entries were checked, which one matched, and the final decision.
+    """
     manifest = await asyncio.to_thread(manifest_service.get_manifest, manifest_id)
     if manifest is None:
         raise HTTPException(status_code=404, detail="Manifest not found")
     _authorize_agent_access(auth_result, manifest.agent_id, "evaluate")
 
-    permission = await asyncio.to_thread(
-        manifest_service.evaluate,
+    trace = await asyncio.to_thread(
+        manifest_service.evaluate_with_trace,
         manifest.agent_id,
         body.tool_name,
         manifest.zone_id,
     )
 
     return {
-        "tool_name": body.tool_name,
-        "permission": permission,
+        "tool_name": trace.tool_name,
+        "permission": trace.decision,
         "agent_id": manifest.agent_id,
         "manifest_id": manifest_id,
+        "trace": {
+            "matched_index": trace.matched_index,
+            "default_applied": trace.default_applied,
+            "entries": [
+                {
+                    "index": e.index,
+                    "tool_pattern": e.tool_pattern,
+                    "permission": e.permission,
+                    "matched": e.matched,
+                    "max_calls_per_minute": e.max_calls_per_minute,
+                }
+                for e in trace.entries
+            ],
+        },
     }
 
 

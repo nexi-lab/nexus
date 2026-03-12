@@ -597,6 +597,18 @@ def restart(build: bool | None) -> None:
 
     cf = config.get("compose_file", "./nexus-stack.yml")
     profiles = list(config.get("compose_profiles", []))
+    # Expand configured add-ons into profiles (same as down/up)
+    addon_profile_map = {
+        "nats": "events",
+        "mcp": "mcp",
+        "frontend": "frontend",
+        "langgraph": "langgraph",
+        "observability": "observability",
+    }
+    for addon in config.get("addons", []):
+        profile = addon_profile_map.get(addon, addon)
+        if profile not in profiles:
+            profiles.append(profile)
     compose_env = _derive_project_env(config)
 
     # Auto-detect build need (same logic as `up`)

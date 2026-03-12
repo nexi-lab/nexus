@@ -4,16 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from nexus.cli.main import main
 from nexus.raft import zone_manager
 
 
-@pytest.mark.skip(
-    reason="Broken: local workspace state does not persist across CLI invocations (PR #2902)"
-)
 def test_local_cli_quickstart_persists_across_invocations(
     tmp_path: Path,
     monkeypatch,

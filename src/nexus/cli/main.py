@@ -9,7 +9,7 @@ import warnings
 import click
 
 import nexus
-from nexus.cli.commands import register_all_commands
+from nexus.cli.commands import LazyCommandGroup, register_all_commands
 from nexus.core import setup_uvloop
 
 # Suppress pydub warning about missing ffmpeg/avconv
@@ -21,7 +21,7 @@ warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", cate
 setup_uvloop()
 
 
-@click.group()
+@click.group(cls=LazyCommandGroup)
 @click.version_option(version=nexus.__version__, prog_name="nexus")
 @click.option(
     "--profile",

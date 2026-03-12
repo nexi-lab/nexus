@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import nexus
 from nexus.raft import zone_manager
@@ -61,3 +62,25 @@ def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
         assert nx.provider_registry.get_all_providers() == []
     finally:
         nx.close()
+
+
+def test_remote_connect_closes_shared_rpc_transport() -> None:
+    """Remote quickstart should close the shared gRPC transport on nx.close()."""
+    mock_channel = MagicMock()
+
+    with (
+        patch("nexus.remote.rpc_transport.grpc.insecure_channel", return_value=mock_channel),
+        patch(
+            "nexus.remote.rpc_transport.vfs_pb2_grpc.NexusVFSServiceStub", return_value=MagicMock()
+        ),
+        patch("nexus.security.tls.config.ZoneTlsConfig.from_env", return_value=None),
+    ):
+        nx = nexus.connect(
+            config={
+                "profile": "remote",
+                "url": "http://127.0.0.1:2027",
+            }
+        )
+        nx.close()
+
+    mock_channel.close.assert_called_once()

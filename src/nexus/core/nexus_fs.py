@@ -237,6 +237,7 @@ class NexusFS(  # type: ignore[misc]
         self._initialized: bool = False
         self._bootstrapped: bool = False
         self._bootstrap_callbacks: list[Callable[[], Any]] = []
+        self._runtime_closeables: list[Any] = []
         self._permission_checker: Any = None  # set by link()
         # Factory-injected lifecycle implementations.
         # Keeps nexus.core free of nexus.factory / nexus.bricks imports.
@@ -303,6 +304,15 @@ class NexusFS(  # type: ignore[misc]
         for cb in self._bootstrap_callbacks:
             await cb()
         self._bootstrapped = True
+
+    def register_runtime_closeable(self, resource: Any) -> None:
+        """Register a process-local resource to close with the filesystem.
+
+        Used for runtime-owned handles that are not persisted in metadata
+        and are not discoverable through the normal service graph, such as
+        the REMOTE client's shared RPC transport.
+        """
+        self._runtime_closeables.append(resource)
 
     # -- Service registry accessors (Issue #1452) ---------------------------
 
@@ -4232,3 +4242,14 @@ class NexusFS(  # type: ignore[misc]
                         route.backend.token_manager.close()
                 except Exception as e:
                     logger.debug("Failed to close backend token manager: %s", e)
+
+        # Close process-local runtime resources owned by this NexusFS.
+        while self._runtime_closeables:
+            resource = self._runtime_closeables.pop()
+            close_fn = getattr(resource, "close", None)
+            if not callable(close_fn):
+                continue
+            try:
+                close_fn()
+            except Exception as e:
+                logger.debug("Failed to close runtime resource %s: %s", type(resource).__name__, e)

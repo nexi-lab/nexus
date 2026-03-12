@@ -153,6 +153,38 @@ class TestIdempotency:
         assert created == 3
         assert mock_rebac.rebac_write.call_count == 3
 
+    @patch("nexus.cli.commands.demo._seed_permissions_docker", return_value=3)
+    def test_seed_permissions_shared_preset_uses_docker(self, mock_docker: MagicMock) -> None:
+        """Shared/demo presets should prefer docker exec over direct rebac."""
+        from nexus.cli.commands.demo import _seed_permissions
+
+        mock_nx = MagicMock()
+        config: dict = {"preset": "shared"}
+        manifest: dict = {}
+
+        created = _seed_permissions(mock_nx, config, manifest)
+        assert created == 3
+        mock_docker.assert_called_once()
+        assert manifest["permissions_count"] == 3
+
+    @patch("nexus.cli.commands.demo._seed_permissions_rpc", return_value=3)
+    @patch("nexus.cli.commands.demo._seed_permissions_docker", return_value=-1)
+    def test_seed_permissions_shared_falls_back_to_rpc(
+        self, mock_docker: MagicMock, mock_rpc: MagicMock
+    ) -> None:
+        """When docker exec is unavailable, fall back to admin RPC."""
+        from nexus.cli.commands.demo import _seed_permissions
+
+        mock_nx = MagicMock()
+        config: dict = {"preset": "demo"}
+        manifest: dict = {}
+
+        created = _seed_permissions(mock_nx, config, manifest)
+        assert created == 3
+        mock_docker.assert_called_once()
+        mock_rpc.assert_called_once()
+        assert manifest["permissions_count"] == 3
+
 
 # ---------------------------------------------------------------------------
 # Delete / reset tests

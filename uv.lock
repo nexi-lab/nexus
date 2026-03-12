@@ -202,6 +202,12 @@ wheels = [
 ]
 
 [[package]]
+name = "annoy"
+version = "1.17.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/38/e321b0e05d8cc068a594279fb7c097efb1df66231c295d482d7ad51b6473/annoy-1.17.3.tar.gz", hash = "sha256:9cbfebefe0a5f843eba29c6be4c84d601f4f41ad4ded0486f1b88c3b07739c15", size = 647460, upload-time = "2023-06-14T16:37:34.152Z" }
+
+[[package]]
 name = "anthropic"
 version = "0.75.0"
 source = { registry = "https://pypi.org/simple" }
@@ -530,6 +536,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c3/b0/1c6a16426d389813b48d95e26898aff79abbde42ad353958ad95cc8c9b21/beautifulsoup4-4.14.3.tar.gz", hash = "sha256:6292b1c5186d356bba669ef9f7f051757099565ad9ada5dd630bd9de5fa7fb86", size = 627737, upload-time = "2025-11-30T15:08:26.084Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1a/39/47f9197bdd44df24d67ac8893641e16f386c984a0619ef2ee4c51fbbc019/beautifulsoup4-4.14.3-py3-none-any.whl", hash = "sha256:0918bfe44902e6ad8d57732ba310582e98da931428d231a5ecb9e7c703a735bb", size = 107721, upload-time = "2025-11-30T15:08:24.087Z" },
+]
+
+[[package]]
+name = "bitsandbytes"
+version = "0.49.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "torch" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/7d/f1fe0992334b18cd8494f89aeec1dcc674635584fcd9f115784fea3a1d05/bitsandbytes-0.49.2-py3-none-macosx_14_0_arm64.whl", hash = "sha256:87be5975edeac5396d699ecbc39dfc47cf2c026daaf2d5852a94368611a6823f", size = 131940, upload-time = "2026-02-16T21:26:04.572Z" },
+    { url = "https://files.pythonhosted.org/packages/29/71/acff7af06c818664aa87ff73e17a52c7788ad746b72aea09d3cb8e424348/bitsandbytes-0.49.2-py3-none-manylinux_2_24_aarch64.whl", hash = "sha256:2fc0830c5f7169be36e60e11f2be067c8f812dfcb829801a8703735842450750", size = 31442815, upload-time = "2026-02-16T21:26:06.783Z" },
+    { url = "https://files.pythonhosted.org/packages/19/57/3443d6f183436fbdaf5000aac332c4d5ddb056665d459244a5608e98ae92/bitsandbytes-0.49.2-py3-none-manylinux_2_24_x86_64.whl", hash = "sha256:54b771f06e1a3c73af5c7f16ccf0fc23a846052813d4b008d10cb6e017dd1c8c", size = 60651714, upload-time = "2026-02-16T21:26:11.579Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/d4/501655842ad6771fb077f576d78cbedb5445d15b1c3c91343ed58ca46f0e/bitsandbytes-0.49.2-py3-none-win_amd64.whl", hash = "sha256:2e0ddd09cd778155388023cbe81f00afbb7c000c214caef3ce83386e7144df7d", size = 55372289, upload-time = "2026-02-16T21:26:16.267Z" },
 ]
 
 [[package]]
@@ -1621,6 +1643,16 @@ wheels = [
 ]
 
 [[package]]
+name = "ggml-py"
+version = "0.9.4.post1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/40/06/c7b5acb7ab90b29e40dfaf8d7638ff0e51cec90718a3ef007c7feb85cc3d/ggml_py-0.9.4.post1.tar.gz", hash = "sha256:eb89ddb0b63ee17f02b65d79b66bb6b4e1afe2ea6e061a83914115f90ac318f0", size = 2233648, upload-time = "2025-11-01T01:44:33.782Z" }
+
+[[package]]
 name = "ghp-import"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2068,6 +2100,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/3d/ab7109e607ed321afaa690f557a9ada6d6d164ec852fd6bf9979665dc3d6/hf_xet-1.1.10-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:f900481cf6e362a6c549c61ff77468bd59d6dd082f3170a36acfef2eb6a6793f", size = 3353360, upload-time = "2025-09-12T20:10:25.563Z" },
     { url = "https://files.pythonhosted.org/packages/ee/0e/471f0a21db36e71a2f1752767ad77e92d8cde24e974e03d662931b1305ec/hf_xet-1.1.10-cp37-abi3-win_amd64.whl", hash = "sha256:5f54b19cc347c13235ae7ee98b330c26dd65ef1df47e5316ffb1e87713ca7045", size = 2804691, upload-time = "2025-09-12T20:10:28.433Z" },
 ]
+
+[[package]]
+name = "hnswlib"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/7a/1a9b1405f2eb59515f06c3074750b03e0e96edf7fee0f6dd6df81d9c21d7/hnswlib-0.8.0.tar.gz", hash = "sha256:cb6d037eedebb34a7134e7dc78966441dfd04c9cf5ee93911be911ced951c44c", size = 36206, upload-time = "2023-12-03T04:16:17.55Z" }
 
 [[package]]
 name = "hpack"
@@ -3446,7 +3487,7 @@ wheels = [
 
 [[package]]
 name = "nexus-ai-fs"
-version = "0.9.0"
+version = "0.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -3526,7 +3567,7 @@ all = [
     { name = "pgvector" },
     { name = "psycopg2-binary" },
     { name = "sqlite-vec" },
-    { name = "txtai", extra = ["database", "graph"], marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "txtai", extra = ["ann", "database", "graph"], marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
 ]
 cloud-sql = [
     { name = "cloud-sql-python-connector", extra = ["asyncpg"] },
@@ -3603,7 +3644,7 @@ semantic-search = [
     { name = "faiss-cpu", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
     { name = "pgvector" },
     { name = "sqlite-vec" },
-    { name = "txtai", extra = ["database", "graph"], marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "txtai", extra = ["ann", "database", "graph"], marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
 ]
 semantic-search-remote = [
     { name = "openai" },
@@ -3766,8 +3807,8 @@ requires-dist = [
     { name = "tenacity", specifier = ">=8.2.0" },
     { name = "tiktoken", specifier = ">=0.12" },
     { name = "tqdm", specifier = ">=4.66.0" },
-    { name = "txtai", extras = ["database", "graph"], marker = "(platform_machine != 'x86_64' and extra == 'all') or (sys_platform != 'darwin' and extra == 'all')", specifier = ">=9.0" },
-    { name = "txtai", extras = ["database", "graph"], marker = "(platform_machine != 'x86_64' and extra == 'semantic-search') or (sys_platform != 'darwin' and extra == 'semantic-search')", specifier = ">=9.0" },
+    { name = "txtai", extras = ["ann", "database", "graph"], marker = "(platform_machine != 'x86_64' and extra == 'all') or (sys_platform != 'darwin' and extra == 'all')", specifier = ">=9.0" },
+    { name = "txtai", extras = ["ann", "database", "graph"], marker = "(platform_machine != 'x86_64' and extra == 'semantic-search') or (sys_platform != 'darwin' and extra == 'semantic-search')", specifier = ">=9.0" },
     { name = "types-cachetools", marker = "extra == 'dev'", specifier = ">=5.3.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
@@ -6370,6 +6411,17 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+ann = [
+    { name = "annoy" },
+    { name = "bitsandbytes" },
+    { name = "ggml-py" },
+    { name = "hnswlib" },
+    { name = "pgvector" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "sqlalchemy" },
+    { name = "sqlite-vec" },
+]
 database = [
     { name = "duckdb" },
     { name = "pillow" },

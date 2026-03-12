@@ -9,7 +9,7 @@ Mocked unit tests verifying:
 - Graph search methods
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -101,6 +101,55 @@ class TestTxtaiBackendLifecycle:
         assert backend._embeddings is None
         backend._embeddings = MagicMock()
         assert backend._embeddings is not None
+
+    def test_startup_pgvector_config_uses_pgvector_url_key(self) -> None:
+        """Regression test for #2916: pgvector URL must be under config['pgvector']['url'].
+
+        txtai's PGVector ANN resolves the database URL via self.setting('url'),
+        which looks up config[config['backend']]['url'].  Previously the URL was
+        placed under config['database'] (the content-DB key), leaving the ANN's
+        database session uninitialised and causing ``AttributeError: 'NoneType'
+        object has no attribute 'query'`` at search time.
+        """
+        import asyncio
+
+        mock_embeddings_cls = MagicMock()
+        captured_configs: list[dict] = []
+        mock_embeddings_cls.side_effect = (
+            lambda cfg: captured_configs.append(dict(cfg)) or MagicMock()
+        )
+
+        # Build mock torch module tree
+        mock_mps = MagicMock()
+        mock_mps.is_available.return_value = False
+        mock_backends = MagicMock()
+        mock_backends.mps = mock_mps
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.backends = mock_backends
+
+        # Patch txtai + torch imports so startup() doesn't need real packages
+        with patch.dict(
+            "sys.modules",
+            {
+                "txtai": MagicMock(Embeddings=mock_embeddings_cls),
+                "txtai.ann": MagicMock(),
+                "txtai.ann.dense": MagicMock(),
+                "txtai.ann.dense.pgvector": MagicMock(),
+                "torch": mock_torch,
+            },
+        ):
+            backend = TxtaiBackend(
+                database_url="postgresql://u:p@localhost:5432/nexus",
+                model="test-model",
+            )
+            asyncio.get_event_loop().run_until_complete(backend.startup())
+
+        assert len(captured_configs) >= 1
+        cfg = captured_configs[0]
+        assert cfg["backend"] == "pgvector"
+        assert cfg["pgvector"] == {"url": "postgresql://u:p@localhost:5432/nexus"}
+        assert "database" not in cfg, "URL must not go under 'database' — that's the content-DB key"
 
     @pytest.mark.asyncio
     async def test_shutdown_when_not_started(self) -> None:

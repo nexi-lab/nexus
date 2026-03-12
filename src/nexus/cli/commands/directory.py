@@ -89,14 +89,15 @@ def list_files(
     timing = CommandTiming()
 
     try:
-        with (
-            timing.phase("connect"),
-            open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx,
-        ):
+        with contextlib.ExitStack() as stack:
+            with timing.phase("connect"):
+                nx = stack.enter_context(
+                    open_filesystem(
+                        remote_url,
+                        remote_api_key,
+                        allow_local_default=True,
+                    )
+                )
             if at_operation:
                 _ls_time_travel(nx, path, at_operation, recursive, long, output_opts, timing)
                 return
@@ -328,16 +329,17 @@ def tree(
     timing = CommandTiming()
 
     try:
-        with (
-            timing.phase("connect"),
-            open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx,
-            timing.phase("server"),
-        ):
-            files_raw = nx.sys_readdir(path, recursive=True, details=True)
+        with contextlib.ExitStack() as stack:
+            with timing.phase("connect"):
+                nx = stack.enter_context(
+                    open_filesystem(
+                        remote_url,
+                        remote_api_key,
+                        allow_local_default=True,
+                    )
+                )
+            with timing.phase("server"):
+                files_raw = nx.sys_readdir(path, recursive=True, details=True)
 
         files = _normalize_readdir(files_raw)
         if not files:

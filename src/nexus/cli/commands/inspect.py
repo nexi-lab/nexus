@@ -3,6 +3,7 @@
 Commands for viewing file information, version, and calculating sizes.
 """
 
+import contextlib
 import sys
 from typing import Any, cast
 
@@ -42,7 +43,9 @@ def info(
     timing = CommandTiming()
 
     try:
-        with timing.phase("connect"), open_filesystem(remote_url, remote_api_key) as nx:
+        with contextlib.ExitStack() as stack:
+            with timing.phase("connect"):
+                nx = stack.enter_context(open_filesystem(remote_url, remote_api_key))
             # Check if file exists first
             if not nx.sys_access(path):
                 render_output(

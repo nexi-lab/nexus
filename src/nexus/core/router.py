@@ -130,8 +130,47 @@ class PathRouter:
             entry_type=DT_MOUNT,
         )
         self._metastore.put(meta)
+        self._register_mount_entry(
+            mount_point,
+            backend,
+            readonly=readonly,
+            admin_only=admin_only,
+            io_profile=io_profile,
+        )
 
-        # Register runtime backend (Python objects, not a cache)
+    def add_runtime_mount(
+        self,
+        mount_point: str,
+        backend: "ObjectStoreABC",
+        *,
+        readonly: bool = False,
+        admin_only: bool = False,
+        io_profile: str = "balanced",
+    ) -> None:
+        """Register an in-memory mount without persisting metadata.
+
+        Used for ephemeral runtime mounts where the metastore is not the
+        source of truth, such as the REMOTE client-side root mount.
+        """
+        mount_point = self._normalize_path(mount_point)
+        self._register_mount_entry(
+            mount_point,
+            backend,
+            readonly=readonly,
+            admin_only=admin_only,
+            io_profile=io_profile,
+        )
+
+    def _register_mount_entry(
+        self,
+        mount_point: str,
+        backend: "ObjectStoreABC",
+        *,
+        readonly: bool,
+        admin_only: bool,
+        io_profile: str,
+    ) -> None:
+        """Register the runtime mount entry for path routing."""
         self._backends[mount_point] = _MountEntry(
             backend=backend,
             readonly=readonly,

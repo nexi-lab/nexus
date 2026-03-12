@@ -91,7 +91,8 @@ class RemoteMetastore(MetastoreABC):
 
     def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
         """List files by proxying ``list`` to the server."""
-        params: dict[str, Any] = {"path": prefix, "recursive": recursive}
+        rpc_path = prefix or "/"
+        params: dict[str, Any] = {"path": rpc_path, "recursive": recursive}
         if kwargs:
             params.update(kwargs)
         result = self._call_rpc("sys_readdir", params)
@@ -101,8 +102,11 @@ class RemoteMetastore(MetastoreABC):
         items: list[Any] = []
         if isinstance(result, list):
             items = result
-        elif isinstance(result, dict) and "items" in result:
-            items = result["items"]
+        elif isinstance(result, dict):
+            if "files" in result:
+                items = result["files"]
+            elif "items" in result:
+                items = result["items"]
 
         metadata_list: list[FileMetadata] = []
         for item in items:

@@ -1,5 +1,6 @@
 """File operation commands - read, write, cat, cp, mv, rm, sync."""
 
+import contextlib
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -112,14 +113,15 @@ def cat(
     timing = CommandTiming()
 
     try:
-        with (
-            timing.phase("connect"),
-            open_filesystem(
-                remote_url,
-                remote_api_key,
-                allow_local_default=True,
-            ) as nx,
-        ):
+        with contextlib.ExitStack() as stack:
+            with timing.phase("connect"):
+                nx = stack.enter_context(
+                    open_filesystem(
+                        remote_url,
+                        remote_api_key,
+                        allow_local_default=True,
+                    )
+                )
             if at_operation:
                 _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
                 return

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import click
 from click.testing import CliRunner
 
+from nexus.cli.commands import LazyCommandGroup, register_all_commands
 from nexus.cli.main import main
 from nexus.raft import zone_manager
 
@@ -79,3 +81,25 @@ def test_cli_help_registers_local_quickstart_commands() -> None:
     assert result.exit_code == 0, result.output
     for command_name in ("init", "write", "cat", "ls"):
         assert command_name in result.output
+
+
+def test_lazy_registration_defers_command_module_import(monkeypatch) -> None:
+    """Top-level CLI registration should not import every command eagerly."""
+    imported: list[str] = []
+    real_import = __import__("importlib").import_module
+
+    def _spy(name: str, package: str | None = None):
+        imported.append(name)
+        return real_import(name, package)
+
+    monkeypatch.setattr("nexus.cli.commands.importlib.import_module", _spy)
+
+    cli = LazyCommandGroup(name="nexus")
+    register_all_commands(cli)
+    assert imported == []
+
+    command = cli.get_command(click.Context(cli), "ls")
+
+    assert command is not None
+    assert "nexus.cli.commands.directory" in imported
+    assert "nexus.cli.commands.oauth" not in imported

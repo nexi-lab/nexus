@@ -1,5 +1,6 @@
 """Search and discovery commands - glob, grep, semantic search."""
 
+import contextlib
 from collections import defaultdict
 from typing import Any, cast
 
@@ -59,7 +60,9 @@ def glob(
     timing = CommandTiming()
 
     try:
-        with timing.phase("connect"), open_filesystem(remote_url, remote_api_key) as nx:
+        with contextlib.ExitStack() as stack:
+            with timing.phase("connect"):
+                nx = stack.enter_context(open_filesystem(remote_url, remote_api_key))
             with timing.phase("server"):
                 result = nx.service("search").glob(pattern, path)
                 matches = (
@@ -216,19 +219,18 @@ def grep(
     timing = CommandTiming()
 
     try:
-        with (
-            timing.phase("connect"),
-            open_filesystem(remote_url, remote_api_key) as nx,
-            timing.phase("server"),
-        ):
-            result = nx.service("search").grep(
-                pattern,
-                path=path,
-                file_pattern=file_pattern,
-                ignore_case=ignore_case,
-                max_results=max_results,
-                search_mode=search_mode,
-            )
+        with contextlib.ExitStack() as stack:
+            with timing.phase("connect"):
+                nx = stack.enter_context(open_filesystem(remote_url, remote_api_key))
+            with timing.phase("server"):
+                result = nx.service("search").grep(
+                    pattern,
+                    path=path,
+                    file_pattern=file_pattern,
+                    ignore_case=ignore_case,
+                    max_results=max_results,
+                    search_mode=search_mode,
+                )
 
         # Normalize result format
         if isinstance(result, dict) and "results" in result:

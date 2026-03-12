@@ -153,15 +153,14 @@ class TxtaiBackend:
 
         use_pgvector = False
         if self._database_url:
-            # Try pgvector backend — fall back to default if not available
+            # Try pgvector backend — fall back to default if not available.
+            # txtai >=9.x dispatches in ANNFactory.create() directly and
+            # no longer exposes _BACKENDS, so probe the actual module.
             try:
-                from txtai.ann import ANNFactory  # noqa: F401
+                from txtai.ann.dense.pgvector import PGVector  # noqa: F401
 
-                # Quick check: does pgvector ANN exist?
-                _has_pgvector = hasattr(ANNFactory, "create") and "pgvector" in str(
-                    getattr(ANNFactory, "_BACKENDS", {})
-                )
-            except (ImportError, AttributeError):
+                _has_pgvector = True
+            except (ImportError, ModuleNotFoundError):
                 _has_pgvector = False
 
             if _has_pgvector:

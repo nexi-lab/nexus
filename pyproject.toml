@@ -238,7 +238,7 @@ semantic-search = [
     # txtai unified search: hybrid BM25+dense, semantic graph (Issue #2663)
     # NOTE: txtai depends on faiss-cpu and large ML wheels; keep this opt-in.
     # torch still has no supported macOS x86_64 path for this stack.
-    "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "txtai[ann,database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
     # Keyword search support - uses existing SQLite/PostgreSQL FTS
     # BM25S is now in core dependencies (Issue #796)
@@ -295,7 +295,7 @@ all = [
     # Excludes: sentence-transformers (too heavy ~2GB), voyageai (specialized use case)
     # Note: fusepy removed - Rust nexus-fuse binary is bundled in the package
     # Note: bm25s is now in core dependencies (Issue #796)
-    "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "txtai[ann,database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
     "psycopg2-binary>=2.9.9",
     "sqlite-vec>=0.1.0",

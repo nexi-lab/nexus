@@ -605,7 +605,7 @@ class DelegationService:
         # Validate scope_prefix at system boundary
         validate_scope_prefix(new_scope_prefix)
 
-        # 1. Re-derive grants from parent's current permissions
+        # 1. Re-derive grants from parent's current permissions (pure, no side effects)
         parent_grants = self._enumerate_parent_grants(record.parent_agent_id, record.zone_id)
         child_grants = derive_grants(
             parent_grants=parent_grants,
@@ -616,22 +616,22 @@ class DelegationService:
             scope_prefix=new_scope_prefix,
         )
 
-        # 2. Delete old ReBAC tuples for the worker
-        self._delete_worker_tuples(record.agent_id, record.zone_id)
-
-        # 3. Create new ReBAC tuples from re-derived grants
-        self._create_grant_tuples(
-            worker_id=record.agent_id,
-            grants=child_grants,
-            zone_id=record.zone_id,
-            coordinator_agent_id=record.parent_agent_id,
-            expires_at=record.lease_expires_at,
+        # 2. Snapshot existing tuples for compensation on failure
+        old_tuples = self._rebac_manager.list_tuples(
+            subject=("agent", record.agent_id),
         )
 
-        # 4. Update the DB record
+        # 3. Update DB record first (auto-rollback via session on exception)
         from sqlalchemy import update as sa_update
 
         from nexus.storage.models.agents import DelegationRecordModel
+
+        old_record_values = {
+            "scope_prefix": record.scope_prefix,
+            "removed_grants": json.dumps(list(record.removed_grants)),
+            "added_grants": json.dumps(list(record.added_grants)),
+            "readonly_paths": json.dumps(list(record.readonly_paths)),
+        }
 
         with self._session() as session:
             session.execute(
@@ -644,6 +644,33 @@ class DelegationService:
                     readonly_paths=json.dumps(new_readonly),
                 )
             )
+
+        # 4. Replace tuples with compensation on failure
+        try:
+            self._delete_worker_tuples(record.agent_id, record.zone_id)
+            self._create_grant_tuples(
+                worker_id=record.agent_id,
+                grants=child_grants,
+                zone_id=record.zone_id,
+                coordinator_agent_id=record.parent_agent_id,
+                expires_at=record.lease_expires_at,
+            )
+        except Exception:
+            logger.error(
+                "[Delegation] Tuple replacement failed for delegation=%s, "
+                "compensating: restoring DB record + old tuples",
+                delegation_id,
+            )
+            # Compensate: rollback DB record to previous values
+            with self._session() as session:
+                session.execute(
+                    sa_update(DelegationRecordModel)
+                    .where(DelegationRecordModel.delegation_id == delegation_id)
+                    .values(**old_record_values)
+                )
+            # Compensate: restore old tuples from snapshot
+            self._restore_tuples_from_snapshot(old_tuples)
+            raise
 
         # 5. Invalidate namespace cache so mount_table reflects new state
         if self._namespace_manager is not None:
@@ -886,6 +913,42 @@ class DelegationService:
             deleted,
             worker_id,
         )
+
+    def _restore_tuples_from_snapshot(self, snapshot: list[dict[str, Any]]) -> None:
+        """Restore ReBAC tuples from a previous snapshot (compensating transaction).
+
+        Converts list_tuples() output back to write_batch() input format
+        and re-creates the tuples.  Best-effort: logs errors but does not
+        raise, since this is itself a compensation path.
+        """
+        if not snapshot:
+            return
+
+        batch: list[dict[str, Any]] = []
+        for t in snapshot:
+            batch.append(
+                {
+                    "subject": (t["subject_type"], t["subject_id"]),
+                    "relation": t["relation"],
+                    "object": (t["object_type"], t["object_id"]),
+                    "zone_id": t.get("zone_id"),
+                    "expires_at": t.get("expires_at"),
+                    "conditions": t.get("conditions"),
+                }
+            )
+
+        try:
+            restored = self._rebac_manager.rebac_write_batch(batch)
+            logger.info(
+                "[Delegation] Compensating restore: recreated %d/%d tuples",
+                restored,
+                len(batch),
+            )
+        except Exception:
+            logger.exception(
+                "[Delegation] CRITICAL: Failed to restore %d tuples during compensation",
+                len(batch),
+            )
 
     def _revoke_worker_api_key(self, worker_id: str) -> None:
         """Revoke all API keys for the worker agent."""

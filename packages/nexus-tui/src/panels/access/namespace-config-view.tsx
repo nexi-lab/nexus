@@ -8,6 +8,7 @@
  * Press 'e' to enter edit mode, which allows editing scope_prefix,
  * adding/removing grants, and adding/removing readonly paths.
  * Tab cycles between editable fields, Enter saves, Escape cancels.
+ * Ctrl+D removes the last item from the focused list.
  */
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -47,6 +48,11 @@ export function NamespaceConfigView({
   const [removeGrant, setRemoveGrant] = useState("");
   const [readonlyPath, setReadonlyPath] = useState("");
 
+  // Editable local copies of list arrays (populated on edit enter)
+  const [editRemovedGrants, setEditRemovedGrants] = useState<readonly string[]>([]);
+  const [editAddedGrants, setEditAddedGrants] = useState<readonly string[]>([]);
+  const [editReadonlyPaths, setEditReadonlyPaths] = useState<readonly string[]>([]);
+
   useEffect(() => {
     if (client && delegationId) {
       fetchNamespaceDetail(delegationId, client);
@@ -60,12 +66,36 @@ export function NamespaceConfigView({
     }
   }, [namespaceDetail]);
 
+  const enterEditMode = useCallback(() => {
+    if (!namespaceDetail) return;
+    setEditing(true);
+    setActiveField("scopePrefix");
+    setScopePrefix(namespaceDetail.scope_prefix ?? "");
+    setEditRemovedGrants([...namespaceDetail.removed_grants]);
+    setEditAddedGrants([...namespaceDetail.added_grants]);
+    setEditReadonlyPaths([...namespaceDetail.readonly_paths]);
+    setAddGrant("");
+    setRemoveGrant("");
+    setReadonlyPath("");
+  }, [namespaceDetail]);
+
   const setters: Readonly<Record<EditField, (fn: (b: string) => string) => void>> = {
     scopePrefix: (fn) => setScopePrefix((b) => fn(b)),
     addGrant: (fn) => setAddGrant((b) => fn(b)),
     removeGrant: (fn) => setRemoveGrant((b) => fn(b)),
     readonlyPath: (fn) => setReadonlyPath((b) => fn(b)),
   };
+
+  const handleDeleteFromList = useCallback(() => {
+    if (!editing) return;
+    if (activeField === "removeGrant") {
+      setEditRemovedGrants((prev) => prev.slice(0, -1));
+    } else if (activeField === "addGrant") {
+      setEditAddedGrants((prev) => prev.slice(0, -1));
+    } else if (activeField === "readonlyPath") {
+      setEditReadonlyPaths((prev) => prev.slice(0, -1));
+    }
+  }, [editing, activeField]);
 
   const handleSave = useCallback(() => {
     if (!client || !namespaceDetail) return;
@@ -81,23 +111,29 @@ export function NamespaceConfigView({
     const newPrefix = scopePrefix.trim();
     const oldPrefix = namespaceDetail.scope_prefix ?? "";
     if (newPrefix !== oldPrefix) {
-      // "" means "clear prefix" (backend interprets "" as clear)
       update.scope_prefix = newPrefix;
     }
 
-    // Add new grant path if entered
-    if (addGrant.trim()) {
-      update.add_grants = [...namespaceDetail.added_grants, addGrant.trim()];
-    }
+    // Build final arrays: local editable copy + any new text input
+    const finalRemoved = removeGrant.trim()
+      ? [...editRemovedGrants, removeGrant.trim()]
+      : [...editRemovedGrants];
+    const finalAdded = addGrant.trim()
+      ? [...editAddedGrants, addGrant.trim()]
+      : [...editAddedGrants];
+    const finalReadonly = readonlyPath.trim()
+      ? [...editReadonlyPaths, readonlyPath.trim()]
+      : [...editReadonlyPaths];
 
-    // Add new remove grant path if entered
-    if (removeGrant.trim()) {
-      update.remove_grants = [...namespaceDetail.removed_grants, removeGrant.trim()];
+    // Send full replacement arrays if they differ from server state
+    if (JSON.stringify(finalRemoved) !== JSON.stringify(namespaceDetail.removed_grants)) {
+      update.remove_grants = finalRemoved;
     }
-
-    // Add new readonly path if entered
-    if (readonlyPath.trim()) {
-      update.readonly_paths = [...namespaceDetail.readonly_paths, readonlyPath.trim()];
+    if (JSON.stringify(finalAdded) !== JSON.stringify(namespaceDetail.added_grants)) {
+      update.add_grants = finalAdded;
+    }
+    if (JSON.stringify(finalReadonly) !== JSON.stringify(namespaceDetail.readonly_paths)) {
+      update.readonly_paths = finalReadonly;
     }
 
     if (Object.keys(update).length > 0) {
@@ -108,7 +144,12 @@ export function NamespaceConfigView({
     setRemoveGrant("");
     setReadonlyPath("");
     setEditing(false);
-  }, [client, delegationId, namespaceDetail, scopePrefix, addGrant, removeGrant, readonlyPath, updateNamespaceConfig]);
+  }, [
+    client, delegationId, namespaceDetail, scopePrefix,
+    addGrant, removeGrant, readonlyPath,
+    editRemovedGrants, editAddedGrants, editReadonlyPaths,
+    updateNamespaceConfig,
+  ]);
 
   const handleUnhandledKey = useCallback(
     (keyName: string) => {
@@ -134,8 +175,7 @@ export function NamespaceConfigView({
       },
       e: () => {
         if (!editing && namespaceDetail) {
-          setEditing(true);
-          setActiveField("scopePrefix");
+          enterEditMode();
         }
       },
       return: () => {
@@ -158,12 +198,20 @@ export function NamespaceConfigView({
           }
         }
       },
+      "ctrl+d": () => {
+        handleDeleteFromList();
+      },
     },
     handleUnhandledKey,
   );
 
   const ns = namespaceDetail;
   const cursor = "\u2588";
+
+  // In edit mode, show local editable arrays; in view mode, show server data
+  const displayRemovedGrants = editing ? editRemovedGrants : (ns?.removed_grants ?? []);
+  const displayAddedGrants = editing ? editAddedGrants : (ns?.added_grants ?? []);
+  const displayReadonlyPaths = editing ? editReadonlyPaths : (ns?.readonly_paths ?? []);
 
   return (
     <box height="100%" width="100%" flexDirection="column">
@@ -213,9 +261,9 @@ export function NamespaceConfigView({
 
           {/* Removed grants */}
           <box height={1} width="100%">
-            <text>{`  Removed grants (${ns.removed_grants.length}):`}</text>
+            <text>{`  Removed grants (${displayRemovedGrants.length}):`}</text>
           </box>
-          {ns.removed_grants.map((g, i) => (
+          {displayRemovedGrants.map((g, i) => (
             <box key={`rg-${i}`} height={1} width="100%">
               <text>{`    - ${g}`}</text>
             </box>
@@ -232,9 +280,9 @@ export function NamespaceConfigView({
 
           {/* Added grants */}
           <box height={1} width="100%">
-            <text>{`  Added grants (${ns.added_grants.length}):`}</text>
+            <text>{`  Added grants (${displayAddedGrants.length}):`}</text>
           </box>
-          {ns.added_grants.map((g, i) => (
+          {displayAddedGrants.map((g, i) => (
             <box key={`ag-${i}`} height={1} width="100%">
               <text>{`    + ${g}`}</text>
             </box>
@@ -251,9 +299,9 @@ export function NamespaceConfigView({
 
           {/* Readonly paths */}
           <box height={1} width="100%">
-            <text>{`  Read-only paths (${ns.readonly_paths.length}):`}</text>
+            <text>{`  Read-only paths (${displayReadonlyPaths.length}):`}</text>
           </box>
-          {ns.readonly_paths.map((p, i) => (
+          {displayReadonlyPaths.map((p, i) => (
             <box key={`ro-${i}`} height={1} width="100%">
               <text>{`    [RO] ${p}`}</text>
             </box>
@@ -289,7 +337,7 @@ export function NamespaceConfigView({
       <box height={1} width="100%">
         <text>
           {editing
-            ? "Tab:next field  Enter:save  Escape:cancel edit  Backspace:delete"
+            ? "Tab:next field  Enter:save  Escape:cancel  Backspace:delete char  Ctrl+D:remove last item"
             : "e:edit  Escape:close"}
         </text>
       </box>

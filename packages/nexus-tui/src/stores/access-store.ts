@@ -118,6 +118,42 @@ export interface FraudScore {
   readonly computed_at: string;
 }
 
+/** Matches backend DelegateResponse from delegation.py. */
+export interface DelegationCreateResponse {
+  readonly delegation_id: string;
+  readonly worker_agent_id: string;
+  readonly api_key: string;
+  readonly mount_table: readonly string[];
+  readonly expires_at: string | null;
+  readonly delegation_mode: string;
+}
+
+/** Matches backend DelegationChainLink from delegation.py. */
+export interface DelegationChainEntry {
+  readonly delegation_id: string;
+  readonly agent_id: string;
+  readonly parent_agent_id: string;
+  readonly delegation_mode: string;
+  readonly status: string;
+  readonly depth: number;
+  readonly intent: string;
+  readonly created_at: string;
+}
+
+/** Matches backend DelegationChainResponse from delegation.py. */
+export interface DelegationChain {
+  readonly chain: readonly DelegationChainEntry[];
+  readonly total_depth: number;
+}
+
+/** Matches backend governance check result from governance.py. */
+export interface GovernanceCheckResult {
+  readonly allowed: boolean;
+  readonly constraint_type: string | null;
+  readonly reason: string;
+  readonly edge_id: string;
+}
+
 export type AccessTab =
   | "manifests"
   | "alerts"
@@ -168,6 +204,13 @@ export interface AccessState {
   readonly delegations: readonly DelegationItem[];
   readonly delegationsLoading: boolean;
   readonly selectedDelegationIndex: number;
+  readonly lastDelegationCreate: DelegationCreateResponse | null;
+  readonly delegationChain: DelegationChain | null;
+  readonly delegationChainLoading: boolean;
+
+  // Governance check
+  readonly governanceCheck: GovernanceCheckResult | null;
+  readonly governanceCheckLoading: boolean;
 
   // UI state
   readonly activeTab: AccessTab;
@@ -209,6 +252,34 @@ export interface AccessState {
 
   // Actions — delegations
   readonly fetchDelegations: (client: FetchClient) => Promise<void>;
+  readonly createDelegation: (
+    request: {
+      readonly worker_id: string;
+      readonly worker_name: string;
+      readonly namespace_mode: string;
+      readonly scope_prefix?: string;
+      readonly intent: string;
+      readonly can_sub_delegate: boolean;
+      readonly ttl_seconds?: number;
+    },
+    client: FetchClient,
+  ) => Promise<void>;
+  readonly revokeDelegation: (delegationId: string, client: FetchClient) => Promise<void>;
+  readonly completeDelegation: (
+    delegationId: string,
+    outcome: string,
+    qualityScore: number | null,
+    client: FetchClient,
+  ) => Promise<void>;
+  readonly fetchDelegationChain: (delegationId: string, client: FetchClient) => Promise<void>;
+
+  // Actions — governance check
+  readonly checkGovernanceEdge: (
+    fromAgentId: string,
+    toAgentId: string,
+    zoneId: string | undefined,
+    client: FetchClient,
+  ) => Promise<void>;
 
   // Actions — UI
   readonly setActiveTab: (tab: AccessTab) => void;
@@ -241,6 +312,11 @@ export const useAccessStore = create<AccessState>((set) => ({
   delegations: [],
   delegationsLoading: false,
   selectedDelegationIndex: 0,
+  lastDelegationCreate: null,
+  delegationChain: null,
+  delegationChainLoading: false,
+  governanceCheck: null,
+  governanceCheckLoading: false,
   activeTab: "manifests",
   error: null,
 
@@ -559,7 +635,112 @@ export const useAccessStore = create<AccessState>((set) => ({
     }
   },
 
+  createDelegation: async (request, client) => {
+    set({ delegationsLoading: true, error: null });
+    try {
+      const response = await client.post<DelegationCreateResponse>(
+        "/api/v2/agents/delegate",
+        request,
+      );
+      set({ lastDelegationCreate: response, delegationsLoading: false });
+      // Re-fetch list to include the new delegation
+      const listResponse = await client.get<{
+        readonly delegations: readonly DelegationItem[];
+        readonly count: number;
+      }>("/api/v2/agents/delegate");
+      set({
+        delegations: listResponse.delegations,
+        selectedDelegationIndex: 0,
+      });
+    } catch (err) {
+      set({
+        delegationsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to create delegation",
+      });
+    }
+  },
+
+  revokeDelegation: async (delegationId, client) => {
+    set({ delegationsLoading: true, error: null });
+    try {
+      await client.delete<{
+        readonly status: string;
+        readonly delegation_id: string;
+      }>(`/api/v2/agents/delegate/${encodeURIComponent(delegationId)}`);
+      set((state) => ({
+        delegations: state.delegations.map((d) =>
+          d.delegation_id === delegationId ? { ...d, status: "revoked" } : d,
+        ),
+        delegationsLoading: false,
+      }));
+    } catch (err) {
+      set({
+        delegationsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to revoke delegation",
+      });
+    }
+  },
+
+  completeDelegation: async (delegationId, outcome, qualityScore, client) => {
+    set({ delegationsLoading: true, error: null });
+    try {
+      const body: { outcome: string; quality_score?: number } = { outcome };
+      if (qualityScore !== null) {
+        body.quality_score = qualityScore;
+      }
+      await client.post<{
+        readonly status: string;
+        readonly delegation_id: string;
+        readonly outcome: string;
+      }>(`/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/complete`, body);
+      set((state) => ({
+        delegations: state.delegations.map((d) =>
+          d.delegation_id === delegationId ? { ...d, status: outcome } : d,
+        ),
+        delegationsLoading: false,
+      }));
+    } catch (err) {
+      set({
+        delegationsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to complete delegation",
+      });
+    }
+  },
+
+  fetchDelegationChain: async (delegationId, client) => {
+    set({ delegationChainLoading: true, error: null });
+    try {
+      const response = await client.get<DelegationChain>(
+        `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/chain`,
+      );
+      set({ delegationChain: response, delegationChainLoading: false });
+    } catch (err) {
+      set({
+        delegationChainLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch delegation chain",
+      });
+    }
+  },
+
   setSelectedDelegationIndex: (index) => {
     set({ selectedDelegationIndex: index });
+  },
+
+  // ── Governance check ────────────────────────────────────────────────────
+
+  checkGovernanceEdge: async (fromAgentId, toAgentId, zoneId, client) => {
+    set({ governanceCheckLoading: true, error: null });
+    try {
+      const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
+      const response = await client.get<GovernanceCheckResult>(
+        `/api/v2/governance/check/${encodeURIComponent(fromAgentId)}/${encodeURIComponent(toAgentId)}${params}`,
+      );
+      set({ governanceCheck: response, governanceCheckLoading: false });
+    } catch (err) {
+      set({
+        governanceCheckLoading: false,
+        error: err instanceof Error ? err.message : "Failed to check governance edge",
+      });
+    }
   },
 }));

@@ -13,16 +13,19 @@
 
 import React, { useState, useCallback } from "react";
 import { useAccessStore } from "../../stores/access-store.js";
-import type { PermissionCheck, ManifestEntry } from "../../stores/access-store.js";
+import type { PermissionCheck, ManifestEntry, GovernanceCheckResult } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 
-type ActiveField = "manifestId" | "toolName";
+type ActiveField = "manifestId" | "toolName" | "fromAgentId" | "toAgentId";
 
 interface PermissionCheckerProps {
   readonly initialManifestId: string;
   readonly lastResult: PermissionCheck | null;
   readonly loading: boolean;
+  readonly governanceCheck: GovernanceCheckResult | null;
+  readonly governanceCheckLoading: boolean;
+  readonly zoneId: string | undefined;
   readonly onClose: () => void;
 }
 
@@ -43,39 +46,53 @@ export function PermissionChecker({
   initialManifestId,
   lastResult,
   loading,
+  governanceCheck,
+  governanceCheckLoading,
+  zoneId,
   onClose,
 }: PermissionCheckerProps): React.ReactNode {
   const client = useApi();
   const checkPermission = useAccessStore((s) => s.checkPermission);
   const fetchManifestDetail = useAccessStore((s) => s.fetchManifestDetail);
+  const checkGovernanceEdge = useAccessStore((s) => s.checkGovernanceEdge);
   const manifests = useAccessStore((s) => s.manifests);
 
   const [manifestId, setManifestId] = useState(initialManifestId);
   const [toolName, setToolName] = useState("");
+  const [fromAgentId, setFromAgentId] = useState("");
+  const [toAgentId, setToAgentId] = useState("");
   const [activeField, setActiveField] = useState<ActiveField>("toolName");
 
+  const FIELD_ORDER: readonly ActiveField[] = ["manifestId", "toolName", "fromAgentId", "toAgentId"];
+
+  const setters: Readonly<Record<ActiveField, (fn: (b: string) => string) => void>> = {
+    manifestId: (fn) => setManifestId((b) => fn(b)),
+    toolName: (fn) => setToolName((b) => fn(b)),
+    fromAgentId: (fn) => setFromAgentId((b) => fn(b)),
+    toAgentId: (fn) => setToAgentId((b) => fn(b)),
+  };
+
   const handleSubmit = useCallback(() => {
-    if (!client || !manifestId.trim() || !toolName.trim()) return;
-    const id = manifestId.trim();
-    // Fetch manifest detail (to get entries) alongside the permission check
-    fetchManifestDetail(id, client);
-    checkPermission(id, toolName.trim(), client);
-  }, [client, manifestId, toolName, checkPermission, fetchManifestDetail]);
+    if (!client) return;
+    // Manifest permission check (requires both fields)
+    if (manifestId.trim() && toolName.trim()) {
+      const id = manifestId.trim();
+      fetchManifestDetail(id, client);
+      checkPermission(id, toolName.trim(), client);
+    }
+    // Governance edge check (requires both agent IDs)
+    if (fromAgentId.trim() && toAgentId.trim()) {
+      checkGovernanceEdge(fromAgentId.trim(), toAgentId.trim(), zoneId, client);
+    }
+  }, [client, manifestId, toolName, fromAgentId, toAgentId, zoneId, checkPermission, fetchManifestDetail, checkGovernanceEdge]);
 
   const handleUnhandledKey = useCallback(
     (keyName: string) => {
+      const setter = setters[activeField];
       if (keyName.length === 1) {
-        if (activeField === "manifestId") {
-          setManifestId((b) => b + keyName);
-        } else {
-          setToolName((b) => b + keyName);
-        }
+        setter((b) => b + keyName);
       } else if (keyName === "space") {
-        if (activeField === "manifestId") {
-          setManifestId((b) => b + " ");
-        } else {
-          setToolName((b) => b + " ");
-        }
+        setter((b) => b + " ");
       }
     },
     [activeField],
@@ -86,21 +103,21 @@ export function PermissionChecker({
       return: handleSubmit,
       escape: onClose,
       backspace: () => {
-        if (activeField === "manifestId") {
-          setManifestId((b) => b.slice(0, -1));
-        } else {
-          setToolName((b) => b.slice(0, -1));
-        }
+        setters[activeField]((b) => b.slice(0, -1));
       },
       tab: () => {
-        setActiveField((f) => (f === "manifestId" ? "toolName" : "manifestId"));
+        const currentIdx = FIELD_ORDER.indexOf(activeField);
+        const nextIdx = (currentIdx + 1) % FIELD_ORDER.length;
+        const next = FIELD_ORDER[nextIdx];
+        if (next) {
+          setActiveField(next);
+        }
       },
     },
     handleUnhandledKey,
   );
 
-  const manifestCursor = activeField === "manifestId" ? "\u2588" : "";
-  const toolCursor = activeField === "toolName" ? "\u2588" : "";
+  const cursor = "\u2588";
 
   // Look up the manifest (with entries loaded via fetchManifestDetail)
   const matchedManifest = lastResult
@@ -126,26 +143,28 @@ export function PermissionChecker({
     ? findMatchedEntry(entries, lastResult.tool_name)
     : null;
 
+  const fields: readonly { readonly key: ActiveField; readonly label: string; readonly value: string; readonly hint?: string }[] = [
+    { key: "manifestId", label: "Manifest ID  ", value: manifestId },
+    { key: "toolName", label: "Tool Name    ", value: toolName },
+    { key: "fromAgentId", label: "From Agent ID", value: fromAgentId, hint: "governance check" },
+    { key: "toAgentId", label: "To Agent ID  ", value: toAgentId, hint: "governance check" },
+  ];
+
   return (
     <box height="100%" width="100%" flexDirection="column">
       {/* Form fields */}
-      <box height={1} width="100%">
-        <text>
-          {activeField === "manifestId"
-            ? `> Manifest ID: ${manifestId}${manifestCursor}`
-            : `  Manifest ID: ${manifestId}`}
-        </text>
-      </box>
-      <box height={1} width="100%">
-        <text>
-          {activeField === "toolName"
-            ? `> Tool Name:   ${toolName}${toolCursor}`
-            : `  Tool Name:   ${toolName}`}
-        </text>
-      </box>
+      {fields.map((f) => (
+        <box key={f.key} height={1} width="100%">
+          <text>
+            {activeField === f.key
+              ? `> ${f.label}: ${f.value}${cursor}${f.hint ? `  (${f.hint})` : ""}`
+              : `  ${f.label}: ${f.value}${f.hint && !f.value ? `  (${f.hint})` : ""}`}
+          </text>
+        </box>
+      ))}
 
       {/* Loading indicator */}
-      {loading && (
+      {(loading || governanceCheckLoading) && (
         <box height={1} width="100%">
           <text>Evaluating...</text>
         </box>
@@ -212,10 +231,31 @@ export function PermissionChecker({
         </box>
       )}
 
+      {/* Governance edge check result */}
+      {governanceCheck && !governanceCheckLoading && (
+        <box flexDirection="column" width="100%">
+          <box height={1} width="100%">
+            <text>{"--- Governance Edge Check ---"}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>
+              {governanceCheck.allowed
+                ? `[ALLOWED] ${governanceCheck.reason}`
+                : `[BLOCKED] ${governanceCheck.reason}`}
+            </text>
+          </box>
+          {governanceCheck.constraint_type && (
+            <box height={1} width="100%">
+              <text>{`  Constraint: ${governanceCheck.constraint_type}  edge=${governanceCheck.edge_id}`}</text>
+            </box>
+          )}
+        </box>
+      )}
+
       {/* Help */}
       <box height={1} width="100%">
         <text>
-          {"Tab:switch field  Enter:evaluate  Escape:cancel  Backspace:delete"}
+          {"Tab:cycle fields  Enter:evaluate  Escape:cancel  Backspace:delete"}
         </text>
       </box>
     </box>

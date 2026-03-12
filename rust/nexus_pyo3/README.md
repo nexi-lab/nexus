@@ -45,14 +45,10 @@ All operations use GIL-free computation for true parallel execution with zero-co
 
 ### Automatic Installation (Recommended)
 
-The published Rust extension package is `nexus-fast`. Install it directly or
-through the main package's optional extra:
+The published Rust extension package is `nexus-fast`. Install it directly:
 
 ```bash
-# Install the main package with the Rust extra
-pip install 'nexus-ai-fs[rust]'
-
-# Or install the Rust extension package directly
+# Install the Rust extension package directly
 pip install nexus-fast
 
 # Base installation (no Rust acceleration)

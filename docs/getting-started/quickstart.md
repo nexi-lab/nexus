@@ -82,7 +82,7 @@ Expected result:
 
 - Full dev/test environment: `uv sync --extra dev --extra test`
 - txtai/FAISS semantic search stack: `uv sync --extra semantic-search`
-- Optional Rust acceleration from PyPI: `pip install 'nexus-ai-fs[rust]'`
+- Optional Rust acceleration from PyPI: `pip install nexus-fast`
 - Optional Rust acceleration from a checkout: `uv pip install maturin && maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
 - Rust metastore / federation extensions: `maturin develop --release -m rust/nexus_raft/Cargo.toml --features python` or `--features full`
 

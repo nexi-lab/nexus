@@ -142,16 +142,6 @@ performance = [
     "fastembed>=0.4.0",
 ]
 
-rust = [
-    # Optional Rust acceleration package (nexus_fast PyO3 extension)
-    "nexus-fast==0.9.1",
-]
-
-fast = [
-    # Backward-compatible alias for Rust acceleration
-    "nexus-fast==0.9.1",
-]
-
 compression = [
     # zstd compression for CompressedStorage wrapper (Issue #1705)
     # Python 3.14+ has native compression.zstd; this is the fallback for 3.12/3.13

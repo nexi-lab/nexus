@@ -913,11 +913,14 @@ class NexusFS(  # type: ignore[misc]
             # Return directory metadata
             return {
                 "path": normalized,
+                "backend_name": "",
+                "physical_path": "",
                 "size": 4096,  # Standard directory size
                 "mime_type": "inode/directory",
                 "created_at": None,
                 "modified_at": None,
                 "is_directory": True,
+                "entry_type": 1,
                 "owner": ctx.user_id,
                 "group": ctx.user_id,
                 "mode": 0o755,  # drwxr-xr-x
@@ -930,6 +933,8 @@ class NexusFS(  # type: ignore[misc]
 
         return {
             "path": file_meta.path,
+            "backend_name": file_meta.backend_name,
+            "physical_path": file_meta.physical_path,
             "size": file_meta.size or 0,
             "etag": file_meta.etag,
             "mime_type": file_meta.mime_type or "application/octet-stream",
@@ -2225,62 +2230,91 @@ class NexusFS(  # type: ignore[misc]
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # VFS I/O Lock: exclusive write lock around backend write + metadata put.
-        # Like Linux i_rwsem: held for I/O duration only, released before observers.
-        with self._vfs_locked(path, "write"):
-            # Issue #1508: Inline data — store small files directly in metastore
-            # (Raft-replicated), bypassing CAS backend entirely.
-            from nexus.contracts.constants import (
-                INLINE_CONTENT_KEY,
-                INLINE_PREFIX,
-                INLINE_THRESHOLD,
-            )
-
-            _use_inline = len(content) <= INLINE_THRESHOLD
-
-            if _use_inline:
-                # Inline path: compute hash locally, skip backend I/O
-                content_hash = hash_content(content)
-                # Store content in metastore custom metadata (Raft-replicated)
-                import base64
-
-                self.metadata.set_file_metadata(
-                    path, INLINE_CONTENT_KEY, base64.b64encode(content).decode("ascii")
-                )
-            else:
-                # CAS path: write to backend (original behavior)
-                content_hash = route.backend.write_content(content, context=context).content_hash
-                # Clean up stale inline data if file grew past threshold
-                if meta and meta.physical_path.startswith(INLINE_PREFIX):
-                    self.metadata.set_file_metadata(path, INLINE_CONTENT_KEY, None)
-
-            # NOTE: sys_write does NOT release old content on overwrite.
-            # HDFS/GFS pattern: content cleanup is async via background GC.
-            # See: docs/architecture/federation-memo.md §7f Caveat 4.
-
-            # Calculate new version number (increment if updating)
+        # Remote backends (external_content capability): the typed Write RPC
+        # already performs the full write (content + metadata) on the server.
+        # Skip local metadata management to avoid overwriting the server's
+        # inline/CAS decisions with stale client-side metadata.
+        _backend_caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
+        if "external_content" in _backend_caps:
+            wr = route.backend.write_content(content, context=context)
+            content_hash = wr.content_hash
             new_version = (meta.version + 1) if meta else 1
-
-            # Store metadata with content hash as both etag and physical_path
-            # Issue #920: Set owner_id for O(1) permission checks (only on new files)
+            # Build a lightweight metadata object for event dispatch / hooks.
+            # The server already persisted the real metadata via the typed Write RPC.
             ctx = context if context is not None else self._default_context
             owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
-
             metadata = FileMetadata(
                 path=path,
                 backend_name=route.backend.name,
-                physical_path=f"{INLINE_PREFIX}{content_hash}" if _use_inline else content_hash,
+                physical_path=content_hash,
                 size=len(content),
                 etag=content_hash,
                 created_at=meta.created_at if meta else now,
                 modified_at=now,
                 version=new_version,
                 created_by=self._get_created_by(context),
-                zone_id=zone_id or "root",  # Issue #904, #773: pre-existing default
+                zone_id=zone_id or "root",
                 owner_id=owner_id,
             )
+        else:
+            # VFS I/O Lock: exclusive write lock around backend write + metadata put.
+            # Like Linux i_rwsem: held for I/O duration only, released before observers.
+            with self._vfs_locked(path, "write"):
+                # Issue #1508: Inline data — store small files directly in metastore
+                # (Raft-replicated), bypassing CAS backend entirely.
+                from nexus.contracts.constants import (
+                    INLINE_CONTENT_KEY,
+                    INLINE_PREFIX,
+                    INLINE_THRESHOLD,
+                )
 
-            self.metadata.put(metadata)
+                _use_inline = len(content) <= INLINE_THRESHOLD
+
+                if _use_inline:
+                    # Inline path: compute hash locally, skip backend I/O
+                    content_hash = hash_content(content)
+                    # Store content in metastore custom metadata (Raft-replicated)
+                    import base64
+
+                    self.metadata.set_file_metadata(
+                        path, INLINE_CONTENT_KEY, base64.b64encode(content).decode("ascii")
+                    )
+                else:
+                    # CAS path: write to backend (original behavior)
+                    content_hash = route.backend.write_content(
+                        content, context=context
+                    ).content_hash
+                    # Clean up stale inline data if file grew past threshold
+                    if meta and meta.physical_path.startswith(INLINE_PREFIX):
+                        self.metadata.set_file_metadata(path, INLINE_CONTENT_KEY, None)
+
+                # NOTE: sys_write does NOT release old content on overwrite.
+                # HDFS/GFS pattern: content cleanup is async via background GC.
+                # See: docs/architecture/federation-memo.md §7f Caveat 4.
+
+                # Calculate new version number (increment if updating)
+                new_version = (meta.version + 1) if meta else 1
+
+                # Store metadata with content hash as both etag and physical_path
+                # Issue #920: Set owner_id for O(1) permission checks (only on new files)
+                ctx = context if context is not None else self._default_context
+                owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
+
+                metadata = FileMetadata(
+                    path=path,
+                    backend_name=route.backend.name,
+                    physical_path=f"{INLINE_PREFIX}{content_hash}" if _use_inline else content_hash,
+                    size=len(content),
+                    etag=content_hash,
+                    created_at=meta.created_at if meta else now,
+                    modified_at=now,
+                    version=new_version,
+                    created_by=self._get_created_by(context),
+                    zone_id=zone_id or "root",  # Issue #904, #773: pre-existing default
+                    owner_id=owner_id,
+                )
+
+                self.metadata.put(metadata)
 
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 

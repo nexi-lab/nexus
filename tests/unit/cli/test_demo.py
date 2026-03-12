@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from nexus.cli.commands.demo import (
     DEMO_AGENTS,
@@ -15,6 +15,7 @@ from nexus.cli.commands.demo import (
     _delete_demo_files,
     _load_manifest,
     _save_manifest,
+    _seed_identities,
 )
 
 # ---------------------------------------------------------------------------
@@ -183,3 +184,55 @@ class TestDeleteDemoFiles:
 
         removed = _delete_demo_files(mock_nx, manifest)
         assert removed == 0  # All failed, but no exception raised
+
+
+# ---------------------------------------------------------------------------
+# Identity seeding tests
+# ---------------------------------------------------------------------------
+
+
+class TestSeedIdentities:
+    def test_skips_non_database_auth(self) -> None:
+        config = {"preset": "shared", "auth": "static"}
+        manifest: dict = {}
+        created = _seed_identities(config, manifest)
+        assert created == 0
+        assert manifest["identities_seeded"] is True
+
+    def test_idempotent(self) -> None:
+        config = {"preset": "demo", "auth": "database", "api_key": "test-key"}
+        manifest: dict = {"identities_seeded": True}
+        created = _seed_identities(config, manifest)
+        assert created == 0
+
+    def test_provisions_via_rpc(self, tmp_path: Path) -> None:
+        """When admin RPC is available, should create demo_user + demo_agent."""
+        key_file = tmp_path / ".admin-api-key"
+        key_file.write_text("test-admin-key")
+
+        mock_rpc = MagicMock(return_value={"api_key": "new-key", "user_id": "x"})
+        mock_get_rpc = MagicMock(return_value=mock_rpc)
+
+        config = {
+            "preset": "demo",
+            "auth": "database",
+            "data_dir": str(tmp_path),
+            "ports": {"http": 2026, "grpc": 2028},
+        }
+        manifest: dict = {}
+
+        # Patch the admin module that _seed_identities imports from
+        mock_admin_module = MagicMock(get_admin_rpc=mock_get_rpc)
+        with patch.dict("sys.modules", {"nexus.cli.commands.admin": mock_admin_module}):
+            created = _seed_identities(config, manifest)
+
+        # Should create demo_user (skip admin) + demo_agent = 2
+        assert created == 2
+        assert manifest["identities_seeded"] is True
+        assert "identity_keys" in manifest
+
+    def test_skips_when_no_api_key(self) -> None:
+        config = {"preset": "demo", "auth": "database", "data_dir": "/nonexistent"}
+        manifest: dict = {}
+        created = _seed_identities(config, manifest)
+        assert created == 0

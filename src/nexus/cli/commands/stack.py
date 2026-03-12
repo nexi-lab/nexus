@@ -330,10 +330,8 @@ def up(
         "NEXUS_ADMIN_USER": str(config.get("admin_user", "admin")),
     }
 
-    # Auth config
-    auth = config.get("auth", "none")
-    if auth == "database":
-        compose_env["NEXUS_AUTH_TYPE"] = "database"
+    # Auth config — always forward so the entrypoint honours the preset's choice
+    compose_env["NEXUS_AUTH_TYPE"] = config.get("auth", "none")
 
     # TLS config — paths must be container-relative (/app/data/tls/...)
     # since the host data_dir is mounted at /app/data inside the container.
@@ -380,6 +378,18 @@ def up(
         console.print("  Run `nexus logs` to investigate.")
         raise SystemExit(1)
 
+    # Bootstrap auth: read the admin API key written by the container entrypoint
+    # into <data_dir>/.admin-api-key and persist it to nexus.yaml so that
+    # downstream commands (e.g. `nexus demo init`) can authenticate.
+    data_dir = config.get("data_dir", "./nexus-data")
+    api_key_file = Path(data_dir) / ".admin-api-key"
+    admin_api_key: str | None = None
+    if api_key_file.exists():
+        admin_api_key = api_key_file.read_text().strip()
+        if admin_api_key and admin_api_key != config.get("api_key"):
+            config["api_key"] = admin_api_key
+            _save_project_config(config)
+
     # Print final status table
     console.print()
     console.print("[bold]Healthy services:[/bold]")
@@ -397,6 +407,13 @@ def up(
         console.print(f"  dragonfly   localhost:{df_port}")
     if "zoekt" in active_services:
         console.print(f"  zoekt       http://localhost:{zk_port}")
+
+    # Surface the admin API key so the user can authenticate downstream
+    if admin_api_key:
+        console.print()
+        console.print("[bold]Admin API key:[/bold]")
+        console.print(f"  export NEXUS_API_KEY='{admin_api_key}'")
+        console.print(f"  export NEXUS_URL='http://localhost:{http_port}'")
 
     # Print next steps
     console.print()

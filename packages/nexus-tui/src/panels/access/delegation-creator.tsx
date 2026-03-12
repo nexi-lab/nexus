@@ -121,7 +121,7 @@ export function DelegationCreator({ onClose }: DelegationCreatorProps): React.Re
     { key: "ttlSeconds", label: "TTL (seconds)  ", value: ttlSeconds, hint: "1-86400, blank=none" },
   ];
 
-  const showResult = lastResult && !delegationsLoading && !error;
+  const showResult = lastResult && !delegationsLoading;
 
   return (
     <box height="100%" width="100%" flexDirection="column">

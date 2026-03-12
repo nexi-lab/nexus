@@ -643,7 +643,15 @@ export const useAccessStore = create<AccessState>((set) => ({
         request,
       );
       set({ lastDelegationCreate: response, delegationsLoading: false });
-      // Re-fetch list to include the new delegation
+    } catch (err) {
+      set({
+        delegationsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to create delegation",
+      });
+      return;
+    }
+    // Re-fetch list separately — a GET failure here must not mask the successful POST
+    try {
       const listResponse = await client.get<{
         readonly delegations: readonly DelegationItem[];
         readonly count: number;
@@ -652,11 +660,8 @@ export const useAccessStore = create<AccessState>((set) => ({
         delegations: listResponse.delegations,
         selectedDelegationIndex: 0,
       });
-    } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to create delegation",
-      });
+    } catch {
+      // Non-critical: list will refresh on next tab visit
     }
   },
 

@@ -115,15 +115,20 @@ def resolve_ports(
 
     resolved: dict[str, int] = {}
     messages: list[str] = []
+    # Track ports already claimed in this pass to avoid self-conflicts
+    # (e.g. http and grpc both resolving to the same free port).
+    claimed: set[int] = set()
 
     for service, port in ports.items():
         # Skip services not in the active set
         if services is not None and service not in services:
             resolved[service] = port
+            claimed.add(port)
             continue
 
-        if check_port_available(port, host):
+        if check_port_available(port, host) and port not in claimed:
             resolved[service] = port
+            claimed.add(port)
         elif strategy == "fail":
             label = PORT_LABELS.get(service, service)
             from nexus.cli.utils import console
@@ -137,18 +142,38 @@ def resolve_ports(
             label = PORT_LABELS.get(service, service)
             import click
 
+            default_free = _find_free_unclaimed(port + 1, host, claimed)
             new_port = click.prompt(
                 f"Port {port} ({label}) is in use. Enter alternative port",
                 type=int,
-                default=find_free_port(port + 1, host),
+                default=default_free,
             )
             resolved[service] = new_port
+            claimed.add(new_port)
             messages.append(f"Port {port} ({label}) in use, using {new_port}")
         else:
             # strategy == "auto"
-            new_port = find_free_port(port + 1, host)
+            new_port = _find_free_unclaimed(port + 1, host, claimed)
             label = PORT_LABELS.get(service, service)
             resolved[service] = new_port
+            claimed.add(new_port)
             messages.append(f"Port {port} ({label}) in use, selected {new_port}")
 
     return resolved, messages
+
+
+def _find_free_unclaimed(
+    preferred: int,
+    host: str,
+    claimed: set[int],
+    max_attempts: int = 100,
+) -> int:
+    """Find a free port that is also not already claimed in this resolution pass."""
+    for offset in range(max_attempts):
+        candidate = preferred + offset
+        if candidate > 65535:
+            break
+        if candidate not in claimed and check_port_available(candidate, host):
+            return candidate
+    msg = f"No free port found starting from {preferred} (tried {max_attempts} ports)"
+    raise RuntimeError(msg)

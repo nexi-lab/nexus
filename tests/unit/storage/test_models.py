@@ -59,16 +59,6 @@ class TestFilePathModel:
         assert file_path.created_at is not None
         assert file_path.updated_at is not None
 
-    @pytest.mark.skip(reason="v0.5.0: zone_id removed - use ReBAC for multi-zone access control")
-    def test_unique_constraint_zone_virtual_path(self, session):
-        """Test that zone_id + virtual_path must be unique (deprecated)."""
-        pass
-
-    @pytest.mark.skip(reason="v0.5.0: zone_id removed - use ReBAC for multi-zone access control")
-    def test_different_zones_can_have_same_path(self, session):
-        """Test that different zones can have the same virtual path (deprecated)."""
-        pass
-
     def test_soft_delete(self, session):
         """Test soft delete functionality."""
         file_path = FilePathModel(

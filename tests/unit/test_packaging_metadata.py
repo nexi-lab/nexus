@@ -19,15 +19,14 @@ def test_semantic_search_stack_is_not_in_base_dependencies() -> None:
     assert any(dep.startswith("faiss-cpu") for dep in semantic_search)
 
 
-def test_rust_extra_points_at_version_matched_nexus_fast() -> None:
+def test_root_package_does_not_advertise_unpublished_nexus_fast_extra() -> None:
     pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
     payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
 
-    version = payload["project"]["version"]
     optional = payload["project"]["optional-dependencies"]
 
-    assert f"nexus-fast=={version}" in optional["rust"]
-    assert f"nexus-fast=={version}" in optional["fast"]
+    assert "rust" not in optional
+    assert "fast" not in optional
 
 
 def test_rust_package_versions_match_main_package() -> None:

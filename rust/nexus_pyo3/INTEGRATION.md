@@ -16,14 +16,17 @@ maturin build --release
 pip install target/wheels/nexus_fast-*.whl
 ```
 
-## Step 2: Add Optional Dependency
+## Step 2: Install `nexus-fast` in the Target Environment
 
-In the main `pyproject.toml`:
+Nexus loads `nexus_fast` opportunistically via import when it is present. Keep
+the extension as a separately installed package instead of advertising a root
+package extra that points at an unpublished registry artifact during
+development.
 
-```toml
-[project.optional-dependencies]
-rust = ["nexus-fast==0.9.1"]
-fast = ["nexus-fast==0.9.1"]
+For released environments:
+
+```bash
+pip install nexus-fast
 ```
 
 ## Step 3: Create Wrapper Module

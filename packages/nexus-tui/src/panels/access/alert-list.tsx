@@ -46,7 +46,7 @@ export function AlertList({ alerts, selectedIndex, loading }: AlertListProps): R
     <scrollbox height="100%" width="100%">
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  SEV  CATEGORY         AGENT            MESSAGE                              STATUS     TIME"}</text>
+        <text>{"  SEV  TYPE             AGENT            DETAILS                              STATUS     TIME"}</text>
       </box>
       <box height={1} width="100%">
         <text>{"  ---  ---------------  ---------------  -------------------------------------  ---------  ----"}</text>
@@ -58,15 +58,19 @@ export function AlertList({ alerts, selectedIndex, loading }: AlertListProps): R
         const prefix = isSelected ? "> " : "  ";
         const icon = SEVERITY_ICONS[alert.severity] ?? "?";
         const agent = alert.agent_id ?? "system";
-        const message = alert.message.length > 37
-          ? `${alert.message.slice(0, 34)}...`
-          : alert.message;
+        const detailStr = typeof alert.details === "string"
+          ? alert.details
+          : JSON.stringify(alert.details ?? "");
+        const details = detailStr.length > 37
+          ? `${detailStr.slice(0, 34)}...`
+          : detailStr;
         const status = alert.resolved ? "resolved" : "active";
+        const time = alert.created_at ? formatTimestamp(alert.created_at) : "-";
 
         return (
           <box key={alert.alert_id} height={1} width="100%">
             <text>
-              {`${prefix}${icon}  ${alert.category.padEnd(15)}  ${agent.padEnd(15)}  ${message.padEnd(37)}  ${status.padEnd(9)}  ${formatTimestamp(alert.created_at)}`}
+              {`${prefix}${icon}  ${alert.alert_type.padEnd(15)}  ${agent.padEnd(15)}  ${details.padEnd(37)}  ${status.padEnd(9)}  ${time}`}
             </text>
           </box>
         );

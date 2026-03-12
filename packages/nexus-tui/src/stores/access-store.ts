@@ -307,6 +307,16 @@ export interface AccessState {
   ) => Promise<void>;
   readonly fetchDelegationChain: (delegationId: string, client: FetchClient) => Promise<void>;
   readonly fetchNamespaceDetail: (delegationId: string, client: FetchClient) => Promise<void>;
+  readonly updateNamespaceConfig: (
+    delegationId: string,
+    update: {
+      readonly scope_prefix?: string;
+      readonly remove_grants?: readonly string[];
+      readonly add_grants?: readonly string[];
+      readonly readonly_paths?: readonly string[];
+    },
+    client: FetchClient,
+  ) => Promise<void>;
 
   // Actions — governance check
   readonly checkGovernanceEdge: (
@@ -777,6 +787,22 @@ export const useAccessStore = create<AccessState>((set) => ({
       set({
         namespaceDetailLoading: false,
         error: err instanceof Error ? err.message : "Failed to fetch namespace detail",
+      });
+    }
+  },
+
+  updateNamespaceConfig: async (delegationId, update, client) => {
+    set({ namespaceDetailLoading: true, error: null });
+    try {
+      const response = await client.patch<NamespaceDetail>(
+        `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/namespace`,
+        update,
+      );
+      set({ namespaceDetail: response, namespaceDetailLoading: false });
+    } catch (err) {
+      set({
+        namespaceDetailLoading: false,
+        error: err instanceof Error ? err.message : "Failed to update namespace config",
       });
     }
   },

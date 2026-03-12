@@ -538,6 +538,78 @@ class DelegationService:
                 e,
             )
 
+    def update_namespace_config(
+        self,
+        delegation_id: str,
+        *,
+        scope_prefix: str | None = None,
+        remove_grants: list[str] | None = None,
+        add_grants: list[str] | None = None,
+        readonly_paths: list[str] | None = None,
+    ) -> DelegationRecord:
+        """Update mutable namespace config fields on an active delegation.
+
+        Only scope_prefix, removed_grants, added_grants, and readonly_paths
+        are editable. delegation_mode is immutable (set at creation).
+
+        Args:
+            delegation_id: The delegation to update.
+            scope_prefix: New scope prefix (None = leave unchanged).
+            remove_grants: New removed grants list (None = leave unchanged).
+            add_grants: New added grants list (None = leave unchanged).
+            readonly_paths: New readonly paths list (None = leave unchanged).
+
+        Returns:
+            Updated DelegationRecord.
+
+        Raises:
+            DelegationNotFoundError: If delegation_id not found.
+            DelegationError: If delegation is not ACTIVE.
+        """
+        record = self._load_delegation_record(delegation_id)
+        if record is None:
+            raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
+
+        if record.status != DelegationStatus.ACTIVE:
+            raise DelegationError(
+                f"Delegation {delegation_id} is not active (status={record.status.value})"
+            )
+
+        from sqlalchemy import update as sa_update
+
+        from nexus.storage.models.agents import DelegationRecordModel
+
+        values: dict[str, str | None] = {}
+        if scope_prefix is not None:
+            values["scope_prefix"] = scope_prefix
+        if remove_grants is not None:
+            values["removed_grants"] = json.dumps(remove_grants)
+        if add_grants is not None:
+            values["added_grants"] = json.dumps(add_grants)
+        if readonly_paths is not None:
+            values["readonly_paths"] = json.dumps(readonly_paths)
+
+        if not values:
+            return record
+
+        with self._session() as session:
+            session.execute(
+                sa_update(DelegationRecordModel)
+                .where(DelegationRecordModel.delegation_id == delegation_id)
+                .values(**values)
+            )
+
+        logger.info(
+            "[Delegation] Updated namespace config for delegation=%s fields=%s",
+            delegation_id,
+            list(values.keys()),
+        )
+
+        updated = self._load_delegation_record(delegation_id)
+        if updated is None:
+            raise DelegationNotFoundError(f"Delegation {delegation_id} not found after update")
+        return updated
+
     # -------------------------------------------------------------------------
     # Private helpers
     # -------------------------------------------------------------------------

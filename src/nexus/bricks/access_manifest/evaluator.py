@@ -46,8 +46,9 @@ class ManifestEvaluator:
     def evaluate_with_trace(entries: tuple[ManifestEntry, ...], tool_name: str) -> EvaluationTrace:
         """Evaluate a tool with a full decision trace (proof tree).
 
-        Same first-match-wins semantics as evaluate(), but records every
-        entry checked and which one matched.
+        Mirrors first-match-wins exactly: once a deciding entry is found,
+        subsequent entries are recorded with matched=False (not evaluated,
+        since evaluation stops at the first match).
 
         Args:
             entries: Ordered manifest entries.
@@ -62,7 +63,12 @@ class ManifestEvaluator:
         decision = ToolPermission.DENY
 
         for i, entry in enumerate(entries):
-            matched = fnmatch.fnmatch(normalized, entry.tool_pattern.lower())
+            # Once a match is found, stop evaluating — first-match-wins
+            if matched_index == -1:
+                matched = fnmatch.fnmatch(normalized, entry.tool_pattern.lower())
+            else:
+                matched = False
+
             trace_entries.append(
                 EvaluationTraceEntry(
                     index=i,
@@ -72,7 +78,7 @@ class ManifestEvaluator:
                     max_calls_per_minute=entry.max_calls_per_minute,
                 )
             )
-            if matched and matched_index == -1:
+            if matched:
                 matched_index = i
                 decision = entry.permission
 

@@ -315,7 +315,7 @@ export default function AccessPanel(): React.ReactNode {
     delegationCreator: " | New Delegation",
     delegationCompleter: " | Complete Delegation",
     delegationChainView: " | Delegation Chain",
-    namespaceConfigView: " | Namespace Config",
+    namespaceConfigView: " | Namespace Editor",
   };
   const overlayLabel = OVERLAY_LABELS[overlay];
 

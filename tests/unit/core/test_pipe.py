@@ -878,3 +878,61 @@ class TestSysSetAttrUpsert:
         # Attempting to change entry_type should be rejected by caller
         assert ms.get("/existing/file") is not None
         assert ms.get("/existing/file").entry_type == DT_REG
+
+
+# ======================================================================
+# PipeManager federation — self_address and backend_name
+# ======================================================================
+
+SELF_ADDR = "10.0.0.1:50051"
+REMOTE_ADDR = "10.0.0.2:50051"
+
+
+class TestPipeManagerSelfAddress:
+    """Test PipeManager.self_address and backend_name embedding (#1576)."""
+
+    def test_self_address_none_by_default(self) -> None:
+        ms = MockMetastore()
+        mgr = PipeManager(ms)
+        assert mgr.self_address is None
+
+    def test_self_address_set(self) -> None:
+        ms = MockMetastore()
+        mgr = PipeManager(ms, self_address=SELF_ADDR)
+        assert mgr.self_address == SELF_ADDR
+
+    def test_create_with_self_address_embeds_origin(self) -> None:
+        ms = MockMetastore()
+        mgr = PipeManager(ms, self_address=SELF_ADDR)
+        mgr.create("/nexus/pipes/fed")
+
+        meta = ms.get("/nexus/pipes/fed")
+        assert meta is not None
+        assert meta.backend_name == f"pipe@{SELF_ADDR}"
+
+    def test_create_without_self_address_plain_pipe(self) -> None:
+        ms = MockMetastore()
+        mgr = PipeManager(ms)
+        mgr.create("/nexus/pipes/local")
+
+        meta = ms.get("/nexus/pipes/local")
+        assert meta is not None
+        assert meta.backend_name == "pipe"
+
+    def test_backend_address_parse_roundtrip(self) -> None:
+        """Verify BackendAddress can parse pipe@<addr> format."""
+        from nexus.contracts.backend_address import BackendAddress
+
+        addr = BackendAddress.parse(f"pipe@{SELF_ADDR}")
+        assert addr.backend_type == "pipe"
+        assert addr.has_origin is True
+        assert addr.origin == SELF_ADDR
+
+    def test_backend_address_parse_plain_pipe(self) -> None:
+        """Verify BackendAddress handles plain 'pipe' (no origin)."""
+        from nexus.contracts.backend_address import BackendAddress
+
+        addr = BackendAddress.parse("pipe")
+        assert addr.backend_type == "pipe"
+        assert addr.has_origin is False
+        assert addr.origin is None

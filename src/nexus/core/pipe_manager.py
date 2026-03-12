@@ -63,11 +63,22 @@ class PipeManager:
     memory, like Linux kfifo data in kmalloc'd kernel heap.
     """
 
-    def __init__(self, metastore: "MetastoreABC", zone_id: str = ROOT_ZONE_ID) -> None:
+    def __init__(
+        self,
+        metastore: "MetastoreABC",
+        zone_id: str = ROOT_ZONE_ID,
+        self_address: str | None = None,
+    ) -> None:
         self._metastore = metastore
         self._zone_id = zone_id
+        self._self_address = self_address
         self._buffers: dict[str, RingBuffer] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+
+    @property
+    def self_address(self) -> str | None:
+        """This node's advertise address, or None for single-node mode."""
+        return self._self_address
 
     def create(
         self,
@@ -101,10 +112,13 @@ class PipeManager:
         if existing is not None:
             raise PipeError(f"path already exists: {path}")
 
-        # Create DT_PIPE inode in MetastoreABC
+        # Create DT_PIPE inode in MetastoreABC.
+        # Embed origin address so remote nodes can proxy pipe I/O.
+        # "pipe" (no origin) = single-node mode, "pipe@host:port" = federated.
+        pipe_backend = f"pipe@{self._self_address}" if self._self_address else "pipe"
         metadata = FileMetadata(
             path=path,
-            backend_name="pipe",
+            backend_name=pipe_backend,
             physical_path="mem://",
             size=capacity,
             entry_type=DT_PIPE,

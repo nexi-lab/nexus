@@ -54,35 +54,36 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
 }
 
 # Modules that expose a single Click command/group to add via cli.add_command
-_ADD_COMMAND: dict[str, str] = {
-    "memory": "memory",
-    "agent": "agent",
-    "admin": "admin",
-    "sandbox": "sandbox",
-    "oauth": "oauth",
-    "zone": "zone",
+# Map module -> (click command name, module attribute name).
+_ADD_COMMAND: dict[str, tuple[str, str]] = {
+    "memory": ("memory", "memory"),
+    "agent": ("agent", "agent"),
+    "admin": ("admin", "admin"),
+    "sandbox": ("sandbox", "sandbox"),
+    "oauth": ("oauth", "oauth"),
+    "zone": ("zone", "zone"),
     # Issue #2811: New CLI command groups
-    "pay": "pay",
-    "audit": "audit",
-    "locks": "lock",
-    "governance_cli": "governance",
-    "events_cli": "events",
-    "snapshots": "snapshot",
-    "exchange": "exchange",
-    "federation": "federation",
+    "pay": ("pay", "pay"),
+    "audit": ("audit", "audit"),
+    "locks": ("lock", "lock"),
+    "governance_cli": ("governance", "governance"),
+    "events_cli": ("events", "events"),
+    "snapshots": ("snapshot", "snapshot"),
+    "exchange": ("exchange", "exchange"),
+    "federation": ("federation", "federation"),
     # Issue #2812: Missing CLI commands for identity, reputation, ipc, etc.
-    "identity": "identity",
-    "reputation": "reputation",
-    "ipc": "ipc",
-    "delegation": "delegation",
-    "scheduler_cli": "scheduler",
+    "identity": ("identity", "identity"),
+    "reputation": ("reputation", "reputation"),
+    "ipc": ("ipc", "ipc"),
+    "delegation": ("delegation", "delegation"),
+    "scheduler_cli": ("scheduler", "scheduler"),
     # "share" removed: /api/v2/share-links endpoints not implemented server-side
-    "graph_cli": "graph",
-    "conflicts": "conflicts",
-    "manifest_cli": "manifest",
-    "secrets_audit": "secrets_audit",
-    "rlm": "rlm",
-    "upload": "upload",
+    "graph_cli": ("graph", "graph"),
+    "conflicts": ("conflicts", "conflicts"),
+    "manifest_cli": ("manifest", "manifest"),
+    "secrets_audit": ("secrets-audit", "secrets_audit"),
+    "rlm": ("rlm", "rlm"),
+    "upload": ("upload", "upload"),
 }
 
 
@@ -155,8 +156,8 @@ def register_all_commands(cli: click.Group) -> None:
     if isinstance(cli, LazyCommandGroup):
         for module_name, command_names in _REGISTER_COMMANDS.items():
             cli.add_lazy_module(module_name, command_names)
-        for module_name, command_name in _ADD_COMMAND.items():
-            cli.add_lazy_command_attr(module_name, command_name, command_name)
+        for module_name, (command_name, attr_name) in _ADD_COMMAND.items():
+            cli.add_lazy_command_attr(module_name, command_name, attr_name)
         return
 
     for module_name in _REGISTER_COMMANDS:
@@ -166,10 +167,10 @@ def register_all_commands(cli: click.Group) -> None:
         except (ImportError, Exception):
             pass
 
-    for mod_name, cmd_name in _ADD_COMMAND.items():
+    for mod_name, (_, attr_name) in _ADD_COMMAND.items():
         try:
             mod = importlib.import_module(f"nexus.cli.commands.{mod_name}")
-            cli.add_command(getattr(mod, cmd_name))
+            cli.add_command(getattr(mod, attr_name))
         except (ImportError, Exception):
             pass
 

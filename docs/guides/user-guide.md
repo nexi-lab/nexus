@@ -223,6 +223,7 @@ mkdir -p ~/nexus-server
 cd ~/nexus-server
 export NEXUS_DATA_DIR="$PWD/data"
 export NEXUS_API_KEY="dev-key-123"
+export NEXUS_GRPC_PORT=2028
 nexusd --profile full --host 0.0.0.0 --port 2026 --data-dir "$NEXUS_DATA_DIR" --api-key "$NEXUS_API_KEY"
 ```
 
@@ -233,6 +234,7 @@ Open terminal B:
 ```bash
 export NEXUS_URL="http://localhost:2026"
 export NEXUS_API_KEY="dev-key-123"
+export NEXUS_GRPC_PORT=2028
 
 nexus status
 curl http://localhost:2026/health
@@ -249,8 +251,12 @@ nexus --profile local-dev ls /
 
 ### Step 4: Connect with the remote Python client
 
-The remote SDK path uses `profile="remote"`. The gRPC port defaults to `2028`,
-so only set `NEXUS_GRPC_PORT` if you changed it on the server.
+The remote SDK path uses `profile="remote"`. `NEXUS_URL` is the HTTP address,
+but filesystem operations still use gRPC on `NEXUS_GRPC_PORT`.
+
+If you start `nexusd` without `NEXUS_GRPC_PORT`, the HTTP server can still come
+up while remote `nexus ls`, `nexus cat`, and SDK filesystem calls fail because
+there is no gRPC listener.
 
 ```bash
 python - <<'PY'
@@ -1068,7 +1074,8 @@ Check:
 
 - `NEXUS_URL`
 - `NEXUS_API_KEY`
-- `NEXUS_GRPC_PORT` if you changed the default gRPC port
+- `NEXUS_GRPC_PORT`
+- the server was started with the same `NEXUS_GRPC_PORT` value, because gRPC is disabled if the server never exported it
 
 ### If permissions seem ignored
 

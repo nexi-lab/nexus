@@ -149,6 +149,10 @@ RUN mkdir -p /app/data && chown -R nexus:nexus /app
 USER nexus
 
 # ---------- Environment variables ----------
+# Prevent faiss SVE auto-detection crash on aarch64 in Docker containers
+# where /proc or /sys may not expose CPU feature flags correctly.
+# OMP_NUM_THREADS=1 avoids the OpenMP runtime conflict between faiss-cpu
+# and PyTorch on ARM (libiomp5 vs libomp).
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
@@ -157,7 +161,9 @@ ENV PYTHONUNBUFFERED=1 \
     ZOEKT_ENABLED=true \
     ZOEKT_URL=http://localhost:6070 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
-    ZOEKT_DATA_DIR=/app/data
+    ZOEKT_DATA_DIR=/app/data \
+    FAISS_OPT_LEVEL=generic \
+    OMP_NUM_THREADS=1
 
 EXPOSE 2026 2126 6070
 

@@ -42,6 +42,32 @@ class _JsonLogFormatter(logging.Formatter):
         return json_mod.dumps(entry)
 
 
+def _is_nexusd_process(pid: int) -> bool:
+    """Check whether *pid* belongs to a running ``nexusd`` process.
+
+    On Linux we inspect ``/proc/<pid>/cmdline``; elsewhere we fall back to
+    ``os.kill(pid, 0)`` which only tells us *some* process is alive.  The
+    cmdline check prevents false positives after PID reuse — common in Docker
+    containers with small PID namespaces after a segfault/crash restart.
+    """
+    # Fast path: process doesn't exist at all
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+
+    # On Linux, verify the process is actually nexusd
+    cmdline_path = Path(f"/proc/{pid}/cmdline")
+    try:
+        cmdline = cmdline_path.read_bytes()
+        # /proc/PID/cmdline uses NUL separators; join for easy substring search
+        cmdline_str = cmdline.replace(b"\x00", b" ").decode("utf-8", errors="replace")
+        return "nexusd" in cmdline_str or "nexus.daemon" in cmdline_str
+    except (FileNotFoundError, PermissionError, OSError):
+        # Not Linux or can't read — conservatively assume it's nexusd
+        return True
+
+
 def _manage_pid_file() -> Path:
     """Check for stale PID file and write current PID. Returns PID file path."""
     pid_path = Path.home() / ".nexus" / "nexusd.pid"
@@ -50,11 +76,14 @@ def _manage_pid_file() -> Path:
     if pid_path.exists():
         try:
             old_pid = int(pid_path.read_text().strip())
-            os.kill(old_pid, 0)  # Check if process exists
-            click.echo(f"Error: nexusd is already running (PID {old_pid}).", err=True)
-            click.echo(f"PID file: {pid_path}", err=True)
-            sys.exit(ExitCode.CONFIG_ERROR)
-        except (ValueError, ProcessLookupError, PermissionError):
+        except (ValueError, OSError):
+            pid_path.unlink(missing_ok=True)
+        else:
+            if _is_nexusd_process(old_pid):
+                click.echo(f"Error: nexusd is already running (PID {old_pid}).", err=True)
+                click.echo(f"PID file: {pid_path}", err=True)
+                sys.exit(ExitCode.CONFIG_ERROR)
+            # PID doesn't exist or belongs to a different process — stale file
             pid_path.unlink(missing_ok=True)
 
     pid_path.write_text(str(os.getpid()))

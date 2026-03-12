@@ -337,6 +337,21 @@ join_cluster_if_needed() {
     fi
 }
 
+cleanup_stale_pid_files() {
+    # After an abnormal exit (e.g. SIGSEGV from a native extension), nexusd
+    # cannot run its Python-level finally block, so PID/ready files survive
+    # into the next container start.  Remove them unconditionally — the daemon
+    # hasn't started yet at this point, so there is nothing legitimate to
+    # protect.
+    local nexus_home="${HOME}/.nexus"
+    for f in "$nexus_home/nexusd.pid" "$nexus_home/nexusd.ready"; do
+        if [ -f "$f" ]; then
+            echo -e "${YELLOW}Removing stale $f from previous run${NC}"
+            rm -f "$f"
+        fi
+    done
+}
+
 start_nexus_server() {
     echo ""
     echo "🚀 Starting Nexus server..."
@@ -379,6 +394,7 @@ start_nexus_server() {
 # -----------------------------------------------------------------------------
 main() {
     print_banner
+    cleanup_stale_pid_files
     check_permissions_flags
     wait_for_postgres
     ensure_skills_directory

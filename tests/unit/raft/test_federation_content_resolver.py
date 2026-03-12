@@ -15,22 +15,21 @@ SELF_ADDR = "10.0.0.1:50051"
 REMOTE_ADDR = "10.0.0.2:50051"
 
 
-def _make_meta(backend_name: str, etag: str = "abc123", version: int = 1):
+def _make_meta(backend_name: str, etag: str = "abc123", version: int = 1, size: int = 100):
     """Create a mock FileMetadata with the given backend_name."""
     meta = MagicMock()
     meta.backend_name = backend_name
     meta.etag = etag
     meta.version = version
+    meta.size = size
     meta.modified_at = "2026-01-01T00:00:00Z"
     return meta
 
 
 def _make_resolver(**kwargs):
     metastore = kwargs.pop("metastore", MagicMock())
-    backend = kwargs.pop("backend", MagicMock())
     return FederationContentResolver(
         metastore=metastore,
-        backend=backend,
         self_address=kwargs.pop("self_address", SELF_ADDR),
         **kwargs,
     )
@@ -91,24 +90,21 @@ class TestTryReadRemoteContent:
     @patch.object(FederationContentResolver, "_fetch_from_peer")
     def test_remote_origin_fetches_content(self, mock_fetch):
         mock_fetch.return_value = b"remote content"
-        meta = _make_meta(f"local@{REMOTE_ADDR}")
+        meta = _make_meta(f"local@{REMOTE_ADDR}", size=100)
         metastore = MagicMock()
         metastore.get.return_value = meta
-        backend = MagicMock()
 
-        resolver = _make_resolver(metastore=metastore, backend=backend)
+        resolver = _make_resolver(metastore=metastore)
         handled, result = resolver.try_read("/test/file.txt")
 
         assert handled is True
         assert result == b"remote content"
         mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/file.txt")
-        # Progressive replication: content persisted locally
-        backend.write_content.assert_called_once_with(b"remote content")
 
     @patch.object(FederationContentResolver, "_fetch_from_peer")
     def test_remote_with_metadata(self, mock_fetch):
         mock_fetch.return_value = b"data"
-        meta = _make_meta(f"local@{REMOTE_ADDR}", etag="xyz789", version=3)
+        meta = _make_meta(f"local@{REMOTE_ADDR}", etag="xyz789", version=3, size=4)
         metastore = MagicMock()
         metastore.get.return_value = meta
 
@@ -121,22 +117,35 @@ class TestTryReadRemoteContent:
         assert result["version"] == 3
         assert result["size"] == 4
 
-    @patch.object(FederationContentResolver, "_fetch_from_peer")
-    def test_persist_failure_does_not_abort(self, mock_fetch):
-        """Progressive replication failure is a warning, not an error."""
-        mock_fetch.return_value = b"remote content"
-        meta = _make_meta(f"local@{REMOTE_ADDR}")
+    @patch.object(FederationContentResolver, "_fetch_from_peer_streaming")
+    def test_large_file_uses_streaming(self, mock_stream):
+        """Files > _STREAMING_THRESHOLD use StreamRead instead of unary Read."""
+        mock_stream.return_value = b"streamed content"
+        meta = _make_meta(f"local@{REMOTE_ADDR}", size=2_000_000)  # 2MB > 1MB threshold
         metastore = MagicMock()
         metastore.get.return_value = meta
-        backend = MagicMock()
-        backend.write_content.side_effect = OSError("disk full")
 
-        resolver = _make_resolver(metastore=metastore, backend=backend)
-        handled, result = resolver.try_read("/test/file.txt")
+        resolver = _make_resolver(metastore=metastore)
+        handled, result = resolver.try_read("/test/large.bin")
 
-        # Read still succeeds even though local persist failed
         assert handled is True
-        assert result == b"remote content"
+        assert result == b"streamed content"
+        mock_stream.assert_called_once_with(REMOTE_ADDR, "/test/large.bin")
+
+    @patch.object(FederationContentResolver, "_fetch_from_peer")
+    def test_small_file_uses_unary_read(self, mock_fetch):
+        """Files <= _STREAMING_THRESHOLD use unary Read RPC."""
+        mock_fetch.return_value = b"small"
+        meta = _make_meta(f"local@{REMOTE_ADDR}", size=500_000)  # 500KB < 1MB threshold
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        handled, result = resolver.try_read("/test/small.txt")
+
+        assert handled is True
+        assert result == b"small"
+        mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/small.txt")
 
 
 class TestTryDeleteLocalContent:

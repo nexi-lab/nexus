@@ -489,12 +489,24 @@ def _boot_system_services(
             logger.warning("[BOOT:SYSTEM] SchedulerService unavailable: %s", exc)
 
     # --- PipeManager (Issue #809: DT_PIPE kernel IPC for write observer + zoekt) ---
+    # self_address enables federated DT_PIPE: remote nodes can proxy pipe
+    # I/O to the origin via gRPC Call RPC (Issue #1576).
     pipe_manager: Any = None
     try:
+        import os
+
         from nexus.core.pipe_manager import PipeManager
 
-        pipe_manager = PipeManager(ctx.metadata_store, zone_id=ctx.zone_id or ROOT_ZONE_ID)
-        logger.debug("[BOOT:SYSTEM] PipeManager created")
+        _pipe_self_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
+        pipe_manager = PipeManager(
+            ctx.metadata_store,
+            zone_id=ctx.zone_id or ROOT_ZONE_ID,
+            self_address=_pipe_self_addr,
+        )
+        logger.debug(
+            "[BOOT:SYSTEM] PipeManager created (self_address=%s)",
+            _pipe_self_addr or "none/single-node",
+        )
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] PipeManager unavailable: %s", exc)
 

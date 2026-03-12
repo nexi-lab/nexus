@@ -25,20 +25,17 @@ import grpc
 
 from nexus.contracts.backend_address import BackendAddress
 from nexus.contracts.exceptions import NexusFileNotFoundError
+from nexus.grpc.channel_factory import build_peer_channel
 
 if TYPE_CHECKING:
-    from nexus.backends.base.backend import Backend
     from nexus.core.metastore import MetastoreABC
     from nexus.security.tls.config import ZoneTlsConfig
 
 logger = logging.getLogger(__name__)
 
-_CHANNEL_OPTIONS = [
-    ("grpc.keepalive_time_ms", 10_000),
-    ("grpc.keepalive_timeout_ms", 5_000),
-    ("grpc.keepalive_permit_without_calls", True),
-    ("grpc.http2.max_pings_without_data", 0),
-]
+# Files larger than this threshold use StreamRead instead of unary Read.
+# StreamRead keeps ~1MB in memory at a time; unary Read buffers entire file.
+_STREAMING_THRESHOLD = 1_048_576  # 1 MB
 
 
 class FederationContentResolver:
@@ -58,7 +55,6 @@ class FederationContentResolver:
 
     Args:
         metastore: MetastoreABC for metadata lookup.
-        backend: Local backend for persisting replicated content.
         self_address: This node's advertise address (e.g., "10.0.0.5:50051").
         tls_config: Optional ZoneTlsConfig for mTLS peer channels.
         timeout: Read RPC timeout in seconds.
@@ -69,13 +65,11 @@ class FederationContentResolver:
     def __init__(
         self,
         metastore: "MetastoreABC",
-        backend: "Backend",
         self_address: str,
         tls_config: "ZoneTlsConfig | None" = None,
         timeout: float = 30.0,
     ) -> None:
         self._metastore = metastore
-        self._backend = backend
         self._self_address = self_address
         self._tls_config = tls_config
         self._timeout = timeout
@@ -105,16 +99,28 @@ class FederationContentResolver:
 
         # Remote content — fetch from origin peer
         assert addr.origin is not None  # guaranteed by has_origin check above
+        file_size = meta.size or 0
+        use_streaming = file_size > _STREAMING_THRESHOLD
         logger.info(
-            "Federation read: %s -> %s (etag=%s)",
+            "Federation read: %s -> %s (etag=%s, size=%d, streaming=%s)",
             path,
             addr.origin,
             (meta.etag or "")[:12],
+            file_size,
+            use_streaming,
         )
-        content = self._fetch_from_peer(addr.origin, path)
 
-        # Progressive replication: persist to local CAS
-        self._persist_locally(content)
+        if use_streaming:
+            # Large file: stream via StreamRead RPC — ~1MB in memory at a time.
+            # Backend-agnostic: the origin's StreamRead handler decides how
+            # to serve (CAS chunks, PAS read, etc).
+            content = self._fetch_from_peer_streaming(addr.origin, path)
+        else:
+            content = self._fetch_from_peer(addr.origin, path)
+
+        # No local persistence — per design decision (2026-03-12):
+        # cache via CacheStoreABC is explicit contract (future),
+        # replication is implicit contract (hold for now).
 
         if return_metadata:
             return True, {
@@ -170,7 +176,7 @@ class FederationContentResolver:
         """Dispatch sync Delete RPC to origin peer (full sys_unlink)."""
         from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 
-        channel = self._build_channel(address)
+        channel = build_peer_channel(address, self._tls_config)
         try:
             stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
             request = vfs_pb2.DeleteRequest(path=virtual_path, auth_token="")
@@ -191,7 +197,7 @@ class FederationContentResolver:
         """Dispatch sync Read RPC to origin peer."""
         from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 
-        channel = self._build_channel(address)
+        channel = build_peer_channel(address, self._tls_config)
         try:
             stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
             request = vfs_pb2.ReadRequest(path=virtual_path, auth_token="")
@@ -212,26 +218,38 @@ class FederationContentResolver:
         finally:
             channel.close()
 
-    def _build_channel(self, address: str) -> grpc.Channel:
-        """Build sync gRPC channel with optional mTLS."""
-        if self._tls_config is not None:
-            ca = self._tls_config.ca_cert_path.read_bytes()
-            cert = self._tls_config.node_cert_path.read_bytes()
-            key = self._tls_config.node_key_path.read_bytes()
-            creds = grpc.ssl_channel_credentials(
-                root_certificates=ca,
-                private_key=key,
-                certificate_chain=cert,
-            )
-            return grpc.secure_channel(address, creds, options=_CHANNEL_OPTIONS)
-        return grpc.insecure_channel(address, options=_CHANNEL_OPTIONS)
+    def _fetch_from_peer_streaming(self, address: str, virtual_path: str) -> bytes:
+        """Fetch via StreamRead RPC — backend-agnostic streaming.
 
-    def _persist_locally(self, content: bytes) -> None:
-        """Write fetched content to local CAS for future reads."""
+        The origin's StreamRead handler decides how to serve the file
+        (CAS chunk-aware streaming, PAS read-and-chunk, etc).
+        This method just collects the stream and returns assembled bytes.
+        """
+        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+
+        channel = build_peer_channel(address, self._tls_config)
         try:
-            self._backend.write_content(content)
-        except Exception as exc:
-            logger.warning("Failed to persist replicated content: %s", exc)
+            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
+            request = vfs_pb2.StreamReadRequest(path=virtual_path, auth_token="")
+            chunks: list[bytes] = []
+            for chunk in stub.StreamRead(request, timeout=self._timeout):
+                if chunk.is_error:
+                    raise NexusFileNotFoundError(
+                        virtual_path,
+                        f"Remote peer {address} returned streaming error",
+                    )
+                chunks.append(bytes(chunk.data))
+                if chunk.is_last:
+                    break
+            return b"".join(chunks)
+        except grpc.RpcError as exc:
+            logger.warning("Federation StreamRead to %s failed: %s", address, exc)
+            raise NexusFileNotFoundError(
+                virtual_path,
+                f"Remote peer {address} unreachable: {exc}",
+            ) from exc
+        finally:
+            channel.close()
 
     # === VFSPathResolver compat ===
     # resolve_write uses matches() — must return False so writes pass through.

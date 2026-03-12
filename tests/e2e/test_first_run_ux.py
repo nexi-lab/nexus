@@ -196,7 +196,13 @@ class TestFullWorkflow:
 
     @pytest.fixture()
     def initialized_project(self, project_dir: Path) -> Path:
-        """Run nexus init --preset demo and return the project dir."""
+        """Run nexus init --preset demo and return the project dir.
+
+        Runs with cwd=project_dir so that _find_compose_file() picks up
+        the bundled (portable) compose file instead of the repo-root one
+        which contains ``build:`` directives and would trigger a full
+        Rust compilation during ``nexus up``.
+        """
         config_path = project_dir / "nexus.yaml"
         data_dir = project_dir / "nexus-data"
 
@@ -214,6 +220,7 @@ class TestFullWorkflow:
             capture_output=True,
             text=True,
             timeout=30,
+            cwd=str(project_dir),
         )
         assert result.returncode == 0, f"init failed: {result.stderr}"
         return project_dir

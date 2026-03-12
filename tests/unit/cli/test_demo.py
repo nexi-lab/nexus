@@ -130,13 +130,14 @@ class TestIdempotency:
         # No rebac_manager available
         mock_nx._rebac_manager = None
         mock_nx.rebac_manager = None
+        config: dict = {"preset": "local"}
         manifest: dict = {}
 
-        _seed_permissions(mock_nx, manifest)
+        _seed_permissions(mock_nx, config, manifest)
         assert manifest["permissions_seeded"] is True
 
         # Second call — should skip
-        result = _seed_permissions(mock_nx, manifest)
+        result = _seed_permissions(mock_nx, config, manifest)
         assert result == 0
 
     def test_seed_permissions_with_rebac(self) -> None:
@@ -145,9 +146,10 @@ class TestIdempotency:
         mock_rebac = MagicMock()
         mock_nx = MagicMock()
         mock_nx._rebac_manager = mock_rebac
+        config: dict = {"preset": "local"}
         manifest: dict = {}
 
-        created = _seed_permissions(mock_nx, manifest)
+        created = _seed_permissions(mock_nx, config, manifest)
         assert created == 3
         assert mock_rebac.rebac_write.call_count == 3
 

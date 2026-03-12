@@ -1,45 +1,47 @@
 # User Guide
 
-Nexus is easiest to understand as a terminal-first filesystem and context plane for agent systems. The current product surface is:
+This guide is for someone using Nexus from the terminal for the first time.
+It starts with the easiest path, then adds remote servers, search, permissions,
+agents, memory, workflows, sandboxing, MCP, and federation.
 
-- the embedded Python SDK in `nexus.sdk`
-- the rich `nexus` CLI
-- the `nexusd` daemon plus FastAPI/gRPC server stack
-- the remote thin-client path for shared deployments
+Nexus does not ship a full-screen TUI in this repository today. The supported
+terminal UX is:
 
-There is not a first-party full-screen TUI in this repository today. The shipped terminal UX is a rich CLI with prompts, tables, watch mode, and JSON output. If you want a true TUI, the supported foundation is `nexus.sdk` plus the CLI JSON contracts.
+- the `nexus` CLI
+- the `nexusd` daemon
+- JSON output for scripting
+- the Python SDK for building your own UI later
 
-## Setup First
+One important note before you start: some older examples in the repo still say
+`nexus serve`. The current daemon entrypoint is `nexusd`.
 
-Before choosing a workflow, make sure Nexus is installed in a way that matches your goal.
+## Before You Start
 
-### Start from a source checkout
+Use this guide in order the first time:
 
-Use a source checkout when you are:
+1. sections 1 through 4 to get a working local or shared server
+2. sections 5 through 10 to turn on the features most people actually use
+3. sections 11 and 12 only after the basics already work
 
-- contributing to Nexus
-- validating docs or tests against this repository
-- changing code and docs together
-- working with examples that assume the current branch state
+What you need depends on how far you go:
 
-Typical setup:
+| You want to try... | What you need |
+| --- | --- |
+| basic local CLI and SDK | Python and a virtualenv |
+| shared server for multiple users or agents | `nexusd` plus an API key |
+| database auth and richer multi-user setups | Postgres-compatible database |
+| parsed document search | parser API keys such as `UNSTRUCTURED_API_KEY` or `LLAMA_CLOUD_API_KEY` |
+| Zoekt-backed code search | a separately running Zoekt service |
+| sandbox execution | Docker or E2B, depending on provider |
+| federation mesh networking | TLS material and usually WireGuard |
 
-```bash
-uv venv --python 3.14
-source .venv/bin/activate
-uv pip install -r requirements-minimal.txt
-uv pip install -e . --no-deps
-```
+## 1. Install Nexus
 
-### Start from PyPI
+Pick one path and stick to it for your first run.
 
-Use a package install when you are:
+### Option A: Install from PyPI
 
-- evaluating Nexus as a user rather than a contributor
-- embedding Nexus in another project
-- following the stable package path instead of the repo checkout path
-
-Typical setup:
+Use this if you want to try Nexus as a user.
 
 ```bash
 python -m venv .venv
@@ -47,291 +49,1011 @@ source .venv/bin/activate
 pip install nexus-ai-fs
 ```
 
-### Which should the guide assume?
+### Option B: Install from a source checkout
 
-The user guide assumes the package is importable and the CLI is available. In practice:
+Use this if you are working from this repository and want the docs, examples,
+and code to line up.
 
-- if you are in a source checkout, use the editable install path above
-- if you are outside the repo, use the PyPI install path
-
-For CLI examples:
-
-- after a package install, use `nexus ...`
-- from a source checkout without console scripts on `PATH`, `python -m nexus.cli.main ...` is the safest fallback
-
-## Choose Your Path
-
-| Use case | Start here | Main packages |
-| --- | --- | --- |
-| Embed Nexus in a Python tool, notebook, script, or custom UI | `from nexus.sdk import connect` | `sdk`, `core`, `contracts`, `storage`, `backends`, `factory` |
-| Operate Nexus from the shell | `nexus ...` | `cli`, `core`, `remote`, `server` |
-| Run a shared Nexus node | `nexusd ...` | `daemon`, `server`, `grpc`, `security`, `remote` |
-| Mount Nexus like a filesystem | `nexus mount ...` and FUSE workflows | `fuse`, `core`, `backends`, `bricks.parsers` |
-| Build agent workflows, memory, search, or sandboxed execution | feature commands and SDK services | `bricks.*`, `system_services`, `validation`, `storage` |
-| Run multi-zone federation or remote access | daemon plus remote profile | `remote`, `grpc`, `server`, `raft`, `network`, `security` |
-
-## 1. Start Local
-
-Use the embedded path when you want the smallest working setup and do not need a shared server.
-
-```python
-from nexus.sdk import connect
-
-nx = connect(
-    config={
-        "profile": "minimal",
-        "data_dir": "./nexus-data",
-    }
-)
-
-nx.sys_write("/workspace/hello.txt", b"hello")
-print(nx.sys_read("/workspace/hello.txt").decode())
-nx.close()
+```bash
+uv venv --python 3.14
+source .venv/bin/activate
+uv pip install -e .
 ```
 
-This path is powered by:
+### Optional extras
 
-- `sdk`: stable import surface and the recommended programmatic entrypoint
-- `core`: `NexusFS`, syscall-style file operations, routing, locking, and kernel behavior
-- `contracts`: filesystem and service contracts, exceptions, operation context, deployment profiles
-- `storage`: metadata, record stores, persistent views, versioning, audit, and domain persistence
-- `backends`: local CAS/path backends, connector registry, cloud/object-store implementations
-- `factory`: boot wiring for profiles, services, and optional bricks
+The base package already includes the main CLI, server, remote client, LLM,
+MCP, and most storage/search plumbing. Add extras only when you need them.
 
-Use this path for:
+- Semantic search with remote embedding providers: `pip install "nexus-ai-fs[semantic-search-remote]"`
+- E2B sandbox provider: `pip install "nexus-ai-fs[e2b]"`
+- Docker sandbox provider: `pip install "nexus-ai-fs[docker]"`
+- FUSE support: `pip install "nexus-ai-fs[fuse]"`
 
-- local prototypes
-- unit and integration tests
-- notebook workflows
-- custom GUIs or TUIs
-- local automation where a daemon would be unnecessary overhead
+### Verify the install
 
-## 2. Operate From The Terminal
+You should have both console scripts:
 
-The CLI is the main human-facing interface. It is broad, but it clusters naturally by workflow.
+```bash
+nexus --help
+nexusd --help
+```
 
-### File and directory work
+If you are running from source and the console scripts are not on your `PATH`,
+the safe fallbacks are:
 
-Use `init`, `write`, `append`, `cat`, `cp`, `copy`, `move`, `rm`, `ls`, `mkdir`, `rmdir`, and `tree` for the core filesystem lifecycle.
+```bash
+python -m nexus.cli.main --help
+python -m nexus.daemon.main --help
+```
 
-These flows primarily exercise:
+## 2. Pick The Right Mode
 
-- `cli.commands.file_ops`
-- `cli.commands.directory`
-- `core`
-- `storage`
-- `backends`
+If you are unsure, use `profile=full`.
 
-### Search and inspection
-
-Use `glob`, `grep`, semantic search commands, `inspect`, `metadata`, and `graph` when you need discovery rather than raw path access.
-
-These flows primarily exercise:
-
-- `cli.commands.search`
-- `cli.commands.inspect`
-- `bricks.search`
-- `bricks.parsers`
-- `storage`
-
-### Profiles, configuration, and health
-
-Use `profile`, `connect`, `config`, `status`, `doctor`, and `migrate` to manage connection targets, inspect node health, and validate install/runtime state.
-
-These flows primarily exercise:
-
-- `cli`
-- `daemon`
-- `server`
-- `remote`
-- `config`
-
-### Terminal UX notes
-
-The CLI already behaves like a lightweight terminal UI:
-
-- rich human output for interactive terminals
-- automatic JSON mode when output is piped
-- `status --watch` style live views
-- interactive connection setup in `connect`
-- explicit `--json`, `--fields`, `--quiet`, and verbosity levels for automation
-
-If you are planning a future TUI, build it on:
-
-- `nexus.sdk` for state and actions
-- CLI JSON contracts for parity
-- the remote profile when it needs to manage shared infrastructure
-
-## 3. Search, Parse, and Read Context
-
-Nexus has a larger “read and retrieve context” stack than a basic filesystem.
-
-| Capability | What users do | Main packages |
+| If you want to... | Use this | Typical profile |
 | --- | --- | --- |
-| Raw file discovery | glob, grep, list, inspect | `core`, `cli`, `bricks.search` |
-| Parsed document search | search PDFs and other parsed formats | `bricks.parsers`, `bricks.search`, `storage` |
-| Hybrid and semantic retrieval | build indices, run semantic queries, contextual chunking | `bricks.search`, `storage`, `backends`, `cache` |
-| LLM-mediated reading | ask for summaries or structured extraction | `bricks.llm`, `cli.commands.llm`, `remote.domain.llm` |
-| MCP tool serving and discovery | expose or consume tools through MCP | `bricks.mcp`, `bricks.discovery`, `cli.commands.mcp` |
-| Artifact indexing | index outputs for later retrieval | `bricks.artifact_index`, `storage` |
+| Try Nexus alone on one machine | local CLI or SDK | `full` |
+| Run a shared Nexus node for CLI and SDK clients | `nexusd` | `full` |
+| Turn on permissions, agent registry, IPC, scheduler | server-backed flow | `lite` or `full` |
+| Use search, memory, workflows, sandbox, MCP, LLM | full feature set | `full` |
+| Run multi-zone federation | distributed node | `cloud` |
+| Connect Python to an existing node | remote thin client | `remote` |
 
-For practical use, think in layers:
+Profile summary:
 
-1. `core` gives you paths and bytes.
-2. `bricks.parsers` turns supported files into searchable text or structured views.
-3. `bricks.search` gives you lexical, hybrid, and semantic retrieval.
-4. `bricks.llm` and `bricks.mcp` connect the retrieval layer to agent tooling.
-
-## 4. Control Access and Identity
-
-Nexus is not only storage. It also carries identity, authorization, and inter-agent control surfaces.
-
-| Use case | Main commands | Main packages |
-| --- | --- | --- |
-| Relationship-based access control | `rebac`, `manifest` | `bricks.rebac`, `bricks.access_manifest`, `contracts`, `storage` |
-| Authentication and OAuth | `oauth`, server auth routes | `bricks.auth`, `server.auth`, `storage` |
-| Agent identity and credentials | `identity` | `bricks.identity`, `storage`, `security` |
-| Delegation | `delegation` | `bricks.delegation`, `identity`, `storage` |
-| Reputation and dispute flows | `reputation` | `bricks.reputation`, `storage` |
-| Governance and anti-fraud | `governance` | `bricks.governance`, `storage`, `graph` |
-| IPC and A2A | `ipc`, `agent`, A2A APIs | `bricks.ipc`, `bricks.a2a`, `system_services` |
-
-These are the packages to read first if your product story is “shared agents with policy” rather than “filesystem with search.”
-
-## 5. Build Long-Running Agent Systems
-
-Several packages exist specifically for persistent agent workflows rather than one-off file commands.
-
-| Capability | Main packages | Notes |
-| --- | --- | --- |
-| Memory and memory evolution | `bricks.memory`, `storage`, `system_services.workspace` | memory APIs, paging, versioned and append-only flows |
-| Workspaces and branching | `cli.commands.workspace`, `cli.commands.context`, `bricks.workspace`, `bricks.context_manifest` | workspace-scoped work, context branching, pre-execution manifests |
-| Workflow automation | `bricks.workflows`, `cli.commands.workflows` | event-driven workflow execution |
-| Sandboxed execution | `bricks.sandbox`, `cli.commands.sandbox`, `validation` | Docker, Monty, and routing logic for code execution |
-| Validation | `validation` | use `nexus.validation` as the canonical public validation entrypoint |
-| Durable background work | `tasks`, `scheduler_cli`, `system_services.scheduler` | queueing, workers, fair-share scheduling |
-| Eventing and watch flows | `events`, `watch`, `system_services.event_subsystem` | subscriptions, replay, notifications |
-| Agent-tool integration | `tools`, `bricks.tools`, `bricks.mcp`, `bricks.llm` | LangGraph-style tools, prompts, file/memory/search actions |
-
-When these features are running in a daemon-backed node, the supporting control plane is mostly:
-
-- `server`
-- `system_services`
-- `storage`
-- `tasks`
-
-## 6. Version, Snapshot, Sync, and Recover
-
-Nexus includes several ways to preserve or move state:
-
-| Capability | Main packages |
+| Profile | What it is good for |
 | --- | --- |
-| File history and rollback | `bricks.versioning`, `cli.commands.versions`, `storage` |
-| Transactional snapshots | `bricks.snapshot`, `cli.commands.snapshots`, `storage` |
-| Operation logs and audit | `cli.commands.operations`, `cli.commands.audit`, `storage` |
-| Upload and resumable transfer | `bricks.upload`, `cli.commands.upload`, `backends` |
-| Mount persistence and external mounts | `bricks.mount`, `cli.commands.mounts`, `backends.connectors` |
-| Proxying and edge sync | `proxy`, `remote`, `server`, `backends.transports` |
-| Zone export/import portability | `bricks.portability`, `zone`, `storage`, `raft` |
+| `minimal` | storage only |
+| `embedded` | tiny local deployments |
+| `lite` | permissions, agent registry, IPC, scheduler, cache |
+| `full` | the easiest all-features starting point |
+| `cloud` | federation on top of full |
+| `remote` | client only, never for `nexusd` |
 
-Use these packages when the question is “how do we keep, move, replay, or recover state?”
+If you want to force features on or off, create a `nexus.yaml` file and start
+Nexus with it:
 
-## 7. Run Nexus As A Service
+```yaml
+profile: full
+features:
+  agent_registry: true
+  permissions: true
+  search: true
+  sandbox: true
+  workflows: true
+  mcp: true
+  memory: true
+  federation: false
+```
 
-When you leave the embedded path, the important components are:
+Then start the daemon with:
 
-- `daemon`: bootstraps `nexusd`
-- `server`: FastAPI app, auth, RPC dispatch, health, subscriptions, websockets, observability
-- `grpc`: typed remote transport for the thin client path
-- `remote`: thin filesystem and service proxies used by the remote SDK profile
-- `security`: federation TLS and trust bootstrap
+```bash
+nexusd --config ./nexus.yaml --port 2026
+```
 
-Choose this path when you need:
+## 3. First Local Run
 
-- a long-lived process
-- remote SDK clients
-- shared auth and policy
-- websockets or subscriptions
-- operational observability
-- deployment-profile-specific features enabled centrally
+This is the smallest working path and the best place to start.
 
-## 8. Federation, Networking, and Mounting
+### Step 1: Create a local workspace
 
-The advanced distributed path is split across a few packages:
+```bash
+mkdir -p ~/nexus-demo
+cd ~/nexus-demo
+nexus init .
+export NEXUS_DATA_DIR="$PWD/nexus-data"
+export NEXUS_PROFILE=full
+```
 
-- `raft`: consensus, zone management, federated metadata, distributed sharing
-- `network`: WireGuard-oriented network setup and peer config for federation
-- `security`: TLS, trust-on-first-use bootstrap, join tokens
-- `fuse`: mount Nexus into the host filesystem
+`nexus init .` creates a local data directory for the workspace. Exporting
+`NEXUS_DATA_DIR` makes the CLI keep using that workspace instead of the global
+default under `~/.nexus`.
 
-These are not the best place to start unless your use case is explicitly:
+### Step 2: Write, read, and list files
 
-- multi-zone data sharing
-- remote joins and trust establishment
-- mounted filesystem UX for existing Unix tools
+```bash
+nexus write /workspace/hello.txt "hello from nexus"
+nexus cat /workspace/hello.txt
+nexus ls /workspace -l
+```
 
-## 9. Extensibility
+### Step 3: Try the Python SDK against the same data
 
-Two extension stories are present in the codebase:
+```bash
+python - <<'PY'
+import nexus
 
-- `plugins`: package-level extension model for extra commands and hooks
-- `backends.connectors`: data-plane extension model for external systems and storage providers
+nx = nexus.connect(config={
+    "profile": "full",
+    "data_dir": "./nexus-data",
+})
 
-Use plugins when you want to extend Nexus behavior without forking the core package. Use connectors/backends when you want new storage or external service integrations.
+nx.sys_write("/workspace/sdk.txt", b"written from sdk")
+print(nx.sys_read("/workspace/sdk.txt").decode())
+nx.close()
+PY
+```
 
-## Package Map
+### Step 4: Run a quick environment check
 
-The table below is the shortest practical package-by-package map for the checked-in source.
+```bash
+nexus doctor
+```
 
-| Package | Role |
+Packages behind this:
+
+- Kernel and syscalls: `nexus.core`, `nexus.contracts`
+- Persistence: `nexus.storage`
+- Object backends and connectors: `nexus.backends`
+- Programmatic entrypoint: `nexus.sdk` and top-level `nexus.connect()`
+
+## 4. Start A Shared Server
+
+Use `nexusd` when you want multiple terminals, users, or SDK clients to hit
+the same Nexus node.
+
+### Step 1: Start a simple dev server with one API key
+
+Open terminal A:
+
+```bash
+mkdir -p ~/nexus-server
+cd ~/nexus-server
+export NEXUS_DATA_DIR="$PWD/data"
+export NEXUS_API_KEY="dev-key-123"
+nexusd --profile full --host 0.0.0.0 --port 2026 --data-dir "$NEXUS_DATA_DIR" --api-key "$NEXUS_API_KEY"
+```
+
+### Step 2: Connect from another terminal
+
+Open terminal B:
+
+```bash
+export NEXUS_URL="http://localhost:2026"
+export NEXUS_API_KEY="dev-key-123"
+
+nexus status
+curl http://localhost:2026/health
+nexus ls /
+```
+
+### Step 3: Save a reusable CLI profile
+
+```bash
+nexus connect http://localhost:2026 --name local-dev -k "$NEXUS_API_KEY"
+nexus profile list
+nexus --profile local-dev ls /
+```
+
+### Step 4: Connect with the remote Python client
+
+The remote SDK path uses `profile="remote"`. The gRPC port defaults to `2028`,
+so only set `NEXUS_GRPC_PORT` if you changed it on the server.
+
+```bash
+python - <<'PY'
+import nexus
+
+nx = nexus.connect(config={
+    "profile": "remote",
+    "url": "http://localhost:2026",
+    "api_key": "dev-key-123",
+})
+
+print(nx.sys_readdir("/"))
+nx.close()
+PY
+```
+
+### When should you use database auth?
+
+Use `--auth-type database` and `--database-url ...` when you need:
+
+- per-user API keys
+- admin/user provisioning
+- more realistic multi-user permissions
+- server-side search backed by a real record store
+
+Typical daemon startup:
+
+```bash
+export NEXUS_DATA_DIR="$PWD/data"
+export NEXUS_DATABASE_URL="postgresql://$USER@localhost/nexus"
+export NEXUS_SEARCH_DAEMON=true
+
+nexusd \
+  --profile full \
+  --host 0.0.0.0 \
+  --port 2026 \
+  --data-dir "$NEXUS_DATA_DIR" \
+  --auth-type database \
+  --database-url "$NEXUS_DATABASE_URL"
+```
+
+Packages behind this:
+
+- Daemon entrypoint: `nexus.daemon`
+- HTTP and app lifecycle: `nexus.server`
+- Remote client transport: `nexus.remote`, `nexus.grpc`
+- Auth, policy, and server-side feature wiring: `nexus.bricks.*`, `nexus.system_services.*`
+
+## 5. Search, Parsing, And Indexing
+
+Think about search in three layers:
+
+1. file discovery: `glob`, `grep`
+2. parsed text extraction: PDFs, docs, and other formats
+3. semantic and hybrid retrieval: `nexus search ...`
+
+### 5.1 Find files and text first
+
+```bash
+nexus glob "**/*.py" /workspace
+nexus grep "TODO" /workspace
+nexus grep "revenue" /workspace -f "**/*.pdf" --search-mode parsed
+```
+
+Parser providers are auto-discovered from environment variables:
+
+- `UNSTRUCTURED_API_KEY`
+- `LLAMA_CLOUD_API_KEY`
+- local MarkItDown fallback
+
+### 5.2 Initialize semantic search
+
+Use keyword-only mode first if you just want index-backed retrieval without
+embedding keys:
+
+```bash
+nexus search init
+```
+
+For semantic or hybrid search, initialize with an embedding provider:
+
+```bash
+nexus search init --provider openai --api-key "$OPENAI_API_KEY"
+```
+
+Voyage is also supported:
+
+```bash
+nexus search init --provider voyage --api-key "$VOYAGE_API_KEY"
+```
+
+### 5.3 Build the index
+
+```bash
+nexus search index /workspace
+nexus search stats
+```
+
+### 5.4 Query the index
+
+```bash
+nexus search query "How does authentication work?" --path /workspace
+nexus search query "database migration" --mode hybrid --limit 5
+```
+
+### 5.5 Start the server-side search daemon
+
+The server-side search API is what you want for a long-running shared node.
+It is enabled when:
+
+- `NEXUS_SEARCH_DAEMON=true`, or
+- the daemon has a database URL and search is not explicitly disabled
+
+Start the daemon like this:
+
+```bash
+export NEXUS_SEARCH_DAEMON=true
+export NEXUS_DATABASE_URL="postgresql://$USER@localhost/nexus"
+
+nexusd \
+  --profile full \
+  --port 2026 \
+  --data-dir "$PWD/data" \
+  --auth-type database \
+  --database-url "$NEXUS_DATABASE_URL"
+```
+
+Verify it:
+
+```bash
+curl "$NEXUS_URL/api/v2/search/health"
+curl -H "Authorization: Bearer $NEXUS_API_KEY" "$NEXUS_URL/api/v2/search/stats"
+```
+
+### 5.6 What about Zoekt?
+
+Zoekt is an optional fast trigram/code-search backend behind Nexus search.
+There is not a separate `nexus zoekt ...` command today. You run Zoekt
+separately, then point Nexus at it.
+
+Step by step:
+
+1. start your Zoekt service outside Nexus
+2. point Nexus at that service with the Zoekt environment variables
+3. start `nexusd`
+4. keep using `nexus grep` and `nexus search ...` from the client side
+
+Typical Nexus-side setup:
+
+```bash
+export ZOEKT_ENABLED=true
+export ZOEKT_URL="http://localhost:6070"
+export ZOEKT_INDEX_DIR="$PWD/.zoekt-index"
+export ZOEKT_DATA_DIR="$PWD"
+export ZOEKT_INDEX_BINARY="zoekt-index"
+export NEXUS_SEARCH_DAEMON=true
+
+nexusd --profile full --port 2026 --data-dir "$PWD/data"
+```
+
+What this means in practice:
+
+- Nexus still exposes normal `grep` and `search` flows
+- the search brick uses Zoekt when it is available
+- Zoekt is especially useful for large code trees
+
+If you only want a beginner path, start with `nexus search init/index/query`
+and add Zoekt later.
+
+Packages behind this:
+
+- Search daemon and retrieval: `nexus.bricks.search`
+- Document parsing: `nexus.bricks.parsers`
+- Search HTTP API: `nexus.server.api.v2.routers.search`
+- Search daemon startup: `nexus.server.lifespan.search`
+
+## 6. Turn On Permissions And Policy
+
+If you want permissions, agent registry, and IPC, use `profile=full` unless you
+have a reason to squeeze into `lite`.
+
+### Step 1: Make sure permissions are actually enforced
+
+The important settings are:
+
+- use `lite`, `full`, or `cloud`
+- keep `NEXUS_ENFORCE_PERMISSIONS=true` (this is already the default)
+- authenticate to the server with `NEXUS_API_KEY`
+
+For an explicit config:
+
+```yaml
+profile: full
+enforce_permissions: true
+features:
+  permissions: true
+  agent_registry: true
+```
+
+### Step 2: Create a file to protect
+
+```bash
+nexus write /workspace/secret.txt "top secret"
+```
+
+### Step 3: Create ReBAC relationships
+
+```bash
+nexus rebac create agent alice direct_owner file /workspace/secret.txt
+nexus rebac check agent alice write file /workspace/secret.txt
+nexus rebac explain agent alice write file /workspace/secret.txt --verbose
+```
+
+### Step 4: Use zones when you need tenant isolation
+
+```bash
+nexus rebac create agent alice direct_owner file /workspace/secret.txt --zone-id org_acme
+nexus rebac check agent alice write file /workspace/secret.txt --zone-id org_acme
+```
+
+### Step 5: Create and test access manifests
+
+Access manifests let you say which tools and data surfaces an agent may use.
+
+```bash
+nexus manifest create agent_alice --name "dev tools" --entry "read_*:allow"
+nexus manifest list
+nexus manifest evaluate <manifest-id> --tool-name read_file
+```
+
+### Step 6: If you are running database auth, create real user keys
+
+This is the operator path once a database-auth deployment is in place:
+
+```bash
+nexus admin create-user alice --name "Alice Laptop" --expires-days 90
+nexus admin create-user bot1 --name "Bot Agent" --subject-type agent
+```
+
+Packages behind this:
+
+- Auth: `nexus.bricks.auth`
+- ReBAC and policy graph: `nexus.bricks.rebac`
+- Access manifests: `nexus.bricks.access_manifest`
+- Identity and delegation: `nexus.bricks.identity`, `nexus.bricks.delegation`
+
+## 7. Agent Registry, IPC, Identity, And Delegation
+
+This is the part of Nexus that turns a filesystem into an agent platform.
+
+### Step 1: Register agents
+
+```bash
+nexus agent register alice_bot "Alice Research Bot"
+nexus agent register bob_bot "Bob Worker"
+nexus agent list
+nexus agent info alice_bot
+```
+
+By default, registered agents do not get their own API keys. They use the
+owner's auth plus the `X-Agent-ID` model, which is the recommended path.
+
+If you really need an agent-specific key:
+
+```bash
+nexus agent register legacy_bot "Legacy Bot" --with-api-key
+```
+
+### Step 2: Send messages between agents
+
+```bash
+nexus ipc send bob_bot "hello from alice" --from alice_bot
+nexus ipc inbox bob_bot
+nexus ipc count bob_bot
+```
+
+### Step 3: Inspect identity
+
+```bash
+nexus identity show alice_bot
+nexus identity credentials alice_bot
+nexus identity passport alice_bot
+```
+
+### Step 4: Delegate work
+
+```bash
+nexus delegation create alice_bot bob_bot --mode CLEAN --scope "/workspace/project/*" --ttl 3600
+nexus delegation list
+```
+
+Packages behind this:
+
+- Agent registry and lifecycle: `nexus.system_services.agents`
+- IPC: `nexus.bricks.ipc`
+- Identity: `nexus.bricks.identity`
+- Delegation: `nexus.bricks.delegation`
+- A2A support: `nexus.bricks.a2a`
+
+## 8. Memory, Workspaces, And Context Branching
+
+This is where Nexus starts feeling like long-lived agent infrastructure instead
+of a normal filesystem.
+
+### 8.1 Store and recall memory
+
+```bash
+nexus memory store "User prefers concise answers" --scope user --type preference
+nexus memory list
+nexus memory search "concise" --mode keyword
+```
+
+Use namespaces when you want stable paths:
+
+```bash
+nexus memory store "theme:dark" --namespace "user/preferences/ui" --path-key settings
+nexus memory retrieve "user/preferences/ui/settings"
+```
+
+### 8.2 Register a directory as a memory
+
+```bash
+nexus mkdir /workspace/research-memory
+nexus memory register /workspace/research-memory --name research-kb --description "Research notes"
+nexus memory list-registered
+nexus memory info /workspace/research-memory
+```
+
+### 8.3 Register a workspace and snapshot it
+
+```bash
+nexus mkdir /workspace/project
+nexus workspace register /workspace/project --name project --description "Main project workspace"
+nexus workspace snapshot /workspace/project --description "Before refactor"
+nexus workspace log /workspace/project
+```
+
+### 8.4 Create context branches
+
+```bash
+nexus context branch /workspace/project --name try-new-approach
+nexus context checkout /workspace/project --target try-new-approach
+nexus context commit /workspace/project --message "Experiment 1"
+nexus context merge /workspace/project --source try-new-approach
+```
+
+Packages behind this:
+
+- Memory: `nexus.bricks.memory`
+- Workspace and branching: `nexus.bricks.workspace`, `nexus.bricks.context_manifest`
+- Registry and lifecycle plumbing: `nexus.system_services.workspace`
+
+## 9. Workflows, Sandbox, LLM, And MCP
+
+These are the main "do useful work with agents" feature families.
+
+### 9.1 Load a workflow
+
+Create a file:
+
+```bash
+mkdir -p .nexus/workflows
+cat > .nexus/workflows/tag-incoming.yaml <<'YAML'
+name: tag-incoming
+version: "1.0"
+description: Mark incoming files as processed
+triggers:
+  - type: file_write
+    pattern: /workspace/inbox/*
+actions:
+  - name: mark-processed
+    type: metadata
+    metadata:
+      workflow_status: processed
+YAML
+```
+
+Load and test it:
+
+```bash
+nexus workflows load .nexus/workflows/tag-incoming.yaml
+nexus workflows list
+nexus workflows test tag-incoming --file /workspace/inbox/demo.txt
+nexus workflows enable tag-incoming
+```
+
+`nexus workflows discover .nexus/workflows --load` is the quickest way to load
+a whole workflow directory.
+
+### 9.2 Create a sandbox
+
+Docker provider:
+
+```bash
+pip install "nexus-ai-fs[docker]"
+nexus sandbox create demo-box --provider docker
+nexus sandbox list
+nexus sandbox run <sandbox-id> -c "print('hello from sandbox')"
+nexus sandbox stop <sandbox-id>
+```
+
+E2B provider:
+
+```bash
+pip install "nexus-ai-fs[e2b]"
+export E2B_API_KEY="..."
+nexus sandbox create demo-box --provider e2b
+```
+
+### 9.3 Ask an LLM to read your files
+
+```bash
+export OPENROUTER_API_KEY="..."
+nexus llm read /workspace/hello.txt "Summarize this file"
+```
+
+You can also set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or provider-specific
+model flags depending on your environment.
+
+### 9.4 Start the MCP server
+
+For local desktop tools:
+
+```bash
+nexus mcp serve --transport stdio
+```
+
+For networked clients:
+
+```bash
+nexus mcp serve --transport http --port 8081
+curl http://localhost:8081/health
+```
+
+If the MCP server should talk to a remote Nexus node, export:
+
+```bash
+export NEXUS_URL="http://localhost:2026"
+export NEXUS_API_KEY="..."
+```
+
+Packages behind this:
+
+- Workflow engine: `nexus.bricks.workflows`
+- Sandbox providers: `nexus.bricks.sandbox`
+- LLM reading: `nexus.bricks.llm`
+- MCP and tool serving: `nexus.bricks.mcp`, `nexus.bricks.discovery`
+- Validation and guardrails: `nexus.validation`
+
+## 10. Versions, Snapshots, Uploads, Events, And Operations
+
+These commands are about durability, rollback, and operator visibility.
+
+### File version history
+
+```bash
+nexus versions history /workspace/hello.txt
+nexus versions get /workspace/hello.txt --version 1
+nexus versions rollback /workspace/hello.txt --version 1
+```
+
+### Transactional snapshots
+
+```bash
+nexus snapshot create --description "Before migration"
+nexus snapshot list
+nexus snapshot restore <txn_id>
+```
+
+### Event replay and live subscriptions
+
+```bash
+nexus events replay --since 1h
+nexus events subscribe "file_write"
+```
+
+### Scheduler visibility
+
+```bash
+nexus scheduler status
+nexus scheduler queue
+```
+
+### Upload visibility
+
+The upload command group is mainly for inspecting or cancelling resumable
+uploads that already exist on the server:
+
+```bash
+nexus upload status <upload-id>
+nexus upload cancel <upload-id>
+```
+
+### Operation logs and undo
+
+```bash
+nexus ops log
+nexus undo
+```
+
+Packages behind this:
+
+- Versioning: `nexus.bricks.versioning`
+- Snapshots: `nexus.bricks.snapshot`
+- Uploads: `nexus.bricks.upload`
+- Event subsystem and scheduler: `nexus.system_services.event_subsystem`, `nexus.system_services.scheduler`
+- Storage and audit trails: `nexus.storage`
+
+## 11. Federation, TLS, Networking, And Cloud Mode
+
+This is the most advanced part of Nexus. Start here only after local and
+single-node remote mode already work.
+
+### Step 1: Use the `cloud` profile
+
+This path assumes you have a federation-capable build. If `cloud` mode does
+not boot on your machine yet, stay on `full` until your environment includes
+the federation pieces.
+
+```bash
+nexusd --profile cloud --port 2026 --data-dir "$PWD/data"
+```
+
+### Step 2: Initialize TLS material
+
+```bash
+nexus tls init --data-dir "$PWD/data" --zone-id root --node-id 1
+nexus tls show
+```
+
+### Step 3: Join another node to the cluster
+
+On the joining node:
+
+```bash
+nexus join leader.example.com:2026 --token "<join-token>" --node-id 2 --data-dir "$PWD/data"
+```
+
+### Step 4: Set up the WireGuard mesh
+
+```bash
+nexus network init --node-id 1
+nexus network add-peer --node-id 2 --public-key "<peer-public-key>" --endpoint "203.0.113.10:51820"
+nexus network config
+nexus network status
+```
+
+`nexus network up` usually needs sudo or admin privileges because it brings up
+the WireGuard interface.
+
+### Step 5: Share and mount zones
+
+```bash
+nexus federation share /workspace/shared --zone-id team-shared
+nexus federation zones
+nexus federation mount --parent-zone root --path /shared --target-zone team-shared
+```
+
+To pull a shared subtree from a peer:
+
+```bash
+nexus federation join peer1:2126 /shared /local/shared
+```
+
+Packages behind this:
+
+- Federation and consensus: `nexus.raft`
+- Trust and TLS: `nexus.security`
+- Network mesh: `nexus.network`
+- Federation APIs and runtime: `nexus.server`, `nexus.cli.commands.federation`
+
+## 12. Connectors, OAuth, Plugins, And Other Advanced Areas
+
+Once the basics work, these are the next user-facing areas to explore.
+
+### 12.1 Connectors and external data sources
+
+```bash
+nexus connectors list
+nexus connectors info gcs_connector
+```
+
+If your build exposes `nexus mounts`, that is the persistent mount management
+group for attaching external backends under virtual paths.
+
+### 12.2 OAuth-backed integrations
+
+```bash
+nexus oauth list
+nexus oauth setup-gdrive
+nexus oauth test google alice@example.com
+nexus oauth revoke google alice@example.com
+```
+
+### 12.3 Plugins
+
+```bash
+nexus plugins list
+nexus plugins init my-plugin
+nexus plugins install some-plugin
+nexus plugins info some-plugin
+nexus plugins uninstall some-plugin
+```
+
+### 12.4 Knowledge graph
+
+Use this when Nexus has already extracted or stored graph entities and you want
+to inspect relationships:
+
+```bash
+nexus graph search "alice"
+nexus graph entity ent_123
+nexus graph neighbors ent_123 --hops 2
+```
+
+### 12.5 Governance and fraud signals
+
+These commands are mainly for operator or marketplace deployments, not for a
+single-user laptop setup:
+
+```bash
+nexus governance status
+nexus governance alerts --severity high
+nexus governance rings --json
+```
+
+### 12.6 Exchange, payments, reputation, and audit
+
+These features fit together as a marketplace flow:
+
+1. publish something through the exchange
+2. pay for it
+3. leave reputation feedback
+4. inspect the audit trail
+
+Typical first commands:
+
+```bash
+nexus exchange list
+nexus exchange create /workspace/report.csv --price 25 --description "Weekly report"
+nexus pay balance
+nexus pay transfer bob_bot 10.00 --memo "For data access"
+nexus reputation show bob_bot
+nexus reputation feedback exch_123 --rater alice_bot --rated bob_bot --outcome positive
+nexus audit list --since 1h
+```
+
+The current exchange CLI is present, but the backend is still marked as under
+development. Use it as an advanced deployment feature, not as the first thing
+you try.
+
+### 12.7 Conflicts, locks, cache, migrate, secrets audit, and RLM
+
+These commands are operational tools. You usually need them after a deployment
+already exists.
+
+Conflict handling:
+
+```bash
+nexus conflicts list
+nexus conflicts show <conflict-id>
+nexus conflicts resolve <conflict-id> --outcome nexus_wins
+```
+
+Distributed lock inspection:
+
+```bash
+nexus lock list
+nexus lock info /workspace/project/db.sqlite
+nexus lock release /workspace/project/db.sqlite --force
+```
+
+Cache warmup for hot paths:
+
+```bash
+nexus cache stats
+nexus cache warmup /workspace/project --include-content
+nexus cache hot
+```
+
+Migration and bulk import:
+
+```bash
+nexus migrate status
+nexus migrate plan --from 0.9.0 --to 0.10.0
+nexus migrate import-fs --source ./docs --target /workspace/docs/ --dry-run
+```
+
+Secret access audit:
+
+```bash
+nexus secrets-audit list --since 1h
+nexus secrets-audit export --format csv
+nexus secrets-audit verify <record-id>
+```
+
+Recursive language-model inference:
+
+```bash
+nexus rlm infer /workspace/report.pdf --prompt "Summarize the key findings"
+```
+
+### 12.8 Other command families you will eventually see
+
+These are real user-facing areas, but they are more specialized than the core
+guide above:
+
+- `graph`: knowledge graph queries
+- `governance`: anti-fraud and collusion analysis
+- `reputation`: reputation and disputes
+- `exchange`: agent exchange marketplace
+- `pay`: credits and payment flows
+- `audit`: exchange transaction audit
+- `conflicts`: optimistic concurrency conflict resolution
+- `lock`: distributed lock visibility
+- `cache`: cache warming and cache stats
+- `migrate`: upgrade, rollback, backup, restore, and import flows
+- `secrets-audit`: secret access auditing
+- `rlm`: recursive language-model inference
+
+## 13. Package Map By Use Case
+
+If you want to read the code after using the product, this is the shortest
+useful map.
+
+### Kernel and storage
+
+| Package group | What it gives you as a user |
 | --- | --- |
-| `backends` | Concrete storage backends, connectors, wrappers, and transport adapters |
-| `bricks` | Optional feature modules such as auth, search, memory, sandbox, workflows, MCP, governance, pay, and versioning |
-| `cache` | Cache drivers and cache-aware acceleration around retrieval and authorization |
-| `cli` | Human/operator terminal interface |
-| `config` | Unified config model and environment/file loading |
-| `contracts` | Shared contracts and types across the whole stack |
-| `core` | The kernel and filesystem/VFS implementation |
-| `daemon` | `nexusd` bootstrap and process management |
-| `factory` | Default service and brick wiring for each profile |
-| `fuse` | Mount Nexus into the host filesystem |
-| `grpc` | Typed remote transport surface |
-| `lib` | Shared internal utilities used across tiers |
-| `migrations` | Version upgrades and migration flows |
-| `network` | WireGuard and future federation transport helpers |
-| `plugins` | Extension/plugin mechanism |
-| `proxy` | Edge proxying, replay, offline queue, conflict handling |
-| `raft` | Federation, consensus, and zone-aware metadata |
-| `remote` | Thin remote filesystem and service client |
-| `sdk` | Stable programmatic entrypoint |
-| `security` | Federation TLS and trust bootstrap |
-| `server` | FastAPI application, RPC exposure, auth, websockets, observability |
-| `storage` | Persistent models, record/metastore implementations, caches, repositories |
-| `system_services` | Internal long-running system services for agents, workspaces, scheduling, sync, and lifecycle |
-| `tasks` | Durable task-queue surface and runners |
-| `tools` | Tool-facing integrations around Nexus server interactions |
-| `utils` | Small shared helpers such as edit/timing utilities |
-| `validation` | Validation pipeline for sandboxed and pre-execution checking |
+| `nexus.core` | the kernel, VFS, syscalls, routing, locks |
+| `nexus.contracts` | stable protocol and type boundaries |
+| `nexus.storage` | metadata, record store, history, audit, snapshots |
+| `nexus.backends` | local/cloud/object backends and connector adapters |
 
-### Package Names That Are Not Primary Source Roots
+### Server and remote access
 
-Some top-level directories currently act more like placeholders or compatibility namespaces than primary checked-in source roots. In practice, current functionality for these areas lives under `bricks/*`, `system_services/*`, `server/*`, or `storage/*`:
+| Package group | What it gives you as a user |
+| --- | --- |
+| `nexus.daemon` | `nexusd` startup |
+| `nexus.server` | FastAPI app, health, auth, RPC, search/workflow routes |
+| `nexus.grpc` | gRPC transport for remote clients |
+| `nexus.remote` | thin client proxies used by `profile=remote` |
 
-- `llm`
-- `parsers`
-- `search`
-- `rlm`
-- `services`
+### System services
 
-When you document product behavior, prefer the feature packages under `bricks/*` and the runtime packages under `server/*` or `system_services/*`.
+| Package group | What it gives you as a user |
+| --- | --- |
+| `nexus.system_services.agents` | agent registry, lifecycle, warmup |
+| `nexus.system_services.workspace` | workspace and memory registration |
+| `nexus.system_services.scheduler` | queue visibility and scheduling |
+| `nexus.system_services.event_subsystem` | replay, subscriptions, exporters |
+| `nexus.system_services.sync` | sync and write-back plumbing |
+| `nexus.system_services.agent_runtime` | embedded agent process runtime |
+| `nexus.system_services.pipe_manager` | kernel pipe plumbing used by background consumers |
 
-## Recommended Reading Order
+### Bricks for user features
 
-If you are new to the codebase:
+| Package group | What it gives you as a user |
+| --- | --- |
+| `nexus.bricks.auth`, `rebac`, `identity`, `delegation`, `access_manifest` | auth, permissions, identity, delegation, tool scoping |
+| `nexus.bricks.ipc`, `a2a` | agent messaging and agent-to-agent protocols |
+| `nexus.bricks.search`, `parsers`, `llm`, `mcp`, `discovery` | retrieval, parsing, LLM reading, MCP serving, tool discovery |
+| `nexus.bricks.memory`, `workspace`, `context_manifest` | long-term agent state and context packaging |
+| `nexus.bricks.workflows`, `sandbox` | automation and isolated execution |
+| `nexus.bricks.snapshot`, `versioning`, `upload`, `mount` | durability, transfer, rollback, external mount flows |
+| `nexus.bricks.governance`, `reputation`, `pay`, `exchange` | marketplace and governance features |
 
-1. Quickstart and local SDK path
-2. CLI commands you expect to use daily
-3. `core`, `contracts`, and `storage`
-4. The specific `bricks/*` packages for your feature area
-5. `daemon`, `server`, `remote`, and `grpc` if you need shared deployments
-6. `raft`, `network`, `security`, and `fuse` only when you are ready for advanced operations
+### Supporting packages
+
+| Package group | What it gives you as a user |
+| --- | --- |
+| `nexus.network`, `nexus.security`, `nexus.raft` | federation networking, trust, consensus |
+| `nexus.tools` | agent-framework-facing tool wrappers |
+| `nexus.validation` | validation pipelines before execution or sandbox use |
+| `nexus.plugins` | extension points and plugin discovery |
+
+## 14. Troubleshooting
+
+### The first commands to run
+
+```bash
+nexus doctor
+nexus status
+curl "$NEXUS_URL/health"
+curl "$NEXUS_URL/api/v2/bricks/health"
+```
+
+### If `nexus search` or another command group is missing
+
+Nexus CLI command registration is import-based. If a command group does not
+appear in `nexus --help`, the module likely failed to load in your environment.
+The usual fix is:
+
+1. reinstall from a clean checkout or fresh virtualenv
+2. rerun `nexus --help`
+3. verify the feature dependencies you need are installed
+
+### If remote SDK calls fail
+
+Check:
+
+- `NEXUS_URL`
+- `NEXUS_API_KEY`
+- `NEXUS_GRPC_PORT` if you changed the default gRPC port
+
+### If permissions seem ignored
+
+Check:
+
+- you are not accidentally using `minimal` or `embedded`
+- `NEXUS_ENFORCE_PERMISSIONS` is still true
+- you are authenticating as the subject you think you are
+- your `rebac` tuples were created in the correct zone
+
+### If search feels half-enabled
+
+Check:
+
+- `nexus search init` has been run for semantic search
+- `NEXUS_SEARCH_DAEMON=true` for long-running server-side search
+- parser keys such as `UNSTRUCTURED_API_KEY` or `LLAMA_CLOUD_API_KEY` if you expect parsed search
+- `ZOEKT_ENABLED=true` only after a Zoekt server is actually running
+
+### If older docs say `nexus serve`
+
+Use `nexusd`.

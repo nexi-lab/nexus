@@ -1,5 +1,5 @@
 /**
- * Governance alert list with severity icons.
+ * Governance alert list with severity icons and selection for resolve action.
  */
 
 import React from "react";
@@ -7,6 +7,7 @@ import type { GovernanceAlert } from "../../stores/access-store.js";
 
 interface AlertListProps {
   readonly alerts: readonly GovernanceAlert[];
+  readonly selectedIndex: number;
   readonly loading: boolean;
 }
 
@@ -24,7 +25,7 @@ function formatTimestamp(ts: string): string {
   }
 }
 
-export function AlertList({ alerts, loading }: AlertListProps): React.ReactNode {
+export function AlertList({ alerts, selectedIndex, loading }: AlertListProps): React.ReactNode {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -52,7 +53,9 @@ export function AlertList({ alerts, loading }: AlertListProps): React.ReactNode 
       </box>
 
       {/* Rows */}
-      {alerts.map((alert) => {
+      {alerts.map((alert, i) => {
+        const isSelected = i === selectedIndex;
+        const prefix = isSelected ? "> " : "  ";
         const icon = SEVERITY_ICONS[alert.severity] ?? "?";
         const agent = alert.agent_id ?? "system";
         const message = alert.message.length > 37
@@ -63,7 +66,7 @@ export function AlertList({ alerts, loading }: AlertListProps): React.ReactNode 
         return (
           <box key={alert.alert_id} height={1} width="100%">
             <text>
-              {`  ${icon}    ${alert.category.padEnd(15)}  ${agent.padEnd(15)}  ${message.padEnd(37)}  ${status.padEnd(9)}  ${formatTimestamp(alert.created_at)}`}
+              {`${prefix}${icon}  ${alert.category.padEnd(15)}  ${agent.padEnd(15)}  ${message.padEnd(37)}  ${status.padEnd(9)}  ${formatTimestamp(alert.created_at)}`}
             </text>
           </box>
         );

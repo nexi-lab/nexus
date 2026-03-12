@@ -1,6 +1,7 @@
 /**
  * Zustand store for the Access Control panel:
- * manifests, permission evaluation, governance alerts, reputation leaderboard, credentials.
+ * manifests (+ tuple entries), permission evaluation, governance alerts,
+ * reputation leaderboard, credentials, disputes, fraud scores.
  */
 
 import { create } from "zustand";
@@ -90,7 +91,22 @@ export interface Dispute {
   readonly appeal_deadline: string | null;
 }
 
-export type AccessTab = "manifests" | "alerts" | "reputation" | "credentials" | "disputes";
+/** Matches backend FraudScoreResponse from governance.py:177. */
+export interface FraudScore {
+  readonly agent_id: string;
+  readonly zone_id: string;
+  readonly score: number;
+  readonly components: Readonly<Record<string, number>>;
+  readonly computed_at: string;
+}
+
+export type AccessTab =
+  | "manifests"
+  | "alerts"
+  | "reputation"
+  | "credentials"
+  | "disputes"
+  | "fraud";
 
 // =============================================================================
 // Store
@@ -109,6 +125,7 @@ export interface AccessState {
   // Governance alerts
   readonly alerts: readonly GovernanceAlert[];
   readonly alertsLoading: boolean;
+  readonly selectedAlertIndex: number;
 
   // Reputation leaderboard
   readonly leaderboard: readonly LeaderboardEntry[];
@@ -123,11 +140,16 @@ export interface AccessState {
   readonly disputesLoading: boolean;
   readonly selectedDisputeIndex: number;
 
+  // Fraud scores
+  readonly fraudScores: readonly FraudScore[];
+  readonly fraudScoresLoading: boolean;
+  readonly selectedFraudIndex: number;
+
   // UI state
   readonly activeTab: AccessTab;
   readonly error: string | null;
 
-  // Actions
+  // Actions — manifests
   readonly fetchManifests: (client: FetchClient) => Promise<void>;
   readonly fetchManifestDetail: (manifestId: string, client: FetchClient) => Promise<void>;
   readonly checkPermission: (
@@ -135,12 +157,18 @@ export interface AccessState {
     toolName: string,
     client: FetchClient,
   ) => Promise<void>;
+
+  // Actions — alerts
   readonly fetchAlerts: (client: FetchClient) => Promise<void>;
+  readonly resolveAlert: (alertId: string, resolvedBy: string, client: FetchClient) => Promise<void>;
+
+  // Actions — reputation
   readonly fetchLeaderboard: (client: FetchClient) => Promise<void>;
-  readonly fetchCredentials: (
-    agentId: string,
-    client: FetchClient,
-  ) => Promise<void>;
+
+  // Actions — credentials
+  readonly fetchCredentials: (agentId: string, client: FetchClient) => Promise<void>;
+
+  // Actions — disputes
   readonly fetchDispute: (disputeId: string, client: FetchClient) => Promise<void>;
   readonly fileDispute: (
     exchangeId: string,
@@ -150,9 +178,17 @@ export interface AccessState {
     client: FetchClient,
   ) => Promise<void>;
   readonly resolveDispute: (disputeId: string, resolution: string, client: FetchClient) => Promise<void>;
+
+  // Actions — fraud scores
+  readonly fetchFraudScores: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
+  readonly computeFraudScores: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
+
+  // Actions — UI
   readonly setActiveTab: (tab: AccessTab) => void;
   readonly setSelectedManifestIndex: (index: number) => void;
+  readonly setSelectedAlertIndex: (index: number) => void;
   readonly setSelectedDisputeIndex: (index: number) => void;
+  readonly setSelectedFraudIndex: (index: number) => void;
 }
 
 export const useAccessStore = create<AccessState>((set) => ({
@@ -163,6 +199,7 @@ export const useAccessStore = create<AccessState>((set) => ({
   permissionCheckLoading: false,
   alerts: [],
   alertsLoading: false,
+  selectedAlertIndex: 0,
   leaderboard: [],
   leaderboardLoading: false,
   credentials: [],
@@ -170,8 +207,13 @@ export const useAccessStore = create<AccessState>((set) => ({
   disputes: [],
   disputesLoading: false,
   selectedDisputeIndex: 0,
+  fraudScores: [],
+  fraudScoresLoading: false,
+  selectedFraudIndex: 0,
   activeTab: "manifests",
   error: null,
+
+  // ── Manifests ──────────────────────────────────────────────────────────
 
   fetchManifests: async (client) => {
     set({ manifestsLoading: true, error: null });
@@ -243,6 +285,8 @@ export const useAccessStore = create<AccessState>((set) => ({
     }
   },
 
+  // ── Alerts ─────────────────────────────────────────────────────────────
+
   fetchAlerts: async (client) => {
     set({ alertsLoading: true, error: null });
     try {
@@ -252,6 +296,7 @@ export const useAccessStore = create<AccessState>((set) => ({
       set({
         alerts: response.alerts,
         alertsLoading: false,
+        selectedAlertIndex: 0,
       });
     } catch (err) {
       set({
@@ -260,6 +305,32 @@ export const useAccessStore = create<AccessState>((set) => ({
       });
     }
   },
+
+  resolveAlert: async (alertId, resolvedBy, client) => {
+    set({ alertsLoading: true, error: null });
+    try {
+      await client.post<{
+        readonly alert_id: string;
+        readonly resolved: boolean;
+        readonly resolved_by: string;
+      }>(`/api/v2/governance/alerts/${encodeURIComponent(alertId)}/resolve`, {
+        resolved_by: resolvedBy,
+      });
+      set((state) => ({
+        alerts: state.alerts.map((a) =>
+          a.alert_id === alertId ? { ...a, resolved: true } : a,
+        ),
+        alertsLoading: false,
+      }));
+    } catch (err) {
+      set({
+        alertsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to resolve alert",
+      });
+    }
+  },
+
+  // ── Reputation ─────────────────────────────────────────────────────────
 
   fetchLeaderboard: async (client) => {
     set({ leaderboardLoading: true, error: null });
@@ -278,6 +349,8 @@ export const useAccessStore = create<AccessState>((set) => ({
       });
     }
   },
+
+  // ── Credentials ────────────────────────────────────────────────────────
 
   fetchCredentials: async (agentId, client) => {
     set({ credentialsLoading: true, error: null });
@@ -299,6 +372,8 @@ export const useAccessStore = create<AccessState>((set) => ({
       });
     }
   },
+
+  // ── Disputes ───────────────────────────────────────────────────────────
 
   fetchDispute: async (disputeId, client) => {
     set({ disputesLoading: true, error: null });
@@ -363,6 +438,52 @@ export const useAccessStore = create<AccessState>((set) => ({
     }
   },
 
+  // ── Fraud scores ───────────────────────────────────────────────────────
+
+  fetchFraudScores: async (zoneId, client) => {
+    set({ fraudScoresLoading: true, error: null });
+    try {
+      const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
+      const response = await client.get<{
+        readonly scores: readonly FraudScore[];
+        readonly count: number;
+      }>(`/api/v2/governance/fraud-scores${params}`);
+      set({
+        fraudScores: response.scores,
+        fraudScoresLoading: false,
+        selectedFraudIndex: 0,
+      });
+    } catch (err) {
+      set({
+        fraudScoresLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch fraud scores",
+      });
+    }
+  },
+
+  computeFraudScores: async (zoneId, client) => {
+    set({ fraudScoresLoading: true, error: null });
+    try {
+      const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
+      const response = await client.post<{
+        readonly scores: readonly FraudScore[];
+        readonly count: number;
+      }>(`/api/v2/governance/fraud-scores/compute${params}`, {});
+      set({
+        fraudScores: response.scores,
+        fraudScoresLoading: false,
+        selectedFraudIndex: 0,
+      });
+    } catch (err) {
+      set({
+        fraudScoresLoading: false,
+        error: err instanceof Error ? err.message : "Failed to compute fraud scores",
+      });
+    }
+  },
+
+  // ── UI ─────────────────────────────────────────────────────────────────
+
   setActiveTab: (tab) => {
     set({ activeTab: tab, error: null });
   },
@@ -371,7 +492,15 @@ export const useAccessStore = create<AccessState>((set) => ({
     set({ selectedManifestIndex: index });
   },
 
+  setSelectedAlertIndex: (index) => {
+    set({ selectedAlertIndex: index });
+  },
+
   setSelectedDisputeIndex: (index) => {
     set({ selectedDisputeIndex: index });
+  },
+
+  setSelectedFraudIndex: (index) => {
+    set({ selectedFraudIndex: index });
   },
 }));

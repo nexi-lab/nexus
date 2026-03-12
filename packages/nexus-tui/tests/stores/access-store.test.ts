@@ -28,6 +28,7 @@ function resetStore(): void {
     permissionCheckLoading: false,
     alerts: [],
     alertsLoading: false,
+    selectedAlertIndex: 0,
     leaderboard: [],
     leaderboardLoading: false,
     credentials: [],
@@ -35,6 +36,9 @@ function resetStore(): void {
     disputes: [],
     disputesLoading: false,
     selectedDisputeIndex: 0,
+    fraudScores: [],
+    fraudScoresLoading: false,
+    selectedFraudIndex: 0,
     activeTab: "manifests",
     error: null,
   });
@@ -672,6 +676,161 @@ describe("AccessStore", () => {
     it("sets the selected dispute index", () => {
       useAccessStore.getState().setSelectedDisputeIndex(2);
       expect(useAccessStore.getState().selectedDisputeIndex).toBe(2);
+    });
+  });
+
+  describe("resolveAlert", () => {
+    it("resolves an alert and updates local state", async () => {
+      useAccessStore.setState({
+        alerts: [
+          {
+            alert_id: "a-1",
+            severity: "critical" as const,
+            category: "access_violation",
+            message: "Unauthorized",
+            agent_id: "agent-rogue",
+            created_at: "2025-01-15T10:00:00Z",
+            resolved: false,
+          },
+        ],
+      });
+
+      const client = mockClient({
+        "/api/v2/governance/alerts/a-1/resolve": {
+          alert_id: "a-1",
+          resolved: true,
+          resolved_by: "tui-operator",
+        },
+      });
+
+      await useAccessStore.getState().resolveAlert("a-1", "tui-operator", client);
+      const state = useAccessStore.getState();
+
+      expect(state.alerts[0]!.resolved).toBe(true);
+      expect(state.alertsLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        post: mock(async () => { throw new Error("Not authorized"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().resolveAlert("a-1", "op", client);
+      expect(useAccessStore.getState().error).toBe("Not authorized");
+    });
+  });
+
+  describe("setSelectedAlertIndex", () => {
+    it("sets the selected alert index", () => {
+      useAccessStore.getState().setSelectedAlertIndex(2);
+      expect(useAccessStore.getState().selectedAlertIndex).toBe(2);
+    });
+  });
+
+  describe("fetchFraudScores", () => {
+    it("fetches fraud scores with zone_id", async () => {
+      const client = mockClient({
+        "/api/v2/governance/fraud-scores": {
+          scores: [
+            {
+              agent_id: "agent-alice",
+              zone_id: "zone-1",
+              score: 0.15,
+              components: { velocity: 0.1, volume: 0.2 },
+              computed_at: "2025-06-01T12:00:00Z",
+            },
+            {
+              agent_id: "agent-bob",
+              zone_id: "zone-1",
+              score: 0.85,
+              components: { velocity: 0.9, volume: 0.8 },
+              computed_at: "2025-06-01T12:00:00Z",
+            },
+          ],
+          count: 2,
+        },
+      });
+
+      await useAccessStore.getState().fetchFraudScores("zone-1", client);
+      const state = useAccessStore.getState();
+
+      expect(state.fraudScores).toHaveLength(2);
+      expect(state.fraudScores[0]!.agent_id).toBe("agent-alice");
+      expect(state.fraudScores[0]!.score).toBe(0.15);
+      expect(state.fraudScores[0]!.components.velocity).toBe(0.1);
+      expect(state.fraudScores[1]!.score).toBe(0.85);
+      expect(state.fraudScoresLoading).toBe(false);
+      expect(state.selectedFraudIndex).toBe(0);
+      expect(state.error).toBeNull();
+
+      // Verify zone_id passed as query param
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("zone_id=zone-1");
+    });
+
+    it("fetches without zone_id when undefined", async () => {
+      const client = mockClient({
+        "/api/v2/governance/fraud-scores": { scores: [], count: 0 },
+      });
+
+      await useAccessStore.getState().fetchFraudScores(undefined, client);
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toBe("/api/v2/governance/fraud-scores");
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("Governance down"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchFraudScores("zone-1", client);
+      expect(useAccessStore.getState().error).toBe("Governance down");
+    });
+  });
+
+  describe("computeFraudScores", () => {
+    it("computes fraud scores via POST", async () => {
+      const client = mockClient({
+        "/api/v2/governance/fraud-scores/compute": {
+          scores: [
+            {
+              agent_id: "agent-x",
+              zone_id: "zone-1",
+              score: 0.42,
+              components: { pattern: 0.5 },
+              computed_at: "2025-06-02T00:00:00Z",
+            },
+          ],
+          count: 1,
+        },
+      });
+
+      await useAccessStore.getState().computeFraudScores("zone-1", client);
+      const state = useAccessStore.getState();
+
+      expect(state.fraudScores).toHaveLength(1);
+      expect(state.fraudScores[0]!.score).toBe(0.42);
+      expect(state.fraudScoresLoading).toBe(false);
+
+      // Verify POST was called
+      expect(client.post).toHaveBeenCalled();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        post: mock(async () => { throw new Error("Compute failed"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().computeFraudScores("zone-1", client);
+      expect(useAccessStore.getState().error).toBe("Compute failed");
+    });
+  });
+
+  describe("setSelectedFraudIndex", () => {
+    it("sets the selected fraud index", () => {
+      useAccessStore.getState().setSelectedFraudIndex(3);
+      expect(useAccessStore.getState().selectedFraudIndex).toBe(3);
     });
   });
 

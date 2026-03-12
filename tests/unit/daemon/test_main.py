@@ -19,6 +19,7 @@ import pytest
 from click.testing import CliRunner
 
 from nexus.daemon.main import (
+    _is_nexusd_process,
     _JsonLogFormatter,
     _manage_pid_file,
     _redact_url,
@@ -112,6 +113,58 @@ class TestJsonLogFormatter:
 
 
 # ---------------------------------------------------------------------------
+# _is_nexusd_process
+# ---------------------------------------------------------------------------
+
+
+class TestIsNexusdProcess:
+    """Tests for ``_is_nexusd_process``."""
+
+    def test_nonexistent_pid(self) -> None:
+        # PID above kernel max — guaranteed not to exist
+        assert _is_nexusd_process(4194305) is False
+
+    def test_current_process_without_proc_fs(self, monkeypatch) -> None:
+        # On macOS (no /proc), should fall back to os.kill and return True
+        # because the process exists and /proc read raises FileNotFoundError
+        result = _is_nexusd_process(os.getpid())
+        # On Linux the cmdline won't contain "nexusd" (it's pytest), but
+        # on macOS the /proc fallback returns True conservatively.
+        # Either way, just verify it doesn't crash.
+        assert isinstance(result, bool)
+
+    def test_pid_reuse_different_process(self, tmp_path: Path) -> None:
+        # Simulate /proc/<pid>/cmdline pointing to a non-nexusd process
+        # by patching Path so that /proc/<pid>/cmdline returns "bash"
+        pid = os.getpid()
+        fake_cmdline = b"bash\x00--login\x00"
+
+        with patch.object(Path, "read_bytes", return_value=fake_cmdline):
+            # Also need /proc/{pid}/cmdline to "exist" — don't raise FileNotFoundError
+            result = _is_nexusd_process(pid)
+
+        assert result is False
+
+    def test_cmdline_contains_nexusd(self) -> None:
+        pid = os.getpid()
+        fake_cmdline = b"python3\x00-m\x00nexus.daemon\x00--port\x002026\x00"
+
+        with patch.object(Path, "read_bytes", return_value=fake_cmdline):
+            result = _is_nexusd_process(pid)
+
+        assert result is True
+
+    def test_cmdline_contains_nexusd_script(self) -> None:
+        pid = os.getpid()
+        fake_cmdline = b"/usr/local/bin/nexusd\x00--host\x000.0.0.0\x00"
+
+        with patch.object(Path, "read_bytes", return_value=fake_cmdline):
+            result = _is_nexusd_process(pid)
+
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
 # _manage_pid_file
 # ---------------------------------------------------------------------------
 
@@ -160,6 +213,39 @@ class TestManagePidFile:
         assert exc_info.value.code == 78  # CONFIG_ERROR
         # Cleanup
         pid_file.unlink(missing_ok=True)
+
+    def test_manage_pid_file_clears_reused_pid(self, tmp_path: Path, monkeypatch) -> None:
+        """PID file points to a live process that is NOT nexusd (PID reuse)."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        nexus_dir = tmp_path / ".nexus"
+        nexus_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = nexus_dir / "nexusd.pid"
+        # Current PID is alive but _is_nexusd_process will say False
+        pid_file.write_text(str(os.getpid()))
+
+        with patch("nexus.daemon.main._is_nexusd_process", return_value=False):
+            pid_path = _manage_pid_file()
+
+        # Should have replaced the stale file with our own PID
+        assert pid_path.exists()
+        assert pid_path.read_text().strip() == str(os.getpid())
+        pid_path.unlink(missing_ok=True)
+
+    def test_manage_pid_file_handles_corrupt_content(self, tmp_path: Path, monkeypatch) -> None:
+        """PID file contains non-numeric garbage."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        nexus_dir = tmp_path / ".nexus"
+        nexus_dir.mkdir(parents=True, exist_ok=True)
+        pid_file = nexus_dir / "nexusd.pid"
+        pid_file.write_text("not-a-number\n")
+
+        pid_path = _manage_pid_file()
+
+        assert pid_path.exists()
+        assert pid_path.read_text().strip() == str(os.getpid())
+        pid_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------

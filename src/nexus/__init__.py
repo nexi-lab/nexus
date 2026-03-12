@@ -233,9 +233,8 @@ def connect(
         remote_metastore = RemoteMetastore(transport)
 
         # Build a lightweight NexusFS directly — no factory, no bricks.
-        # Server is SSOT; client just proxies calls via HTTP.
-        from nexus.bricks.parsers.providers.registry import ProviderRegistry as _ProviderRegistry
-        from nexus.bricks.parsers.registry import ParserRegistry as _ParserRegistry
+        # Server is SSOT; client just proxies calls via gRPC.
+        # No parser registries — remote delegates all parsing to the server.
         from nexus.core.config import BrickServices as _BrickServices
         from nexus.core.config import PermissionConfig as _PermissionConfig
         from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
@@ -250,13 +249,7 @@ def connect(
             metadata_store=remote_metastore,
             permissions=_PermissionConfig(enforce=False),
             kernel_services=_KernelServices(router=_router),
-            brick_services=_BrickServices(
-                # Remote clients delegate parsing to the server. Supplying
-                # empty registries avoids parser auto-discovery and heavy
-                # optional imports during one-shot CLI startup.
-                parser_registry=_ParserRegistry(),
-                provider_registry=_ProviderRegistry(),
-            ),
+            brick_services=_BrickServices(),
         )
 
         # Wire service proxies for REMOTE profile (Issue #1171).

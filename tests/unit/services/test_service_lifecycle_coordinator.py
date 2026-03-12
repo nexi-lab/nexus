@@ -115,6 +115,32 @@ class _PersistentFakeService:
         return "working"
 
 
+class _BothProtocolsService:
+    """Q4: HotSwappable + PersistentService — satisfies both protocols."""
+
+    def __init__(self, hook_spec_value: HookSpec | None = None) -> None:
+        self._hook_spec = hook_spec_value or HookSpec()
+        self.drained = False
+        self.activated = False
+        self.started = False
+        self.stopped = False
+
+    def hook_spec(self) -> HookSpec:
+        return self._hook_spec
+
+    async def drain(self) -> None:
+        self.drained = True
+
+    async def activate(self) -> None:
+        self.activated = True
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
 # ---------------------------------------------------------------------------
 # insmod — register_service
 # ---------------------------------------------------------------------------
@@ -584,3 +610,286 @@ class TestDistroClassification:
         assert "rebac" in hot
         assert "search" in static
         assert "worker" in static  # persistent but not hot-swappable
+
+
+# ---------------------------------------------------------------------------
+# Auto-lifecycle — four-quadrant "one-click" management (Issue #1580)
+# ---------------------------------------------------------------------------
+
+
+class TestAutoLifecyclePersistentService:
+    """Auto start/stop for PersistentService (Q3 + Q4)."""
+
+    @pytest.mark.asyncio()
+    async def test_start_calls_start_on_persistent(
+        self, coordinator: ServiceLifecycleCoordinator
+    ) -> None:
+        svc = _PersistentFakeService()
+        coordinator.register_service("worker", svc)
+        started = await coordinator.start_persistent_services()
+        assert started == ["worker"]
+        assert svc.started is True
+
+    @pytest.mark.asyncio()
+    async def test_start_skips_non_persistent(
+        self, coordinator: ServiceLifecycleCoordinator
+    ) -> None:
+        coordinator.register_service("search", _FakeService())
+        started = await coordinator.start_persistent_services()
+        assert started == []
+
+    @pytest.mark.asyncio()
+    async def test_stop_calls_stop_on_persistent(
+        self, coordinator: ServiceLifecycleCoordinator
+    ) -> None:
+        svc = _PersistentFakeService()
+        coordinator.register_service("worker", svc)
+        stopped = await coordinator.stop_persistent_services()
+        assert stopped == ["worker"]
+        assert svc.stopped is True
+
+    @pytest.mark.asyncio()
+    async def test_start_handles_exception(self, coordinator: ServiceLifecycleCoordinator) -> None:
+        """Exception during start() logs error, continues to next service."""
+
+        class _FailStart:
+            async def start(self) -> None:
+                raise RuntimeError("boom")
+
+            async def stop(self) -> None:
+                pass
+
+        ok_svc = _PersistentFakeService()
+        coordinator.register_service("fail", _FailStart())
+        coordinator.register_service("ok", ok_svc)
+        started = await coordinator.start_persistent_services()
+        assert "ok" in started
+        assert "fail" not in started
+        assert ok_svc.started is True
+
+    @pytest.mark.asyncio()
+    async def test_stop_handles_exception(self, coordinator: ServiceLifecycleCoordinator) -> None:
+        """Exception during stop() logs error, continues."""
+
+        class _FailStop:
+            async def start(self) -> None:
+                pass
+
+            async def stop(self) -> None:
+                raise RuntimeError("boom")
+
+        ok_svc = _PersistentFakeService()
+        coordinator.register_service("fail", _FailStop())
+        coordinator.register_service("ok", ok_svc)
+        stopped = await coordinator.stop_persistent_services()
+        assert "ok" in stopped
+        assert "fail" not in stopped
+        assert ok_svc.stopped is True
+
+    @pytest.mark.asyncio()
+    async def test_start_handles_timeout(self, coordinator: ServiceLifecycleCoordinator) -> None:
+        """Timeout during start() logs error, continues."""
+
+        class _SlowStart:
+            async def start(self) -> None:
+                await asyncio.sleep(10)
+
+            async def stop(self) -> None:
+                pass
+
+        ok_svc = _PersistentFakeService()
+        coordinator.register_service("slow", _SlowStart())
+        coordinator.register_service("ok", ok_svc)
+        started = await coordinator.start_persistent_services(timeout=0.01)
+        assert "ok" in started
+        assert "slow" not in started
+
+    @pytest.mark.asyncio()
+    async def test_start_stop_idempotent(self, coordinator: ServiceLifecycleCoordinator) -> None:
+        svc = _PersistentFakeService()
+        coordinator.register_service("worker", svc)
+        await coordinator.start_persistent_services()
+        await coordinator.start_persistent_services()
+        assert svc.started is True
+        await coordinator.stop_persistent_services()
+        await coordinator.stop_persistent_services()
+        assert svc.stopped is True
+
+
+class TestAutoLifecycleHotSwappable:
+    """Auto activate/deactivate for HotSwappable (Q2 + Q4)."""
+
+    @pytest.mark.asyncio()
+    async def test_activate_registers_hooks_and_calls_activate(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        dispatch: KernelDispatch,
+    ) -> None:
+        hook = MagicMock()
+        spec = HookSpec(read_hooks=(hook,))
+        svc = _HotSwappableService(hook_spec_value=spec)
+        coordinator.register_service("rebac", svc)
+        activated = await coordinator.activate_hot_swappable_services()
+        assert activated == ["rebac"]
+        assert svc.activated is True
+        assert dispatch.read_hook_count == 1
+
+    @pytest.mark.asyncio()
+    async def test_activate_auto_captures_hook_spec_from_protocol(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        dispatch: KernelDispatch,
+    ) -> None:
+        """hook_spec is auto-detected from HotSwappable.hook_spec() if not set explicitly."""
+        hook = MagicMock()
+        spec = HookSpec(read_hooks=(hook,))
+        svc = _HotSwappableService(hook_spec_value=spec)
+        # Register WITHOUT explicit hook_spec — should auto-capture
+        coordinator.register_service("rebac", svc)
+        assert coordinator.get_hook_spec("rebac") is None
+        await coordinator.activate_hot_swappable_services()
+        assert coordinator.get_hook_spec("rebac") is spec
+        assert dispatch.read_hook_count == 1
+
+    @pytest.mark.asyncio()
+    async def test_activate_skips_non_hot_swappable(
+        self, coordinator: ServiceLifecycleCoordinator
+    ) -> None:
+        coordinator.register_service("search", _FakeService())
+        activated = await coordinator.activate_hot_swappable_services()
+        assert activated == []
+
+    @pytest.mark.asyncio()
+    async def test_deactivate_drains_and_unregisters_hooks(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        dispatch: KernelDispatch,
+    ) -> None:
+        hook = MagicMock()
+        spec = HookSpec(read_hooks=(hook,))
+        svc = _HotSwappableService(hook_spec_value=spec)
+        coordinator.register_service("rebac", svc, hook_spec=spec)
+        await coordinator.activate_hot_swappable_services()
+        assert dispatch.read_hook_count == 1
+
+        deactivated = await coordinator.deactivate_hot_swappable_services()
+        assert deactivated == ["rebac"]
+        assert svc.drained is True
+        assert dispatch.read_hook_count == 0
+
+    @pytest.mark.asyncio()
+    async def test_activate_handles_exception(
+        self, coordinator: ServiceLifecycleCoordinator
+    ) -> None:
+        class _FailActivate:
+            def hook_spec(self) -> HookSpec:
+                return HookSpec()
+
+            async def drain(self) -> None:
+                pass
+
+            async def activate(self) -> None:
+                raise RuntimeError("boom")
+
+        ok_svc = _HotSwappableService()
+        coordinator.register_service("fail", _FailActivate())
+        coordinator.register_service("ok", ok_svc)
+        activated = await coordinator.activate_hot_swappable_services()
+        assert "ok" in activated
+        assert "fail" not in activated
+
+
+class TestAutoLifecycleQ4BothProtocols:
+    """Q4: HotSwappable + PersistentService — both protocols auto-managed."""
+
+    @pytest.mark.asyncio()
+    async def test_q4_activate_and_start(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        dispatch: KernelDispatch,
+    ) -> None:
+        hook = MagicMock()
+        spec = HookSpec(read_hooks=(hook,))
+        svc = _BothProtocolsService(hook_spec_value=spec)
+        coordinator.register_service("q4svc", svc)
+
+        activated = await coordinator.activate_hot_swappable_services()
+        started = await coordinator.start_persistent_services()
+
+        assert activated == ["q4svc"]
+        assert started == ["q4svc"]
+        assert svc.activated is True
+        assert svc.started is True
+        assert dispatch.read_hook_count == 1
+
+    @pytest.mark.asyncio()
+    async def test_q4_stop_and_deactivate(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        dispatch: KernelDispatch,
+    ) -> None:
+        hook = MagicMock()
+        spec = HookSpec(read_hooks=(hook,))
+        svc = _BothProtocolsService(hook_spec_value=spec)
+        coordinator.register_service("q4svc", svc)
+        await coordinator.activate_hot_swappable_services()
+        await coordinator.start_persistent_services()
+
+        stopped = await coordinator.stop_persistent_services()
+        deactivated = await coordinator.deactivate_hot_swappable_services()
+
+        assert stopped == ["q4svc"]
+        assert deactivated == ["q4svc"]
+        assert svc.stopped is True
+        assert svc.drained is True
+        assert dispatch.read_hook_count == 0
+
+    @pytest.mark.asyncio()
+    async def test_q4_mixed_with_other_quadrants(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        dispatch: KernelDispatch,
+    ) -> None:
+        """All four quadrants coexist — each gets its appropriate lifecycle."""
+        # Q1: static + invocation
+        q1 = _FakeService()
+        coordinator.register_service("q1_search", q1)
+
+        # Q2: hot-swappable + invocation
+        q2_hook = MagicMock()
+        q2 = _HotSwappableService(hook_spec_value=HookSpec(read_hooks=(q2_hook,)))
+        coordinator.register_service("q2_rebac", q2)
+
+        # Q3: static + persistent
+        q3 = _PersistentFakeService()
+        coordinator.register_service("q3_worker", q3)
+
+        # Q4: both
+        q4_hook = MagicMock()
+        q4 = _BothProtocolsService(hook_spec_value=HookSpec(observers=(q4_hook,)))
+        coordinator.register_service("q4_full", q4)
+
+        # --- Bootstrap ---
+        activated = await coordinator.activate_hot_swappable_services()
+        started = await coordinator.start_persistent_services()
+
+        assert sorted(activated) == ["q2_rebac", "q4_full"]
+        assert sorted(started) == ["q3_worker", "q4_full"]
+        assert q2.activated is True
+        assert q3.started is True
+        assert q4.activated is True
+        assert q4.started is True
+        assert dispatch.read_hook_count == 1  # q2
+        assert dispatch.observer_count == 1  # q4
+
+        # --- Shutdown ---
+        stopped = await coordinator.stop_persistent_services()
+        deactivated = await coordinator.deactivate_hot_swappable_services()
+
+        assert sorted(stopped) == ["q3_worker", "q4_full"]
+        assert sorted(deactivated) == ["q2_rebac", "q4_full"]
+        assert q3.stopped is True
+        assert q4.stopped is True
+        assert q4.drained is True
+        assert dispatch.read_hook_count == 0
+        assert dispatch.observer_count == 0

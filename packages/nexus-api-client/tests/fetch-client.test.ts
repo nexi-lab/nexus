@@ -260,6 +260,108 @@ describe("FetchClient", () => {
     });
   });
 
+  describe("PATCH method", () => {
+    it("sends PATCH request with body", async () => {
+      const fetchFn = mockFetch([{ status: 200, body: { updated: true } }]);
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      const result = await client.patch<{ updated: boolean }>("/api/v2/resource", { name: "new" });
+
+      expect(result).toEqual({ updated: true });
+      const [, init] = (fetchFn as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      expect(init.method).toBe("PATCH");
+      expect(init.headers["Content-Type"]).toBe("application/json");
+    });
+  });
+
+  describe("rawRequest", () => {
+    it("returns raw Response without JSON parsing", async () => {
+      const fetchFn = vi.fn(async () =>
+        new Response(JSON.stringify({ raw: true }), { status: 200 }),
+      ) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      const response = await client.rawRequest("GET", "/api/v2/test");
+
+      expect(response).toBeInstanceOf(Response);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toEqual({ raw: true });
+    });
+
+    it("sends body as-is without JSON.stringify", async () => {
+      const fetchFn = vi.fn(async () =>
+        new Response("ok", { status: 200 }),
+      ) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      await client.rawRequest("POST", "/api/v2/test", '{"already":"stringified"}');
+
+      const [, init] = fetchFn.mock.calls[0]!;
+      expect(init.body).toBe('{"already":"stringified"}');
+    });
+
+    it("throws AbortError when signal is already aborted", async () => {
+      const fetchFn = vi.fn(async () =>
+        new Response("ok", { status: 200 }),
+      ) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(
+        client.rawRequest("GET", "/test", undefined, { signal: controller.signal }),
+      ).rejects.toThrow(AbortError);
+    });
+
+    it("throws TimeoutError on fetch timeout", async () => {
+      const fetchFn = vi.fn(async () => {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0, timeout: 100 });
+
+      await expect(client.rawRequest("GET", "/test")).rejects.toThrow(TimeoutError);
+    });
+
+    it("throws AbortError when user signal fires during fetch", async () => {
+      const controller = new AbortController();
+      const fetchFn = vi.fn(async (_url: string, init: { signal: AbortSignal }) => {
+        // Simulate user aborting mid-request
+        controller.abort();
+        // Throw AbortError as fetch would
+        throw new DOMException("Aborted", "AbortError");
+      }) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      await expect(
+        client.rawRequest("GET", "/test", undefined, { signal: controller.signal }),
+      ).rejects.toThrow(AbortError);
+    });
+
+    it("sends identity headers from config", async () => {
+      const fetchFn = vi.fn(async () =>
+        new Response("ok", { status: 200 }),
+      ) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({
+        apiKey: "k",
+        baseUrl: "http://localhost",
+        fetch: fetchFn,
+        maxRetries: 0,
+        agentId: "bot-1",
+        subject: "user:bob",
+        zoneId: "zone-x",
+      });
+
+      await client.rawRequest("GET", "/test");
+
+      const [, init] = fetchFn.mock.calls[0]!;
+      expect(init.headers["X-Agent-ID"]).toBe("bot-1");
+      expect(init.headers["X-Nexus-Subject"]).toBe("user:bob");
+      expect(init.headers["X-Nexus-Zone-ID"]).toBe("zone-x");
+    });
+  });
+
   describe("timeout and abort", () => {
     it("throws AbortError when signal is already aborted", async () => {
       const fetchFn = mockFetch([{ status: 200, body: {} }]);
@@ -269,6 +371,75 @@ describe("FetchClient", () => {
       controller.abort();
 
       await expect(client.get("/test", { signal: controller.signal })).rejects.toThrow(AbortError);
+    });
+
+    it("throws TimeoutError when fetch aborts due to timeout", async () => {
+      const fetchFn = vi.fn(async () => {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0, timeout: 100 });
+
+      await expect(client.get("/test")).rejects.toThrow(TimeoutError);
+    });
+
+    it("throws AbortError when user aborts during fetch", async () => {
+      const controller = new AbortController();
+      const fetchFn = vi.fn(async () => {
+        controller.abort();
+        throw new DOMException("Aborted", "AbortError");
+      }) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      await expect(
+        client.get("/test", { signal: controller.signal }),
+      ).rejects.toThrow(AbortError);
+    });
+
+    it("cleans up user signal listener after request", async () => {
+      const fetchFn = mockFetch([{ status: 200, body: { ok: true } }]);
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      const controller = new AbortController();
+      const removeSpy = vi.spyOn(controller.signal, "removeEventListener");
+
+      await client.get("/test", { signal: controller.signal });
+      expect(removeSpy).toHaveBeenCalledWith("abort", expect.any(Function));
+    });
+  });
+
+  describe("retry with RateLimitError retryAfter", () => {
+    it("uses retryAfter from 429 header for retry delay", async () => {
+      const fetchFn = mockFetch([
+        { status: 429, body: { detail: "throttled" }, headers: { "Retry-After": "2" } },
+        { status: 200, body: { ok: true } },
+      ]);
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 1 });
+
+      const result = await client.get<{ ok: boolean }>("/test");
+      expect(result).toEqual({ ok: true });
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("204 response handling", () => {
+    it("returns undefined for 204 responses", async () => {
+      const fetchFn = mockFetch([{ status: 204 }]);
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 0 });
+
+      const result = await client.get("/test");
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe("network errors exhaust retries", () => {
+    it("wraps non-NexusApiError in NetworkError after exhausting retries", async () => {
+      const fetchFn = vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }) as unknown as typeof globalThis.fetch;
+      client = new FetchClient({ apiKey: "k", baseUrl: "http://localhost", fetch: fetchFn, maxRetries: 1 });
+
+      await expect(client.get("/test")).rejects.toThrow(NetworkError);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
     });
   });
 

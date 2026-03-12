@@ -128,6 +128,9 @@ class LazyCommandGroup(click.Group):
 
     def _load_command_module(self, cmd_name: str) -> None:
         spec = self._lazy_commands.get(cmd_name)
+        if spec is None:
+            # Try underscore form (e.g. secrets-audit → secrets_audit)
+            spec = self._lazy_commands.get(cmd_name.replace("-", "_"))
         if spec is None or spec.module_name in self._loaded_modules:
             return
 

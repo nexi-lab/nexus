@@ -45,28 +45,19 @@ All operations use GIL-free computation for true parallel execution with zero-co
 
 ### Automatic Installation (Recommended)
 
-Starting with version 0.5.6+, pre-built Rust wheels are available on PyPI:
+The published Rust extension package is `nexus-fast`. Install it directly or
+through the main package's optional extra:
 
 ```bash
-# Install with Rust acceleration (recommended - 30-100x faster grep)
-pip install nexus-ai-fs[fast]
+# Install the main package with the Rust extra
+pip install 'nexus-ai-fs[rust]'
 
-# Or install all optional dependencies (includes Rust acceleration)
-pip install nexus-ai-fs[all]
-
-# Or install all performance optimizations
-pip install nexus-ai-fs[performance]
+# Or install the Rust extension package directly
+pip install nexus-fast
 
 # Base installation (no Rust acceleration)
 pip install nexus-ai-fs
 ```
-
-Pre-built wheels are available for:
-- **Linux**: x86_64, aarch64 (ARM64)
-- **macOS**: x86_64 (Intel), aarch64 (Apple Silicon)
-- **Windows**: x86_64
-
-If a pre-built wheel is not available for your platform, Nexus will automatically fall back to Python implementations.
 
 #### Verify Installation
 
@@ -83,14 +74,14 @@ Only needed for development or unsupported platforms:
 #### Prerequisites
 
 - Rust toolchain (install via [rustup](https://rustup.rs/))
-- Python 3.8+
+- Python 3.12+
 - maturin (`pip install maturin`)
 
 #### Build Steps
 
 ```bash
 # Navigate to the Rust extension directory
-cd rust/nexus_fast
+cd rust/nexus_pyo3
 
 # Build and install in development mode
 maturin develop --release
@@ -334,14 +325,14 @@ def check_permissions_optimized(checks, tuples, namespace_configs):
 ### Build Requirements
 
 - Rust 1.70+ (with cargo)
-- Python 3.8+
-- PyO3 0.22
+- Python 3.12+
+- PyO3 0.27
 - maturin 1.0+
 
 ### Project Structure
 
 ```
-rust/nexus_fast/
+rust/nexus_pyo3/
 ├── Cargo.toml              # Rust dependencies and configuration
 ├── pyproject.toml          # Python packaging configuration
 ├── src/

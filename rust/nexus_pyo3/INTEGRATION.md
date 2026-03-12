@@ -5,13 +5,13 @@ This guide shows how to integrate the high-performance Rust permission checker w
 ## Step 1: Install the Extension
 
 ```bash
-cd rust/nexus_fast
+cd rust/nexus_pyo3
 maturin develop --release
 ```
 
 Or for production:
 ```bash
-cd rust/nexus_fast
+cd rust/nexus_pyo3
 maturin build --release
 pip install target/wheels/nexus_fast-*.whl
 ```
@@ -22,7 +22,8 @@ In the main `pyproject.toml`:
 
 ```toml
 [project.optional-dependencies]
-fast = ["nexus-fast>=0.1.0"]
+rust = ["nexus-fast==0.9.1"]
+fast = ["nexus-fast==0.9.1"]
 ```
 
 ## Step 3: Create Wrapper Module

@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from nexus.bricks.access_manifest.evaluator import ManifestEvaluator
 from nexus.contracts.access_manifest_types import (
     AccessManifest,
+    EvaluationTrace,
     ManifestEntry,
     ToolPermission,
 )
@@ -254,6 +255,34 @@ class AccessManifestService:
         if entries is None:
             return ToolPermission.DENY
         return self._evaluator.evaluate(entries, tool_name)
+
+    def evaluate_with_trace(
+        self, agent_id: str, tool_name: str, zone_id: str = ROOT_ZONE_ID
+    ) -> EvaluationTrace:
+        """Evaluate a tool with a full decision trace (proof tree).
+
+        Uses cache first, falls back to DB lookup. Returns the complete
+        evaluation trace showing which entries were checked and matched.
+
+        Args:
+            agent_id: Agent requesting access.
+            tool_name: Tool to evaluate.
+            zone_id: Zone scope.
+
+        Returns:
+            EvaluationTrace with decision and per-entry trace.
+        """
+        entries = self._get_entries_cached(agent_id, zone_id)
+        if entries is None:
+            # No manifest found — return trace with default deny, no entries
+            return EvaluationTrace(
+                tool_name=tool_name,
+                decision=ToolPermission.DENY,
+                matched_index=-1,
+                entries=(),
+                default_applied=True,
+            )
+        return self._evaluator.evaluate_with_trace(entries, tool_name)
 
     def filter_tools(
         self, agent_id: str, tool_names: frozenset[str], zone_id: str = ROOT_ZONE_ID

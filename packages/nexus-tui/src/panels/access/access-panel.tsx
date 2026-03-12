@@ -15,6 +15,7 @@
  *   x              : (delegations tab) revoke selected delegation
  *   o              : (delegations tab) complete selected delegation
  *   v              : (delegations tab) view delegation chain
+ *   w              : (delegations tab) view namespace config
  *   r              : refresh current tab
  */
 
@@ -37,6 +38,7 @@ import { DisputeLookup } from "./dispute-lookup.js";
 import { DelegationCreator } from "./delegation-creator.js";
 import { DelegationCompleter } from "./delegation-completer.js";
 import { DelegationChainView } from "./delegation-chain-view.js";
+import { NamespaceConfigView } from "./namespace-config-view.js";
 
 const TAB_ORDER: readonly AccessTab[] = [
   "manifests",
@@ -64,7 +66,8 @@ type OverlayMode =
   | "disputeLookup"
   | "delegationCreator"
   | "delegationCompleter"
-  | "delegationChainView";
+  | "delegationChainView"
+  | "namespaceConfigView";
 
 export default function AccessPanel(): React.ReactNode {
   const client = useApi();
@@ -267,6 +270,14 @@ export default function AccessPanel(): React.ReactNode {
         }
       }
     },
+    w: () => {
+      if (activeTab === "delegations" && overlay === "none") {
+        const selected = delegations[selectedDelegationIndex];
+        if (selected) {
+          setOverlay("namespaceConfigView");
+        }
+      }
+    },
     c: () => {
       // Compute fraud scores
       if (activeTab === "fraud" && client) {
@@ -304,6 +315,7 @@ export default function AccessPanel(): React.ReactNode {
     delegationCreator: " | New Delegation",
     delegationCompleter: " | Complete Delegation",
     delegationChainView: " | Delegation Chain",
+    namespaceConfigView: " | Namespace Config",
   };
   const overlayLabel = OVERLAY_LABELS[overlay];
 
@@ -352,6 +364,12 @@ export default function AccessPanel(): React.ReactNode {
               onClose={closeOverlay}
             />
           )}
+          {overlay === "namespaceConfigView" && (
+            <NamespaceConfigView
+              delegationId={selectedDelegation?.delegation_id ?? ""}
+              onClose={closeOverlay}
+            />
+          )}
         </box>
       </box>
     );
@@ -365,7 +383,7 @@ export default function AccessPanel(): React.ReactNode {
     credentials: "Tab:tab  r:refresh  q:quit",
     disputes: "j/k:navigate  f:file  g:lookup  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
     fraud: "j/k:navigate  c:compute  Tab:tab  r:refresh  q:quit",
-    delegations: "j/k:navigate  n:new  x:revoke  o:complete  v:chain  Tab:tab  r:refresh  q:quit",
+    delegations: "j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  Tab:tab  r:refresh  q:quit",
   };
 
   return (

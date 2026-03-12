@@ -44,6 +44,8 @@ function resetStore(): void {
     delegationChainLoading: false,
     governanceCheck: null,
     governanceCheckLoading: false,
+    namespaceDetail: null,
+    namespaceDetailLoading: false,
     activeTab: "manifests",
     error: null,
   });
@@ -1216,6 +1218,168 @@ describe("AccessStore", () => {
 
       await useAccessStore.getState().checkGovernanceEdge("a", "b", "z", client);
       expect(useAccessStore.getState().error).toBe("Governance unavailable");
+    });
+  });
+
+  describe("checkPermission with trace", () => {
+    it("stores server-side evaluation trace", async () => {
+      const client = mockClient({
+        "/api/v2/access-manifests/m-1/evaluate": {
+          tool_name: "file:read:reports",
+          permission: "allow",
+          agent_id: "agent-alice",
+          manifest_id: "m-1",
+          trace: {
+            matched_index: 0,
+            default_applied: false,
+            entries: [
+              {
+                index: 0,
+                tool_pattern: "file:read:*",
+                permission: "allow",
+                matched: true,
+                max_calls_per_minute: 100,
+              },
+              {
+                index: 1,
+                tool_pattern: "file:write:*",
+                permission: "deny",
+                matched: false,
+                max_calls_per_minute: null,
+              },
+            ],
+          },
+        },
+      });
+
+      await useAccessStore.getState().checkPermission("m-1", "file:read:reports", client);
+      const state = useAccessStore.getState();
+
+      expect(state.lastPermissionCheck).not.toBeNull();
+      expect(state.lastPermissionCheck!.trace).not.toBeNull();
+      expect(state.lastPermissionCheck!.trace!.matched_index).toBe(0);
+      expect(state.lastPermissionCheck!.trace!.default_applied).toBe(false);
+      expect(state.lastPermissionCheck!.trace!.entries).toHaveLength(2);
+      expect(state.lastPermissionCheck!.trace!.entries[0]!.matched).toBe(true);
+      expect(state.lastPermissionCheck!.trace!.entries[0]!.tool_pattern).toBe("file:read:*");
+      expect(state.lastPermissionCheck!.trace!.entries[1]!.matched).toBe(false);
+    });
+
+    it("handles response without trace (backward compat)", async () => {
+      const client = mockClient({
+        "/api/v2/access-manifests/m-2/evaluate": {
+          tool_name: "tool-x",
+          permission: "deny",
+          agent_id: "agent-bob",
+          manifest_id: "m-2",
+        },
+      });
+
+      await useAccessStore.getState().checkPermission("m-2", "tool-x", client);
+      const state = useAccessStore.getState();
+
+      expect(state.lastPermissionCheck!.trace).toBeNull();
+      expect(state.lastPermissionCheck!.permission).toBe("deny");
+    });
+
+    it("stores default-deny trace when no entry matches", async () => {
+      const client = mockClient({
+        "/api/v2/access-manifests/m-3/evaluate": {
+          tool_name: "unknown-tool",
+          permission: "deny",
+          agent_id: "agent-x",
+          manifest_id: "m-3",
+          trace: {
+            matched_index: -1,
+            default_applied: true,
+            entries: [
+              {
+                index: 0,
+                tool_pattern: "file:*",
+                permission: "allow",
+                matched: false,
+                max_calls_per_minute: null,
+              },
+            ],
+          },
+        },
+      });
+
+      await useAccessStore.getState().checkPermission("m-3", "unknown-tool", client);
+      const state = useAccessStore.getState();
+
+      expect(state.lastPermissionCheck!.trace!.default_applied).toBe(true);
+      expect(state.lastPermissionCheck!.trace!.matched_index).toBe(-1);
+      expect(state.lastPermissionCheck!.trace!.entries[0]!.matched).toBe(false);
+    });
+  });
+
+  describe("fetchNamespaceDetail", () => {
+    it("fetches and stores namespace detail", async () => {
+      const client = mockClient({
+        "/api/v2/agents/delegate/del-1/namespace": {
+          delegation_id: "del-1",
+          agent_id: "worker-1",
+          delegation_mode: "copy",
+          scope_prefix: "files/reports/",
+          removed_grants: ["/admin"],
+          added_grants: [],
+          readonly_paths: ["/config"],
+          mount_table: ["/workspace/reports", "/workspace/shared"],
+          zone_id: "zone-1",
+        },
+      });
+
+      await useAccessStore.getState().fetchNamespaceDetail("del-1", client);
+      const state = useAccessStore.getState();
+
+      expect(state.namespaceDetail).not.toBeNull();
+      expect(state.namespaceDetail!.delegation_id).toBe("del-1");
+      expect(state.namespaceDetail!.delegation_mode).toBe("copy");
+      expect(state.namespaceDetail!.scope_prefix).toBe("files/reports/");
+      expect(state.namespaceDetail!.removed_grants).toEqual(["/admin"]);
+      expect(state.namespaceDetail!.readonly_paths).toEqual(["/config"]);
+      expect(state.namespaceDetail!.mount_table).toEqual(["/workspace/reports", "/workspace/shared"]);
+      expect(state.namespaceDetailLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("handles clean mode with added grants", async () => {
+      const client = mockClient({
+        "/api/v2/agents/delegate/del-2/namespace": {
+          delegation_id: "del-2",
+          agent_id: "worker-2",
+          delegation_mode: "clean",
+          scope_prefix: null,
+          removed_grants: [],
+          added_grants: ["/workspace/sandbox/a.txt", "/workspace/sandbox/b.txt"],
+          readonly_paths: [],
+          mount_table: ["/workspace/sandbox"],
+          zone_id: null,
+        },
+      });
+
+      await useAccessStore.getState().fetchNamespaceDetail("del-2", client);
+      const state = useAccessStore.getState();
+
+      expect(state.namespaceDetail!.delegation_mode).toBe("clean");
+      expect(state.namespaceDetail!.added_grants).toHaveLength(2);
+      expect(state.namespaceDetail!.scope_prefix).toBeNull();
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => {
+          throw new Error("Namespace not found");
+        }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchNamespaceDetail("del-404", client);
+      const state = useAccessStore.getState();
+
+      expect(state.namespaceDetailLoading).toBe(false);
+      expect(state.error).toBe("Namespace not found");
+      expect(state.namespaceDetail).toBeNull();
     });
   });
 

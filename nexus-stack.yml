@@ -1,0 +1,364 @@
+# Nexus Stack — Single Source of Truth
+# =====================================
+# Unified Docker Compose file for all Nexus deployment presets.
+# Services are activated via Docker Compose profiles:
+#
+#   Preset "shared":  --profile core --profile cache --profile search
+#   Preset "demo":    --profile core --profile cache --profile search
+#   Add-on "nats":    --profile events
+#   Add-on "mcp":     --profile mcp
+#   Add-on "frontend": --profile frontend
+#   Add-on "langgraph": --profile langgraph
+#
+# Usage (via nexus CLI — recommended):
+#   nexus init --preset shared && nexus up
+#
+# Usage (direct docker compose):
+#   docker compose -f nexus-stack.yml --profile core --profile cache --profile search up -d
+#
+# Issue #2915: https://github.com/nexi-lab/nexus/issues/2915
+
+services:
+  # ============================================================================
+  # PostgreSQL Database
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexus-postgres
+    restart: unless-stopped
+    profiles:
+      - core
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-wal-archive:/var/lib/postgresql/wal_archive
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c effective_io_concurrency=16
+      -c maintenance_io_concurrency=16
+      -c wal_compression=lz4
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nexus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Nexus RPC Server
+  # ============================================================================
+  nexus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nexus-server:latest
+    container_name: nexus-server
+    restart: unless-stopped
+    profiles:
+      - core
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Server
+      NEXUS_HOST: "0.0.0.0"
+      NEXUS_PORT: "2026"
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_MODE: standalone
+      # Database
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
+      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
+      # Auth
+      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      # Backend
+      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
+      NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
+      NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
+      # Permissions
+      NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
+      NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
+      NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
+      # Config
+      NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
+      # Cache
+      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
+      NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
+      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
+      # Event bus
+      NEXUS_EVENT_BUS_BACKEND: ${NEXUS_EVENT_BUS_BACKEND:-redis}
+      NEXUS_NATS_URL: ${NEXUS_NATS_URL:-nats://nats:4222}
+      # Zoekt
+      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
+      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
+      # Sandbox
+      NEXUS_SERVER_URL: http://nexus:2026
+      NEXUS_DOCKER_NETWORK: nexus_nexus-network
+      # OAuth
+      NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
+      NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
+      NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
+      # Runtime
+      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
+    volumes:
+      - ./nexus-data:/app/data
+      - ./configs:/app/configs:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    user: root
+    ports:
+      - "${NEXUS_PORT:-2026}:2026"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # DragonflyDB — Hot Cache
+  # ============================================================================
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    container_name: nexus-dragonfly
+    restart: unless-stopped
+    profiles:
+      - cache
+    command: >
+      --cache_mode=true
+      --maxmemory=512mb
+      --proactor_threads=2
+    ports:
+      - "${DRAGONFLY_PORT:-6379}:6379"
+    volumes:
+      - dragonfly-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Zoekt — Fast Code Search
+  # ============================================================================
+  zoekt:
+    image: sourcegraph/zoekt-webserver:latest
+    container_name: nexus-zoekt
+    restart: unless-stopped
+    profiles:
+      - search
+    environment:
+      ZOEKT_INDEX_DIR: /index
+      ZOEKT_DATA_DIR: /data
+    volumes:
+      - ./nexus-data:/data
+      - zoekt-index:/index
+    ports:
+      - "${ZOEKT_PORT:-6070}:6070"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6070/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # NATS JetStream — Durable Event Bus (optional add-on)
+  # ============================================================================
+  nats:
+    image: nats:2.10-alpine
+    container_name: nexus-nats
+    restart: unless-stopped
+    profiles:
+      - events
+    command: ["--jetstream", "--store_dir=/data", "-m", "8222"]
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -q --spider http://localhost:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # MCP Server (optional add-on)
+  # ============================================================================
+  mcp-server:
+    image: nexus-server:latest
+    container_name: nexus-mcp-server
+    restart: unless-stopped
+    profiles:
+      - mcp
+    depends_on:
+      nexus:
+        condition: service_healthy
+    entrypoint: []
+    environment:
+      NEXUS_URL: http://nexus:2026
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8081"
+    ports:
+      - "${MCP_PORT:-8081}:8081"
+    command: ["nexus", "mcp", "serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8081"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # LangGraph Agent Server (optional add-on)
+  # ============================================================================
+  langgraph:
+    build:
+      context: ../nexus-langgraph
+      dockerfile: ../nexus/dockerfiles/langgraph.Dockerfile
+    image: nexus-langgraph:latest
+    container_name: nexus-langgraph
+    restart: unless-stopped
+    profiles:
+      - langgraph
+    depends_on:
+      nexus:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      LANGGRAPH_PORT: "2024"
+      LANGGRAPH_HOST: "0.0.0.0"
+      NEXUS_SERVER_URL: http://nexus:2026
+    ports:
+      - "${LANGGRAPH_PORT:-2024}:2024"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2024/ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # Frontend — React UI (optional add-on)
+  # ============================================================================
+  frontend:
+    build:
+      context: ../nexus-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:2026}
+        VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
+    image: nexus-frontend:latest
+    container_name: nexus-frontend
+    restart: unless-stopped
+    profiles:
+      - frontend
+    depends_on:
+      nexus:
+        condition: service_healthy
+    environment:
+      VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:2026}
+      VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  postgres-data:
+    driver: local
+  postgres-wal-archive:
+    driver: local
+  dragonfly-data:
+    driver: local
+  zoekt-index:
+    driver: local
+  nats-data:
+    driver: local
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  nexus-network:
+    name: nexus_nexus-network
+    driver: bridge

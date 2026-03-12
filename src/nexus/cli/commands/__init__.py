@@ -51,6 +51,8 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "profile": ("profile",),  # profile list/add/use/delete/show/rename
     "connect_cmd": ("connect",),  # Interactive connection setup
     "config_cmd": ("config",),  # Config show/set/get/reset
+    # Issue #2915: Stack lifecycle
+    "stack": ("up", "down", "logs", "restart"),
 }
 
 # Modules that expose a single Click command/group to add via cli.add_command
@@ -84,6 +86,9 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "secrets_audit": ("secrets-audit", "secrets_audit"),
     "rlm": ("rlm", "rlm"),
     "upload": ("upload", "upload"),
+    # Issue #2915: Demo data management + preset-aware init
+    "demo": ("demo", "demo"),
+    "init_cmd": ("init", "init"),
 }
 
 

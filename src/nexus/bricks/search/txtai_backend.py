@@ -165,7 +165,7 @@ class TxtaiBackend:
 
             if _has_pgvector:
                 config["backend"] = "pgvector"
-                config["database"] = self._database_url
+                config["pgvector"] = {"url": self._database_url}
                 use_pgvector = True
             else:
                 logger.warning(

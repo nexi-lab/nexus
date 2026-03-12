@@ -265,6 +265,7 @@ def connect(
         from nexus.factory._remote import _boot_remote_services
 
         _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+        nfs._register_runtime_closeable(transport)
 
         return nfs
 

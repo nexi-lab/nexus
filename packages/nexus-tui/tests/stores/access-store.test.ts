@@ -13,6 +13,7 @@ function mockClient(responses: Record<string, unknown>): FetchClient {
     get: mock(async (path: string) => handler(path)),
     post: mock(async (path: string) => handler(path)),
     delete: mock(async (path: string) => handler(path)),
+    patch: mock(async (path: string) => handler(path)),
   } as unknown as FetchClient;
 }
 
@@ -1380,6 +1381,85 @@ describe("AccessStore", () => {
       expect(state.namespaceDetailLoading).toBe(false);
       expect(state.error).toBe("Namespace not found");
       expect(state.namespaceDetail).toBeNull();
+    });
+  });
+
+  describe("updateNamespaceConfig", () => {
+    it("sends PATCH and stores updated namespace", async () => {
+      const client = mockClient({
+        "/api/v2/agents/delegate/del-1/namespace": {
+          delegation_id: "del-1",
+          agent_id: "worker-1",
+          delegation_mode: "copy",
+          scope_prefix: "files/new-prefix/",
+          removed_grants: ["/admin", "/secrets"],
+          added_grants: [],
+          readonly_paths: ["/config"],
+          mount_table: ["/workspace/reports"],
+          zone_id: "zone-1",
+        },
+      });
+
+      await useAccessStore.getState().updateNamespaceConfig(
+        "del-1",
+        {
+          scope_prefix: "files/new-prefix/",
+          remove_grants: ["/admin", "/secrets"],
+        },
+        client,
+      );
+      const state = useAccessStore.getState();
+
+      expect(state.namespaceDetail).not.toBeNull();
+      expect(state.namespaceDetail!.scope_prefix).toBe("files/new-prefix/");
+      expect(state.namespaceDetail!.removed_grants).toEqual(["/admin", "/secrets"]);
+      expect(state.namespaceDetailLoading).toBe(false);
+      expect(state.error).toBeNull();
+    });
+
+    it("calls patch method on client", async () => {
+      const patchMock = mock(async () => ({
+        delegation_id: "del-1",
+        agent_id: "worker-1",
+        delegation_mode: "copy",
+        scope_prefix: null,
+        removed_grants: [],
+        added_grants: ["/new/path"],
+        readonly_paths: [],
+        mount_table: [],
+        zone_id: null,
+      }));
+      const client = {
+        patch: patchMock,
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().updateNamespaceConfig(
+        "del-1",
+        { add_grants: ["/new/path"] },
+        client,
+      );
+      expect(patchMock).toHaveBeenCalledWith(
+        "/api/v2/agents/delegate/del-1/namespace",
+        { add_grants: ["/new/path"] },
+      );
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        patch: mock(async () => {
+          throw new Error("Forbidden");
+        }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().updateNamespaceConfig(
+        "del-1",
+        { scope_prefix: "x" },
+        client,
+      );
+      const state = useAccessStore.getState();
+
+      expect(state.namespaceDetailLoading).toBe(false);
+      expect(state.error).toBe("Forbidden");
     });
   });
 

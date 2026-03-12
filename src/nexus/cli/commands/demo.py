@@ -14,6 +14,8 @@ import contextlib
 import json
 import logging
 import os
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -370,9 +372,11 @@ def _seed_directories(nx: Any) -> int:
 def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> int:
     """Seed demo ReBAC permissions.
 
-    For remote presets (shared/demo), uses the ``admin_write_permission``
-    RPC so that tuples are written server-side where the rebac_manager
-    lives.  For local presets, accesses the rebac_manager directly.
+    For remote presets (shared/demo), uses ``docker compose exec`` to run
+    a script inside the container that writes tuples via ReBACManager.
+    This works with any server image version (no new RPC required).
+    Falls back to the ``admin_write_permission`` RPC for non-Docker
+    remote deployments.  For local presets, accesses rebac_manager directly.
 
     Writes relationship tuples for the demo workspace:
     - admin gets direct_owner on /workspace/demo
@@ -406,8 +410,11 @@ def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any])
     preset = config.get("preset", "local")
 
     if preset in ("shared", "demo"):
-        # Remote path — use admin RPC to write permissions server-side
-        created = _seed_permissions_rpc(config, tuples)
+        # Primary: docker compose exec (works with any server image)
+        created = _seed_permissions_docker(config, tuples)
+        if created < 0:
+            # Fallback: admin RPC (requires server built from this branch)
+            created = _seed_permissions_rpc(config, tuples)
     else:
         # Local path — direct rebac_manager access
         rebac = getattr(nx, "_rebac_manager", None) or getattr(nx, "rebac_manager", None)
@@ -431,12 +438,100 @@ def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any])
                 logger.debug("Could not seed permission %s: %s", t, e)
 
     manifest["permissions_seeded"] = True
-    manifest["permissions_count"] = created
-    return created
+    manifest["permissions_count"] = max(created, 0)
+    return max(created, 0)
+
+
+# Python script executed inside the Docker container via ``docker compose exec``.
+# It creates a standalone ReBACManager connected to the container's database
+# and writes the permission tuples.  This approach works with any server image
+# because it uses the container's own installed packages — no new RPC needed.
+_DOCKER_SEED_SCRIPT = """\
+import json, os, sys
+sys.path.insert(0, '/app/src')
+db_url = os.environ.get('NEXUS_DATABASE_URL', '')
+if not db_url:
+    print('0')
+    sys.exit(0)
+try:
+    from sqlalchemy import create_engine
+    from nexus.bricks.rebac.manager import ReBACManager
+    engine = create_engine(db_url)
+    mgr = ReBACManager(engine=engine, is_postgresql=not db_url.startswith('sqlite'))
+    created = 0
+    for s, r, o, z in json.loads(sys.stdin.read()):
+        try:
+            mgr.rebac_write(subject=tuple(s), relation=r, object=tuple(o), zone_id=z)
+            created += 1
+        except Exception:
+            pass
+    print(created)
+except Exception:
+    print('0')
+"""
+
+
+def _seed_permissions_docker(config: dict[str, Any], tuples: list[dict[str, Any]]) -> int:
+    """Seed permissions by executing a script inside the Docker container.
+
+    Returns the number of tuples created, or -1 if docker exec is unavailable.
+    """
+    compose_file = config.get("compose_file", "")
+    if not compose_file or not Path(compose_file).exists():
+        return -1
+
+    # Locate docker compose binary
+    compose_cmd = _find_compose_cmd()
+    if compose_cmd is None:
+        return -1
+
+    # Build compose project env so we target the correct stack
+    from nexus.cli.commands.stack import _derive_project_env
+
+    compose_env = _derive_project_env(config)
+
+    # Serialise tuples as [[subject, relation, object, zone_id], ...]
+    payload = json.dumps(
+        [[t["subject"], t["relation"], t["object"], t.get("zone_id", "root")] for t in tuples]
+    )
+
+    cmd = [
+        *compose_cmd,
+        "-f",
+        compose_file,
+        "exec",
+        "-T",
+        "nexus",
+        "python3",
+        "-c",
+        _DOCKER_SEED_SCRIPT,
+    ]
+    env = {**os.environ, **compose_env}
+
+    try:
+        result = subprocess.run(
+            cmd,
+            input=payload,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return int(result.stdout.strip())
+        logger.debug("docker exec failed (rc=%d): %s", result.returncode, result.stderr)
+        return -1
+    except (subprocess.TimeoutExpired, ValueError, OSError) as e:
+        logger.debug("docker exec error: %s", e)
+        return -1
 
 
 def _seed_permissions_rpc(config: dict[str, Any], tuples: list[dict[str, Any]]) -> int:
-    """Write permission tuples via the admin_write_permission RPC."""
+    """Write permission tuples via the admin_write_permission RPC.
+
+    Fallback for non-Docker remote deployments where docker exec is
+    unavailable but the server has the admin_write_permission handler.
+    """
     ports = config.get("ports", {})
     http_port = ports.get("http", 2026)
     grpc_port = ports.get("grpc", 2028)
@@ -463,6 +558,21 @@ def _seed_permissions_rpc(config: dict[str, Any], tuples: list[dict[str, Any]]) 
     except Exception as e:
         logger.debug("Could not seed permissions via RPC: %s", e)
         return 0
+
+
+def _find_compose_cmd() -> list[str] | None:
+    """Return docker compose command prefix, or None if unavailable."""
+    if shutil.which("docker"):
+        result = subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return ["docker", "compose"]
+    if shutil.which("docker-compose"):
+        return ["docker-compose"]
+    return None
 
 
 def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:

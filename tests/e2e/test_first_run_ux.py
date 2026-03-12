@@ -12,6 +12,7 @@ Timeout: 5 minutes (containers need startup time).
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -312,10 +313,18 @@ class TestFullWorkflow:
             )
             assert "Seeding" in demo_result.stdout or "Files" in demo_result.stdout
 
-            # Verify manifest was created
+            # Verify manifest was created and permissions were seeded
             data_dir = cfg.get("data_dir", str(initialized_project / "nexus-data"))
             manifest_path = Path(data_dir) / ".demo-manifest.json"
             assert manifest_path.exists(), "demo manifest not created"
+
+            with open(manifest_path) as f:
+                manifest = json.loads(f.read())
+            assert manifest.get("permissions_seeded") is True, "permissions not seeded"
+            assert manifest.get("permissions_count", 0) > 0, (
+                f"permissions_count is {manifest.get('permissions_count', 0)}, "
+                "expected > 0 — docker exec or RPC seeding failed"
+            )
 
             # Step 3: nexus demo reset (verify cleanup works)
             reset_result = subprocess.run(

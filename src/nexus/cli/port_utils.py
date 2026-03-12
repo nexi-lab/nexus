@@ -14,9 +14,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 # Default port assignments for Nexus services
+# NOTE: gRPC default must match grpc/server.py client default (2028).
 DEFAULT_PORTS: dict[str, int] = {
     "http": 2026,
-    "grpc": 2126,
+    "grpc": 2028,
     "postgres": 5432,
     "dragonfly": 6379,
     "zoekt": 6070,

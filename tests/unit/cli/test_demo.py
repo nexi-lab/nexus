@@ -125,9 +125,9 @@ class TestIdempotency:
         from nexus.cli.commands.demo import _seed_permissions
 
         mock_nx = MagicMock()
-        # No grant API available
-        mock_nx.grant_consent_sync = None
-        mock_nx.grant = None
+        # No rebac_manager available
+        mock_nx._rebac_manager = None
+        mock_nx.rebac_manager = None
         manifest: dict = {}
 
         _seed_permissions(mock_nx, manifest)
@@ -136,6 +136,18 @@ class TestIdempotency:
         # Second call — should skip
         result = _seed_permissions(mock_nx, manifest)
         assert result == 0
+
+    def test_seed_permissions_with_rebac(self) -> None:
+        from nexus.cli.commands.demo import _seed_permissions
+
+        mock_rebac = MagicMock()
+        mock_nx = MagicMock()
+        mock_nx._rebac_manager = mock_rebac
+        manifest: dict = {}
+
+        created = _seed_permissions(mock_nx, manifest)
+        assert created == 3
+        assert mock_rebac.rebac_write.call_count == 3
 
 
 # ---------------------------------------------------------------------------

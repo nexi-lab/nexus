@@ -128,7 +128,8 @@ services:
     user: root
     ports:
       - "${NEXUS_PORT:-2026}:2026"
-      - "${NEXUS_GRPC_PORT:-2028}:2028"
+      # gRPC: host port = container port (server binds to NEXUS_GRPC_PORT)
+      - "${NEXUS_GRPC_PORT:-2028}:${NEXUS_GRPC_PORT:-2028}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
       interval: 10s

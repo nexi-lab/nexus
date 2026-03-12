@@ -347,38 +347,45 @@ def _seed_directories(nx: Any) -> int:
 
 
 def _seed_permissions(nx: Any, manifest: dict[str, Any]) -> int:
-    """Seed demo ReBAC permissions. Returns count created.
+    """Seed demo ReBAC permissions via the internal rebac_write API.
 
-    Creates permission relationships for the demo workspace:
-    - admin gets owner on /workspace/demo
+    Writes relationship tuples for the demo workspace:
+    - admin gets direct_owner on /workspace/demo
     - demo_user gets viewer on /workspace/demo
     - demo_agent gets editor on /workspace/demo
-    - restricted/internal.md: only admin has access (inherited from owner)
+
+    The NexusFS also auto-grants direct_owner on mkdir/write when a user
+    context is present, so the admin tuple may already exist.
     """
     if manifest.get("permissions_seeded"):
         return 0
 
     created = 0
     tuples = [
-        ("user:admin", "owner", "/workspace/demo"),
-        ("user:demo_user", "viewer", "/workspace/demo"),
-        ("agent:demo_agent", "editor", "/workspace/demo"),
+        (("user", "admin"), "direct_owner", ("file", "/workspace/demo")),
+        (("user", "demo_user"), "viewer", ("file", "/workspace/demo")),
+        (("agent", "demo_agent"), "editor", ("file", "/workspace/demo")),
     ]
 
-    for subject, relation, resource in tuples:
+    # Access the internal rebac_manager if available
+    rebac = getattr(nx, "_rebac_manager", None) or getattr(nx, "rebac_manager", None)
+    if rebac is None:
+        logger.debug("No rebac_manager available — skipping permission seeding")
+        manifest["permissions_seeded"] = True
+        manifest["permissions_count"] = 0
+        return 0
+
+    for subject, relation, obj in tuples:
         try:
-            # Use the ReBAC grant_consent_sync if available via RPC
-            # This is a best-effort operation — permissions may not be enforced
-            # in all deployment modes.
-            grant_fn = getattr(nx, "grant_consent_sync", None) or getattr(nx, "grant", None)
-            if grant_fn is not None:
-                grant_fn(subject=subject, relation=relation, resource=resource)
-                created += 1
-            else:
-                logger.debug("No permission grant API available — skipping ReBAC seeding")
-                break
+            rebac.rebac_write(
+                subject=subject,
+                relation=relation,
+                object=obj,
+                zone_id="root",
+            )
+            created += 1
         except Exception as e:
-            logger.debug("Could not seed permission %s %s %s: %s", subject, relation, resource, e)
+            logger.debug("Could not seed permission %s %s %s: %s", subject, relation, obj, e)
 
     manifest["permissions_seeded"] = True
     manifest["permissions_count"] = created

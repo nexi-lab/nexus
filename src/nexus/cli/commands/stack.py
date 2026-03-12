@@ -335,16 +335,13 @@ def up(
     if auth == "database":
         compose_env["NEXUS_AUTH_TYPE"] = "database"
 
-    # TLS config
+    # TLS config — paths must be container-relative (/app/data/tls/...)
+    # since the host data_dir is mounted at /app/data inside the container.
     if config.get("tls"):
         compose_env["NEXUS_TLS_ENABLED"] = "true"
-        tls_dir = config.get("tls_dir", "")
-        if tls_dir:
-            compose_env["NEXUS_TLS_DIR"] = str(tls_dir)
-        for key in ("tls_cert", "tls_key", "tls_ca"):
-            val = config.get(key)
-            if val:
-                compose_env[f"NEXUS_{key.upper()}"] = str(val)
+        compose_env["NEXUS_TLS_CERT"] = "/app/data/tls/server.crt"
+        compose_env["NEXUS_TLS_KEY"] = "/app/data/tls/server.key"
+        compose_env["NEXUS_TLS_CA"] = "/app/data/tls/ca.crt"
 
     # Start compose
     compose_args: list[str] = ["up"]
@@ -387,7 +384,7 @@ def up(
     console.print()
     console.print("[bold]Healthy services:[/bold]")
     http_port = resolved_ports.get("http", 2026)
-    grpc_port = resolved_ports.get("grpc", 2126)
+    grpc_port = resolved_ports.get("grpc", 2028)
     pg_port = resolved_ports.get("postgres", 5432)
     df_port = resolved_ports.get("dragonfly", 6379)
     zk_port = resolved_ports.get("zoekt", 6070)

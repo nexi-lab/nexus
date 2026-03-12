@@ -157,9 +157,12 @@ def walk_click_tree(
 ) -> list[dict[str, Any]]:
     """Walk a Click group recursively, collecting MCP tool definitions for leaf commands."""
     tools: list[dict[str, Any]] = []
+    ctx = click.Context(group)
 
-    for name in sorted(group.commands):
-        cmd = group.commands[name]
+    for name in group.list_commands(ctx):
+        cmd = group.get_command(ctx, name)
+        if cmd is None:
+            continue
         # Normalize group name for prefix
         normalized = name.replace("-", "_")
 

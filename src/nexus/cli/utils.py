@@ -7,7 +7,7 @@ import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 from rich.console import Console
@@ -34,12 +34,28 @@ _LOCAL_WORKSPACE_ENV_KEYS = (
     "NEXUS_METASTORE_PATH",
     "NEXUS_RECORD_STORE_PATH",
     "NEXUS_DATABASE_URL",
+    "POSTGRES_URL",
+    "DATABASE_URL",
     "NEXUS_NODE_ID",
     "NEXUS_BIND_ADDR",
     "NEXUS_ADVERTISE_ADDR",
+    "NEXUS_GRPC_PORT",
     "NEXUS_PEERS",
     "NEXUS_FEDERATION_ZONES",
     "NEXUS_FEDERATION_MOUNTS",
+    "NEXUS_TIMEOUT",
+    "NEXUS_ZONE_ID",
+    "NEXUS_USER_ID",
+    "NEXUS_AGENT_ID",
+    "NEXUS_SUBJECT",
+    "NEXUS_SUBJECT_TYPE",
+    "NEXUS_SUBJECT_ID",
+    "NEXUS_READ_REPLICA_URL",
+    "TOKEN_MANAGER_DB",
+    "CLOUD_SQL_INSTANCE",
+    "CLOUD_SQL_READ_INSTANCE",
+    "CLOUD_SQL_USER",
+    "CLOUD_SQL_DB",
 )
 
 # Global options
@@ -165,10 +181,29 @@ def _isolated_local_workspace_env(data_dir: str) -> Generator[None, None, None]:
                 os.environ[key] = value
 
 
+class _LocalWorkspaceFilesystemProxy:
+    """Reapply local-workspace env isolation around filesystem operations."""
+
+    def __init__(self, data_dir: str, filesystem: NexusFilesystem) -> None:
+        self._data_dir = data_dir
+        self._filesystem = filesystem
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._filesystem, name)
+        if not callable(attr):
+            return attr
+
+        def _wrapped(*args: Any, **kwargs: Any) -> Any:
+            with _isolated_local_workspace_env(self._data_dir):
+                return attr(*args, **kwargs)
+
+        return _wrapped
+
+
 def connect_local_workspace(data_dir: str) -> NexusFilesystem:
     """Connect to a self-contained local workspace without ambient env bleed."""
     with _isolated_local_workspace_env(data_dir):
-        return nexus.connect(
+        filesystem = nexus.connect(
             config={
                 "profile": "minimal",
                 "backend": "local",
@@ -180,6 +215,7 @@ def connect_local_workspace(data_dir: str) -> NexusFilesystem:
                 "api_key": None,
             }
         )
+    return cast(NexusFilesystem, _LocalWorkspaceFilesystemProxy(data_dir, filesystem))
 
 
 def get_filesystem(

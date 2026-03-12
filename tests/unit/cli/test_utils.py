@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from nexus.cli.exit_codes import ExitCode
 from nexus.cli.utils import (
+    connect_local_workspace,
     create_operation_context,
     get_zone_id,
     handle_error,
@@ -147,6 +150,70 @@ class TestResolveContent:
         with pytest.raises(SystemExit) as exc_info:
             resolve_content(None, None)
         assert exc_info.value.code == ExitCode.USAGE_ERROR
+
+
+# ---------------------------------------------------------------------------
+# connect_local_workspace
+# ---------------------------------------------------------------------------
+
+
+class TestConnectLocalWorkspace:
+    def test_reapplies_local_env_for_operations(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: pytest.TempPathFactory,
+    ) -> None:
+        local_data_dir = str(tmp_path / "local-data")
+        ambient_data_dir = str(tmp_path / "ambient-data")
+        ambient_database_url = "sqlite:///" + str(tmp_path / "ambient.db")
+
+        seen: dict[str, dict[str, str | None]] = {}
+
+        class DummyFilesystem:
+            def sys_read(self, path: str) -> bytes:
+                seen["sys_read"] = {
+                    "path": path,
+                    "data_dir": os.environ.get("NEXUS_DATA_DIR"),
+                    "database_url": os.environ.get("NEXUS_DATABASE_URL"),
+                    "remote_url": os.environ.get("NEXUS_URL"),
+                }
+                return b"ok"
+
+            def close(self) -> None:
+                seen["close"] = {
+                    "data_dir": os.environ.get("NEXUS_DATA_DIR"),
+                    "database_url": os.environ.get("NEXUS_DATABASE_URL"),
+                    "remote_url": os.environ.get("NEXUS_URL"),
+                }
+
+        monkeypatch.setenv("NEXUS_DATA_DIR", ambient_data_dir)
+        monkeypatch.setenv("NEXUS_DATABASE_URL", ambient_database_url)
+        monkeypatch.setenv("NEXUS_URL", "http://127.0.0.1:65535")
+        monkeypatch.setattr("nexus.connect", lambda config: DummyFilesystem())
+
+        filesystem = connect_local_workspace(local_data_dir)
+
+        assert os.environ["NEXUS_DATA_DIR"] == ambient_data_dir
+        assert os.environ["NEXUS_DATABASE_URL"] == ambient_database_url
+        assert os.environ["NEXUS_URL"] == "http://127.0.0.1:65535"
+
+        assert filesystem.sys_read("/workspace/demo.txt") == b"ok"
+        filesystem.close()
+
+        assert seen["sys_read"] == {
+            "path": "/workspace/demo.txt",
+            "data_dir": local_data_dir,
+            "database_url": None,
+            "remote_url": None,
+        }
+        assert seen["close"] == {
+            "data_dir": local_data_dir,
+            "database_url": None,
+            "remote_url": None,
+        }
+        assert os.environ["NEXUS_DATA_DIR"] == ambient_data_dir
+        assert os.environ["NEXUS_DATABASE_URL"] == ambient_database_url
+        assert os.environ["NEXUS_URL"] == "http://127.0.0.1:65535"
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,8 @@ Writes a project-local ``nexus.yaml`` with all defaults materialized.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -96,10 +98,113 @@ def _write_config(config: dict[str, Any], config_path: Path) -> None:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
-def _create_data_dirs(data_dir: Path) -> None:
-    """Create the data directory structure."""
+def _scaffold_tls(tls_dir: Path) -> None:
+    """Create self-signed CA + server certs in *tls_dir* using openssl.
+
+    If ``openssl`` is not on ``$PATH``, the directory is created but
+    left empty and the user is told which files to provide.
+    """
+    tls_dir.mkdir(parents=True, exist_ok=True)
+
+    ca_key = tls_dir / "ca.key"
+    ca_crt = tls_dir / "ca.crt"
+    srv_key = tls_dir / "server.key"
+    srv_crt = tls_dir / "server.crt"
+
+    # Already populated — skip
+    if srv_crt.exists() and ca_crt.exists():
+        console.print(f"  TLS certs already exist in {tls_dir}")
+        return
+
+    if not shutil.which("openssl"):
+        console.print(f"  [yellow]openssl not found[/yellow] — created {tls_dir}")
+        console.print("  Please provide: ca.crt, server.crt, server.key")
+        return
+
+    try:
+        # Generate CA key + self-signed CA cert
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(ca_key),
+                "-out",
+                str(ca_crt),
+                "-days",
+                "365",
+                "-nodes",
+                "-subj",
+                "/CN=Nexus Dev CA",
+            ],
+            capture_output=True,
+            check=True,
+        )
+        # Generate server key + CSR, sign with CA
+        srv_csr = tls_dir / "server.csr"
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                str(srv_key),
+                "-out",
+                str(srv_csr),
+                "-subj",
+                "/CN=localhost",
+            ],
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            [
+                "openssl",
+                "x509",
+                "-req",
+                "-in",
+                str(srv_csr),
+                "-CA",
+                str(ca_crt),
+                "-CAkey",
+                str(ca_key),
+                "-CAcreateserial",
+                "-out",
+                str(srv_crt),
+                "-days",
+                "365",
+            ],
+            capture_output=True,
+            check=True,
+        )
+        # Clean up transient files
+        srv_csr.unlink(missing_ok=True)
+        (tls_dir / "ca.srl").unlink(missing_ok=True)
+
+        console.print(f"  [green]TLS certificates generated in {tls_dir}[/green]")
+    except subprocess.CalledProcessError:
+        console.print(f"  [yellow]openssl failed[/yellow] — created {tls_dir}")
+        console.print("  Please provide: ca.crt, server.crt, server.key")
+
+
+def _create_data_dirs(data_dir: Path, *, tls: bool = False) -> None:
+    """Create the data directory structure.
+
+    When *tls* is True, also scaffolds the ``tls/`` subdirectory and
+    generates a self-signed CA + server certificate using ``openssl``.
+    If ``openssl`` is not available, the directory is still created and
+    the user is told how to populate it manually.
+    """
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "cas").mkdir(exist_ok=True)
+
+    if tls:
+        _scaffold_tls(data_dir / "tls")
 
 
 def _print_local_summary(config_path: Path, data_dir: Path) -> None:
@@ -219,8 +324,8 @@ def init(
     config = _build_config(preset, str(d_dir), tls, ports, addons)
     _write_config(config, cfg_path)
 
-    # Create data directories
-    _create_data_dirs(d_dir)
+    # Create data directories (and TLS certs when --tls is passed)
+    _create_data_dirs(d_dir, tls=tls)
 
     # Validate compose file exists for non-local presets
     if preset != "local":

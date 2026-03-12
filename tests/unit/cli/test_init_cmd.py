@@ -14,6 +14,7 @@ from nexus.cli.commands.init_cmd import (
     PRESET_SERVICES,
     VALID_PRESETS,
     _build_config,
+    _scaffold_tls,
     init,
 )
 
@@ -157,6 +158,7 @@ class TestInitCliCommand:
 
     def test_tls_flag(self, runner: CliRunner, tmp_project: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
+        data_dir = tmp_project / "data"
         result = runner.invoke(
             init,
             [
@@ -166,7 +168,7 @@ class TestInitCliCommand:
                 "--config-path",
                 str(config_path),
                 "--data-dir",
-                str(tmp_project / "data"),
+                str(data_dir),
             ],
             catch_exceptions=False,
         )
@@ -176,6 +178,9 @@ class TestInitCliCommand:
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
         assert cfg["tls"] is True
+
+        # TLS directory should have been scaffolded
+        assert (data_dir / "tls").is_dir()
 
     def test_refuses_overwrite_without_force(self, runner: CliRunner, tmp_project: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
@@ -252,6 +257,44 @@ class TestInitCliCommand:
 # ---------------------------------------------------------------------------
 # Constants tests
 # ---------------------------------------------------------------------------
+
+
+class TestTlsScaffolding:
+    def test_creates_tls_dir(self, tmp_path: Path) -> None:
+        tls_dir = tmp_path / "tls"
+        _scaffold_tls(tls_dir)
+        assert tls_dir.is_dir()
+
+    def test_generates_certs_when_openssl_available(self, tmp_path: Path) -> None:
+        import shutil
+
+        if not shutil.which("openssl"):
+            pytest.skip("openssl not on PATH")
+        tls_dir = tmp_path / "tls"
+        _scaffold_tls(tls_dir)
+        assert (tls_dir / "ca.crt").exists()
+        assert (tls_dir / "ca.key").exists()
+        assert (tls_dir / "server.crt").exists()
+        assert (tls_dir / "server.key").exists()
+
+    def test_idempotent_when_certs_exist(self, tmp_path: Path) -> None:
+        tls_dir = tmp_path / "tls"
+        tls_dir.mkdir()
+        (tls_dir / "ca.crt").write_text("existing")
+        (tls_dir / "server.crt").write_text("existing")
+        # Should not overwrite
+        _scaffold_tls(tls_dir)
+        assert (tls_dir / "ca.crt").read_text() == "existing"
+
+    def test_fallback_when_openssl_missing(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        tls_dir = tmp_path / "tls"
+        with patch("nexus.cli.commands.init_cmd.shutil.which", return_value=None):
+            _scaffold_tls(tls_dir)
+        assert tls_dir.is_dir()
+        # Certs should NOT exist since openssl is "missing"
+        assert not (tls_dir / "server.crt").exists()
 
 
 class TestPresetConstants:

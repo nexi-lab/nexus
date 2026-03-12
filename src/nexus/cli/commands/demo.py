@@ -253,12 +253,21 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
         # Set NEXUS_GRPC_PORT so nexus.connect() uses the right port
         os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
 
+        # Resolve the admin API key — prefer nexus.yaml, fall back to the
+        # key file written by the container entrypoint.
+        api_key = config.get("api_key", "")
+        if not api_key:
+            data_dir = config.get("data_dir", "./nexus-data")
+            key_file = Path(data_dir) / ".admin-api-key"
+            if key_file.exists():
+                api_key = key_file.read_text().strip()
+
         try:
             nx = nexus.connect(
                 config={
                     "mode": "remote",
                     "url": f"http://localhost:{http_port}",
-                    "api_key": config.get("api_key", ""),
+                    "api_key": api_key,
                 }
             )
             # Verify connectivity with a lightweight call
@@ -392,6 +401,94 @@ def _seed_permissions(nx: Any, manifest: dict[str, Any]) -> int:
     return created
 
 
+def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
+    """Provision demo users and agents via the admin RPC.
+
+    Uses the same ``admin_create_key`` RPC as ``nexus admin create-user``
+    so that the identities are registered in the database and can
+    authenticate with their own API keys.
+
+    Returns the number of identities created.
+    """
+    if manifest.get("identities_seeded"):
+        return 0
+
+    # Only applicable for presets that have database auth
+    if config.get("auth") not in ("database",):
+        manifest["identities_seeded"] = True
+        return 0
+
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    grpc_port = ports.get("grpc", 2028)
+
+    # Resolve admin API key
+    api_key = config.get("api_key", "")
+    if not api_key:
+        data_dir = config.get("data_dir", "./nexus-data")
+        key_file = Path(data_dir) / ".admin-api-key"
+        if key_file.exists():
+            api_key = key_file.read_text().strip()
+
+    if not api_key:
+        logger.debug("No admin API key available — skipping identity seeding")
+        return 0
+
+    try:
+        from nexus.cli.commands.admin import get_admin_rpc
+
+        os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
+        call_rpc = get_admin_rpc(f"http://localhost:{http_port}", api_key)
+    except Exception as e:
+        logger.debug("Could not connect admin RPC for identity seeding: %s", e)
+        return 0
+
+    created = 0
+    identity_keys: dict[str, str] = {}
+
+    # Provision users (skip "admin" — already created by entrypoint)
+    for user in DEMO_USERS:
+        if user["id"] == "admin":
+            continue
+        try:
+            result = call_rpc(
+                "admin_create_key",
+                {
+                    "user_id": user["id"],
+                    "name": user["display_name"],
+                    "is_admin": False,
+                    "zone_id": "root",
+                    "subject_type": "user",
+                },
+            )
+            identity_keys[user["id"]] = result.get("api_key", "")
+            created += 1
+        except Exception as e:
+            logger.debug("Could not create user %s: %s", user["id"], e)
+
+    # Provision agents
+    for agent in DEMO_AGENTS:
+        try:
+            result = call_rpc(
+                "admin_create_key",
+                {
+                    "user_id": agent["id"],
+                    "name": agent["display_name"],
+                    "is_admin": False,
+                    "zone_id": "root",
+                    "subject_type": "agent",
+                },
+            )
+            identity_keys[agent["id"]] = result.get("api_key", "")
+            created += 1
+        except Exception as e:
+            logger.debug("Could not create agent %s: %s", agent["id"], e)
+
+    manifest["identities_seeded"] = True
+    manifest["identity_keys"] = identity_keys
+    return created
+
+
 def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     """Delete all demo files tracked in the manifest. Returns count deleted."""
     files = manifest.get("files", [])
@@ -481,10 +578,13 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     _seed_versions(nx, manifest)
     console.print(f"  Versions:     {len(PLAN_VERSIONS) + 1} (plan.md history)")
 
-    # 4. Seed permissions (best-effort)
+    # 4. Seed demo identities via admin RPC (best-effort)
+    identities_created = _seed_identities(config, manifest)
+
+    # 5. Seed permissions (best-effort)
     perms_created = _seed_permissions(nx, manifest)
 
-    # 5. Record seed metadata
+    # 6. Record seed metadata
     manifest["seeded_at"] = datetime.now(tz=UTC).isoformat()
     manifest["preset"] = config.get("preset", "unknown")
     manifest["skip_semantic"] = skip_semantic
@@ -497,10 +597,12 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
         nx.close()
 
     # Print summary
-    users_count = len(DEMO_USERS)
-    agents_count = len(DEMO_AGENTS)
-    console.print(f"  Users:        {users_count} (admin, demo_user)")
-    console.print(f"  Agents:       {agents_count} (demo_agent)")
+    if identities_created > 0:
+        console.print(f"  Identities:   {identities_created} provisioned via admin RPC")
+    else:
+        console.print(
+            f"  Identities:   {len(DEMO_USERS)} users, {len(DEMO_AGENTS)} agents (pre-existing or skipped)"
+        )
     if perms_created > 0:
         console.print(f"  Permissions:  {perms_created} tuples")
     else:

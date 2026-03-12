@@ -15,6 +15,27 @@ terminal UX is:
 One important note before you start: some older examples in the repo still say
 `nexus serve`. The current daemon entrypoint is `nexusd`.
 
+Another important distinction: local, shared, remote, and federation are not
+the same thing.
+
+- Local embedded: no daemon. `nexus init` and `nexus.connect(...)` use a local
+  data directory directly.
+- Shared single-node: one `nexusd` process serves multiple terminals, users,
+  agents, or SDK clients.
+- Remote thin client: the CLI or SDK uses `profile="remote"` to talk to an
+  existing daemon. `remote` is client-only and is never a valid `nexusd`
+  profile.
+- Federation: multiple `nexusd` nodes are joined with TLS, networking, and
+  zone-sharing.
+- Database auth is orthogonal to all of the above. It changes how a
+  server-backed deployment authenticates users and stores auth/search metadata;
+  it is not what makes a client "remote".
+
+Today there is not a first-party `nexus up` or `nexus demo init` command in
+the public CLI. Those would likely be a cleaner operator UX later, but this
+guide documents the commands that actually ship today: `nexus init` for local
+state and `nexusd` for node startup.
+
 ## Before You Start
 
 Use this guide in order the first time:
@@ -113,12 +134,27 @@ If you are unsure, use `profile=full`.
 
 | If you want to... | Use this | Typical profile |
 | --- | --- | --- |
-| Try Nexus alone on one machine | local CLI or SDK | `full` |
+| Try Nexus alone on one machine | local CLI or SDK, no daemon | `full` |
 | Run a shared Nexus node for CLI and SDK clients | `nexusd` | `full` |
 | Turn on permissions, agent registry, IPC, scheduler | server-backed flow | `lite` or `full` |
 | Use search, memory, workflows, sandbox, MCP, LLM | full feature set | `full` |
-| Run multi-zone federation | distributed node | `cloud` |
-| Connect Python to an existing node | remote thin client | `remote` |
+| Run multi-zone federation | multiple `nexusd` nodes plus TLS/networking | `cloud` |
+| Connect Python or the CLI to an existing node | remote thin client | `remote` |
+
+The same `nexusd` binary starts both a simple shared node and a future
+federation-capable node. What changes is:
+
+- deployment profile (`full`, `lite`, `cloud`)
+- auth backend (`--api-key` for static auth or `--auth-type database`)
+- storage/search wiring (`--data-dir`, `--database-url`, `NEXUS_SEARCH_DAEMON`)
+- whether other clients connect to it remotely
+- whether other nodes join it for federation
+
+What does not change:
+
+- `profile=remote` is still client-only
+- `--auth-type database` does not make Nexus "remote"
+- federation is more than database auth; it adds multi-node trust and join flows
 
 Profile summary:
 
@@ -152,6 +188,37 @@ Then start the daemon with:
 ```bash
 nexusd --config ./nexus.yaml --port 2026
 ```
+
+For anything beyond a one-off shell demo, prefer a config file such as
+`nexus.yaml` for stable settings and keep environment variables for secrets or
+machine-specific overrides. This is less error-prone than re-exporting a long
+set of values in every terminal.
+
+## 2.1 Capability checklist for a serious demo
+
+If you are evaluating Nexus as more than a toy filesystem, the first real
+single-node walkthrough should cover:
+
+- file CRUD
+- version history and rollback
+- permissions enabled
+- agent registry
+- agent-to-agent coordination, either through files, IPC, or both
+- audit and operation logs
+- grep and semantic search
+
+This guide covers those capabilities in these sections:
+
+- local file CRUD: sections 3 and 4
+- search and semantic retrieval: section 5
+- permissions and policy: section 6
+- agent registry, IPC, identity, and delegation: section 7
+- versions, snapshots, and operations: section 10
+- audit examples and advanced operator flows: section 12
+
+For federation, repeat the same checklist after join/share succeeds. A
+federation guide is only convincing when the same user stories work across
+zones, not just on one node.
 
 ## 3. First Local Run
 
@@ -213,6 +280,13 @@ Packages behind this:
 
 Use `nexusd` when you want multiple terminals, users, or SDK clients to hit
 the same Nexus node.
+
+This is the first place where "shared" and "remote" start to matter:
+
+- the server process is still `nexusd`
+- local and remote clients can both talk to it
+- the remote SDK path uses `profile="remote"` on the client side, never on the daemon side
+- auth mode is a separate choice from transport mode
 
 ### Step 1: Start a simple dev server with one API key
 
@@ -282,7 +356,21 @@ Use `--auth-type database` and `--database-url ...` when you need:
 - more realistic multi-user permissions
 - server-side search backed by a real record store
 
-Typical daemon startup:
+What database auth does not mean:
+
+- it does not replace `nexusd`; it is still the same daemon entrypoint
+- it does not change the client into `profile="remote"` by itself
+- it does not imply federation
+
+In practice, think about the combinations like this:
+
+- local embedded: no daemon, no remote client
+- shared static-auth daemon: `nexusd --api-key ...`
+- shared database-auth daemon: `nexusd --auth-type database --database-url ...`
+- remote client: CLI or SDK pointed at either of the daemon shapes above
+- federation: one or more database-backed or durable nodes joined with TLS/networking
+
+Typical single-node database-auth daemon startup:
 
 ```bash
 export NEXUS_DATA_DIR="$PWD/data"
@@ -769,6 +857,20 @@ Packages behind this:
 
 This is the most advanced part of Nexus. Start here only after local and
 single-node remote mode already work.
+
+Federation should prove the same user stories that you already validated on one
+node:
+
+- file CRUD
+- version history
+- permissions
+- agent registry and delegation
+- file-mediated or IPC-based collaboration
+- audit trails
+- grep and semantic search
+
+The difference is that these flows now cross node and zone boundaries instead
+of staying inside one local daemon.
 
 ### Step 1: Use the `cloud` profile
 

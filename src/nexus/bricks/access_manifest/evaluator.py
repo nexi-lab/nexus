@@ -7,7 +7,12 @@ Default: DENY (least privilege) when no entry matches.
 
 import fnmatch
 
-from nexus.contracts.access_manifest_types import ManifestEntry, ToolPermission
+from nexus.contracts.access_manifest_types import (
+    EvaluationTrace,
+    EvaluationTraceEntry,
+    ManifestEntry,
+    ToolPermission,
+)
 
 
 class ManifestEvaluator:
@@ -36,6 +41,48 @@ class ManifestEvaluator:
             if fnmatch.fnmatch(normalized, entry.tool_pattern.lower()):
                 return entry.permission
         return ToolPermission.DENY
+
+    @staticmethod
+    def evaluate_with_trace(entries: tuple[ManifestEntry, ...], tool_name: str) -> EvaluationTrace:
+        """Evaluate a tool with a full decision trace (proof tree).
+
+        Same first-match-wins semantics as evaluate(), but records every
+        entry checked and which one matched.
+
+        Args:
+            entries: Ordered manifest entries.
+            tool_name: Tool name to evaluate (case-insensitive).
+
+        Returns:
+            EvaluationTrace with the decision and per-entry trace.
+        """
+        normalized = tool_name.lower()
+        trace_entries: list[EvaluationTraceEntry] = []
+        matched_index = -1
+        decision = ToolPermission.DENY
+
+        for i, entry in enumerate(entries):
+            matched = fnmatch.fnmatch(normalized, entry.tool_pattern.lower())
+            trace_entries.append(
+                EvaluationTraceEntry(
+                    index=i,
+                    tool_pattern=entry.tool_pattern,
+                    permission=entry.permission,
+                    matched=matched,
+                    max_calls_per_minute=entry.max_calls_per_minute,
+                )
+            )
+            if matched and matched_index == -1:
+                matched_index = i
+                decision = entry.permission
+
+        return EvaluationTrace(
+            tool_name=tool_name,
+            decision=decision,
+            matched_index=matched_index,
+            entries=tuple(trace_entries),
+            default_applied=matched_index == -1,
+        )
 
     @staticmethod
     def filter_tools(

@@ -29,11 +29,28 @@ export interface AccessManifest {
   readonly valid_until: string;
 }
 
+/** Single step in the server-side evaluation trace (proof tree). */
+export interface EvaluationTraceEntry {
+  readonly index: number;
+  readonly tool_pattern: string;
+  readonly permission: string;
+  readonly matched: boolean;
+  readonly max_calls_per_minute: number | null;
+}
+
+/** Server-side evaluation trace returned by the evaluate endpoint. */
+export interface EvaluationTraceResult {
+  readonly matched_index: number;
+  readonly default_applied: boolean;
+  readonly entries: readonly EvaluationTraceEntry[];
+}
+
 export interface PermissionCheck {
   readonly tool_name: string;
   readonly permission: string;
   readonly agent_id: string;
   readonly manifest_id: string;
+  readonly trace: EvaluationTraceResult | null;
 }
 
 /** Matches backend anomaly alert from governance.py:128-139. */
@@ -146,6 +163,19 @@ export interface DelegationChain {
   readonly total_depth: number;
 }
 
+/** Matches backend NamespaceDetailResponse from delegation.py. */
+export interface NamespaceDetail {
+  readonly delegation_id: string;
+  readonly agent_id: string;
+  readonly delegation_mode: string;
+  readonly scope_prefix: string | null;
+  readonly removed_grants: readonly string[];
+  readonly added_grants: readonly string[];
+  readonly readonly_paths: readonly string[];
+  readonly mount_table: readonly string[];
+  readonly zone_id: string | null;
+}
+
 /** Matches backend governance check result from governance.py. */
 export interface GovernanceCheckResult {
   readonly allowed: boolean;
@@ -207,6 +237,10 @@ export interface AccessState {
   readonly lastDelegationCreate: DelegationCreateResponse | null;
   readonly delegationChain: DelegationChain | null;
   readonly delegationChainLoading: boolean;
+
+  // Namespace detail
+  readonly namespaceDetail: NamespaceDetail | null;
+  readonly namespaceDetailLoading: boolean;
 
   // Governance check
   readonly governanceCheck: GovernanceCheckResult | null;
@@ -272,6 +306,7 @@ export interface AccessState {
     client: FetchClient,
   ) => Promise<void>;
   readonly fetchDelegationChain: (delegationId: string, client: FetchClient) => Promise<void>;
+  readonly fetchNamespaceDetail: (delegationId: string, client: FetchClient) => Promise<void>;
 
   // Actions — governance check
   readonly checkGovernanceEdge: (
@@ -315,6 +350,8 @@ export const useAccessStore = create<AccessState>((set) => ({
   lastDelegationCreate: null,
   delegationChain: null,
   delegationChainLoading: false,
+  namespaceDetail: null,
+  namespaceDetailLoading: false,
   governanceCheck: null,
   governanceCheckLoading: false,
   activeTab: "manifests",
@@ -371,6 +408,7 @@ export const useAccessStore = create<AccessState>((set) => ({
         readonly permission: string;
         readonly agent_id: string;
         readonly manifest_id: string;
+        readonly trace?: EvaluationTraceResult;
       }>(`/api/v2/access-manifests/${manifestId}/evaluate`, {
         tool_name: toolName,
       });
@@ -380,6 +418,7 @@ export const useAccessStore = create<AccessState>((set) => ({
           permission: response.permission,
           agent_id: response.agent_id,
           manifest_id: response.manifest_id,
+          trace: response.trace ?? null,
         },
         permissionCheckLoading: false,
       });
@@ -723,6 +762,21 @@ export const useAccessStore = create<AccessState>((set) => ({
       set({
         delegationChainLoading: false,
         error: err instanceof Error ? err.message : "Failed to fetch delegation chain",
+      });
+    }
+  },
+
+  fetchNamespaceDetail: async (delegationId, client) => {
+    set({ namespaceDetailLoading: true, error: null });
+    try {
+      const response = await client.get<NamespaceDetail>(
+        `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/namespace`,
+      );
+      set({ namespaceDetail: response, namespaceDetailLoading: false });
+    } catch (err) {
+      set({
+        namespaceDetailLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch namespace detail",
       });
     }
   },

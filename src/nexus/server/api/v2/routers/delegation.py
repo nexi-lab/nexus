@@ -404,6 +404,71 @@ async def get_delegation_chain(
     return DelegationChainResponse(chain=items, total_depth=len(chain) - 1)
 
 
+class NamespaceDetailResponse(BaseModel):
+    """Namespace configuration for a delegation."""
+
+    delegation_id: str
+    agent_id: str
+    delegation_mode: str
+    scope_prefix: str | None
+    removed_grants: list[str]
+    added_grants: list[str]
+    readonly_paths: list[str]
+    mount_table: list[str]
+    zone_id: str | None
+
+
+@router.get("/{delegation_id}/namespace", response_model=NamespaceDetailResponse)
+async def get_delegation_namespace(
+    delegation_id: str,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    service: Any = Depends(_get_delegation_service),
+) -> NamespaceDetailResponse:
+    """Get the namespace configuration for a delegation.
+
+    Returns the delegation's namespace mode, scope constraints, grant
+    modifications, and the current mount table (visible paths).
+    """
+    subject_type = auth_result.get("subject_type", "")
+    if subject_type != "agent":
+        raise HTTPException(
+            status_code=403,
+            detail="Only agents can view delegation namespace details.",
+        )
+
+    record = service.get_delegation_by_id(delegation_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
+
+    # Get current mount table for the worker agent
+    mount_table: list[str] = []
+    ns_manager = getattr(service, "_namespace_manager", None)
+    if ns_manager is not None:
+        try:
+            entries = ns_manager.get_mount_table(
+                subject=("agent", record.agent_id),
+                zone_id=record.zone_id,
+            )
+            mount_table = [entry.virtual_path for entry in entries]
+        except Exception:
+            logger.warning(
+                "[Delegation] Failed to get mount table for namespace detail: %s",
+                delegation_id,
+            )
+
+    return NamespaceDetailResponse(
+        delegation_id=record.delegation_id,
+        agent_id=record.agent_id,
+        delegation_mode=record.delegation_mode.value,
+        scope_prefix=record.scope_prefix,
+        removed_grants=list(record.removed_grants),
+        added_grants=list(record.added_grants),
+        readonly_paths=list(record.readonly_paths),
+        mount_table=mount_table,
+        zone_id=record.zone_id,
+    )
+
+
 @router.post("/{delegation_id}/complete")
 async def complete_delegation(
     delegation_id: str,

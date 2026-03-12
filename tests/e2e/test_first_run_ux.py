@@ -322,17 +322,70 @@ class TestFullWorkflow:
                 "demo init should print --remote-url for shared/demo presets"
             )
 
-            # Verify manifest was created and permissions were seeded
+            # Verify manifest was created, files were seeded, and permissions set
             data_dir = cfg.get("data_dir", str(initialized_project / "nexus-data"))
             manifest_path = Path(data_dir) / ".demo-manifest.json"
             assert manifest_path.exists(), "demo manifest not created"
 
             with open(manifest_path) as f:
                 manifest = json.loads(f.read())
+
+            # Critical: demo files must actually be created (not silently 0)
+            demo_files = manifest.get("files", [])
+            assert len(demo_files) >= 8, (
+                f"only {len(demo_files)} demo files in manifest, expected >= 8 — "
+                "sys_write likely crashed (e.g. missing auto_parse attribute on remote NexusFS)"
+            )
+
             assert manifest.get("permissions_seeded") is True, "permissions not seeded"
             assert manifest.get("permissions_count", 0) > 0, (
                 f"permissions_count is {manifest.get('permissions_count', 0)}, "
                 "expected > 0 — docker exec or RPC seeding failed"
+            )
+
+            # Step 2b: Verify grep works against the running stack
+            http_port = cfg.get("ports", {}).get("http", 2026)
+            remote_url = f"http://localhost:{http_port}"
+            grep_result = subprocess.run(
+                [
+                    "nexus",
+                    "grep",
+                    "vector index",
+                    "/workspace/demo",
+                    "--remote-url",
+                    remote_url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(initialized_project),
+            )
+            assert grep_result.returncode == 0, (
+                f"nexus grep failed against live stack:\n"
+                f"stdout: {grep_result.stdout}\nstderr: {grep_result.stderr}"
+            )
+            # Should find at least one match in the demo corpus
+            assert "vector index" in grep_result.stdout.lower() or grep_result.stdout.strip(), (
+                "grep returned no output — demo file corpus not searchable"
+            )
+
+            # Step 2c: Verify ls works against the running stack
+            ls_result = subprocess.run(
+                [
+                    "nexus",
+                    "ls",
+                    "/workspace/demo",
+                    "--remote-url",
+                    remote_url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(initialized_project),
+            )
+            assert ls_result.returncode == 0, (
+                f"nexus ls failed against live stack:\n"
+                f"stdout: {ls_result.stdout}\nstderr: {ls_result.stderr}"
             )
 
             # Step 3: nexus demo reset (verify cleanup works)

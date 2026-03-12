@@ -71,6 +71,14 @@ def _find_compose_file() -> Path | None:
     return None
 
 
+def _bundled_compose_file() -> Path | None:
+    """Return the path to the compose file bundled inside the package."""
+    bundled = Path(__file__).resolve().parent.parent / "data" / "nexus-stack.yml"
+    if bundled.exists():
+        return bundled
+    return None
+
+
 def _build_config(
     preset: str,
     data_dir: str,
@@ -98,7 +106,7 @@ def _build_config(
         config["ports"] = {k: v for k, v in ports.items() if k in PRESET_PORT_KEYS[preset]}
         config["compose_profiles"] = list(PRESET_COMPOSE_PROFILES[preset])
 
-        # Compose file: CLI override → search CWD + ancestors → error
+        # Compose file: CLI override → search CWD + ancestors → bundled copy
         if compose_file_override:
             config["compose_file"] = str(Path(compose_file_override).resolve())
         else:
@@ -106,8 +114,8 @@ def _build_config(
             if found is not None:
                 config["compose_file"] = str(found)
             else:
-                # Placeholder — init will check and fail below
-                config["compose_file"] = str(Path("nexus-stack.yml").resolve())
+                # Mark as needing the bundled copy (resolved later in init())
+                config["compose_file"] = ""
 
     if addons:
         config.setdefault("addons", []).extend(addons)
@@ -360,14 +368,29 @@ def init(
     # Build and write config
     config = _build_config(preset, str(d_dir), tls, ports, addons, compose_file)
 
-    # Validate compose file exists for non-local presets (fail, don't warn)
+    # Resolve compose file for non-local presets:
+    # 1) Explicit --compose-file passed → must exist, error if not
+    # 2) Auto-detected (non-empty, exists) → use as-is
+    # 3) Auto-detection missed → copy bundled version next to nexus.yaml
+    # 4) No bundled version → hard error
     if preset != "local":
-        compose_file = config.get("compose_file", "")
-        if not Path(compose_file).exists():
-            console.print(f"[red]Error:[/red] Compose file not found: {compose_file}")
-            console.print("  Run `nexus init` from the Nexus repo root, or pass")
-            console.print("  --compose-file /absolute/path/to/nexus-stack.yml")
+        cf = config.get("compose_file", "")
+        if compose_file and not Path(cf).exists():
+            # User explicitly passed --compose-file but it doesn't exist
+            console.print(f"[red]Error:[/red] Compose file not found: {cf}")
             raise SystemExit(1)
+        if not cf or not Path(cf).exists():
+            bundled = _bundled_compose_file()
+            if bundled is not None:
+                dest = cfg_path.parent.resolve() / "nexus-stack.yml"
+                shutil.copy2(str(bundled), str(dest))
+                config["compose_file"] = str(dest)
+                console.print(f"  Copied bundled nexus-stack.yml → {dest}")
+            else:
+                console.print(f"[red]Error:[/red] Compose file not found: {cf}")
+                console.print("  Run `nexus init` from the Nexus repo root, or pass")
+                console.print("  --compose-file /absolute/path/to/nexus-stack.yml")
+                raise SystemExit(1)
 
     _write_config(config, cfg_path)
 

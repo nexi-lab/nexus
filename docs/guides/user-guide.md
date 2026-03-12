@@ -60,6 +60,20 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
+If you want the optional Rust acceleration module in a source checkout, build
+it separately after the editable install:
+
+```bash
+uv pip install maturin
+maturin develop --release -m rust/nexus_pyo3/Cargo.toml
+python -c "import nexus_fast; print('nexus_fast available')"
+```
+
+You do not need this for a normal first run. Nexus falls back to Python
+implementations when `nexus_fast` is not installed. Add it when you want faster
+grep/glob, hashing, lock/semaphore primitives, Bloom-filter paths, and some
+permission/search fast paths.
+
 ### Optional extras
 
 The base package already includes the main CLI, server, remote client, LLM,

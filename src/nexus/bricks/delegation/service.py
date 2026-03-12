@@ -914,26 +914,74 @@ class DelegationService:
             worker_id,
         )
 
+    @staticmethod
+    def _normalize_expires_at(raw: Any) -> datetime | None:
+        """Normalize expires_at from DB row to datetime.
+
+        list_tuples() returns the raw DB value which may be a datetime
+        object or an ISO-format string depending on the driver.
+        write_batch() calls .isoformat() unconditionally, so we must
+        ensure a datetime is returned.
+        """
+        if raw is None:
+            return None
+        if isinstance(raw, datetime):
+            return raw
+        # String-backed timestamp from SQLite/Postgres text column
+        if isinstance(raw, str):
+            return datetime.fromisoformat(raw)
+        return None
+
+    @staticmethod
+    def _normalize_conditions(raw: Any) -> Any:
+        """Normalize conditions from DB row for write_batch().
+
+        list_tuples() returns the raw DB value (a JSON string).
+        write_batch() calls json.dumps() on it, so we must parse
+        the string back to a Python object to avoid double-encoding.
+        """
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            return json.loads(raw)
+        # Already a dict/list — pass through
+        return raw
+
     def _restore_tuples_from_snapshot(self, snapshot: list[dict[str, Any]]) -> None:
         """Restore ReBAC tuples from a previous snapshot (compensating transaction).
 
-        Converts list_tuples() output back to write_batch() input format
-        and re-creates the tuples.  Best-effort: logs errors but does not
-        raise, since this is itself a compensation path.
+        Converts list_tuples() output back to write_batch() input format,
+        preserving all fields (subject_relation, conditions, zone IDs,
+        expires_at) so the restored tuples are identical to the originals.
+        Best-effort: logs errors but does not raise, since this is itself
+        a compensation path.
         """
         if not snapshot:
             return
 
         batch: list[dict[str, Any]] = []
         for t in snapshot:
+            # Reconstruct subject tuple, including subject_relation if present
+            subject_relation = t.get("subject_relation")
+            if subject_relation:
+                subject: tuple[str, ...] = (
+                    t["subject_type"],
+                    t["subject_id"],
+                    subject_relation,
+                )
+            else:
+                subject = (t["subject_type"], t["subject_id"])
+
             batch.append(
                 {
-                    "subject": (t["subject_type"], t["subject_id"]),
+                    "subject": subject,
                     "relation": t["relation"],
                     "object": (t["object_type"], t["object_id"]),
                     "zone_id": t.get("zone_id"),
-                    "expires_at": t.get("expires_at"),
-                    "conditions": t.get("conditions"),
+                    "expires_at": self._normalize_expires_at(t.get("expires_at")),
+                    "conditions": self._normalize_conditions(t.get("conditions")),
+                    "subject_zone_id": t.get("subject_zone_id"),
+                    "object_zone_id": t.get("object_zone_id"),
                 }
             )
 

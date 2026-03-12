@@ -143,7 +143,7 @@ class TestTxtaiBackendLifecycle:
                 database_url="postgresql://u:p@localhost:5432/nexus",
                 model="test-model",
             )
-            asyncio.get_event_loop().run_until_complete(backend.startup())
+            asyncio.run(backend.startup())
 
         assert len(captured_configs) >= 1
         cfg = captured_configs[0]

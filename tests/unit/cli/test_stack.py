@@ -10,6 +10,7 @@ import yaml
 from click.testing import CliRunner
 
 from nexus.cli.commands.stack import (
+    _derive_project_env,
     _load_project_config,
     _save_project_config,
     down,
@@ -124,6 +125,54 @@ class TestUpCommand:
 # ---------------------------------------------------------------------------
 # `nexus down` — behavior tests
 # ---------------------------------------------------------------------------
+
+
+class TestDeriveProjectEnv:
+    def test_basic_env(self, tmp_path: Path) -> None:
+        """Produces COMPOSE_PROJECT_NAME, ports, data dir, and auth."""
+        config = {
+            "data_dir": str(tmp_path / "data"),
+            "ports": {
+                "http": 2026,
+                "grpc": 2028,
+                "postgres": 5432,
+                "dragonfly": 6379,
+                "zoekt": 6070,
+            },
+            "admin_user": "admin",
+            "auth": "database",
+        }
+        env = _derive_project_env(config)
+        assert env["COMPOSE_PROJECT_NAME"].startswith("nexus-")
+        assert len(env["COMPOSE_PROJECT_NAME"]) == len("nexus-") + 8
+        assert env["NEXUS_PORT"] == "2026"
+        assert env["NEXUS_GRPC_PORT"] == "2028"
+        assert env["POSTGRES_PORT"] == "5432"
+        assert env["NEXUS_HOST_DATA_DIR"] == str(tmp_path / "data")
+        assert env["NEXUS_AUTH_TYPE"] == "database"
+        assert "NEXUS_TLS_ENABLED" not in env
+
+    def test_tls_env(self, tmp_path: Path) -> None:
+        """When tls is enabled, TLS env vars are set."""
+        config = {"data_dir": str(tmp_path / "data"), "tls": True, "ports": {}}
+        env = _derive_project_env(config)
+        assert env["NEXUS_TLS_ENABLED"] == "true"
+        assert env["NEXUS_TLS_CERT"] == "/app/data/tls/server.crt"
+        assert env["NEXUS_TLS_KEY"] == "/app/data/tls/server.key"
+        assert env["NEXUS_TLS_CA"] == "/app/data/tls/ca.crt"
+
+    def test_deterministic_project_name(self, tmp_path: Path) -> None:
+        """Same data_dir always produces same project name."""
+        config = {"data_dir": str(tmp_path / "data"), "ports": {}}
+        env1 = _derive_project_env(config)
+        env2 = _derive_project_env(config)
+        assert env1["COMPOSE_PROJECT_NAME"] == env2["COMPOSE_PROJECT_NAME"]
+
+    def test_different_data_dirs_get_different_names(self, tmp_path: Path) -> None:
+        """Different data_dirs produce different project names."""
+        env1 = _derive_project_env({"data_dir": str(tmp_path / "a"), "ports": {}})
+        env2 = _derive_project_env({"data_dir": str(tmp_path / "b"), "ports": {}})
+        assert env1["COMPOSE_PROJECT_NAME"] != env2["COMPOSE_PROJECT_NAME"]
 
 
 class TestDownCommand:

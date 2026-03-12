@@ -305,7 +305,7 @@ class NexusFS(  # type: ignore[misc]
             await cb()
         self._bootstrapped = True
 
-    def register_runtime_closeable(self, resource: Any) -> None:
+    def _register_runtime_closeable(self, resource: Any) -> None:
         """Register a process-local resource to close with the filesystem.
 
         Used for runtime-owned handles that are not persisted in metadata

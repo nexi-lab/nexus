@@ -77,10 +77,12 @@ export function NamespaceConfigView({
       readonly_paths?: readonly string[];
     } = {};
 
-    // Always send scope_prefix (may have changed)
-    const newPrefix = scopePrefix.trim() || undefined;
-    if (newPrefix !== (namespaceDetail.scope_prefix ?? undefined)) {
-      update.scope_prefix = newPrefix ?? "";
+    // scope_prefix: send "" to clear, non-empty to set, omit to leave unchanged
+    const newPrefix = scopePrefix.trim();
+    const oldPrefix = namespaceDetail.scope_prefix ?? "";
+    if (newPrefix !== oldPrefix) {
+      // "" means "clear prefix" (backend interprets "" as clear)
+      update.scope_prefix = newPrefix;
     }
 
     // Add new grant path if entered

@@ -478,10 +478,14 @@ async def get_delegation_namespace(
 
 
 class UpdateNamespaceRequest(BaseModel):
-    """Request to update mutable namespace config fields."""
+    """Request to update mutable namespace config fields.
+
+    All fields default to None (leave unchanged). To clear scope_prefix,
+    send empty string "". To set a new prefix, send a non-empty string.
+    """
 
     scope_prefix: str | None = Field(
-        default=None, description="New scope prefix (null = leave unchanged)"
+        default=None, description="New scope prefix (null = leave unchanged, empty = clear)"
     )
     remove_grants: list[str] | None = Field(
         default=None, description="New removed grants list (null = leave unchanged)"
@@ -525,10 +529,15 @@ async def update_delegation_namespace(
             detail="Only the parent agent can update a delegation's namespace config.",
         )
 
+    # Interpret scope_prefix: None = leave unchanged, "" = clear, else = set
+    clear_prefix = body.scope_prefix is not None and body.scope_prefix == ""
+    effective_prefix = None if (body.scope_prefix is None or clear_prefix) else body.scope_prefix
+
     try:
         updated = service.update_namespace_config(
             delegation_id,
-            scope_prefix=body.scope_prefix,
+            scope_prefix=effective_prefix,
+            clear_scope_prefix=clear_prefix,
             remove_grants=body.remove_grants,
             add_grants=body.add_grants,
             readonly_paths=body.readonly_paths,

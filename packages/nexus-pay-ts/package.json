@@ -27,6 +27,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "vitest run tests/e2e.test.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

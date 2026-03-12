@@ -4,6 +4,8 @@
  *
  * Press 'p' to open the permission checker form (pre-filled with the selected manifest).
  * Press 'f' on the disputes tab to file a new dispute.
+ * Press 'g' on the disputes tab to look up a dispute by ID.
+ * Press Shift+R on the disputes tab to resolve the selected dispute.
  */
 
 import React, { useState, useEffect } from "react";
@@ -18,6 +20,7 @@ import { CredentialList } from "./credential-list.js";
 import { DisputeList } from "./dispute-list.js";
 import { PermissionChecker } from "./permission-checker.js";
 import { DisputeFiler } from "./dispute-filer.js";
+import { DisputeLookup } from "./dispute-lookup.js";
 
 const TAB_ORDER: readonly AccessTab[] = ["manifests", "alerts", "reputation", "credentials", "disputes"];
 const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
@@ -28,10 +31,11 @@ const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
   disputes: "Disputes",
 };
 
+type OverlayMode = "none" | "permissionChecker" | "disputeFiler" | "disputeLookup";
+
 export default function AccessPanel(): React.ReactNode {
   const client = useApi();
-  const [permissionCheckerOpen, setPermissionCheckerOpen] = useState(false);
-  const [disputeFilerOpen, setDisputeFilerOpen] = useState(false);
+  const [overlay, setOverlay] = useState<OverlayMode>("none");
 
   const manifests = useAccessStore((s) => s.manifests);
   const selectedManifestIndex = useAccessStore((s) => s.selectedManifestIndex);
@@ -71,13 +75,12 @@ export default function AccessPanel(): React.ReactNode {
     } else if (activeTab === "reputation") {
       fetchLeaderboard(client);
     } else if (activeTab === "credentials") {
-      // Credentials require an agent_id; use selected manifest's agent_id if available
       const selected = manifests[selectedManifestIndex];
       if (selected) {
         fetchCredentials(selected.agent_id, client);
       }
     } else if (activeTab === "disputes") {
-      // Re-fetch each known dispute by ID (no list endpoint)
+      // Re-fetch each known dispute by ID (no list endpoint available)
       for (const d of disputes) {
         fetchDispute(d.id, client);
       }
@@ -137,18 +140,23 @@ export default function AccessPanel(): React.ReactNode {
     },
     r: () => refreshCurrentView(),
     p: () => {
-      if (!permissionCheckerOpen && !disputeFilerOpen) {
-        setPermissionCheckerOpen(true);
+      if (overlay === "none") {
+        setOverlay("permissionChecker");
       }
     },
     f: () => {
-      if (activeTab === "disputes" && !disputeFilerOpen && !permissionCheckerOpen) {
-        setDisputeFilerOpen(true);
+      if (activeTab === "disputes" && overlay === "none") {
+        setOverlay("disputeFiler");
       }
     },
-    R: () => {
-      // Resolve selected dispute (capital R)
-      if (activeTab === "disputes" && !disputeFilerOpen && !permissionCheckerOpen && client) {
+    g: () => {
+      if (activeTab === "disputes" && overlay === "none") {
+        setOverlay("disputeLookup");
+      }
+    },
+    "shift+r": () => {
+      // Resolve selected dispute
+      if (activeTab === "disputes" && overlay === "none" && client) {
         const selected = disputes[selectedDisputeIndex];
         if (selected && selected.status !== "resolved" && selected.status !== "dismissed") {
           resolveDispute(selected.id, "Resolved via TUI", client);
@@ -161,7 +169,19 @@ export default function AccessPanel(): React.ReactNode {
   const selectedManifest = manifests[selectedManifestIndex];
   const initialManifestId = selectedManifest?.manifest_id ?? "";
 
-  if (permissionCheckerOpen) {
+  const closeOverlay = (): void => setOverlay("none");
+
+  // Overlay title label
+  const overlayLabel =
+    overlay === "permissionChecker"
+      ? " | Permission Checker"
+      : overlay === "disputeFiler"
+        ? " | File Dispute"
+        : overlay === "disputeLookup"
+          ? " | Lookup Dispute"
+          : "";
+
+  if (overlay !== "none") {
     return (
       <box height="100%" width="100%" flexDirection="column">
         {/* Tab bar */}
@@ -171,40 +191,26 @@ export default function AccessPanel(): React.ReactNode {
               const label = TAB_LABELS[tab];
               return tab === activeTab ? `[${label}]` : ` ${label} `;
             }).join(" ")}
-            {" | Permission Checker"}
+            {overlayLabel}
           </text>
         </box>
 
-        {/* Permission checker form */}
+        {/* Overlay form */}
         <box flexGrow={1} borderStyle="single">
-          <PermissionChecker
-            initialManifestId={initialManifestId}
-            lastResult={lastPermissionCheck}
-            loading={permissionCheckLoading}
-            onClose={() => setPermissionCheckerOpen(false)}
-          />
-        </box>
-      </box>
-    );
-  }
-
-  if (disputeFilerOpen) {
-    return (
-      <box height="100%" width="100%" flexDirection="column">
-        {/* Tab bar */}
-        <box height={1} width="100%">
-          <text>
-            {TAB_ORDER.map((tab) => {
-              const label = TAB_LABELS[tab];
-              return tab === activeTab ? `[${label}]` : ` ${label} `;
-            }).join(" ")}
-            {" | File Dispute"}
-          </text>
-        </box>
-
-        {/* Dispute filer form */}
-        <box flexGrow={1} borderStyle="single">
-          <DisputeFiler onClose={() => setDisputeFilerOpen(false)} />
+          {overlay === "permissionChecker" && (
+            <PermissionChecker
+              initialManifestId={initialManifestId}
+              lastResult={lastPermissionCheck}
+              loading={permissionCheckLoading}
+              onClose={closeOverlay}
+            />
+          )}
+          {overlay === "disputeFiler" && (
+            <DisputeFiler onClose={closeOverlay} />
+          )}
+          {overlay === "disputeLookup" && (
+            <DisputeLookup onClose={closeOverlay} />
+          )}
         </box>
       </box>
     );
@@ -213,7 +219,7 @@ export default function AccessPanel(): React.ReactNode {
   // Tab-specific help text
   const helpText =
     activeTab === "disputes"
-      ? "j/k:navigate  f:file dispute  R:resolve  Tab:switch tab  p:permission check  r:refresh  q:quit"
+      ? "j/k:navigate  f:file  g:lookup  Shift+R:resolve  Tab:tab  p:perm check  r:refresh  q:quit"
       : "j/k:navigate  Tab:switch tab  p:permission check  r:refresh  q:quit";
 
   return (

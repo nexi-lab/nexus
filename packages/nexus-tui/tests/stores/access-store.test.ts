@@ -71,7 +71,7 @@ describe("AccessStore", () => {
   });
 
   describe("fetchManifests", () => {
-    it("fetches and stores access manifests", async () => {
+    it("fetches and stores access manifests (list returns summaries without entries)", async () => {
       const client = mockClient({
         "/api/v2/access-manifests": {
           manifests: [
@@ -80,13 +80,6 @@ describe("AccessStore", () => {
               agent_id: "agent-alice",
               zone_id: "zone-1",
               name: "read-access",
-              entries: [
-                {
-                  tool_pattern: "file:read:*",
-                  permission: "allow",
-                  max_calls_per_minute: 100,
-                },
-              ],
               status: "active",
               valid_from: "2025-01-01T00:00:00Z",
               valid_until: "2025-12-31T23:59:59Z",
@@ -96,18 +89,6 @@ describe("AccessStore", () => {
               agent_id: "agent-bob",
               zone_id: "zone-2",
               name: "write-access",
-              entries: [
-                {
-                  tool_pattern: "file:write:*",
-                  permission: "allow",
-                  max_calls_per_minute: null,
-                },
-                {
-                  tool_pattern: "file:delete:*",
-                  permission: "deny",
-                  max_calls_per_minute: null,
-                },
-              ],
               status: "expired",
               valid_from: "2025-02-01T00:00:00Z",
               valid_until: "2025-03-01T00:00:00Z",
@@ -127,13 +108,10 @@ describe("AccessStore", () => {
       expect(state.manifests[0]!.agent_id).toBe("agent-alice");
       expect(state.manifests[0]!.zone_id).toBe("zone-1");
       expect(state.manifests[0]!.name).toBe("read-access");
-      expect(state.manifests[0]!.entries).toHaveLength(1);
-      expect(state.manifests[0]!.entries[0]!.tool_pattern).toBe("file:read:*");
-      expect(state.manifests[0]!.entries[0]!.permission).toBe("allow");
-      expect(state.manifests[0]!.entries[0]!.max_calls_per_minute).toBe(100);
+      expect(state.manifests[0]!.entries).toBeUndefined();
       expect(state.manifests[0]!.status).toBe("active");
-      expect(state.manifests[1]!.entries).toHaveLength(2);
       expect(state.manifests[1]!.status).toBe("expired");
+      expect(state.manifests[1]!.entries).toBeUndefined();
       expect(state.manifestsLoading).toBe(false);
       expect(state.selectedManifestIndex).toBe(0);
       expect(state.error).toBeNull();
@@ -178,6 +156,83 @@ describe("AccessStore", () => {
 
       await useAccessStore.getState().fetchManifests(client);
       expect(useAccessStore.getState().selectedManifestIndex).toBe(0);
+    });
+  });
+
+  describe("fetchManifestDetail", () => {
+    it("fetches single manifest with entries and updates the store", async () => {
+      // Pre-populate with summary (no entries)
+      useAccessStore.setState({
+        manifests: [
+          {
+            manifest_id: "m-1",
+            agent_id: "agent-alice",
+            zone_id: "zone-1",
+            name: "read-access",
+            status: "active",
+            valid_from: "2025-01-01T00:00:00Z",
+            valid_until: "2025-12-31T23:59:59Z",
+          },
+        ],
+      });
+
+      const client = mockClient({
+        "/api/v2/access-manifests/m-1": {
+          manifest_id: "m-1",
+          agent_id: "agent-alice",
+          zone_id: "zone-1",
+          name: "read-access",
+          entries: [
+            {
+              tool_pattern: "file:read:*",
+              permission: "allow",
+              max_calls_per_minute: 100,
+            },
+          ],
+          status: "active",
+          valid_from: "2025-01-01T00:00:00Z",
+          valid_until: "2025-12-31T23:59:59Z",
+        },
+      });
+
+      await useAccessStore.getState().fetchManifestDetail("m-1", client);
+      const state = useAccessStore.getState();
+
+      expect(state.manifests).toHaveLength(1);
+      expect(state.manifests[0]!.entries).toHaveLength(1);
+      expect(state.manifests[0]!.entries![0]!.tool_pattern).toBe("file:read:*");
+      expect(state.manifests[0]!.entries![0]!.permission).toBe("allow");
+      expect(state.manifests[0]!.entries![0]!.max_calls_per_minute).toBe(100);
+    });
+
+    it("does not error when manifest is not in store", async () => {
+      const client = mockClient({
+        "/api/v2/access-manifests/m-unknown": {
+          manifest_id: "m-unknown",
+          agent_id: "agent-x",
+          zone_id: "zone-1",
+          name: "unknown",
+          entries: [],
+          status: "active",
+          valid_from: "2025-01-01T00:00:00Z",
+          valid_until: "2025-12-31T23:59:59Z",
+        },
+      });
+
+      await useAccessStore.getState().fetchManifestDetail("m-unknown", client);
+      // No crash, store unchanged
+      expect(useAccessStore.getState().manifests).toHaveLength(0);
+      expect(useAccessStore.getState().error).toBeNull();
+    });
+
+    it("silently ignores fetch errors", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("Not found"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchManifestDetail("m-bad", client);
+      // Non-critical: no error set
+      expect(useAccessStore.getState().error).toBeNull();
     });
   });
 

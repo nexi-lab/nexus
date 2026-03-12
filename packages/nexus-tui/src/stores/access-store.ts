@@ -16,12 +16,13 @@ export interface ManifestEntry {
   readonly max_calls_per_minute: number | null;
 }
 
+/** List endpoint returns summary (no entries); detail endpoint includes entries. */
 export interface AccessManifest {
   readonly manifest_id: string;
   readonly agent_id: string;
   readonly zone_id: string;
   readonly name: string;
-  readonly entries: readonly ManifestEntry[];
+  readonly entries?: readonly ManifestEntry[];
   readonly status: string;
   readonly valid_from: string;
   readonly valid_until: string;
@@ -128,6 +129,7 @@ export interface AccessState {
 
   // Actions
   readonly fetchManifests: (client: FetchClient) => Promise<void>;
+  readonly fetchManifestDetail: (manifestId: string, client: FetchClient) => Promise<void>;
   readonly checkPermission: (
     manifestId: string,
     toolName: string,
@@ -190,6 +192,25 @@ export const useAccessStore = create<AccessState>((set) => ({
         manifestsLoading: false,
         error: err instanceof Error ? err.message : "Failed to fetch manifests",
       });
+    }
+  },
+
+  fetchManifestDetail: async (manifestId, client) => {
+    try {
+      const manifest = await client.get<AccessManifest>(
+        `/api/v2/access-manifests/${encodeURIComponent(manifestId)}`,
+      );
+      set((state) => {
+        const idx = state.manifests.findIndex((m) => m.manifest_id === manifestId);
+        if (idx >= 0) {
+          return {
+            manifests: state.manifests.map((m, i) => (i === idx ? manifest : m)),
+          };
+        }
+        return {};
+      });
+    } catch {
+      // Non-critical: entries just won't be available for the checker trace
     }
   },
 

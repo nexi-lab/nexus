@@ -59,7 +59,7 @@ export function ManifestList({
       {manifests.map((m, i) => {
         const isSelected = i === selectedIndex;
         const prefix = isSelected ? "> " : "  ";
-        const entriesCount = String(m.entries.length);
+        const entriesCount = String(m.entries?.length ?? "-");
 
         return (
           <box key={m.manifest_id} height={1} width="100%">

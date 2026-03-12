@@ -10,6 +10,8 @@ import yaml
 from click.testing import CliRunner
 
 from nexus.cli.commands.stack import (
+    _compose_has_build,
+    _compose_profiles,
     _derive_project_env,
     _load_project_config,
     _save_project_config,
@@ -173,6 +175,67 @@ class TestDeriveProjectEnv:
         env1 = _derive_project_env({"data_dir": str(tmp_path / "a"), "ports": {}})
         env2 = _derive_project_env({"data_dir": str(tmp_path / "b"), "ports": {}})
         assert env1["COMPOSE_PROJECT_NAME"] != env2["COMPOSE_PROJECT_NAME"]
+
+
+class TestComposeHasBuild:
+    def test_with_build_directive(self, tmp_path: Path) -> None:
+        compose = tmp_path / "stack.yml"
+        compose.write_text(
+            yaml.dump(
+                {
+                    "services": {
+                        "app": {
+                            "build": {"context": ".", "dockerfile": "Dockerfile"},
+                            "image": "app:latest",
+                        },
+                        "db": {"image": "postgres:16"},
+                    }
+                }
+            )
+        )
+        assert _compose_has_build(str(compose)) is True
+
+    def test_without_build_directive(self, tmp_path: Path) -> None:
+        compose = tmp_path / "stack.yml"
+        compose.write_text(
+            yaml.dump(
+                {"services": {"app": {"image": "app:latest"}, "db": {"image": "postgres:16"}}}
+            )
+        )
+        assert _compose_has_build(str(compose)) is False
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        assert _compose_has_build(str(tmp_path / "nope.yml")) is False
+
+    def test_empty_file(self, tmp_path: Path) -> None:
+        compose = tmp_path / "stack.yml"
+        compose.write_text("")
+        assert _compose_has_build(str(compose)) is False
+
+
+class TestComposeProfiles:
+    def test_collects_profiles(self, tmp_path: Path) -> None:
+        compose = tmp_path / "stack.yml"
+        compose.write_text(
+            yaml.dump(
+                {
+                    "services": {
+                        "pg": {"image": "postgres:16", "profiles": ["core"]},
+                        "redis": {"image": "redis:7", "profiles": ["cache"]},
+                        "nats": {"image": "nats:2.10", "profiles": ["events"]},
+                    }
+                }
+            )
+        )
+        assert _compose_profiles(str(compose)) == {"core", "cache", "events"}
+
+    def test_empty_services(self, tmp_path: Path) -> None:
+        compose = tmp_path / "stack.yml"
+        compose.write_text(yaml.dump({"services": {}}))
+        assert _compose_profiles(str(compose)) == set()
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        assert _compose_profiles(str(tmp_path / "nope.yml")) == set()
 
 
 class TestDownCommand:

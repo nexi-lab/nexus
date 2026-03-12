@@ -95,6 +95,33 @@ def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _compose_has_build(compose_file: str) -> bool:
+    """Return True if any service in the compose file has a ``build:`` key."""
+    try:
+        with open(compose_file) as f:
+            stack = yaml.safe_load(f) or {}
+        for svc in (stack.get("services") or {}).values():
+            if "build" in svc:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _compose_profiles(compose_file: str) -> set[str]:
+    """Return the set of profiles defined across all services."""
+    try:
+        with open(compose_file) as f:
+            stack = yaml.safe_load(f) or {}
+        profiles: set[str] = set()
+        for svc in (stack.get("services") or {}).values():
+            for p in svc.get("profiles") or []:
+                profiles.add(p)
+        return profiles
+    except Exception:
+        return set()
+
+
 def _find_docker_compose() -> str:
     """Return the docker compose command prefix."""
     # Prefer `docker compose` (Compose V2, plugin)
@@ -267,7 +294,11 @@ def register_commands(cli: click.Group) -> None:
     default=None,
     help="Override the compose file path.",
 )
-@click.option("--build", is_flag=True, default=False, help="Rebuild images before starting.")
+@click.option(
+    "--build/--no-build",
+    default=None,
+    help="Build images before starting (auto-detected: builds when compose file has build: directives).",
+)
 @click.option(
     "--timeout", type=int, default=180, show_default=True, help="Health check timeout in seconds."
 )
@@ -276,7 +307,7 @@ def up(
     addons: tuple[str, ...],
     port_strategy: str,
     compose_file: str | None,
-    build: bool,
+    build: bool | None,
     timeout: int,
 ) -> None:
     """Start the Nexus stack.
@@ -284,11 +315,16 @@ def up(
     Reads nexus.yaml, resolves port conflicts, starts Docker Compose
     services, waits for health, and prints the service table.
 
+    When the compose file contains ``build:`` directives (e.g. the
+    repo-root nexus-stack.yml), images are rebuilt automatically.
+    Use ``--no-build`` to skip building.
+
     Examples:
         nexus up                        # start from nexus.yaml
         nexus up --with nats            # add NATS event bus
         nexus up --port-strategy prompt # ask on conflicts
-        nexus up --build                # rebuild images first
+        nexus up --build                # force rebuild images
+        nexus up --no-build             # skip rebuild
     """
     config = _load_project_config()
     preset = config.get("preset", "local")
@@ -307,6 +343,11 @@ def up(
         console.print(f"[red]Error:[/red] Compose file not found: {cf}")
         console.print("[yellow]Hint:[/yellow] Ensure nexus-stack.yml is in the project root.")
         raise SystemExit(1)
+
+    # Auto-detect build need: compose files with build: directives (e.g.
+    # the repo-root stack) should always rebuild to avoid stale images.
+    if build is None:
+        build = _compose_has_build(cf)
 
     # Build profiles list
     profiles = list(config.get("compose_profiles", []))
@@ -327,6 +368,19 @@ def up(
         profile = addon_profile_map.get(addon, addon)
         if profile not in profiles:
             profiles.append(profile)
+
+    # Validate profiles against what the compose file actually defines.
+    # This catches attempts to use repo-only add-ons (frontend, langgraph,
+    # observability) with the portable bundled stack.
+    available_profiles = _compose_profiles(cf)
+    if available_profiles:
+        missing = [p for p in profiles if p not in available_profiles]
+        if missing:
+            for p in missing:
+                console.print(
+                    f"  [yellow]Warning: profile '{p}' not found in {Path(cf).name}, skipping[/yellow]"
+                )
+            profiles = [p for p in profiles if p in available_profiles]
 
     # Port conflict resolution — check all ports in config (not filtered by services)
     ports = config.get("ports", {})
@@ -519,15 +573,20 @@ def logs(follow: bool, tail: int, service: str | None) -> None:
 
 
 @click.command()
-@click.option("--build", is_flag=True, default=False, help="Rebuild images.")
-def restart(build: bool) -> None:
+@click.option(
+    "--build/--no-build",
+    default=None,
+    help="Build images (auto-detected from compose file).",
+)
+def restart(build: bool | None) -> None:
     """Restart the Nexus stack.
 
     Equivalent to `nexus down && nexus up`.
 
     Examples:
         nexus restart           # restart services
-        nexus restart --build   # rebuild and restart
+        nexus restart --build   # force rebuild and restart
+        nexus restart --no-build  # skip rebuild
     """
     config = _load_project_config()
     preset = config.get("preset", "local")
@@ -539,6 +598,10 @@ def restart(build: bool) -> None:
     cf = config.get("compose_file", "./nexus-stack.yml")
     profiles = list(config.get("compose_profiles", []))
     compose_env = _derive_project_env(config)
+
+    # Auto-detect build need (same logic as `up`)
+    if build is None:
+        build = _compose_has_build(cf)
 
     console.print(f"[bold]Restarting Nexus preset: {preset}[/bold]")
     _run_compose(cf, profiles, "down", extra_env=compose_env)

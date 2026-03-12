@@ -55,16 +55,18 @@ Use this if you are working from this repository and want the docs, examples,
 and code to line up.
 
 ```bash
+uv python install 3.14
 uv venv --python 3.14
 source .venv/bin/activate
 uv pip install -e .
 ```
 
 If you want the optional Rust acceleration module in a source checkout, build
-it separately after the editable install:
+it in the same uv-managed environment:
 
 ```bash
-uv pip install maturin
+source .venv/bin/activate
+uv pip install -e . maturin
 maturin develop --release -m rust/nexus_pyo3/Cargo.toml
 python -c "import nexus_fast; print('nexus_fast available')"
 ```
@@ -73,6 +75,10 @@ You do not need this for a normal first run. Nexus falls back to Python
 implementations when `nexus_fast` is not installed. Add it when you want faster
 grep/glob, hashing, lock/semaphore primitives, Bloom-filter paths, and some
 permission/search fast paths.
+
+If you already have Conda, pyenv, or another Python activated, do not build the
+Rust module there by accident. Activate `.venv` first, then run `maturin
+develop`.
 
 ### Optional extras
 

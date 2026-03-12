@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,8 @@ import click
 import yaml
 
 from nexus.cli.utils import console
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -184,6 +188,15 @@ PLAN_VERSIONS = [
     "## Phase 2: Development\n- Build vector index pipeline\n- Implement search API\n",
 ]
 
+# Demo directories (ordered parents-first for creation, reversed for deletion)
+DEMO_DIRS = [
+    "/workspace/demo",
+    "/workspace/demo/notes",
+    "/workspace/demo/code",
+    "/workspace/demo/data",
+    "/workspace/demo/restricted",
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -221,25 +234,46 @@ def _save_manifest(data_dir: str, manifest: dict[str, Any]) -> None:
 
 
 def _get_nexus_client(config: dict[str, Any]) -> Any:
-    """Connect to a running Nexus server or local instance."""
+    """Connect to a running Nexus server via gRPC, or fall back to local.
+
+    For remote presets (shared/demo), sets NEXUS_GRPC_PORT from nexus.yaml
+    so the SDK connects to the correct gRPC port published by the compose stack.
+
+    Raises on failure — does not silently fall back to a separate local instance
+    when a remote preset is expected.
+    """
     import nexus
 
+    preset = config.get("preset", "local")
     ports = config.get("ports", {})
     http_port = ports.get("http", 2026)
+    grpc_port = ports.get("grpc", 2028)
 
-    # Try remote connection first (assumes `nexus up` is running)
-    try:
-        return nexus.connect(
-            config={
-                "mode": "remote",
-                "url": f"http://localhost:{http_port}",
-                "api_key": config.get("api_key", ""),
-            }
-        )
-    except Exception:
-        # Fallback to local data dir
-        data_dir = config.get("data_dir", "./nexus-data")
-        return nexus.connect(config={"data_dir": data_dir})
+    if preset in ("shared", "demo"):
+        # Set NEXUS_GRPC_PORT so nexus.connect() uses the right port
+        os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
+
+        try:
+            nx = nexus.connect(
+                config={
+                    "mode": "remote",
+                    "url": f"http://localhost:{http_port}",
+                    "api_key": config.get("api_key", ""),
+                }
+            )
+            # Verify connectivity with a lightweight call
+            nx.sys_mkdir("/workspace", exist_ok=True)
+            return nx
+        except Exception as e:
+            console.print(f"[red]Error:[/red] Could not connect to Nexus server: {e}")
+            console.print(
+                f"[yellow]Hint:[/yellow] Is `nexus up` running? Expected gRPC on port {grpc_port}."
+            )
+            raise
+
+    # Local preset — connect directly to data dir
+    data_dir = config.get("data_dir", "./nexus-data")
+    return nexus.connect(config={"data_dir": data_dir})
 
 
 # ---------------------------------------------------------------------------
@@ -302,21 +336,74 @@ def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
 
 def _seed_directories(nx: Any) -> int:
     """Create base demo directories. Returns count created."""
-    dirs = [
-        "/workspace/demo",
-        "/workspace/demo/notes",
-        "/workspace/demo/code",
-        "/workspace/demo/data",
-        "/workspace/demo/restricted",
-    ]
     created = 0
-    for d in dirs:
+    for d in DEMO_DIRS:
         try:
             nx.sys_mkdir(d, exist_ok=True)
             created += 1
         except Exception:
             pass
     return created
+
+
+def _seed_permissions(nx: Any, manifest: dict[str, Any]) -> int:
+    """Seed demo ReBAC permissions. Returns count created.
+
+    Creates permission relationships for the demo workspace:
+    - admin gets owner on /workspace/demo
+    - demo_user gets viewer on /workspace/demo
+    - demo_agent gets editor on /workspace/demo
+    - restricted/internal.md: only admin has access (inherited from owner)
+    """
+    if manifest.get("permissions_seeded"):
+        return 0
+
+    created = 0
+    tuples = [
+        ("user:admin", "owner", "/workspace/demo"),
+        ("user:demo_user", "viewer", "/workspace/demo"),
+        ("agent:demo_agent", "editor", "/workspace/demo"),
+    ]
+
+    for subject, relation, resource in tuples:
+        try:
+            # Use the ReBAC grant_consent_sync if available via RPC
+            # This is a best-effort operation — permissions may not be enforced
+            # in all deployment modes.
+            grant_fn = getattr(nx, "grant_consent_sync", None) or getattr(nx, "grant", None)
+            if grant_fn is not None:
+                grant_fn(subject=subject, relation=relation, resource=resource)
+                created += 1
+            else:
+                logger.debug("No permission grant API available — skipping ReBAC seeding")
+                break
+        except Exception as e:
+            logger.debug("Could not seed permission %s %s %s: %s", subject, relation, resource, e)
+
+    manifest["permissions_seeded"] = True
+    manifest["permissions_count"] = created
+    return created
+
+
+def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
+    """Delete all demo files tracked in the manifest. Returns count deleted."""
+    files = manifest.get("files", [])
+    removed = 0
+
+    # Delete files in reverse order (deepest first)
+    for path in reversed(files):
+        try:
+            nx.sys_unlink(path)
+            removed += 1
+        except Exception:
+            pass
+
+    # Delete directories in reverse order (deepest first)
+    for d in reversed(DEMO_DIRS):
+        with contextlib.suppress(Exception):
+            nx.sys_rmdir(d)
+
+    return removed
 
 
 # ---------------------------------------------------------------------------
@@ -353,13 +440,6 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     config = _load_project_config()
     data_dir = config.get("data_dir", "./nexus-data")
 
-    # Load or reset manifest
-    if reset:
-        manifest: dict[str, Any] = {}
-        console.print("[yellow]Resetting demo data...[/yellow]")
-    else:
-        manifest = _load_manifest(data_dir)
-
     # Connect to Nexus
     try:
         nx = _get_nexus_client(config)
@@ -367,6 +447,17 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print(f"[red]Error:[/red] Could not connect to Nexus: {e}")
         console.print("[yellow]Hint:[/yellow] Is the server running? Try `nexus up` first.")
         raise SystemExit(1) from e
+
+    # Load or reset manifest
+    if reset:
+        old_manifest = _load_manifest(data_dir)
+        if old_manifest:
+            console.print("[yellow]Resetting demo data...[/yellow]")
+            removed = _delete_demo_files(nx, old_manifest)
+            console.print(f"  Removed {removed} files.")
+        manifest: dict[str, Any] = {}
+    else:
+        manifest = _load_manifest(data_dir)
 
     console.print("[bold]Seeding Nexus demo data...[/bold]")
     console.print()
@@ -383,7 +474,10 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     _seed_versions(nx, manifest)
     console.print(f"  Versions:     {len(PLAN_VERSIONS) + 1} (plan.md history)")
 
-    # 4. Record seed metadata
+    # 4. Seed permissions (best-effort)
+    perms_created = _seed_permissions(nx, manifest)
+
+    # 5. Record seed metadata
     manifest["seeded_at"] = datetime.now(tz=UTC).isoformat()
     manifest["preset"] = config.get("preset", "unknown")
     manifest["skip_semantic"] = skip_semantic
@@ -400,6 +494,10 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     agents_count = len(DEMO_AGENTS)
     console.print(f"  Users:        {users_count} (admin, demo_user)")
     console.print(f"  Agents:       {agents_count} (demo_agent)")
+    if perms_created > 0:
+        console.print(f"  Permissions:  {perms_created} tuples")
+    else:
+        console.print("  Permissions:  skipped (not available)")
     if not skip_semantic:
         console.print("  Semantic:     ready")
     else:
@@ -437,14 +535,7 @@ def demo_reset() -> None:
     # Connect and delete demo files
     try:
         nx = _get_nexus_client(config)
-        files = manifest.get("files", [])
-        removed = 0
-        for path in reversed(files):
-            try:
-                nx.sys_rm(path)
-                removed += 1
-            except Exception:
-                pass
+        removed = _delete_demo_files(nx, manifest)
         nx.close()
         console.print(f"[green]✓[/green] Removed {removed} demo files.")
     except Exception as e:

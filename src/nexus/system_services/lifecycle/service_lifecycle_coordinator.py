@@ -1,6 +1,6 @@
 """ServiceLifecycleCoordinator — bridge between ServiceRegistry and BrickLifecycleManager.
 
-Provides five Linux-inspired verbs for service lifecycle management:
+Provides five Linux-inspired verbs plus four-quadrant auto-lifecycle management:
 
     insmod  → register_service()   — register instance in both Registry and BLM
     mount   → mount_service()      — BLM mount + register VFS hooks

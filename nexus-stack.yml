@@ -117,15 +117,18 @@ services:
       NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
       NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
       NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
+      # gRPC
+      NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
       # Runtime
       NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
     volumes:
-      - ./nexus-data:/app/data
+      - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/app/data
       - ./configs:/app/configs:ro
       - /var/run/docker.sock:/var/run/docker.sock
     user: root
     ports:
       - "${NEXUS_PORT:-2026}:2026"
+      - "${NEXUS_GRPC_PORT:-2028}:2028"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
       interval: 10s
@@ -184,7 +187,7 @@ services:
       ZOEKT_INDEX_DIR: /index
       ZOEKT_DATA_DIR: /data
     volumes:
-      - ./nexus-data:/data
+      - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/data
       - zoekt-index:/index
     ports:
       - "${ZOEKT_PORT:-6070}:6070"

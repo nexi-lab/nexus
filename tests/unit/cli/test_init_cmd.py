@@ -50,7 +50,8 @@ class TestBuildConfig:
         cfg = _build_config("shared", "./nexus-data", False, dict(DEFAULT_PORTS), ())
         assert cfg["preset"] == "shared"
         assert cfg["auth"] == "static"
-        assert cfg["services"] == ["postgres", "dragonfly", "zoekt"]
+        assert "nexus" in cfg["services"]
+        assert "postgres" in cfg["services"]
         assert "http" in cfg["ports"]
         assert cfg["compose_profiles"] == ["core", "cache", "search"]
         assert "compose_file" in cfg
@@ -61,12 +62,16 @@ class TestBuildConfig:
         cfg = _build_config("demo", "./nexus-data", False, dict(DEFAULT_PORTS), ())
         assert cfg["preset"] == "demo"
         assert cfg["auth"] == "database"
-        assert cfg["services"] == ["postgres", "dragonfly", "zoekt"]
+        assert "nexus" in cfg["services"]
+        assert "postgres" in cfg["services"]
 
     def test_tls_flag(self) -> None:
         cfg = _build_config("shared", "./data", True, {}, ())
         assert cfg["tls"] is True
         assert cfg["tls_dir"] == "./data/tls"
+        assert cfg["tls_cert"] == "./data/tls/server.crt"
+        assert cfg["tls_key"] == "./data/tls/server.key"
+        assert cfg["tls_ca"] == "./data/tls/ca.crt"
 
     def test_addons_included(self) -> None:
         cfg = _build_config("shared", "./data", False, {}, ("nats", "mcp"))

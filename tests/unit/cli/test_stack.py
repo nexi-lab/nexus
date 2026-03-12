@@ -28,7 +28,7 @@ def shared_config(tmp_path: Path) -> Path:
     config = {
         "preset": "shared",
         "data_dir": str(tmp_path / "nexus-data"),
-        "services": ["postgres", "dragonfly", "zoekt"],
+        "services": ["nexus", "postgres", "dragonfly", "zoekt"],
         "ports": {"http": 2026, "grpc": 2126, "postgres": 5432, "dragonfly": 6379, "zoekt": 6070},
         "compose_profiles": ["core", "cache", "search"],
         "compose_file": str(tmp_path / "nexus-stack.yml"),

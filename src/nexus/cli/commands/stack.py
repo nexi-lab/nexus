@@ -294,12 +294,10 @@ def up(
         if profile not in profiles:
             profiles.append(profile)
 
-    # Port conflict resolution
+    # Port conflict resolution — check all ports in config (not filtered by services)
     ports = config.get("ports", {})
     active_services = config.get("services", [])
-    resolved_ports, port_messages = resolve_ports(
-        ports, strategy=port_strategy, services=active_services
-    )
+    resolved_ports, port_messages = resolve_ports(ports, strategy=port_strategy)
 
     # Print header
     console.print()
@@ -318,13 +316,35 @@ def up(
         config["ports"] = resolved_ports
         _save_project_config(config)
 
-    # Build environment variables for compose
+    # Build environment variables for compose — nexus.yaml is the SSOT
     compose_env: dict[str, str] = {
+        # Ports
         "NEXUS_PORT": str(resolved_ports.get("http", 2026)),
+        "NEXUS_GRPC_PORT": str(resolved_ports.get("grpc", 2028)),
         "POSTGRES_PORT": str(resolved_ports.get("postgres", 5432)),
         "DRAGONFLY_PORT": str(resolved_ports.get("dragonfly", 6379)),
         "ZOEKT_PORT": str(resolved_ports.get("zoekt", 6070)),
+        # Data directory (host path for volume mount)
+        "NEXUS_HOST_DATA_DIR": str(config.get("data_dir", "./nexus-data")),
+        # Admin user
+        "NEXUS_ADMIN_USER": str(config.get("admin_user", "admin")),
     }
+
+    # Auth config
+    auth = config.get("auth", "none")
+    if auth == "database":
+        compose_env["NEXUS_AUTH_TYPE"] = "database"
+
+    # TLS config
+    if config.get("tls"):
+        compose_env["NEXUS_TLS_ENABLED"] = "true"
+        tls_dir = config.get("tls_dir", "")
+        if tls_dir:
+            compose_env["NEXUS_TLS_DIR"] = str(tls_dir)
+        for key in ("tls_cert", "tls_key", "tls_ca"):
+            val = config.get(key)
+            if val:
+                compose_env[f"NEXUS_{key.upper()}"] = str(val)
 
     # Start compose
     compose_args: list[str] = ["up"]

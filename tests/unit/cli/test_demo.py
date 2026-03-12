@@ -7,10 +7,12 @@ from unittest.mock import MagicMock
 
 from nexus.cli.commands.demo import (
     DEMO_AGENTS,
+    DEMO_DIRS,
     DEMO_FILES,
     DEMO_USERS,
     MANIFEST_FILENAME,
     PLAN_VERSIONS,
+    _delete_demo_files,
     _load_manifest,
     _save_manifest,
 )
@@ -73,6 +75,15 @@ class TestDemoConstants:
         all_content = " ".join(c for _, c, _ in DEMO_FILES)
         assert "authentication flow" in all_content.lower()
 
+    def test_demo_dirs_ordered_parents_first(self) -> None:
+        """Directories should be ordered so parents come before children."""
+        for i in range(1, len(DEMO_DIRS)):
+            parent = "/".join(DEMO_DIRS[i].split("/")[:-1])
+            # Parent should appear before child in the list
+            parent_indices = [j for j, d in enumerate(DEMO_DIRS) if d == parent]
+            if parent_indices:
+                assert parent_indices[0] < i
+
 
 # ---------------------------------------------------------------------------
 # Idempotency tests
@@ -109,3 +120,54 @@ class TestIdempotency:
         result = _seed_versions(mock_nx, manifest)
         assert result == 0
         mock_nx.sys_write.assert_not_called()
+
+    def test_seed_permissions_idempotent(self) -> None:
+        from nexus.cli.commands.demo import _seed_permissions
+
+        mock_nx = MagicMock()
+        # No grant API available
+        mock_nx.grant_consent_sync = None
+        mock_nx.grant = None
+        manifest: dict = {}
+
+        _seed_permissions(mock_nx, manifest)
+        assert manifest["permissions_seeded"] is True
+
+        # Second call — should skip
+        result = _seed_permissions(mock_nx, manifest)
+        assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# Delete / reset tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteDemoFiles:
+    def test_deletes_files_via_sys_unlink(self) -> None:
+        """Should call sys_unlink (not sys_rm) for each file."""
+        mock_nx = MagicMock()
+        manifest = {"files": ["/workspace/demo/a.txt", "/workspace/demo/b.py"]}
+
+        removed = _delete_demo_files(mock_nx, manifest)
+        assert removed == 2
+
+        # Verify sys_unlink was called (not sys_rm)
+        assert mock_nx.sys_unlink.call_count == 2
+        # Should also try to remove directories
+        assert mock_nx.sys_rmdir.call_count == len(DEMO_DIRS)
+
+    def test_delete_empty_manifest(self) -> None:
+        mock_nx = MagicMock()
+        removed = _delete_demo_files(mock_nx, {"files": []})
+        assert removed == 0
+
+    def test_delete_tolerates_errors(self) -> None:
+        """Errors during deletion should not propagate."""
+        mock_nx = MagicMock()
+        mock_nx.sys_unlink.side_effect = Exception("not found")
+        mock_nx.sys_rmdir.side_effect = Exception("not empty")
+        manifest = {"files": ["/workspace/demo/a.txt"]}
+
+        removed = _delete_demo_files(mock_nx, manifest)
+        assert removed == 0  # All failed, but no exception raised

@@ -29,8 +29,8 @@ VALID_PRESETS = ("local", "shared", "demo")
 # Services activated per preset (maps to Docker Compose profiles)
 PRESET_SERVICES: dict[str, list[str]] = {
     "local": [],
-    "shared": ["postgres", "dragonfly", "zoekt"],
-    "demo": ["postgres", "dragonfly", "zoekt"],
+    "shared": ["nexus", "postgres", "dragonfly", "zoekt"],
+    "demo": ["nexus", "postgres", "dragonfly", "zoekt"],
 }
 
 # Default auth mode per preset
@@ -82,6 +82,9 @@ def _build_config(
 
     if tls:
         config["tls_dir"] = os.path.join(data_dir, "tls")
+        config["tls_cert"] = os.path.join(data_dir, "tls", "server.crt")
+        config["tls_key"] = os.path.join(data_dir, "tls", "server.key")
+        config["tls_ca"] = os.path.join(data_dir, "tls", "ca.crt")
 
     return config
 
@@ -218,6 +221,14 @@ def init(
 
     # Create data directories
     _create_data_dirs(d_dir)
+
+    # Validate compose file exists for non-local presets
+    if preset != "local":
+        compose_file = config.get("compose_file", "./nexus-stack.yml")
+        if not Path(compose_file).exists():
+            console.print(f"[yellow]Warning:[/yellow] Compose file not found: {compose_file}")
+            console.print("  The stack requires nexus-stack.yml in the project root.")
+            console.print("  If you cloned the Nexus repo, run `nexus init` from the repo root.")
 
     # Initialize local Nexus workspace for 'local' preset
     if preset == "local":

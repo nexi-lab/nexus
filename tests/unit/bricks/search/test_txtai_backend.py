@@ -386,3 +386,32 @@ class TestTxtaiBackendConcurrency:
         backend = TxtaiBackend()
         assert hasattr(backend, "_lock")
         assert isinstance(backend._lock, asyncio.Lock)
+
+    @pytest.mark.asyncio
+    async def test_search_during_shutdown_returns_empty(self) -> None:
+        """search() must not dereference None if shutdown() clears _embeddings."""
+        backend = TxtaiBackend()
+        mock_emb = MagicMock()
+        mock_emb.search.return_value = []
+        backend._embeddings = mock_emb
+
+        # Simulate: shutdown runs while search is queued on the lock.
+        await backend.shutdown()
+        assert backend._embeddings is None
+
+        # search() after shutdown must return [] without raising
+        results = await backend.search("test", zone_id="z")
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_upsert_during_shutdown_returns_zero(self) -> None:
+        """upsert() must not dereference None if shutdown() clears _embeddings."""
+        backend = TxtaiBackend()
+        mock_emb = MagicMock()
+        mock_emb.ann = MagicMock()
+        backend._embeddings = mock_emb
+
+        await backend.shutdown()
+
+        count = await backend.upsert([{"id": "1", "text": "t", "path": "/a"}], zone_id="z")
+        assert count == 0

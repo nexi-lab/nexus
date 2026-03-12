@@ -1048,6 +1048,20 @@ The usual fix is:
 2. rerun `nexus --help`
 3. verify the feature dependencies you need are installed
 
+Also make sure your shell is using the repo virtualenv, not an older global or
+Conda install:
+
+```bash
+source .venv/bin/activate
+which nexus
+nexus --help
+python -m nexus.cli.main --help
+```
+
+For this checkout, `which nexus` should point at `.venv/bin/nexus`. If `nexus
+status` is missing but `python -m nexus.cli.main status` works, your shell is
+resolving the wrong executable.
+
 ### If remote SDK calls fail
 
 Check:

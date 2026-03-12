@@ -115,8 +115,8 @@ class TestTxtaiBackendLifecycle:
 
         mock_embeddings_cls = MagicMock()
         captured_configs: list[dict] = []
-        mock_embeddings_cls.side_effect = (
-            lambda cfg: captured_configs.append(dict(cfg)) or MagicMock()
+        mock_embeddings_cls.side_effect = lambda cfg: (
+            captured_configs.append(dict(cfg)) or MagicMock()
         )
 
         # Build mock torch module tree

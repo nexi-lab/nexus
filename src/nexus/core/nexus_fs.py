@@ -1030,7 +1030,7 @@ class NexusFS(  # type: ignore[misc]
 
         try:
             # For root path, try routing "/" to find the root mount's backend
-            if path == "/":
+            if not path or path == "/":
                 try:
                     zone_id, _agent_id, is_admin = self._get_routing_params(context)
                     root_route = self.router.route("/", is_admin=is_admin, check_write=False)

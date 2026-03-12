@@ -3,6 +3,8 @@
  *
  * Shows structured evaluation result with the manifest's entries,
  * highlighting which glob pattern matched the tool name (first-match-wins semantics).
+ * Fetches manifest detail on evaluate to ensure entries are available
+ * (the list endpoint returns summaries without entries).
  *
  * Tab cycles between Manifest ID and Tool Name fields.
  * Enter evaluates using the store's checkPermission().
@@ -45,6 +47,7 @@ export function PermissionChecker({
 }: PermissionCheckerProps): React.ReactNode {
   const client = useApi();
   const checkPermission = useAccessStore((s) => s.checkPermission);
+  const fetchManifestDetail = useAccessStore((s) => s.fetchManifestDetail);
   const manifests = useAccessStore((s) => s.manifests);
 
   const [manifestId, setManifestId] = useState(initialManifestId);
@@ -53,8 +56,11 @@ export function PermissionChecker({
 
   const handleSubmit = useCallback(() => {
     if (!client || !manifestId.trim() || !toolName.trim()) return;
-    checkPermission(manifestId.trim(), toolName.trim(), client);
-  }, [client, manifestId, toolName, checkPermission]);
+    const id = manifestId.trim();
+    // Fetch manifest detail (to get entries) alongside the permission check
+    fetchManifestDetail(id, client);
+    checkPermission(id, toolName.trim(), client);
+  }, [client, manifestId, toolName, checkPermission, fetchManifestDetail]);
 
   const handleUnhandledKey = useCallback(
     (keyName: string) => {
@@ -96,17 +102,19 @@ export function PermissionChecker({
   const manifestCursor = activeField === "manifestId" ? "\u2588" : "";
   const toolCursor = activeField === "toolName" ? "\u2588" : "";
 
-  // Look up the manifest entries to show decision trace
+  // Look up the manifest (with entries loaded via fetchManifestDetail)
   const matchedManifest = lastResult
     ? manifests.find((m) => m.manifest_id === lastResult.manifest_id)
     : null;
 
+  const entries = matchedManifest?.entries;
+
   // Find which entry matched (first-match-wins)
   const findMatchedEntry = (
-    entries: readonly ManifestEntry[],
+    allEntries: readonly ManifestEntry[],
     tool: string,
   ): ManifestEntry | null => {
-    for (const entry of entries) {
+    for (const entry of allEntries) {
       if (globMatches(entry.tool_pattern, tool)) {
         return entry;
       }
@@ -114,8 +122,8 @@ export function PermissionChecker({
     return null;
   };
 
-  const matchedEntry = matchedManifest && lastResult
-    ? findMatchedEntry(matchedManifest.entries, lastResult.tool_name)
+  const matchedEntry = entries && lastResult
+    ? findMatchedEntry(entries, lastResult.tool_name)
     : null;
 
   return (
@@ -164,19 +172,19 @@ export function PermissionChecker({
             </box>
           )}
 
-          {!matchedEntry && matchedManifest && (
+          {entries && !matchedEntry && (
             <box height={1} width="100%">
               <text>{"No entry matched (default: deny)"}</text>
             </box>
           )}
 
           {/* Manifest entry table (decision trace) */}
-          {matchedManifest && matchedManifest.entries.length > 0 && (
+          {entries && entries.length > 0 && (
             <>
               <box height={1} width="100%">
                 <text>{"--- Manifest Entries (first-match-wins) ---"}</text>
               </box>
-              {matchedManifest.entries.map((entry, i) => {
+              {entries.map((entry, i) => {
                 const isMatch = matchedEntry === entry;
                 const prefix = isMatch ? ">> " : "   ";
                 const rateStr = entry.max_calls_per_minute

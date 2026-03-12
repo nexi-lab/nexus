@@ -40,7 +40,7 @@ export function DisputeList({
   if (disputes.length === 0) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No disputes found. Use 'f' to file a dispute by exchange ID.</text>
+        <text>No disputes found. Use 'f' to file or 'g' to look up by ID.</text>
       </box>
     );
   }

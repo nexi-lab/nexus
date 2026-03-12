@@ -475,11 +475,11 @@ def _register_vfs_hooks(
 
     nx._parser_engine = ContentParserEngine(
         metadata=nx.metadata,
-        provider_registry=getattr(nx, "provider_registry", None),
+        provider_registry=nx._brick_services.provider_registry,
     )
 
     # AutoParseWriteHook (post-write: background parsing + cache invalidation)
-    parser_reg = getattr(nx, "parser_registry", None)
+    parser_reg = nx._brick_services.parser_registry
     parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
     _auto_parse_hook = None
     if auto_parse and parser_reg is not None and parse_fn is not None:

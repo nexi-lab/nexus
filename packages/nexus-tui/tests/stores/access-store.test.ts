@@ -3,19 +3,16 @@ import { useAccessStore } from "../../src/stores/access-store.js";
 import type { FetchClient } from "@nexus/api-client";
 
 function mockClient(responses: Record<string, unknown>): FetchClient {
+  const handler = mock(async (path: string) => {
+    for (const [pattern, response] of Object.entries(responses)) {
+      if (path.includes(pattern)) return response;
+    }
+    throw new Error(`Unmocked path: ${path}`);
+  });
   return {
-    get: mock(async (path: string) => {
-      for (const [pattern, response] of Object.entries(responses)) {
-        if (path.includes(pattern)) return response;
-      }
-      throw new Error(`Unmocked path: ${path}`);
-    }),
-    post: mock(async (path: string) => {
-      for (const [pattern, response] of Object.entries(responses)) {
-        if (path.includes(pattern)) return response;
-      }
-      throw new Error(`Unmocked path: ${path}`);
-    }),
+    get: mock(async (path: string) => handler(path)),
+    post: mock(async (path: string) => handler(path)),
+    delete: mock(async (path: string) => handler(path)),
   } as unknown as FetchClient;
 }
 
@@ -42,6 +39,11 @@ function resetStore(): void {
     delegations: [],
     delegationsLoading: false,
     selectedDelegationIndex: 0,
+    lastDelegationCreate: null,
+    delegationChain: null,
+    delegationChainLoading: false,
+    governanceCheck: null,
+    governanceCheckLoading: false,
     activeTab: "manifests",
     error: null,
   });
@@ -929,6 +931,258 @@ describe("AccessStore", () => {
     it("sets the selected delegation index", () => {
       useAccessStore.getState().setSelectedDelegationIndex(2);
       expect(useAccessStore.getState().selectedDelegationIndex).toBe(2);
+    });
+  });
+
+  describe("createDelegation", () => {
+    it("creates a delegation and refreshes list", async () => {
+      const client = mockClient({
+        "/api/v2/agents/delegate": {
+          delegation_id: "del-new",
+          worker_agent_id: "worker-1",
+          api_key: "nx_live_worker1_key",
+          mount_table: ["files/reports/"],
+          expires_at: "2025-12-31T23:59:59Z",
+          delegation_mode: "clean",
+          delegations: [{
+            delegation_id: "del-new",
+            agent_id: "worker-1",
+            parent_agent_id: "parent-1",
+            delegation_mode: "clean",
+            status: "active",
+            scope_prefix: "files/reports/",
+            lease_expires_at: "2025-12-31T23:59:59Z",
+            zone_id: "zone-1",
+            intent: "Read reports",
+            depth: 1,
+            can_sub_delegate: false,
+            created_at: "2025-01-01T00:00:00Z",
+          }],
+          count: 1,
+        },
+      });
+
+      await useAccessStore.getState().createDelegation(
+        {
+          worker_id: "worker-1",
+          worker_name: "Report Reader",
+          namespace_mode: "clean",
+          scope_prefix: "files/reports/",
+          intent: "Read reports",
+          can_sub_delegate: false,
+        },
+        client,
+      );
+      const state = useAccessStore.getState();
+
+      expect(state.lastDelegationCreate).not.toBeNull();
+      expect(state.lastDelegationCreate!.delegation_id).toBe("del-new");
+      expect(state.lastDelegationCreate!.api_key).toBe("nx_live_worker1_key");
+      expect(state.lastDelegationCreate!.mount_table).toEqual(["files/reports/"]);
+      expect(state.delegationsLoading).toBe(false);
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        post: mock(async () => { throw new Error("Insufficient trust"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().createDelegation(
+        { worker_id: "w", worker_name: "n", namespace_mode: "clean", intent: "i", can_sub_delegate: false },
+        client,
+      );
+      expect(useAccessStore.getState().error).toBe("Insufficient trust");
+    });
+  });
+
+  describe("revokeDelegation", () => {
+    it("revokes a delegation and updates status", async () => {
+      useAccessStore.setState({
+        delegations: [{
+          delegation_id: "del-1",
+          agent_id: "worker-1",
+          parent_agent_id: "parent-1",
+          delegation_mode: "clean",
+          status: "active",
+          scope_prefix: "files/",
+          lease_expires_at: null,
+          zone_id: "zone-1",
+          intent: "test",
+          depth: 1,
+          can_sub_delegate: false,
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      });
+
+      const client = mockClient({
+        "/api/v2/agents/delegate/del-1": {
+          status: "revoked",
+          delegation_id: "del-1",
+        },
+      });
+
+      await useAccessStore.getState().revokeDelegation("del-1", client);
+      const state = useAccessStore.getState();
+
+      expect(state.delegations[0]!.status).toBe("revoked");
+      expect(state.delegationsLoading).toBe(false);
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        delete: mock(async () => { throw new Error("Not authorized"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().revokeDelegation("del-1", client);
+      expect(useAccessStore.getState().error).toBe("Not authorized");
+    });
+  });
+
+  describe("completeDelegation", () => {
+    it("completes a delegation with outcome and quality score", async () => {
+      useAccessStore.setState({
+        delegations: [{
+          delegation_id: "del-1",
+          agent_id: "worker-1",
+          parent_agent_id: "parent-1",
+          delegation_mode: "clean",
+          status: "active",
+          scope_prefix: null,
+          lease_expires_at: null,
+          zone_id: null,
+          intent: "task",
+          depth: 1,
+          can_sub_delegate: false,
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      });
+
+      const client = mockClient({
+        "/api/v2/agents/delegate/del-1/complete": {
+          status: "completed",
+          delegation_id: "del-1",
+          outcome: "completed",
+        },
+      });
+
+      await useAccessStore.getState().completeDelegation("del-1", "completed", 0.9, client);
+      const state = useAccessStore.getState();
+
+      expect(state.delegations[0]!.status).toBe("completed");
+      expect(state.delegationsLoading).toBe(false);
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        post: mock(async () => { throw new Error("Already completed"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().completeDelegation("del-1", "completed", null, client);
+      expect(useAccessStore.getState().error).toBe("Already completed");
+    });
+  });
+
+  describe("fetchDelegationChain", () => {
+    it("fetches and stores delegation chain", async () => {
+      const client = mockClient({
+        "/api/v2/agents/delegate/del-1/chain": {
+          chain: [
+            {
+              delegation_id: "del-root",
+              agent_id: "agent-root",
+              parent_agent_id: "system",
+              delegation_mode: "clean",
+              status: "active",
+              depth: 0,
+              intent: "Root delegation",
+              created_at: "2025-01-01T00:00:00Z",
+            },
+            {
+              delegation_id: "del-1",
+              agent_id: "worker-1",
+              parent_agent_id: "agent-root",
+              delegation_mode: "clean",
+              status: "active",
+              depth: 1,
+              intent: "Sub-task",
+              created_at: "2025-01-02T00:00:00Z",
+            },
+          ],
+          total_depth: 1,
+        },
+      });
+
+      await useAccessStore.getState().fetchDelegationChain("del-1", client);
+      const state = useAccessStore.getState();
+
+      expect(state.delegationChain).not.toBeNull();
+      expect(state.delegationChain!.chain).toHaveLength(2);
+      expect(state.delegationChain!.total_depth).toBe(1);
+      expect(state.delegationChain!.chain[0]!.delegation_id).toBe("del-root");
+      expect(state.delegationChain!.chain[1]!.delegation_id).toBe("del-1");
+      expect(state.delegationChainLoading).toBe(false);
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("Chain not found"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().fetchDelegationChain("del-x", client);
+      expect(useAccessStore.getState().error).toBe("Chain not found");
+    });
+  });
+
+  describe("checkGovernanceEdge", () => {
+    it("checks governance constraint between agents with zone_id", async () => {
+      const client = mockClient({
+        "/api/v2/governance/check": {
+          allowed: true,
+          constraint_type: null,
+          reason: "No constraints found",
+          edge_id: "edge-123",
+        },
+      });
+
+      await useAccessStore.getState().checkGovernanceEdge("agent-a", "agent-b", "zone-1", client);
+      const state = useAccessStore.getState();
+
+      expect(state.governanceCheck).not.toBeNull();
+      expect(state.governanceCheck!.allowed).toBe(true);
+      expect(state.governanceCheck!.reason).toBe("No constraints found");
+      expect(state.governanceCheck!.edge_id).toBe("edge-123");
+      expect(state.governanceCheckLoading).toBe(false);
+
+      const calledUrl = (client.get as ReturnType<typeof mock>).mock.calls[0]![0] as string;
+      expect(calledUrl).toContain("agent-a");
+      expect(calledUrl).toContain("agent-b");
+      expect(calledUrl).toContain("zone_id=zone-1");
+    });
+
+    it("returns blocked result with constraint details", async () => {
+      const client = mockClient({
+        "/api/v2/governance/check": {
+          allowed: false,
+          constraint_type: "blocklist",
+          reason: "Agent is blocklisted",
+          edge_id: "edge-456",
+        },
+      });
+
+      await useAccessStore.getState().checkGovernanceEdge("agent-a", "agent-bad", undefined, client);
+      const state = useAccessStore.getState();
+
+      expect(state.governanceCheck!.allowed).toBe(false);
+      expect(state.governanceCheck!.constraint_type).toBe("blocklist");
+    });
+
+    it("sets error on failure", async () => {
+      const client = {
+        get: mock(async () => { throw new Error("Governance unavailable"); }),
+      } as unknown as FetchClient;
+
+      await useAccessStore.getState().checkGovernanceEdge("a", "b", "z", client);
+      expect(useAccessStore.getState().error).toBe("Governance unavailable");
     });
   });
 

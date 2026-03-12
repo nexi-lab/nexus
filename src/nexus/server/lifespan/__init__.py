@@ -229,9 +229,12 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     await shutdown_services(app, svc)
     await shutdown_realtime(app, svc)
 
-    # Close NexusFS kernel
-    if app.state.nexus_fs and hasattr(app.state.nexus_fs, "close"):
-        app.state.nexus_fs.close()
+    # Close NexusFS kernel (async shutdown for PersistentService + HotSwappable)
+    if app.state.nexus_fs:
+        if hasattr(app.state.nexus_fs, "aclose"):
+            await app.state.nexus_fs.aclose()
+        elif hasattr(app.state.nexus_fs, "close"):
+            app.state.nexus_fs.close()
 
     # Shutdown CacheBrick (Issue #1524)
     if app.state.cache_brick:

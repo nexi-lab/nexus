@@ -1,7 +1,7 @@
 """Regression tests for the documented local CLI quickstart.
 
-Note: test_local_cli_quickstart_persists_across_invocations is xfail on
-Python 3.13 due to redb/PyO3 metastore persistence timing issues.
+Note: test_local_cli_quickstart_persists_across_invocations is xfail on Python
+3.13 due to redb/PyO3 metastore persistence timing issues.
 """
 
 from __future__ import annotations

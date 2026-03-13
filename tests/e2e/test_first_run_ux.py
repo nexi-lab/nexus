@@ -184,6 +184,10 @@ class TestFirstRunInit:
         assert compose_file, "compose_file not set in config"
         assert Path(compose_file).exists(), f"compose file not found: {compose_file}"
 
+        # image_tag should be set to the installed CLI version
+        image_tag = cfg.get("image_tag", "")
+        assert image_tag, "image_tag not set in config for portable path"
+
 
 class TestFullWorkflow:
     """Full init → up → demo init → verify → down cycle.

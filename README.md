@@ -23,83 +23,96 @@ Nexus gives agents one place to read, write, search, and carry context across fi
 
 ## Quick Start
 
-This is the verified source-checkout path as of March 11, 2026. It uses `uv`,
-Python 3.14, the lightweight `requirements-minimal.txt` set, and does not
-require a Rust build.
+### Install
 
 ```bash
-uv venv --python 3.14
-source .venv/bin/activate
-uv pip install -r requirements-minimal.txt
-uv pip install -e . --no-deps
+pip install nexus-ai-fs
+```
 
-python - <<'PY'
+### One-command demo (Docker)
+
+```bash
+nexus init --preset demo
+nexus up
+nexus demo init          # seeds sample workspace + prints API key
+```
+
+This pulls the prebuilt image (`ghcr.io/nexi-lab/nexus`) and starts Nexus on `localhost:2026`. No Rust toolchain, no local build required.
+
+### Shared deployment (Postgres + cache)
+
+```bash
+nexus init --preset shared
+nexus up
+```
+
+Adds PostgreSQL (metadata), Dragonfly (cache), and Zoekt (code search) as Docker services alongside Nexus.
+
+### Local SDK (no Docker)
+
+For in-process use without a daemon:
+
+```bash
+pip install nexus-ai-fs
+```
+
+```python
 from nexus.sdk import connect
 
-nx = connect(
-    config={
-        "profile": "minimal",
-        "data_dir": "./nexus-data",
-    }
-)
-
+nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
 nx.sys_write("/hello.txt", b"Hello, Nexus!")
-print(nx.sys_read("/hello.txt").decode())
-
+print(nx.sys_read("/hello.txt").decode())  # Hello, Nexus!
 nx.close()
-PY
 ```
 
-Expected output:
-
-```text
-Hello, Nexus!
-```
-
-The commands below assume the same activated `.venv`.
-
-Local CLI path from a source checkout:
+### CLI usage
 
 ```bash
-python -m nexus.cli.main init .nexus-cli-demo
-export NEXUS_DATA_DIR="$PWD/.nexus-cli-demo/nexus-data"
-
-python -m nexus.cli.main write /workspace/hello.txt "hello from cli"
-python -m nexus.cli.main cat /workspace/hello.txt
-python -m nexus.cli.main ls /workspace
+nexus write /workspace/hello.txt "hello from cli"
+nexus cat /workspace/hello.txt
+nexus ls /workspace
 ```
 
-If you installed from PyPI, use `nexus` instead of `python -m nexus.cli.main`.
+### Docker image
+
+The prebuilt multi-arch image (amd64 + arm64) is published to GHCR:
+
+```
+ghcr.io/nexi-lab/nexus:latest        # CPU-only PyTorch (recommended)
+ghcr.io/nexi-lab/nexus:latest-cuda   # GPU-accelerated (CUDA)
+ghcr.io/nexi-lab/nexus:<version>     # Pinned to a specific release
+```
+
+`nexus init` pins the image tag to the installed CLI version. To build locally from source instead of pulling, pass `--build` to `nexus up`.
 
 ## Optional Capabilities
 
+- Semantic search: `pip install "nexus-ai-fs[semantic-search]"`
+- Rust acceleration: `pip install nexus-fast`
 - Full dev/test environment: `uv sync --extra dev --extra test`
-- txtai/FAISS semantic search stack: `uv sync --extra semantic-search`
-- Optional Rust acceleration from PyPI: `pip install nexus-fast`
-- Optional Rust acceleration from a checkout: `uv pip install maturin && maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
-- Rust metastore / federation extensions: `maturin develop --release -m rust/nexus_raft/Cargo.toml --features python` or `--features full`
+- Rust extensions from source: `uv pip install maturin && maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
+- Raft federation extensions: `maturin develop --release -m rust/nexus_raft/Cargo.toml --features full`
 
 ## Troubleshooting
 
-- `ModuleNotFoundError: No module named 'nexus'`: you are in a source checkout without installing the package into the active interpreter. Use the `uv` setup above or install `nexus-ai-fs` from PyPI.
-- `maturin develop --release` fails at the repo root: the root [Cargo.toml](./Cargo.toml) is a workspace manifest. Point `maturin` at a crate manifest under `rust/`.
-- `maturin develop ... rust/nexus_pyo3/Cargo.toml` uses the wrong Python: run it from the same activated `.venv` as Nexus. The package metadata requires Python 3.12+.
-- `Rust BLAKE3 extension not available`: this is an optional performance path. The default quickstart uses the Python `blake3` package.
-- `faiss-cpu` resolution fails: stay on the default source quickstart above, or opt into `semantic-search` only on a platform with compatible `txtai`/`faiss-cpu` wheels.
+- `ModuleNotFoundError: No module named 'nexus'`: install `nexus-ai-fs` from PyPI or use `uv pip install -e .` in a source checkout.
+- `maturin develop --release` fails at the repo root: point `maturin` at a crate manifest under `rust/`, not the workspace root `Cargo.toml`.
+- `Rust BLAKE3 extension not available`: optional performance path. The default uses the Python `blake3` package.
+- `faiss-cpu` resolution fails: opt into `semantic-search` only on platforms with compatible `txtai`/`faiss-cpu` wheels.
 
 For the full walkthrough, see the [quickstart page](https://nexi-lab.github.io/nexus/getting-started/quickstart/).
 
 ## Three Landing Paths
 
-- **Local SDK**: Start local, keep the filesystem/context plane inside your process, and integrate from Python. Docs: [Local SDK path](https://nexi-lab.github.io/nexus/paths/embedded-sdk/)
-- **Shared daemon**: Run `nexusd` when you need a long-lived service, remote clients, or operational controls. Docs: [Shared daemon path](https://nexi-lab.github.io/nexus/paths/daemon-and-remote/)
-- **Architecture**: Read the kernel, storage, and proposal docs before changing the system model. Docs: [Architecture path](https://nexi-lab.github.io/nexus/paths/architecture/)
+- **Local SDK**: In-process filesystem/context plane — no daemon, no Docker. Docs: [Local SDK path](https://nexi-lab.github.io/nexus/paths/embedded-sdk/)
+- **Shared daemon**: Long-lived `nexusd` service with remote clients, permissions, and operational controls. Docs: [Shared daemon path](https://nexi-lab.github.io/nexus/paths/daemon-and-remote/)
+- **Architecture**: Kernel, storage, and proposal docs for contributors. Docs: [Architecture path](https://nexi-lab.github.io/nexus/paths/architecture/)
 
 ## Trust Boundaries
 
-- The quickstart above is a local path. It is intentionally smaller than a production deployment.
+- The demo preset runs a single-node Nexus with SQLite — suitable for evaluation, not production.
 - Remote SDK access uses the `remote` profile and depends on a running `nexusd` plus a configured gRPC port.
-- Permissions, memory, and federation are deployment capabilities, not implied by the basic local write/read example.
+- Permissions, memory, and federation are deployment capabilities configured via the `shared` or custom presets.
 
 ## Architecture
 

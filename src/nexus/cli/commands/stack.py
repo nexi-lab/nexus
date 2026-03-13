@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import shutil
 import subprocess
 import time
@@ -87,9 +88,9 @@ def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
     if api_key:
         env["NEXUS_API_KEY"] = api_key
 
-    # Pin the prebuilt image tag (set by nexus init from __version__).
-    # Repo-checkout stacks ignore this because they use build: directives.
-    image_tag = config.get("image_tag", "")
+    # Pin the prebuilt image tag.  Environment variable wins so users can
+    # override with e.g. ``NEXUS_IMAGE_TAG=pr-2918-arm64 nexus up``.
+    image_tag = os.environ.get("NEXUS_IMAGE_TAG") or config.get("image_tag", "")
     if image_tag:
         env["NEXUS_IMAGE_TAG"] = image_tag
 
@@ -296,7 +297,7 @@ def register_commands(cli: click.Group) -> None:
 @click.option(
     "--build/--no-build",
     default=None,
-    help="Build images before starting (auto-detected: builds when compose file has build: directives).",
+    help="Build images locally instead of pulling from GHCR (default: pull).",
 )
 @click.option(
     "--timeout", type=int, default=180, show_default=True, help="Health check timeout in seconds."

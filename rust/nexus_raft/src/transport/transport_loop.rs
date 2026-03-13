@@ -43,8 +43,14 @@ const EC_BACKOFF_BASE: Duration = Duration::from_millis(100);
 /// Maximum backoff interval (cap) for EC replication retries.
 const EC_BACKOFF_CAP: Duration = Duration::from_secs(60);
 
-/// Timeout for individual peer message sends.
-const PEER_SEND_TIMEOUT: StdDuration = StdDuration::from_secs(5);
+/// Timeout for individual Raft consensus message sends.
+/// Kept short because Raft heartbeats/votes must be fast.
+const RAFT_SEND_TIMEOUT: StdDuration = StdDuration::from_secs(5);
+
+/// Maximum entries to send per peer per EC replication cycle.
+/// Caps memory and prevents the tonic request timeout from being exceeded
+/// on large backlogs.
+const EC_MAX_ENTRIES_PER_BATCH: usize = 500;
 
 /// Per-peer EC replication state.
 struct PeerReplicationState {
@@ -216,7 +222,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
 
             join_set.spawn(async move {
                 let result = tokio::time::timeout(
-                    PEER_SEND_TIMEOUT,
+                    RAFT_SEND_TIMEOUT,
                     send_raft_message(&client_pool, target_id, &addr, msg, zone_id),
                 )
                 .await;
@@ -226,7 +232,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                     Ok(Err(e)) => (target_id, Err(e)),
                     Err(_elapsed) => (
                         target_id,
-                        Err(format!("timeout after {:?}", PEER_SEND_TIMEOUT)),
+                        Err(format!("timeout after {:?}", RAFT_SEND_TIMEOUT)),
                     ),
                 }
             });
@@ -356,10 +362,13 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 continue; // Skip — incremental replication impossible
             }
 
-            // Filter entries: only send what this peer hasn't acked yet
+            // Filter entries: only send what this peer hasn't acked yet.
+            // Cap at EC_MAX_ENTRIES_PER_BATCH to bound memory and stay
+            // within the tonic request timeout on large backlogs.
             let filtered: Vec<EcReplicationEntry> = entries
                 .iter()
                 .filter(|(seq, _)| *seq > state.acked_seq)
+                .take(EC_MAX_ENTRIES_PER_BATCH)
                 .map(|(seq, entry)| EcReplicationEntry {
                     seq: *seq,
                     command: entry.command.clone(),
@@ -389,25 +398,20 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 let node_id = self.node_id;
 
                 join_set.spawn(async move {
-                    let result = tokio::time::timeout(
-                        PEER_SEND_TIMEOUT,
-                        send_ec_entries(
-                            &client_pool,
-                            &task.peer_addr,
-                            zone_id,
-                            task.entries,
-                            node_id,
-                        ),
+                    // No extra timeout here — tonic's 10s request timeout
+                    // (client.rs:131) handles slow peers. A hard 5s wrapper
+                    // would wedge EC catch-up on legitimately large batches.
+                    match send_ec_entries(
+                        &client_pool,
+                        &task.peer_addr,
+                        zone_id,
+                        task.entries,
+                        node_id,
                     )
-                    .await;
-
-                    match result {
-                        Ok(Ok(applied_up_to)) => (task.peer_id, Ok(applied_up_to)),
-                        Ok(Err(e)) => (task.peer_id, Err(e)),
-                        Err(_elapsed) => (
-                            task.peer_id,
-                            Err(format!("timeout after {:?}", PEER_SEND_TIMEOUT)),
-                        ),
+                    .await
+                    {
+                        Ok(applied_up_to) => (task.peer_id, Ok(applied_up_to)),
+                        Err(e) => (task.peer_id, Err(e)),
                     }
                 });
             }
@@ -664,7 +668,7 @@ mod tests {
     #[test]
     fn test_peer_send_timeout_constant() {
         // Verify timeout is reasonable
-        assert!(PEER_SEND_TIMEOUT.as_secs() >= 1);
-        assert!(PEER_SEND_TIMEOUT.as_secs() <= 30);
+        assert!(RAFT_SEND_TIMEOUT.as_secs() >= 1);
+        assert!(RAFT_SEND_TIMEOUT.as_secs() <= 30);
     }
 }

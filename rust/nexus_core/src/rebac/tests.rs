@@ -746,3 +746,63 @@ fn parity_cycle_detection() {
         &[("user", "charlie", "read", "group", "a", false)],
     );
 }
+
+#[test]
+fn parity_tuple_to_userset_with_direct_fallback() {
+    // Exercises the Zanzibar direct-relation fallthrough in TupleToUserset
+    // (graph.rs:305). User has a direct "viewer" tuple on the file, and the
+    // namespace also defines viewer as tupleToUserset(parent, viewer).
+    // Both paths should grant access.
+    let ns_json = r#"{"relations":{
+        "parent":"direct",
+        "viewer":{"tupleToUserset":{"tupleset":"parent","computedUserset":"viewer"}}
+    },"permissions":{"read":["viewer"]}}"#;
+
+    assert_parity(
+        &[
+            // Direct viewer on the file (exercises the fallback)
+            tuple_direct("user", "alice", "viewer", "file", "doc1"),
+            // Indirect via parent folder (exercises tupleToUserset forward)
+            tuple_direct("file", "doc2", "parent", "folder", "docs"),
+            tuple_direct("user", "bob", "viewer", "folder", "docs"),
+        ],
+        &[("file", ns_json), ("folder", ns_json)],
+        &[
+            // alice: direct viewer on doc1
+            ("user", "alice", "read", "file", "doc1", true),
+            // bob: indirect via folder
+            ("user", "bob", "read", "file", "doc2", true),
+            // alice has no access to doc2 (no direct or indirect path)
+            ("user", "alice", "read", "file", "doc2", false),
+        ],
+    );
+}
+
+#[test]
+fn parity_shared_visited_cycle_path() {
+    // Exercises the shared visited set with a cycle reachable from
+    // multiple branches. Group A and B form a cycle. User has member
+    // on group A. The permission check must terminate (not loop) and
+    // the cycle must not block the successful direct path.
+    let ns_json = r#"{"relations":{
+        "member":"direct",
+        "viewer":{"union":["member","admin"]}
+    },"permissions":{"read":["viewer"]}}"#;
+
+    assert_parity(
+        &[
+            // Cycle: A ↔ B via member
+            tuple_direct("group", "a", "member", "group", "b"),
+            tuple_direct("group", "b", "member", "group", "a"),
+            // User is direct member of group A
+            tuple_direct("user", "alice", "member", "group", "a"),
+        ],
+        &[("group", ns_json)],
+        &[
+            // alice is a member of group A → viewer via union(member)
+            ("user", "alice", "read", "group", "a", true),
+            // bob has no relation → should be false, not loop
+            ("user", "bob", "read", "group", "a", false),
+        ],
+    );
+}

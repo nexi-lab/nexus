@@ -62,11 +62,17 @@ COPY alembic/alembic.ini ./alembic.ini
 
 # ---------- Install Python dependencies ----------
 ENV UV_HTTP_TIMEOUT=300
+# Install CPU-only torch first — txtai[ann] transitively pulls torch via
+# sentence-transformers; pre-installing from the CPU index avoids ~4 GB of
+# CUDA libraries that are never used in the container.
 RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
         PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
+        TORCH_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
     else \
         PIP_INDEX="https://pypi.org/simple"; \
+        TORCH_INDEX="https://download.pytorch.org/whl/cpu"; \
     fi && \
+    uv pip install --system --index-url $TORCH_INDEX torch && \
     uv pip install --system -i $PIP_INDEX ".[semantic-search]" "txtai[ann]>=9.0"
 
 # ---------- Install sandbox providers ----------

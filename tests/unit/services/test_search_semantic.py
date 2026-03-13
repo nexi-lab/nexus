@@ -200,16 +200,15 @@ class TestSemanticSearch:
 
     @pytest.mark.asyncio
     async def test_raises_when_no_engine(self, svc_no_engine):
-        """semantic_search should raise ValueError without engine."""
-        with pytest.raises(ValueError, match="not initialized"):
+        """semantic_search should raise ValueError without engine or record store."""
+        with pytest.raises(ValueError, match="not available"):
             await svc_no_engine.semantic_search(query="test")
 
     @pytest.mark.asyncio
     async def test_raises_when_query_service_none(self):
-        """Should raise when _query_service is set then cleared."""
-        svc = _make_svc(query_service=MagicMock())
-        svc._query_service = None
-        with pytest.raises(ValueError, match="not initialized"):
+        """Should raise when _query_service is None and no record_store."""
+        svc = _make_svc(query_service=None)
+        with pytest.raises(ValueError, match="not available"):
             await svc.semantic_search(query="test")
 
     @pytest.mark.asyncio
@@ -271,10 +270,10 @@ class TestSemanticSearchIndex:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_raises_when_no_engine(self, svc_no_engine):
-        """semantic_search_index should raise ValueError without engine."""
-        with pytest.raises(ValueError, match="not initialized"):
-            await svc_no_engine.semantic_search_index(path="/doc.txt")
+    async def test_returns_empty_when_no_engine(self, svc_no_engine):
+        """semantic_search_index returns empty dict without engine (no raise)."""
+        result = await svc_no_engine.semantic_search_index(path="/doc.txt")
+        assert result == {}
 
     @pytest.mark.asyncio
     async def test_falls_back_to_pipeline_indexer(self, mock_pipeline_indexer):
@@ -314,15 +313,15 @@ class TestSemanticSearchStats:
 
     @pytest.mark.asyncio
     async def test_raises_when_no_engine(self, svc_no_engine):
-        """semantic_search_stats should raise ValueError without engine."""
-        with pytest.raises(ValueError, match="not initialized"):
+        """semantic_search_stats should raise ValueError without engine or record store."""
+        with pytest.raises(ValueError, match="not available"):
             await svc_no_engine.semantic_search_stats()
 
     @pytest.mark.asyncio
     async def test_raises_when_no_indexing_service(self):
-        """Should raise when IndexingService is None."""
+        """Should raise when IndexingService is None and no record_store."""
         svc = _make_svc(query_service=MagicMock())
-        with pytest.raises(ValueError, match="not properly initialized"):
+        with pytest.raises(ValueError, match="not available"):
             await svc.semantic_search_stats()
 
 

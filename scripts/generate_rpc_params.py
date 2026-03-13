@@ -233,9 +233,9 @@ def _default_repr(default: Any) -> str:
         return f'"{default}"'
     if isinstance(default, bool):
         return repr(default)
-    if isinstance(default, (int, float)):
+    if isinstance(default, int | float):
         return repr(default)
-    if isinstance(default, (list, tuple, dict)):
+    if isinstance(default, list | tuple | dict):
         return repr(default)
     return repr(default)
 

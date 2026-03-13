@@ -114,6 +114,9 @@ EXPECTED_MODELS = [
     # Credentials & Access Manifests (Issues #1753, #1754)
     "AgentCredentialModel",
     "AccessManifestModel",
+    # DataHub Knowledge Platform (Issue #2929)
+    "EntityAspectModel",
+    "MetadataChangeLogModel",
 ]
 
 

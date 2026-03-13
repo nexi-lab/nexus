@@ -31,8 +31,12 @@ def client(mock_fs: MagicMock) -> TestClient:
     router = create_async_files_router(nexus_fs=mock_fs)
     app.include_router(router)
 
-    # Override auth to return unauthenticated (allows anonymous access)
-    app.dependency_overrides[get_auth_result] = lambda: None
+    # Override auth to return an authenticated result (bypasses real auth)
+    app.dependency_overrides[get_auth_result] = lambda: {
+        "authenticated": True,
+        "user_id": "test-user",
+        "groups": [],
+    }
 
     return TestClient(app)
 

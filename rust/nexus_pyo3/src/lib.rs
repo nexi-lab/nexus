@@ -9,6 +9,7 @@ mod io;
 mod lock;
 mod pipe;
 mod prefix;
+mod stream;
 mod semaphore;
 mod rebac;
 mod search;
@@ -81,6 +82,7 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<cache::L1MetadataCache>()?;
     m.add_class::<lock::VFSLockManager>()?;
     m.add_class::<pipe::RingBufferCore>()?;
+    m.add_class::<stream::StreamBufferCore>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
     Ok(())
 }

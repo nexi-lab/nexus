@@ -116,6 +116,10 @@ class OperationLogger:
         # Uses MAX+1 within the current session. The UNIQUE constraint on
         # sequence_number prevents duplicates under concurrent writers;
         # on collision, retry with the new MAX+1 (up to 3 attempts).
+        #
+        # IMPORTANT: Uses a SAVEPOINT (nested transaction) so that on collision
+        # only the failed INSERT is rolled back, not the caller's pending work
+        # (e.g. AspectService entity_aspects rows).
         from sqlalchemy.exc import IntegrityError
 
         max_retries = 3
@@ -142,14 +146,17 @@ class OperationLogger:
             )
 
             operation.validate()
+
+            nested = self.session.begin_nested()
             self.session.add(operation)
             try:
+                nested.commit()
                 if flush:
                     self.session.flush()
                 return operation.operation_id
             except IntegrityError:
+                nested.rollback()
                 if attempt < max_retries - 1:
-                    self.session.rollback()
                     continue
                 raise
 

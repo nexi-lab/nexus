@@ -567,14 +567,14 @@ mod tests {
         // max_seq should be 101 (next to assign)
         assert_eq!(log.max_seq(), 101);
 
-        // Verify persisted next_seq matches
+        // Persisted next_seq must exactly equal max(seqs) + 1.
+        // The max() inside the transaction prevents regression even under
+        // concurrent access — the last committer always preserves the highest value.
         let next_seq_bytes = log.meta_tree.get(KEY_NEXT_SEQ).unwrap().unwrap();
         let persisted_next = u64::from_be_bytes(next_seq_bytes.try_into().unwrap());
-        // Due to concurrent access, persisted next_seq should be at least 101
-        // (it could be higher if a concurrent writer persisted a higher value)
-        assert!(
-            persisted_next >= 100,
-            "persisted next_seq {} should be >= 100",
+        assert_eq!(
+            persisted_next, 101,
+            "persisted next_seq {} must equal max_seq (101)",
             persisted_next
         );
     }

@@ -183,8 +183,7 @@ class TestBootSystemServices:
             "brick_lifecycle_manager",
             "brick_reconciler",
             "zone_lifecycle",
-            # DT_PIPE manager (Issue #809)
-            "pipe_manager",
+            # (PipeManager is kernel-internal §4.2, not in SystemServices)
             # Process lifecycle (Issue #1509)
             "process_table",
             "scheduler_service",

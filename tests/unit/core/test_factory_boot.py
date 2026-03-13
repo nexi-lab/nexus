@@ -72,7 +72,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "brick_lifecycle_manager",
         "brick_reconciler",
         "zone_lifecycle",
-        "pipe_manager",
         "process_table",
         "scheduler_service",
         "agent_runtime",
@@ -227,7 +226,6 @@ class TestBootSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "workspace_registry",  # degradable — None with mock session_factory
-            "pipe_manager",  # degradable — None if PipeManager unavailable
             "scheduler_service",  # degradable — None if SchedulerService unavailable
             "agent_runtime",  # degradable — None if AgentRuntime unavailable
         }

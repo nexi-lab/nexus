@@ -275,8 +275,7 @@ class TestSystemServices:
         assert ss.delivery_worker is None
         assert ss.observability_subsystem is None
         assert ss.resiliency_manager is None
-        # DT_PIPE manager (Issue #809)
-        assert ss.pipe_manager is None
+        # (PipeManager is kernel-internal §4.2, not in SystemServices)
 
     def test_frozen(self) -> None:
         ss = SystemServices()
@@ -329,7 +328,6 @@ class TestSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "zone_lifecycle",
-            "pipe_manager",
             "process_table",
             "scheduler_service",
         }

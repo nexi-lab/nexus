@@ -529,3 +529,220 @@ fn find_groups_for_subject() {
     assert!(group_ids.contains(&"eng"));
     assert!(group_ids.contains(&"admins"));
 }
+
+// ============================================================================
+// Cross-implementation parity: string-keyed vs interned must agree
+// ============================================================================
+
+/// Helper to run the same permission check against both string-keyed and
+/// interned implementations, asserting they produce identical results.
+fn assert_parity(
+    tuples: &[ReBACTuple],
+    namespaces_json: &[(&str, &str)],
+    checks: &[(&str, &str, &str, &str, &str, bool)],
+) {
+    // --- String-keyed setup ---
+    let graph = ReBACGraph::from_tuples(tuples);
+    let mut namespaces: AHashMap<String, NamespaceConfig> = AHashMap::new();
+    for (name, json) in namespaces_json {
+        namespaces.insert(name.to_string(), ns_config(json));
+    }
+
+    // --- Interned setup ---
+    let mut interner = DefaultStringInterner::new();
+    let interned_tuples: Vec<InternedTuple> = tuples
+        .iter()
+        .map(|t| InternedTuple {
+            subject_type: interner.get_or_intern(&t.subject_type),
+            subject_id: interner.get_or_intern(&t.subject_id),
+            subject_relation: t
+                .subject_relation
+                .as_ref()
+                .map(|r| interner.get_or_intern(r)),
+            relation: interner.get_or_intern(&t.relation),
+            object_type: interner.get_or_intern(&t.object_type),
+            object_id: interner.get_or_intern(&t.object_id),
+        })
+        .collect();
+    let interned_graph = InternedGraph::from_tuples(&interned_tuples, &mut interner);
+    let mut interned_ns: AHashMap<Sym, InternedNamespaceConfig> = AHashMap::new();
+    for (name, json) in namespaces_json {
+        let config: NamespaceConfig = serde_json::from_str(json).unwrap();
+        let interned_config = InternedNamespaceConfig::from_config(&config, &mut interner);
+        interned_ns.insert(interner.get_or_intern(*name), interned_config);
+    }
+
+    // --- Run checks against both ---
+    for (subj_type, subj_id, permission, obj_type, obj_id, expected) in checks {
+        let subject = entity(subj_type, subj_id);
+        let object = entity(obj_type, obj_id);
+
+        // String-keyed
+        let mut memo = MemoCache::new();
+        let mut visited = AHashSet::new();
+        let string_result = compute_permission(
+            &subject,
+            permission,
+            &object,
+            &graph,
+            &namespaces,
+            &mut memo,
+            &mut visited,
+            0,
+        );
+
+        // Interned
+        let i_subject = InternedEntity {
+            entity_type: interner.get_or_intern(*subj_type),
+            entity_id: interner.get_or_intern(*subj_id),
+        };
+        let i_object = InternedEntity {
+            entity_type: interner.get_or_intern(*obj_type),
+            entity_id: interner.get_or_intern(*obj_id),
+        };
+        let i_perm = interner.get_or_intern(*permission);
+
+        let mut i_memo = InternedMemoCache::new();
+        let mut i_visited = InternedVisitedSet::new();
+        let interned_result = compute_permission_interned(
+            i_subject,
+            i_perm,
+            i_object,
+            &interned_graph,
+            &interned_ns,
+            &mut i_memo,
+            &mut i_visited,
+            0,
+        );
+
+        assert_eq!(
+            string_result, interned_result,
+            "Parity mismatch for ({subj_type}:{subj_id}, {permission}, {obj_type}:{obj_id}): \
+             string={string_result}, interned={interned_result}"
+        );
+        assert_eq!(
+            string_result, *expected,
+            "Unexpected result for ({subj_type}:{subj_id}, {permission}, {obj_type}:{obj_id}): \
+             got={string_result}, expected={expected}"
+        );
+    }
+}
+
+#[test]
+fn parity_direct_relations() {
+    assert_parity(
+        &[
+            tuple_direct("user", "alice", "editor", "file", "readme"),
+            tuple_direct("user", "bob", "viewer", "file", "readme"),
+        ],
+        &[],
+        &[
+            ("user", "alice", "editor", "file", "readme", true),
+            ("user", "bob", "editor", "file", "readme", false),
+            ("user", "bob", "viewer", "file", "readme", true),
+            ("user", "charlie", "viewer", "file", "readme", false),
+        ],
+    );
+}
+
+#[test]
+fn parity_userset_permissions() {
+    assert_parity(
+        &[
+            tuple_userset("group", "eng", "member", "editor", "file", "readme"),
+            tuple_direct("user", "alice", "member", "group", "eng"),
+        ],
+        &[],
+        &[
+            ("user", "alice", "editor", "file", "readme", true),
+            ("user", "bob", "editor", "file", "readme", false),
+        ],
+    );
+}
+
+#[test]
+fn parity_tuple_to_userset() {
+    let ns_json = r#"{"relations":{
+        "parent":"direct",
+        "viewer":{"tupleToUserset":{"tupleset":"parent","computedUserset":"viewer"}}
+    },"permissions":{"read":["viewer"]}}"#;
+
+    assert_parity(
+        &[
+            tuple_direct("file", "doc1", "parent", "folder", "docs"),
+            tuple_direct("user", "alice", "viewer", "folder", "docs"),
+        ],
+        &[("file", ns_json), ("folder", ns_json)],
+        &[
+            ("user", "alice", "read", "file", "doc1", true),
+            ("user", "bob", "read", "file", "doc1", false),
+        ],
+    );
+}
+
+#[test]
+fn parity_union_relations() {
+    let ns_json = r#"{"relations":{"editor":{"union":["owner","collaborator"]},"owner":"direct","collaborator":"direct"},"permissions":{"write":["editor"]}}"#;
+
+    assert_parity(
+        &[
+            tuple_direct("user", "alice", "owner", "file", "readme"),
+            tuple_direct("user", "bob", "collaborator", "file", "readme"),
+        ],
+        &[("file", ns_json)],
+        &[
+            ("user", "alice", "write", "file", "readme", true),
+            ("user", "bob", "write", "file", "readme", true),
+            ("user", "charlie", "write", "file", "readme", false),
+        ],
+    );
+}
+
+#[test]
+fn parity_wildcard_subject() {
+    assert_parity(
+        &[tuple_direct("*", "*", "viewer", "file", "public")],
+        &[],
+        &[
+            ("user", "anyone", "viewer", "file", "public", true),
+            ("agent", "bot", "viewer", "file", "public", true),
+        ],
+    );
+}
+
+#[test]
+fn parity_deeply_nested() {
+    let ns_json = r#"{"relations":{
+        "parent":"direct",
+        "viewer":{"tupleToUserset":{"tupleset":"parent","computedUserset":"viewer"}}
+    },"permissions":{"read":["viewer"]}}"#;
+
+    assert_parity(
+        &[
+            tuple_direct("file", "doc", "parent", "folder", "a"),
+            tuple_direct("folder", "a", "parent", "folder", "b"),
+            tuple_direct("folder", "b", "parent", "folder", "c"),
+            tuple_direct("folder", "c", "parent", "folder", "root"),
+            tuple_direct("user", "alice", "viewer", "folder", "root"),
+        ],
+        &[("file", ns_json), ("folder", ns_json)],
+        &[
+            ("user", "alice", "read", "file", "doc", true),
+            ("user", "bob", "read", "file", "doc", false),
+        ],
+    );
+}
+
+#[test]
+fn parity_cycle_detection() {
+    let ns_json = r#"{"relations":{"member":"direct","viewer":{"union":["member"]}},"permissions":{"read":["viewer"]}}"#;
+
+    assert_parity(
+        &[
+            tuple_direct("group", "a", "member", "group", "b"),
+            tuple_direct("group", "b", "member", "group", "a"),
+        ],
+        &[("group", ns_json)],
+        &[("user", "charlie", "read", "group", "a", false)],
+    );
+}

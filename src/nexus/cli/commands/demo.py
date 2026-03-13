@@ -978,10 +978,10 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print(f"  Permissions:  {perms_created} tuples")
     else:
         console.print("  Permissions:  skipped (not available)")
-    if not skip_semantic:
-        console.print("  Semantic:     ready")
-    else:
+    if skip_semantic:
         console.print("  Semantic:     skipped")
+    else:
+        console.print("  Semantic:     not configured (requires pgvector + embedding provider)")
     console.print("  Grep corpus:  ready")
 
     # Print suggested commands — for shared/demo presets, tell the user to
@@ -1005,7 +1005,6 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     console.print("  nexus cat /workspace/demo/README.md")
     console.print("  nexus versions history /workspace/demo/plan.md")
     console.print('  nexus grep "vector index" /workspace/demo')
-    console.print('  nexus search query "How does the demo authentication flow work?"')
 
 
 @demo.command(name="reset")

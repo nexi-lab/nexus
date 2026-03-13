@@ -187,6 +187,7 @@ class AspectRegistry:
         Raises:
             ValueError: If aspect is not registered.
             ValueError: If payload exceeds size limit.
+            ValueError: If required fields are missing.
         """
         if not self.is_registered(name):
             raise ValueError(f"Unknown aspect type: {name!r}")
@@ -197,6 +198,14 @@ class AspectRegistry:
                 f"Aspect payload exceeds {MAX_ASPECT_PAYLOAD_BYTES} bytes "
                 f"(got {len(payload_json.encode())} bytes)"
             )
+
+        # Validate required fields by attempting to instantiate the aspect class
+        reg = self._registry[name]
+        if issubclass(reg.cls, AspectBase):
+            try:
+                reg.cls.from_dict(payload)
+            except TypeError as e:
+                raise ValueError(f"Invalid payload for aspect {name!r}: {e}") from e
 
 
 def register_aspect(

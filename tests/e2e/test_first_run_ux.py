@@ -395,6 +395,30 @@ class TestFullWorkflow:
                 f"stdout: {ls_result.stdout}\nstderr: {ls_result.stderr}"
             )
 
+            # Step 2d: Verify semantic search works against the running stack
+            search_result = subprocess.run(
+                [
+                    "nexus",
+                    "search",
+                    "query",
+                    "How does the demo authentication flow work?",
+                    "--path",
+                    "/workspace/demo",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=str(initialized_project),
+                env=stack_env,
+            )
+            # Semantic search may gracefully return 0 results if embedding
+            # model is not configured, but it must NOT crash with a missing
+            # positional-arg error (the bug fixed by adding SemanticSearchParams).
+            assert search_result.returncode == 0, (
+                f"nexus search query failed against live stack:\n"
+                f"stdout: {search_result.stdout}\nstderr: {search_result.stderr}"
+            )
+
             # Step 3: nexus demo reset (verify cleanup works)
             reset_result = subprocess.run(
                 ["nexus", "demo", "reset"],

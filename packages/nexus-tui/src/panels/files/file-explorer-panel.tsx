@@ -14,6 +14,8 @@ import { FileAspects } from "./file-aspects.js";
 import { FileSchema } from "./file-schema.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useKnowledgeStore } from "../../stores/knowledge-store.js";
+import crypto from "node:crypto";
 
 export default function FileExplorerPanel(): React.ReactNode {
   const client = useApi();
@@ -39,6 +41,13 @@ export default function FileExplorerPanel(): React.ReactNode {
   const [metadataTab, setMetadataTab] = React.useState<
     "metadata" | "aspects" | "schema"
   >("metadata");
+
+  // Aspect count badge for the selected file
+  const aspectsCache = useKnowledgeStore((s) => s.aspectsCache);
+  const selectedUrn = selectedItem?.path && selectedItem?.zoneId
+    ? `urn:nexus:file:${selectedItem.zoneId}:${crypto.createHash("sha256").update(selectedItem.path).digest("hex").slice(0, 32)}`
+    : null;
+  const aspectCount = selectedUrn ? (aspectsCache.get(selectedUrn)?.length ?? 0) : 0;
 
   useKeyboard({
     "j": () => setSelectedIndex(Math.min(selectedIndex + 1, visibleNodeCount - 1)),
@@ -92,10 +101,10 @@ export default function FileExplorerPanel(): React.ReactNode {
             <FilePreview />
           </box>
 
-          {/* Metadata tab bar */}
+          {/* Metadata tab bar with aspect count badge */}
           <box height={1} width="100%">
             <text>
-              {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "} ${metadataTab === "aspects" ? "[Aspects]" : " Aspects "} ${metadataTab === "schema" ? "[Schema]" : " Schema "}`}
+              {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "} ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}`}
             </text>
           </box>
 

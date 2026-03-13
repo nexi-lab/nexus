@@ -98,6 +98,16 @@ async def trigger_reindex(
     op_logger, zone_id = logger_and_zone
     effective_zone = zone_id  # Always use authenticated user's zone — no cross-zone escalation
 
+    # Semantic reindex requires local filesystem walk — not available via REST API
+    if body.target == "semantic":
+        raise HTTPException(
+            status_code=501,
+            detail="Semantic reindex requires local filesystem access. "
+            "Use 'nexus reindex --target semantic' from the CLI with a local RecordStore.",
+        )
+    # For "all" via REST, _MCLProcessor runs search+versions; semantic
+    # requires local filesystem walk and is not available remotely.
+
     try:
         from sqlalchemy import func, select
 

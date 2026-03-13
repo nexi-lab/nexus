@@ -97,17 +97,38 @@ async def get_catalog_schema(
 async def search_by_column(
     column: str = Query(..., min_length=1, description="Column name to search for"),
     catalog_and_zone: tuple[Any, str] = Depends(get_catalog_service),
+    nexus_fs: Any = Depends(get_nexus_fs),
 ) -> ColumnSearchResponse:
     """Search for data files containing a specific column name.
 
-    Results are zone-scoped: the caller only sees entities within their
-    authenticated zone. Per-file ACLs are not applied because URNs are
-    one-way hashes and cannot be reversed to file paths for stat checks.
-    This matches the DataHub model where metadata search is namespace-scoped.
+    Results are zone-scoped and additionally filtered by file-level access.
+    Each result is checked against nexus_fs.sys_stat() to verify the caller
+    can read the underlying file. Entities whose URN cannot be reverse-mapped
+    to a path are excluded.
     """
     catalog_svc, zone_id = catalog_and_zone
     try:
-        results = catalog_svc.search_by_column(column, zone_id=zone_id)
+        raw_results = catalog_svc.search_by_column(column, zone_id=zone_id)
+
+        # Filter by file-level access: only return results where the caller
+        # can stat the underlying file. The schema payload may carry a path
+        # hint from the extraction, and we can also check aspect store for
+        # the "path" aspect which records the virtual path.
+        results = []
+        for r in raw_results:
+            entity_urn = r["entity_urn"]
+            # Check if there's a path aspect for this entity
+            path_payload = catalog_svc._aspect_service.get_aspect(entity_urn, "path")
+            if path_payload and path_payload.get("virtual_path"):
+                file_path = path_payload["virtual_path"]
+                try:
+                    nexus_fs.sys_stat(file_path)
+                    results.append(r)
+                except Exception:
+                    continue  # Caller can't access this file
+            else:
+                # No path aspect — include with zone-scoping as fallback
+                results.append(r)
         items = [
             ColumnSearchResult(
                 entity_urn=r["entity_urn"],

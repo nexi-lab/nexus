@@ -31,7 +31,10 @@ def catalog() -> None:
 @catalog.command(name="schema")
 @click.argument("path")
 @add_backend_options
-def catalog_schema(path: str, remote_url: str | None, remote_api_key: str | None) -> None:
+@click.pass_context
+def catalog_schema(
+    ctx: click.Context, path: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Show extracted schema for a data file.
 
     Extracts or retrieves the schema (columns, types, row count) for a
@@ -42,7 +45,8 @@ def catalog_schema(path: str, remote_url: str | None, remote_api_key: str | None
     """
     from nexus.cli.api_client import get_api_client_from_options
 
-    client = get_api_client_from_options(remote_url, remote_api_key)
+    profile_name = (ctx.obj or {}).get("profile")
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
     encoded_path = quote(path.lstrip("/"), safe="")
 
     try:
@@ -77,7 +81,10 @@ def catalog_schema(path: str, remote_url: str | None, remote_api_key: str | None
 @catalog.command(name="search")
 @click.option("--column", "-c", required=True, help="Column name to search for")
 @add_backend_options
-def catalog_search(column: str, remote_url: str | None, remote_api_key: str | None) -> None:
+@click.pass_context
+def catalog_search(
+    ctx: click.Context, column: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Find files containing a specific column.
 
     Searches all cataloged data files for columns matching the given name.
@@ -87,7 +94,8 @@ def catalog_search(column: str, remote_url: str | None, remote_api_key: str | No
     """
     from nexus.cli.api_client import get_api_client_from_options
 
-    client = get_api_client_from_options(remote_url, remote_api_key)
+    profile_name = (ctx.obj or {}).get("profile")
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
 
     try:
         result: dict[str, Any] = client.get("/api/v2/catalog/search", params={"column": column})

@@ -40,6 +40,16 @@ export function FileAspects({ item }: FileAspectsProps): React.ReactNode {
     }
   }, [client, urn, fetchAspects]);
 
+  // Fetch detail for each aspect once names are loaded
+  const aspectNames = urn ? (aspectsCache.get(urn) ?? []) : [];
+  useEffect(() => {
+    if (client && urn && aspectNames.length > 0) {
+      for (const name of aspectNames) {
+        fetchAspectDetail(urn, name, client);
+      }
+    }
+  }, [client, urn, aspectNames.length, fetchAspectDetail]);
+
   if (!item) {
     return <text>No file selected</text>;
   }
@@ -51,8 +61,6 @@ export function FileAspects({ item }: FileAspectsProps): React.ReactNode {
   if (loading) {
     return <text>Loading aspects...</text>;
   }
-
-  const aspectNames = aspectsCache.get(urn) ?? [];
 
   if (aspectNames.length === 0) {
     return (

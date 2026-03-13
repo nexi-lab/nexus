@@ -300,3 +300,20 @@ class OwnershipAspect(AspectBase):
     ) -> None:
         self.owner_id = owner_id
         self.owner_type = owner_type
+
+
+@register_aspect("governance.classification", max_versions=10)
+class GovernanceClassificationAspect(AspectBase):
+    """Governance classification for data sensitivity and access control."""
+
+    def __init__(
+        self,
+        level: str = "internal",
+        owner: str = "",
+        reason: str = "",
+        review_date: str = "",
+    ) -> None:
+        self.level = level
+        self.owner = owner
+        self.reason = reason
+        self.review_date = review_date

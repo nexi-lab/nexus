@@ -36,6 +36,8 @@ def client(mock_fs: MagicMock) -> TestClient:
         "authenticated": True,
         "user_id": "test-user",
         "groups": [],
+        "zone_id": "root",
+        "is_admin": False,
     }
 
     return TestClient(app)

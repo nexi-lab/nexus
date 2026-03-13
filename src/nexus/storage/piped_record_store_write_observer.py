@@ -493,6 +493,10 @@ class PipedRecordStoreWriteObserver:
                     change_type="delete",
                 )
                 recorder.record_delete(event["path"])
+                # Soft-delete entity aspects (Issue #2929)
+                from nexus.storage.aspect_service import AspectService
+
+                AspectService(session).soft_delete_entity_aspects(urn)
 
             elif op == "rename":
                 # Two rows: DELETE old + UPSERT new (locator URNs)

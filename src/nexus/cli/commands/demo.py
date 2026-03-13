@@ -23,209 +23,35 @@ from typing import Any
 import click
 import yaml
 
+from nexus.cli.commands.demo_data import (
+    CONFIG_SEARCH_PATHS,
+    DEMO_AGENTS,
+    DEMO_DIRS,
+    DEMO_FILES,
+    DEMO_PERMISSION_TUPLES,
+    DEMO_USERS,
+    MANIFEST_FILENAME,
+    PLAN_VERSIONS,
+)
 from nexus.cli.utils import console
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-CONFIG_SEARCH_PATHS = ("./nexus.yaml", "./nexus.yml")
-MANIFEST_FILENAME = ".demo-manifest.json"
-
-# Demo identities
-DEMO_USERS = [
-    {"type": "user", "id": "admin", "display_name": "Admin"},
-    {"type": "user", "id": "demo_user", "display_name": "Demo User"},
-]
-DEMO_AGENTS = [
-    {"type": "agent", "id": "demo_agent", "display_name": "Demo Agent"},
-]
-
-# Demo file tree — (path, content, description)
-DEMO_FILES: list[tuple[str, str, str]] = [
-    (
-        "/workspace/demo/README.md",
-        "# Nexus Demo Workspace\n\n"
-        "This workspace contains sample files for exploring Nexus features.\n\n"
-        "## Features demonstrated\n\n"
-        "- File CRUD operations\n"
-        "- Version history and rollback\n"
-        "- Permission-based access control\n"
-        "- Agent registry and coordination\n"
-        "- Audit logging\n"
-        "- Full-text search (grep)\n"
-        "- Semantic search\n",
-        "Demo workspace README",
-    ),
-    (
-        "/workspace/demo/plan.md",
-        "# Project Plan\n\n"
-        "## Phase 1: Setup\n- Initialize workspace\n- Configure authentication\n\n"
-        "## Phase 2: Development\n- Build vector index pipeline\n- Implement search API\n\n"
-        "## Phase 3: Deployment\n- Deploy to production\n- Monitor and iterate\n",
-        "Versioned project plan",
-    ),
-    (
-        "/workspace/demo/auth-flow.md",
-        "# Authentication Flow\n\n"
-        "## Overview\n"
-        "The demo authentication flow uses database-backed credentials.\n\n"
-        "## Steps\n"
-        "1. Client sends API key in `Authorization` header\n"
-        "2. Server validates key against the database\n"
-        "3. Server resolves the associated user/agent identity\n"
-        "4. OperationContext is populated with subject, zone, and capabilities\n"
-        "5. ReBAC checks are applied on every file operation\n\n"
-        "## API Key Format\n"
-        "- Live keys: `nx_live_<agent_id>`\n"
-        "- Test keys: `nx_test_<agent_id>`\n",
-        "Auth flow documentation (semantic-search friendly)",
-    ),
-    (
-        "/workspace/demo/notes/meeting-2026-03.md",
-        "# Meeting Notes — March 2026\n\n"
-        "## Attendees\n- Alice, Bob, Demo Agent\n\n"
-        "## Discussion\n"
-        "- Reviewed vector index performance benchmarks\n"
-        "- Decided to use HNSW with ef_construction=200\n"
-        "- Demo Agent will index the workspace nightly\n\n"
-        "## Action Items\n"
-        "- [ ] Alice: finalize schema migration\n"
-        "- [ ] Bob: benchmark Dragonfly cache hit rates\n"
-        "- [ ] Demo Agent: run nightly indexing job\n",
-        "Meeting notes with grep-friendly content",
-    ),
-    (
-        "/workspace/demo/notes/architecture.md",
-        "# Architecture Overview\n\n"
-        "## Storage Layer\n"
-        "Content-addressable storage (CAS) backed by local disk or GCS.\n"
-        "Each file's content is hashed (SHA-256) and stored by hash.\n\n"
-        "## Metadata Layer\n"
-        "Raft consensus for distributed metadata (sled state machine).\n"
-        "Supports single-node embedded mode (like SQLite) and multi-node federation.\n\n"
-        "## Search\n"
-        "- Grep: direct CAS scan or Zoekt trigram index\n"
-        "- Semantic: pgvector HNSW index with embedding cache in Dragonfly\n\n"
-        "## Permissions\n"
-        "Relationship-based access control (ReBAC) with Zanzibar-style tuples.\n"
-        "Zone isolation ensures cross-zone data cannot leak.\n",
-        "Architecture documentation (search-friendly)",
-    ),
-    (
-        "/workspace/demo/code/example.py",
-        '"""Example Python module for grep testing."""\n\n'
-        "import hashlib\n"
-        "from pathlib import Path\n\n\n"
-        "def compute_hash(data: bytes) -> str:\n"
-        '    """Compute SHA-256 hash of data."""\n'
-        "    return hashlib.sha256(data).hexdigest()\n\n\n"
-        "def build_vector_index(documents: list[str]) -> dict:\n"
-        '    """Build a simple vector index from documents.\n\n'
-        "    This function demonstrates semantic indexing by computing\n"
-        "    document embeddings and storing them in an HNSW index.\n"
-        '    """\n'
-        "    index = {}\n"
-        "    for i, doc in enumerate(documents):\n"
-        "        index[i] = compute_hash(doc.encode())\n"
-        "    return index\n",
-        "Python code file (grep-friendly)",
-    ),
-    (
-        "/workspace/demo/code/config.yaml",
-        "# Demo configuration\n"
-        "server:\n"
-        "  host: 0.0.0.0\n"
-        "  port: 2026\n"
-        "  workers: 4\n\n"
-        "cache:\n"
-        "  backend: dragonfly\n"
-        "  ttl: 3600\n"
-        "  max_memory: 512mb\n\n"
-        "search:\n"
-        "  engine: zoekt\n"
-        "  semantic_enabled: true\n"
-        "  embedding_model: text-embedding-3-small\n",
-        "YAML config file (grep-friendly)",
-    ),
-    (
-        "/workspace/demo/data/sample.json",
-        json.dumps(
-            {
-                "agents": [
-                    {
-                        "id": "demo_agent",
-                        "status": "active",
-                        "capabilities": ["read", "write", "search"],
-                    },
-                    {"id": "indexer", "status": "idle", "capabilities": ["read", "index"]},
-                ],
-                "workspace": {"path": "/workspace/demo", "files": 18, "version": 1},
-            },
-            indent=2,
-        )
-        + "\n",
-        "JSON data file",
-    ),
-    (
-        "/workspace/demo/restricted/internal.md",
-        "# Internal Document\n\n"
-        "This file has restricted permissions.\n"
-        "Only admin and authorized agents can read it.\n\n"
-        "## Confidential Notes\n"
-        "- Database credentials are rotated weekly\n"
-        "- API rate limits: 1000 req/min for agents, 100 req/min for users\n",
-        "Permission-restricted file",
-    ),
-]
-
-# Version history entries for plan.md
-PLAN_VERSIONS = [
-    "# Project Plan v1\n\n## Phase 1: Setup\n- Initialize workspace\n",
-    "# Project Plan v2\n\n## Phase 1: Setup\n- Initialize workspace\n- Configure auth\n\n"
-    "## Phase 2: Development\n- Build search API\n",
-    "# Project Plan v3\n\n## Phase 1: Setup\n- Initialize workspace\n- Configure authentication\n\n"
-    "## Phase 2: Development\n- Build vector index pipeline\n- Implement search API\n",
-]
-
-# Demo directories (ordered parents-first for creation, reversed for deletion)
-DEMO_DIRS = [
-    "/workspace",
-    "/workspace/demo",
-    "/workspace/demo/notes",
-    "/workspace/demo/code",
-    "/workspace/demo/data",
-    "/workspace/demo/restricted",
-]
-
-# ReBAC permission tuples seeded by demo init (used by both seed and reset)
-DEMO_PERMISSION_TUPLES = [
-    {
-        "subject": ["user", "admin"],
-        "relation": "direct_owner",
-        "object": ["file", "/workspace/demo"],
-        "zone_id": "root",
-    },
-    {
-        "subject": ["user", "demo_user"],
-        "relation": "viewer",
-        "object": ["file", "/workspace/demo"],
-        "zone_id": "root",
-    },
-    {
-        "subject": ["agent", "demo_agent"],
-        "relation": "editor",
-        "object": ["file", "/workspace/demo"],
-        "zone_id": "root",
-    },
-]
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _resolve_admin_key(config: dict[str, Any]) -> str:
+    """Resolve the admin API key from config or on-disk key file."""
+    api_key: str = config.get("api_key", "")
+    if not api_key:
+        data_dir: str = config.get("data_dir", "./nexus-data")
+        key_file = Path(data_dir) / ".admin-api-key"
+        if key_file.exists():
+            api_key = key_file.read_text().strip()
+    return api_key
 
 
 def _load_project_config() -> dict[str, Any]:
@@ -280,12 +106,7 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
 
         # Resolve the admin API key — prefer nexus.yaml, fall back to the
         # key file written by the container entrypoint.
-        api_key = config.get("api_key", "")
-        if not api_key:
-            data_dir = config.get("data_dir", "./nexus-data")
-            key_file = Path(data_dir) / ".admin-api-key"
-            if key_file.exists():
-                api_key = key_file.read_text().strip()
+        api_key = _resolve_admin_key(config)
 
         # When TLS is enabled, set env vars so nexus.connect() builds
         # an RPCTransport with mTLS credentials (dev certs double as
@@ -345,7 +166,7 @@ def _seed_files(
             parent = "/".join(path.split("/")[:-1])
             if parent:
                 nx.sys_mkdir(parent, parents=True, exist_ok=True)
-            nx.sys_write(path, content.encode())
+            nx.sys_write(path, content.encode(), consistency="ec")
             seeded.append(path)
             created += 1
         except Exception as e:
@@ -541,12 +362,7 @@ def _seed_permissions_rpc(config: dict[str, Any], tuples: list[dict[str, Any]]) 
     http_port = ports.get("http", 2026)
     grpc_port = ports.get("grpc", 2028)
 
-    api_key = config.get("api_key", "")
-    if not api_key:
-        data_dir = config.get("data_dir", "./nexus-data")
-        key_file = Path(data_dir) / ".admin-api-key"
-        if key_file.exists():
-            api_key = key_file.read_text().strip()
+    api_key = _resolve_admin_key(config)
 
     if not api_key:
         logger.debug("No admin API key — skipping permission seeding via RPC")
@@ -602,12 +418,7 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     grpc_port = ports.get("grpc", 2028)
 
     # Resolve admin API key
-    api_key = config.get("api_key", "")
-    if not api_key:
-        data_dir = config.get("data_dir", "./nexus-data")
-        key_file = Path(data_dir) / ".admin-api-key"
-        if key_file.exists():
-            api_key = key_file.read_text().strip()
+    api_key = _resolve_admin_key(config)
 
     if not api_key:
         logger.debug("No admin API key available — skipping identity seeding")
@@ -688,12 +499,7 @@ def _revoke_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     http_port = ports.get("http", 2026)
     grpc_port = ports.get("grpc", 2028)
 
-    api_key = config.get("api_key", "")
-    if not api_key:
-        data_dir = config.get("data_dir", "./nexus-data")
-        key_file = Path(data_dir) / ".admin-api-key"
-        if key_file.exists():
-            api_key = key_file.read_text().strip()
+    api_key = _resolve_admin_key(config)
     if not api_key:
         return 0
 
@@ -876,6 +682,92 @@ def _delete_permissions(nx: Any, config: dict[str, Any]) -> int:
             logger.debug("Could not delete permission %s: %s", t, e)
 
     return deleted
+
+
+def _seed_catalog(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> int:  # noqa: ARG001
+    """Extract and store catalog schemas for data files.
+
+    Calls the catalog REST API to extract schemas from CSV/JSON demo files.
+    Returns count of schemas extracted.
+    """
+    if manifest.get("schemas_extracted"):
+        return 0
+
+    from nexus.cli.api_client import NexusApiClient
+
+    api_key = _resolve_admin_key(config)
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    client = NexusApiClient(url=f"http://localhost:{http_port}", api_key=api_key)
+
+    data_files = [
+        "/workspace/demo/data/sales.csv",
+        "/workspace/demo/data/metrics.json",
+        "/workspace/demo/data/sample.json",
+    ]
+
+    extracted = 0
+    for path in data_files:
+        try:
+            encoded = path.lstrip("/").replace("/", "%2F")
+            client.get(f"/api/v2/catalog/schema/{encoded}")
+            extracted += 1
+        except Exception as e:
+            logger.debug("Could not extract schema for %s: %s", path, e)
+
+    manifest["schemas_extracted"] = extracted > 0
+    manifest["schemas_count"] = extracted
+    return extracted
+
+
+def _seed_aspects(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> int:  # noqa: ARG001
+    """Attach governance aspects to restricted files.
+
+    Calls the aspects REST API to attach a governance.classification aspect
+    to the restricted/internal.md file.
+    Returns count of aspects created.
+    """
+    if manifest.get("aspects_created"):
+        return 0
+
+    from nexus.cli.api_client import NexusApiClient
+    from nexus.contracts.urn import NexusURN
+
+    api_key = _resolve_admin_key(config)
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    client = NexusApiClient(url=f"http://localhost:{http_port}", api_key=api_key)
+
+    aspects_to_seed = [
+        (
+            "/workspace/demo/restricted/internal.md",
+            "governance.classification",
+            {
+                "level": "restricted",
+                "owner": "admin",
+                "reason": "Contains confidential operational data",
+                "review_date": "2026-06-01",
+            },
+        ),
+    ]
+
+    created = 0
+    for path, aspect_name, payload in aspects_to_seed:
+        try:
+            urn = str(NexusURN.for_file("root", path))
+            encoded_urn = urn.replace(":", "%3A")
+            encoded_name = aspect_name.replace(".", "%2E")
+            client.put(
+                f"/api/v2/aspects/{encoded_urn}/{encoded_name}",
+                json_body={"payload": payload, "created_by": "demo_seed"},
+            )
+            created += 1
+        except Exception as e:
+            logger.debug("Could not seed aspect %s on %s: %s", aspect_name, path, e)
+
+    manifest["aspects_created"] = created > 0
+    manifest["aspects_count"] = created
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -1154,11 +1046,26 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     if not skip_semantic:
         semantic_ready = _init_semantic_search(nx, config)
 
-    # 7. Record seed metadata
+    # 7. Seed catalog schemas (best-effort)
+    schemas_extracted = 0
+    try:
+        schemas_extracted = _seed_catalog(nx, config, manifest)
+    except Exception as e:
+        logger.debug("Catalog seeding failed: %s", e)
+
+    # 8. Seed aspects (best-effort)
+    aspects_created = 0
+    try:
+        aspects_created = _seed_aspects(nx, config, manifest)
+    except Exception as e:
+        logger.debug("Aspect seeding failed: %s", e)
+
+    # 9. Record seed metadata
     manifest["seeded_at"] = datetime.now(tz=UTC).isoformat()
     manifest["preset"] = config.get("preset", "unknown")
     manifest["skip_semantic"] = skip_semantic
     manifest["semantic_ready"] = semantic_ready
+    manifest["write_mode_used"] = "ec"
 
     # Save manifest
     _save_manifest(data_dir, manifest)
@@ -1185,6 +1092,14 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     else:
         console.print("  Semantic:     failed (check server logs)")
     console.print("  Grep corpus:  ready")
+    if schemas_extracted > 0:
+        console.print(f"  Catalog:      {schemas_extracted} schemas extracted")
+    else:
+        console.print("  Catalog:      skipped (server unavailable)")
+    if aspects_created > 0:
+        console.print(f"  Aspects:      {aspects_created} aspects seeded")
+    else:
+        console.print("  Aspects:      skipped (server unavailable)")
 
     # Print suggested commands — for shared/demo presets, tell the user to
     # export env vars so all CLI commands authenticate against the running stack.
@@ -1217,6 +1132,17 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     console.print('  nexus grep "vector index" /workspace/demo')
     if semantic_ready:
         console.print('  nexus search query "How does the demo authentication flow work?"')
+    console.print()
+    console.print("[bold]Data catalog:[/bold]")
+    console.print("  nexus catalog schema /workspace/demo/data/sales.csv")
+    console.print("  nexus catalog search --column amount")
+    console.print()
+    console.print("[bold]Metadata aspects:[/bold]")
+    console.print("  nexus aspects list /workspace/demo/restricted/internal.md")
+    console.print()
+    console.print("[bold]Operations & replay:[/bold]")
+    console.print("  nexus ops replay --limit 5")
+    console.print("  nexus reindex --target search --dry-run")
 
 
 @demo.command(name="reset")

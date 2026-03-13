@@ -44,6 +44,14 @@ export type {
   ApiErrorResponse,
   PaginatedResponse,
   SseEvent,
+  AspectEnvelope,
+  AspectListResponse,
+  DatasetSchema,
+  CatalogSchemaResponse,
+  ColumnSearchResult,
+  ColumnSearchResponse,
+  ReplayRecord,
+  ReplayResponse,
 } from "./types.js";
 
 // Case transform utilities

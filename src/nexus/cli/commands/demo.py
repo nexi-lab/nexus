@@ -715,7 +715,7 @@ def _seed_catalog(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> 
         except Exception as e:
             logger.debug("Could not extract schema for %s: %s", path, e)
 
-    manifest["schemas_extracted"] = True
+    manifest["schemas_extracted"] = extracted > 0
     manifest["schemas_count"] = extracted
     return extracted
 
@@ -754,7 +754,7 @@ def _seed_aspects(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> 
     created = 0
     for path, aspect_name, payload in aspects_to_seed:
         try:
-            urn = str(NexusURN.for_file("default", path))
+            urn = str(NexusURN.for_file("root", path))
             encoded_urn = urn.replace(":", "%3A")
             encoded_name = aspect_name.replace(".", "%2E")
             client.put(
@@ -765,7 +765,7 @@ def _seed_aspects(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> 
         except Exception as e:
             logger.debug("Could not seed aspect %s on %s: %s", aspect_name, path, e)
 
-    manifest["aspects_created"] = True
+    manifest["aspects_created"] = created > 0
     manifest["aspects_count"] = created
     return created
 

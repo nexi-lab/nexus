@@ -80,6 +80,8 @@ export interface KnowledgeState {
     client: FetchClient,
     fromSequence?: number,
     limit?: number,
+    entityUrn?: string,
+    aspectName?: string,
   ) => Promise<void>;
   readonly searchByColumn: (
     column: string,
@@ -191,16 +193,23 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     }
   },
 
-  fetchReplay: async (client, fromSequence = 0, limit = 50) => {
+  fetchReplay: async (
+    client,
+    fromSequence = 0,
+    limit = 50,
+    entityUrn?: string,
+    aspectName?: string,
+  ) => {
     set({ replayLoading: true, error: null });
     try {
+      let url = `/api/v2/ops/replay?from_sequence=${fromSequence}&limit=${limit}`;
+      if (entityUrn) url += `&entity_urn=${encodeURIComponent(entityUrn)}`;
+      if (aspectName) url += `&aspect_name=${encodeURIComponent(aspectName)}`;
       const result = await client.get<{
         records: ReplayEntry[];
         nextCursor: number | null;
         hasMore: boolean;
-      }>(
-        `/api/v2/ops/replay?from_sequence=${fromSequence}&limit=${limit}`,
-      );
+      }>(url);
       const records: ReplayEntry[] = result.records ?? [];
       const entries = records.map((r) => ({
         sequenceNumber: r.sequenceNumber ?? 0,

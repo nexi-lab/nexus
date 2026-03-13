@@ -1,7 +1,9 @@
 """API v2 routers."""
 
 from nexus.server.api.v2.routers import (
+    aspects,
     bricks,
+    catalog,
     conflicts,
     connectors,
     events_replay,
@@ -10,13 +12,16 @@ from nexus.server.api.v2.routers import (
     mobile_search,
     operations,
     pay,
+    replay,
     reputation,
     sync_push,
     workflows,
 )
 
 __all__ = [
+    "aspects",
     "bricks",
+    "catalog",
     "conflicts",
     "connectors",
     "events_replay",
@@ -24,6 +29,7 @@ __all__ = [
     "mobile_search",
     "operations",
     "pay",
+    "replay",
     "reputation",
     "sync_push",
     "workflows",

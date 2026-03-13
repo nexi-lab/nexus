@@ -198,7 +198,6 @@ def _run_semantic_reindex(
     For each file, computes its URN, reads content, and runs
     CatalogService.extract_schema() to rebuild the schema_metadata aspect.
     """
-    import hashlib
     import mimetypes
 
     from nexus.bricks.catalog.protocol import CatalogService
@@ -234,9 +233,9 @@ def _run_semantic_reindex(
         for file_path in all_files:
             try:
                 # Compute URN from path
-                z = zone_id or "default"
-                path_hash = hashlib.sha256(file_path.encode()).hexdigest()[:32]
-                urn = f"urn:nexus:file:{z}:{path_hash}"
+                from nexus.contracts.urn import NexusURN
+
+                urn = str(NexusURN.for_file(zone_id or "default", file_path))
 
                 # Read file content
                 content = nx.read(file_path)

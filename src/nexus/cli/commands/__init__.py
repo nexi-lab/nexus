@@ -55,6 +55,9 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "stack": ("up", "down", "logs", "restart"),
     # Issue #2929: MCL replay for index rebuild
     "reindex": ("reindex",),
+    # Issue #2930: Catalog and aspects commands
+    "catalog": ("catalog",),
+    "aspects": ("aspects",),
 }
 
 # Modules that expose a single Click command/group to add via cli.add_command

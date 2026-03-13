@@ -16,14 +16,17 @@ import { KnowledgeView } from "./knowledge-view.js";
 import { MemoryList } from "./memory-list.js";
 import { PlaybookList } from "./playbook-list.js";
 import { RlmAnswerView } from "./rlm-answer-view.js";
+import { ColumnSearch } from "./column-search.js";
+import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 
-const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories", "playbooks", "ask"];
+const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories", "playbooks", "ask", "columns"];
 const TAB_LABELS: Readonly<Record<SearchTab, string>> = {
   search: "Search",
   knowledge: "Knowledge",
   memories: "Memories",
   playbooks: "Playbooks",
   ask: "Ask",
+  columns: "Columns",
 };
 
 const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
@@ -66,6 +69,11 @@ export default function SearchPanel(): React.ReactNode {
   const activeTab = useSearchStore((s) => s.activeTab);
   const error = useSearchStore((s) => s.error);
 
+  // Knowledge store (column search)
+  const columnSearchResults = useKnowledgeStore((s) => s.columnSearchResults);
+  const columnSearchLoading = useKnowledgeStore((s) => s.columnSearchLoading);
+  const searchByColumn = useKnowledgeStore((s) => s.searchByColumn);
+
   const searchMode = useSearchStore((s) => s.searchMode);
   const cycleSearchMode = useSearchStore((s) => s.cycleSearchMode);
 
@@ -104,9 +112,11 @@ export default function SearchPanel(): React.ReactNode {
         fetchPlaybooks(query.trim(), client);
       } else if (activeTab === "ask") {
         askRlm(query.trim(), client, effectiveZoneId);
+      } else if (activeTab === "columns") {
+        void searchByColumn(query.trim(), client);
       }
     },
-    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, setSearchQuery, effectiveZoneId],
+    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, searchByColumn, setSearchQuery, effectiveZoneId],
   );
 
   // Refresh current view based on active tab
@@ -123,8 +133,10 @@ export default function SearchPanel(): React.ReactNode {
       fetchPlaybooks(searchQuery || "", client);
     } else if (activeTab === "ask" && searchQuery) {
       askRlm(searchQuery, client, effectiveZoneId);
+    } else if (activeTab === "columns" && searchQuery) {
+      void searchByColumn(searchQuery, client);
     }
-  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, effectiveZoneId]);
+  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, searchByColumn, effectiveZoneId]);
 
   // In input mode, capture printable characters via onUnhandled
   const handleUnhandledKey = useCallback(
@@ -376,6 +388,9 @@ export default function SearchPanel(): React.ReactNode {
         {activeTab === "ask" && (
           <RlmAnswerView answer={rlmAnswer} loading={rlmLoading} contextPaths={rlmContextPaths} />
         )}
+        {activeTab === "columns" && (
+          <ColumnSearch results={columnSearchResults} loading={columnSearchLoading} />
+        )}
       </box>
 
       {/* Help bar */}
@@ -387,9 +402,11 @@ export default function SearchPanel(): React.ReactNode {
               ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  Esc:close  r:refresh  q:quit"
               : activeTab === "ask"
                 ? "/:ask  a:clear context  Tab:switch tab  r:refresh  q:quit"
-                : activeTab === "search"
-                  ? "j/k:navigate  a:add to context  /:search  m:mode  Enter:select  Tab:tab  r:refresh  q:quit"
-                  : "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit"}
+                : activeTab === "columns"
+                  ? "/:search column  Tab:switch tab  r:refresh  q:quit"
+                  : activeTab === "search"
+                    ? "j/k:navigate  a:add to context  /:search  m:mode  Enter:select  Tab:tab  r:refresh  q:quit"
+                    : "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit"}
         </text>
       </box>
     </box>

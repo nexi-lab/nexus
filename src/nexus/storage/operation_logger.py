@@ -184,24 +184,25 @@ class OperationLogger:
         Yields:
             OperationLogModel instances with MCL columns populated.
         """
-        stmt = (
-            select(OperationLogModel)
-            .where(
-                OperationLogModel.entity_urn.isnot(None),
-                OperationLogModel.sequence_number >= from_sequence,
-            )
-            .order_by(OperationLogModel.sequence_number)
-        )
-        if zone_id is not None:
-            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
-
-        offset = 0
+        current_seq = from_sequence
         while True:
-            batch = list(self.session.execute(stmt.limit(batch_size).offset(offset)).scalars())
+            batch_stmt = (
+                select(OperationLogModel)
+                .where(
+                    OperationLogModel.entity_urn.isnot(None),
+                    OperationLogModel.sequence_number >= current_seq,
+                )
+                .order_by(OperationLogModel.sequence_number)
+                .limit(batch_size)
+            )
+            if zone_id is not None:
+                batch_stmt = batch_stmt.where(OperationLogModel.zone_id == zone_id)
+            batch = list(self.session.execute(batch_stmt).scalars())
             if not batch:
                 break
             yield from batch
-            offset += len(batch)
+            last_seq = batch[-1].sequence_number
+            current_seq = (last_seq + 1) if last_seq is not None else current_seq + batch_size
 
     def get_operation(self, operation_id: str) -> OperationLogModel | None:
         """Get operation by ID.

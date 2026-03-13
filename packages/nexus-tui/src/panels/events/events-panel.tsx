@@ -18,13 +18,16 @@ import { ConnectorList } from "./connector-list.js";
 import { SubscriptionList } from "./subscription-list.js";
 import { LockList } from "./lock-list.js";
 import { SecretsAudit } from "./secrets-audit.js";
+import { MclReplay } from "./mcl-replay.js";
+import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 
 type FilterMode = "none" | "type" | "search";
 
-type PanelTab = "events" | InfraTab;
+type PanelTab = "events" | "mcl" | InfraTab;
 
 const TAB_ORDER: readonly PanelTab[] = [
   "events",
+  "mcl",
   "connectors",
   "subscriptions",
   "locks",
@@ -33,6 +36,7 @@ const TAB_ORDER: readonly PanelTab[] = [
 
 const TAB_LABELS: Readonly<Record<PanelTab, string>> = {
   events: "Events",
+  mcl: "MCL",
   connectors: "Connectors",
   subscriptions: "Subscriptions",
   locks: "Locks",
@@ -99,19 +103,24 @@ export default function EventsPanel(): React.ReactNode {
     return () => disconnect();
   }, [config.apiKey, config.baseUrl, config.agentId, config.subject, config.zoneId, connect, disconnect]);
 
+  // Knowledge store (MCL replay)
+  const fetchReplay = useKnowledgeStore((s) => s.fetchReplay);
+  const clearReplay = useKnowledgeStore((s) => s.clearReplay);
+
   // Fetch infra data when switching tabs
   useEffect(() => {
     if (!apiClient || activeTab === "events") return;
 
-    if (activeTab === "connectors") fetchConnectors(apiClient);
+    if (activeTab === "mcl") void fetchReplay(apiClient, 0, 50);
+    else if (activeTab === "connectors") fetchConnectors(apiClient);
     else if (activeTab === "subscriptions") fetchSubscriptions(apiClient);
     else if (activeTab === "locks") fetchLocks(apiClient);
     else if (activeTab === "secrets") fetchSecretAudit(apiClient);
-  }, [activeTab, apiClient, fetchConnectors, fetchSubscriptions, fetchLocks, fetchSecretAudit]);
+  }, [activeTab, apiClient, fetchConnectors, fetchSubscriptions, fetchLocks, fetchSecretAudit, fetchReplay]);
 
   // Sync infra tab state
   useEffect(() => {
-    if (activeTab !== "events") {
+    if (activeTab !== "events" && activeTab !== "mcl") {
       setInfraTab(activeTab as InfraTab);
     }
   }, [activeTab, setInfraTab]);
@@ -152,6 +161,9 @@ export default function EventsPanel(): React.ReactNode {
           zoneId: config.zoneId,
         });
       }
+    } else if (activeTab === "mcl" && apiClient) {
+      clearReplay();
+      void fetchReplay(apiClient, 0, 50);
     } else if (apiClient) {
       if (activeTab === "connectors") fetchConnectors(apiClient);
       else if (activeTab === "subscriptions") fetchSubscriptions(apiClient);
@@ -275,7 +287,7 @@ export default function EventsPanel(): React.ReactNode {
       )}
 
       {/* Error display */}
-      {infraError && activeTab !== "events" && (
+      {infraError && activeTab !== "events" && activeTab !== "mcl" && (
         <box height={1} width="100%">
           <text>{`Error: ${infraError}`}</text>
         </box>
@@ -310,6 +322,8 @@ export default function EventsPanel(): React.ReactNode {
             </scrollbox>
           </box>
         )}
+
+        {activeTab === "mcl" && <MclReplay />}
 
         {activeTab === "connectors" && (
           <ConnectorList
@@ -350,11 +364,13 @@ export default function EventsPanel(): React.ReactNode {
             ? "Type filter, Enter:apply, Escape:cancel, Backspace:delete"
             : activeTab === "events"
             ? "f:filter type  s:filter search  c:clear  r:reconnect  Tab:switch tab  q:quit"
-            : activeTab === "subscriptions"
-              ? "j/k:navigate  d:delete  t:test  r:refresh  Tab:switch tab"
-              : activeTab === "locks"
-                ? "j/k:navigate  d:release  r:refresh  Tab:switch tab"
-                : "j/k:navigate  r:refresh  Tab:switch tab"}
+            : activeTab === "mcl"
+              ? "r:refresh  Tab:switch tab  q:quit"
+              : activeTab === "subscriptions"
+                ? "j/k:navigate  d:delete  t:test  r:refresh  Tab:switch tab"
+                : activeTab === "locks"
+                  ? "j/k:navigate  d:release  r:refresh  Tab:switch tab"
+                  : "j/k:navigate  r:refresh  Tab:switch tab"}
         </text>
       </box>
     </box>

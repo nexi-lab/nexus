@@ -220,3 +220,60 @@ async def get_reputation_context(
     }
 
     return reputation_service, dispute_service, auth_ctx
+
+
+# =============================================================================
+# Aspect & Catalog dependencies (Issue #2930)
+# =============================================================================
+
+
+async def get_aspect_service(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> Any:
+    """Get AspectService scoped to the authenticated user's zone.
+
+    Returns a tuple of (AspectService, zone_id) for zone-scoped operations.
+    Issue #2930.
+    """
+    from nexus.storage.aspect_service import AspectService
+
+    context = get_operation_context(auth_result)
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    session_factory = (
+        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
+    )
+    session = session_factory()
+    zone_id = context.zone_id or ROOT_ZONE_ID
+
+    try:
+        yield AspectService(session=session), zone_id
+    finally:
+        session.close()
+
+
+async def get_catalog_service(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> Any:
+    """Get CatalogService scoped to the authenticated user's zone.
+
+    Returns a tuple of (CatalogService, zone_id) for zone-scoped operations.
+    Issue #2930.
+    """
+    from nexus.bricks.catalog.protocol import CatalogService
+    from nexus.storage.aspect_service import AspectService
+
+    context = get_operation_context(auth_result)
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    session_factory = (
+        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
+    )
+    session = session_factory()
+    zone_id = context.zone_id or ROOT_ZONE_ID
+
+    try:
+        aspect_svc = AspectService(session=session)
+        yield CatalogService(aspect_svc), zone_id
+    finally:
+        session.close()

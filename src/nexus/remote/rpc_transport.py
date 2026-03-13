@@ -97,6 +97,10 @@ class RPCTransport:
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
         self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
 
+        # Pre-warm: trigger eager TCP/TLS handshake so connection establishment
+        # overlaps with NexusFS construction instead of blocking on first RPC.
+        self._channel_ready = grpc.channel_ready_future(self._channel)
+
         # Reuse BaseRemoteNexusFS error handling (static method access)
         self._error_handler = BaseRemoteNexusFS()
 

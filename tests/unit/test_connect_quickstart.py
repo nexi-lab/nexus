@@ -39,17 +39,18 @@ def test_local_connect_falls_back_when_full_federation_build_is_unavailable(
 def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
     monkeypatch,
 ) -> None:
-    """Remote clients should avoid local parser bootstrap and mount writes."""
-    from nexus.bricks.parsers.providers.registry import ProviderRegistry
-    from nexus.bricks.parsers.registry import ParserRegistry
+    """Remote clients should avoid local parser bootstrap and mount writes.
+
+    parser_registry / provider_registry are brick-layer — the kernel must
+    NOT hold references to them, and the remote connect path must NOT import
+    bricks.parsers at all.
+    """
     from nexus.storage.remote_metastore import RemoteMetastore
 
     def _unexpected(*args, **kwargs):
         raise AssertionError("remote connect should not perform this bootstrap step")
 
     monkeypatch.setattr(RemoteMetastore, "put", _unexpected)
-    monkeypatch.setattr(ParserRegistry, "register", _unexpected)
-    monkeypatch.setattr(ProviderRegistry, "auto_discover", _unexpected)
 
     nx = nexus.connect(
         config={
@@ -58,8 +59,9 @@ def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
         }
     )
     try:
-        assert nx.parser_registry.get_parsers() == []
-        assert nx.provider_registry.get_all_providers() == []
+        # Kernel must NOT hold brick-layer parser/provider registry references
+        assert not hasattr(nx, "parser_registry")
+        assert not hasattr(nx, "provider_registry")
     finally:
         nx.close()
 

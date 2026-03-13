@@ -49,7 +49,7 @@ def aspects_list(
         remote_url=remote_url, remote_api_key=remote_api_key, profile_name=profile_name
     )
     zone_id = conn.zone_id or "root"
-    client = get_api_client_from_options(remote_url, remote_api_key)
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
     urn = str(NexusURN.for_file(zone_id, path))
 
     try:
@@ -96,7 +96,7 @@ def aspects_get(
         remote_url=remote_url, remote_api_key=remote_api_key, profile_name=profile_name
     )
     zone_id = conn.zone_id or "root"
-    client = get_api_client_from_options(remote_url, remote_api_key)
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
     urn = str(NexusURN.for_file(zone_id, path))
 
     try:

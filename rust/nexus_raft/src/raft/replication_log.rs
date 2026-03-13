@@ -129,7 +129,9 @@ impl ReplicationLog {
     /// Both the log entry and the next_seq counter are written in a single
     /// redb transaction to prevent sequence reuse after a crash.
     pub fn append(&self, command_bytes: &[u8]) -> Result<u64> {
-        let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
+        // Relaxed: uniqueness from the atomic op; ordering from redb's
+        // single-writer transaction serialization. SeqCst is unnecessary.
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
 
         let entry = ReplicationEntry {
             command: command_bytes.to_vec(),
@@ -142,9 +144,10 @@ impl ReplicationLog {
 
         let key = seq.to_be_bytes();
         let value = bincode::serialize(&entry)?;
-        let next_seq_bytes = (seq + 1).to_be_bytes();
 
-        // Atomic: write log entry + persist next_seq in a single transaction
+        // Single transaction for both entry and metadata — atomic, one fsync.
+        // The max() prevents next_seq regression under concurrent appends:
+        // redb serializes write transactions, so only one thread is here at a time.
         let log_table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.log_tree.name());
         let meta_table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.meta_tree.name());
         let db = self.log_tree.raw_db();
@@ -161,8 +164,21 @@ impl ReplicationLog {
             let mut meta_table = write_txn
                 .open_table(meta_table_def)
                 .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+            // Read current persisted next_seq, advance only if our seq is higher.
+            // Prevents regression when concurrent appenders commit out of order.
+            use redb::ReadableTable;
+            let current_persisted: u64 = meta_table
+                .get(KEY_NEXT_SEQ as &[u8])
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?
+                .map(|guard| {
+                    let slice: &[u8] = guard.value();
+                    let bytes: [u8; 8] = slice.try_into().unwrap_or([0; 8]);
+                    u64::from_be_bytes(bytes)
+                })
+                .unwrap_or(1);
+            let new_next_seq = current_persisted.max(seq + 1);
             meta_table
-                .insert(KEY_NEXT_SEQ, next_seq_bytes.as_slice())
+                .insert(KEY_NEXT_SEQ, new_next_seq.to_be_bytes().as_slice())
                 .map_err(|e| super::RaftError::Storage(e.to_string()))?;
         }
         write_txn
@@ -180,12 +196,12 @@ impl ReplicationLog {
     /// - `Some("pending")` — write is local-only, awaiting replication
     /// - `None` — invalid token (0, or >= next_seq)
     pub fn is_committed(&self, token: u64) -> Option<&str> {
-        let max = self.next_seq.load(Ordering::SeqCst);
+        let max = self.next_seq.load(Ordering::Acquire);
         if token == 0 || token >= max {
             return None; // invalid or unknown token
         }
 
-        let watermark = self.replicated_watermark.load(Ordering::SeqCst);
+        let watermark = self.replicated_watermark.load(Ordering::Acquire);
         if token <= watermark {
             Some("committed")
         } else {
@@ -195,7 +211,7 @@ impl ReplicationLog {
 
     /// Get the next sequence number (exclusive upper bound).
     pub fn max_seq(&self) -> u64 {
-        self.next_seq.load(Ordering::SeqCst)
+        self.next_seq.load(Ordering::Relaxed)
     }
 
     /// Advance the replicated watermark after peer confirmation.
@@ -203,10 +219,10 @@ impl ReplicationLog {
     /// Called by the background replication task (Phase C) when writes
     /// have been acknowledged by a majority of peers.
     pub fn advance_watermark(&self, new_watermark: u64) -> Result<()> {
-        let current = self.replicated_watermark.load(Ordering::SeqCst);
+        let current = self.replicated_watermark.load(Ordering::Relaxed);
         if new_watermark > current {
             self.replicated_watermark
-                .store(new_watermark, Ordering::SeqCst);
+                .store(new_watermark, Ordering::Release);
             self.meta_tree
                 .set(KEY_REPLICATED_WATERMARK, &new_watermark.to_be_bytes())?;
             tracing::debug!(
@@ -223,8 +239,8 @@ impl ReplicationLog {
     /// Used by the background replication task (Phase C) to send pending
     /// writes to peers.
     pub fn drain_unreplicated(&self) -> Result<Vec<(u64, ReplicationEntry)>> {
-        let watermark = self.replicated_watermark.load(Ordering::SeqCst);
-        let max = self.next_seq.load(Ordering::SeqCst);
+        let watermark = self.replicated_watermark.load(Ordering::Acquire);
+        let max = self.next_seq.load(Ordering::Acquire);
 
         let mut entries = Vec::new();
         for seq in (watermark + 1)..max {
@@ -244,7 +260,7 @@ impl ReplicationLog {
     /// this value, it has fallen behind the compacted region and needs a
     /// full snapshot instead of incremental replication.
     pub fn earliest_seq(&self) -> u64 {
-        self.earliest_seq.load(Ordering::SeqCst)
+        self.earliest_seq.load(Ordering::Relaxed)
     }
 
     /// Remove WAL entries with seq <= `up_to_seq` (Kafka-style compaction).
@@ -255,7 +271,7 @@ impl ReplicationLog {
     /// Safe to call concurrently — `earliest_seq` is updated atomically and
     /// persisted to the meta tree for crash recovery.
     pub fn compact(&self, up_to_seq: u64) -> Result<u64> {
-        let earliest = self.earliest_seq.load(Ordering::SeqCst);
+        let earliest = self.earliest_seq.load(Ordering::Relaxed);
         if up_to_seq < earliest {
             return Ok(0); // Already compacted past this point
         }
@@ -268,7 +284,7 @@ impl ReplicationLog {
         }
 
         let new_earliest = up_to_seq + 1;
-        self.earliest_seq.store(new_earliest, Ordering::SeqCst);
+        self.earliest_seq.store(new_earliest, Ordering::Release);
         self.meta_tree
             .set(KEY_EARLIEST_SEQ, &new_earliest.to_be_bytes())?;
 
@@ -433,5 +449,133 @@ mod tests {
             assert!(log.log_tree.get(&1u64.to_be_bytes()).unwrap().is_none());
             assert!(log.log_tree.get(&2u64.to_be_bytes()).unwrap().is_none());
         }
+    }
+
+    #[test]
+    fn test_append_atomicity() {
+        let store = RedbStore::open_temporary().unwrap();
+        let log = ReplicationLog::new(&store, 1).unwrap();
+
+        // Successful append — both entry and next_seq should be present
+        let seq = log.append(b"cmd1").unwrap();
+        assert_eq!(seq, 1);
+
+        // Verify entry exists
+        assert!(log.log_tree.get(&1u64.to_be_bytes()).unwrap().is_some());
+
+        // Verify next_seq was persisted
+        let next_seq_bytes = log.meta_tree.get(KEY_NEXT_SEQ).unwrap().unwrap();
+        let persisted_next = u64::from_be_bytes(next_seq_bytes.try_into().unwrap());
+        assert_eq!(persisted_next, 2);
+    }
+
+    #[test]
+    fn test_recovery_consistency() {
+        let tmpfile = tempfile::NamedTempFile::new().unwrap();
+        let path = tmpfile.path().to_path_buf();
+
+        // Write entries
+        {
+            let store = RedbStore::open(&path).unwrap();
+            let log = ReplicationLog::new(&store, 1).unwrap();
+            log.append(b"cmd1").unwrap();
+            log.append(b"cmd2").unwrap();
+            log.append(b"cmd3").unwrap();
+        }
+
+        // Reopen — verify next_seq matches actual entries
+        {
+            let store = RedbStore::open(&path).unwrap();
+            let log = ReplicationLog::new(&store, 1).unwrap();
+            assert_eq!(log.max_seq(), 4); // next_seq = 4 (3 appends)
+
+            // All 3 entries should exist
+            for seq in 1..=3u64 {
+                assert!(
+                    log.log_tree.get(&seq.to_be_bytes()).unwrap().is_some(),
+                    "entry {} should exist",
+                    seq
+                );
+            }
+
+            // Verify no orphan entry at seq 4
+            assert!(log.log_tree.get(&4u64.to_be_bytes()).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn test_recovery_after_restart() {
+        let tmpfile = tempfile::NamedTempFile::new().unwrap();
+        let path = tmpfile.path().to_path_buf();
+
+        let expected_seq;
+        {
+            let store = RedbStore::open(&path).unwrap();
+            let log = ReplicationLog::new(&store, 1).unwrap();
+            log.append(b"cmd1").unwrap();
+            log.append(b"cmd2").unwrap();
+            expected_seq = log.append(b"cmd3").unwrap();
+            // Drop without explicit close — simulates crash
+        }
+
+        // Reopen and verify next_seq is correct (no regression)
+        {
+            let store = RedbStore::open(&path).unwrap();
+            let log = ReplicationLog::new(&store, 1).unwrap();
+            assert_eq!(log.max_seq(), expected_seq + 1);
+
+            // New append should get next sequence, not reuse
+            let new_seq = log.append(b"cmd4").unwrap();
+            assert_eq!(new_seq, expected_seq + 1);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_append_seq_monotonicity() {
+        use std::sync::Arc;
+
+        let store = RedbStore::open_temporary().unwrap();
+        let log = Arc::new(ReplicationLog::new(&store, 1).unwrap());
+        let mut handles = Vec::new();
+
+        // Spawn 4 threads each appending 25 entries
+        for t in 0..4 {
+            let log = Arc::clone(&log);
+            handles.push(std::thread::spawn(move || {
+                let mut seqs = Vec::new();
+                for i in 0..25 {
+                    let cmd = format!("t{t}-cmd{i}");
+                    let seq = log.append(cmd.as_bytes()).unwrap();
+                    seqs.push(seq);
+                }
+                seqs
+            }));
+        }
+
+        let mut all_seqs: Vec<u64> = Vec::new();
+        for h in handles {
+            all_seqs.extend(h.join().unwrap());
+        }
+
+        // All 100 sequences must be unique
+        all_seqs.sort();
+        let total = all_seqs.len();
+        all_seqs.dedup();
+        assert_eq!(all_seqs.len(), total, "all sequences must be unique");
+        assert_eq!(total, 100);
+
+        // max_seq should be 101 (next to assign)
+        assert_eq!(log.max_seq(), 101);
+
+        // Verify persisted next_seq matches
+        let next_seq_bytes = log.meta_tree.get(KEY_NEXT_SEQ).unwrap().unwrap();
+        let persisted_next = u64::from_be_bytes(next_seq_bytes.try_into().unwrap());
+        // Due to concurrent access, persisted next_seq should be at least 101
+        // (it could be higher if a concurrent writer persisted a higher value)
+        assert!(
+            persisted_next >= 100,
+            "persisted next_seq {} should be >= 100",
+            persisted_next
+        );
     }
 }

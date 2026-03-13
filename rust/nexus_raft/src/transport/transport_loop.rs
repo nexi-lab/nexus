@@ -34,11 +34,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
+use tokio::task::JoinSet;
+
+use std::time::Duration as StdDuration;
 
 /// Base backoff interval for EC replication retries.
 const EC_BACKOFF_BASE: Duration = Duration::from_millis(100);
 /// Maximum backoff interval (cap) for EC replication retries.
 const EC_BACKOFF_CAP: Duration = Duration::from_secs(60);
+
+/// Timeout for individual peer message sends.
+const PEER_SEND_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 
 /// Per-peer EC replication state.
 struct PeerReplicationState {
@@ -164,16 +170,8 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             // 2. Advance raft state + apply entries + get outgoing messages
             match self.driver.advance().await {
                 Ok(messages) => {
-                    for msg in messages {
-                        let target_id = msg.to;
-                        // Clone address under read lock, then release before async send
-                        // (std::sync lock must not be held across .await)
-                        let addr = self.peers.read().unwrap().get(&target_id).cloned();
-                        if let Some(addr) = addr {
-                            self.send_message(target_id, &addr, msg).await;
-                        } else {
-                            tracing::warn!("No address for peer {} — dropping message", target_id);
-                        }
+                    if !messages.is_empty() {
+                        self.send_messages_parallel(messages).await;
                     }
                 }
                 Err(e) => {
@@ -186,35 +184,65 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
         }
     }
 
-    /// Serialize and send an eraftpb::Message to a peer via gRPC.
-    async fn send_message(&self, target_id: u64, addr: &NodeAddress, msg: raft::eraftpb::Message) {
-        let bytes = match msg.write_to_bytes() {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::error!("Failed to serialize message for node {}: {}", target_id, e);
-                return;
-            }
-        };
+    /// Send Raft messages to peers concurrently using JoinSet.
+    ///
+    /// Each peer send gets its own task with an independent timeout.
+    /// Slow peers don't block fast peers. If a send fails or times out,
+    /// the error is logged and the client is evicted from the pool.
+    async fn send_messages_parallel(&self, messages: Vec<raft::eraftpb::Message>) {
+        // Snapshot peer addresses under the read lock (released immediately)
+        let peers_snapshot: std::collections::HashMap<u64, NodeAddress> = self
+            .peers
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(id, addr)| (*id, addr.clone()))
+            .collect();
 
-        match self.client_pool.get(addr).await {
-            Ok(mut client) => {
-                if let Err(e) = client.step_message(bytes, self.zone_id.clone()).await {
-                    tracing::warn!(
-                        "Failed to send message to node {} ({}): {}",
+        let mut join_set: JoinSet<(u64, std::result::Result<(), String>)> = JoinSet::new();
+
+        for msg in messages {
+            let target_id = msg.to;
+            let addr = match peers_snapshot.get(&target_id) {
+                Some(a) => a.clone(),
+                None => {
+                    tracing::warn!("No address for peer {} — dropping message", target_id);
+                    continue;
+                }
+            };
+
+            let client_pool = self.client_pool.clone();
+            let zone_id = self.zone_id.clone();
+
+            join_set.spawn(async move {
+                let result = tokio::time::timeout(
+                    PEER_SEND_TIMEOUT,
+                    send_raft_message(&client_pool, target_id, &addr, msg, zone_id),
+                )
+                .await;
+
+                match result {
+                    Ok(Ok(())) => (target_id, Ok(())),
+                    Ok(Err(e)) => (target_id, Err(e)),
+                    Err(_elapsed) => (
                         target_id,
-                        addr.endpoint,
-                        e
-                    );
+                        Err(format!("timeout after {:?}", PEER_SEND_TIMEOUT)),
+                    ),
+                }
+            });
+        }
+
+        // Collect results — don't block indefinitely
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok((target_id, Err(e))) => {
+                    tracing::warn!(peer = target_id, "Raft message send failed: {}", e);
                     self.client_pool.remove(target_id).await;
                 }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to connect to node {} ({}): {}",
-                    target_id,
-                    addr.endpoint,
-                    e
-                );
+                Err(join_err) => {
+                    tracing::error!("Raft send task panicked: {}", join_err);
+                }
+                _ => {} // Success — nothing to do
             }
         }
     }
@@ -272,7 +300,15 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
 
         let now = Instant::now();
 
-        // Send to each peer (respecting backoff)
+        // Collect work items for eligible peers
+        struct EcSendTask {
+            peer_id: u64,
+            peer_addr: NodeAddress,
+            entries: Vec<EcReplicationEntry>,
+        }
+
+        let mut tasks: Vec<EcSendTask> = Vec::new();
+
         for (peer_id, peer_addr) in &peer_snapshot {
             let state = self
                 .ec_peer_state
@@ -336,26 +372,62 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 continue;
             }
 
-            let entry_count = filtered.len();
+            tasks.push(EcSendTask {
+                peer_id: *peer_id,
+                peer_addr: peer_addr.clone(),
+                entries: filtered,
+            });
+        }
 
-            // Send via gRPC
-            match self.client_pool.get(peer_addr).await {
-                Ok(mut client) => {
-                    match client
-                        .replicate_entries(self.zone_id.clone(), filtered, self.node_id)
-                        .await
-                    {
-                        Ok(applied_up_to) => {
+        // Fan out EC replication sends in parallel
+        if !tasks.is_empty() {
+            let mut join_set: JoinSet<(u64, std::result::Result<u64, String>)> = JoinSet::new();
+
+            for task in tasks {
+                let client_pool = self.client_pool.clone();
+                let zone_id = self.zone_id.clone();
+                let node_id = self.node_id;
+
+                join_set.spawn(async move {
+                    let result = tokio::time::timeout(
+                        PEER_SEND_TIMEOUT,
+                        send_ec_entries(
+                            &client_pool,
+                            &task.peer_addr,
+                            zone_id,
+                            task.entries,
+                            node_id,
+                        ),
+                    )
+                    .await;
+
+                    match result {
+                        Ok(Ok(applied_up_to)) => (task.peer_id, Ok(applied_up_to)),
+                        Ok(Err(e)) => (task.peer_id, Err(e)),
+                        Err(_elapsed) => (
+                            task.peer_id,
+                            Err(format!("timeout after {:?}", PEER_SEND_TIMEOUT)),
+                        ),
+                    }
+                });
+            }
+
+            // Collect results and update per-peer state
+            while let Some(result) = join_set.join_next().await {
+                match result {
+                    Ok((peer_id, Ok(applied_up_to))) => {
+                        if let Some(state) = self.ec_peer_state.get_mut(&peer_id) {
                             state.acked_seq = state.acked_seq.max(applied_up_to);
                             state.reset_backoff();
                             tracing::debug!(
                                 peer = peer_id,
                                 applied_up_to,
-                                entries = entry_count,
                                 "EC entries replicated to peer"
                             );
                         }
-                        Err(e) => {
+                    }
+                    Ok((peer_id, Err(e))) => {
+                        if let Some(state) = self.ec_peer_state.get_mut(&peer_id) {
                             state.increase_backoff();
                             tracing::debug!(
                                 peer = peer_id,
@@ -365,15 +437,9 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                             );
                         }
                     }
-                }
-                Err(e) => {
-                    state.increase_backoff();
-                    tracing::debug!(
-                        peer = peer_id,
-                        backoff_ms = state.backoff.as_millis(),
-                        "EC replication connect failed: {}",
-                        e
-                    );
+                    Err(join_err) => {
+                        tracing::error!("EC replication task panicked: {}", join_err);
+                    }
                 }
             }
         }
@@ -400,6 +466,55 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             }
         }
     }
+}
+
+/// Send a single Raft message to a peer (used by parallel send tasks).
+async fn send_raft_message(
+    client_pool: &RaftClientPool,
+    target_id: u64,
+    addr: &NodeAddress,
+    msg: raft::eraftpb::Message,
+    zone_id: String,
+) -> std::result::Result<(), String> {
+    let bytes = msg
+        .write_to_bytes()
+        .map_err(|e| format!("serialize error for node {}: {}", target_id, e))?;
+
+    let mut client = client_pool
+        .get(addr)
+        .await
+        .map_err(|e| format!("connect to node {} ({}): {}", target_id, addr.endpoint, e))?;
+
+    client
+        .step_message(bytes, zone_id)
+        .await
+        .map_err(|e| format!("send to node {} ({}): {}", target_id, addr.endpoint, e))
+}
+
+/// Send EC replication entries to a peer (used by parallel EC tasks).
+async fn send_ec_entries(
+    client_pool: &RaftClientPool,
+    peer_addr: &NodeAddress,
+    zone_id: String,
+    entries: Vec<EcReplicationEntry>,
+    sender_node_id: u64,
+) -> std::result::Result<u64, String> {
+    let mut client = client_pool.get(peer_addr).await.map_err(|e| {
+        format!(
+            "connect to {} ({}): {}",
+            peer_addr.id, peer_addr.endpoint, e
+        )
+    })?;
+
+    client
+        .replicate_entries(zone_id, entries, sender_node_id)
+        .await
+        .map_err(|e| {
+            format!(
+                "replicate to {} ({}): {}",
+                peer_addr.id, peer_addr.endpoint, e
+            )
+        })
 }
 
 /// Compute the EC replication watermark based on peer acknowledgements.
@@ -544,5 +659,12 @@ mod tests {
             state.increase_backoff();
         }
         assert_eq!(state.backoff, EC_BACKOFF_CAP);
+    }
+
+    #[test]
+    fn test_peer_send_timeout_constant() {
+        // Verify timeout is reasonable
+        assert!(PEER_SEND_TIMEOUT.as_secs() >= 1);
+        assert!(PEER_SEND_TIMEOUT.as_secs() <= 30);
     }
 }

@@ -384,14 +384,38 @@ class PipedRecordStoreWriteObserver:
         return result
 
     @staticmethod
+    def _lookup_urn_from_aspects(session: Any, path: str) -> str | None:
+        """Reverse-lookup entity_urn from entity_aspects by path aspect payload."""
+        from sqlalchemy import select
+
+        from nexus.storage.models.aspect_store import EntityAspectModel
+
+        stmt = (
+            select(EntityAspectModel.entity_urn)
+            .where(
+                EntityAspectModel.aspect_name == "path",
+                EntityAspectModel.version == 0,
+                EntityAspectModel.payload.contains(f'"virtual_path": "{path}"'),
+            )
+            .limit(1)
+        )
+        result: str | None = session.execute(stmt).scalar_one_or_none()
+        return result
+
+    @staticmethod
     def _build_urn(session: Any, path: str, zone_id: str | None) -> str:
         """Build a stable URN using FilePathModel.path_id (UUID).
 
-        Falls back to hash-based identifier if path_id unavailable.
+        Lookup chain: file_paths → entity_aspects reverse → hash fallback.
         """
         path_id = PipedRecordStoreWriteObserver._lookup_path_id(session, path)
         if path_id is not None:
             return f"urn:nexus:file:{zone_id or 'default'}:{path_id}"
+
+        existing_urn = PipedRecordStoreWriteObserver._lookup_urn_from_aspects(session, path)
+        if existing_urn is not None:
+            return existing_urn
+
         path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
         return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
 

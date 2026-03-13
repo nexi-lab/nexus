@@ -1,18 +1,31 @@
 """Reindex CLI command — replay MCL to rebuild indices (Issue #2929).
 
 Consumes MetadataChangeLogModel entries via ``MCLRecorder.replay_changes()``
-to rebuild search, semantic, and version indices. Supports incremental and
-clean modes with cursor-based batching and checkpoint resume.
+to rebuild aspect store state. Supports incremental and clean modes with
+cursor-based batching and checkpoint resume.
+
+Targets:
+    - search: Rebuild aspect store (version-0 state) from MCL events
+    - versions: Rebuild full version history from MCL events
+    - semantic: Re-extract schemas from file content (requires filesystem)
+    - all: Run all targets
 
 Examples:
     nexus reindex --target search
     nexus reindex --target all --dry-run
-    nexus reindex --target semantic --from-sequence 1000 --batch-size 200
+    nexus reindex --target search --from-sequence 1000 --batch-size 200
 """
 
+import json
 import logging
+from typing import TYPE_CHECKING
 
 import click
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from nexus.storage.models.metadata_change_log import MetadataChangeLogModel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
@@ -60,14 +73,14 @@ def reindex(
 ) -> None:
     """Replay metadata change log to rebuild indices.
 
-    Uses MCLRecorder.replay_changes() to iterate MCL records and dispatch
-    them to the appropriate index rebuilder. Supports checkpoint-based
-    resume for large datasets.
+    Uses MCLRecorder.replay_changes() to iterate MCL records and apply
+    them to the aspect store. Each MCL record is replayed idempotently:
+    upserts overwrite current state, deletes soft-delete aspects.
 
     Examples:
         nexus reindex --target search
         nexus reindex --target all --dry-run
-        nexus reindex --target semantic --from-sequence 1000
+        nexus reindex --target search --from-sequence 1000
     """
     try:
         nx = get_filesystem(backend_config)
@@ -105,6 +118,7 @@ def reindex(
 
             # Replay MCL via replay_changes() API
             recorder = MCLRecorder(session)
+            processor = _MCLProcessor(session, target)
             processed = 0
             last_sequence = from_sequence or 0
             errors = 0
@@ -122,7 +136,7 @@ def reindex(
                     batch_size=batch_size,
                 ):
                     try:
-                        _process_mcl_record(mcl, target)
+                        processor.process(mcl)
                         processed += 1
                         last_sequence = mcl.sequence_number
                     except Exception as e:
@@ -130,6 +144,8 @@ def reindex(
                         console.print(f"[red]Error at seq {mcl.sequence_number}: {e}[/red]")
 
                     progress.update(task, advance=1)
+
+            session.commit()
 
             # Summary
             console.print()
@@ -167,25 +183,103 @@ def _show_dry_run_summary(
     console.print("\n[dim]Run without --dry-run to execute.[/dim]")
 
 
-def _process_mcl_record(mcl: object, target: str) -> None:
-    """Process a single MCL record for reindexing.
+class _MCLProcessor:
+    """Processes MCL records to rebuild aspect store state.
 
-    Dispatches MCL records to the appropriate index rebuilder.
-    Currently logs and validates each record — concrete indexer
-    implementations (search, semantic, versions) will be added as
-    index backends are built. The framework is wired end-to-end:
-    MCL → replay_changes() → _process_mcl_record().
+    Each MCL record is replayed idempotently:
+      - UPSERT → put_aspect (overwrites version 0 with MCL payload)
+      - DELETE → delete_aspect (soft-deletes all versions)
+      - PATH_CHANGED → put_aspect for "path" aspect
     """
-    entity_urn = getattr(mcl, "entity_urn", "unknown")
-    aspect_name = getattr(mcl, "aspect_name", "unknown")
-    change_type = getattr(mcl, "change_type", "unknown")
-    seq = getattr(mcl, "sequence_number", 0)
 
-    logger.info(
-        "Reindex [%s] seq=%d urn=%s aspect=%s change=%s",
-        target,
-        seq,
-        entity_urn,
-        aspect_name,
-        change_type,
-    )
+    def __init__(self, session: "Session", target: str) -> None:
+        from nexus.storage.aspect_service import AspectService
+
+        self._aspect_service = AspectService(session)
+        self._target = target
+        self._targets = {"search", "versions"} if target == "all" else {target}
+
+    def process(self, mcl: "MetadataChangeLogModel") -> None:
+        """Process a single MCL record."""
+        change_type = getattr(mcl, "change_type", "")
+        entity_urn = getattr(mcl, "entity_urn", "")
+        aspect_name = getattr(mcl, "aspect_name", "")
+        aspect_value = getattr(mcl, "aspect_value", None)
+        zone_id = getattr(mcl, "zone_id", None)
+        seq = getattr(mcl, "sequence_number", 0)
+
+        logger.info(
+            "Reindex [%s] seq=%d urn=%s aspect=%s change=%s",
+            self._target,
+            seq,
+            entity_urn,
+            aspect_name,
+            change_type,
+        )
+
+        if "search" in self._targets:
+            self._rebuild_search(
+                change_type=change_type,
+                entity_urn=entity_urn,
+                aspect_name=aspect_name,
+                aspect_value=aspect_value,
+                zone_id=zone_id,
+            )
+
+        if "versions" in self._targets:
+            self._rebuild_versions(
+                change_type=change_type,
+                entity_urn=entity_urn,
+                aspect_name=aspect_name,
+                aspect_value=aspect_value,
+                zone_id=zone_id,
+            )
+
+    def _rebuild_search(
+        self,
+        *,
+        change_type: str,
+        entity_urn: str,
+        aspect_name: str,
+        aspect_value: str | None,
+        zone_id: str | None,
+    ) -> None:
+        """Rebuild search index: apply MCL event to aspect store version 0."""
+        if change_type in ("upsert", "path_changed"):
+            if aspect_value is None:
+                return
+            payload: dict = json.loads(aspect_value)
+            self._aspect_service.put_aspect(
+                entity_urn,
+                aspect_name,
+                payload,
+                created_by="reindex",
+                zone_id=zone_id,
+            )
+        elif change_type == "delete":
+            self._aspect_service.delete_aspect(
+                entity_urn,
+                aspect_name,
+                zone_id=zone_id,
+            )
+
+    def _rebuild_versions(
+        self,
+        *,
+        change_type: str,
+        entity_urn: str,
+        aspect_name: str,
+        aspect_value: str | None,
+        zone_id: str | None,
+    ) -> None:
+        """Rebuild version history: same as search (put_aspect creates history)."""
+        # Version history is built by put_aspect's version-0 swap pattern:
+        # each put copies current to version N+1 before overwriting version 0.
+        # So replaying upserts in sequence naturally rebuilds version history.
+        self._rebuild_search(
+            change_type=change_type,
+            entity_urn=entity_urn,
+            aspect_name=aspect_name,
+            aspect_value=aspect_value,
+            zone_id=zone_id,
+        )

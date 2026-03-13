@@ -87,6 +87,12 @@ def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
     if api_key:
         env["NEXUS_API_KEY"] = api_key
 
+    # Override the Dockerfile when using the lightweight demo image
+    # (auto-detected by nexus init for repo-root checkouts).
+    dockerfile = config.get("dockerfile", "")
+    if dockerfile:
+        env["NEXUS_DOCKERFILE"] = dockerfile
+
     if config.get("tls"):
         env["NEXUS_TLS_ENABLED"] = "true"
         env["NEXUS_TLS_CERT"] = "/app/data/tls/server.crt"

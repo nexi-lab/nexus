@@ -1,6 +1,6 @@
 # Lightweight Nexus server image for demo/shared presets.
-# Installs from PyPI for standalone use outside the repo root.
-# For repo-root builds, the production Dockerfile is used instead.
+# Installs from local source when build context contains pyproject.toml + src/
+# (repo-root checkout), falls back to PyPI for standalone portable use.
 # Issue #2915.
 
 FROM python:3.13-slim
@@ -27,12 +27,22 @@ RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
-# Install Nexus from PyPI with semantic-search support.
-RUN if [ "$NEXUS_VERSION" = "latest" ]; then \
+# Stage the full build context so we can detect local source.
+# When the build context is the repo root, this includes pyproject.toml + src/.
+# When the build context is a portable temp dir, only compose/Dockerfile files.
+COPY . /tmp/nexus-build/
+
+# Install: prefer local source (repo checkout), fall back to PyPI.
+RUN if [ -f /tmp/nexus-build/pyproject.toml ] && [ -d /tmp/nexus-build/src ]; then \
+      echo "Installing from local source..."; \
+      cd /tmp/nexus-build && uv pip install --system ".[semantic-search]" "txtai[ann]>=9.0"; \
+    elif [ "$NEXUS_VERSION" = "latest" ]; then \
+      echo "Installing from PyPI (latest)..."; \
       uv pip install --system "nexus-ai-fs[semantic-search]" "txtai[ann]>=9.0"; \
     else \
+      echo "Installing from PyPI (${NEXUS_VERSION})..."; \
       uv pip install --system "nexus-ai-fs[semantic-search]==${NEXUS_VERSION}" "txtai[ann]>=9.0"; \
-    fi
+    fi && rm -rf /tmp/nexus-build
 
 RUN useradd -r -m -u 1000 -s /bin/bash nexus \
     && mkdir -p /app/data \
@@ -45,7 +55,7 @@ EXPOSE 2026
 HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=10 \
     CMD curl -f http://localhost:${NEXUS_PORT:-2026}/health || exit 1
 
-# Start nexusd directly — no entrypoint scripts in standalone mode.
+# Start nexusd directly — no entrypoint scripts in lightweight mode.
 # The CLI's demo init reads the API key from config or the key file.
 CMD exec nexusd \
       --host ${NEXUS_HOST} \

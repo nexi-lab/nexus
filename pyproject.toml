@@ -322,7 +322,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"nexus.cli" = ["data/*.yml"]
+"nexus.cli" = ["data/*.yml", "data/*.Dockerfile", "data/*.sql"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

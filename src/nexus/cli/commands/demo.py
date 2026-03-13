@@ -984,24 +984,26 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print("  Semantic:     skipped")
     console.print("  Grep corpus:  ready")
 
-    # Print suggested commands — include --remote-url for shared/demo presets
-    # so the CLI connects to the running stack instead of the local filesystem.
+    # Print suggested commands — for shared/demo presets, tell the user to
+    # export env vars so all CLI commands authenticate against the running stack.
     preset = config.get("preset", "local")
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    remote_flag = (
-        f" --remote-url http://localhost:{http_port}" if preset in ("shared", "demo") else ""
-    )
-
     console.print()
+
+    if preset in ("shared", "demo"):
+        ports = config.get("ports", {})
+        http_port = ports.get("http", 2026)
+        api_key = config.get("api_key", "")
+        console.print("[bold]Set these env vars to talk to the running stack:[/bold]")
+        console.print(f"  export NEXUS_URL=http://localhost:{http_port}")
+        console.print(f"  export NEXUS_API_KEY={api_key}")
+        console.print()
+
     console.print("[bold]Try these commands:[/bold]")
-    console.print(f"  nexus ls /workspace/demo{remote_flag}")
-    console.print(f"  nexus cat /workspace/demo/README.md{remote_flag}")
-    console.print(f"  nexus versions history /workspace/demo/plan.md{remote_flag}")
-    console.print(f'  nexus grep "vector index" /workspace/demo{remote_flag}')
-    console.print(
-        f'  nexus search query "How does the demo authentication flow work?"{remote_flag}'
-    )
+    console.print("  nexus ls /workspace/demo")
+    console.print("  nexus cat /workspace/demo/README.md")
+    console.print("  nexus versions history /workspace/demo/plan.md")
+    console.print('  nexus grep "vector index" /workspace/demo')
+    console.print('  nexus search query "How does the demo authentication flow work?"')
 
 
 @demo.command(name="reset")

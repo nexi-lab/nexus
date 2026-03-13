@@ -16,6 +16,11 @@ Architecture:
     Kernel → write_observer.on_delete() → [OperationLogger + VersionRecorder]
     Error policy owned by observer (strict_mode). Kernel is a pure caller.
 
+MCL in operation_log (Issue #2929, Key Decision #2):
+    Each operation_log row carries entity_urn / aspect_name / change_type.
+    metadata_snapshot stores the NEW aspect value (for replay), not the old
+    value. ``OperationLogger.replay_changes()`` is the single replay source.
+
 For async DT_PIPE-backed implementation, see PipedRecordStoreWriteObserver
 in ``nexus.storage.piped_record_store_write_observer``.
 
@@ -24,13 +29,9 @@ Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 
 import hashlib
 import logging
-from typing import TYPE_CHECKING
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.record_store import RecordStoreABC
-
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +94,8 @@ class RecordStoreWriteObserver:
     ) -> None:
         """Sync a write operation to RecordStore.
 
-        snapshot_hash/metadata_snapshot in the operation log store the PREVIOUS
-        version (for undo).  Derived from old_metadata, not metadata.
-        Also records MCL entry (fire-and-forget, non-critical).
+        metadata_snapshot stores the NEW metadata (for MCL replay).
+        snapshot_hash stores the old etag (for CAS undo).
         """
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.version_recorder import VersionRecorder
@@ -109,23 +109,13 @@ class RecordStoreWriteObserver:
                     zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=old_metadata.etag if old_metadata else None,
-                    metadata_snapshot=old_metadata.to_dict() if old_metadata else None,
+                    metadata_snapshot=metadata.to_dict(),
                     status="success",
                     entity_urn=urn,
                     aspect_name="file_metadata",
                     change_type="upsert",
                 )
                 VersionRecorder(session).record_write(metadata, is_new=is_new)
-
-                # MCL recording (Issue #2929) — non-critical, fire-and-forget
-                self._record_mcl_write(
-                    session,
-                    metadata=metadata,
-                    old_metadata=old_metadata,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                )
-
                 session.commit()
         except Exception as e:
             self._handle_error("write", path, e)
@@ -158,7 +148,7 @@ class RecordStoreWriteObserver:
                         zone_id=zone_id,
                         agent_id=agent_id,
                         snapshot_hash=metadata.etag,
-                        metadata_snapshot=None,
+                        metadata_snapshot=metadata.to_dict(),
                         status="success",
                         flush=False,
                         entity_urn=urn,
@@ -166,15 +156,6 @@ class RecordStoreWriteObserver:
                         change_type="upsert",
                     )
                     recorder.record_write(metadata, is_new=is_new)
-
-                    # MCL recording (Issue #2929) — non-critical per item
-                    self._record_mcl_write(
-                        session,
-                        metadata=metadata,
-                        old_metadata=None,
-                        zone_id=zone_id,
-                        agent_id=agent_id,
-                    )
 
                 session.commit()
         except Exception as e:
@@ -193,8 +174,7 @@ class RecordStoreWriteObserver:
         """Sync a rename operation to RecordStore.
 
         URNs are locators (Issue #2929 Key Decision #3): rename changes the
-        URN. The operation log records the old URN with change_type=delete,
-        and the MCL helper records DELETE old + UPSERT new.
+        URN. Two operation_log rows: DELETE old URN + UPSERT new URN.
         """
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.version_recorder import VersionRecorder
@@ -202,7 +182,11 @@ class RecordStoreWriteObserver:
         try:
             with self._session_factory() as session:
                 old_urn = self._build_urn(old_path, zone_id)
-                OperationLogger(session).log_operation(
+                new_urn = self._build_urn(new_path, zone_id)
+                op_logger = OperationLogger(session)
+
+                # Row 1: DELETE old locator
+                op_logger.log_operation(
                     operation_type="rename",
                     path=old_path,
                     new_path=new_path,
@@ -217,14 +201,17 @@ class RecordStoreWriteObserver:
                 )
                 VersionRecorder(session).record_rename(old_path, new_path)
 
-                # MCL recording (Issue #2929) — path aspect changed
-                self._record_mcl_rename(
-                    session,
-                    old_path=old_path,
-                    new_path=new_path,
-                    metadata=metadata,
+                # Row 2: UPSERT new locator
+                op_logger.log_operation(
+                    operation_type="rename",
+                    path=new_path,
                     zone_id=zone_id,
                     agent_id=agent_id,
+                    metadata_snapshot=metadata.to_dict() if metadata else None,
+                    status="success",
+                    entity_urn=new_urn,
+                    aspect_name="file_metadata",
+                    change_type="upsert",
                 )
 
                 session.commit()
@@ -241,8 +228,9 @@ class RecordStoreWriteObserver:
     ) -> None:
         """Sync a delete operation to RecordStore.
 
-        Also records MCL entry and soft-deletes entity aspects (Issue #2929).
+        Soft-deletes entity aspects (Issue #2929).
         """
+        from nexus.storage.aspect_service import AspectService
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.version_recorder import VersionRecorder
 
@@ -262,16 +250,7 @@ class RecordStoreWriteObserver:
                     change_type="delete",
                 )
                 VersionRecorder(session).record_delete(path)
-
-                # MCL recording (Issue #2929) — non-critical
-                self._record_mcl_delete(
-                    session,
-                    path=path,
-                    metadata=metadata,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                )
-
+                AspectService(session).soft_delete_entity_aspects(urn)
                 session.commit()
         except Exception as e:
             self._handle_error("delete", path, e)
@@ -299,10 +278,6 @@ class RecordStoreWriteObserver:
         except Exception as e:
             self._handle_error("mkdir", path, e)
 
-    # =========================================================================
-    # MCL helpers (Issue #2929) — non-critical, failures logged not raised
-    # =========================================================================
-
     @staticmethod
     def _build_urn(path: str, zone_id: str | None) -> str:
         """Build a locator URN for a file from its virtual path.
@@ -314,100 +289,6 @@ class RecordStoreWriteObserver:
         """
         path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
         return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
-
-    def _record_mcl_write(
-        self,
-        session: "Session",  # noqa: F821
-        *,
-        metadata: FileMetadata,
-        old_metadata: FileMetadata | None,
-        zone_id: str | None,
-        agent_id: str | None,
-    ) -> None:
-        """Record MCL entry for a file write. Non-critical, uses savepoint."""
-        try:
-            from nexus.storage.mcl_recorder import MCLRecorder
-
-            urn = self._build_urn(metadata.path, zone_id)
-            with session.begin_nested():
-                MCLRecorder(session).record_file_write(
-                    entity_urn=urn,
-                    metadata_dict=metadata.to_dict(),
-                    zone_id=zone_id,
-                    changed_by=agent_id or "system",
-                    previous_metadata=old_metadata.to_dict() if old_metadata else None,
-                )
-        except Exception:
-            logger.debug("MCL write recording failed (non-critical)", exc_info=True)
-
-    def _record_mcl_delete(
-        self,
-        session: "Session",  # noqa: F821
-        *,
-        path: str,
-        metadata: FileMetadata | None,
-        zone_id: str | None,
-        agent_id: str | None,
-    ) -> None:
-        """Record MCL entry for a file delete and soft-delete entity aspects. Non-critical."""
-        try:
-            from nexus.storage.aspect_service import AspectService
-            from nexus.storage.mcl_recorder import MCLRecorder
-
-            urn = self._build_urn(path, zone_id)
-            with session.begin_nested():
-                MCLRecorder(session).record_file_delete(
-                    entity_urn=urn,
-                    zone_id=zone_id,
-                    changed_by=agent_id or "system",
-                    previous_metadata=metadata.to_dict() if metadata else None,
-                )
-                # Issue #2929 fix: cascade soft-delete all aspects for deleted entity
-                AspectService(session).soft_delete_entity_aspects(urn)
-        except Exception:
-            logger.debug("MCL delete recording failed (non-critical)", exc_info=True)
-
-    def _record_mcl_rename(
-        self,
-        session: "Session",  # noqa: F821
-        *,
-        old_path: str,
-        new_path: str,
-        metadata: FileMetadata | None,
-        zone_id: str | None,
-        agent_id: str | None,
-    ) -> None:
-        """Record MCL entries for a file rename: DELETE old URN + UPSERT new URN.
-
-        URNs are locators (Issue #2929 Key Decision #3), so rename changes
-        the URN. We record a DELETE for the old path's URN and an UPSERT
-        for the new path's URN.
-        """
-        try:
-            from nexus.storage.mcl_recorder import MCLRecorder
-
-            old_urn = self._build_urn(old_path, zone_id)
-            new_urn = self._build_urn(new_path, zone_id)
-            changed_by = agent_id or "system"
-
-            with session.begin_nested():
-                recorder = MCLRecorder(session)
-                # DELETE old URN (locator no longer valid)
-                recorder.record_file_delete(
-                    entity_urn=old_urn,
-                    zone_id=zone_id,
-                    changed_by=changed_by,
-                    previous_metadata=metadata.to_dict() if metadata else None,
-                )
-                # UPSERT new URN (new locator for renamed file)
-                recorder.record_file_write(
-                    entity_urn=new_urn,
-                    metadata_dict=metadata.to_dict() if metadata else None,
-                    zone_id=zone_id,
-                    changed_by=changed_by,
-                )
-        except Exception:
-            logger.debug("MCL rename recording failed (non-critical)", exc_info=True)
 
     def on_rmdir(
         self,

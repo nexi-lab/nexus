@@ -1,7 +1,8 @@
-"""Reindex CLI command — replay MCL to rebuild indices (Issue #2929).
+"""Reindex CLI command — replay operation_log MCL to rebuild indices (Issue #2929).
 
-Consumes MetadataChangeLogModel entries via ``MCLRecorder.replay_changes()``
-to rebuild aspect store state. Supports incremental and clean modes with
+Consumes OperationLogModel entries via ``OperationLogger.replay_changes()``
+to rebuild aspect store state (Key Decision #2: MCL in existing operation_log,
+not a third event system). Supports incremental and clean modes with
 cursor-based batching and checkpoint resume.
 
 Targets:
@@ -26,7 +27,7 @@ import click
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.storage.models.metadata_change_log import MetadataChangeLogModel
+    from nexus.storage.models.operation_log import OperationLogModel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
@@ -72,11 +73,12 @@ def reindex(
     zone: str | None,
     backend_config: BackendConfig,
 ) -> None:
-    """Replay metadata change log to rebuild indices.
+    """Replay operation_log to rebuild indices.
 
-    Uses MCLRecorder.replay_changes() to iterate MCL records and apply
-    them to the aspect store. Each MCL record is replayed idempotently:
-    upserts overwrite current state, deletes soft-delete aspects.
+    Uses OperationLogger.replay_changes() to iterate operation_log records
+    that carry MCL columns (entity_urn IS NOT NULL) and apply them to the
+    aspect store. Each record is replayed idempotently: upserts overwrite
+    current state, deletes soft-delete aspects.
 
     Examples:
         nexus reindex --target search
@@ -92,8 +94,8 @@ def reindex(
 
         from sqlalchemy import func, select
 
-        from nexus.storage.mcl_recorder import MCLRecorder
-        from nexus.storage.models.metadata_change_log import MetadataChangeLogModel
+        from nexus.storage.models.operation_log import OperationLogModel
+        from nexus.storage.operation_logger import OperationLogger
 
         effective_targets = {"search", "versions", "semantic"} if target == "all" else {target}
 
@@ -107,14 +109,18 @@ def reindex(
             if mcl_targets:
                 mcl_target = "all" if mcl_targets == {"search", "versions"} else mcl_targets.pop()
 
-                # Count total for progress bar
-                count_stmt = select(func.count()).select_from(MetadataChangeLogModel)
+                # Count operation_log rows with MCL columns for progress bar
+                count_stmt = (
+                    select(func.count())
+                    .select_from(OperationLogModel)
+                    .where(OperationLogModel.entity_urn.isnot(None))
+                )
                 if from_sequence is not None:
                     count_stmt = count_stmt.where(
-                        MetadataChangeLogModel.sequence_number >= from_sequence
+                        OperationLogModel.sequence_number >= from_sequence
                     )
                 if zone is not None:
-                    count_stmt = count_stmt.where(MetadataChangeLogModel.zone_id == zone)
+                    count_stmt = count_stmt.where(OperationLogModel.zone_id == zone)
 
                 total = session.execute(count_stmt).scalar_one()
 
@@ -123,8 +129,8 @@ def reindex(
                 elif dry_run:
                     _show_dry_run_summary(total, mcl_target)
                 else:
-                    # Replay MCL via replay_changes() API
-                    recorder = MCLRecorder(session)
+                    # Replay via OperationLogger.replay_changes()
+                    op_logger = OperationLogger(session)
                     processor = _MCLProcessor(session, mcl_target)
                     processed = 0
                     last_sequence = from_sequence or 0
@@ -137,18 +143,18 @@ def reindex(
                     ) as progress:
                         task = progress.add_task(f"Reindexing {mcl_target}...", total=total)
 
-                        for mcl in recorder.replay_changes(
+                        for row in op_logger.replay_changes(
                             from_sequence=from_sequence or 0,
                             zone_id=zone,
                             batch_size=batch_size,
                         ):
                             try:
-                                processor.process(mcl)
+                                processor.process(row)
                                 processed += 1
-                                last_sequence = mcl.sequence_number
+                                last_sequence = row.sequence_number
                             except Exception as e:
                                 errors += 1
-                                console.print(f"[red]Error at seq {mcl.sequence_number}: {e}[/red]")
+                                console.print(f"[red]Error at seq {row.sequence_number}: {e}[/red]")
 
                             progress.update(task, advance=1)
 
@@ -160,7 +166,7 @@ def reindex(
                     table.add_column("Metric", style="cyan")
                     table.add_column("Value", style="green")
                     table.add_row("Target", mcl_target)
-                    table.add_row("Total MCL records", str(total))
+                    table.add_row("Total records", str(total))
                     table.add_row("Processed", str(processed))
                     table.add_row("Errors", str(errors))
                     table.add_row("Last sequence", str(last_sequence))
@@ -321,14 +327,18 @@ class _MCLProcessor:
         self._target = target
         self._targets = {"search", "versions"} if target == "all" else {target}
 
-    def process(self, mcl: "MetadataChangeLogModel") -> None:
-        """Process a single MCL record."""
-        change_type = getattr(mcl, "change_type", "")
-        entity_urn = getattr(mcl, "entity_urn", "")
-        aspect_name = getattr(mcl, "aspect_name", "")
-        aspect_value = getattr(mcl, "aspect_value", None)
-        zone_id = getattr(mcl, "zone_id", None)
-        seq = getattr(mcl, "sequence_number", 0)
+    def process(self, row: "OperationLogModel") -> None:
+        """Process a single operation_log MCL row.
+
+        Reads entity_urn, aspect_name, change_type, and metadata_snapshot
+        from the operation_log row (Key Decision #2: MCL in operation_log).
+        """
+        change_type = getattr(row, "change_type", "")
+        entity_urn = getattr(row, "entity_urn", "")
+        aspect_name = getattr(row, "aspect_name", "")
+        aspect_value = getattr(row, "metadata_snapshot", None)
+        zone_id = getattr(row, "zone_id", None)
+        seq = getattr(row, "sequence_number", 0)
 
         logger.info(
             "Reindex [%s] seq=%d urn=%s aspect=%s change=%s",

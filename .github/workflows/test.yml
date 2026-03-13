@@ -110,7 +110,7 @@ jobs:
       - name: Build Rust extension (nexus_tasks)
         run: |
           cd rust/nexus_tasks
-          maturin develop --release
+          maturin develop --release --features mimalloc
         shell: bash
 
       - name: Install dependencies
@@ -191,7 +191,8 @@ jobs:
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features full && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
+
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -255,7 +256,7 @@ jobs:
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"
@@ -317,7 +318,7 @@ jobs:
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -365,7 +366,7 @@ jobs:
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -420,7 +421,7 @@ jobs:
           pip install maturin
           cd rust/nexus_pyo3 && maturin develop --release && cd ../..
           cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"

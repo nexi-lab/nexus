@@ -19,7 +19,7 @@ tracing = "0.1"
 mimalloc = { workspace = true, optional = true }
 
 [features]
-default = ["mimalloc"]
+default = []
 mimalloc = ["dep:mimalloc"]
 
 [dev-dependencies]

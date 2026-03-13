@@ -67,7 +67,7 @@ tonic-build = { version = "0.12", optional = true }
 tokio-test = "0.4"
 
 [features]
-default = ["mimalloc"]
+default = []
 mimalloc = ["dep:mimalloc"]
 
 # Enable async support (Tokio runtime)
@@ -75,7 +75,8 @@ async = ["tokio"]
 
 # Enable Python bindings (PyO3 FFI) — production path.
 # Provides LocalRaft for ~5μs metadata/lock operations.
-python = ["pyo3"]
+# Includes mimalloc allocator for cdylib builds (safe in terminal crate context).
+python = ["pyo3", "mimalloc"]
 
 # Enable Raft consensus (tikv/raft-rs) — EXPERIMENTAL, default OFF.
 # Not used in production. Preserved for future multi-node support.

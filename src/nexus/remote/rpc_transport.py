@@ -33,6 +33,7 @@ from nexus.contracts.exceptions import (
     RemoteConnectionError,
     RemoteTimeoutError,
 )
+from nexus.grpc.defaults import build_channel_options
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
@@ -42,16 +43,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 64 MB max message size (matches server config)
-_MAX_MESSAGE_LENGTH = 64 * 1024 * 1024
-
-_CHANNEL_OPTIONS = [
-    ("grpc.max_send_message_length", _MAX_MESSAGE_LENGTH),
-    ("grpc.max_receive_message_length", _MAX_MESSAGE_LENGTH),
-    ("grpc.keepalive_time_ms", 30_000),
-    ("grpc.keepalive_timeout_ms", 10_000),
-    ("grpc.keepalive_permit_without_calls", 1),
-]
+_CHANNEL_OPTIONS = build_channel_options(
+    keepalive_time_ms=30_000,
+    keepalive_timeout_ms=10_000,
+)
 
 
 class RPCTransport:

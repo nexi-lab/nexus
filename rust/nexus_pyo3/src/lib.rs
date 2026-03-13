@@ -1,5 +1,9 @@
 #![allow(clippy::useless_conversion)]
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod bitmap;
 mod bloom;
 mod cache;

@@ -38,9 +38,9 @@ export function MclReplay(props: MclReplayProps): React.ReactNode {
 
   useEffect(() => {
     if (client && entries.length === 0) {
-      void fetchReplay(client, 0, 50);
+      void fetchReplay(client, 0, 50, urnFilter || undefined, aspectFilter || undefined);
     }
-  }, [client, entries.length, fetchReplay]);
+  }, [client, entries.length, fetchReplay, urnFilter, aspectFilter]);
 
   // Apply filters client-side
   const filtered = entries.filter((e) => {

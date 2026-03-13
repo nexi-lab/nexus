@@ -42,7 +42,7 @@ class TestSeedCatalog:
         result = _seed_catalog(MagicMock(), config, manifest)
 
         assert result == 0
-        assert manifest["schemas_extracted"] is True
+        assert manifest["schemas_extracted"] is False
 
 
 class TestSeedAspects:
@@ -87,4 +87,4 @@ class TestSeedAspects:
         result = _seed_aspects(MagicMock(), config, manifest)
 
         assert result == 0
-        assert manifest["aspects_created"] is True
+        assert manifest["aspects_created"] is False

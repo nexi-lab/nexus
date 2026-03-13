@@ -25,6 +25,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/aspects", tags=["aspects"])
 
 
+def _verify_urn_zone(urn: str, zone_id: str) -> None:
+    """Verify URN belongs to caller's zone (prevent cross-zone data exposure).
+
+    URNs are one-way hashes so we check the zone component embedded in the URN.
+    Root zone bypasses the check as it has global visibility.
+    """
+    if zone_id == "root":
+        return
+    if f":{zone_id}:" not in urn:
+        raise HTTPException(status_code=403, detail="Access denied: URN is outside your zone")
+
+
 @router.get("/{urn}")
 async def list_aspects(
     urn: str = Path(..., description="Entity URN"),
@@ -32,6 +44,7 @@ async def list_aspects(
 ) -> AspectListResponse:
     """List all aspect names attached to an entity."""
     aspect_svc, _zone_id = aspect_and_zone
+    _verify_urn_zone(urn, _zone_id)
     try:
         names = aspect_svc.list_aspects(urn)
         return AspectListResponse(entity_urn=urn, aspects=names)
@@ -49,6 +62,7 @@ async def get_aspect(
 ) -> AspectResponse:
     """Get a specific aspect for an entity."""
     aspect_svc, _zone_id = aspect_and_zone
+    _verify_urn_zone(urn, _zone_id)
     try:
         if version is not None:
             payload = aspect_svc.get_aspect_version(urn, name, version)
@@ -80,6 +94,7 @@ async def get_aspect_history(
 ) -> AspectHistoryResponse:
     """Get version history for a specific aspect."""
     aspect_svc, _zone_id = aspect_and_zone
+    _verify_urn_zone(urn, _zone_id)
     try:
         history = aspect_svc.get_aspect_history(urn, name, limit=limit)
         versions = [

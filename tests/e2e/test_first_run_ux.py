@@ -474,6 +474,10 @@ class TestFullWorkflow:
                 f"stdout: {catalog_schema_result.stdout}\n"
                 f"stderr: {catalog_schema_result.stderr}"
             )
+            if catalog_schema_result.returncode == 1:
+                assert "Traceback" not in catalog_schema_result.stderr, (
+                    f"nexus catalog schema crashed with traceback:\n{catalog_schema_result.stderr}"
+                )
             if catalog_schema_result.returncode == 0:
                 # If the REST API is available, output should mention
                 # columns or schema details
@@ -504,6 +508,10 @@ class TestFullWorkflow:
                 f"stdout: {catalog_search_result.stdout}\n"
                 f"stderr: {catalog_search_result.stderr}"
             )
+            if catalog_search_result.returncode == 1:
+                assert "Traceback" not in catalog_search_result.stderr, (
+                    f"nexus catalog search crashed with traceback:\n{catalog_search_result.stderr}"
+                )
 
             # ----------------------------------------------------------
             # Step 2h: Knowledge platform — aspects list
@@ -526,6 +534,10 @@ class TestFullWorkflow:
                 f"stdout: {aspects_list_result.stdout}\n"
                 f"stderr: {aspects_list_result.stderr}"
             )
+            if aspects_list_result.returncode == 1:
+                assert "Traceback" not in aspects_list_result.stderr, (
+                    f"nexus aspects list crashed with traceback:\n{aspects_list_result.stderr}"
+                )
 
             # ----------------------------------------------------------
             # Step 2i: Knowledge platform — ops replay
@@ -543,6 +555,10 @@ class TestFullWorkflow:
                 f"stdout: {ops_replay_result.stdout}\n"
                 f"stderr: {ops_replay_result.stderr}"
             )
+            if ops_replay_result.returncode == 1:
+                assert "Traceback" not in ops_replay_result.stderr, (
+                    f"nexus ops replay crashed with traceback:\n{ops_replay_result.stderr}"
+                )
 
             # ----------------------------------------------------------
             # Step 2j: Knowledge platform — reindex dry-run
@@ -568,6 +584,10 @@ class TestFullWorkflow:
                 f"stdout: {reindex_result.stdout}\n"
                 f"stderr: {reindex_result.stderr}"
             )
+            if reindex_result.returncode == 1:
+                assert "Traceback" not in reindex_result.stderr, (
+                    f"nexus reindex crashed with traceback:\n{reindex_result.stderr}"
+                )
 
             # Step 3: nexus demo reset (verify cleanup works)
             reset_result = subprocess.run(

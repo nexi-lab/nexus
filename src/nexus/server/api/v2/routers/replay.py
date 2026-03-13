@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from nexus.server.api.v2.dependencies import get_operation_logger
+from nexus.server.api.v2.dependencies import get_auth_result, get_operation_logger
 from nexus.server.api.v2.models.aspects import (
     ReindexRequest,
     ReindexResponse,
@@ -84,14 +84,19 @@ async def replay_changes(
 async def trigger_reindex(
     body: ReindexRequest,
     logger_and_zone: tuple[Any, str] = Depends(get_operation_logger),
+    auth_result: dict[str, Any] = Depends(get_auth_result),
 ) -> ReindexResponse:
     """Trigger an index rebuild from MCL records.
 
     Replays operation_log MCL entries to rebuild aspect store state.
     Use dry_run=true to see what would be processed without making changes.
+    Requires admin privileges.
     """
+    if not auth_result.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required for reindex")
+
     op_logger, zone_id = logger_and_zone
-    effective_zone = body.zone_id or zone_id
+    effective_zone = zone_id  # Always use authenticated user's zone — no cross-zone escalation
 
     try:
         from sqlalchemy import func, select

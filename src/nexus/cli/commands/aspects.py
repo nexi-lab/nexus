@@ -14,6 +14,7 @@ from urllib.parse import quote
 import click
 
 from nexus.cli.utils import add_backend_options, console
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def aspects_list(path: str, remote_url: str | None, remote_api_key: str | None) 
     from nexus.contracts.urn import NexusURN
 
     client = get_api_client_from_options(remote_url, remote_api_key)
-    urn = str(NexusURN.for_file("default", path))
+    urn = str(NexusURN.for_file(ROOT_ZONE_ID, path))
 
     try:
         result = client.get(f"/api/v2/aspects/{quote(urn, safe='')}")
@@ -80,7 +81,7 @@ def aspects_get(
     from nexus.contracts.urn import NexusURN
 
     client = get_api_client_from_options(remote_url, remote_api_key)
-    urn = str(NexusURN.for_file("default", path))
+    urn = str(NexusURN.for_file(ROOT_ZONE_ID, path))
 
     try:
         result = client.get(f"/api/v2/aspects/{quote(urn, safe='')}/{quote(aspect_name, safe='')}")

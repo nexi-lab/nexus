@@ -45,6 +45,18 @@ async def get_catalog_schema(
         # Try stored schema first
         schema = catalog_svc.get_schema(urn)
         if schema is not None:
+            # Verify caller has file access before returning cached schema
+            # (prevents bypassing permission checks via cache)
+            try:
+                nexus_fs.sys_stat(full_path)
+            except PermissionError as perm_err:
+                raise HTTPException(
+                    status_code=403, detail=f"Access denied: {full_path}"
+                ) from perm_err
+            except Exception as stat_err:
+                raise HTTPException(
+                    status_code=404, detail=f"File not found: {full_path}"
+                ) from stat_err
             return CatalogSchemaResponse(entity_urn=urn, path=full_path, schema=schema)
 
         # Extract on-the-fly

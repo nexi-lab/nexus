@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -80,5 +81,29 @@ def get_api_client_from_options(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
 ) -> NexusApiClient:
-    """Build a NexusApiClient from CLI options / env vars."""
+    """Build a NexusApiClient from CLI options / env vars / project config.
+
+    Resolution order:
+    1. Explicit ``remote_url`` / ``remote_api_key`` arguments
+    2. ``NEXUS_URL`` / ``NEXUS_API_KEY`` environment variables (handled by NexusApiClient)
+    3. Project config (``nexus.yaml`` / ``nexus.yml`` in cwd)
+    4. Default ``http://localhost:2026``
+    """
+    # Try project config (nexus.yaml) if no explicit URL and no env var
+    if not remote_url and not os.environ.get("NEXUS_URL"):
+        try:
+            import yaml
+
+            for candidate in ("./nexus.yaml", "./nexus.yml"):
+                p = Path(candidate)
+                if p.exists():
+                    with open(p) as f:
+                        cfg = yaml.safe_load(f) or {}
+                    ports = cfg.get("ports", {})
+                    remote_url = f"http://localhost:{ports.get('http', 2026)}"
+                    if not remote_api_key:
+                        remote_api_key = cfg.get("api_key", "")
+                    break
+        except Exception:
+            pass
     return NexusApiClient(url=remote_url, api_key=remote_api_key)

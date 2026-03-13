@@ -6,6 +6,7 @@
 
 import React, { useState } from "react";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 
 interface ReindexResult {
   readonly target: string;
@@ -21,6 +22,15 @@ export function ReindexStatus(): React.ReactNode {
   const [result, setResult] = useState<ReindexResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useKeyboard({
+    d: () => {
+      void triggerReindex("all", true);
+    },
+    r: () => {
+      void triggerReindex("all", false);
+    },
+  });
 
   const triggerReindex = async (target: string, dryRun: boolean): Promise<void> => {
     if (!client) return;
@@ -45,6 +55,7 @@ export function ReindexStatus(): React.ReactNode {
       <text> </text>
       <text>{"  Targets: search | versions | semantic | all"}</text>
       <text>{"  Use CLI: nexus reindex --target search [--dry-run]"}</text>
+      <text>{"  Press 'd' for dry-run, 'r' to reindex all"}</text>
       <text> </text>
 
       {loading && <text>{"  Reindex in progress..."}</text>}

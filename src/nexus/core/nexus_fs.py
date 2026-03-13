@@ -484,7 +484,9 @@ class NexusFS(  # type: ignore[misc]
                         parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
                     )
                 except Exception as e:
-                    logger.warning(f"mkdir: Failed to create parent tuples for {parent_dir}: {e}")
+                    logger.warning(
+                        "mkdir: Failed to create parent tuples for %s: %s", parent_dir, e
+                    )
 
     def _create_directory_metadata(
         self, path: str, context: OperationContext | None = None
@@ -608,9 +610,9 @@ class NexusFS(  # type: ignore[misc]
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
                     path, zone_id=ctx.zone_id or ROOT_ZONE_ID
                 )
-                logger.debug(f"mkdir: Created {created_count} parent tuples for {path}")
+                logger.debug("mkdir: Created %d parent tuples for %s", created_count, path)
                 if created_count > 0:
-                    logger.debug(f"Created {created_count} parent tuples for {path}")
+                    logger.debug("Created %d parent tuples for %s", created_count, path)
             except Exception as e:
                 # Log the error but don't fail the mkdir operation
                 # This helps diagnose issues with parent tuple creation
@@ -626,16 +628,20 @@ class NexusFS(  # type: ignore[misc]
         # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
         if self._rebac_manager and ctx.user_id and not ctx.is_system:
             try:
-                logger.debug(f"mkdir: Granting direct_owner permission to {ctx.user_id} for {path}")
+                logger.debug(
+                    "mkdir: Granting direct_owner permission to %s for %s", ctx.user_id, path
+                )
                 self._rebac_manager.rebac_write(
                     subject=("user", ctx.user_id),
                     relation="direct_owner",
                     object=("file", path),
                     zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 )
-                logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user_id} for {path}")
+                logger.debug(
+                    "mkdir: Granted direct_owner permission to %s for %s", ctx.user_id, path
+                )
             except Exception as e:
-                logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
+                logger.warning("Failed to grant direct_owner permission for %s: %s", path, e)
 
         # Issue #900: Unified two-phase dispatch for mkdir
         from nexus.contracts.vfs_hooks import MkdirHookContext
@@ -726,7 +732,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.contracts.vfs_hooks import RmdirHookContext
 
         self._dispatch.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
-        logger.debug(f"  -> PRE-INTERCEPT passed for rmdir on {path}")
+        logger.debug("  -> PRE-INTERCEPT passed for rmdir on %s", path)
 
         # Route to backend with write access check (rmdir requires write permission)
         route = self.router.route(
@@ -1439,7 +1445,7 @@ class NexusFS(  # type: ignore[misc]
                 allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
                 allowed_set = set(allowed_paths)
             except Exception as e:
-                logger.error(f"[READ-BULK] Permission check failed: {e}")
+                logger.error("[READ-BULK] Permission check failed: %s", e)
                 if not skip_errors:
                     raise
                 # If skip_errors, assume no files are allowed
@@ -1496,14 +1502,14 @@ class NexusFS(  # type: ignore[misc]
                     backend_paths[backend] = []
                 backend_paths[backend].append(path)
             except Exception as e:
-                logger.warning(f"[READ-BULK] Failed to route {path}: {type(e).__name__}: {e}")
+                logger.warning("[READ-BULK] Failed to route %s: %s: %s", path, type(e).__name__, e)
                 if skip_errors:
                     results[path] = None
                 else:
                     raise
 
         route_elapsed = (time.time() - route_start) * 1000
-        logger.info(f"[READ-BULK] Routing: {len(path_info)} paths in {route_elapsed:.1f}ms")
+        logger.info("[READ-BULK] Routing: %d paths in %.1fms", len(path_info), route_elapsed)
 
         # Try bulk read for backends that support it (CacheConnectorMixin)
         for backend, paths_for_backend in backend_paths.items():
@@ -2378,18 +2384,20 @@ class NexusFS(  # type: ignore[misc]
                 if meta is None and ctx.user_id and not ctx.is_system:
                     deferred_buffer.queue_owner_grant(ctx.user_id, path, ctx.zone_id or "root")
             except Exception as e:
-                logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
+                logger.warning("write: Failed to queue deferred permissions for %s: %s", path, e)
         else:
             # SYNC PATH: Execute permission operations immediately (original behavior)
             if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
                 try:
                     logger.info(
-                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
+                        "write: Calling ensure_parent_tuples for %s, zone_id=%s",
+                        path,
+                        ctx.zone_id or ROOT_ZONE_ID,
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
                         path, zone_id=ctx.zone_id or "root"
                     )
-                    logger.info(f"write: Created {created_count} parent tuples for {path}")
+                    logger.info("write: Created %d parent tuples for %s", created_count, path)
                 except Exception as e:
                     logger.warning(
                         f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
@@ -3059,7 +3067,9 @@ class NexusFS(  # type: ignore[misc]
                 try:
                     self._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
                 except Exception as e:
-                    logger.warning(f"write_batch: Failed to create parent tuples for {path}: {e}")
+                    logger.warning(
+                        "write_batch: Failed to create parent tuples for %s: %s", path, e
+                    )
         _hierarchy_elapsed = (time.perf_counter() - _hierarchy_start) * 1000
 
         # PERF: Batch direct_owner grants (single transaction instead of N)
@@ -3087,7 +3097,7 @@ class NexusFS(  # type: ignore[misc]
             if owner_grants and hasattr(self._rebac_manager, "rebac_write_batch"):
                 try:
                     grant_count = self._rebac_manager.rebac_write_batch(owner_grants)
-                    logger.info(f"write_batch: Batch granted direct_owner to {grant_count} files")
+                    logger.info("write_batch: Batch granted direct_owner to %d files", grant_count)
                 except Exception as e:
                     logger.warning(
                         f"write_batch: Batch rebac_write failed, falling back to individual: {e}"
@@ -3102,7 +3112,7 @@ class NexusFS(  # type: ignore[misc]
                                 zone_id=grant["zone_id"],
                             )
                         except Exception as e2:
-                            logger.warning(f"write_batch: Failed to grant direct_owner: {e2}")
+                            logger.warning("write_batch: Failed to grant direct_owner: %s", e2)
             elif owner_grants:
                 # No batch method available, use individual calls
                 for grant in owner_grants:
@@ -3114,7 +3124,7 @@ class NexusFS(  # type: ignore[misc]
                             zone_id=grant["zone_id"],
                         )
                     except Exception as e:
-                        logger.warning(f"write_batch: Failed to grant direct_owner: {e}")
+                        logger.warning("write_batch: Failed to grant direct_owner: %s", e)
         _rebac_elapsed = (time.perf_counter() - _rebac_start) * 1000
 
         # Log detailed timing breakdown for performance analysis
@@ -3456,7 +3466,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
-        logger.warning(f"[RENAME-REBAC] Starting ReBAC update: {old_path} -> {new_path}")
+        logger.warning("[RENAME-REBAC] Starting ReBAC update: %s -> %s", old_path, new_path)
         logger.warning(
             f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"
         )
@@ -3662,7 +3672,7 @@ class NexusFS(  # type: ignore[misc]
                 allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
                 allowed_set = set(allowed_paths)
             except Exception as e:
-                logger.error(f"[STAT-BULK] Permission check failed: {e}")
+                logger.error("[STAT-BULK] Permission check failed: %s", e)
                 if not skip_errors:
                     raise
                 allowed_set = set()
@@ -3713,7 +3723,7 @@ class NexusFS(  # type: ignore[misc]
         except NexusFileNotFoundError:
             raise
         except Exception as e:
-            logger.warning(f"[STAT-BULK] Batch metadata failed: {type(e).__name__}: {e}")
+            logger.warning("[STAT-BULK] Batch metadata failed: %s: %s", type(e).__name__, e)
             if not skip_errors:
                 raise
 

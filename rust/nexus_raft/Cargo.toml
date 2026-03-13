@@ -58,6 +58,7 @@ sha2 = { version = "0.10", optional = true }  # SHA-256 for JoinCluster token ve
 
 # Python bindings (PyO3 FFI)
 pyo3 = { version = "0.27.2", features = ["extension-module"], optional = true }
+mimalloc = { workspace = true, optional = true }
 
 [build-dependencies]
 tonic-build = { version = "0.12", optional = true }
@@ -66,7 +67,8 @@ tonic-build = { version = "0.12", optional = true }
 tokio-test = "0.4"
 
 [features]
-default = []
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc"]
 
 # Enable async support (Tokio runtime)
 async = ["tokio"]
@@ -87,8 +89,3 @@ grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber",
 
 # Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]
-
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3

@@ -83,6 +83,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_rename,
         handle_rmdir,
         handle_search,
+        handle_semantic_search,
         handle_semantic_search_index,
         handle_set_metadata,
         handle_write,
@@ -134,6 +135,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "delta_read": DispatchEntry(handle_delta_read),
         "delta_write": DispatchEntry(handle_delta_write),
         # Semantic search
+        "semantic_search": DispatchEntry(handle_semantic_search, is_async=True),
         "semantic_search_index": DispatchEntry(handle_semantic_search_index, is_async=True),
         # Memory API — moved to MemoryService @rpc_expose (Issue #12)
         # Admin API

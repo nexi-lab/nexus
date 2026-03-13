@@ -109,6 +109,15 @@ class DictMetastore(MetastoreABC):
     def get_file_metadata(self, path: str, key: str) -> Any:
         return self._file_metadata.get(path, {}).get(key)
 
+    def get_file_metadata_bulk(self, paths: Sequence[str], key: str) -> dict[str, Any]:
+        """Get custom metadata value for multiple files."""
+        return {path: self._file_metadata.get(path, {}).get(key) for path in paths}
+
+    def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:
+        """Get cached searchable text for multiple files."""
+        bulk = self.get_file_metadata_bulk(paths, "parsed_text")
+        return {path: text for path, text in bulk.items() if text is not None}
+
     def is_implicit_directory(self, path: str) -> bool:
         prefix = path.rstrip("/") + "/"
         return any(p.startswith(prefix) for p in self._store)

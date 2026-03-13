@@ -106,6 +106,13 @@ def _build_config(
         config["ports"] = {k: v for k, v in ports.items() if k in PRESET_PORT_KEYS[preset]}
         config["compose_profiles"] = list(PRESET_COMPOSE_PROFILES[preset])
 
+        # Generate a random admin API key so the CLI can authenticate
+        # against the stack without relying on docker-entrypoint.sh
+        # to write .admin-api-key (portable image runs nexusd directly).
+        import secrets
+
+        config["api_key"] = f"nx_admin_{secrets.token_urlsafe(32)}"
+
         # Compose file: CLI override → search CWD + ancestors → bundled copy
         if compose_file_override:
             config["compose_file"] = str(Path(compose_file_override).resolve())

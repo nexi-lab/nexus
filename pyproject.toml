@@ -240,9 +240,6 @@ semantic-search = [
     # torch still has no supported macOS x86_64 path for this stack.
     "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
-    # CPU-only torch — txtai[ann] pulls torch transitively via sentence-transformers;
-    # constrain to CPU wheels to avoid ~4 GB of CUDA libraries.
-    "torch>=2.0.0",
     # Keyword search support - uses existing SQLite/PostgreSQL FTS
     # BM25S is now in core dependencies (Issue #796)
     # Vector database extensions for semantic/hybrid search:
@@ -300,7 +297,6 @@ all = [
     # Note: bm25s is now in core dependencies (Issue #796)
     "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
-    "torch>=2.0.0",
     "psycopg2-binary>=2.9.9",
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",

@@ -212,7 +212,7 @@ pub fn compute_permission(
                 graph,
                 namespaces,
                 memo_cache,
-                &mut visited.clone(),
+                visited,
                 depth + 1,
             ) {
                 allowed = true;
@@ -237,7 +237,7 @@ pub fn compute_permission(
                         graph,
                         namespaces,
                         memo_cache,
-                        &mut visited.clone(),
+                        visited,
                         depth + 1,
                     ) {
                         allowed = true;
@@ -269,7 +269,7 @@ pub fn compute_permission(
                         graph,
                         namespaces,
                         memo_cache,
-                        &mut visited.clone(),
+                        visited,
                         depth + 1,
                     ) {
                         allowed = true;
@@ -289,7 +289,7 @@ pub fn compute_permission(
                             graph,
                             namespaces,
                             memo_cache,
-                            &mut visited.clone(),
+                            visited,
                             depth + 1,
                         ) {
                             allowed = true;
@@ -346,7 +346,7 @@ pub fn check_relation_with_usersets(
             graph,
             namespaces,
             memo_cache,
-            &mut visited.clone(),
+            visited,
             depth + 1,
         ) {
             return true;

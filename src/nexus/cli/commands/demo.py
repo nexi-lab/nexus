@@ -307,8 +307,10 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
                     "api_key": api_key,
                 }
             )
-            # Verify connectivity with a lightweight read-only call
-            nx.sys_stat("/")
+            # Verify connectivity with a lightweight read-only call.
+            # Use sys_readdir (returns list) instead of sys_stat (goes through
+            # MetadataMapper.from_json which can fail on schema mismatches).
+            nx.sys_readdir("/")
             return nx
         except Exception as e:
             console.print(f"[red]Error:[/red] Could not connect to Nexus server: {e}")

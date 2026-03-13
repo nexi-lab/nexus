@@ -2563,11 +2563,43 @@ class SearchService:
         if zone_match:
             path = zone_match.group(1) or "/"
 
-        keywords = [w.strip().lower() for w in query.split() if len(w.strip()) >= 2]
+        # Filter stopwords and short tokens for better recall
+        _STOPWORDS = frozenset(
+            {
+                "a",
+                "an",
+                "the",
+                "is",
+                "it",
+                "in",
+                "on",
+                "at",
+                "to",
+                "of",
+                "and",
+                "or",
+                "for",
+                "by",
+                "how",
+                "does",
+                "do",
+                "what",
+                "why",
+                "this",
+                "that",
+                "with",
+                "from",
+            }
+        )
+        keywords = [
+            w.strip().lower()
+            for w in query.split()
+            if len(w.strip()) >= 2 and w.strip().lower() not in _STOPWORDS
+        ]
         if not keywords:
             return []
 
-        # Build WHERE clause: chunk_text ILIKE all keywords
+        # Build WHERE clause: chunk_text ILIKE any keyword (OR for recall)
         conditions = []
         bind_params: dict[str, Any] = {
             "path_prefix": f"{path}%",
@@ -2578,7 +2610,7 @@ class SearchService:
             conditions.append(f"dc.chunk_text ILIKE :{key}")
             bind_params[key] = f"%{kw}%"
 
-        where_clause = " AND ".join(conditions)
+        where_clause = " OR ".join(conditions)
         sql = sa_text(f"""
             SELECT dc.chunk_text, dc.chunk_index, dc.start_offset,
                    dc.end_offset, dc.line_start, dc.line_end,

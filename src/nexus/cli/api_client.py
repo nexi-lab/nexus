@@ -80,13 +80,14 @@ class NexusApiClient:
 def get_api_client_from_options(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
+    profile_name: str | None = None,
 ) -> NexusApiClient:
-    """Build a NexusApiClient from CLI options / env vars / active profile.
+    """Build a NexusApiClient from CLI options / env vars / named or active profile.
 
     Resolution order (via resolve_connection):
     1. Explicit ``remote_url`` / ``remote_api_key`` arguments (CLI flags)
     2. ``NEXUS_URL`` / ``NEXUS_API_KEY`` environment variables
-    3. Active profile from ~/.nexus/config.yaml
+    3. Named profile (``--profile`` flag) or active profile from ~/.nexus/config.yaml
     4. Project config (``nexus.yaml`` / ``nexus.yml`` in cwd)
     5. Default ``http://localhost:2026``
     """
@@ -95,6 +96,7 @@ def get_api_client_from_options(
     conn = resolve_connection(
         remote_url=remote_url,
         remote_api_key=remote_api_key,
+        profile_name=profile_name,
     )
 
     # If resolve_connection returned a URL, use it; otherwise fall back

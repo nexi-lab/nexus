@@ -31,7 +31,10 @@ def aspects() -> None:
 @aspects.command(name="list")
 @click.argument("path")
 @add_backend_options
-def aspects_list(path: str, remote_url: str | None, remote_api_key: str | None) -> None:
+@click.pass_context
+def aspects_list(
+    ctx: click.Context, path: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """List all aspects attached to a file.
 
     Example:
@@ -41,7 +44,10 @@ def aspects_list(path: str, remote_url: str | None, remote_api_key: str | None) 
     from nexus.cli.config import resolve_connection
     from nexus.contracts.urn import NexusURN
 
-    conn = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
+    profile_name = (ctx.obj or {}).get("profile")
+    conn = resolve_connection(
+        remote_url=remote_url, remote_api_key=remote_api_key, profile_name=profile_name
+    )
     zone_id = conn.zone_id or "root"
     client = get_api_client_from_options(remote_url, remote_api_key)
     urn = str(NexusURN.for_file(zone_id, path))
@@ -68,7 +74,9 @@ def aspects_list(path: str, remote_url: str | None, remote_api_key: str | None) 
 @click.argument("path")
 @click.argument("aspect_name")
 @add_backend_options
+@click.pass_context
 def aspects_get(
+    ctx: click.Context,
     path: str,
     aspect_name: str,
     remote_url: str | None,
@@ -83,7 +91,10 @@ def aspects_get(
     from nexus.cli.config import resolve_connection
     from nexus.contracts.urn import NexusURN
 
-    conn = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
+    profile_name = (ctx.obj or {}).get("profile")
+    conn = resolve_connection(
+        remote_url=remote_url, remote_api_key=remote_api_key, profile_name=profile_name
+    )
     zone_id = conn.zone_id or "root"
     client = get_api_client_from_options(remote_url, remote_api_key)
     urn = str(NexusURN.for_file(zone_id, path))

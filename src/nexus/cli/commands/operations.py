@@ -262,7 +262,9 @@ def ops_log(
 @click.option("--entity-urn", type=str, default=None, help="Filter by entity URN")
 @click.option("--from-sequence", type=int, default=0, help="Start from sequence number")
 @add_backend_options
+@click.pass_context
 def ops_replay(
+    ctx: click.Context,
     limit: int,
     entity_urn: str | None,
     from_sequence: int,
@@ -280,7 +282,8 @@ def ops_replay(
     """
     from nexus.cli.api_client import get_api_client_from_options
 
-    client = get_api_client_from_options(remote_url, remote_api_key)
+    profile_name = (ctx.obj or {}).get("profile")
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
 
     params: dict[str, str | int] = {
         "from_sequence": from_sequence,

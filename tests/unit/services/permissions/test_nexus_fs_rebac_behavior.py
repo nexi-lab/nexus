@@ -57,11 +57,6 @@ class MockNexusFS:
             raise RuntimeError("ReBAC manager not available")
         return mgr
 
-    # --- Methods from context_utils (formerly bound from NexusFS) ---
-    @staticmethod
-    def _get_subject_from_context(context):
-        return get_subject_from_context(context)
-
     # --- Delegation to rebac_service (Issue #2440: methods deleted from NexusFS) ---
     def rebac_create(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self.rebac_service.rebac_create_sync(*args, **kwargs)
@@ -114,7 +109,7 @@ class MockNexusFS:
             resource_path = resource[1]
         else:
             has_permission = self.rebac_check(
-                subject=self._get_subject_from_context(context) or ("user", op_context.user_id),
+                subject=get_subject_from_context(context) or ("user", op_context.user_id),
                 permission="owner",
                 object=resource,
                 context=context,

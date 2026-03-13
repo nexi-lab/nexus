@@ -905,18 +905,19 @@ ignore_imports = [
 unmatched_ignore_imports_alerting = "warn"
 
 # Contract 2: Five-tier layered architecture
-# contracts (include/linux) < lib (lib/) < kernel (core) < system_services < bricks
+# contracts (include/linux) < lib+security (lib/) < kernel (core) < system_services < bricks
 # contracts is the type-definition base — everyone can depend on it.
-# lib provides utilities that may use contract types, like Linux lib/ includes include/linux/.
+# lib and security provide utilities that may use contract types, like Linux lib/ includes include/linux/.
+# security is tier-neutral (TLS, TOFU, prompt sanitizer) — zero kernel/service/brick deps.
 [[tool.importlinter.contracts]]
 id = "four-tier-layers"
-name = "Five-tier architecture: contracts < lib < kernel < system_services < bricks"
+name = "Five-tier architecture: contracts < lib+security < kernel < system_services < bricks"
 type = "layers"
 layers = [
     "nexus.bricks",
     "nexus.system_services",
     "nexus.core",
-    "nexus.lib",
+    "nexus.lib | nexus.security",
     "nexus.contracts",
 ]
 # Ratchet baseline — known violations. Remove entries as fixes land.

@@ -1,6 +1,7 @@
 name: Publish Docker Image
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -36,12 +37,13 @@ jobs:
       - name: Extract version metadata
         id: meta
         run: |
+          PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          SHA="${GITHUB_SHA::8}"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
             echo "tags=ghcr.io/nexi-lab/nexus:${VERSION},ghcr.io/nexi-lab/nexus:latest" >> "$GITHUB_OUTPUT"
           else
-            SHA="${GITHUB_SHA::8}"
-            echo "tags=ghcr.io/nexi-lab/nexus:sha-${SHA},ghcr.io/nexi-lab/nexus:edge" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/nexi-lab/nexus:${PKG_VERSION},ghcr.io/nexi-lab/nexus:sha-${SHA},ghcr.io/nexi-lab/nexus:edge" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push

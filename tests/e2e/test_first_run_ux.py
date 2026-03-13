@@ -395,10 +395,32 @@ class TestFullWorkflow:
                 f"stdout: {ls_result.stdout}\nstderr: {ls_result.stderr}"
             )
 
-            # Note: semantic search (nexus search query) is NOT tested here
-            # because the demo stack uses postgres:16-alpine without pgvector.
-            # Semantic search requires pgvector + an embedding provider.
-            # The demo correctly does NOT advertise the search query command.
+            # Step 2d: Verify semantic search was initialized by demo init
+            assert manifest.get("semantic_ready") is True, (
+                "semantic search not initialized — demo init should call "
+                "initialize_semantic_search + semantic_search_index"
+            )
+
+            # Step 2e: Verify semantic search query works against the live stack
+            search_result = subprocess.run(
+                [
+                    "nexus",
+                    "search",
+                    "query",
+                    "How does the demo authentication flow work?",
+                    "--path",
+                    "/workspace/demo",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=str(initialized_project),
+                env=stack_env,
+            )
+            assert search_result.returncode == 0, (
+                f"nexus search query failed against live stack:\n"
+                f"stdout: {search_result.stdout}\nstderr: {search_result.stderr}"
+            )
 
             # Step 3: nexus demo reset (verify cleanup works)
             reset_result = subprocess.run(

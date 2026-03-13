@@ -213,9 +213,6 @@ def connect(
 
         # Single shared RPCTransport (gRPC channel) for all remote proxies.
         from nexus.remote.rpc_transport import RPCTransport
-        from nexus.security.tls.config import ZoneTlsConfig
-
-        tls_config = ZoneTlsConfig.from_env()
 
         # TLS: honour NEXUS_TLS_CERT / KEY / CA env vars (same convention
         # as the gRPC server) so that `nexus connect` works against a

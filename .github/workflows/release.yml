@@ -165,6 +165,7 @@ jobs:
           if-no-files-found: error
 
   publish-rust:
+    if: ${{ secrets.NEXUS_FAST_PYPI_API_TOKEN != '' }}
     name: Publish nexus-fast to PyPI
     needs: [build-rust-wheel, build-rust-sdist]
     runs-on: ubuntu-latest
@@ -188,12 +189,12 @@ jobs:
       - name: Publish nexus-fast to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          password: ${{ secrets.NEXUS_FAST_PYPI_API_TOKEN }}
           packages-dir: dist-rust
 
   publish:
     name: Publish nexus-ai-fs to PyPI
-    needs: [build-wheel, build-sdist, publish-rust]
+    needs: [build-wheel, build-sdist, build-rust-wheel, build-rust-sdist]
     runs-on: ubuntu-latest
 
     steps:

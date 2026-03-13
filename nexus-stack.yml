@@ -64,10 +64,10 @@ services:
   # Nexus RPC Server
   # ============================================================================
   nexus:
+    image: ghcr.io/nexi-lab/nexus:${NEXUS_IMAGE_TAG:-latest}
     build:
       context: .
-      dockerfile: ${NEXUS_DOCKERFILE:-Dockerfile}
-    image: nexus:latest
+      dockerfile: Dockerfile
     restart: unless-stopped
     profiles:
       - core

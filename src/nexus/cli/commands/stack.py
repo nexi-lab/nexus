@@ -107,19 +107,6 @@ def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _compose_has_build(compose_file: str) -> bool:
-    """Return True if any service in the compose file has a ``build:`` key."""
-    try:
-        with open(compose_file) as f:
-            stack = yaml.safe_load(f) or {}
-        for svc in (stack.get("services") or {}).values():
-            if "build" in svc:
-                return True
-    except Exception:
-        pass
-    return False
-
-
 def _compose_profiles(compose_file: str) -> set[str]:
     """Return the set of profiles defined across all services."""
     try:
@@ -358,10 +345,10 @@ def up(
         console.print("[yellow]Hint:[/yellow] Ensure nexus-stack.yml is in the project root.")
         raise SystemExit(1)
 
-    # Auto-detect build need: compose files with build: directives (e.g.
-    # the repo-root stack) should always rebuild to avoid stale images.
+    # Default: pull prebuilt image.  Only build when explicitly requested
+    # via --build (local dev iteration).
     if build is None:
-        build = _compose_has_build(cf)
+        build = False
 
     # Build profiles list
     profiles = list(config.get("compose_profiles", []))
@@ -625,9 +612,9 @@ def restart(build: bool | None) -> None:
             profiles.append(profile)
     compose_env = _derive_project_env(config)
 
-    # Auto-detect build need (same logic as `up`)
+    # Default: pull prebuilt image (same as `up`)
     if build is None:
-        build = _compose_has_build(cf)
+        build = False
 
     console.print(f"[bold]Restarting Nexus preset: {preset}[/bold]")
     _run_compose(cf, profiles, "down", extra_env=compose_env)

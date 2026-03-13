@@ -12,6 +12,7 @@ Architecture:
 
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -34,11 +35,18 @@ class MCLRecorder:
         self._session = session
 
     def _next_sequence(self) -> int:
-        """Get the next MCL sequence number."""
+        """Get the next MCL sequence number.
+
+        Uses time-based microsecond timestamps to avoid race conditions
+        under concurrent transactions. Falls back to MAX+1 if the
+        timestamp would be lower than existing entries.
+        """
+        time_based = int(time.time() * 1_000_000)
         result = self._session.execute(
-            select(func.coalesce(func.max(MetadataChangeLogModel.sequence_number), 0) + 1)
+            select(func.coalesce(func.max(MetadataChangeLogModel.sequence_number), 0))
         ).scalar()
-        return int(result) if result is not None else 1
+        current_max = int(result) if result is not None else 0
+        return max(time_based, current_max + 1)
 
     def record_file_write(
         self,

@@ -22,6 +22,7 @@ in ``nexus.storage.piped_record_store_write_observer``.
 Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 """
 
+import hashlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -157,6 +158,16 @@ class RecordStoreWriteObserver:
                         flush=False,
                     )
                     recorder.record_write(metadata, is_new=is_new)
+
+                    # MCL recording (Issue #2929) — non-critical per item
+                    self._record_mcl_write(
+                        session,
+                        metadata=metadata,
+                        old_metadata=None,
+                        zone_id=zone_id,
+                        agent_id=agent_id,
+                    )
+
                 session.commit()
         except Exception as e:
             first_path = items[0][0].path if items else "<batch>"
@@ -275,6 +286,17 @@ class RecordStoreWriteObserver:
     # MCL helpers (Issue #2929) — non-critical, failures logged not raised
     # =========================================================================
 
+    @staticmethod
+    def _build_urn(path: str, zone_id: str | None) -> str:
+        """Build a URN from a path using hash-based identifier.
+
+        Uses SHA-256 hash of the path as identifier to avoid slashes
+        in the URN component. The service layer uses FilePathModel.path_id
+        (UUID) in production; this is the observer-layer fallback.
+        """
+        path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
+        return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
+
     def _record_mcl_write(
         self,
         session: "Session",  # noqa: F821
@@ -284,19 +306,19 @@ class RecordStoreWriteObserver:
         zone_id: str | None,
         agent_id: str | None,
     ) -> None:
-        """Record MCL entry for a file write. Non-critical."""
+        """Record MCL entry for a file write. Non-critical, uses savepoint."""
         try:
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            # Construct URN from path (service layer will use path_id in production)
-            urn = f"urn:nexus:file:{zone_id or 'default'}:{metadata.path}"
-            MCLRecorder(session).record_file_write(
-                entity_urn=urn,
-                metadata_dict=metadata.to_dict(),
-                zone_id=zone_id,
-                changed_by=agent_id or "system",
-                previous_metadata=old_metadata.to_dict() if old_metadata else None,
-            )
+            urn = self._build_urn(metadata.path, zone_id)
+            with session.begin_nested():
+                MCLRecorder(session).record_file_write(
+                    entity_urn=urn,
+                    metadata_dict=metadata.to_dict(),
+                    zone_id=zone_id,
+                    changed_by=agent_id or "system",
+                    previous_metadata=old_metadata.to_dict() if old_metadata else None,
+                )
         except Exception:
             logger.debug("MCL write recording failed (non-critical)", exc_info=True)
 
@@ -309,17 +331,21 @@ class RecordStoreWriteObserver:
         zone_id: str | None,
         agent_id: str | None,
     ) -> None:
-        """Record MCL entry for a file delete. Non-critical."""
+        """Record MCL entry for a file delete and soft-delete entity aspects. Non-critical."""
         try:
+            from nexus.storage.aspect_service import AspectService
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            urn = f"urn:nexus:file:{zone_id or 'default'}:{path}"
-            MCLRecorder(session).record_file_delete(
-                entity_urn=urn,
-                zone_id=zone_id,
-                changed_by=agent_id or "system",
-                previous_metadata=metadata.to_dict() if metadata else None,
-            )
+            urn = self._build_urn(path, zone_id)
+            with session.begin_nested():
+                MCLRecorder(session).record_file_delete(
+                    entity_urn=urn,
+                    zone_id=zone_id,
+                    changed_by=agent_id or "system",
+                    previous_metadata=metadata.to_dict() if metadata else None,
+                )
+                # Issue #2929 fix: cascade soft-delete all aspects for deleted entity
+                AspectService(session).soft_delete_entity_aspects(urn)
         except Exception:
             logger.debug("MCL delete recording failed (non-critical)", exc_info=True)
 
@@ -337,14 +363,15 @@ class RecordStoreWriteObserver:
         try:
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            urn = f"urn:nexus:file:{zone_id or 'default'}:{old_path}"
-            MCLRecorder(session).record_file_rename(
-                entity_urn=urn,
-                old_path=old_path,
-                new_path=new_path,
-                zone_id=zone_id,
-                changed_by=agent_id or "system",
-            )
+            urn = self._build_urn(old_path, zone_id)
+            with session.begin_nested():
+                MCLRecorder(session).record_file_rename(
+                    entity_urn=urn,
+                    old_path=old_path,
+                    new_path=new_path,
+                    zone_id=zone_id,
+                    changed_by=agent_id or "system",
+                )
         except Exception:
             logger.debug("MCL rename recording failed (non-critical)", exc_info=True)
 

@@ -38,12 +38,14 @@ def upgrade() -> None:
         sa.Column("lock_version", sa.BigInteger(), nullable=False, server_default="0"),
     )
 
-    # Unique constraint on (urn, name, version) for active aspects
+    # Unique constraint on (urn, name, version) for active (non-deleted) aspects.
+    # Partial index (WHERE deleted_at IS NULL) allows soft-delete + recreate.
     op.create_index(
         "idx_entity_aspects_urn_name_version",
         "entity_aspects",
         ["entity_urn", "aspect_name", "version"],
         unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
     )
 
     # Fast lookup by URN (list all aspects for an entity)
@@ -51,6 +53,7 @@ def upgrade() -> None:
         "idx_entity_aspects_urn",
         "entity_aspects",
         ["entity_urn"],
+        postgresql_where=sa.text("deleted_at IS NULL"),
     )
 
     # Batch loading index (WHERE aspect_name=? AND version=0)
@@ -58,6 +61,7 @@ def upgrade() -> None:
         "idx_entity_aspects_name_version",
         "entity_aspects",
         ["aspect_name", "version"],
+        postgresql_where=sa.text("deleted_at IS NULL"),
     )
 
     # --- metadata_change_log table ---

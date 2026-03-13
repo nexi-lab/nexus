@@ -32,6 +32,7 @@ Architecture:
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import time
@@ -372,7 +373,60 @@ class PipedRecordStoreWriteObserver:
             await self._flush_batch(batch)
 
     @staticmethod
-    def _process_events_in_session(session: Any, events: list[dict[str, Any]]) -> None:
+    def _build_urn(path: str, zone_id: str | None) -> str:
+        """Build a URN from a path using hash-based identifier."""
+        path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
+        return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
+
+    def _record_mcl_for_event(
+        self,
+        session: Any,
+        event: dict[str, Any],
+    ) -> None:
+        """Record MCL entry for a single event. Non-critical, uses savepoint."""
+        try:
+            from nexus.storage.mcl_recorder import MCLRecorder
+
+            op = event["op"]
+            zone_id = event.get("zone_id")
+            agent_id = event.get("agent_id")
+            path = event["path"]
+            urn = self._build_urn(path, zone_id)
+
+            with session.begin_nested():
+                recorder = MCLRecorder(session)
+                if op == "write":
+                    recorder.record_file_write(
+                        entity_urn=urn,
+                        metadata_dict=event.get("metadata"),
+                        zone_id=zone_id,
+                        changed_by=agent_id or "system",
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                elif op == "delete":
+                    from nexus.storage.aspect_service import AspectService
+
+                    recorder.record_file_delete(
+                        entity_urn=urn,
+                        zone_id=zone_id,
+                        changed_by=agent_id or "system",
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                    AspectService(session).soft_delete_entity_aspects(urn)
+                elif op == "rename":
+                    recorder.record_file_rename(
+                        entity_urn=urn,
+                        old_path=path,
+                        new_path=event.get("new_path", ""),
+                        zone_id=zone_id,
+                        changed_by=agent_id or "system",
+                    )
+        except Exception:
+            logger.debug(
+                "MCL recording failed for %s:%s (non-critical)", event.get("op"), event.get("path")
+            )
+
+    def _process_events_in_session(self, session: Any, events: list[dict[str, Any]]) -> None:
         """Dispatch events to OperationLogger + VersionRecorder within a session.
 
         Shared by ``_flush_batch()`` (async consumer) and ``flush_sync()`` (CLI drain).
@@ -447,6 +501,10 @@ class PipedRecordStoreWriteObserver:
                     agent_id=agent_id,
                     status="success",
                 )
+
+            # MCL recording (Issue #2929) — non-critical per event
+            if op in ("write", "delete", "rename"):
+                self._record_mcl_for_event(session, event)
 
     async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
         """Flush a batch of events to RecordStore in a single transaction."""

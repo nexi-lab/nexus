@@ -105,6 +105,12 @@ class TestAspectRegistry:
         # Should not raise
         registry.validate_payload("path", {"virtual_path": "/test"})
 
+    def test_validate_payload_missing_required_field(self) -> None:
+        registry = AspectRegistry.get()
+        # OwnershipAspect requires owner_id — missing it should raise
+        with pytest.raises(ValueError, match="Invalid payload"):
+            registry.validate_payload("ownership", {})
+
     def test_register_duplicate_same_class_ok(self) -> None:
         registry = AspectRegistry.get()
         # Re-registering same name+class is OK

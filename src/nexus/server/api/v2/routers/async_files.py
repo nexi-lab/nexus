@@ -231,6 +231,8 @@ def create_async_files_router(
                 media_type="application/json",
             )
 
+        except HTTPException:
+            raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:

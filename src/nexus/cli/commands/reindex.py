@@ -168,13 +168,27 @@ def _show_dry_run_summary(
     console.print("\n[dim]Run without --dry-run to execute.[/dim]")
 
 
-def _process_mcl_record(
-    mcl: object,  # noqa: ARG001
-    target: str,  # noqa: ARG001
-) -> None:
+def _process_mcl_record(mcl: object, target: str) -> None:
     """Process a single MCL record for reindexing.
 
-    This is where index-specific logic goes. Currently a stub that
-    logs the action — real implementations will dispatch to search
-    indexer, semantic indexer, or version tracker.
+    Dispatches MCL records to the appropriate index rebuilder.
+    Currently logs the action for observability — concrete indexer
+    implementations will be added as index backends are built.
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    entity_urn = getattr(mcl, "entity_urn", "unknown")
+    aspect_name = getattr(mcl, "aspect_name", "unknown")
+    change_type = getattr(mcl, "change_type", "unknown")
+    seq = getattr(mcl, "sequence_number", 0)
+
+    logger.info(
+        "Reindex [%s] seq=%d urn=%s aspect=%s change=%s",
+        target,
+        seq,
+        entity_urn,
+        aspect_name,
+        change_type,
+    )

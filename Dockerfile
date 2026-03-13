@@ -2,10 +2,12 @@
 # Multi-stage build for optimal image size
 # 国内镜像支持：APT、pip、Rust、Go
 ARG USE_CHINA_MIRROR=false
+ARG TORCH_VARIANT=cpu
 FROM python:3.13-slim AS builder
 
 # 设置国内镜像环境变量（默认 false，国外环境不使用）
 ARG USE_CHINA_MIRROR
+ARG TORCH_VARIANT
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GOSUMDB=off
@@ -62,17 +64,19 @@ COPY alembic/alembic.ini ./alembic.ini
 
 # ---------- Install Python dependencies ----------
 ENV UV_HTTP_TIMEOUT=300
-# Install CPU-only torch first — txtai[ann] transitively pulls torch via
-# sentence-transformers; pre-installing from the CPU index avoids ~4 GB of
-# CUDA libraries that are never used in the container.
+# Pre-install torch before txtai[ann] to control the variant.
+# TORCH_VARIANT=cpu  → CPU-only wheels (~300 MB, no CUDA)
+# TORCH_VARIANT=cuda → Default PyPI wheels with CUDA (~2 GB)
 RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
         PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
-        TORCH_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
     else \
         PIP_INDEX="https://pypi.org/simple"; \
-        TORCH_INDEX="https://download.pytorch.org/whl/cpu"; \
     fi && \
-    uv pip install --system --index-url $TORCH_INDEX torch && \
+    if [ "$TORCH_VARIANT" = "cpu" ]; then \
+        uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch; \
+    else \
+        uv pip install --system -i $PIP_INDEX torch; \
+    fi && \
     uv pip install --system -i $PIP_INDEX ".[semantic-search]" "txtai[ann]>=9.0"
 
 # ---------- Install sandbox providers ----------

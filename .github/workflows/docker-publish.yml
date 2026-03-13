@@ -14,8 +14,15 @@ permissions:
 
 jobs:
   build-and-push:
-    name: Build & Push multi-arch image
+    name: Build & Push (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - variant: cpu
+            suffix: ""
+          - variant: cuda
+            suffix: "-cuda"
 
     steps:
       - name: Checkout code
@@ -39,11 +46,12 @@ jobs:
         run: |
           PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           SHA="${GITHUB_SHA::8}"
+          SUFFIX="${{ matrix.suffix }}"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "tags=ghcr.io/nexi-lab/nexus:${VERSION},ghcr.io/nexi-lab/nexus:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
           else
-            echo "tags=ghcr.io/nexi-lab/nexus:${PKG_VERSION},ghcr.io/nexi-lab/nexus:sha-${SHA},ghcr.io/nexi-lab/nexus:edge" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/nexi-lab/nexus:${PKG_VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:sha-${SHA}${SUFFIX},ghcr.io/nexi-lab/nexus:edge${SUFFIX}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push
@@ -54,5 +62,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}

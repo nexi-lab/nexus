@@ -14,7 +14,6 @@ from urllib.parse import quote
 import click
 
 from nexus.cli.utils import add_backend_options, console
-from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +38,13 @@ def aspects_list(path: str, remote_url: str | None, remote_api_key: str | None) 
         nexus aspects list /workspace/demo/restricted/internal.md
     """
     from nexus.cli.api_client import get_api_client_from_options
+    from nexus.cli.config import resolve_connection
     from nexus.contracts.urn import NexusURN
 
+    conn = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
+    zone_id = conn.zone_id or "root"
     client = get_api_client_from_options(remote_url, remote_api_key)
-    urn = str(NexusURN.for_file(ROOT_ZONE_ID, path))
+    urn = str(NexusURN.for_file(zone_id, path))
 
     try:
         result = client.get(f"/api/v2/aspects/{quote(urn, safe='')}")
@@ -78,10 +80,13 @@ def aspects_get(
         nexus aspects get /workspace/demo/restricted/internal.md governance.classification
     """
     from nexus.cli.api_client import get_api_client_from_options
+    from nexus.cli.config import resolve_connection
     from nexus.contracts.urn import NexusURN
 
+    conn = resolve_connection(remote_url=remote_url, remote_api_key=remote_api_key)
+    zone_id = conn.zone_id or "root"
     client = get_api_client_from_options(remote_url, remote_api_key)
-    urn = str(NexusURN.for_file(ROOT_ZONE_ID, path))
+    urn = str(NexusURN.for_file(zone_id, path))
 
     try:
         result = client.get(f"/api/v2/aspects/{quote(urn, safe='')}/{quote(aspect_name, safe='')}")

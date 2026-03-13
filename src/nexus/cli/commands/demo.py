@@ -166,7 +166,7 @@ def _seed_files(
             parent = "/".join(path.split("/")[:-1])
             if parent:
                 nx.sys_mkdir(parent, parents=True, exist_ok=True)
-            nx.sys_write(path, content.encode())
+            nx.sys_write(path, content.encode(), consistency="ec")
             seeded.append(path)
             created += 1
         except Exception as e:
@@ -1065,7 +1065,7 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     manifest["preset"] = config.get("preset", "unknown")
     manifest["skip_semantic"] = skip_semantic
     manifest["semantic_ready"] = semantic_ready
-    manifest["write_mode_used"] = "sc"
+    manifest["write_mode_used"] = "ec"
 
     # Save manifest
     _save_manifest(data_dir, manifest)

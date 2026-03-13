@@ -81,16 +81,29 @@ def get_api_client_from_options(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
 ) -> NexusApiClient:
-    """Build a NexusApiClient from CLI options / env vars / project config.
+    """Build a NexusApiClient from CLI options / env vars / active profile.
 
-    Resolution order:
-    1. Explicit ``remote_url`` / ``remote_api_key`` arguments
-    2. ``NEXUS_URL`` / ``NEXUS_API_KEY`` environment variables (handled by NexusApiClient)
-    3. Project config (``nexus.yaml`` / ``nexus.yml`` in cwd)
-    4. Default ``http://localhost:2026``
+    Resolution order (via resolve_connection):
+    1. Explicit ``remote_url`` / ``remote_api_key`` arguments (CLI flags)
+    2. ``NEXUS_URL`` / ``NEXUS_API_KEY`` environment variables
+    3. Active profile from ~/.nexus/config.yaml
+    4. Project config (``nexus.yaml`` / ``nexus.yml`` in cwd)
+    5. Default ``http://localhost:2026``
     """
-    # Try project config (nexus.yaml) if no explicit URL and no env var
-    if not remote_url and not os.environ.get("NEXUS_URL"):
+    from nexus.cli.config import resolve_connection
+
+    conn = resolve_connection(
+        remote_url=remote_url,
+        remote_api_key=remote_api_key,
+    )
+
+    # If resolve_connection returned a URL, use it; otherwise fall back
+    # to project config (nexus.yaml) for local setups
+    effective_url = conn.url
+    effective_key = conn.api_key
+
+    if not effective_url:
+        # Try project config (nexus.yaml) as last resort
         try:
             import yaml
 
@@ -100,10 +113,11 @@ def get_api_client_from_options(
                     with open(p) as f:
                         cfg = yaml.safe_load(f) or {}
                     ports = cfg.get("ports", {})
-                    remote_url = f"http://localhost:{ports.get('http', 2026)}"
-                    if not remote_api_key:
-                        remote_api_key = cfg.get("api_key", "")
+                    effective_url = f"http://localhost:{ports.get('http', 2026)}"
+                    if not effective_key:
+                        effective_key = cfg.get("api_key", "")
                     break
         except Exception:
             pass
-    return NexusApiClient(url=remote_url, api_key=remote_api_key)
+
+    return NexusApiClient(url=effective_url, api_key=effective_key)

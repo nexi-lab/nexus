@@ -21,7 +21,7 @@ import { SecretsAudit } from "./secrets-audit.js";
 import { MclReplay } from "./mcl-replay.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 
-type FilterMode = "none" | "type" | "search";
+type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect";
 
 type PanelTab = "events" | "mcl" | InfraTab;
 
@@ -50,6 +50,10 @@ export default function EventsPanel(): React.ReactNode {
   // Filter input state
   const [filterMode, setFilterMode] = useState<FilterMode>("none");
   const [filterBuffer, setFilterBuffer] = useState("");
+
+  // MCL filter state
+  const [mclUrnFilter, setMclUrnFilter] = useState("");
+  const [mclAspectFilter, setMclAspectFilter] = useState("");
 
   // Events store (SSE)
   const connected = useEventsStore((s) => s.connected);
@@ -190,11 +194,15 @@ export default function EventsPanel(): React.ReactNode {
       ? {
           // Filter input mode: capture keystrokes
           return: () => {
-            const value = filterBuffer.trim() || null;
+            const value = filterBuffer.trim() || "";
             if (filterMode === "type") {
-              setFilter({ eventType: value });
-            } else {
-              setFilter({ search: value });
+              setFilter({ eventType: value || null });
+            } else if (filterMode === "search") {
+              setFilter({ search: value || null });
+            } else if (filterMode === "mcl_urn") {
+              setMclUrnFilter(value);
+            } else if (filterMode === "mcl_aspect") {
+              setMclAspectFilter(value);
             }
             setFilterMode("none");
             setFilterBuffer("");
@@ -242,6 +250,18 @@ export default function EventsPanel(): React.ReactNode {
               setFilterBuffer(filters.search ?? "");
             }
           },
+          u: () => {
+            if (activeTab === "mcl") {
+              setFilterMode("mcl_urn");
+              setFilterBuffer(mclUrnFilter);
+            }
+          },
+          n: () => {
+            if (activeTab === "mcl") {
+              setFilterMode("mcl_aspect");
+              setFilterBuffer(mclAspectFilter);
+            }
+          },
           d: () => {
             if (activeTab === "subscriptions" && apiClient) {
               const sub = subscriptions[selectedSubscriptionIndex];
@@ -273,7 +293,7 @@ export default function EventsPanel(): React.ReactNode {
         </text>
       </box>
 
-      {/* Filter bar (events tab only) */}
+      {/* Filter bar (events tab) */}
       {activeTab === "events" && (
         <box height={1} width="100%">
           <text>
@@ -282,6 +302,19 @@ export default function EventsPanel(): React.ReactNode {
               : filterMode === "search"
                 ? `Filter search: ${filterBuffer}\u2588`
                 : `Filter: type=${filters.eventType ?? "*"} search=${filters.search ?? "*"}`}
+          </text>
+        </box>
+      )}
+
+      {/* Filter bar (MCL tab) */}
+      {activeTab === "mcl" && (
+        <box height={1} width="100%">
+          <text>
+            {filterMode === "mcl_urn"
+              ? `Filter URN: ${filterBuffer}\u2588`
+              : filterMode === "mcl_aspect"
+                ? `Filter aspect: ${filterBuffer}\u2588`
+                : `Filter: URN=${mclUrnFilter || "*"} aspect=${mclAspectFilter || "*"}`}
           </text>
         </box>
       )}
@@ -323,7 +356,7 @@ export default function EventsPanel(): React.ReactNode {
           </box>
         )}
 
-        {activeTab === "mcl" && <MclReplay />}
+        {activeTab === "mcl" && <MclReplay urnFilter={mclUrnFilter} aspectFilter={mclAspectFilter} />}
 
         {activeTab === "connectors" && (
           <ConnectorList
@@ -364,8 +397,10 @@ export default function EventsPanel(): React.ReactNode {
             ? "Type filter, Enter:apply, Escape:cancel, Backspace:delete"
             : activeTab === "events"
             ? "f:filter type  s:filter search  c:clear  r:reconnect  Tab:switch tab  q:quit"
-            : activeTab === "mcl"
-              ? "r:refresh  Tab:switch tab  q:quit"
+            : activeTab === "mcl" && filterMode !== "none"
+              ? "Type filter, Enter:apply, Escape:cancel, Backspace:delete"
+              : activeTab === "mcl"
+              ? "u:filter URN  n:filter aspect  r:refresh  Tab:switch tab  q:quit"
               : activeTab === "subscriptions"
                 ? "j/k:navigate  d:delete  t:test  r:refresh  Tab:switch tab"
                 : activeTab === "locks"

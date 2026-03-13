@@ -248,6 +248,10 @@ async def get_aspect_service(
 
     try:
         yield AspectService(session=session), zone_id
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -275,5 +279,9 @@ async def get_catalog_service(
     try:
         aspect_svc = AspectService(session=session)
         yield CatalogService(aspect_svc), zone_id
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()

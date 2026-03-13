@@ -444,8 +444,8 @@ class TestFullWorkflow:
             # Verify manifest tracks knowledge platform seeding
             with open(manifest_path) as f:
                 manifest = json.loads(f.read())
-            assert manifest.get("write_mode_used") == "sc", (
-                "manifest should track write_mode_used as 'sc'"
+            assert manifest.get("write_mode_used") == "ec", (
+                "manifest should track write_mode_used as 'ec'"
             )
             # schemas_extracted and aspects_created may be True or False
             # depending on whether the REST API was reachable, but the

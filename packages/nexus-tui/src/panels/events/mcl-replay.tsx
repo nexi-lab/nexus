@@ -5,7 +5,7 @@
  * Issue #2930.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 
@@ -22,25 +22,19 @@ export function MclReplay(props: MclReplayProps): React.ReactNode {
   const loading = useKnowledgeStore((s) => s.replayLoading);
   const hasMore = useKnowledgeStore((s) => s.replayHasMore);
   const fetchReplay = useKnowledgeStore((s) => s.fetchReplay);
+  const clearReplay = useKnowledgeStore((s) => s.clearReplay);
   const error = useKnowledgeStore((s) => s.error);
 
-  const [urnFilter, setUrnFilter] = useState(props.urnFilter ?? "");
-  const [aspectFilter, setAspectFilter] = useState(props.aspectFilter ?? "");
+  const urnFilter = props.urnFilter ?? "";
+  const aspectFilter = props.aspectFilter ?? "";
 
-  // Sync from props when they change
+  // Re-fetch from server when filters change (or on initial mount)
   useEffect(() => {
-    setUrnFilter(props.urnFilter ?? "");
-  }, [props.urnFilter]);
-
-  useEffect(() => {
-    setAspectFilter(props.aspectFilter ?? "");
-  }, [props.aspectFilter]);
-
-  useEffect(() => {
-    if (client && entries.length === 0) {
-      void fetchReplay(client, 0, 50, urnFilter || undefined, aspectFilter || undefined);
+    if (client) {
+      clearReplay();
+      void fetchReplay(client, 0, 200, urnFilter || undefined, aspectFilter || undefined);
     }
-  }, [client, entries.length, fetchReplay, urnFilter, aspectFilter]);
+  }, [client, urnFilter, aspectFilter, fetchReplay, clearReplay]);
 
   // Apply filters client-side
   const filtered = entries.filter((e) => {
@@ -72,7 +66,7 @@ export function MclReplay(props: MclReplayProps): React.ReactNode {
       <text>
         {"  Seq  Change       Aspect               Entity URN"}
       </text>
-      {filtered.slice(0, 20).map((e) => (
+      {filtered.slice(0, 100).map((e) => (
         <text key={e.sequenceNumber}>
           {`  ${String(e.sequenceNumber).padStart(5)}  ${e.changeType.padEnd(12)} ${e.aspectName.padEnd(20)} ${e.entityUrn}`}
         </text>

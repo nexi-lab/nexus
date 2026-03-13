@@ -196,8 +196,8 @@ def create_nexus_services(
         resiliency_manager=system_dict["resiliency_manager"],
         eviction_manager=system_dict.get("eviction_manager"),
         zone_lifecycle=system_dict.get("zone_lifecycle"),
-        # DT_PIPE manager (Issue #809)
-        pipe_manager=system_dict.get("pipe_manager"),
+        # (PipeManager + StreamManager are kernel-internal primitives §4.2,
+        # constructed in NexusFS.__init__ — not injected via SystemServices.)
         # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
     )

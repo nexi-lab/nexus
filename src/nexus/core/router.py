@@ -69,6 +69,17 @@ class PipeRouteResult:
     path: str
 
 
+@dataclass(frozen=True, slots=True)
+class StreamRouteResult:
+    """Route result for DT_STREAM — kernel dispatches to StreamManager.
+
+    Like ``PipeRouteResult`` but for append-only streams with
+    non-destructive offset-based reads.
+    """
+
+    path: str
+
+
 class PathRouter:
     """Route virtual paths to storage backends using mount table.
 
@@ -184,16 +195,17 @@ class PathRouter:
         *,
         is_admin: bool = False,
         check_write: bool = False,
-    ) -> RouteResult | PipeRouteResult:
+    ) -> RouteResult | PipeRouteResult | StreamRouteResult:
         """Route virtual path to backend with mount-level access control.
 
         Algorithm: walk path components from deepest to shallowest, checking
         metastore for DT_MOUNT at each level (longest prefix match).  Each
         metastore.get() is ~5 μs with redb's Rust in-memory cache.
 
-        DT_PIPE inodes are detected at the exact target path (first iteration)
-        and short-circuit to ``PipeRouteResult`` — like Linux VFS dispatching
-        to ``fifo_fops`` when the inode is ``S_ISFIFO``.
+        DT_PIPE / DT_STREAM inodes are detected at the exact target path
+        (first iteration) and short-circuit to ``PipeRouteResult`` /
+        ``StreamRouteResult`` — like Linux VFS dispatching to special
+        ``fops`` when the inode type matches.
 
         Args:
             virtual_path: Virtual path to route.
@@ -201,7 +213,8 @@ class PathRouter:
             check_write: Whether to check write permissions.
 
         Returns:
-            RouteResult for regular files, PipeRouteResult for DT_PIPE.
+            RouteResult for regular files, PipeRouteResult for DT_PIPE,
+            StreamRouteResult for DT_STREAM.
 
         Raises:
             PathNotMountedError: No mount found for path.
@@ -215,11 +228,14 @@ class PathRouter:
         while True:
             meta = self._metastore.get(current)
 
-            # DT_PIPE: kernel-native pipe dispatch at exact target path.
-            # Pipes are endpoint inodes (not prefixes), so only match on
-            # the first iteration (current == virtual_path).
-            if meta is not None and meta.is_pipe and current == virtual_path:
-                return PipeRouteResult(path=virtual_path)
+            # DT_PIPE / DT_STREAM: kernel-native IPC dispatch at exact
+            # target path. IPC inodes are endpoints (not prefixes), so
+            # only match on the first iteration (current == virtual_path).
+            if meta is not None and current == virtual_path:
+                if meta.is_pipe:
+                    return PipeRouteResult(path=virtual_path)
+                if meta.is_stream:
+                    return StreamRouteResult(path=virtual_path)
 
             # Primary: metastore DT_MOUNT (persistent, cross-session).
             # Fallback: _backends registry (in-memory, current session).

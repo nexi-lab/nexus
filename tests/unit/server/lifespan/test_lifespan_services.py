@@ -132,9 +132,8 @@ class TestFromAppSystemServices:
             eviction_manager="em",
             write_observer="write_obs",
             zone_lifecycle="zl",
-            pipe_manager="pipe_mgr",
         )
-        nx = _make_nexus_fs(_system_services=sys_svc)
+        nx = _make_nexus_fs(_system_services=sys_svc, _pipe_manager="pipe_mgr")
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 

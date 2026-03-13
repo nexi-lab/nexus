@@ -233,7 +233,7 @@ Documented in `document-ai/notes/` discussions; brief summary for reference:
 - **Memory/Cache tiering**: L0 kernel (redb ~50ns), L1 Dragonfly (~1ms), L2 PostgreSQL (~5ms). L0 stays in kernel; L1/L2 hot-pluggable.
 - **Identity: PCB-based binding**: Immutable identity at process spawn. Progressive isolation: Host Process → Docker → Wasm.
 - **Auth: Verify/Sign split**: Kernel = `verify_token()` ~50ns. Driver = `login()` ~50-500ms (DB + OAuth).
-- **Nexus native IPC**: `DT_PIPE` inode, ring buffer at `/nexus/pipes/{name}`. Observable, Raft-replicated metadata, local or distributed data (see §7j).
+- **Nexus native IPC**: `DT_PIPE` (destructive FIFO) and `DT_STREAM` (non-destructive append-only log with offset-based reads). VFS inodes, heap buffers. Observable, Raft-replicated metadata, local or distributed data (see §7j).
 - **Container I/O monopoly**: `--network none`, single mount `/mnt/nexus`, `--read-only`.
 - **Runtime hot-swapping**: Linux `modprobe`/`rmmod` semantics for drivers. Phases: Constructor DI → DriverRegistry → state migration.
 
@@ -331,10 +331,12 @@ Single-node GC is straightforward (scan local ObjectStore vs local Metastore).
 Federation GC requires node-level reconciliation: each node scans its local ObjectStore
 against the Raft-replicated Metastore to find locally-held orphans.
 
-### 7j. DT_PIPE Federation Design
+### 7j. DT_PIPE / DT_STREAM Federation Design
 
-DT_PIPE inodes have Raft-replicated metadata but in-process heap data (RingBuffer).
-Federation extends pipe I/O transparently via origin-aware routing.
+Both IPC primitives have Raft-replicated metadata but in-process heap data
+(RingBuffer for DT_PIPE, StreamBuffer for DT_STREAM). Federation extends
+IPC I/O transparently via origin-aware routing. DT_STREAM uses the same
+`stream@host:port` pattern as DT_PIPE's `pipe@host:port`.
 
 #### Metadata: `backend_name` Encoding
 
@@ -342,8 +344,8 @@ PipeManager embeds the creator node's advertise address in `backend_name`:
 
 | Mode | `backend_name` | Meaning |
 |------|---------------|---------|
-| Single-node | `pipe` | No origin, always local |
-| Federated | `pipe@host:port` | Origin node address for remote proxy |
+| Single-node | `pipe` / `stream` | No origin, always local |
+| Federated | `pipe@host:port` / `stream@host:port` | Origin node address for remote proxy |
 
 #### Read/Write Routing
 

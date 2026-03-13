@@ -199,8 +199,6 @@ class RecordStoreWriteObserver:
                     aspect_name="file_metadata",
                     change_type="delete",
                 )
-                VersionRecorder(session).record_rename(old_path, new_path)
-
                 # Row 2: UPSERT new locator
                 op_logger.log_operation(
                     operation_type="rename",
@@ -213,6 +211,8 @@ class RecordStoreWriteObserver:
                     aspect_name="file_metadata",
                     change_type="upsert",
                 )
+
+                VersionRecorder(session).record_rename(old_path, new_path)
 
                 session.commit()
         except Exception as e:

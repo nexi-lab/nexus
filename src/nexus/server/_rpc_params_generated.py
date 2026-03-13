@@ -87,6 +87,7 @@ __all__ = [
     "RevokeShareParams",
     "RollbackParams",
     "SaveMountParams",
+    "SemanticSearchParams",
     "SemanticSearchIndexParams",
     "ShareWithUserParams",
     "SnapshotBeginParams",
@@ -850,6 +851,18 @@ class SaveMountParams:
 
 
 @dataclass
+class SemanticSearchParams:
+    """Parameters for semantic_search(): Search documents using natural language queries."""
+
+    query: str = ""
+    path: str = "/"
+    limit: int = 10
+    filters: dict[str, Any] | None = None
+    search_mode: str = "semantic"
+    adaptive_k: bool = False
+
+
+@dataclass
 class SemanticSearchIndexParams:
     """Parameters for semantic_search_index(): Index documents for semantic search."""
 
@@ -1183,6 +1196,7 @@ METHOD_PARAMS: dict[str, type] = {
     "revoke_share_link": RevokeShareLinkParams,
     "rollback": RollbackParams,
     "save_mount": SaveMountParams,
+    "semantic_search": SemanticSearchParams,
     "semantic_search_index": SemanticSearchIndexParams,
     "share_with_user": ShareWithUserParams,
     "snapshot_begin": SnapshotBeginParams,

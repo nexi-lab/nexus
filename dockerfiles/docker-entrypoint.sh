@@ -277,10 +277,16 @@ start_zoekt_if_enabled() {
 }
 
 build_serve_cmd() {
+    local auth_type="${NEXUS_AUTH_TYPE:-database}"
     if [ -f "$CONFIG_FILE" ]; then
-        echo "nexusd --config $CONFIG_FILE --auth-type database"
+        echo "nexusd --config $CONFIG_FILE --auth-type $auth_type"
     else
-        echo "nexusd --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-2026} --auth-type database"
+        local cmd="nexusd --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-2026} --auth-type $auth_type"
+        if [ "${NEXUS_BACKEND:-}" = "gcs" ]; then
+            cmd="$cmd --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET:-}"
+            [ -n "${NEXUS_GCS_PROJECT:-}" ] && cmd="$cmd --gcs-project ${NEXUS_GCS_PROJECT}"
+        fi
+        echo "$cmd"
     fi
 }
 

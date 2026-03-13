@@ -3,7 +3,7 @@
 Issue #2929: DataHub-inspired knowledge platform — entity aspects + MCL.
 
 Revision ID: c4b5ef9d1ff5
-Revises: None (standalone, no dependency on existing head)
+Revises: add_credentials_and_manifests
 Create Date: 2026-03-12
 
 """
@@ -17,13 +17,16 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c4b5ef9d1ff5"
-down_revision: Union[str, Sequence[str], None] = None
+down_revision: Union[str, Sequence[str], None] = "add_credentials_and_manifests"
 branch_labels: Union[str, Sequence[str], None] = ("knowledge_platform",)
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
     """Create entity_aspects and metadata_change_log tables."""
+    bind = op.get_bind()
+    is_postgres = bind.dialect.name == "postgresql"
+
     # --- entity_aspects table ---
     op.create_table(
         "entity_aspects",
@@ -39,30 +42,52 @@ def upgrade() -> None:
     )
 
     # Unique constraint on (urn, name, version) for active (non-deleted) aspects.
-    # Partial index (WHERE deleted_at IS NULL) allows soft-delete + recreate.
-    op.create_index(
-        "idx_entity_aspects_urn_name_version",
-        "entity_aspects",
-        ["entity_urn", "aspect_name", "version"],
-        unique=True,
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
+    # PostgreSQL: partial index (WHERE deleted_at IS NULL) allows soft-delete + recreate.
+    # SQLite: partial index via raw DDL (supported since SQLite 3.8.0).
+    partial_where = sa.text("deleted_at IS NULL")
+    if is_postgres:
+        op.create_index(
+            "idx_entity_aspects_urn_name_version",
+            "entity_aspects",
+            ["entity_urn", "aspect_name", "version"],
+            unique=True,
+            postgresql_where=partial_where,
+        )
+    else:
+        # SQLite supports partial indexes natively via CREATE INDEX ... WHERE
+        op.execute(
+            sa.text(
+                "CREATE UNIQUE INDEX idx_entity_aspects_urn_name_version "
+                "ON entity_aspects (entity_urn, aspect_name, version) "
+                "WHERE deleted_at IS NULL"
+            )
+        )
 
     # Fast lookup by URN (list all aspects for an entity)
-    op.create_index(
-        "idx_entity_aspects_urn",
-        "entity_aspects",
-        ["entity_urn"],
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
-
-    # Batch loading index (WHERE aspect_name=? AND version=0)
-    op.create_index(
-        "idx_entity_aspects_name_version",
-        "entity_aspects",
-        ["aspect_name", "version"],
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
+    if is_postgres:
+        op.create_index(
+            "idx_entity_aspects_urn",
+            "entity_aspects",
+            ["entity_urn"],
+            postgresql_where=partial_where,
+        )
+        op.create_index(
+            "idx_entity_aspects_name_version",
+            "entity_aspects",
+            ["aspect_name", "version"],
+            postgresql_where=partial_where,
+        )
+    else:
+        op.create_index(
+            "idx_entity_aspects_urn",
+            "entity_aspects",
+            ["entity_urn"],
+        )
+        op.create_index(
+            "idx_entity_aspects_name_version",
+            "entity_aspects",
+            ["aspect_name", "version"],
+        )
 
     # --- metadata_change_log table ---
     op.create_table(

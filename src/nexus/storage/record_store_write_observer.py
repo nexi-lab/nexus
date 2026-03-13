@@ -287,13 +287,29 @@ class RecordStoreWriteObserver:
     # =========================================================================
 
     @staticmethod
-    def _build_urn(path: str, zone_id: str | None) -> str:
-        """Build a URN from a path using hash-based identifier.
+    def _lookup_path_id(session: "Session", path: str) -> str | None:  # noqa: F821
+        """Look up FilePathModel.path_id by virtual_path.
 
-        Uses SHA-256 hash of the path as identifier to avoid slashes
-        in the URN component. The service layer uses FilePathModel.path_id
-        (UUID) in production; this is the observer-layer fallback.
+        Returns the UUID path_id (stable across renames) or None if not found.
         """
+        from sqlalchemy import select
+
+        from nexus.storage.models.file_path import FilePathModel
+
+        stmt = select(FilePathModel.path_id).where(FilePathModel.virtual_path == path).limit(1)
+        return session.execute(stmt).scalar_one_or_none()
+
+    @staticmethod
+    def _build_urn(session: "Session", path: str, zone_id: str | None) -> str:  # noqa: F821
+        """Build a stable URN for a file using FilePathModel.path_id.
+
+        Looks up the UUID path_id from the metastore (stable across renames).
+        Falls back to SHA-256 hash of path if path_id is unavailable.
+        """
+        path_id = RecordStoreWriteObserver._lookup_path_id(session, path)
+        if path_id is not None:
+            return f"urn:nexus:file:{zone_id or 'default'}:{path_id}"
+        # Fallback for paths not yet in metastore (e.g., during creation)
         path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
         return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
 
@@ -310,7 +326,7 @@ class RecordStoreWriteObserver:
         try:
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            urn = self._build_urn(metadata.path, zone_id)
+            urn = self._build_urn(session, metadata.path, zone_id)
             with session.begin_nested():
                 MCLRecorder(session).record_file_write(
                     entity_urn=urn,
@@ -336,7 +352,7 @@ class RecordStoreWriteObserver:
             from nexus.storage.aspect_service import AspectService
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            urn = self._build_urn(path, zone_id)
+            urn = self._build_urn(session, path, zone_id)
             with session.begin_nested():
                 MCLRecorder(session).record_file_delete(
                     entity_urn=urn,
@@ -363,7 +379,8 @@ class RecordStoreWriteObserver:
         try:
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            urn = self._build_urn(old_path, zone_id)
+            # Look up by new_path — metastore has already updated virtual_path
+            urn = self._build_urn(session, new_path, zone_id)
             with session.begin_nested():
                 MCLRecorder(session).record_file_rename(
                     entity_urn=urn,

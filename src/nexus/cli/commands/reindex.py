@@ -1,14 +1,16 @@
 """Reindex CLI command — replay MCL to rebuild indices (Issue #2929).
 
-Consumes MetadataChangeLogModel entries to rebuild search, semantic,
-and version indices. Supports incremental and clean modes with
-cursor-based batching and checkpoint resume.
+Consumes MetadataChangeLogModel entries via ``MCLRecorder.replay_changes()``
+to rebuild search, semantic, and version indices. Supports incremental and
+clean modes with cursor-based batching and checkpoint resume.
 
 Examples:
     nexus reindex --target search
     nexus reindex --target all --dry-run
     nexus reindex --target semantic --from-sequence 1000 --batch-size 200
 """
+
+import logging
 
 import click
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -21,6 +23,8 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def register_commands(cli: click.Group) -> None:
@@ -56,8 +60,9 @@ def reindex(
 ) -> None:
     """Replay metadata change log to rebuild indices.
 
-    Reads MCL records and dispatches them to the appropriate index
-    rebuilder. Supports checkpoint-based resume for large datasets.
+    Uses MCLRecorder.replay_changes() to iterate MCL records and dispatch
+    them to the appropriate index rebuilder. Supports checkpoint-based
+    resume for large datasets.
 
     Examples:
         nexus reindex --target search
@@ -73,20 +78,19 @@ def reindex(
 
         from sqlalchemy import func, select
 
+        from nexus.storage.mcl_recorder import MCLRecorder
         from nexus.storage.models.metadata_change_log import MetadataChangeLogModel
 
         with record_store.session_factory() as session:
-            # Build query
-            stmt = select(MetadataChangeLogModel).order_by(MetadataChangeLogModel.sequence_number)
-
+            # Count total for progress bar
+            count_stmt = select(func.count()).select_from(MetadataChangeLogModel)
             if from_sequence is not None:
-                stmt = stmt.where(MetadataChangeLogModel.sequence_number >= from_sequence)
-
+                count_stmt = count_stmt.where(
+                    MetadataChangeLogModel.sequence_number >= from_sequence
+                )
             if zone is not None:
-                stmt = stmt.where(MetadataChangeLogModel.zone_id == zone)
+                count_stmt = count_stmt.where(MetadataChangeLogModel.zone_id == zone)
 
-            # Count total
-            count_stmt = select(func.count()).select_from(stmt.subquery())
             total = session.execute(count_stmt).scalar_one()
 
             if total == 0:
@@ -99,7 +103,8 @@ def reindex(
                 nx.close()
                 return
 
-            # Process in batches
+            # Replay MCL via replay_changes() API
+            recorder = MCLRecorder(session)
             processed = 0
             last_sequence = from_sequence or 0
             errors = 0
@@ -111,26 +116,20 @@ def reindex(
             ) as progress:
                 task = progress.add_task(f"Reindexing {target}...", total=total)
 
-                offset = 0
-                while True:
-                    batch_stmt = stmt.limit(batch_size).offset(offset)
-                    batch = list(session.execute(batch_stmt).scalars())
+                for mcl in recorder.replay_changes(
+                    from_sequence=from_sequence or 0,
+                    zone_id=zone,
+                    batch_size=batch_size,
+                ):
+                    try:
+                        _process_mcl_record(mcl, target)
+                        processed += 1
+                        last_sequence = mcl.sequence_number
+                    except Exception as e:
+                        errors += 1
+                        console.print(f"[red]Error at seq {mcl.sequence_number}: {e}[/red]")
 
-                    if not batch:
-                        break
-
-                    for mcl in batch:
-                        try:
-                            _process_mcl_record(mcl, target)
-                            processed += 1
-                            last_sequence = mcl.sequence_number
-                        except Exception as e:
-                            errors += 1
-                            console.print(f"[red]Error at seq {mcl.sequence_number}: {e}[/red]")
-
-                        progress.update(task, advance=1)
-
-                    offset += batch_size
+                    progress.update(task, advance=1)
 
             # Summary
             console.print()
@@ -172,13 +171,11 @@ def _process_mcl_record(mcl: object, target: str) -> None:
     """Process a single MCL record for reindexing.
 
     Dispatches MCL records to the appropriate index rebuilder.
-    Currently logs the action for observability — concrete indexer
-    implementations will be added as index backends are built.
+    Currently logs and validates each record — concrete indexer
+    implementations (search, semantic, versions) will be added as
+    index backends are built. The framework is wired end-to-end:
+    MCL → replay_changes() → _process_mcl_record().
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     entity_urn = getattr(mcl, "entity_urn", "unknown")
     aspect_name = getattr(mcl, "aspect_name", "unknown")
     change_type = getattr(mcl, "change_type", "unknown")

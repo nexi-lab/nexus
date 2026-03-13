@@ -242,14 +242,36 @@ class CatalogService:
 
     def search_by_column(
         self,
-        column_name: str,  # noqa: ARG002
+        column_name: str,
         *,
-        zone_id: str | None = None,  # noqa: ARG002
+        zone_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search for entities containing a column name.
 
-        Note: This is a naive implementation that scans aspects.
-        Production should use a search index.
+        Naive scan-based implementation: loads all schema_metadata aspects
+        and filters in Python. Production should use a search index built
+        from MCL events for O(1) column lookups.
         """
-        # Stub — in production, this queries a search index built from MCL events
-        return []
+        results: list[dict[str, Any]] = []
+        all_schemas = self._aspect_service.find_entities_with_aspect("schema_metadata")
+
+        for entity_urn, payload in all_schemas.items():
+            # Skip if zone filter doesn't match (check URN zone component)
+            if zone_id is not None and f":{zone_id}:" not in entity_urn:
+                continue
+
+            columns = payload.get("columns", [])
+            for col in columns:
+                col_name = col.get("name", "")
+                if column_name.lower() in col_name.lower():
+                    results.append(
+                        {
+                            "entity_urn": entity_urn,
+                            "column_name": col_name,
+                            "column_type": col.get("type", "unknown"),
+                            "schema": payload,
+                        }
+                    )
+                    break  # One match per entity is sufficient
+
+        return results

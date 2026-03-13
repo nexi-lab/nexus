@@ -13,6 +13,7 @@ Architecture:
 import json
 import logging
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -131,3 +132,46 @@ class MCLRecorder:
             self._session.add(mcl)
         except Exception:
             logger.warning("MCL record_file_rename failed", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Replay API (Issue #2929)
+    # ------------------------------------------------------------------
+
+    def replay_changes(
+        self,
+        *,
+        from_sequence: int = 0,
+        zone_id: str | None = None,
+        aspect_name: str | None = None,
+        batch_size: int = 500,
+    ) -> Iterator[MetadataChangeLogModel]:
+        """Yield MCL records for replay/reindexing.
+
+        Returns an iterator of MCL records ordered by sequence_number.
+        Supports filtering by zone_id, aspect_name, and sequence cursor.
+
+        Args:
+            from_sequence: Start from this sequence number (inclusive).
+            zone_id: Filter by zone.
+            aspect_name: Filter by aspect type.
+            batch_size: Number of records to fetch per batch.
+
+        Yields:
+            MetadataChangeLogModel instances in sequence order.
+        """
+        stmt = select(MetadataChangeLogModel).order_by(MetadataChangeLogModel.sequence_number)
+
+        if from_sequence > 0:
+            stmt = stmt.where(MetadataChangeLogModel.sequence_number >= from_sequence)
+        if zone_id is not None:
+            stmt = stmt.where(MetadataChangeLogModel.zone_id == zone_id)
+        if aspect_name is not None:
+            stmt = stmt.where(MetadataChangeLogModel.aspect_name == aspect_name)
+
+        offset = 0
+        while True:
+            batch = list(self._session.execute(stmt.limit(batch_size).offset(offset)).scalars())
+            if not batch:
+                break
+            yield from batch
+            offset += batch_size

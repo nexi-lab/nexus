@@ -301,12 +301,14 @@ def main(
                 database_url = os.getenv("POSTGRES_URL")
             if database_url:
                 try:
-                    from nexus.server.auth.database_auth import DatabaseAuthProvider
+                    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+                    from nexus.storage.record_store import SQLAlchemyRecordStore
 
-                    auth_provider = DatabaseAuthProvider(database_url)
+                    record_store = SQLAlchemyRecordStore(database_url)
+                    auth_provider = DatabaseAPIKeyAuth(record_store)
                     logger.info("Using database authentication")
-                except ImportError:
-                    logger.warning("DatabaseAuthProvider not available, falling back to static")
+                except Exception:
+                    logger.warning("DatabaseAPIKeyAuth not available, falling back to static")
 
         # Resolve API key: explicit flag > env var (handled by Click) > key file
         if not api_key:

@@ -2,10 +2,12 @@
 # Multi-stage build for optimal image size
 # 国内镜像支持：APT、pip、Rust、Go
 ARG USE_CHINA_MIRROR=false
+ARG TORCH_VARIANT=cpu
 FROM python:3.13-slim AS builder
 
 # 设置国内镜像环境变量（默认 false，国外环境不使用）
 ARG USE_CHINA_MIRROR
+ARG TORCH_VARIANT
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GOSUMDB=off
@@ -62,12 +64,20 @@ COPY alembic/alembic.ini ./alembic.ini
 
 # ---------- Install Python dependencies ----------
 ENV UV_HTTP_TIMEOUT=300
+# Pre-install torch before txtai[ann] to control the variant.
+# TORCH_VARIANT=cpu  → CPU-only wheels (~300 MB, no CUDA)
+# TORCH_VARIANT=cuda → Default PyPI wheels with CUDA (~2 GB)
 RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
         PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
     else \
         PIP_INDEX="https://pypi.org/simple"; \
     fi && \
-    uv pip install --system -i $PIP_INDEX .
+    if [ "$TORCH_VARIANT" = "cpu" ]; then \
+        uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch; \
+    else \
+        uv pip install --system -i $PIP_INDEX torch; \
+    fi && \
+    uv pip install --system -i $PIP_INDEX ".[semantic-search]" "txtai[ann]>=9.0"
 
 # ---------- Install sandbox providers ----------
 RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
@@ -88,8 +98,8 @@ RUN maturin build --release --out /build/dist && \
 
 # Build nexus_raft
 WORKDIR /build/rust/nexus_raft
-RUN maturin build --release --features full && \
-    pip install --no-cache-dir target/wheels/nexus_raft-*-manylinux*.whl
+RUN maturin build --release --features full --out /build/dist && \
+    pip install --no-cache-dir /build/dist/nexus_raft-*.whl
 
 WORKDIR /build
 
@@ -110,6 +120,7 @@ RUN set -eux; \
 # ---------- Copy Python packages + Rust extension ----------
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
+COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 
 # ---------- Copy Zoekt binaries ----------

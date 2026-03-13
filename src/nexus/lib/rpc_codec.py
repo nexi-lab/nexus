@@ -101,7 +101,7 @@ def _prepare_for_orjson(obj: Any) -> Any:
         return {"__type__": "timedelta", "seconds": obj.total_seconds()}
     elif isinstance(obj, dict):
         return {k: _prepare_for_orjson(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
+    elif isinstance(obj, list | tuple):
         return [_prepare_for_orjson(item) for item in obj]
     elif hasattr(obj, "__dict__") and not isinstance(obj, type):
         return {

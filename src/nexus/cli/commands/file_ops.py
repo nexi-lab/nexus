@@ -24,8 +24,11 @@ from nexus.cli.utils import (
 
 
 def register_commands(cli: click.Group) -> None:
-    """Register all file operation commands."""
-    cli.add_command(init)
+    """Register all file operation commands.
+
+    Note: ``init`` has been moved to ``init_cmd.py`` (Issue #2915).
+    It is registered separately in ``__init__.py``.
+    """
     cli.add_command(cat)
     cli.add_command(write)
     cli.add_command(append)

@@ -9,7 +9,7 @@ Categories:
   3. Methods not on NexusFS class (admin, memory, skills, trajectory, etc.)
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from nexus.contracts.constants import DEFAULT_OAUTH_REDIRECT_URI
@@ -142,6 +142,17 @@ class AdminUpdateKeyParams:
     expires_days: int | None = None
     is_admin: bool | None = None
     name: str | None = None
+
+
+@dataclass
+class AdminWritePermissionParams:
+    """Parameters for admin_write_permission() method.
+
+    Accepts a batch of ReBAC relationship tuples to write.
+    Each tuple is a dict with keys: subject, relation, object, zone_id.
+    """
+
+    tuples: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -392,6 +403,7 @@ OVERRIDE_METHOD_PARAMS: dict[str, type] = {
     "admin_get_key": AdminGetKeyParams,
     "admin_revoke_key": AdminRevokeKeyParams,
     "admin_update_key": AdminUpdateKeyParams,
+    "admin_write_permission": AdminWritePermissionParams,
     "admin_gc_versions": AdminGcVersionsParams,
     "admin_gc_versions_stats": AdminGcVersionsStatsParams,
     # Memory

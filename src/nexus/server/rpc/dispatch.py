@@ -63,6 +63,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_admin_list_keys,
         handle_admin_revoke_key,
         handle_admin_update_key,
+        handle_admin_write_permission,
     )
     from nexus.server.rpc.handlers.delta import (
         handle_delta_read,
@@ -82,6 +83,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         handle_rename,
         handle_rmdir,
         handle_search,
+        handle_semantic_search,
         handle_semantic_search_index,
         handle_set_metadata,
         handle_write,
@@ -133,9 +135,11 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "delta_read": DispatchEntry(handle_delta_read),
         "delta_write": DispatchEntry(handle_delta_write),
         # Semantic search
+        "semantic_search": DispatchEntry(handle_semantic_search, is_async=True),
         "semantic_search_index": DispatchEntry(handle_semantic_search_index, is_async=True),
         # Memory API — moved to MemoryService @rpc_expose (Issue #12)
         # Admin API
+        "admin_write_permission": DispatchEntry(handle_admin_write_permission),
         "admin_create_key": DispatchEntry(handle_admin_create_key, pass_auth_provider=True),
         "admin_list_keys": DispatchEntry(handle_admin_list_keys, pass_auth_provider=True),
         "admin_get_key": DispatchEntry(handle_admin_get_key, pass_auth_provider=True),

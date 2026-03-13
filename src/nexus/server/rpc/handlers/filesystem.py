@@ -462,6 +462,22 @@ async def handle_semantic_search_index(
     return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
 
+async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any) -> dict[str, Any]:
+    """Handle semantic_search method — natural language search via SQL fallback."""
+    search = nexus_fs.service("search")
+    if search is None:
+        raise ValueError("SearchService not available")
+
+    results = await search.semantic_search(
+        query=params.query,
+        path=getattr(params, "path", "/"),
+        limit=getattr(params, "limit", 10),
+        search_mode=getattr(params, "search_mode", "semantic"),
+        adaptive_k=getattr(params, "adaptive_k", False),
+    )
+    return {"results": results}
+
+
 def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
     return {"is_directory": nexus_fs.sys_is_directory(params.path, context=context)}

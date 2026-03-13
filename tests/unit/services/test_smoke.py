@@ -208,7 +208,7 @@ class TestSearchServiceSmoke:
             enforce_permissions=False,
         )
 
-        with pytest.raises(ValueError, match="not initialized"):
+        with pytest.raises(ValueError, match="not available"):
             await service.semantic_search(query="test")
 
     @pytest.mark.asyncio

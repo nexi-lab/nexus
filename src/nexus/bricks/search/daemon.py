@@ -680,7 +680,12 @@ class SearchDaemon:
             # Get query embedding
             embedding = await self._get_query_embedding(query)
             if not embedding:
-                logger.warning("Could not generate query embedding")
+                if self._embedding_provider is None:
+                    logger.debug(
+                        "Legacy semantic search unavailable: no embedding provider configured"
+                    )
+                else:
+                    logger.warning("Could not generate query embedding")
                 return []
 
             from sqlalchemy import text
@@ -1434,6 +1439,7 @@ class SearchDaemon:
         )
         return {
             "status": "healthy" if self._initialized else "starting",
+            "initialized": self._initialized,
             "daemon_initialized": self._initialized,
             "backend": "txtai" if self._backend is not None else "legacy",
             "bm25_index_loaded": keyword_ready,

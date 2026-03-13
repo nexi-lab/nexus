@@ -63,6 +63,7 @@ class OperationLogModel(Base):
 
     # Monotonic sequence for cursor-based replay pagination (Issue #1138/#1139).
     # Nullable for backfill of existing rows; new rows auto-populated via trigger/app.
+    # Unique constraint prevents duplicate sequences under concurrent writers.
     sequence_number: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True, default=None, unique=True
     )
@@ -72,6 +73,13 @@ class OperationLogModel(Base):
     retry_count: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
+
+    # MCL columns (Issue #2929 Step 4): extend operation_log as MCL carrier.
+    # Key Decision #2: "MCL in existing operation log, not a third event system."
+    # Nullable: only populated for operations that carry aspect change semantics.
+    entity_urn: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    aspect_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    change_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # Indexes
     __table_args__ = (
@@ -116,6 +124,8 @@ class OperationLogModel(Base):
             "sequence_number",
             postgresql_using="brin",
         ),
+        # MCL entity URN index (Issue #2929): efficient lookup by entity.
+        Index("idx_operation_log_entity_urn", "entity_urn"),
     )
 
     def __repr__(self) -> str:

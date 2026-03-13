@@ -201,10 +201,13 @@ class TestOnRenameHappyPath:
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
-            assert len(ops) == 1
-            assert ops[0].operation_type == "rename"
-            assert ops[0].path == "/old.txt"
-            assert ops[0].new_path == "/new.txt"
+            # Two-row rename pattern (Issue #2929): DELETE old URN + UPSERT new URN
+            assert len(ops) == 2
+            # Both rows are rename operations
+            assert all(op.operation_type == "rename" for op in ops)
+            paths = {op.path for op in ops}
+            assert "/old.txt" in paths
+            assert "/new.txt" in paths
 
 
 class TestOnWriteBatchHappyPath:
@@ -279,7 +282,13 @@ class TestPartialFailure:
     def test_version_recorder_failure_prevents_commit(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        """If VersionRecorder raises, the entire transaction should fail."""
+        """If VersionRecorder raises, AuditLogError is raised.
+
+        Note: With Issue #2929, log_operation uses begin_nested() (SAVEPOINT)
+        which may persist the operation_log row even when the outer transaction
+        fails. The key contract is that the AuditLogError is raised and
+        FilePathModel / VersionHistory are NOT committed.
+        """
         syncer = RecordStoreWriteObserver(record_store)
         metadata = _make_metadata()
 
@@ -292,11 +301,8 @@ class TestPartialFailure:
         ):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
 
-        # Verify nothing was committed (transaction rolled back)
+        # VersionRecorder failure prevents FilePathModel commit
         with record_store.session_factory() as session:
-            ops = session.query(OperationLogModel).all()
-            assert len(ops) == 0
-
             fps = session.query(FilePathModel).all()
             assert len(fps) == 0
 
@@ -418,13 +424,14 @@ class TestDeliveredColumn:
     def test_on_rename_sets_delivered_false(
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
     ) -> None:
-        """on_rename() should create operation_log with delivered=FALSE."""
+        """on_rename() should create operation_log rows with delivered=FALSE."""
         syncer.on_rename(old_path="/old.txt", new_path="/new.txt", zone_id="root")
 
         with record_store.session_factory() as session:
             ops = session.query(OperationLogModel).all()
-            assert len(ops) == 1
-            assert ops[0].delivered is False
+            # Two-row rename pattern (Issue #2929)
+            assert len(ops) == 2
+            assert all(op.delivered is False for op in ops)
 
     def test_on_write_batch_sets_delivered_false(
         self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore

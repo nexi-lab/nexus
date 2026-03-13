@@ -293,6 +293,27 @@ class TransactionProtocol(StrEnum):
     INTERNAL = "internal"
 
 
+class WriteMode(StrEnum):
+    """Write consistency mode for file operations (Issue #2929).
+
+    Maps to existing Metastore consistency parameter:
+        SYNC  → consistency="sc" (strong, blocks until committed)
+        ASYNC → consistency="ec" (eventual, returns write token)
+
+    PRIMARY_SYNC is deferred — requires async side-effect orchestration.
+    Stored as String for forward-compatible schema evolution.
+    """
+
+    SYNC = "sync"
+    ASYNC = "async"
+
+    def to_metastore_consistency(self) -> str:
+        """Map WriteMode to Metastore consistency parameter."""
+        if self == WriteMode.SYNC:
+            return "sc"
+        return "ec"
+
+
 # ---------------------------------------------------------------------------
 # Sync types (moved from nexus.services.sync_service, Issue #194)
 # ---------------------------------------------------------------------------

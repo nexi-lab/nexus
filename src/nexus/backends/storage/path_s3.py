@@ -49,6 +49,8 @@ class PathS3Backend(PathBackend, CacheConnectorMixin, MultipartUpload):
             ConnectorCapability.CACHE_SYNC,
             ConnectorCapability.SIGNED_URL,
             ConnectorCapability.MULTIPART_UPLOAD,
+            ConnectorCapability.NATIVE_VERSIONING,
+            ConnectorCapability.RESUMABLE_UPLOAD,
         }
     )
 

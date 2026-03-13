@@ -876,6 +876,109 @@ def _delete_permissions(nx: Any, config: dict[str, Any]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Semantic search initialization
+# ---------------------------------------------------------------------------
+
+_DOCKER_PGVECTOR_SCRIPT = (
+    "psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nexus} "
+    "-c 'CREATE EXTENSION IF NOT EXISTS vector;'"
+)
+
+
+def _ensure_pgvector_extension(config: dict[str, Any]) -> bool:
+    """Create pgvector extension via docker exec on the postgres container.
+
+    Returns True if the extension was created (or already existed).
+    """
+    compose_file = config.get("compose_file", "")
+    if not compose_file:
+        return False
+
+    compose_cmd = ["docker", "compose"] if shutil.which("docker") else ["docker-compose"]
+    from nexus.cli.commands.stack import _derive_project_env
+
+    compose_env = _derive_project_env(config)
+
+    cmd = [
+        *compose_cmd,
+        "-f",
+        compose_file,
+        "exec",
+        "-T",
+        "postgres",
+        "sh",
+        "-c",
+        _DOCKER_PGVECTOR_SCRIPT,
+    ]
+    env = {**os.environ, **compose_env}
+
+    try:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError) as e:
+        logger.debug("docker exec (pgvector) error: %s", e)
+        return False
+
+
+def _init_semantic_search(nx: Any, config: dict[str, Any]) -> bool:
+    """Initialize semantic search engine and index demo files.
+
+    For shared/demo presets:
+      1. Create pgvector extension via docker exec
+      2. Initialize search engine via RPC (keyword-only, no API key needed)
+      3. Index demo files via RPC
+
+    For local preset:
+      Initialize search engine directly.
+
+    Returns True if semantic search is ready.
+    """
+    import asyncio
+
+    preset = config.get("preset", "local")
+
+    # Step 1: Ensure pgvector extension exists (shared/demo only)
+    if preset in ("shared", "demo"):
+        _ensure_pgvector_extension(config)
+
+    # Step 2: Initialize search engine via RPC
+    try:
+        search_svc = nx.service("search")
+
+        async def _do_init() -> None:
+            await search_svc.initialize_semantic_search()
+
+        asyncio.run(_do_init())
+    except Exception as e:
+        logger.debug("Semantic search init failed: %s", e)
+        return False
+
+    # Step 3: Index demo files
+    try:
+
+        async def _do_index() -> dict[str, int]:
+            result: dict[str, int] = await nx.service("search").semantic_search_index(
+                path="/workspace/demo", recursive=True
+            )
+            return result
+
+        indexed = asyncio.run(_do_index())
+        logger.debug("Indexed %d files for semantic search", len(indexed))
+    except Exception as e:
+        logger.debug("Semantic search indexing failed: %s", e)
+        # Init succeeded even if indexing failed — search is still usable
+        pass
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Click commands
 # ---------------------------------------------------------------------------
 
@@ -955,10 +1058,16 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     # 5. Seed permissions (best-effort)
     perms_created = _seed_permissions(nx, config, manifest)
 
-    # 6. Record seed metadata
+    # 6. Initialize semantic search and index demo files (best-effort)
+    semantic_ready = False
+    if not skip_semantic:
+        semantic_ready = _init_semantic_search(nx, config)
+
+    # 7. Record seed metadata
     manifest["seeded_at"] = datetime.now(tz=UTC).isoformat()
     manifest["preset"] = config.get("preset", "unknown")
     manifest["skip_semantic"] = skip_semantic
+    manifest["semantic_ready"] = semantic_ready
 
     # Save manifest
     _save_manifest(data_dir, manifest)
@@ -980,8 +1089,10 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print("  Permissions:  skipped (not available)")
     if skip_semantic:
         console.print("  Semantic:     skipped")
+    elif semantic_ready:
+        console.print("  Semantic:     ready")
     else:
-        console.print("  Semantic:     not configured (requires pgvector + embedding provider)")
+        console.print("  Semantic:     failed (check server logs)")
     console.print("  Grep corpus:  ready")
 
     # Print suggested commands — for shared/demo presets, tell the user to
@@ -1005,6 +1116,8 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     console.print("  nexus cat /workspace/demo/README.md")
     console.print("  nexus versions history /workspace/demo/plan.md")
     console.print('  nexus grep "vector index" /workspace/demo')
+    if semantic_ready:
+        console.print('  nexus search query "How does the demo authentication flow work?"')
 
 
 @demo.command(name="reset")

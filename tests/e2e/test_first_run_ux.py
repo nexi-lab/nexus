@@ -319,12 +319,15 @@ class TestFullWorkflow:
             assert "--path" not in demo_result.stdout, (
                 "grep command should use positional path, not --path"
             )
-            # For shared/demo presets, should print NEXUS_URL and NEXUS_API_KEY env vars
+            # For shared/demo presets, should print all required env vars
             assert "NEXUS_URL" in demo_result.stdout, (
                 "demo init should print NEXUS_URL export for shared/demo presets"
             )
             assert "NEXUS_API_KEY" in demo_result.stdout, (
                 "demo init should print NEXUS_API_KEY export for shared/demo presets"
+            )
+            assert "NEXUS_GRPC_PORT" in demo_result.stdout, (
+                "demo init should print NEXUS_GRPC_PORT export for shared/demo presets"
             )
 
             # Verify manifest was created, files were seeded, and permissions set
@@ -349,13 +352,16 @@ class TestFullWorkflow:
             )
 
             # Step 2b: Verify grep/ls work against the running stack.
-            # Set NEXUS_URL + NEXUS_API_KEY env vars (as printed by demo init).
+            # Set NEXUS_URL + NEXUS_API_KEY + NEXUS_GRPC_PORT env vars
+            # (as printed by demo init).
             http_port = cfg.get("ports", {}).get("http", 2026)
+            grpc_port = cfg.get("ports", {}).get("grpc", 2028)
             api_key = cfg.get("api_key", "")
             stack_env = {
                 **os.environ,
                 "NEXUS_URL": f"http://localhost:{http_port}",
                 "NEXUS_API_KEY": api_key,
+                "NEXUS_GRPC_PORT": str(grpc_port),
             }
 
             grep_result = subprocess.run(

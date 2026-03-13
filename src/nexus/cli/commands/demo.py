@@ -992,10 +992,12 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     if preset in ("shared", "demo"):
         ports = config.get("ports", {})
         http_port = ports.get("http", 2026)
+        grpc_port = ports.get("grpc", 2028)
         api_key = config.get("api_key", "")
         console.print("[bold]Set these env vars to talk to the running stack:[/bold]")
         console.print(f"  export NEXUS_URL=http://localhost:{http_port}")
         console.print(f"  export NEXUS_API_KEY={api_key}")
+        console.print(f"  export NEXUS_GRPC_PORT={grpc_port}")
         console.print()
 
     console.print("[bold]Try these commands:[/bold]")

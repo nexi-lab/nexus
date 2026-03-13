@@ -1,7 +1,7 @@
 # Nexus Stack — Portable Compose File
 # ====================================
-# Bundled version of nexus-stack.yml for use outside the repo root.
-# Uses pre-built images only (no build: context).
+# Bundled version for use outside the repo root.
+# Builds Nexus from source with semantic-search support (txtai + pgvector).
 # Services are activated via Docker Compose profiles:
 #
 #   Preset "shared":  --profile core --profile cache --profile search
@@ -16,7 +16,7 @@
 
 services:
   # ============================================================================
-  # PostgreSQL Database
+  # PostgreSQL Database (with pgvector for semantic search)
   # ============================================================================
   postgres:
     image: pgvector/pgvector:pg16
@@ -30,6 +30,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - postgres-wal-archive:/var/lib/postgresql/wal_archive
+      - ${NEXUS_PGVECTOR_INIT_SQL:-./001-enable-pgvector.sql}:/docker-entrypoint-initdb.d/001-enable-pgvector.sql:ro
     command: >
       postgres
       -c shared_preload_libraries=pg_stat_statements
@@ -56,10 +57,13 @@ services:
         max-file: "3"
 
   # ============================================================================
-  # Nexus RPC Server
+  # Nexus RPC Server (built from source with semantic-search)
   # ============================================================================
   nexus:
-    image: nexus-server:latest
+    build:
+      context: ${NEXUS_BUILD_CONTEXT:-.}
+      dockerfile: ${NEXUS_DOCKERFILE:-nexus-demo.Dockerfile}
+    image: nexus-demo:latest
     restart: unless-stopped
     profiles:
       - core
@@ -71,20 +75,14 @@ services:
       NEXUS_HOST: "0.0.0.0"
       NEXUS_PORT: "2026"
       NEXUS_DATA_DIR: /app/data
-      NEXUS_MODE: standalone
+      NEXUS_PROFILE: full
       # Database
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
-      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
-      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
-      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
       # Auth
-      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+      NEXUS_AUTH_TYPE: ${NEXUS_AUTH_TYPE:-database}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
-      # Backend
-      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
-      NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
-      NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
+      # Search
+      NEXUS_SEARCH_DAEMON: "true"
       # Permissions
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
@@ -92,38 +90,19 @@ services:
       # Cache
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
-      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
-      # Event bus
-      NEXUS_EVENT_BUS_BACKEND: ${NEXUS_EVENT_BUS_BACKEND:-redis}
-      NEXUS_NATS_URL: ${NEXUS_NATS_URL:-nats://nats:4222}
-      # Zoekt
-      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
-      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
-      # Sandbox
-      NEXUS_SERVER_URL: http://nexus:2026
-      NEXUS_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-nexus}_nexus-network
-      # OAuth
-      NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
-      NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
-      NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
       # gRPC
       NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
-      # Runtime
-      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
     volumes:
       - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
-    user: root
     ports:
       - "${NEXUS_PORT:-2026}:2026"
-      # gRPC: host port = container port (server binds to NEXUS_GRPC_PORT)
       - "${NEXUS_GRPC_PORT:-2028}:${NEXUS_GRPC_PORT:-2028}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
       interval: 10s
       timeout: 10s
-      retries: 20
-      start_period: 120s
+      retries: 30
+      start_period: 30s
     networks:
       - nexus-network
     logging:
@@ -212,40 +191,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ============================================================================
-  # MCP Server (optional add-on)
-  # ============================================================================
-  mcp-server:
-    image: nexus-server:latest
-    restart: unless-stopped
-    profiles:
-      - mcp
-    depends_on:
-      nexus:
-        condition: service_healthy
-    entrypoint: []
-    environment:
-      NEXUS_URL: http://nexus:2026
-      NEXUS_API_KEY: ${NEXUS_API_KEY:-}
-      MCP_HOST: "0.0.0.0"
-      MCP_PORT: "8081"
-    ports:
-      - "${MCP_PORT:-8081}:8081"
-    command: ["nexus", "mcp", "serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8081"]
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
     networks:
       - nexus-network
     logging:

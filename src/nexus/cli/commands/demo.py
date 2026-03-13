@@ -192,6 +192,7 @@ PLAN_VERSIONS = [
 
 # Demo directories (ordered parents-first for creation, reversed for deletion)
 DEMO_DIRS = [
+    "/workspace",
     "/workspace/demo",
     "/workspace/demo/notes",
     "/workspace/demo/code",
@@ -301,13 +302,13 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
         try:
             nx = nexus.connect(
                 config={
-                    "mode": "remote",
+                    "profile": "remote",
                     "url": f"http://localhost:{http_port}",
                     "api_key": api_key,
                 }
             )
-            # Verify connectivity with a lightweight call
-            nx.sys_mkdir("/workspace", exist_ok=True)
+            # Verify connectivity with a lightweight read-only call
+            nx.sys_stat("/")
             return nx
         except Exception as e:
             console.print(f"[red]Error:[/red] Could not connect to Nexus server: {e}")
@@ -341,7 +342,7 @@ def _seed_files(
             # Ensure parent directory exists
             parent = "/".join(path.split("/")[:-1])
             if parent:
-                nx.sys_mkdir(parent, exist_ok=True)
+                nx.sys_mkdir(parent, parents=True, exist_ok=True)
             nx.sys_write(path, content.encode())
             seeded.append(path)
             created += 1
@@ -384,7 +385,7 @@ def _seed_directories(nx: Any) -> int:
     created = 0
     for d in DEMO_DIRS:
         try:
-            nx.sys_mkdir(d, exist_ok=True)
+            nx.sys_mkdir(d, parents=True, exist_ok=True)
             created += 1
         except Exception:
             pass
@@ -926,56 +927,144 @@ def _ensure_pgvector_extension(config: dict[str, Any]) -> bool:
         return False
 
 
+_DOCKER_SEED_CHUNKS_SCRIPT = """\
+import json, os, sys, uuid
+from datetime import datetime, timezone
+db_url = os.environ.get('NEXUS_DATABASE_URL', '')
+if not db_url:
+    print('0')
+    sys.exit(0)
+try:
+    from sqlalchemy import create_engine, text
+    engine = create_engine(db_url)
+    docs = json.loads(sys.stdin.read())
+    inserted = 0
+    now = datetime.now(timezone.utc)
+    with engine.connect() as conn:
+        for doc in docs:
+            path = doc['path']
+            content = doc['content']
+            size = len(content.encode('utf-8'))
+            # Check if file_paths entry already exists
+            row = conn.execute(text(
+                "SELECT path_id FROM file_paths "
+                "WHERE zone_id = 'root' AND virtual_path = :vp AND deleted_at IS NULL"
+            ), {"vp": path}).fetchone()
+            if row:
+                path_id = row[0]
+            else:
+                path_id = str(uuid.uuid4())
+                conn.execute(text(
+                    "INSERT INTO file_paths "
+                    "(path_id, zone_id, virtual_path, backend_id, physical_path, "
+                    " size_bytes, created_at, updated_at, current_version) "
+                    "VALUES (:pid, 'root', :vp, 'demo', :vp, :sz, :now, :now, 1)"
+                ), {"pid": path_id, "vp": path, "sz": size, "now": now})
+            # Delete old chunks for this path_id
+            conn.execute(text(
+                "DELETE FROM document_chunks WHERE path_id = :pid"
+            ), {"pid": path_id})
+            # Insert content as a single chunk
+            chunk_id = str(uuid.uuid4())
+            conn.execute(text(
+                "INSERT INTO document_chunks "
+                "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, "
+                " start_offset, end_offset, line_start, line_end, created_at) "
+                "VALUES (:cid, :pid, 0, :txt, :tokens, 0, :end, 1, :lines, :now)"
+            ), {
+                "cid": chunk_id, "pid": path_id,
+                "txt": content, "tokens": len(content.split()),
+                "end": len(content), "lines": content.count(chr(10)) + 1,
+                "now": now,
+            })
+            inserted += 1
+        conn.commit()
+    print(inserted)
+except Exception as e:
+    print(f'0 error: {e}', file=sys.stderr)
+    print('0')
+"""
+
+
+def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
+    """Seed document_chunks by executing a script inside the Docker container.
+
+    Reads demo file content via RPC, then inserts file_paths + document_chunks
+    entries via docker exec into the PostgreSQL database.
+    """
+    compose_file = config.get("compose_file", "")
+    if not compose_file or not Path(compose_file).exists():
+        return False
+
+    compose_cmd = _find_compose_cmd()
+    if compose_cmd is None:
+        return False
+
+    from nexus.cli.commands.stack import _derive_project_env
+
+    compose_env = _derive_project_env(config)
+
+    # Read file contents via RPC
+    docs = []
+    for path, _content, _desc in DEMO_FILES:
+        try:
+            raw = nx.sys_read(path)
+            text = raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else str(raw)
+            if text.strip():
+                docs.append({"path": path, "content": text})
+        except Exception:
+            pass
+
+    if not docs:
+        return False
+
+    payload = json.dumps(docs)
+    cmd = [
+        *compose_cmd,
+        "-f",
+        compose_file,
+        "exec",
+        "-T",
+        "nexus",
+        "python3",
+        "-c",
+        _DOCKER_SEED_CHUNKS_SCRIPT,
+    ]
+    env = {**os.environ, **compose_env}
+
+    try:
+        result = subprocess.run(
+            cmd,
+            input=payload,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        count = int(result.stdout.strip().split()[0]) if result.stdout.strip() else 0
+        logger.debug("Seeded %d document chunks (stderr: %s)", count, result.stderr.strip())
+        return count > 0
+    except (subprocess.TimeoutExpired, OSError, ValueError) as e:
+        logger.debug("docker exec (search chunks) error: %s", e)
+        return False
+
+
 def _init_semantic_search(nx: Any, config: dict[str, Any]) -> bool:
-    """Initialize semantic search engine and index demo files.
+    """Initialize semantic search by inserting demo content into document_chunks.
 
-    For shared/demo presets:
-      1. Create pgvector extension via docker exec
-      2. Initialize search engine via RPC (keyword-only, no API key needed)
-      3. Index demo files via RPC
-
-    For local preset:
-      Initialize search engine directly.
+    The IndexingPipeline/PipelineIndexer paths are broken for the demo because
+    file_paths table is empty (NexusFS uses its own internal metastore).
+    Instead, we directly insert file_paths + document_chunks via docker exec
+    so the SQL fallback search can find demo content.
 
     Returns True if semantic search is ready.
     """
-    import asyncio
-
     preset = config.get("preset", "local")
-
-    # Step 1: Ensure pgvector extension exists (shared/demo only)
-    if preset in ("shared", "demo"):
-        _ensure_pgvector_extension(config)
-
-    # Step 2: Initialize search engine via RPC
-    try:
-        search_svc = nx.service("search")
-
-        async def _do_init() -> None:
-            await search_svc.initialize_semantic_search()
-
-        asyncio.run(_do_init())
-    except Exception as e:
-        logger.debug("Semantic search init failed: %s", e)
+    if preset not in ("shared", "demo"):
         return False
 
-    # Step 3: Index demo files
-    try:
-
-        async def _do_index() -> dict[str, int]:
-            result: dict[str, int] = await nx.service("search").semantic_search_index(
-                path="/workspace/demo", recursive=True
-            )
-            return result
-
-        indexed = asyncio.run(_do_index())
-        logger.debug("Indexed %d files for semantic search", len(indexed))
-    except Exception as e:
-        logger.debug("Semantic search indexing failed: %s", e)
-        # Init succeeded even if indexing failed — search is still usable
-        pass
-
-    return True
+    _ensure_pgvector_extension(config)
+    return _seed_search_chunks_docker(nx, config)
 
 
 # ---------------------------------------------------------------------------

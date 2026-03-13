@@ -2435,8 +2435,16 @@ class SearchService:
 
     @property
     def _has_search_engine(self) -> bool:
-        """Check if a search engine is available."""
-        return self._query_service is not None
+        """Check if a search engine is available.
+
+        Since Issue #2663 (txtai migration), ``_query_service`` is always
+        ``None``; indexing uses ``_pipeline_indexer`` / ``_indexing_service``.
+        """
+        return (
+            self._query_service is not None
+            or self._pipeline_indexer is not None
+            or self._indexing_service is not None
+        )
 
     def _require_search_engine(self) -> None:
         """Raise ValueError if no search engine is initialized."""
@@ -2508,19 +2516,106 @@ class SearchService:
         Raises:
             ValueError: If semantic search is not initialized
         """
-        self._require_search_engine()
+        # Issue #2663: _query_service was removed (txtai handles search via
+        # SearchDaemon).  When available, delegate to it; otherwise fall back
+        # to a simple SQL ILIKE search on document_chunks.
+        if self._query_service is not None:
+            results = await self._query_service.search(
+                query=query,
+                path=path,
+                limit=limit,
+                search_mode=search_mode,
+                adaptive_k=adaptive_k,
+            )
+            return [_result_to_dict(r) for r in results]
 
-        if self._query_service is None:
-            raise ValueError("Semantic search not properly initialized")
+        if self._record_store is not None:
+            return await self._sql_chunk_search(query, path, limit)
 
-        results = await self._query_service.search(
-            query=query,
-            path=path,
-            limit=limit,
-            search_mode=search_mode,
-            adaptive_k=adaptive_k,
+        raise ValueError(
+            "Semantic search is not available. No query service or record store configured."
         )
-        return [_result_to_dict(r) for r in results]
+
+    async def _sql_chunk_search(
+        self,
+        query: str,
+        path: str,
+        limit: int,
+    ) -> builtins.list[dict[str, Any]]:
+        """Fallback search via SQL LIKE on document_chunks (Issue #2663).
+
+        Used when _query_service is None (txtai migration removed it).
+
+        The *path* may arrive zone-scoped (``/zone/<id>/…``) from the gRPC
+        dispatcher.  We strip the zone prefix and use the inner path for the
+        LIKE filter so it matches stored ``virtual_path`` values.
+        """
+        if self._record_store is None:
+            return []
+
+        # Strip zone prefix injected by _scope_params_for_zone.
+        # E.g. "/zone/default/" → inner_path="/", "/zone/default/docs" → "/docs"
+        import re
+
+        from sqlalchemy import text as sa_text
+
+        zone_match = re.match(r"^/zone/[^/]+(/.*)?$", path)
+        if zone_match:
+            path = zone_match.group(1) or "/"
+
+        keywords = [w.strip().lower() for w in query.split() if len(w.strip()) >= 2]
+        if not keywords:
+            return []
+
+        # Build WHERE clause: chunk_text ILIKE all keywords
+        conditions = []
+        bind_params: dict[str, Any] = {
+            "path_prefix": f"{path}%",
+            "lim": limit,
+        }
+        for i, kw in enumerate(keywords[:5]):  # max 5 keywords
+            key = f"kw{i}"
+            conditions.append(f"dc.chunk_text ILIKE :{key}")
+            bind_params[key] = f"%{kw}%"
+
+        where_clause = " AND ".join(conditions)
+        sql = sa_text(f"""
+            SELECT dc.chunk_text, dc.chunk_index, dc.start_offset,
+                   dc.end_offset, dc.line_start, dc.line_end,
+                   fp.virtual_path
+            FROM document_chunks dc
+            JOIN file_paths fp ON dc.path_id = fp.path_id
+            WHERE fp.virtual_path LIKE :path_prefix
+              AND {where_clause}
+            LIMIT :lim
+        """)
+
+        try:
+            session = self._record_store.session_factory()
+            try:
+                result = session.execute(sql, bind_params)
+                rows = result.fetchall()
+            finally:
+                session.close()
+        except Exception as e:
+            logger.warning("SQL chunk search failed: %s", e, exc_info=True)
+            return []
+
+        hits = []
+        for i, row in enumerate(rows):
+            hits.append(
+                {
+                    "path": row.virtual_path if hasattr(row, "virtual_path") else row[6],
+                    "chunk_index": row.chunk_index if hasattr(row, "chunk_index") else row[1],
+                    "chunk_text": row.chunk_text if hasattr(row, "chunk_text") else row[0],
+                    "score": round(1.0 - (i * 0.05), 4),
+                    "start_offset": row.start_offset if hasattr(row, "start_offset") else row[2],
+                    "end_offset": row.end_offset if hasattr(row, "end_offset") else row[3],
+                    "line_start": row.line_start if hasattr(row, "line_start") else row[4],
+                    "line_end": row.line_end if hasattr(row, "line_end") else row[5],
+                }
+            )
+        return hits
 
     @rpc_expose(description="Index documents for semantic search")
     async def semantic_search_index(
@@ -2540,8 +2635,6 @@ class SearchService:
         Raises:
             ValueError: If semantic search is not initialized
         """
-        self._require_search_engine()
-
         # Prefer IndexingService (Issue #2075)
         if self._indexing_service is not None:
             try:
@@ -2563,17 +2656,45 @@ class SearchService:
 
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
-        """Get semantic search indexing statistics.
-
-        Raises:
-            ValueError: If semantic search is not initialized
-        """
-        self._require_search_engine()
-
+        """Get semantic search indexing statistics."""
         if self._indexing_service is not None:
             return await self._indexing_service.get_index_stats()
 
-        raise ValueError("Semantic search not properly initialized")
+        # SQL fallback when indexing_service is unavailable (Issue #2663)
+        if self._record_store is not None:
+            return self._sql_chunk_stats()
+
+        raise ValueError(
+            "Semantic search is not available. No indexing service or record store configured."
+        )
+
+    def _sql_chunk_stats(self) -> dict[str, Any]:
+        """Basic stats from document_chunks table."""
+        from sqlalchemy import text as sa_text
+
+        assert self._record_store is not None  # caller checks
+        try:
+            session = self._record_store.session_factory()
+            try:
+                total_chunks = (
+                    session.execute(sa_text("SELECT count(*) FROM document_chunks")).scalar() or 0
+                )
+                total_files = (
+                    session.execute(
+                        sa_text("SELECT count(DISTINCT path_id) FROM document_chunks")
+                    ).scalar()
+                    or 0
+                )
+                return {
+                    "total_chunks": total_chunks,
+                    "total_files": total_files,
+                    "engine": "sql_fallback",
+                }
+            finally:
+                session.close()
+        except Exception as e:
+            logger.warning("SQL chunk stats failed: %s", e)
+            return {"total_chunks": 0, "total_files": 0, "engine": "sql_fallback"}
 
     @rpc_expose(description="Initialize semantic search engine")
     async def initialize_semantic_search(

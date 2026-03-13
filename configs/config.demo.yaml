@@ -110,7 +110,7 @@ enforce_zone_isolation: true         # Enable zone isolation by default (use --n
 
 # Features — must match FeaturesConfig field names (extra="forbid")
 features:
-  search: false           # Disabled for demo (no embedding model)
+  search: true            # Enabled for demo (txtai local embeddings)
   llm: false              # Disabled for demo (no LLM provider)
   agent_registry: true
   scheduler: false        # Disabled for demo

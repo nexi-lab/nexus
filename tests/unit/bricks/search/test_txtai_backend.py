@@ -151,7 +151,51 @@ class TestTxtaiBackendLifecycle:
         cfg = captured_configs[0]
         assert cfg["backend"] == "pgvector"
         assert cfg["pgvector"] == {"url": "postgresql://u:p@localhost:5432/nexus"}
+        assert cfg["content"] == "postgresql://u:p@localhost:5432/nexus"
         assert "database" not in cfg, "URL must not go under 'database' — that's the content-DB key"
+
+    def test_startup_with_database_url_does_not_default_content_to_sqlite(self) -> None:
+        """Regression test for SQLite sidecar crashes during txtai indexing.
+
+        txtai treats ``content=True`` as "use SQLite". When Nexus already has a
+        PostgreSQL database URL, the content/object store must use that same URL
+        so the backend stays fully Postgres/pgvector-backed.
+        """
+        import asyncio
+
+        mock_embeddings_cls = MagicMock()
+        captured_configs: list[dict] = []
+        mock_embeddings_cls.side_effect = lambda cfg: (
+            captured_configs.append(dict(cfg)) or MagicMock()
+        )
+
+        mock_mps = MagicMock()
+        mock_mps.is_available.return_value = False
+        mock_backends = MagicMock()
+        mock_backends.mps = mock_mps
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.backends = mock_backends
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "txtai": MagicMock(Embeddings=mock_embeddings_cls),
+                "txtai.ann": MagicMock(),
+                "txtai.ann.dense": MagicMock(),
+                "txtai.ann.dense.pgvector": MagicMock(),
+                "torch": mock_torch,
+            },
+        ):
+            backend = TxtaiBackend(
+                database_url="postgresql://u:p@localhost:5432/nexus",
+                model="test-model",
+            )
+            asyncio.run(backend.startup())
+
+        cfg = captured_configs[0]
+        assert cfg["content"] == "postgresql://u:p@localhost:5432/nexus"
+        assert cfg["content"] is not True
 
     @pytest.mark.asyncio
     async def test_shutdown_when_not_started(self) -> None:

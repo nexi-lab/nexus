@@ -142,9 +142,14 @@ class TxtaiBackend:
         except Exception:
             pass
 
+        # txtai treats ``content=True`` as "store content in SQLite". When Nexus
+        # has a database URL, keep both ANN vectors and content/object storage on
+        # the same client-server database instead of silently creating a local
+        # SQLite sidecar that can crash under concurrent indexing/search.
+        content_store: bool | str = self._database_url or True
         config: dict[str, Any] = {
             "path": self._model,
-            "content": True,
+            "content": content_store,
             "hybrid": self._hybrid,
             "objects": True,
         }
@@ -193,7 +198,7 @@ class TxtaiBackend:
             try:
                 bm25_config: dict[str, Any] = {
                     "keyword": True,
-                    "content": True,
+                    "content": content_store,
                     "objects": True,
                 }
                 self._embeddings = Embeddings(bm25_config)

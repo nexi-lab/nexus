@@ -147,6 +147,23 @@ class AspectServiceProtocol(Protocol):
         """
         ...
 
+    def find_entities_with_aspect(
+        self,
+        aspect_name: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Find all entities that have a given aspect (current version).
+
+        Used for scan-based searches (e.g., search_by_column).
+        Production should use a search index built from MCL events.
+
+        Args:
+            aspect_name: Aspect type to search for.
+
+        Returns:
+            Dict mapping entity_urn → payload for all entities with this aspect.
+        """
+        ...
+
     def get_aspect_history(
         self,
         entity_urn: str,

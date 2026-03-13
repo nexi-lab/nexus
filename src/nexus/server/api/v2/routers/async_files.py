@@ -48,10 +48,6 @@ class WriteRequest(BaseModel):
     encoding: str | None = Field(None, description="Content encoding: 'utf8' (default) or 'base64'")
     if_match: str | None = Field(None, description="ETag for optimistic concurrency")
     if_none_match: bool = Field(False, description="Only write if file doesn't exist")
-    write_mode: str | None = Field(
-        None,
-        description="Write consistency mode: 'sync' (default, strong) or 'async' (eventual)",
-    )
 
 
 class WriteResponse(BaseModel):
@@ -174,6 +170,10 @@ def create_async_files_router(
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
         request: WriteRequest,
+        write_mode: str | None = Query(
+            None,
+            description="Write consistency mode: 'sync' (default, strong) or 'async' (eventual)",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -202,15 +202,15 @@ def create_async_files_router(
                 "if_none_match": request.if_none_match,
                 "context": context,
             }
-            if request.write_mode is not None:
+            if write_mode is not None:
                 from nexus.contracts.types import WriteMode
 
                 try:
-                    mode = WriteMode(request.write_mode)
+                    mode = WriteMode(write_mode)
                 except ValueError:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Invalid write_mode: {request.write_mode!r}. "
+                        detail=f"Invalid write_mode: {write_mode!r}. "
                         f"Valid values: {[m.value for m in WriteMode]}",
                     ) from None
                 write_kwargs["consistency"] = mode.to_metastore_consistency()

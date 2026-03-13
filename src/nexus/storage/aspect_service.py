@@ -171,16 +171,37 @@ class AspectService:
             current.created_at = datetime.now(UTC)
             current.lock_version += 1
         else:
-            # First version — insert version 0
-            new_aspect = EntityAspectModel(
-                entity_urn=entity_urn,
-                aspect_name=aspect_name,
-                version=0,
-                payload=json.dumps(payload, default=str),
-                created_by=created_by,
-                lock_version=0,
-            )
-            self._session.add(new_aspect)
+            # First version — insert version 0.
+            # Check for soft-deleted rows that would conflict on the unique index
+            # (SQLite partial index or app-level conflict resolution).
+            deleted_row = self._session.execute(
+                select(EntityAspectModel)
+                .where(
+                    EntityAspectModel.entity_urn == entity_urn,
+                    EntityAspectModel.aspect_name == aspect_name,
+                    EntityAspectModel.version == 0,
+                    EntityAspectModel.deleted_at.is_not(None),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if deleted_row is not None:
+                # Reuse the soft-deleted row: clear deleted_at, update payload
+                deleted_row.payload = json.dumps(payload, default=str)
+                deleted_row.created_by = created_by
+                deleted_row.created_at = datetime.now(UTC)
+                deleted_row.deleted_at = None
+                deleted_row.lock_version = 0
+            else:
+                new_aspect = EntityAspectModel(
+                    entity_urn=entity_urn,
+                    aspect_name=aspect_name,
+                    version=0,
+                    payload=json.dumps(payload, default=str),
+                    created_by=created_by,
+                    lock_version=0,
+                )
+                self._session.add(new_aspect)
 
         # Inline compaction: delete old versions beyond max_versions
         max_versions = registry.max_versions_for(aspect_name)
@@ -292,6 +313,26 @@ class AspectService:
 
         stmt = select(EntityAspectModel).where(
             EntityAspectModel.entity_urn.in_(entity_urns),
+            EntityAspectModel.aspect_name == aspect_name,
+            EntityAspectModel.version == 0,
+            EntityAspectModel.deleted_at.is_(None),
+        )
+        rows = self._session.execute(stmt).scalars().all()
+        result: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            result[row.entity_urn] = json.loads(row.payload)
+        return result
+
+    def find_entities_with_aspect(
+        self,
+        aspect_name: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Find all entities that have a given aspect (current version).
+
+        Scans entity_aspects WHERE aspect_name=? AND version=0 AND deleted_at IS NULL.
+        Returns dict mapping entity_urn → payload.
+        """
+        stmt = select(EntityAspectModel).where(
             EntityAspectModel.aspect_name == aspect_name,
             EntityAspectModel.version == 0,
             EntityAspectModel.deleted_at.is_(None),

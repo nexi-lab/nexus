@@ -373,8 +373,25 @@ class PipedRecordStoreWriteObserver:
             await self._flush_batch(batch)
 
     @staticmethod
-    def _build_urn(path: str, zone_id: str | None) -> str:
-        """Build a URN from a path using hash-based identifier."""
+    def _lookup_path_id(session: Any, path: str) -> str | None:
+        """Look up FilePathModel.path_id by virtual_path."""
+        from sqlalchemy import select
+
+        from nexus.storage.models.file_path import FilePathModel
+
+        stmt = select(FilePathModel.path_id).where(FilePathModel.virtual_path == path).limit(1)
+        result: str | None = session.execute(stmt).scalar_one_or_none()
+        return result
+
+    @staticmethod
+    def _build_urn(session: Any, path: str, zone_id: str | None) -> str:
+        """Build a stable URN using FilePathModel.path_id (UUID).
+
+        Falls back to hash-based identifier if path_id unavailable.
+        """
+        path_id = PipedRecordStoreWriteObserver._lookup_path_id(session, path)
+        if path_id is not None:
+            return f"urn:nexus:file:{zone_id or 'default'}:{path_id}"
         path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
         return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
 
@@ -391,7 +408,9 @@ class PipedRecordStoreWriteObserver:
             zone_id = event.get("zone_id")
             agent_id = event.get("agent_id")
             path = event["path"]
-            urn = self._build_urn(path, zone_id)
+            # For renames, look up by new_path (metastore already updated)
+            lookup_path = event.get("new_path", path) if op == "rename" else path
+            urn = self._build_urn(session, lookup_path, zone_id)
 
             with session.begin_nested():
                 recorder = MCLRecorder(session)

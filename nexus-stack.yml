@@ -66,7 +66,7 @@ services:
   nexus:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: ${NEXUS_DOCKERFILE:-Dockerfile}
     image: nexus:latest
     restart: unless-stopped
     profiles:

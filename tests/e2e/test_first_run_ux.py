@@ -200,11 +200,16 @@ class TestFullWorkflow:
     def initialized_project(self, project_dir: Path) -> Path:
         """Run nexus init --preset demo and return the project dir.
 
-        Runs with cwd=project_dir so that _find_compose_file() picks up
-        the bundled (portable) compose file instead of the repo-root one
-        which contains ``build:`` directives and would trigger a full
-        Rust compilation during ``nexus up``.
+        Uses the repo-root nexus-stack.yml with NEXUS_DOCKERFILE pointing
+        to the lightweight nexus-demo.Dockerfile. The build context is the
+        repo root, so ``COPY . /tmp/nexus-build/`` picks up pyproject.toml
+        and src/, giving the container the PR's code (Python-only, no Rust).
         """
+        # Find the repo root (where nexus-stack.yml lives)
+        repo_root = Path(__file__).resolve().parents[2]
+        compose_file = repo_root / "nexus-stack.yml"
+        assert compose_file.exists(), f"repo-root compose file not found: {compose_file}"
+
         config_path = project_dir / "nexus.yaml"
         data_dir = project_dir / "nexus-data"
 
@@ -218,6 +223,8 @@ class TestFullWorkflow:
                 str(config_path),
                 "--data-dir",
                 str(data_dir),
+                "--compose-file",
+                str(compose_file),
             ],
             capture_output=True,
             text=True,

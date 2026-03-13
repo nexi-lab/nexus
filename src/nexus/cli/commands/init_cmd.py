@@ -124,6 +124,15 @@ def _build_config(
                 # Mark as needing the bundled copy (resolved later in init())
                 config["compose_file"] = ""
 
+        # When the compose file lives in a repo checkout (not the bundled
+        # copy), use the lightweight demo Dockerfile instead of the full
+        # production build (which compiles Rust/Go and is much slower).
+        cf_path = Path(config["compose_file"]) if config["compose_file"] else None
+        if cf_path and cf_path.exists():
+            demo_df = cf_path.parent / "src" / "nexus" / "cli" / "data" / "nexus-demo.Dockerfile"
+            if demo_df.exists():
+                config["dockerfile"] = str(demo_df.relative_to(cf_path.parent))
+
     if addons:
         config.setdefault("addons", []).extend(addons)
 

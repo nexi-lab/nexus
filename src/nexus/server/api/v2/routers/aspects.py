@@ -123,6 +123,7 @@ async def put_aspect(
 ) -> AspectResponse:
     """Create or update an aspect."""
     aspect_svc, zone_id = aspect_and_zone
+    _verify_urn_zone(urn, zone_id)  # Prevent cross-zone mutation
     try:
         aspect_svc.put_aspect(
             entity_urn=urn,
@@ -155,6 +156,7 @@ async def delete_aspect(
 ) -> None:
     """Delete an aspect."""
     aspect_svc, zone_id = aspect_and_zone
+    _verify_urn_zone(urn, zone_id)  # Prevent cross-zone mutation
     try:
         deleted = aspect_svc.delete_aspect(urn, name, zone_id=zone_id)
         if not deleted:

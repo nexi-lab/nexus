@@ -256,9 +256,12 @@ class CatalogService:
         all_schemas = self._aspect_service.find_entities_with_aspect("schema_metadata")
 
         for entity_urn, payload in all_schemas.items():
-            # Skip if zone filter doesn't match (check URN zone component)
-            if zone_id is not None and f":{zone_id}:" not in entity_urn:
-                continue
+            # Skip if zone filter doesn't match (exact zone component check)
+            # URN format: urn:nexus:{type}:{zone}:{id}
+            if zone_id is not None:
+                parts = entity_urn.split(":")
+                if len(parts) >= 4 and parts[3] != zone_id:
+                    continue
 
             columns = payload.get("columns", [])
             for col in columns:

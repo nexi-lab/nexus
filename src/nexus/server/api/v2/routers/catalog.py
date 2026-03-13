@@ -98,7 +98,13 @@ async def search_by_column(
     column: str = Query(..., min_length=1, description="Column name to search for"),
     catalog_and_zone: tuple[Any, str] = Depends(get_catalog_service),
 ) -> ColumnSearchResponse:
-    """Search for data files containing a specific column name."""
+    """Search for data files containing a specific column name.
+
+    Results are zone-scoped: the caller only sees entities within their
+    authenticated zone. Per-file ACLs are not applied because URNs are
+    one-way hashes and cannot be reversed to file paths for stat checks.
+    This matches the DataHub model where metadata search is namespace-scoped.
+    """
     catalog_svc, zone_id = catalog_and_zone
     try:
         results = catalog_svc.search_by_column(column, zone_id=zone_id)

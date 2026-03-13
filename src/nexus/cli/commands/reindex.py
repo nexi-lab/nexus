@@ -90,7 +90,17 @@ def reindex(
 
         record_store = getattr(nx, "_record_store", None)
         if record_store is None:
-            raise click.ClickException("Reindex requires a local NexusFS with RecordStore")
+            # Fall back to REST API for remote presets (shared/demo)
+            _reindex_via_rest(
+                remote_url=remote_url,
+                remote_api_key=remote_api_key,
+                target=target,
+                dry_run=dry_run,
+                from_sequence=from_sequence,
+                batch_size=batch_size,
+            )
+            nx.close()
+            return
 
         from sqlalchemy import func, select
 
@@ -185,6 +195,63 @@ def reindex(
 
     except Exception as e:
         handle_error(e)
+
+
+def _reindex_via_rest(
+    *,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    target: str,
+    dry_run: bool,
+    from_sequence: int | None,
+    batch_size: int,
+) -> None:
+    """Run reindex via REST API for remote presets (shared/demo).
+
+    The REST endpoint supports search and versions targets via MCL replay.
+    Semantic reindex requires local filesystem access and is not supported remotely.
+    """
+    if target == "semantic":
+        raise click.ClickException(
+            "Semantic reindex requires local filesystem access. "
+            "Use 'nexus reindex --target semantic' with a local RecordStore."
+        )
+
+    from nexus.cli.api_client import get_api_client_from_options
+
+    client = get_api_client_from_options(remote_url, remote_api_key)
+    try:
+        result = client.post(
+            "/api/v2/admin/reindex",
+            json_body={
+                "target": target if target != "all" else "all",
+                "dry_run": dry_run,
+                "from_sequence": from_sequence,
+                "batch_size": batch_size,
+            },
+        )
+    except Exception as e:
+        raise click.ClickException(
+            f"Reindex requires either a local RecordStore or a running REST API. "
+            f"REST API error: {e}"
+        ) from e
+
+    # Display result
+    console.print()
+    table = Table(title="Reindex Summary (via REST API)")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("Target", result.get("target", target))
+    table.add_row("Total records", str(result.get("total", 0)))
+    table.add_row("Processed", str(result.get("processed", 0)))
+    table.add_row("Errors", str(result.get("errors", 0)))
+    table.add_row("Dry run", str(result.get("dry_run", dry_run)))
+    if target == "all":
+        console.print(
+            "\n[yellow]Note:[/yellow] Semantic reindex requires local filesystem access "
+            "and was skipped. Only search + versions targets were processed."
+        )
+    console.print(table)
 
 
 def _run_semantic_reindex(

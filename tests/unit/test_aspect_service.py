@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.contracts.aspects import (
@@ -15,7 +15,7 @@ from nexus.contracts.aspects import (
 from nexus.storage.aspect_service import AspectService
 from nexus.storage.models._base import Base
 from nexus.storage.models.aspect_store import EntityAspectModel
-from nexus.storage.models.metadata_change_log import MetadataChangeLogModel
+from nexus.storage.models.operation_log import OperationLogModel
 
 
 @pytest.fixture()
@@ -222,18 +222,32 @@ class TestSoftDeleteCascade:
 
 
 class TestMCLRecording:
-    """MCL records are created for aspect changes."""
+    """MCL records are created in operation_log for aspect changes (Key Decision #2)."""
+
+    @staticmethod
+    def _mcl_rows(session: Session) -> list[OperationLogModel]:
+        """Return operation_log rows that carry MCL semantics."""
+        return list(
+            session.execute(
+                select(OperationLogModel)
+                .where(OperationLogModel.entity_urn.isnot(None))
+                .order_by(OperationLogModel.sequence_number)
+            )
+            .scalars()
+            .all()
+        )
 
     def test_put_creates_mcl_upsert(self, db_session: Session) -> None:
         svc = AspectService(db_session)
         svc.put_aspect("urn:nexus:file:z1:id1", "path", {"virtual_path": "/v1"}, zone_id="z1")
         db_session.commit()
 
-        mcl_records = db_session.execute(select(MetadataChangeLogModel)).scalars().all()
-        assert len(mcl_records) == 1
-        assert mcl_records[0].change_type == "upsert"
-        assert mcl_records[0].entity_urn == "urn:nexus:file:z1:id1"
-        assert mcl_records[0].aspect_name == "path"
+        rows = self._mcl_rows(db_session)
+        assert len(rows) == 1
+        assert rows[0].change_type == "upsert"
+        assert rows[0].entity_urn == "urn:nexus:file:z1:id1"
+        assert rows[0].aspect_name == "path"
+        assert rows[0].operation_type == "aspect_upsert"
 
     def test_delete_creates_mcl_delete(self, db_session: Session) -> None:
         svc = AspectService(db_session)
@@ -243,10 +257,11 @@ class TestMCLRecording:
         svc.delete_aspect("urn:nexus:file:z1:id1", "path")
         db_session.commit()
 
-        mcl_records = db_session.execute(select(MetadataChangeLogModel)).scalars().all()
+        rows = self._mcl_rows(db_session)
         # 1 upsert + 1 delete
-        assert len(mcl_records) == 2
-        assert mcl_records[1].change_type == "delete"
+        assert len(rows) == 2
+        assert rows[1].change_type == "delete"
+        assert rows[1].operation_type == "aspect_delete"
 
     def test_mcl_sequence_monotonic(self, db_session: Session) -> None:
         svc = AspectService(db_session)
@@ -254,19 +269,13 @@ class TestMCLRecording:
             svc.put_aspect(f"urn:nexus:file:z1:id{i}", "path", {"virtual_path": f"/v{i}"})
         db_session.commit()
 
-        mcl_records = (
-            db_session.execute(
-                select(MetadataChangeLogModel).order_by(MetadataChangeLogModel.sequence_number)
-            )
-            .scalars()
-            .all()
-        )
-
-        sequences = [r.sequence_number for r in mcl_records]
+        rows = self._mcl_rows(db_session)
+        sequences = [r.sequence_number for r in rows]
         assert sequences == sorted(sequences)
         assert len(set(sequences)) == len(sequences)  # All unique
 
-    def test_mcl_contains_previous_value(self, db_session: Session) -> None:
+    def test_mcl_contains_aspect_value(self, db_session: Session) -> None:
+        """MCL rows carry the new aspect value in metadata_snapshot."""
         svc = AspectService(db_session)
         svc.put_aspect("urn:nexus:file:z1:id1", "path", {"virtual_path": "/v1"})
         db_session.commit()
@@ -274,22 +283,24 @@ class TestMCLRecording:
         svc.put_aspect("urn:nexus:file:z1:id1", "path", {"virtual_path": "/v2"})
         db_session.commit()
 
-        mcl_records = (
-            db_session.execute(
-                select(MetadataChangeLogModel).order_by(MetadataChangeLogModel.sequence_number)
-            )
-            .scalars()
-            .all()
-        )
-
-        # Second MCL record should have previous_value
-        assert len(mcl_records) == 2
-        prev = json.loads(mcl_records[1].previous_value)
-        assert prev["virtual_path"] == "/v1"
+        rows = self._mcl_rows(db_session)
+        assert len(rows) == 2
+        # Second MCL record carries the new value (not previous)
+        snapshot = json.loads(rows[1].metadata_snapshot)
+        assert snapshot["virtual_path"] == "/v2"
 
 
 class TestRecordMclFlag:
     """Tests for record_mcl=False (reindex replay support)."""
+
+    @staticmethod
+    def _mcl_count(session: Session) -> int:
+        """Count operation_log rows with MCL semantics."""
+        return session.execute(
+            select(func.count())
+            .select_from(OperationLogModel)
+            .where(OperationLogModel.entity_urn.isnot(None))
+        ).scalar_one()
 
     def test_put_aspect_skip_mcl(self, db_session: Session) -> None:
         """put_aspect(record_mcl=False) writes aspect but no MCL row."""
@@ -305,9 +316,8 @@ class TestRecordMclFlag:
         # Aspect should exist
         assert svc.get_aspect("urn:nexus:file:z1:id1", "path") is not None
 
-        # But no MCL row should have been created
-        mcl_records = db_session.execute(select(MetadataChangeLogModel)).scalars().all()
-        assert len(mcl_records) == 0
+        # But no MCL row should have been created in operation_log
+        assert self._mcl_count(db_session) == 0
 
     def test_delete_aspect_skip_mcl(self, db_session: Session) -> None:
         """delete_aspect(record_mcl=False) deletes aspect but no MCL row."""
@@ -325,8 +335,7 @@ class TestRecordMclFlag:
 
         assert svc.get_aspect("urn:nexus:file:z1:id1", "path") is None
 
-        mcl_records = db_session.execute(select(MetadataChangeLogModel)).scalars().all()
-        assert len(mcl_records) == 0
+        assert self._mcl_count(db_session) == 0
 
 
 class TestValidation:

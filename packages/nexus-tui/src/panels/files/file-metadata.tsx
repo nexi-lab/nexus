@@ -3,6 +3,7 @@
  */
 
 import React from "react";
+import * as crypto from "node:crypto";
 import type { FileItem } from "../../stores/files-store.js";
 
 interface FileMetadataProps {
@@ -47,6 +48,17 @@ export function FileMetadata({ item }: FileMetadataProps): React.ReactNode {
   lines.push(`Owner: ${display(item.owner)}`);
   lines.push(`Permissions: ${display(item.permissions)}`);
   lines.push(`Zone: ${display(item.zoneId)}`);
+
+  // URN (computed from path, matching NexusURN.for_file() in Python)
+  if (item.path && item.zoneId) {
+    const pathHash = crypto
+      .createHash("sha256")
+      .update(item.path)
+      .digest("hex")
+      .slice(0, 32);
+    lines.push(`URN: urn:nexus:file:${item.zoneId}:${pathHash}`);
+  }
+
   lines.push(`Modified: ${display(item.modifiedAt)}`);
 
   return (

@@ -63,3 +63,63 @@ export interface SseEvent {
   readonly data: string;
   readonly retry?: number;
 }
+
+// =============================================================================
+// Knowledge platform types (Issue #2930)
+// =============================================================================
+
+export interface AspectEnvelope {
+  readonly entityUrn: string;
+  readonly aspectName: string;
+  readonly version: number;
+  readonly payload: Record<string, unknown>;
+  readonly createdBy: string;
+  readonly createdAt: string | null;
+}
+
+export interface AspectListResponse {
+  readonly entityUrn: string;
+  readonly aspects: readonly string[];
+}
+
+export interface DatasetSchema {
+  readonly columns: readonly { name: string; type: string; nullable: string }[];
+  readonly format: string;
+  readonly rowCount: number | null;
+  readonly confidence: number;
+  readonly warnings: readonly string[];
+}
+
+export interface CatalogSchemaResponse {
+  readonly entityUrn: string;
+  readonly path: string;
+  readonly schema: DatasetSchema | null;
+}
+
+export interface ColumnSearchResult {
+  readonly entityUrn: string;
+  readonly columnName: string;
+  readonly columnType: string;
+  readonly schema: Record<string, unknown>;
+}
+
+export interface ColumnSearchResponse {
+  readonly results: readonly ColumnSearchResult[];
+  readonly total: number;
+  readonly capped: boolean;
+}
+
+export interface ReplayRecord {
+  readonly sequenceNumber: number;
+  readonly entityUrn: string;
+  readonly aspectName: string;
+  readonly changeType: string;
+  readonly timestamp: string;
+  readonly operationType: string;
+}
+
+export interface ReplayResponse {
+  readonly records: readonly ReplayRecord[];
+  readonly nextCursor: number | null;
+  readonly hasMore: boolean;
+}

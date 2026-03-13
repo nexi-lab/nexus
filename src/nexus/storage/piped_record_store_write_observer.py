@@ -469,7 +469,7 @@ class PipedRecordStoreWriteObserver:
                     zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=event.get("snapshot_hash"),
-                    metadata_snapshot=event.get("metadata_snapshot"),
+                    metadata_snapshot=event.get("metadata"),
                     status="success",
                     entity_urn=urn,
                     aspect_name="file_metadata",
@@ -495,11 +495,14 @@ class PipedRecordStoreWriteObserver:
                 recorder.record_delete(event["path"])
 
             elif op == "rename":
+                # Two rows: DELETE old + UPSERT new (locator URNs)
                 old_urn = self._build_urn(event["path"], zone_id)
+                new_path = event.get("new_path", "")
+                new_urn = self._build_urn(new_path, zone_id)
                 op_logger.log_operation(
                     operation_type="rename",
                     path=event["path"],
-                    new_path=event.get("new_path"),
+                    new_path=new_path,
                     zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=event.get("snapshot_hash"),
@@ -509,7 +512,17 @@ class PipedRecordStoreWriteObserver:
                     aspect_name="file_metadata",
                     change_type="delete",
                 )
-                new_path = event.get("new_path")
+                op_logger.log_operation(
+                    operation_type="rename",
+                    path=new_path,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    metadata_snapshot=event.get("metadata_snapshot"),
+                    status="success",
+                    entity_urn=new_urn,
+                    aspect_name="file_metadata",
+                    change_type="upsert",
+                )
                 if new_path:
                     recorder.record_rename(event["path"], new_path)
 

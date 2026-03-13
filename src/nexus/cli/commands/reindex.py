@@ -32,7 +32,6 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -71,7 +70,8 @@ def reindex(
     from_sequence: int | None,
     batch_size: int,
     zone: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Replay operation_log to rebuild indices.
 
@@ -86,7 +86,7 @@ def reindex(
         nexus reindex --target search --from-sequence 1000
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         record_store = getattr(nx, "_record_store", None)
         if record_store is None:

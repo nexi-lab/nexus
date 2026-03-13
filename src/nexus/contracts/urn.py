@@ -1,27 +1,35 @@
-"""Nexus URN — stable, location-independent entity identifiers (Issue #2929).
+"""Nexus URN — path-based entity locators (Issue #2929).
 
-A NexusURN uniquely identifies an entity across the system. URNs are stable:
-they do NOT change on rename/move. The path is stored as an aspect, not
-embedded in the URN.
+A NexusURN addresses an entity within the system. URNs are *locators*, not
+stable identities: they change on rename/move. Rename-stable resource IDs
+are future work.
 
 Format: ``urn:nexus:{entity_type}:{zone_id}:{identifier}``
 
+The identifier is a deterministic hash of the entity's path, so any caller
+can compute a URN from a path without a database lookup.
+
 Examples:
-    - ``urn:nexus:file:zone_acme:550e8400-e29b-41d4-a716-446655440000``
+    - ``urn:nexus:file:zone_acme:a1b2c3d4...``  (SHA-256 prefix of path)
     - ``urn:nexus:schema:zone_acme:abc123``
     - ``urn:nexus:user:zone_acme:alice``
 
-Design decisions (Issue #2929, Architecture Review #1):
-    - UUID-based stable identity (not path-based locator)
-    - ``FilePathModel.path_id`` serves as the file entity identifier
-    - Path is an aspect, not part of the URN
-    - URN construction belongs in the service layer, not on this dataclass
+Design decisions (Issue #2929):
+    - URN is a locator, not stable identity (Key Decision #3)
+    - Identifier derived from path via SHA-256 hash prefix
+    - Rename → DELETE old URN + UPSERT new URN
+    - ``NexusURN.from_metadata(meta)`` computes URN from FileMetadata
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
 
 # Valid entity types for URN construction
 VALID_ENTITY_TYPES = frozenset(
@@ -40,15 +48,15 @@ _URN_PATTERN = re.compile(r"^urn:nexus:([a-z_]+):([a-zA-Z0-9_-]+):([a-zA-Z0-9_-]
 
 @dataclass(frozen=True, slots=True)
 class NexusURN:
-    """Stable, location-independent entity identifier.
+    """Path-based entity locator.
 
-    URNs are immutable value types. They survive renames and moves
-    because identity is based on UUID, not path.
+    URNs are immutable value types. They change on rename/move because
+    identity is derived from path, not a stable UUID.
 
     Attributes:
         entity_type: Type of entity (file, directory, schema, user, tag).
         zone_id: Zone/organization scope.
-        identifier: Unique identifier within the entity type and zone.
+        identifier: Deterministic hash of the entity's path.
     """
 
     entity_type: str
@@ -91,26 +99,48 @@ class NexusURN:
             identifier=match.group(3),
         )
 
-    @classmethod
-    def for_file(cls, zone_id: str, path_id: str) -> NexusURN:
-        """Create a URN for a file entity using its path_id.
+    @staticmethod
+    def _hash_path(path: str) -> str:
+        """Compute deterministic identifier from a path."""
+        return hashlib.sha256(path.encode()).hexdigest()[:32]
 
-        This is the primary factory for file URNs. The path_id comes
-        from ``FilePathModel.path_id`` (UUID).
+    @classmethod
+    def for_file(cls, zone_id: str, path: str) -> NexusURN:
+        """Create a URN for a file entity from its virtual path.
+
+        The identifier is a deterministic SHA-256 hash prefix of the path,
+        so any caller can compute the same URN without a database lookup.
 
         Args:
             zone_id: Zone the file belongs to.
-            path_id: UUID primary key from FilePathModel.
+            path: Virtual path of the file.
 
         Returns:
             File entity URN.
         """
-        return cls(entity_type="file", zone_id=zone_id, identifier=path_id)
+        return cls(entity_type="file", zone_id=zone_id, identifier=cls._hash_path(path))
 
     @classmethod
-    def for_directory(cls, zone_id: str, path_id: str) -> NexusURN:
-        """Create a URN for a directory entity."""
-        return cls(entity_type="directory", zone_id=zone_id, identifier=path_id)
+    def for_directory(cls, zone_id: str, path: str) -> NexusURN:
+        """Create a URN for a directory entity from its virtual path."""
+        return cls(entity_type="directory", zone_id=zone_id, identifier=cls._hash_path(path))
+
+    @classmethod
+    def from_metadata(cls, meta: Any) -> NexusURN:
+        """Compute a URN from FileMetadata.
+
+        This is the primary entry point for computing a file URN from
+        kernel-native FileMetadata. The URN is derived from the path.
+
+        Args:
+            meta: FileMetadata instance (or any object with ``path`` attribute).
+
+        Returns:
+            File entity URN using the metadata's path.
+        """
+        path: str = getattr(meta, "path", "")
+        zone_id: str = getattr(meta, "zone_id", "default")
+        return cls.for_file(zone_id=zone_id, path=path)
 
     def is_file(self) -> bool:
         return self.entity_type == "file"

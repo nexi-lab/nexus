@@ -12,6 +12,8 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-and-push:
@@ -62,6 +64,8 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           build-args: TORCH_VARIANT=${{ matrix.variant }}
           cache-from: type=gha,scope=${{ matrix.variant }}

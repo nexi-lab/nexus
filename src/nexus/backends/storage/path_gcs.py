@@ -61,6 +61,8 @@ class PathGCSBackend(PathBackend, CacheConnectorMixin):
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
             ConnectorCapability.SIGNED_URL,
+            ConnectorCapability.NATIVE_VERSIONING,
+            ConnectorCapability.RESUMABLE_UPLOAD,
         }
     )
 

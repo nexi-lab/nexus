@@ -382,10 +382,18 @@ def init(
         if not cf or not Path(cf).exists():
             bundled = _bundled_compose_file()
             if bundled is not None:
-                dest = cfg_path.parent.resolve() / "nexus-stack.yml"
+                dest_dir = cfg_path.parent.resolve()
+                dest = dest_dir / "nexus-stack.yml"
                 shutil.copy2(str(bundled), str(dest))
                 config["compose_file"] = str(dest)
                 console.print(f"  Copied bundled nexus-stack.yml → {dest}")
+
+                # Copy supporting files (Dockerfile, pgvector init SQL)
+                bundled_dir = bundled.parent
+                for support_file in ("nexus-demo.Dockerfile", "001-enable-pgvector.sql"):
+                    src = bundled_dir / support_file
+                    if src.exists():
+                        shutil.copy2(str(src), str(dest_dir / support_file))
             else:
                 console.print(f"[red]Error:[/red] Compose file not found: {cf}")
                 console.print("  Run `nexus init` from the Nexus repo root, or pass")

@@ -23,7 +23,7 @@ services:
   # PostgreSQL Database
   # ============================================================================
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     profiles:
       - core
@@ -34,6 +34,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - postgres-wal-archive:/var/lib/postgresql/wal_archive
+      - ./postgres-init/05-pgvector.sql:/docker-entrypoint-initdb.d/05-pgvector.sql:ro
     command: >
       postgres
       -c shared_preload_libraries=pg_stat_statements
@@ -65,8 +66,8 @@ services:
   nexus:
     build:
       context: .
-      dockerfile: Dockerfile
-    image: nexus-server:latest
+      dockerfile: nexus-demo.Dockerfile
+    image: nexus-demo:latest
     restart: unless-stopped
     profiles:
       - core
@@ -87,6 +88,7 @@ services:
       # Auth
       NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      NEXUS_AUTH_TYPE: ${NEXUS_AUTH_TYPE:-database}
       # Backend
       NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
       NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
@@ -105,6 +107,8 @@ services:
       # Event bus
       NEXUS_EVENT_BUS_BACKEND: ${NEXUS_EVENT_BUS_BACKEND:-redis}
       NEXUS_NATS_URL: ${NEXUS_NATS_URL:-nats://nats:4222}
+      # Search
+      NEXUS_SEARCH_DAEMON: ${NEXUS_SEARCH_DAEMON:-true}
       # Zoekt
       ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
       ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}

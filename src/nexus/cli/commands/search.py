@@ -362,25 +362,19 @@ def search_init(
         # Custom settings
         nexus search init --provider openai --chunk-size 2048
     """
-    import asyncio
-
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
         with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
-
-            async def init_search() -> None:
-                await nx.service("search").ainitialize_semantic_search(
-                    nx=nx,
-                    record_store_engine=None,
-                    embedding_provider=provider,
-                    embedding_model=model,
-                    api_key=api_key,
-                    chunk_size=chunk_size,
-                    chunk_strategy=chunk_strategy,
-                )
-
-            asyncio.run(init_search())
+            nx.service("search").ainitialize_semantic_search(
+                nx=nx,
+                record_store_engine=None,
+                embedding_provider=provider,
+                embedding_model=model,
+                api_key=api_key,
+                chunk_size=chunk_size,
+                chunk_strategy=chunk_strategy,
+            )
 
         console.print("[green]✓ Search engine initialized successfully![/green]")
         console.print("  Mode: [cyan]Remote (server-side)[/cyan]")
@@ -423,20 +417,12 @@ def search_index(
         # Index single file
         nexus search index /docs/README.md
     """
-    import asyncio
-
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
-
-            async def do_index() -> dict[str, int]:
-                result: dict[str, int] = await nx.service("search").semantic_search_index(
-                    path, recursive=recursive
-                )
-                return result
-
-            results = asyncio.run(do_index())
+            search_svc = nx.service("search")
+            results: dict[str, int] = search_svc.semantic_search_index(path, recursive=recursive)
 
         # Display results
         total_chunks = sum(v for v in results.values() if v > 0)
@@ -450,11 +436,7 @@ def search_index(
             console.print(f"  Failed: [yellow]{failed}[/yellow]")
 
         # Show stats
-        async def get_stats() -> dict[str, Any]:
-            result: dict[str, Any] = await nx.service("search").semantic_search_stats()
-            return result
-
-        stats = asyncio.run(get_stats())
+        stats: dict[str, Any] = search_svc.semantic_search_stats()
         console.print("\n[bold cyan]Index Statistics:[/bold cyan]")
         console.print(f"  Total indexed files: [green]{stats['indexed_files']}[/green]")
         console.print(f"  Total chunks: [green]{stats['total_chunks']}[/green]")
@@ -501,20 +483,14 @@ def search_query(
         # JSON output
         nexus search query "API endpoints" --json
     """
-    import asyncio
-
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
-
-            async def do_search() -> list[dict[str, Any]]:
-                result: list[dict[str, Any]] = await nx.service("search").semantic_search(
-                    query, path=path, limit=limit, search_mode=mode
-                )
-                return result
-
-            results = asyncio.run(do_search())
+            search_svc = nx.service("search")
+            results: list[dict[str, Any]] = search_svc.semantic_search(
+                query, path=path, limit=limit, search_mode=mode
+            )
 
         if json_output:
             import json
@@ -557,24 +533,25 @@ def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
     Examples:
         nexus search stats
     """
-    import asyncio
-
     try:
         nx = get_filesystem(remote_url, remote_api_key)
 
-        async def get_stats() -> dict[str, Any]:
-            result: dict[str, Any] = await nx.service("search").semantic_search_stats()
-            return result
-
-        stats = asyncio.run(get_stats())
+        stats: dict[str, Any] = nx.service("search").semantic_search_stats()
 
         console.print("\n[bold cyan]Semantic Search Statistics[/bold cyan]")
-        console.print(f"  Database type: [green]{stats['database_type']}[/green]")
-        console.print(f"  Indexed files: [green]{stats['indexed_files']}[/green]")
-        console.print(f"  Total chunks: [green]{stats['total_chunks']}[/green]")
-        console.print(f"  Embedding model: [cyan]{stats.get('embedding_model', 'None')}[/cyan]")
-        console.print(f"  Chunk size: [cyan]{stats['chunk_size']}[/cyan] tokens")
-        console.print(f"  Chunk strategy: [cyan]{stats['chunk_strategy']}[/cyan]")
+        console.print(
+            f"  Engine: [green]{stats.get('engine', stats.get('database_type', 'unknown'))}[/green]"
+        )
+        console.print(
+            f"  Indexed files: [green]{stats.get('total_files', stats.get('indexed_files', 0))}[/green]"
+        )
+        console.print(f"  Total chunks: [green]{stats.get('total_chunks', 0)}[/green]")
+        if stats.get("embedding_model"):
+            console.print(f"  Embedding model: [cyan]{stats['embedding_model']}[/cyan]")
+        if stats.get("chunk_size"):
+            console.print(f"  Chunk size: [cyan]{stats['chunk_size']}[/cyan] tokens")
+        if stats.get("chunk_strategy"):
+            console.print(f"  Chunk strategy: [cyan]{stats['chunk_strategy']}[/cyan]")
 
         nx.close()
     except Exception as e:

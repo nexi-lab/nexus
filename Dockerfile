@@ -67,7 +67,7 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
     else \
         PIP_INDEX="https://pypi.org/simple"; \
     fi && \
-    uv pip install --system -i $PIP_INDEX .
+    uv pip install --system -i $PIP_INDEX ".[semantic-search]" "txtai[ann]>=9.0"
 
 # ---------- Install sandbox providers ----------
 RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
@@ -110,6 +110,7 @@ RUN set -eux; \
 # ---------- Copy Python packages + Rust extension ----------
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
+COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 
 # ---------- Copy Zoekt binaries ----------

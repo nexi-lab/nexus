@@ -51,16 +51,23 @@ class TestLifecycleAdapterSatisfiesLifecycleProtocol:
     @pytest.mark.asyncio
     async def test_adapter_health_check_true(self) -> None:
         mock_daemon = MagicMock()
-        mock_daemon.get_health.return_value = {"initialized": True}
+        mock_daemon.get_health.return_value = {"daemon_initialized": True}
         adapter = SearchBrickLifecycleAdapter(mock_daemon)
         assert await adapter.health_check() is True
 
     @pytest.mark.asyncio
     async def test_adapter_health_check_false(self) -> None:
         mock_daemon = MagicMock()
-        mock_daemon.get_health.return_value = {"initialized": False}
+        mock_daemon.get_health.return_value = {"daemon_initialized": False}
         adapter = SearchBrickLifecycleAdapter(mock_daemon)
         assert await adapter.health_check() is False
+
+    @pytest.mark.asyncio
+    async def test_adapter_health_check_legacy_key_compatibility(self) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon.get_health.return_value = {"initialized": True}
+        adapter = SearchBrickLifecycleAdapter(mock_daemon)
+        assert await adapter.health_check() is True
 
 
 class TestNexusFSFileReaderSatisfiesProtocol:

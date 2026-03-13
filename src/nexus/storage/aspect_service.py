@@ -1,17 +1,16 @@
 """Aspect service — RecordStore implementation of AspectServiceProtocol (Issue #2929).
 
 Implements the version-0 swap pattern with optimistic locking,
-inline compaction, and MCL recording.
+inline compaction, and MCL recording via operation_log.
 
 Architecture:
     AspectService → EntityAspectModel (SQL side-store)
-    AspectService → MetadataChangeLogModel (MCL for replay)
+    AspectService → OperationLogger (MCL in operation_log, Key Decision #2)
     AspectService → AspectRegistry (schema validation)
 """
 
 import json
 import logging
-import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from nexus.contracts.aspects import AspectRegistry
 from nexus.storage.models.aspect_store import EntityAspectModel
-from nexus.storage.models.metadata_change_log import MCLChangeType, MetadataChangeLogModel
 
 logger = logging.getLogger(__name__)
 
@@ -34,42 +32,34 @@ class AspectService:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def _next_mcl_sequence(self) -> int:
-        """Get the next MCL sequence number.
-
-        Uses time-based microsecond timestamps to avoid race conditions
-        under concurrent transactions. Falls back to MAX+1 if the
-        timestamp would be lower than existing entries.
-        """
-        time_based = int(time.time() * 1_000_000)
-        result = self._session.execute(
-            select(func.coalesce(func.max(MetadataChangeLogModel.sequence_number), 0))
-        ).scalar()
-        current_max = int(result) if result is not None else 0
-        return max(time_based, current_max + 1)
-
     def _record_mcl(
         self,
         entity_urn: str,
         aspect_name: str,
-        change_type: MCLChangeType,
+        change_type: str,
         aspect_value: dict[str, Any] | None = None,
-        previous_value: dict[str, Any] | None = None,
         zone_id: str | None = None,
-        changed_by: str = "system",
+        changed_by: str = "system",  # noqa: ARG002
     ) -> None:
-        """Write an MCL record for replay/indexing."""
-        mcl = MetadataChangeLogModel(
-            sequence_number=self._next_mcl_sequence(),
+        """Record an MCL event into operation_log (Key Decision #2).
+
+        Writes aspect mutations as operation_log rows with MCL columns
+        (entity_urn, aspect_name, change_type). This makes all aspect
+        changes visible to OperationLogger.replay_changes().
+        """
+        from nexus.storage.operation_logger import OperationLogger
+
+        op_type = "aspect_upsert" if change_type == "upsert" else "aspect_delete"
+        OperationLogger(self._session).log_operation(
+            operation_type=op_type,
+            path=entity_urn,  # aspect mutations use URN as path
+            zone_id=zone_id,
+            status="success",
+            metadata_snapshot=aspect_value,
             entity_urn=entity_urn,
             aspect_name=aspect_name,
-            change_type=change_type.value,
-            aspect_value=json.dumps(aspect_value, default=str) if aspect_value else None,
-            previous_value=json.dumps(previous_value, default=str) if previous_value else None,
-            zone_id=zone_id,
-            changed_by=changed_by,
+            change_type=change_type,
         )
-        self._session.add(mcl)
 
     def get_aspect(
         self,
@@ -141,13 +131,9 @@ class AspectService:
         )
         current = self._session.execute(stmt).scalar_one_or_none()
 
-        previous_value: dict[str, Any] | None = None
         new_history_version = 0
 
         if current is not None:
-            # Parse previous value for MCL
-            previous_value = json.loads(current.payload)
-
             # Find next history version number
             max_version_result = self._session.execute(
                 select(func.coalesce(func.max(EntityAspectModel.version), 0)).where(
@@ -219,9 +205,8 @@ class AspectService:
             self._record_mcl(
                 entity_urn=entity_urn,
                 aspect_name=aspect_name,
-                change_type=MCLChangeType.UPSERT,
+                change_type="upsert",
                 aspect_value=payload,
-                previous_value=previous_value,
                 zone_id=zone_id,
                 changed_by=created_by,
             )
@@ -292,8 +277,7 @@ class AspectService:
             self._record_mcl(
                 entity_urn=entity_urn,
                 aspect_name=aspect_name,
-                change_type=MCLChangeType.DELETE,
-                previous_value=current,
+                change_type="delete",
                 zone_id=zone_id,
             )
 

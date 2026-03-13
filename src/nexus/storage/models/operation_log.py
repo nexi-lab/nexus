@@ -63,6 +63,7 @@ class OperationLogModel(Base):
 
     # Monotonic sequence for cursor-based replay pagination (Issue #1138/#1139).
     # Nullable for backfill of existing rows; new rows auto-populated via trigger/app.
+    # Unique constraint prevents duplicate sequences under concurrent writers.
     sequence_number: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True, default=None, unique=True
     )

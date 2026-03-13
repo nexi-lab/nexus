@@ -112,37 +112,48 @@ class OperationLogger:
         Returns:
             operation_id: UUID of logged operation
         """
-        # Auto-assign sequence_number for cursor-based replay (#1138/#1139).
-        # Uses SELECT ... FOR UPDATE to prevent concurrent duplicate sequences.
-        next_seq = self.session.execute(
-            select(
-                func.coalesce(func.max(OperationLogModel.sequence_number), 0) + 1
-            ).with_for_update()
-        ).scalar()
+        # Auto-assign sequence_number with retry on unique constraint violation.
+        # Uses MAX+1 within the current session. The UNIQUE constraint on
+        # sequence_number prevents duplicates under concurrent writers;
+        # on collision, retry with the new MAX+1 (up to 3 attempts).
+        from sqlalchemy.exc import IntegrityError
 
-        operation = OperationLogModel(
-            operation_type=operation_type,
-            path=path,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            new_path=new_path,
-            snapshot_hash=snapshot_hash,
-            metadata_snapshot=json.dumps(metadata_snapshot) if metadata_snapshot else None,
-            status=status,
-            error_message=error_message,
-            created_at=datetime.now(UTC),
-            sequence_number=next_seq,
-            entity_urn=entity_urn,
-            aspect_name=aspect_name,
-            change_type=change_type,
-        )
+        max_retries = 3
+        for attempt in range(max_retries):
+            next_seq = self.session.execute(
+                select(func.coalesce(func.max(OperationLogModel.sequence_number), 0) + 1)
+            ).scalar()
 
-        operation.validate()
-        self.session.add(operation)
-        if flush:
-            self.session.flush()  # Get the operation_id
+            operation = OperationLogModel(
+                operation_type=operation_type,
+                path=path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                new_path=new_path,
+                snapshot_hash=snapshot_hash,
+                metadata_snapshot=json.dumps(metadata_snapshot) if metadata_snapshot else None,
+                status=status,
+                error_message=error_message,
+                created_at=datetime.now(UTC),
+                sequence_number=next_seq,
+                entity_urn=entity_urn,
+                aspect_name=aspect_name,
+                change_type=change_type,
+            )
 
-        return operation.operation_id
+            operation.validate()
+            self.session.add(operation)
+            try:
+                if flush:
+                    self.session.flush()
+                return operation.operation_id
+            except IntegrityError:
+                if attempt < max_retries - 1:
+                    self.session.rollback()
+                    continue
+                raise
+
+        return operation.operation_id  # pragma: no cover
 
     def replay_changes(
         self,

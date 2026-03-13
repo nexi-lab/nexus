@@ -132,23 +132,6 @@ class NexusFS(  # type: ignore[misc]
         else:
             self.router = PathRouter(metadata_store)
 
-        # Parser registries (Issue #2134: from BrickServices, fallback for tests)
-        if brk_svc.parser_registry is not None:
-            self.parser_registry = brk_svc.parser_registry
-        else:
-            from nexus.bricks.parsers.markitdown_parser import MarkItDownParser as _MkD
-            from nexus.bricks.parsers.registry import ParserRegistry as _PR
-
-            self.parser_registry = _PR()
-            self.parser_registry.register(_MkD())
-        if brk_svc.provider_registry is not None:
-            self.provider_registry = brk_svc.provider_registry
-        else:
-            from nexus.bricks.parsers.providers.registry import ProviderRegistry as _PvR
-
-            self.provider_registry = _PvR()
-            self.provider_registry.auto_discover()
-
         self._virtual_view_parse_fn = brk_svc.parse_fn
 
         # Default context for embedded mode

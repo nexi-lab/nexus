@@ -74,8 +74,6 @@ def _do_link(
     nx._brick_services = _dc_replace(nx._brick_services, **_brick_updates)
 
     # Update kernel-side references set by __init__ from original BrickServices
-    nx.parser_registry = parsers_brick.parser_registry
-    nx.provider_registry = parsers_brick.provider_registry
     nx._virtual_view_parse_fn = _parse_fn
     nx._parsers_brick = parsers_brick  # kept for BLM registration in initialize()
 

@@ -37,16 +37,16 @@ nexus up
 nexus demo init          # seeds sample workspace + prints API key
 ```
 
-This pulls the prebuilt image (`ghcr.io/nexi-lab/nexus`) and starts Nexus on `localhost:2026`. No Rust toolchain, no local build required.
+This pulls the prebuilt Nexus image and starts it alongside PostgreSQL (pgvector), Dragonfly (cache), and Zoekt (code search). By default Nexus listens on `localhost:2026`; if that port is busy, `nexus up` auto-resolves to a free port and prints the actual URL. No Rust toolchain, no local build required.
 
-### Shared deployment (Postgres + cache)
+### Shared deployment
 
 ```bash
 nexus init --preset shared
 nexus up
 ```
 
-Adds PostgreSQL (metadata), Dragonfly (cache), and Zoekt (code search) as Docker services alongside Nexus.
+Same services as demo (PostgreSQL, Dragonfly, Zoekt) with `static` auth and production-oriented defaults.
 
 ### Local SDK (no Docker)
 
@@ -78,12 +78,11 @@ nexus ls /workspace
 The prebuilt multi-arch image (amd64 + arm64) is published to GHCR:
 
 ```
-ghcr.io/nexi-lab/nexus:latest        # CPU-only PyTorch (recommended)
-ghcr.io/nexi-lab/nexus:latest-cuda   # GPU-accelerated (CUDA)
+ghcr.io/nexi-lab/nexus:latest        # Latest release (CPU-only PyTorch)
 ghcr.io/nexi-lab/nexus:<version>     # Pinned to a specific release
 ```
 
-`nexus init` pins the image tag to the installed CLI version. To build locally from source instead of pulling, pass `--build` to `nexus up`.
+`nexus init` pins the image tag to the installed CLI version. To build locally from source instead of pulling, pass `--build` to `nexus up`. A CUDA variant (`ghcr.io/nexi-lab/nexus:<version>-cuda`) is also published for GPU-accelerated workloads — set `image_tag` in `nexus.yaml` to use it.
 
 ## Optional Capabilities
 
@@ -110,7 +109,7 @@ For the full walkthrough, see the [quickstart page](https://nexi-lab.github.io/n
 
 ## Trust Boundaries
 
-- The demo preset runs a single-node Nexus with SQLite — suitable for evaluation, not production.
+- The demo preset runs a single-node stack (Nexus + PostgreSQL + Dragonfly + Zoekt) with default credentials — suitable for evaluation, not production.
 - Remote SDK access uses the `remote` profile and depends on a running `nexusd` plus a configured gRPC port.
 - Permissions, memory, and federation are deployment capabilities configured via the `shared` or custom presets.
 

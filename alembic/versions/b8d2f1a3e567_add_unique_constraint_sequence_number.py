@@ -49,18 +49,48 @@ def upgrade() -> None:
             )
             """
         )
-
-    op.create_unique_constraint(
-        "uq_operation_log_sequence_number",
-        "operation_log",
-        ["sequence_number"],
-    )
+        op.create_unique_constraint(
+            "uq_operation_log_sequence_number",
+            "operation_log",
+            ["sequence_number"],
+        )
+    else:
+        # SQLite: deduplicate before rebuilding the table via batch mode.
+        # rowid is SQLite's implicit stable PK — used as deterministic tie-break.
+        op.execute(
+            """
+            DELETE FROM operation_log
+            WHERE sequence_number IS NOT NULL
+              AND rowid NOT IN (
+                SELECT MIN(rowid)
+                FROM operation_log
+                WHERE sequence_number IS NOT NULL
+                GROUP BY sequence_number
+              )
+            """
+        )
+        # batch_alter_table is required; SQLite has no native ALTER of constraints.
+        with op.batch_alter_table("operation_log") as batch_op:
+            batch_op.create_unique_constraint(
+                "uq_operation_log_sequence_number",
+                ["sequence_number"],
+            )
 
 
 def downgrade() -> None:
     """Remove unique constraint from operation_log.sequence_number."""
-    op.drop_constraint(
-        "uq_operation_log_sequence_number",
-        "operation_log",
-        type_="unique",
-    )
+    bind = op.get_bind()
+    dialect = bind.dialect.name
+
+    if dialect == "postgresql":
+        op.drop_constraint(
+            "uq_operation_log_sequence_number",
+            "operation_log",
+            type_="unique",
+        )
+    else:
+        with op.batch_alter_table("operation_log") as batch_op:
+            batch_op.drop_constraint(
+                "uq_operation_log_sequence_number",
+                type_="unique",
+            )

@@ -69,7 +69,7 @@ interface ZonesListResponse {
 // Tab type
 // =============================================================================
 
-export type ZoneTab = "zones" | "bricks" | "drift";
+export type ZoneTab = "zones" | "bricks" | "drift" | "reindex";
 
 // =============================================================================
 // Store

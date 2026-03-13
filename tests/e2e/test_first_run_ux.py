@@ -13,6 +13,7 @@ Timeout: 5 minutes (containers need startup time).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -314,12 +315,16 @@ class TestFullWorkflow:
             assert "Seeding" in demo_result.stdout or "Files" in demo_result.stdout
 
             # Verify printed commands use correct CLI syntax
-            # grep takes path as positional arg (not --path) and must include --remote-url
+            # grep takes path as positional arg (not --path)
             assert "--path" not in demo_result.stdout, (
                 "grep command should use positional path, not --path"
             )
-            assert "--remote-url" in demo_result.stdout, (
-                "demo init should print --remote-url for shared/demo presets"
+            # For shared/demo presets, should print NEXUS_URL and NEXUS_API_KEY env vars
+            assert "NEXUS_URL" in demo_result.stdout, (
+                "demo init should print NEXUS_URL export for shared/demo presets"
+            )
+            assert "NEXUS_API_KEY" in demo_result.stdout, (
+                "demo init should print NEXUS_API_KEY export for shared/demo presets"
             )
 
             # Verify manifest was created, files were seeded, and permissions set
@@ -343,45 +348,41 @@ class TestFullWorkflow:
                 "expected > 0 — docker exec or RPC seeding failed"
             )
 
-            # Step 2b: Verify grep works against the running stack
+            # Step 2b: Verify grep/ls work against the running stack.
+            # Set NEXUS_URL + NEXUS_API_KEY env vars (as printed by demo init).
             http_port = cfg.get("ports", {}).get("http", 2026)
-            remote_url = f"http://localhost:{http_port}"
+            api_key = cfg.get("api_key", "")
+            stack_env = {
+                **os.environ,
+                "NEXUS_URL": f"http://localhost:{http_port}",
+                "NEXUS_API_KEY": api_key,
+            }
+
             grep_result = subprocess.run(
-                [
-                    "nexus",
-                    "grep",
-                    "vector index",
-                    "/workspace/demo",
-                    "--remote-url",
-                    remote_url,
-                ],
+                ["nexus", "grep", "vector index", "/workspace/demo"],
                 capture_output=True,
                 text=True,
                 timeout=30,
                 cwd=str(initialized_project),
+                env=stack_env,
             )
             assert grep_result.returncode == 0, (
                 f"nexus grep failed against live stack:\n"
                 f"stdout: {grep_result.stdout}\nstderr: {grep_result.stderr}"
             )
             # Should find at least one match in the demo corpus
-            assert "vector index" in grep_result.stdout.lower() or grep_result.stdout.strip(), (
+            assert grep_result.stdout.strip(), (
                 "grep returned no output — demo file corpus not searchable"
             )
 
             # Step 2c: Verify ls works against the running stack
             ls_result = subprocess.run(
-                [
-                    "nexus",
-                    "ls",
-                    "/workspace/demo",
-                    "--remote-url",
-                    remote_url,
-                ],
+                ["nexus", "ls", "/workspace/demo"],
                 capture_output=True,
                 text=True,
                 timeout=30,
                 cwd=str(initialized_project),
+                env=stack_env,
             )
             assert ls_result.returncode == 0, (
                 f"nexus ls failed against live stack:\n"

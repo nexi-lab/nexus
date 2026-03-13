@@ -32,6 +32,7 @@ Architecture:
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import time
@@ -372,7 +373,78 @@ class PipedRecordStoreWriteObserver:
             await self._flush_batch(batch)
 
     @staticmethod
-    def _process_events_in_session(session: Any, events: list[dict[str, Any]]) -> None:
+    def _build_urn(path: str, zone_id: str | None) -> str:
+        """Build a locator URN for a file from its virtual path.
+
+        URNs are locators (Issue #2929 Key Decision #3): they change on
+        rename. The identifier is a deterministic SHA-256 hash prefix of
+        the path, so any caller can compute the same URN without a
+        database lookup.
+        """
+        path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
+        return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
+
+    def _record_mcl_for_event(
+        self,
+        session: Any,
+        event: dict[str, Any],
+    ) -> None:
+        """Record MCL entry for a single event. Non-critical, uses savepoint."""
+        try:
+            from nexus.storage.mcl_recorder import MCLRecorder
+
+            op = event["op"]
+            zone_id = event.get("zone_id")
+            agent_id = event.get("agent_id")
+            path = event["path"]
+            changed_by = agent_id or "system"
+
+            with session.begin_nested():
+                recorder = MCLRecorder(session)
+                if op == "write":
+                    urn = self._build_urn(path, zone_id)
+                    recorder.record_file_write(
+                        entity_urn=urn,
+                        metadata_dict=event.get("metadata"),
+                        zone_id=zone_id,
+                        changed_by=changed_by,
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                elif op == "delete":
+                    from nexus.storage.aspect_service import AspectService
+
+                    urn = self._build_urn(path, zone_id)
+                    recorder.record_file_delete(
+                        entity_urn=urn,
+                        zone_id=zone_id,
+                        changed_by=changed_by,
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                    AspectService(session).soft_delete_entity_aspects(urn)
+                elif op == "rename":
+                    # URNs are locators (Issue #2929 Key Decision #3):
+                    # rename changes the URN. DELETE old + UPSERT new.
+                    old_urn = self._build_urn(path, zone_id)
+                    new_path = event.get("new_path", "")
+                    new_urn = self._build_urn(new_path, zone_id)
+                    recorder.record_file_delete(
+                        entity_urn=old_urn,
+                        zone_id=zone_id,
+                        changed_by=changed_by,
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                    recorder.record_file_write(
+                        entity_urn=new_urn,
+                        metadata_dict=event.get("metadata_snapshot"),
+                        zone_id=zone_id,
+                        changed_by=changed_by,
+                    )
+        except Exception:
+            logger.debug(
+                "MCL recording failed for %s:%s (non-critical)", event.get("op"), event.get("path")
+            )
+
+    def _process_events_in_session(self, session: Any, events: list[dict[str, Any]]) -> None:
         """Dispatch events to OperationLogger + VersionRecorder within a session.
 
         Shared by ``_flush_batch()`` (async consumer) and ``flush_sync()`` (CLI drain).
@@ -390,19 +462,24 @@ class PipedRecordStoreWriteObserver:
             agent_id = event.get("agent_id")
 
             if op == "write":
+                urn = self._build_urn(event["path"], zone_id)
                 op_logger.log_operation(
                     operation_type="write",
                     path=event["path"],
                     zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=event.get("snapshot_hash"),
-                    metadata_snapshot=event.get("metadata_snapshot"),
+                    metadata_snapshot=event.get("metadata"),
                     status="success",
+                    entity_urn=urn,
+                    aspect_name="file_metadata",
+                    change_type="upsert",
                 )
                 md = _metadata_from_dict(event["metadata"])
                 recorder.record_write(md, is_new=event["is_new"])
 
             elif op == "delete":
+                urn = self._build_urn(event["path"], zone_id)
                 op_logger.log_operation(
                     operation_type="delete",
                     path=event["path"],
@@ -411,21 +488,41 @@ class PipedRecordStoreWriteObserver:
                     snapshot_hash=event.get("snapshot_hash"),
                     metadata_snapshot=event.get("metadata_snapshot"),
                     status="success",
+                    entity_urn=urn,
+                    aspect_name="file_metadata",
+                    change_type="delete",
                 )
                 recorder.record_delete(event["path"])
 
             elif op == "rename":
+                # Two rows: DELETE old + UPSERT new (locator URNs)
+                old_urn = self._build_urn(event["path"], zone_id)
+                new_path = event.get("new_path", "")
+                new_urn = self._build_urn(new_path, zone_id)
                 op_logger.log_operation(
                     operation_type="rename",
                     path=event["path"],
-                    new_path=event.get("new_path"),
+                    new_path=new_path,
                     zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=event.get("snapshot_hash"),
                     metadata_snapshot=event.get("metadata_snapshot"),
                     status="success",
+                    entity_urn=old_urn,
+                    aspect_name="file_metadata",
+                    change_type="delete",
                 )
-                new_path = event.get("new_path")
+                op_logger.log_operation(
+                    operation_type="rename",
+                    path=new_path,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    metadata_snapshot=event.get("metadata_snapshot"),
+                    status="success",
+                    entity_urn=new_urn,
+                    aspect_name="file_metadata",
+                    change_type="upsert",
+                )
                 if new_path:
                     recorder.record_rename(event["path"], new_path)
 
@@ -447,6 +544,10 @@ class PipedRecordStoreWriteObserver:
                     agent_id=agent_id,
                     status="success",
                 )
+
+            # MCL recording (Issue #2929) — non-critical per event
+            if op in ("write", "delete", "rename"):
+                self._record_mcl_for_event(session, event)
 
     async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
         """Flush a batch of events to RecordStore in a single transaction."""

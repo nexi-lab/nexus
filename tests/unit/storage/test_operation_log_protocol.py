@@ -29,6 +29,7 @@ class TestOperationLogProtocol:
         assert hasattr(logger, "get_path_history")
         assert hasattr(logger, "agent_activity_summary")
         assert hasattr(logger, "get_metadata_snapshot")
+        assert hasattr(logger, "replay_changes")
 
     def test_protocol_methods_are_callable(self) -> None:
         """Test that all protocol methods are callable."""
@@ -42,3 +43,4 @@ class TestOperationLogProtocol:
         assert callable(logger.get_path_history)
         assert callable(logger.agent_activity_summary)
         assert callable(logger.get_metadata_snapshot)
+        assert callable(logger.replay_changes)

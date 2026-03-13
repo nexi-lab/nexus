@@ -170,6 +170,10 @@ def create_async_files_router(
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
         request: WriteRequest,
+        write_mode: str | None = Query(
+            None,
+            description="Write consistency mode: 'sync' (default, strong) or 'async' (eventual)",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -190,13 +194,30 @@ def create_async_files_router(
             else:
                 content = request.content.encode("utf-8")
 
+            # Build write kwargs with optional write_mode (Issue #2929)
+            write_kwargs: dict[str, Any] = {
+                "path": request.path,
+                "content": content,
+                "if_match": request.if_match,
+                "if_none_match": request.if_none_match,
+                "context": context,
+            }
+            if write_mode is not None:
+                from nexus.contracts.types import WriteMode
+
+                try:
+                    mode = WriteMode(write_mode)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid write_mode: {write_mode!r}. "
+                        f"Valid values: {[m.value for m in WriteMode]}",
+                    ) from None
+                write_kwargs["consistency"] = mode.to_metastore_consistency()
+
             result = await asyncio.to_thread(
                 fs.write,
-                path=request.path,
-                content=content,
-                if_match=request.if_match,
-                if_none_match=request.if_none_match,
-                context=context,
+                **write_kwargs,
             )
 
             response_data = WriteResponse(
@@ -210,6 +231,8 @@ def create_async_files_router(
                 media_type="application/json",
             )
 
+        except HTTPException:
+            raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:

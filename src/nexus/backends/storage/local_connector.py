@@ -91,6 +91,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             ConnectorCapability.DIRECTORY_LISTING,
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.CHANGE_NOTIFICATIONS,
         }
     )
 

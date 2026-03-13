@@ -102,17 +102,17 @@ def test_write_update_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
         # Should have 2 operations: initial write and update
         assert len(operations) == 2
 
-        # Most recent operation should have snapshot of previous version
+        # Most recent operation should have snapshot of previous version hash
         latest = operations[0]
         assert latest.operation_type == "write"
         assert latest.path == path
         assert latest.snapshot_hash == old_hash  # Should store previous content hash
 
-        # Check metadata snapshot
+        # metadata_snapshot stores the NEW metadata (for MCL replay, Issue #2929)
         metadata = logger.get_metadata_snapshot(latest)
         assert metadata is not None
-        assert metadata["size"] == len(content1)
-        assert metadata["version"] == 1
+        assert metadata["size"] == len(content2)
+        assert metadata["version"] == 2
 
 
 def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
@@ -144,7 +144,12 @@ def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStor
 
 
 def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
-    """Test that rename operations are logged."""
+    """Test that rename operations are logged.
+
+    The PR #2929 two-row rename pattern creates 2 operation_log rows:
+    Row 1 (DELETE old URN): path=old_path, new_path=new_path
+    Row 2 (UPSERT new URN): path=new_path
+    """
     old_path = "/old.txt"
     new_path = "/new.txt"
     content = b"Test content"
@@ -153,17 +158,24 @@ def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStor
     nx.sys_write(old_path, content)
     nx.sys_rename(old_path, new_path)
 
-    # Check operation log
+    # Check operation log — two-row rename pattern (Issue #2929)
     with record_store.session_factory() as session:
         logger = OperationLogger(session)
         operations = logger.list_operations(operation_type="rename", limit=10)
 
-        assert len(operations) >= 1
-        latest = operations[0]
-        assert latest.operation_type == "rename"
-        assert latest.path == old_path
-        assert latest.new_path == new_path
-        assert latest.status == "success"
+        # Two rows: DELETE old URN + UPSERT new URN
+        assert len(operations) >= 2
+        # Most recent row (UPSERT new URN)
+        upsert_row = operations[0]
+        assert upsert_row.operation_type == "rename"
+        assert upsert_row.path == new_path
+        assert upsert_row.status == "success"
+        # Older row (DELETE old URN)
+        delete_row = operations[1]
+        assert delete_row.operation_type == "rename"
+        assert delete_row.path == old_path
+        assert delete_row.new_path == new_path
+        assert delete_row.status == "success"
 
 
 def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
@@ -336,7 +348,12 @@ def test_undo_delete(
 
 
 def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
-    """Test undoing a rename operation."""
+    """Test undoing a rename operation.
+
+    With two-row rename (Issue #2929), get_last_operation returns the
+    most recent row (UPSERT new URN, path=new_path). The older row
+    (DELETE old URN) has path=old_path and new_path=new_path.
+    """
     old_path = "/old.txt"
     new_path = "/new.txt"
     content = b"Test content"
@@ -347,14 +364,17 @@ def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     assert not nx.sys_access(old_path)
     assert nx.sys_access(new_path)
 
-    # Get rename operation
+    # Get rename operations — two-row pattern
     with record_store.session_factory() as session:
         logger = OperationLogger(session)
-        last_op = logger.get_last_operation(operation_type="rename")
+        rename_ops = logger.list_operations(operation_type="rename", limit=10)
 
-        assert last_op is not None
-        assert last_op.path == old_path
-        assert last_op.new_path == new_path
+        # Two rows from the two-row rename pattern
+        assert len(rename_ops) >= 2
+        # Older row (DELETE old URN) has both paths
+        delete_row = rename_ops[1]
+        assert delete_row.path == old_path
+        assert delete_row.new_path == new_path
 
         # Undo by renaming back
         nx.sys_rename(new_path, old_path)

@@ -92,6 +92,22 @@ class ConnectorCapability(StrEnum):
     CAS = "cas"
     """Backend uses content-addressable storage (CAS) addressing."""
 
+    # --- Knowledge platform capabilities (Issue #2929) ---
+
+    NATIVE_VERSIONING = "native_versioning"
+    """Backend supports native object versioning (e.g., S3 versioning, GCS generations)."""
+
+    CHANGE_NOTIFICATIONS = "change_notifications"
+    """Backend supports change notifications (e.g., S3 Event Notifications, GCS Pub/Sub)."""
+
+    RESUMABLE_UPLOAD = "resumable_upload"
+    """Backend supports resumable uploads (e.g., GCS resumable, S3 multipart with resume)."""
+
+
+# --- Capability-to-Protocol mapping ---
+# Used for registration-time validation: if a backend claims a capability
+# that maps to a Protocol, we verify the class has the required methods.
+
 
 # --- Convenience frozensets ---
 

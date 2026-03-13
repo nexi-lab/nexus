@@ -46,6 +46,9 @@ from nexus.storage.models.agents import AgentEventModel as AgentEventModel
 from nexus.storage.models.agents import AgentRecordModel as AgentRecordModel
 from nexus.storage.models.agents import DelegationRecordModel as DelegationRecordModel
 
+# Domain: Knowledge Platform (Issue #2929)
+from nexus.storage.models.aspect_store import EntityAspectModel as EntityAspectModel
+
 # Previously extracted models
 from nexus.storage.models.audit_checkpoint import AuditCheckpointModel as AuditCheckpointModel
 
@@ -95,6 +98,9 @@ from nexus.storage.models.memory import EntityRegistryModel as EntityRegistryMod
 from nexus.storage.models.memory import MemoryConfigModel as MemoryConfigModel
 from nexus.storage.models.memory import MemoryModel as MemoryModel
 from nexus.storage.models.memory import RelationshipModel as RelationshipModel
+from nexus.storage.models.metadata_change_log import (
+    MetadataChangeLogModel as MetadataChangeLogModel,
+)
 from nexus.storage.models.operation_log import OperationLogModel as OperationLogModel
 
 # Domain: Payments

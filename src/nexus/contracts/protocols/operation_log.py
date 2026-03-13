@@ -39,8 +39,16 @@ class OperationLogProtocol(Protocol):
         status: str = "success",
         error_message: str | None = None,
         flush: bool = True,
+        entity_urn: str | None = None,
+        aspect_name: str | None = None,
+        change_type: str | None = None,
     ) -> str:
         """Log a filesystem operation.
+
+        Args:
+            entity_urn: MCL entity URN (Issue #2929 Step 4).
+            aspect_name: MCL aspect name (Issue #2929 Step 4).
+            change_type: MCL change type — upsert/delete (Issue #2929 Step 4).
 
         Returns:
             operation_id: UUID of logged operation.
@@ -146,4 +154,20 @@ class OperationLogProtocol(Protocol):
 
     def get_metadata_snapshot(self, operation: Any) -> dict[str, Any] | None:
         """Get metadata snapshot from an operation log entry."""
+        ...
+
+    def replay_changes(
+        self,
+        *,
+        from_sequence: int = 0,
+        zone_id: str | None = None,
+        batch_size: int = 500,
+    ) -> Any:
+        """Iterate operation log records with MCL semantics (Issue #2929).
+
+        Yields rows where entity_urn IS NOT NULL, ordered by sequence_number.
+
+        Returns:
+            Iterator of operation log entries with MCL columns populated.
+        """
         ...

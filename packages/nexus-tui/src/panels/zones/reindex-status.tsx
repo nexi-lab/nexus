@@ -25,10 +25,13 @@ export function ReindexStatus(): React.ReactNode {
 
   useKeyboard({
     d: () => {
-      void triggerReindex("all", true);
+      void triggerReindex("search", true);
     },
-    r: () => {
-      void triggerReindex("all", false);
+    s: () => {
+      void triggerReindex("search", false);
+    },
+    v: () => {
+      void triggerReindex("versions", false);
     },
   });
 
@@ -53,9 +56,9 @@ export function ReindexStatus(): React.ReactNode {
     <box flexDirection="column" height="100%" width="100%">
       <text>{"─── Reindex Operations ───"}</text>
       <text> </text>
-      <text>{"  Targets: search | versions | semantic | all"}</text>
-      <text>{"  Use CLI: nexus reindex --target search [--dry-run]"}</text>
-      <text>{"  Press 'd' for dry-run, 'r' to reindex all"}</text>
+      <text>{"  Remote targets: search | versions"}</text>
+      <text>{"  (semantic requires local CLI: nexus reindex --target semantic)"}</text>
+      <text>{"  Press 'd' dry-run search, 's' reindex search, 'v' reindex versions"}</text>
       <text> </text>
 
       {loading && <text>{"  Reindex in progress..."}</text>}

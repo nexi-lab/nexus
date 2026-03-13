@@ -37,23 +37,18 @@ async def replay_changes(
     """
     op_logger, zone_id = logger_and_zone
     try:
+        # Fetch limit+1 to detect has_more via true lookahead
         records: list[dict[str, Any]] = []
-        count = 0
-        last_seq = from_sequence
 
         for row in op_logger.replay_changes(
             from_sequence=from_sequence,
             zone_id=zone_id,
-            batch_size=limit + 1,
+            batch_size=limit + 2,  # over-fetch for lookahead after filtering
         ):
-            # Apply optional filters
             if entity_urn and getattr(row, "entity_urn", "") != entity_urn:
                 continue
             if aspect_name and getattr(row, "aspect_name", "") != aspect_name:
                 continue
-
-            if count >= limit:
-                break
 
             records.append(
                 {
@@ -65,10 +60,15 @@ async def replay_changes(
                     "operation_type": row.operation_type,
                 }
             )
-            count += 1
-            last_seq = getattr(row, "sequence_number", 0)
 
-        has_more = count >= limit
+            if len(records) > limit:
+                break  # Got one extra — proves there's more
+
+        has_more = len(records) > limit
+        if has_more:
+            records = records[:limit]
+
+        last_seq = records[-1]["sequence_number"] if records else from_sequence
         return ReplayResponse(
             records=records,
             next_cursor=last_seq + 1 if has_more else None,

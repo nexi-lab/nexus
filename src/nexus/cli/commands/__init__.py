@@ -53,6 +53,8 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "config_cmd": ("config",),  # Config show/set/get/reset
     # Issue #2915: Stack lifecycle
     "stack": ("up", "down", "logs", "restart"),
+    # Issue #2929: MCL replay for index rebuild
+    "reindex": ("reindex",),
 }
 
 # Modules that expose a single Click command/group to add via cli.add_command

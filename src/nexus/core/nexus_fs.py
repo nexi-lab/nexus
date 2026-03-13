@@ -2035,6 +2035,12 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
+        lock: bool = False,
+        lock_timeout: float = 30.0,
+        consistency: str = "sc",
     ) -> dict[str, Any]:
         """Write content to a file (POSIX pwrite(2)).
 
@@ -2182,6 +2188,10 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         content: bytes,
         context: OperationContext | None,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
+        consistency: str = "sc",
     ) -> dict[str, Any]:
         """Kernel write implementation — OCC-free.
 
@@ -2333,7 +2343,7 @@ class NexusFS(  # type: ignore[misc]
                     owner_id=owner_id,
                 )
 
-                self.metadata.put(metadata)
+                self.metadata.put(metadata, consistency=consistency)
 
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 

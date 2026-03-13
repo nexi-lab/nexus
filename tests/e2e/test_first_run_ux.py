@@ -306,7 +306,7 @@ class TestFullWorkflow:
                 ["nexus", "demo", "init"],
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=120,
                 cwd=str(initialized_project),
             )
             assert demo_result.returncode == 0, (

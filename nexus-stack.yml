@@ -66,8 +66,8 @@ services:
   nexus:
     build:
       context: .
-      dockerfile: nexus-demo.Dockerfile
-    image: nexus-demo:latest
+      dockerfile: Dockerfile
+    image: nexus:latest
     restart: unless-stopped
     profiles:
       - core

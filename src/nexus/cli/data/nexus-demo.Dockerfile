@@ -1,6 +1,7 @@
 # Lightweight Nexus server image for demo/shared presets.
-# Installs from PyPI with semantic-search support (txtai + pgvector).
-# Mirrors the proven skill-hub approach (Issue #2915).
+# Installs from PyPI for standalone use outside the repo root.
+# For repo-root builds, the production Dockerfile is used instead.
+# Issue #2915.
 
 FROM python:3.13-slim
 
@@ -19,12 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     ca-certificates \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
+# Install Nexus from PyPI with semantic-search support.
 RUN if [ "$NEXUS_VERSION" = "latest" ]; then \
       uv pip install --system "nexus-ai-fs[semantic-search]" "txtai[ann]>=9.0"; \
     else \
@@ -39,11 +42,16 @@ USER nexus
 
 EXPOSE 2026
 
-CMD nexusd \
-    --host ${NEXUS_HOST} \
-    --port ${NEXUS_PORT} \
-    --data-dir ${NEXUS_DATA_DIR} \
-    ${NEXUS_PROFILE:+--profile $NEXUS_PROFILE} \
-    ${NEXUS_DATABASE_URL:+--database-url $NEXUS_DATABASE_URL} \
-    ${NEXUS_AUTH_TYPE:+--auth-type $NEXUS_AUTH_TYPE} \
-    ${NEXUS_API_KEY:+--api-key $NEXUS_API_KEY}
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=10 \
+    CMD curl -f http://localhost:${NEXUS_PORT:-2026}/health || exit 1
+
+# Start nexusd directly — no entrypoint scripts in standalone mode.
+# The CLI's demo init reads the API key from config or the key file.
+CMD exec nexusd \
+      --host ${NEXUS_HOST} \
+      --port ${NEXUS_PORT} \
+      --data-dir ${NEXUS_DATA_DIR} \
+      ${NEXUS_PROFILE:+--profile $NEXUS_PROFILE} \
+      ${NEXUS_DATABASE_URL:+--database-url $NEXUS_DATABASE_URL} \
+      ${NEXUS_AUTH_TYPE:+--auth-type $NEXUS_AUTH_TYPE} \
+      ${NEXUS_API_KEY:+--api-key $NEXUS_API_KEY}

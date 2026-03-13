@@ -488,8 +488,10 @@ def search_query(
 
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
             search_svc = nx.service("search")
-            results: list[dict[str, Any]] = search_svc.semantic_search(
-                query, path=path, limit=limit, search_mode=mode
+            raw = search_svc.semantic_search(query, path=path, limit=limit, search_mode=mode)
+            # RPC handler wraps as {"results": [...]}, unwrap if needed
+            results: list[dict[str, Any]] = (
+                raw["results"] if isinstance(raw, dict) and "results" in raw else raw
             )
 
         if json_output:

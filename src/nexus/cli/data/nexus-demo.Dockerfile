@@ -32,6 +32,9 @@ WORKDIR /app
 # When the build context is a portable temp dir, only compose/Dockerfile files.
 COPY . /tmp/nexus-build/
 
+# Install CPU-only torch first to avoid ~4 GB of CUDA libraries.
+RUN uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch
+
 # Install: prefer local source (repo checkout), fall back to PyPI.
 RUN if [ -f /tmp/nexus-build/pyproject.toml ] && [ -d /tmp/nexus-build/src ]; then \
       echo "Installing from local source..."; \

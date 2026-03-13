@@ -10,7 +10,7 @@ To modify FileMetadata:
 
 Contains:
   - FileMetadata: Core file metadata dataclass
-  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE: Directory entry type constants
+  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM: Directory entry type constants
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ DT_REG = 0
 DT_DIR = 1
 DT_MOUNT = 2
 DT_PIPE = 3
+DT_STREAM = 4
 
 
 @dataclass(slots=True)
@@ -69,6 +70,10 @@ class FileMetadata:
     @property
     def is_pipe(self) -> bool:
         return self.entry_type == 3
+
+    @property
+    def is_stream(self) -> bool:
+        return self.entry_type == 4
 
     @property
     def backend_address(self) -> BackendAddress:
@@ -127,8 +132,8 @@ class FileMetadata:
         if "\x00" in self.path:
             raise ValidationError("path contains null bytes", path=self.path)
 
-        # DT_PIPE inodes: in-memory ring buffer, no backend storage required
-        if self.entry_type == 3:  # DT_PIPE
+        # DT_PIPE/DT_STREAM inodes: in-memory buffers, no backend storage required
+        if self.entry_type in (3, 4):  # DT_PIPE, DT_STREAM
             return
 
         if not self.backend_name:

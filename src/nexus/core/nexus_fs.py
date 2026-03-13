@@ -172,8 +172,7 @@ class NexusFS(  # type: ignore[misc]
         self._context_branch_service = sys_svc.context_branch_service
         # Zone lifecycle — write gating during deprovisioning (Issue #2061)
         self._zone_lifecycle = getattr(sys_svc, "zone_lifecycle", None)
-        # DT_PIPE manager — kernel primitive (§4.2), None when unavailable (CLI mode)
-        self._pipe_manager = sys_svc.pipe_manager
+        # (PipeManager + StreamManager constructed above as kernel-internal primitives)
         # Process lifecycle — kernel process table (Issue #1509)
         self._process_table = sys_svc.process_table
 
@@ -208,6 +207,30 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.kernel_dispatch import KernelDispatch
 
         self._dispatch: KernelDispatch = KernelDispatch()
+
+        # IPC primitives — kernel-internal, NOT injected via DI.
+        # Like VFSLockManager: always present, created by kernel at init.
+        # Both use ROOT_ZONE_ID (zone_id is a federation concept, not kernel).
+        import os as _os_ipc
+
+        from nexus.core.pipe_manager import PipeManager
+        from nexus.core.stream_manager import StreamManager
+
+        _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
+        self._pipe_manager = PipeManager(
+            metadata_store,
+            zone_id=ROOT_ZONE_ID,
+            self_address=_ipc_self_addr,
+        )
+        self._stream_manager = StreamManager(
+            metadata_store,
+            zone_id=ROOT_ZONE_ID,
+            self_address=_ipc_self_addr,
+        )
+        logger.info(
+            "IPC primitives initialized: PipeManager + StreamManager (self_address=%s)",
+            _ipc_self_addr or "none/single-node",
+        )
 
         # Service registry — /proc/modules of Nexus (Issue #1452).
         # Populated by factory via populate_service_registry() at link().
@@ -985,18 +1008,26 @@ class NexusFS(  # type: ignore[misc]
 
     def _setattr_create(self, path: str, entry_type: int, attrs: dict[str, Any]) -> dict[str, Any]:
         """Create an inode via sys_setattr upsert — dispatches by entry_type."""
-        from nexus.contracts.metadata import DT_PIPE
+        from nexus.contracts.metadata import DT_PIPE, DT_STREAM
+
+        capacity = attrs.get("capacity", 65_536)
+        owner_id = attrs.get("owner_id")
 
         if entry_type == DT_PIPE:
-            capacity = attrs.get("capacity", 65_536)
-            owner_id = attrs.get("owner_id")
-            if self._pipe_manager is None:
-                raise BackendError("PipeManager not available")
             from nexus.core.pipe import PipeError
 
             try:
                 self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
             except PipeError as exc:
+                raise BackendError(str(exc)) from exc
+            return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
+
+        if entry_type == DT_STREAM:
+            from nexus.core.stream import StreamError
+
+            try:
+                self._stream_manager.create(path, capacity=capacity, owner_id=owner_id)
+            except StreamError as exc:
                 raise BackendError(str(exc)) from exc
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
 
@@ -1228,11 +1259,13 @@ class NexusFS(  # type: ignore[misc]
             check_write=False,
         )
 
-        # DT_PIPE: kernel-native pipe dispatch (§4.2)
-        from nexus.core.router import PipeRouteResult
+        # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
+        from nexus.core.router import PipeRouteResult, StreamRouteResult
 
         if isinstance(route, PipeRouteResult):
             return self._pipe_read(path, count=count, offset=offset)
+        if isinstance(route, StreamRouteResult):
+            return self._stream_read(path, count=count, offset=offset)
 
         # Add backend_path to context for path-based connectors
         from dataclasses import replace
@@ -2040,11 +2073,14 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return {"path": path, "bytes_written": len(buf), "created": False}
 
-        # DT_PIPE: kernel-native pipe dispatch (§4.2)
+        # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
         _meta = self.metadata.get(path)
         if _meta is not None and _meta.is_pipe:
             n = self._pipe_write(path, buf)
             return {"path": path, "bytes_written": n, "created": False}
+        if _meta is not None and _meta.is_stream:
+            offset = self._stream_write(path, buf)
+            return {"path": path, "bytes_written": len(buf), "created": False, "offset": offset}
 
         self._write_internal(path=path, content=buf, context=context)
         return {"path": path, "bytes_written": len(buf), "created": _meta is None}
@@ -3112,10 +3148,12 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return _result
 
-        # DT_PIPE: kernel-native pipe destroy (§4.2)
-        _pipe_meta = self.metadata.get(path)
-        if _pipe_meta is not None and _pipe_meta.is_pipe:
+        # DT_PIPE / DT_STREAM: kernel-native IPC destroy (§4.2)
+        _ipc_meta = self.metadata.get(path)
+        if _ipc_meta is not None and _ipc_meta.is_pipe:
             return self._pipe_destroy(path)
+        if _ipc_meta is not None and _ipc_meta.is_stream:
+            return self._stream_destroy(path)
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -4337,6 +4375,70 @@ class NexusFS(  # type: ignore[misc]
         finally:
             channel.close()
 
+    # ------------------------------------------------------------------
+    # DT_STREAM kernel primitives (§4.2)
+    # ------------------------------------------------------------------
+
+    def _stream_is_remote(self, path: str) -> str | None:
+        """Check if a DT_STREAM is hosted on a remote node.
+
+        Returns the remote origin address if remote, None if local.
+        """
+        from nexus.contracts.backend_address import BackendAddress
+
+        meta = self.metadata.get(path)
+        if meta is None or not meta.backend_name:
+            return None
+        addr = BackendAddress.parse(meta.backend_name)
+        if not addr.has_origin:
+            return None
+        if addr.origin == self._stream_manager.self_address:
+            return None
+        return addr.origin
+
+    def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+        """Read from DT_STREAM — non-destructive, offset-based."""
+        from nexus.core.stream import StreamClosedError, StreamEmptyError, StreamNotFoundError
+
+        # TODO: remote proxy (like _pipe_read_remote) when federation is wired
+        try:
+            if count is not None and count > 1:
+                items, _ = self._stream_manager.stream_read_batch(path, offset, count)
+                return b"".join(items)
+            data, _ = self._stream_manager.stream_read_at(path, offset)
+            return data
+        except StreamNotFoundError:
+            raise NexusFileNotFoundError(path, f"Stream not found: {path}") from None
+        except StreamClosedError:
+            raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
+        except StreamEmptyError:
+            from nexus.core.stream import StreamEmptyError as _SE
+
+            raise _SE(f"stream empty at offset {offset}: {path}") from None
+
+    def _stream_write(self, path: str, data: bytes) -> int:
+        """Write to DT_STREAM — non-blocking append, returns byte offset."""
+        from nexus.core.stream import StreamClosedError, StreamNotFoundError
+
+        # TODO: remote proxy when federation is wired
+        try:
+            return self._stream_manager.stream_write_nowait(path, data)
+        except StreamNotFoundError:
+            raise NexusFileNotFoundError(path, f"Stream not found: {path}") from None
+        except StreamClosedError:
+            raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
+
+    def _stream_destroy(self, path: str) -> dict[str, Any]:
+        """Destroy DT_STREAM — close buffer + delete inode."""
+        from nexus.core.stream import StreamNotFoundError
+
+        # TODO: remote proxy when federation is wired
+        try:
+            self._stream_manager.destroy(path)
+        except StreamNotFoundError:
+            raise NexusFileNotFoundError(path, f"Stream not found: {path}") from None
+        return {}
+
     async def aclose(self) -> None:
         """Async shutdown: stop PersistentService + deactivate HotSwappable, then close.
 
@@ -4352,6 +4454,12 @@ class NexusFS(  # type: ignore[misc]
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Close IPC primitives — kernel-internal (§4.2)
+        if hasattr(self, "_pipe_manager"):
+            self._pipe_manager.close_all()
+        if hasattr(self, "_stream_manager"):
+            self._stream_manager.close_all()
+
         # Close ProcessTable — kill all processes, clear state
         if hasattr(self, "_process_table") and self._process_table is not None:
             self._process_table.close_all()

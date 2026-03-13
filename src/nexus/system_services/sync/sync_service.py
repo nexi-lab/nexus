@@ -197,6 +197,10 @@ class SyncService:
         route = self._gw.router.route(ctx.mount_point)
         if isinstance(route, PipeRouteResult):
             raise ValueError(f"Cannot sync pipe path: {ctx.mount_point}")
+        from nexus.core.router import StreamRouteResult
+
+        if isinstance(route, StreamRouteResult):
+            raise ValueError(f"Cannot sync stream path: {ctx.mount_point}")
         backend = route.backend
         backend_name = type(backend).__name__
 

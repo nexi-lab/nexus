@@ -375,6 +375,7 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path read/write lock with hierarchy-aware conflict detection. Details in §4.1 |
 | **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase callback mechanism implementing §2.4. Per-op callback lists; empty = zero overhead. Hook contracts (§2.4) and registration API (§2.5) are User Contract; this is the plumbing |
 | **PipeManager + RingBuffer** | `system_services` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
+| **StreamManager + StreamBuffer** | `system_services` + `core.stream` | append-only log | VFS named streams — inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
 | **ZoneAccessGuard** | `core.nexus_fs` (to extract) | `fs/namespace.c` mount readonly | Zone write permission check on every mutating syscall. Rejects writes to read-only zones before routing |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
@@ -391,16 +392,32 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 
 **Advisory locks** are a separate concern — see `lock-architecture.md` §4.
 
-### 4.2 PipeManager + RingBuffer — Named Pipes
+### 4.2 IPC Primitives — Named Pipes & Streams
 
-Two-layer architecture: VFS metadata (inode) in MetastoreABC, data (bytes) in
-process heap ring buffer (like Linux `kmalloc`'d pipe buffer).
+Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
+(bytes) in process heap buffer (like Linux `kmalloc`'d pipe buffer).
 
-- **PipeManager** — VFS named pipe lifecycle (created via `sys_setattr` upsert,
-  read/write via `sys_read`/`sys_write`, destroyed via `sys_unlink`),
-  per-pipe lock for MPMC safety
-- **RingBuffer** — Lock-free SPSC kernel primitive (`kfifo` analogue), GIL-atomic.
-  PipeManager wraps with `asyncio.Lock` for MPMC
+| Primitive  | Linux Analogue    | Buffer         | Read          |
+|------------|-------------------|----------------|---------------|
+| DT_PIPE    | `kfifo` ring      | RingBuffer     | Destructive   |
+| DT_STREAM  | append-only log   | StreamBuffer   | Non-destructive (offset-based) |
+
+**DT_PIPE (PipeManager + RingBuffer):**
+
+- **PipeManager (mkpipe)** — VFS named pipe lifecycle (created via `sys_setattr`
+  upsert, read/write via `sys_read`/`sys_write`, destroyed via `sys_unlink`),
+  per-pipe lock for MPMC safety. Reads are destructive (consumed on read).
+- **RingBuffer (kpipe)** — Lock-free SPSC kernel primitive (`kfifo` analogue),
+  GIL-atomic. PipeManager wraps with `asyncio.Lock` for MPMC.
+
+**DT_STREAM (StreamManager + StreamBuffer):**
+
+- **StreamManager (mkstream)** — VFS named stream lifecycle (same syscall
+  surface as mkpipe). Per-stream lock for concurrent writers. Reads are
+  non-destructive — multiple readers maintain independent byte offsets (fan-out).
+- **StreamBuffer (kstream)** — Linear append-only buffer. Monotonic tail, no
+  wrap-around. Primary use case: LLM streaming I/O (realtime first consumer +
+  replay for later consumers).
 
 See `federation-memo.md` §7j for design rationale.
 
@@ -534,13 +551,14 @@ Same kernel binary, different driver injection. See §1 `connect()`.
 
 ## 8. Communication
 
-Kernel-adjacent services built on kernel primitives (PipeManager §4.2,
-FileEvent §4.3). Not kernel-owned, but bottom-layer infrastructure.
+Kernel-adjacent services built on kernel primitives (§4.2 IPC, §4.3
+FileEvent). Not kernel-owned, but bottom-layer infrastructure.
 
 | Tier | Nexus | Built on | Topology |
 |------|-------|----------|----------|
-| **Kernel** | Native Pipe (§4.2) | RingBuffer (kernel primitive) | Local or distributed (transparent) |
-| **System** | gRPC + IPC | PipeManager, consensus proto | Point-to-point |
+| **Kernel** | DT_PIPE (§4.2) | RingBuffer — destructive FIFO | Local or distributed (transparent) |
+| **Kernel** | DT_STREAM (§4.2) | StreamBuffer — append-only log | Local or distributed (transparent) |
+| **System** | gRPC + IPC | PipeManager/StreamManager, consensus proto | Point-to-point |
 | **User Space** | EventBus | CacheStoreABC pub/sub + FileEvent (§4.3) | Fan-out (1:N) |
 
 See `federation-memo.md` §2–§5 for gRPC/consensus details.
@@ -557,4 +575,4 @@ See `federation-memo.md` §2–§5 for gRPC/consensus details.
 | VFS lock design + advisory locks | `lock-architecture.md` §4 |
 | Zone model, DT_MOUNT, federation | `federation-memo.md` §5–§6 |
 | Raft, gRPC, write flows | `federation-memo.md` §2–§5 |
-| Pipe design rationale | `federation-memo.md` §7j |
+| Pipe + Stream design rationale | `federation-memo.md` §7j |

@@ -8,15 +8,16 @@ Issue #2938: gRPC channel option tuning.
 
 from __future__ import annotations
 
-# Message size limits (bytes).
-# Content operations (file read/write) need larger limits than metadata.
-MAX_CONTENT_MESSAGE_BYTES = 64 * 1024 * 1024  # 64 MB — RPCTransport (file ops)
-MAX_METADATA_MESSAGE_BYTES = 16 * 1024 * 1024  # 16 MB — RaftClient (metadata ops)
+# Maximum gRPC message size (bytes) for all channels.
+# 64 MB accommodates large file reads and unbounded list_metadata() responses.
+# A per-channel split (e.g. 16 MB for metadata) is unsafe until list_metadata()
+# enforces server-side pagination — see client.py:list_metadata(limit=0).
+MAX_GRPC_MESSAGE_BYTES = 64 * 1024 * 1024  # 64 MB
 
 
 def build_channel_options(
     *,
-    max_message_bytes: int = MAX_CONTENT_MESSAGE_BYTES,
+    max_message_bytes: int = MAX_GRPC_MESSAGE_BYTES,
     keepalive_time_ms: int = 30_000,
     keepalive_timeout_ms: int = 10_000,
 ) -> list[tuple[str, int]]:

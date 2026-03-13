@@ -124,14 +124,12 @@ def _build_config(
                 # Mark as needing the bundled copy (resolved later in init())
                 config["compose_file"] = ""
 
-        # When the compose file lives in a repo checkout (not the bundled
-        # copy), use the lightweight demo Dockerfile instead of the full
-        # production build (which compiles Rust/Go and is much slower).
-        cf_path = Path(config["compose_file"]) if config["compose_file"] else None
-        if cf_path and cf_path.exists():
-            demo_df = cf_path.parent / "src" / "nexus" / "cli" / "data" / "nexus-demo.Dockerfile"
-            if demo_df.exists():
-                config["dockerfile"] = str(demo_df.relative_to(cf_path.parent))
+        # Pin the image tag to the installed CLI version so portable
+        # stacks pull an image that matches the CLI.  Repo-checkout
+        # stacks use build: and ignore this value.
+        import nexus as _nexus_mod
+
+        config["image_tag"] = getattr(_nexus_mod, "__version__", "latest")
 
     if addons:
         config.setdefault("addons", []).extend(addons)
@@ -404,12 +402,11 @@ def init(
                 config["compose_file"] = str(dest)
                 console.print(f"  Copied bundled nexus-stack.yml → {dest}")
 
-                # Copy supporting files (Dockerfile, pgvector init SQL)
+                # Copy pgvector init SQL (needed by the postgres service)
                 bundled_dir = bundled.parent
-                for support_file in ("nexus-demo.Dockerfile", "001-enable-pgvector.sql"):
-                    src = bundled_dir / support_file
-                    if src.exists():
-                        shutil.copy2(str(src), str(dest_dir / support_file))
+                sql_file = bundled_dir / "001-enable-pgvector.sql"
+                if sql_file.exists():
+                    shutil.copy2(str(sql_file), str(dest_dir / sql_file.name))
             else:
                 console.print(f"[red]Error:[/red] Compose file not found: {cf}")
                 console.print("  Run `nexus init` from the Nexus repo root, or pass")

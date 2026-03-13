@@ -81,17 +81,17 @@ def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
         "NEXUS_AUTH_TYPE": config.get("auth", "none"),
     }
 
-    # Pass the API key to the container so both the production entrypoint
-    # and the portable nexusd CMD can register/use it.
+    # Pass the API key to the container so the production entrypoint
+    # can register it without generating a new one.
     api_key = config.get("api_key", "")
     if api_key:
         env["NEXUS_API_KEY"] = api_key
 
-    # Override the Dockerfile when using the lightweight demo image
-    # (auto-detected by nexus init for repo-root checkouts).
-    dockerfile = config.get("dockerfile", "")
-    if dockerfile:
-        env["NEXUS_DOCKERFILE"] = dockerfile
+    # Pin the prebuilt image tag (set by nexus init from __version__).
+    # Repo-checkout stacks ignore this because they use build: directives.
+    image_tag = config.get("image_tag", "")
+    if image_tag:
+        env["NEXUS_IMAGE_TAG"] = image_tag
 
     if config.get("tls"):
         env["NEXUS_TLS_ENABLED"] = "true"
@@ -327,9 +327,11 @@ def up(
     Reads nexus.yaml, resolves port conflicts, starts Docker Compose
     services, waits for health, and prints the service table.
 
-    When the compose file contains ``build:`` directives (e.g. the
-    repo-root nexus-stack.yml), images are rebuilt automatically.
-    Use ``--no-build`` to skip building.
+    Portable stacks (installed via pip) pull the prebuilt image from
+    GHCR — no local Docker build required.  Repo-checkout stacks
+    (with ``build:`` directives) rebuild automatically.
+
+    Use ``--build`` to force a local build, or ``--no-build`` to skip.
 
     Examples:
         nexus up                        # start from nexus.yaml

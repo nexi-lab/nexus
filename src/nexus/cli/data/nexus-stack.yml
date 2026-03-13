@@ -1,7 +1,7 @@
 # Nexus Stack — Portable Compose File
 # ====================================
 # Bundled version for use outside the repo root.
-# Builds Nexus from source with semantic-search support (txtai + pgvector).
+# Pulls the prebuilt Nexus image from GHCR — no local Docker build required.
 # Services are activated via Docker Compose profiles:
 #
 #   Preset "shared":  --profile core --profile cache --profile search
@@ -57,13 +57,10 @@ services:
         max-file: "3"
 
   # ============================================================================
-  # Nexus RPC Server (built from source with semantic-search)
+  # Nexus RPC Server (prebuilt image from GHCR)
   # ============================================================================
   nexus:
-    build:
-      context: ${NEXUS_BUILD_CONTEXT:-.}
-      dockerfile: ${NEXUS_DOCKERFILE:-nexus-demo.Dockerfile}
-    image: nexus-demo:latest
+    image: ghcr.io/nexi-lab/nexus:${NEXUS_IMAGE_TAG:-latest}
     restart: unless-stopped
     profiles:
       - core
@@ -75,10 +72,10 @@ services:
       NEXUS_HOST: "0.0.0.0"
       NEXUS_PORT: "2026"
       NEXUS_DATA_DIR: /app/data
-      NEXUS_PROFILE: full
       # Database
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       # Auth
+      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
       NEXUS_AUTH_TYPE: ${NEXUS_AUTH_TYPE:-database}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
       # Search
@@ -92,6 +89,9 @@ services:
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
       # gRPC
       NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
+      # Zoekt (external container, not built-in sidecar)
+      ZOEKT_ENABLED: "false"
+      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
     volumes:
       - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/app/data
     ports:
@@ -102,7 +102,7 @@ services:
       interval: 10s
       timeout: 10s
       retries: 30
-      start_period: 30s
+      start_period: 60s
     networks:
       - nexus-network
     logging:

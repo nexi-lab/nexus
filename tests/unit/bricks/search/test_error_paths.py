@@ -6,6 +6,8 @@ Validates error handling at brick boundaries:
 - SearchBrickManifest validation
 """
 
+import logging
+
 import pytest
 
 # =============================================================================
@@ -35,6 +37,24 @@ class TestSearchDaemonErrors:
         daemon = SearchDaemon()
         await daemon.shutdown()
         await daemon.shutdown()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_semantic_search_without_embedding_provider_logs_debug_not_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Missing legacy embedding provider should be treated as expected fallback."""
+        from nexus.bricks.search.daemon import SearchDaemon
+
+        daemon = SearchDaemon()
+        daemon._async_engine = object()
+        daemon._async_session = object()
+
+        with caplog.at_level(logging.DEBUG):
+            results = await daemon._semantic_search("test query", 5, None)
+
+        assert results == []
+        assert "Legacy semantic search unavailable: no embedding provider configured" in caplog.text
+        assert "Could not generate query embedding" not in caplog.text
 
 
 # =============================================================================

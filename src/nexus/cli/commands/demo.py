@@ -1196,9 +1196,17 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
         http_port = ports.get("http", 2026)
         grpc_port = ports.get("grpc", 2028)
         api_key = config.get("api_key", "")
+        if not api_key:
+            # Fallback: read from the key file that docker-entrypoint.sh writes
+            key_file = Path(data_dir) / ".admin-api-key"
+            if key_file.exists():
+                api_key = key_file.read_text().strip()
         console.print("[bold]Set these env vars to talk to the running stack:[/bold]")
         console.print(f"  export NEXUS_URL=http://localhost:{http_port}")
-        console.print(f"  export NEXUS_API_KEY={api_key}")
+        if api_key:
+            console.print(f"  export NEXUS_API_KEY={api_key}")
+        else:
+            console.print("  export NEXUS_API_KEY=<see nexus up output>")
         console.print(f"  export NEXUS_GRPC_PORT={grpc_port}")
         console.print()
 

@@ -7,17 +7,19 @@ cursor-based batching and checkpoint resume.
 Targets:
     - search: Rebuild aspect store (version-0 state) from MCL events
     - versions: Rebuild full version history from MCL events
-    - all: Run all targets (search + versions)
+    - semantic: Re-extract schemas from filesystem via CatalogService
+    - all: Run all targets (search + versions + semantic)
 
 Examples:
     nexus reindex --target search
     nexus reindex --target all --dry-run
+    nexus reindex --target semantic --zone z1
     nexus reindex --target search --from-sequence 1000 --batch-size 200
 """
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -48,7 +50,7 @@ def register_commands(cli: click.Group) -> None:
 @click.option(
     "--target",
     "-t",
-    type=click.Choice(["search", "versions", "all"]),
+    type=click.Choice(["search", "versions", "semantic", "all"]),
     default="all",
     help="Index target to rebuild",
 )
@@ -93,83 +95,204 @@ def reindex(
         from nexus.storage.mcl_recorder import MCLRecorder
         from nexus.storage.models.metadata_change_log import MetadataChangeLogModel
 
+        effective_targets = {"search", "versions", "semantic"} if target == "all" else {target}
+
         with record_store.session_factory() as session:
-            # Count total for progress bar
-            count_stmt = select(func.count()).select_from(MetadataChangeLogModel)
-            if from_sequence is not None:
-                count_stmt = count_stmt.where(
-                    MetadataChangeLogModel.sequence_number >= from_sequence
-                )
-            if zone is not None:
-                count_stmt = count_stmt.where(MetadataChangeLogModel.zone_id == zone)
+            # --- Semantic reindex: filesystem walk + CatalogService ---
+            if "semantic" in effective_targets:
+                _run_semantic_reindex(nx, session, zone, dry_run)
 
-            total = session.execute(count_stmt).scalar_one()
+            # --- MCL-based targets (search, versions) ---
+            mcl_targets = effective_targets - {"semantic"}
+            if mcl_targets:
+                mcl_target = "all" if mcl_targets == {"search", "versions"} else mcl_targets.pop()
 
-            if total == 0:
-                console.print("[yellow]No MCL records to process[/yellow]")
-                nx.close()
-                return
+                # Count total for progress bar
+                count_stmt = select(func.count()).select_from(MetadataChangeLogModel)
+                if from_sequence is not None:
+                    count_stmt = count_stmt.where(
+                        MetadataChangeLogModel.sequence_number >= from_sequence
+                    )
+                if zone is not None:
+                    count_stmt = count_stmt.where(MetadataChangeLogModel.zone_id == zone)
 
-            if dry_run:
-                _show_dry_run_summary(total, target)
-                nx.close()
-                return
+                total = session.execute(count_stmt).scalar_one()
 
-            # Replay MCL via replay_changes() API
-            recorder = MCLRecorder(session)
-            processor = _MCLProcessor(session, target)
-            processed = 0
-            last_sequence = from_sequence or 0
-            errors = 0
+                if total == 0:
+                    console.print("[yellow]No MCL records to process[/yellow]")
+                elif dry_run:
+                    _show_dry_run_summary(total, mcl_target)
+                else:
+                    # Replay MCL via replay_changes() API
+                    recorder = MCLRecorder(session)
+                    processor = _MCLProcessor(session, mcl_target)
+                    processed = 0
+                    last_sequence = from_sequence or 0
+                    errors = 0
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-            ) as progress:
-                task = progress.add_task(f"Reindexing {target}...", total=total)
+                    with Progress(
+                        SpinnerColumn(),
+                        TextColumn("[progress.description]{task.description}"),
+                        console=console,
+                    ) as progress:
+                        task = progress.add_task(f"Reindexing {mcl_target}...", total=total)
 
-                for mcl in recorder.replay_changes(
-                    from_sequence=from_sequence or 0,
-                    zone_id=zone,
-                    batch_size=batch_size,
-                ):
-                    try:
-                        processor.process(mcl)
-                        processed += 1
-                        last_sequence = mcl.sequence_number
-                    except Exception as e:
-                        errors += 1
-                        console.print(f"[red]Error at seq {mcl.sequence_number}: {e}[/red]")
+                        for mcl in recorder.replay_changes(
+                            from_sequence=from_sequence or 0,
+                            zone_id=zone,
+                            batch_size=batch_size,
+                        ):
+                            try:
+                                processor.process(mcl)
+                                processed += 1
+                                last_sequence = mcl.sequence_number
+                            except Exception as e:
+                                errors += 1
+                                console.print(f"[red]Error at seq {mcl.sequence_number}: {e}[/red]")
 
-                    progress.update(task, advance=1)
+                            progress.update(task, advance=1)
 
-            session.commit()
+                    session.commit()
 
-            # Summary
-            console.print()
-            table = Table(title="Reindex Summary")
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="green")
-            table.add_row("Target", target)
-            table.add_row("Total MCL records", str(total))
-            table.add_row("Processed", str(processed))
-            table.add_row("Errors", str(errors))
-            table.add_row("Last sequence", str(last_sequence))
-            console.print(table)
+                    # Summary
+                    console.print()
+                    table = Table(title="Reindex Summary")
+                    table.add_column("Metric", style="cyan")
+                    table.add_column("Value", style="green")
+                    table.add_row("Target", mcl_target)
+                    table.add_row("Total MCL records", str(total))
+                    table.add_row("Processed", str(processed))
+                    table.add_row("Errors", str(errors))
+                    table.add_row("Last sequence", str(last_sequence))
+                    console.print(table)
 
-            if errors > 0:
-                console.print(
-                    f"\n[yellow]Resume from sequence {last_sequence + 1} to retry:[/yellow]"
-                )
-                console.print(
-                    f"  nexus reindex --target {target} --from-sequence {last_sequence + 1}"
-                )
+                    if errors > 0:
+                        console.print(
+                            f"\n[yellow]Resume from sequence {last_sequence + 1} to retry:[/yellow]"
+                        )
+                        console.print(
+                            f"  nexus reindex --target {mcl_target} "
+                            f"--from-sequence {last_sequence + 1}"
+                        )
 
         nx.close()
 
     except Exception as e:
         handle_error(e)
+
+
+def _run_semantic_reindex(
+    nx: Any,
+    session: "Session",
+    zone_id: str | None,
+    dry_run: bool,
+) -> None:
+    """Walk the filesystem and re-extract schemas via CatalogService.
+
+    For each file, computes its URN, reads content, and runs
+    CatalogService.extract_schema() to rebuild the schema_metadata aspect.
+    """
+    import hashlib
+    import mimetypes
+
+    from nexus.bricks.catalog.protocol import CatalogService
+    from nexus.storage.aspect_service import AspectService
+
+    aspect_service = AspectService(session)
+    catalog = CatalogService(aspect_service)
+
+    # Walk the filesystem to discover files
+    try:
+        all_files = _walk_filesystem(nx, "/")
+    except Exception as e:
+        console.print(f"[red]Failed to walk filesystem: {e}[/red]")
+        return
+
+    if dry_run:
+        console.print("\n[bold cyan]Dry Run — semantic reindex[/bold cyan]\n")
+        console.print(f"Total files to process: [bold]{len(all_files)}[/bold]")
+        console.print("\n[dim]Run without --dry-run to execute.[/dim]")
+        return
+
+    processed = 0
+    extracted = 0
+    errors = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Semantic reindex...", total=len(all_files))
+
+        for file_path in all_files:
+            try:
+                # Compute URN from path
+                z = zone_id or "default"
+                path_hash = hashlib.sha256(file_path.encode()).hexdigest()[:32]
+                urn = f"urn:nexus:file:{z}:{path_hash}"
+
+                # Read file content
+                content = nx.read(file_path)
+                if isinstance(content, str):
+                    content = content.encode()
+
+                # Detect MIME type from filename
+                mime_type, _ = mimetypes.guess_type(file_path)
+
+                result = catalog.extract_schema(
+                    entity_urn=urn,
+                    content=content,
+                    mime_type=mime_type,
+                    filename=file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path,
+                    zone_id=zone_id,
+                    created_by="reindex",
+                )
+
+                processed += 1
+                if result.schema is not None:
+                    extracted += 1
+
+            except Exception as e:
+                errors += 1
+                logger.debug("Semantic reindex failed for %s: %s", file_path, e)
+
+            progress.update(task, advance=1)
+
+    session.commit()
+
+    # Summary
+    console.print()
+    table = Table(title="Semantic Reindex Summary")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+    table.add_row("Total files", str(len(all_files)))
+    table.add_row("Processed", str(processed))
+    table.add_row("Schemas extracted", str(extracted))
+    table.add_row("Errors", str(errors))
+    console.print(table)
+
+
+def _walk_filesystem(nx: Any, root: str) -> list[str]:
+    """Recursively walk NexusFS and return all file paths."""
+    files: list[str] = []
+    try:
+        entries = nx.listdir(root)
+    except Exception:
+        return files
+
+    for entry in entries:
+        full_path = f"{root.rstrip('/')}/{entry}" if root != "/" else f"/{entry}"
+        try:
+            stat = nx.stat(full_path)
+            if hasattr(stat, "is_dir") and stat.is_dir:
+                files.extend(_walk_filesystem(nx, full_path))
+            else:
+                files.append(full_path)
+        except Exception:
+            files.append(full_path)
+
+    return files
 
 
 def _show_dry_run_summary(

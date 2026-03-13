@@ -102,6 +102,7 @@ class RecordStoreWriteObserver:
 
         try:
             with self._session_factory() as session:
+                urn = self._build_urn(path, zone_id)
                 OperationLogger(session).log_operation(
                     operation_type="write",
                     path=path,
@@ -110,6 +111,9 @@ class RecordStoreWriteObserver:
                     snapshot_hash=old_metadata.etag if old_metadata else None,
                     metadata_snapshot=old_metadata.to_dict() if old_metadata else None,
                     status="success",
+                    entity_urn=urn,
+                    aspect_name="file_metadata",
+                    change_type="upsert",
                 )
                 VersionRecorder(session).record_write(metadata, is_new=is_new)
 
@@ -147,6 +151,7 @@ class RecordStoreWriteObserver:
                 op_logger = OperationLogger(session)
                 recorder = VersionRecorder(session)
                 for metadata, is_new in items:
+                    urn = self._build_urn(metadata.path, zone_id)
                     op_logger.log_operation(
                         operation_type="write",
                         path=metadata.path,
@@ -156,6 +161,9 @@ class RecordStoreWriteObserver:
                         metadata_snapshot=None,
                         status="success",
                         flush=False,
+                        entity_urn=urn,
+                        aspect_name="file_metadata",
+                        change_type="upsert",
                     )
                     recorder.record_write(metadata, is_new=is_new)
 
@@ -184,14 +192,16 @@ class RecordStoreWriteObserver:
     ) -> None:
         """Sync a rename operation to RecordStore.
 
-        With UUID-based URN, rename doesn't change the URN — only the
-        path aspect updates (Issue #2929).
+        URNs are locators (Issue #2929 Key Decision #3): rename changes the
+        URN. The operation log records the old URN with change_type=delete,
+        and the MCL helper records DELETE old + UPSERT new.
         """
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.version_recorder import VersionRecorder
 
         try:
             with self._session_factory() as session:
+                old_urn = self._build_urn(old_path, zone_id)
                 OperationLogger(session).log_operation(
                     operation_type="rename",
                     path=old_path,
@@ -201,6 +211,9 @@ class RecordStoreWriteObserver:
                     snapshot_hash=metadata.etag if metadata else None,
                     metadata_snapshot=metadata.to_dict() if metadata else None,
                     status="success",
+                    entity_urn=old_urn,
+                    aspect_name="file_metadata",
+                    change_type="delete",
                 )
                 VersionRecorder(session).record_rename(old_path, new_path)
 
@@ -235,6 +248,7 @@ class RecordStoreWriteObserver:
 
         try:
             with self._session_factory() as session:
+                urn = self._build_urn(path, zone_id)
                 OperationLogger(session).log_operation(
                     operation_type="delete",
                     path=path,
@@ -243,6 +257,9 @@ class RecordStoreWriteObserver:
                     snapshot_hash=metadata.etag if metadata else None,
                     metadata_snapshot=metadata.to_dict() if metadata else None,
                     status="success",
+                    entity_urn=urn,
+                    aspect_name="file_metadata",
+                    change_type="delete",
                 )
                 VersionRecorder(session).record_delete(path)
 
@@ -287,64 +304,14 @@ class RecordStoreWriteObserver:
     # =========================================================================
 
     @staticmethod
-    def _lookup_path_id(session: "Session", path: str) -> str | None:  # noqa: F821
-        """Look up FilePathModel.path_id by virtual_path.
+    def _build_urn(path: str, zone_id: str | None) -> str:
+        """Build a locator URN for a file from its virtual path.
 
-        Returns the UUID path_id (stable across renames) or None if not found.
-        Searches all rows including soft-deleted ones.
+        URNs are locators (Issue #2929 Key Decision #3): they change on
+        rename. The identifier is a deterministic SHA-256 hash prefix of
+        the path, so any caller can compute the same URN without a
+        database lookup.
         """
-        from sqlalchemy import select
-
-        from nexus.storage.models.file_path import FilePathModel
-
-        stmt = select(FilePathModel.path_id).where(FilePathModel.virtual_path == path).limit(1)
-        return session.execute(stmt).scalar_one_or_none()
-
-    @staticmethod
-    def _lookup_urn_from_aspects(session: "Session", path: str) -> str | None:  # noqa: F821
-        """Reverse-lookup entity_urn from entity_aspects by path aspect payload.
-
-        Used as fallback when file_paths row is already hard-deleted
-        (e.g., during delete operations). Searches the "path" aspect for
-        a payload containing the virtual_path.
-        """
-        from sqlalchemy import select
-
-        from nexus.storage.models.aspect_store import EntityAspectModel
-
-        # Search path aspects for one whose payload contains this virtual_path.
-        # JSON payload format: {"virtual_path": "/some/path", ...}
-        stmt = (
-            select(EntityAspectModel.entity_urn)
-            .where(
-                EntityAspectModel.aspect_name == "path",
-                EntityAspectModel.version == 0,
-                EntityAspectModel.payload.contains(f'"virtual_path": "{path}"'),
-            )
-            .limit(1)
-        )
-        result: str | None = session.execute(stmt).scalar_one_or_none()
-        return result
-
-    @staticmethod
-    def _build_urn(session: "Session", path: str, zone_id: str | None) -> str:  # noqa: F821
-        """Build a stable URN for a file using FilePathModel.path_id.
-
-        Lookup chain:
-          1. FilePathModel.path_id (works for live and soft-deleted rows)
-          2. entity_aspects reverse lookup (works after file_paths row is gone)
-          3. SHA-256 hash fallback (last resort)
-        """
-        path_id = RecordStoreWriteObserver._lookup_path_id(session, path)
-        if path_id is not None:
-            return f"urn:nexus:file:{zone_id or 'default'}:{path_id}"
-
-        # Fallback: reverse lookup from entity_aspects (handles hard-deleted file_paths)
-        existing_urn = RecordStoreWriteObserver._lookup_urn_from_aspects(session, path)
-        if existing_urn is not None:
-            return existing_urn
-
-        # Final fallback for paths not yet in metastore (e.g., during creation)
         path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
         return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
 
@@ -361,7 +328,7 @@ class RecordStoreWriteObserver:
         try:
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            urn = self._build_urn(session, metadata.path, zone_id)
+            urn = self._build_urn(metadata.path, zone_id)
             with session.begin_nested():
                 MCLRecorder(session).record_file_write(
                     entity_urn=urn,
@@ -387,7 +354,7 @@ class RecordStoreWriteObserver:
             from nexus.storage.aspect_service import AspectService
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            urn = self._build_urn(session, path, zone_id)
+            urn = self._build_urn(path, zone_id)
             with session.begin_nested():
                 MCLRecorder(session).record_file_delete(
                     entity_urn=urn,
@@ -406,23 +373,38 @@ class RecordStoreWriteObserver:
         *,
         old_path: str,
         new_path: str,
-        metadata: FileMetadata | None,  # noqa: ARG002
+        metadata: FileMetadata | None,
         zone_id: str | None,
         agent_id: str | None,
     ) -> None:
-        """Record MCL entry for a file rename (path aspect change). Non-critical."""
+        """Record MCL entries for a file rename: DELETE old URN + UPSERT new URN.
+
+        URNs are locators (Issue #2929 Key Decision #3), so rename changes
+        the URN. We record a DELETE for the old path's URN and an UPSERT
+        for the new path's URN.
+        """
         try:
             from nexus.storage.mcl_recorder import MCLRecorder
 
-            # Look up by new_path — metastore has already updated virtual_path
-            urn = self._build_urn(session, new_path, zone_id)
+            old_urn = self._build_urn(old_path, zone_id)
+            new_urn = self._build_urn(new_path, zone_id)
+            changed_by = agent_id or "system"
+
             with session.begin_nested():
-                MCLRecorder(session).record_file_rename(
-                    entity_urn=urn,
-                    old_path=old_path,
-                    new_path=new_path,
+                recorder = MCLRecorder(session)
+                # DELETE old URN (locator no longer valid)
+                recorder.record_file_delete(
+                    entity_urn=old_urn,
                     zone_id=zone_id,
-                    changed_by=agent_id or "system",
+                    changed_by=changed_by,
+                    previous_metadata=metadata.to_dict() if metadata else None,
+                )
+                # UPSERT new URN (new locator for renamed file)
+                recorder.record_file_write(
+                    entity_urn=new_urn,
+                    metadata_dict=metadata.to_dict() if metadata else None,
+                    zone_id=zone_id,
+                    changed_by=changed_by,
                 )
         except Exception:
             logger.debug("MCL rename recording failed (non-critical)", exc_info=True)

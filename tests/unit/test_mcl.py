@@ -192,69 +192,48 @@ class TestMCLReplay:
         assert len(replayed) == 3
 
 
-class TestURNReverseLookup:
-    """Tests for delete-after-metastore-removal URN lookup path."""
+class TestURNLocator:
+    """Tests for URN locator pattern (Issue #2929 Key Decision #3).
 
-    def test_build_urn_with_active_file_path(self, db_session) -> None:
-        """When FilePathModel exists, _build_urn uses path_id."""
-        from nexus.storage.models.file_path import FilePathModel
-        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+    URNs are locators derived from path via SHA-256 hash — no database
+    lookups needed. They change on rename.
+    """
 
-        fp = FilePathModel(
-            path_id="test-uuid-1234",
-            virtual_path="/data/file.csv",
-            backend_id="default",
-            physical_path="/phys/file.csv",
-            zone_id="z1",
-        )
-        db_session.add(fp)
-        db_session.commit()
-
-        urn = RecordStoreWriteObserver._build_urn(db_session, "/data/file.csv", "z1")
-        assert urn == "urn:nexus:file:z1:test-uuid-1234"
-
-    def test_build_urn_falls_back_to_aspect_reverse_lookup(self, db_session) -> None:
-        """When FilePathModel is gone, _build_urn searches entity_aspects."""
-        from nexus.contracts.aspects import AspectRegistry, PathAspect
-        from nexus.storage.aspect_service import AspectService
-        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
-
-        AspectRegistry.reset()
-        AspectRegistry.get().register("path", PathAspect, max_versions=5)
-
-        svc = AspectService(db_session)
-        svc.put_aspect(
-            "urn:nexus:file:z1:some-uuid",
-            "path",
-            {"virtual_path": "/data/file.csv"},
-        )
-        db_session.commit()
-
-        # No FilePathModel exists — simulates hard-deleted metastore row
-        urn = RecordStoreWriteObserver._build_urn(db_session, "/data/file.csv", "z1")
-        assert urn == "urn:nexus:file:z1:some-uuid"
-
-        AspectRegistry.reset()
-
-    def test_build_urn_hash_fallback(self, db_session) -> None:
-        """When neither FilePathModel nor entity_aspects match, uses hash fallback."""
+    def test_build_urn_deterministic_hash(self) -> None:
+        """_build_urn produces a deterministic SHA-256 hash from path."""
         import hashlib
 
         from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
-        urn = RecordStoreWriteObserver._build_urn(db_session, "/data/new.csv", "z1")
-        expected_hash = hashlib.sha256(b"/data/new.csv").hexdigest()[:32]
+        urn = RecordStoreWriteObserver._build_urn("/data/file.csv", "z1")
+        expected_hash = hashlib.sha256(b"/data/file.csv").hexdigest()[:32]
         assert urn == f"urn:nexus:file:z1:{expected_hash}"
 
-    def test_build_urn_default_zone(self, db_session) -> None:
+    def test_build_urn_default_zone(self) -> None:
         """When zone_id is None, uses 'default' in URN."""
         import hashlib
 
         from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
-        urn = RecordStoreWriteObserver._build_urn(db_session, "/data/file.csv", None)
+        urn = RecordStoreWriteObserver._build_urn("/data/file.csv", None)
         expected_hash = hashlib.sha256(b"/data/file.csv").hexdigest()[:32]
         assert urn == f"urn:nexus:file:default:{expected_hash}"
+
+    def test_build_urn_changes_on_rename(self) -> None:
+        """URNs are locators: different path → different URN."""
+        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+
+        urn_old = RecordStoreWriteObserver._build_urn("/data/old.csv", "z1")
+        urn_new = RecordStoreWriteObserver._build_urn("/data/new.csv", "z1")
+        assert urn_old != urn_new
+
+    def test_build_urn_same_path_same_result(self) -> None:
+        """Same path always produces the same URN (deterministic)."""
+        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+
+        urn1 = RecordStoreWriteObserver._build_urn("/data/file.csv", "z1")
+        urn2 = RecordStoreWriteObserver._build_urn("/data/file.csv", "z1")
+        assert urn1 == urn2
 
 
 class TestMCLChangeType:
@@ -264,3 +243,106 @@ class TestMCLChangeType:
         assert MCLChangeType.UPSERT.value == "upsert"
         assert MCLChangeType.DELETE.value == "delete"
         assert MCLChangeType.PATH_CHANGED.value == "path_changed"
+
+
+class TestOperationLogMCLColumns:
+    """Tests for MCL columns on operation_log (Issue #2929 Step 4)."""
+
+    def test_log_operation_with_mcl_fields(self, db_session) -> None:
+        """log_operation() accepts and stores entity_urn, aspect_name, change_type."""
+        from nexus.storage.operation_logger import OperationLogger
+
+        logger = OperationLogger(db_session)
+        op_id = logger.log_operation(
+            operation_type="write",
+            path="/data/file.csv",
+            zone_id="z1",
+            status="success",
+            entity_urn="urn:nexus:file:z1:abc123",
+            aspect_name="file_metadata",
+            change_type="upsert",
+        )
+        db_session.commit()
+
+        op = logger.get_operation(op_id)
+        assert op is not None
+        assert op.entity_urn == "urn:nexus:file:z1:abc123"
+        assert op.aspect_name == "file_metadata"
+        assert op.change_type == "upsert"
+
+    def test_log_operation_mcl_fields_nullable(self, db_session) -> None:
+        """MCL fields are optional — NULL for legacy operations."""
+        from nexus.storage.operation_logger import OperationLogger
+
+        logger = OperationLogger(db_session)
+        op_id = logger.log_operation(
+            operation_type="write",
+            path="/data/file.csv",
+            status="success",
+        )
+        db_session.commit()
+
+        op = logger.get_operation(op_id)
+        assert op is not None
+        assert op.entity_urn is None
+        assert op.aspect_name is None
+        assert op.change_type is None
+
+    def test_replay_changes_yields_mcl_rows(self, db_session) -> None:
+        """replay_changes() yields only rows where entity_urn IS NOT NULL."""
+        from nexus.storage.operation_logger import OperationLogger
+
+        logger = OperationLogger(db_session)
+
+        # Row without MCL fields (legacy)
+        logger.log_operation(
+            operation_type="mkdir",
+            path="/data",
+            status="success",
+        )
+
+        # Row with MCL fields
+        logger.log_operation(
+            operation_type="write",
+            path="/data/file.csv",
+            zone_id="z1",
+            status="success",
+            entity_urn="urn:nexus:file:z1:abc123",
+            aspect_name="file_metadata",
+            change_type="upsert",
+        )
+        db_session.commit()
+
+        replayed = list(logger.replay_changes())
+        assert len(replayed) == 1
+        assert replayed[0].entity_urn == "urn:nexus:file:z1:abc123"
+
+    def test_replay_changes_filters_by_zone(self, db_session) -> None:
+        """replay_changes() respects zone_id filter."""
+        from nexus.storage.operation_logger import OperationLogger
+
+        logger = OperationLogger(db_session)
+
+        logger.log_operation(
+            operation_type="write",
+            path="/a",
+            zone_id="z1",
+            status="success",
+            entity_urn="urn:nexus:file:z1:aaa",
+            aspect_name="file_metadata",
+            change_type="upsert",
+        )
+        logger.log_operation(
+            operation_type="write",
+            path="/b",
+            zone_id="z2",
+            status="success",
+            entity_urn="urn:nexus:file:z2:bbb",
+            aspect_name="file_metadata",
+            change_type="upsert",
+        )
+        db_session.commit()
+
+        replayed = list(logger.replay_changes(zone_id="z1"))
+        assert len(replayed) == 1
+        assert replayed[0].zone_id == "z1"

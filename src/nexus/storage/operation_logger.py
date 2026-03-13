@@ -87,6 +87,9 @@ class OperationLogger:
         status: str = "success",
         error_message: str | None = None,
         flush: bool = True,
+        entity_urn: str | None = None,
+        aspect_name: str | None = None,
+        change_type: str | None = None,
     ) -> str:
         """Log a filesystem operation.
 
@@ -102,6 +105,9 @@ class OperationLogger:
             error_message: Error message if operation failed
             flush: Whether to flush the session immediately (default True).
                 Set to False in batch operations to defer the flush until commit.
+            entity_urn: MCL entity URN (Issue #2929 Step 4).
+            aspect_name: MCL aspect name (Issue #2929 Step 4).
+            change_type: MCL change type — upsert/delete (Issue #2929 Step 4).
 
         Returns:
             operation_id: UUID of logged operation
@@ -126,6 +132,9 @@ class OperationLogger:
             error_message=error_message,
             created_at=datetime.now(UTC),
             sequence_number=next_seq,
+            entity_urn=entity_urn,
+            aspect_name=aspect_name,
+            change_type=change_type,
         )
 
         operation.validate()
@@ -134,6 +143,47 @@ class OperationLogger:
             self.session.flush()  # Get the operation_id
 
         return operation.operation_id
+
+    def replay_changes(
+        self,
+        *,
+        from_sequence: int = 0,
+        zone_id: str | None = None,
+        batch_size: int = 500,
+    ) -> Any:
+        """Iterate operation log records that carry MCL semantics (Issue #2929).
+
+        Yields OperationLogModel rows where entity_urn IS NOT NULL,
+        ordered by sequence_number ascending. This is the operation_log-native
+        equivalent of MCLRecorder.replay_changes() per Key Decision #2:
+        "MCL in existing operation log, not a third event system."
+
+        Args:
+            from_sequence: Start from this sequence number (inclusive).
+            zone_id: Filter by zone ID.
+            batch_size: Number of records per batch (cursor-based).
+
+        Yields:
+            OperationLogModel instances with MCL columns populated.
+        """
+        stmt = (
+            select(OperationLogModel)
+            .where(
+                OperationLogModel.entity_urn.isnot(None),
+                OperationLogModel.sequence_number >= from_sequence,
+            )
+            .order_by(OperationLogModel.sequence_number)
+        )
+        if zone_id is not None:
+            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
+
+        offset = 0
+        while True:
+            batch = list(self.session.execute(stmt.limit(batch_size).offset(offset)).scalars())
+            if not batch:
+                break
+            yield from batch
+            offset += len(batch)
 
     def get_operation(self, operation_id: str) -> OperationLogModel | None:
         """Get operation by ID.

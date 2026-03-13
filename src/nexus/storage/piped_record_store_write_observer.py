@@ -373,49 +373,14 @@ class PipedRecordStoreWriteObserver:
             await self._flush_batch(batch)
 
     @staticmethod
-    def _lookup_path_id(session: Any, path: str) -> str | None:
-        """Look up FilePathModel.path_id by virtual_path."""
-        from sqlalchemy import select
+    def _build_urn(path: str, zone_id: str | None) -> str:
+        """Build a locator URN for a file from its virtual path.
 
-        from nexus.storage.models.file_path import FilePathModel
-
-        stmt = select(FilePathModel.path_id).where(FilePathModel.virtual_path == path).limit(1)
-        result: str | None = session.execute(stmt).scalar_one_or_none()
-        return result
-
-    @staticmethod
-    def _lookup_urn_from_aspects(session: Any, path: str) -> str | None:
-        """Reverse-lookup entity_urn from entity_aspects by path aspect payload."""
-        from sqlalchemy import select
-
-        from nexus.storage.models.aspect_store import EntityAspectModel
-
-        stmt = (
-            select(EntityAspectModel.entity_urn)
-            .where(
-                EntityAspectModel.aspect_name == "path",
-                EntityAspectModel.version == 0,
-                EntityAspectModel.payload.contains(f'"virtual_path": "{path}"'),
-            )
-            .limit(1)
-        )
-        result: str | None = session.execute(stmt).scalar_one_or_none()
-        return result
-
-    @staticmethod
-    def _build_urn(session: Any, path: str, zone_id: str | None) -> str:
-        """Build a stable URN using FilePathModel.path_id (UUID).
-
-        Lookup chain: file_paths → entity_aspects reverse → hash fallback.
+        URNs are locators (Issue #2929 Key Decision #3): they change on
+        rename. The identifier is a deterministic SHA-256 hash prefix of
+        the path, so any caller can compute the same URN without a
+        database lookup.
         """
-        path_id = PipedRecordStoreWriteObserver._lookup_path_id(session, path)
-        if path_id is not None:
-            return f"urn:nexus:file:{zone_id or 'default'}:{path_id}"
-
-        existing_urn = PipedRecordStoreWriteObserver._lookup_urn_from_aspects(session, path)
-        if existing_urn is not None:
-            return existing_urn
-
         path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
         return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
 
@@ -432,37 +397,47 @@ class PipedRecordStoreWriteObserver:
             zone_id = event.get("zone_id")
             agent_id = event.get("agent_id")
             path = event["path"]
-            # For renames, look up by new_path (metastore already updated)
-            lookup_path = event.get("new_path", path) if op == "rename" else path
-            urn = self._build_urn(session, lookup_path, zone_id)
+            changed_by = agent_id or "system"
 
             with session.begin_nested():
                 recorder = MCLRecorder(session)
                 if op == "write":
+                    urn = self._build_urn(path, zone_id)
                     recorder.record_file_write(
                         entity_urn=urn,
                         metadata_dict=event.get("metadata"),
                         zone_id=zone_id,
-                        changed_by=agent_id or "system",
+                        changed_by=changed_by,
                         previous_metadata=event.get("metadata_snapshot"),
                     )
                 elif op == "delete":
                     from nexus.storage.aspect_service import AspectService
 
+                    urn = self._build_urn(path, zone_id)
                     recorder.record_file_delete(
                         entity_urn=urn,
                         zone_id=zone_id,
-                        changed_by=agent_id or "system",
+                        changed_by=changed_by,
                         previous_metadata=event.get("metadata_snapshot"),
                     )
                     AspectService(session).soft_delete_entity_aspects(urn)
                 elif op == "rename":
-                    recorder.record_file_rename(
-                        entity_urn=urn,
-                        old_path=path,
-                        new_path=event.get("new_path", ""),
+                    # URNs are locators (Issue #2929 Key Decision #3):
+                    # rename changes the URN. DELETE old + UPSERT new.
+                    old_urn = self._build_urn(path, zone_id)
+                    new_path = event.get("new_path", "")
+                    new_urn = self._build_urn(new_path, zone_id)
+                    recorder.record_file_delete(
+                        entity_urn=old_urn,
                         zone_id=zone_id,
-                        changed_by=agent_id or "system",
+                        changed_by=changed_by,
+                        previous_metadata=event.get("metadata_snapshot"),
+                    )
+                    recorder.record_file_write(
+                        entity_urn=new_urn,
+                        metadata_dict=event.get("metadata_snapshot"),
+                        zone_id=zone_id,
+                        changed_by=changed_by,
                     )
         except Exception:
             logger.debug(
@@ -487,6 +462,7 @@ class PipedRecordStoreWriteObserver:
             agent_id = event.get("agent_id")
 
             if op == "write":
+                urn = self._build_urn(event["path"], zone_id)
                 op_logger.log_operation(
                     operation_type="write",
                     path=event["path"],
@@ -495,11 +471,15 @@ class PipedRecordStoreWriteObserver:
                     snapshot_hash=event.get("snapshot_hash"),
                     metadata_snapshot=event.get("metadata_snapshot"),
                     status="success",
+                    entity_urn=urn,
+                    aspect_name="file_metadata",
+                    change_type="upsert",
                 )
                 md = _metadata_from_dict(event["metadata"])
                 recorder.record_write(md, is_new=event["is_new"])
 
             elif op == "delete":
+                urn = self._build_urn(event["path"], zone_id)
                 op_logger.log_operation(
                     operation_type="delete",
                     path=event["path"],
@@ -508,10 +488,14 @@ class PipedRecordStoreWriteObserver:
                     snapshot_hash=event.get("snapshot_hash"),
                     metadata_snapshot=event.get("metadata_snapshot"),
                     status="success",
+                    entity_urn=urn,
+                    aspect_name="file_metadata",
+                    change_type="delete",
                 )
                 recorder.record_delete(event["path"])
 
             elif op == "rename":
+                old_urn = self._build_urn(event["path"], zone_id)
                 op_logger.log_operation(
                     operation_type="rename",
                     path=event["path"],
@@ -521,6 +505,9 @@ class PipedRecordStoreWriteObserver:
                     snapshot_hash=event.get("snapshot_hash"),
                     metadata_snapshot=event.get("metadata_snapshot"),
                     status="success",
+                    entity_urn=old_urn,
+                    aspect_name="file_metadata",
+                    change_type="delete",
                 )
                 new_path = event.get("new_path")
                 if new_path:

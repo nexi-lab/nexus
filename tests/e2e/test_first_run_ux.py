@@ -351,8 +351,8 @@ class TestFullWorkflow:
 
             # Critical: demo files must actually be created (not silently 0)
             demo_files = manifest.get("files", [])
-            assert len(demo_files) >= 8, (
-                f"only {len(demo_files)} demo files in manifest, expected >= 8 — "
+            assert len(demo_files) >= 10, (
+                f"only {len(demo_files)} demo files in manifest, expected >= 10 — "
                 "sys_write likely crashed (e.g. missing auto_parse attribute on remote NexusFS)"
             )
 
@@ -431,6 +431,142 @@ class TestFullWorkflow:
             assert search_result.returncode == 0, (
                 f"nexus search query failed against live stack:\n"
                 f"stdout: {search_result.stdout}\nstderr: {search_result.stderr}"
+            )
+
+            # ----------------------------------------------------------
+            # Step 2f: Knowledge platform — catalog schemas (Issue #2930)
+            # ----------------------------------------------------------
+            # Verify demo init output mentions catalog/aspects
+            assert (
+                "catalog" in demo_result.stdout.lower() or "schema" in demo_result.stdout.lower()
+            ), "demo init output should mention catalog or schema seeding"
+
+            # Verify manifest tracks knowledge platform seeding
+            with open(manifest_path) as f:
+                manifest = json.loads(f.read())
+            assert manifest.get("write_mode_used") == "sc", (
+                "manifest should track write_mode_used as 'sc'"
+            )
+            # schemas_extracted and aspects_created may be True or False
+            # depending on whether the REST API was reachable, but the
+            # keys should exist in the manifest
+            assert "schemas_extracted" in manifest, "manifest should track schemas_extracted"
+            assert "aspects_created" in manifest, "manifest should track aspects_created"
+
+            # Verify nexus catalog schema works against the live stack
+            catalog_schema_result = subprocess.run(
+                [
+                    "nexus",
+                    "catalog",
+                    "schema",
+                    "/workspace/demo/data/sales.csv",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(initialized_project),
+                env=stack_env,
+            )
+            # Command should succeed (rc=0) or fail gracefully (rc=1)
+            # with a clear error — it should never crash
+            assert catalog_schema_result.returncode in (0, 1), (
+                f"nexus catalog schema crashed:\n"
+                f"stdout: {catalog_schema_result.stdout}\n"
+                f"stderr: {catalog_schema_result.stderr}"
+            )
+            if catalog_schema_result.returncode == 0:
+                # If the REST API is available, output should mention
+                # columns or schema details
+                output = catalog_schema_result.stdout.lower()
+                assert "schema" in output or "column" in output or "no schema" in output, (
+                    f"catalog schema output unexpected: {catalog_schema_result.stdout}"
+                )
+
+            # ----------------------------------------------------------
+            # Step 2g: Knowledge platform — catalog column search
+            # ----------------------------------------------------------
+            catalog_search_result = subprocess.run(
+                [
+                    "nexus",
+                    "catalog",
+                    "search",
+                    "--column",
+                    "amount",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(initialized_project),
+                env=stack_env,
+            )
+            assert catalog_search_result.returncode in (0, 1), (
+                f"nexus catalog search crashed:\n"
+                f"stdout: {catalog_search_result.stdout}\n"
+                f"stderr: {catalog_search_result.stderr}"
+            )
+
+            # ----------------------------------------------------------
+            # Step 2h: Knowledge platform — aspects list
+            # ----------------------------------------------------------
+            aspects_list_result = subprocess.run(
+                [
+                    "nexus",
+                    "aspects",
+                    "list",
+                    "/workspace/demo/restricted/internal.md",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(initialized_project),
+                env=stack_env,
+            )
+            assert aspects_list_result.returncode in (0, 1), (
+                f"nexus aspects list crashed:\n"
+                f"stdout: {aspects_list_result.stdout}\n"
+                f"stderr: {aspects_list_result.stderr}"
+            )
+
+            # ----------------------------------------------------------
+            # Step 2i: Knowledge platform — ops replay
+            # ----------------------------------------------------------
+            ops_replay_result = subprocess.run(
+                ["nexus", "ops", "replay", "--limit", "5"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(initialized_project),
+                env=stack_env,
+            )
+            assert ops_replay_result.returncode in (0, 1), (
+                f"nexus ops replay crashed:\n"
+                f"stdout: {ops_replay_result.stdout}\n"
+                f"stderr: {ops_replay_result.stderr}"
+            )
+
+            # ----------------------------------------------------------
+            # Step 2j: Knowledge platform — reindex dry-run
+            # ----------------------------------------------------------
+            reindex_result = subprocess.run(
+                [
+                    "nexus",
+                    "reindex",
+                    "--target",
+                    "search",
+                    "--dry-run",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(initialized_project),
+                env=stack_env,
+            )
+            # reindex uses local RecordStore access, may not work via
+            # remote preset — accept both success and graceful failure
+            assert reindex_result.returncode in (0, 1), (
+                f"nexus reindex crashed:\n"
+                f"stdout: {reindex_result.stdout}\n"
+                f"stderr: {reindex_result.stderr}"
             )
 
             # Step 3: nexus demo reset (verify cleanup works)

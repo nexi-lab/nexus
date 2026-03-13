@@ -142,6 +142,121 @@ class TestMCLIdempotency:
         AspectRegistry.reset()
 
 
+class TestMCLReplay:
+    """MCL replay_changes() iterator tests."""
+
+    def test_replay_changes_returns_all_records(self, db_session) -> None:
+        recorder = MCLRecorder(db_session)
+        for i in range(5):
+            recorder.record_file_write(
+                entity_urn=f"urn:nexus:file:z1:id{i}",
+                metadata_dict={"path": f"/file{i}"},
+                zone_id="z1",
+            )
+        db_session.commit()
+
+        replayed = list(recorder.replay_changes())
+        assert len(replayed) == 5
+
+    def test_replay_changes_filters_by_zone(self, db_session) -> None:
+        recorder = MCLRecorder(db_session)
+        recorder.record_file_write(
+            entity_urn="urn:nexus:file:z1:id1",
+            metadata_dict={"path": "/a"},
+            zone_id="z1",
+        )
+        recorder.record_file_write(
+            entity_urn="urn:nexus:file:z2:id2",
+            metadata_dict={"path": "/b"},
+            zone_id="z2",
+        )
+        db_session.commit()
+
+        replayed = list(recorder.replay_changes(zone_id="z1"))
+        assert len(replayed) == 1
+        assert replayed[0].zone_id == "z1"
+
+    def test_replay_changes_from_sequence(self, db_session) -> None:
+        recorder = MCLRecorder(db_session)
+        for i in range(5):
+            recorder.record_file_write(
+                entity_urn=f"urn:nexus:file:z1:id{i}",
+                metadata_dict={"path": f"/file{i}"},
+            )
+        db_session.commit()
+
+        all_records = list(recorder.replay_changes())
+        mid_seq = all_records[2].sequence_number
+
+        replayed = list(recorder.replay_changes(from_sequence=mid_seq))
+        assert len(replayed) == 3
+
+
+class TestURNReverseLookup:
+    """Tests for delete-after-metastore-removal URN lookup path."""
+
+    def test_build_urn_with_active_file_path(self, db_session) -> None:
+        """When FilePathModel exists, _build_urn uses path_id."""
+        from nexus.storage.models.file_path import FilePathModel
+        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+
+        fp = FilePathModel(
+            path_id="test-uuid-1234",
+            virtual_path="/data/file.csv",
+            backend_id="default",
+            physical_path="/phys/file.csv",
+            zone_id="z1",
+        )
+        db_session.add(fp)
+        db_session.commit()
+
+        urn = RecordStoreWriteObserver._build_urn(db_session, "/data/file.csv", "z1")
+        assert urn == "urn:nexus:file:z1:test-uuid-1234"
+
+    def test_build_urn_falls_back_to_aspect_reverse_lookup(self, db_session) -> None:
+        """When FilePathModel is gone, _build_urn searches entity_aspects."""
+        from nexus.contracts.aspects import AspectRegistry, PathAspect
+        from nexus.storage.aspect_service import AspectService
+        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+
+        AspectRegistry.reset()
+        AspectRegistry.get().register("path", PathAspect, max_versions=5)
+
+        svc = AspectService(db_session)
+        svc.put_aspect(
+            "urn:nexus:file:z1:some-uuid",
+            "path",
+            {"virtual_path": "/data/file.csv"},
+        )
+        db_session.commit()
+
+        # No FilePathModel exists — simulates hard-deleted metastore row
+        urn = RecordStoreWriteObserver._build_urn(db_session, "/data/file.csv", "z1")
+        assert urn == "urn:nexus:file:z1:some-uuid"
+
+        AspectRegistry.reset()
+
+    def test_build_urn_hash_fallback(self, db_session) -> None:
+        """When neither FilePathModel nor entity_aspects match, uses hash fallback."""
+        import hashlib
+
+        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+
+        urn = RecordStoreWriteObserver._build_urn(db_session, "/data/new.csv", "z1")
+        expected_hash = hashlib.sha256(b"/data/new.csv").hexdigest()[:32]
+        assert urn == f"urn:nexus:file:z1:{expected_hash}"
+
+    def test_build_urn_default_zone(self, db_session) -> None:
+        """When zone_id is None, uses 'default' in URN."""
+        import hashlib
+
+        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
+
+        urn = RecordStoreWriteObserver._build_urn(db_session, "/data/file.csv", None)
+        expected_hash = hashlib.sha256(b"/data/file.csv").hexdigest()[:32]
+        assert urn == f"urn:nexus:file:default:{expected_hash}"
+
+
 class TestMCLChangeType:
     """MCLChangeType enum tests."""
 

@@ -291,6 +291,7 @@ class RecordStoreWriteObserver:
         """Look up FilePathModel.path_id by virtual_path.
 
         Returns the UUID path_id (stable across renames) or None if not found.
+        Searches all rows including soft-deleted ones.
         """
         from sqlalchemy import select
 
@@ -300,16 +301,50 @@ class RecordStoreWriteObserver:
         return session.execute(stmt).scalar_one_or_none()
 
     @staticmethod
+    def _lookup_urn_from_aspects(session: "Session", path: str) -> str | None:  # noqa: F821
+        """Reverse-lookup entity_urn from entity_aspects by path aspect payload.
+
+        Used as fallback when file_paths row is already hard-deleted
+        (e.g., during delete operations). Searches the "path" aspect for
+        a payload containing the virtual_path.
+        """
+        from sqlalchemy import select
+
+        from nexus.storage.models.aspect_store import EntityAspectModel
+
+        # Search path aspects for one whose payload contains this virtual_path.
+        # JSON payload format: {"virtual_path": "/some/path", ...}
+        stmt = (
+            select(EntityAspectModel.entity_urn)
+            .where(
+                EntityAspectModel.aspect_name == "path",
+                EntityAspectModel.version == 0,
+                EntityAspectModel.payload.contains(f'"virtual_path": "{path}"'),
+            )
+            .limit(1)
+        )
+        result: str | None = session.execute(stmt).scalar_one_or_none()
+        return result
+
+    @staticmethod
     def _build_urn(session: "Session", path: str, zone_id: str | None) -> str:  # noqa: F821
         """Build a stable URN for a file using FilePathModel.path_id.
 
-        Looks up the UUID path_id from the metastore (stable across renames).
-        Falls back to SHA-256 hash of path if path_id is unavailable.
+        Lookup chain:
+          1. FilePathModel.path_id (works for live and soft-deleted rows)
+          2. entity_aspects reverse lookup (works after file_paths row is gone)
+          3. SHA-256 hash fallback (last resort)
         """
         path_id = RecordStoreWriteObserver._lookup_path_id(session, path)
         if path_id is not None:
             return f"urn:nexus:file:{zone_id or 'default'}:{path_id}"
-        # Fallback for paths not yet in metastore (e.g., during creation)
+
+        # Fallback: reverse lookup from entity_aspects (handles hard-deleted file_paths)
+        existing_urn = RecordStoreWriteObserver._lookup_urn_from_aspects(session, path)
+        if existing_urn is not None:
+            return existing_urn
+
+        # Final fallback for paths not yet in metastore (e.g., during creation)
         path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
         return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
 

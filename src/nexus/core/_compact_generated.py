@@ -15,7 +15,6 @@ and timezone information across serialization boundaries.
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -26,12 +25,10 @@ if TYPE_CHECKING:
 # --- String interning ---
 # Single global pool: string -> int ID, and reverse lookup.
 # All string fields share one pool for simplicity.
-# Protected by _POOL_LOCK against concurrent first-seen collisions.
 
 _STRING_POOL: dict[str, int] = {}
 _STRING_POOL_REVERSE: dict[int, str] = {}
 _NEXT_ID: int = 0
-_POOL_LOCK = threading.Lock()
 
 
 def _intern(s: str | None) -> int:
@@ -39,18 +36,11 @@ def _intern(s: str | None) -> int:
     global _NEXT_ID
     if s is None:
         return -1
-    # Fast path: already interned (read-only, safe without lock)
-    existing = _STRING_POOL.get(s)
-    if existing is not None:
-        return existing
-    with _POOL_LOCK:
-        # Re-check under lock (another thread may have inserted)
-        if s in _STRING_POOL:
-            return _STRING_POOL[s]
+    if s not in _STRING_POOL:
         _STRING_POOL[s] = _NEXT_ID
         _STRING_POOL_REVERSE[_NEXT_ID] = s
         _NEXT_ID += 1
-        return _NEXT_ID - 1
+    return _STRING_POOL[s]
 
 
 def _resolve(id: int) -> str | None:
@@ -146,7 +136,6 @@ def get_intern_pool_stats() -> dict[str, int]:
 def clear_intern_pool() -> None:
     """Clear the intern pool. Use only for testing."""
     global _NEXT_ID
-    with _POOL_LOCK:
-        _STRING_POOL.clear()
-        _STRING_POOL_REVERSE.clear()
-        _NEXT_ID = 0
+    _STRING_POOL.clear()
+    _STRING_POOL_REVERSE.clear()
+    _NEXT_ID = 0

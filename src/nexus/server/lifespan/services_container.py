@@ -54,7 +54,7 @@ class LifespanServices:
     eviction_manager: Any = None
     write_observer: Any = None
     zone_lifecycle: Any = None
-    pipe_manager: Any = None  # DT_PIPE manager (Issue #809)
+    pipe_manager: Any = None  # DT_PIPE manager — kernel-internal primitive (§4.2)
 
     # --- Issue #2195, #2360: Scheduler (from SystemServices) ----
     scheduler_service: "SchedulerProtocol | None" = None
@@ -116,7 +116,7 @@ class LifespanServices:
             eviction_manager=(getattr(_sys, "eviction_manager", None) if _sys else None),
             write_observer=(getattr(_sys, "write_observer", None) if _sys else None),
             zone_lifecycle=(getattr(_sys, "zone_lifecycle", None) if _sys else None),
-            pipe_manager=(getattr(_sys, "pipe_manager", None) if _sys else None),
+            pipe_manager=(getattr(nx, "_pipe_manager", None) if nx else None),
             # Issue #810: DT_PIPE Zoekt consumer
             zoekt_pipe_consumer=(getattr(_brk, "zoekt_pipe_consumer", None) if _brk else None),
             # Issue #2195: Scheduler

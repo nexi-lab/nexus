@@ -255,8 +255,8 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
-    # DT_PIPE manager — VFS named-pipe IPC (Issue #809)
-    pipe_manager: Any = None
+    # (PipeManager + StreamManager are kernel-internal primitives,
+    # constructed in NexusFS.__init__ — not injected via SystemServices.)
 
     # Process lifecycle — kernel process table (Issue #1509)
     process_table: Any = None

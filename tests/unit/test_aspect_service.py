@@ -288,6 +288,47 @@ class TestMCLRecording:
         assert prev["virtual_path"] == "/v1"
 
 
+class TestRecordMclFlag:
+    """Tests for record_mcl=False (reindex replay support)."""
+
+    def test_put_aspect_skip_mcl(self, db_session: Session) -> None:
+        """put_aspect(record_mcl=False) writes aspect but no MCL row."""
+        svc = AspectService(db_session)
+        svc.put_aspect(
+            "urn:nexus:file:z1:id1",
+            "path",
+            {"virtual_path": "/v1"},
+            record_mcl=False,
+        )
+        db_session.commit()
+
+        # Aspect should exist
+        assert svc.get_aspect("urn:nexus:file:z1:id1", "path") is not None
+
+        # But no MCL row should have been created
+        mcl_records = db_session.execute(select(MetadataChangeLogModel)).scalars().all()
+        assert len(mcl_records) == 0
+
+    def test_delete_aspect_skip_mcl(self, db_session: Session) -> None:
+        """delete_aspect(record_mcl=False) deletes aspect but no MCL row."""
+        svc = AspectService(db_session)
+        svc.put_aspect(
+            "urn:nexus:file:z1:id1",
+            "path",
+            {"virtual_path": "/v1"},
+            record_mcl=False,
+        )
+        db_session.commit()
+
+        svc.delete_aspect("urn:nexus:file:z1:id1", "path", record_mcl=False)
+        db_session.commit()
+
+        assert svc.get_aspect("urn:nexus:file:z1:id1", "path") is None
+
+        mcl_records = db_session.execute(select(MetadataChangeLogModel)).scalars().all()
+        assert len(mcl_records) == 0
+
+
 class TestValidation:
     """Input validation tests."""
 

@@ -6,7 +6,12 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.contracts.aspects import AspectRegistry, PathAspect, SchemaMetadataAspect
+from nexus.contracts.aspects import (
+    AspectRegistry,
+    FileMetadataAspect,
+    PathAspect,
+    SchemaMetadataAspect,
+)
 from nexus.storage.aspect_service import AspectService
 from nexus.storage.models._base import Base
 from nexus.storage.models.metadata_change_log import MCLChangeType, MetadataChangeLogModel
@@ -30,7 +35,7 @@ def _reset_registry():
     registry = AspectRegistry.get()
     registry.register("path", PathAspect, max_versions=5)
     registry.register("schema_metadata", SchemaMetadataAspect, max_versions=20)
-    registry.register("file_metadata", PathAspect, max_versions=10)
+    registry.register("file_metadata", FileMetadataAspect, max_versions=10)
     yield
     AspectRegistry.reset()
 
@@ -185,6 +190,82 @@ class TestMCLProcessorRebuildsAspectStore:
         svc = AspectService(db_session)
         result = svc.get_aspect("urn:nexus:file:z1:id1", "path")
         assert result is not None
+
+    def test_replay_does_not_generate_new_mcl_rows(self, db_session) -> None:
+        """Reindex replay must not self-amplify by generating new MCL rows.
+
+        Regression test: previously, _MCLProcessor called put_aspect() which
+        wrote new MCL rows into the same table being iterated, causing the
+        replay stream to grow unboundedly.
+        """
+        from sqlalchemy import func, select
+
+        proc = _make_processor(db_session, target="search")
+
+        # Seed one MCL row
+        mcl = MetadataChangeLogModel(
+            sequence_number=1,
+            entity_urn="urn:nexus:file:z1:id1",
+            aspect_name="path",
+            change_type=MCLChangeType.UPSERT.value,
+            aspect_value=json.dumps({"virtual_path": "/data/file.csv"}),
+            zone_id="z1",
+        )
+        db_session.add(mcl)
+        db_session.commit()
+
+        # Count MCL rows before replay
+        count_before = db_session.execute(
+            select(func.count()).select_from(MetadataChangeLogModel)
+        ).scalar_one()
+
+        # Process the MCL row
+        proc.process(mcl)
+        db_session.commit()
+
+        # Count MCL rows after replay — should be unchanged
+        count_after = db_session.execute(
+            select(func.count()).select_from(MetadataChangeLogModel)
+        ).scalar_one()
+
+        assert count_after == count_before, (
+            f"Replay generated {count_after - count_before} new MCL row(s). "
+            "record_mcl=False should prevent self-amplification."
+        )
+
+    def test_file_metadata_aspect_replayable(self, db_session) -> None:
+        """file_metadata MCL rows (from MCLRecorder) must be replayable.
+
+        Regression test: MCLRecorder emits aspect_name='file_metadata' for
+        write/delete events, but the registry previously didn't register it,
+        causing ValueError('Unknown aspect type') during reindex.
+        """
+        proc = _make_processor(db_session, target="search")
+        svc = AspectService(db_session)
+
+        # Simulate a file_metadata MCL row as MCLRecorder would emit
+        mcl = MetadataChangeLogModel(
+            sequence_number=1,
+            entity_urn="urn:nexus:file:z1:id1",
+            aspect_name="file_metadata",
+            change_type=MCLChangeType.UPSERT.value,
+            aspect_value=json.dumps(
+                {
+                    "path": "/data/file.csv",
+                    "size": 1024,
+                    "etag": "abc123",
+                }
+            ),
+            zone_id="z1",
+        )
+
+        # Should NOT raise ValueError — file_metadata is now registered
+        proc.process(mcl)
+        db_session.commit()
+
+        result = svc.get_aspect("urn:nexus:file:z1:id1", "file_metadata")
+        assert result is not None
+        assert result["path"] == "/data/file.csv"
 
     def test_end_to_end_replay_via_mcl_recorder(self, db_session) -> None:
         """Full round-trip: record MCL → replay → verify aspect store state."""

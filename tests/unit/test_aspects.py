@@ -9,6 +9,7 @@ from nexus.contracts.aspects import (
     AspectBase,
     AspectEnvelope,
     AspectRegistry,
+    FileMetadataAspect,
     OwnershipAspect,
     PathAspect,
     SchemaMetadataAspect,
@@ -65,6 +66,7 @@ class TestAspectRegistry:
         registry = AspectRegistry.get()
         registry.register("path", PathAspect, max_versions=5)
         registry.register("schema_metadata", SchemaMetadataAspect, max_versions=20)
+        registry.register("file_metadata", FileMetadataAspect, max_versions=10)
         registry.register("ownership", OwnershipAspect, max_versions=5)
 
     def test_singleton(self) -> None:
@@ -77,6 +79,7 @@ class TestAspectRegistry:
         assert registry.is_registered("path")
         assert registry.is_registered("schema_metadata")
         assert registry.is_registered("ownership")
+        assert registry.is_registered("file_metadata")
 
     def test_list_aspects(self) -> None:
         registry = AspectRegistry.get()

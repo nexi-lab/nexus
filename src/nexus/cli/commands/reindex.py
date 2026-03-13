@@ -7,8 +7,7 @@ cursor-based batching and checkpoint resume.
 Targets:
     - search: Rebuild aspect store (version-0 state) from MCL events
     - versions: Rebuild full version history from MCL events
-    - semantic: Re-extract schemas from file content (requires filesystem)
-    - all: Run all targets
+    - all: Run all targets (search + versions)
 
 Examples:
     nexus reindex --target search
@@ -49,7 +48,7 @@ def register_commands(cli: click.Group) -> None:
 @click.option(
     "--target",
     "-t",
-    type=click.Choice(["search", "semantic", "versions", "all"]),
+    type=click.Choice(["search", "versions", "all"]),
     default="all",
     help="Index target to rebuild",
 )
@@ -244,7 +243,11 @@ class _MCLProcessor:
         aspect_value: str | None,
         zone_id: str | None,
     ) -> None:
-        """Rebuild search index: apply MCL event to aspect store version 0."""
+        """Rebuild search index: apply MCL event to aspect store version 0.
+
+        Uses record_mcl=False to prevent self-amplification: replaying MCL
+        rows must not generate new MCL rows into the same table.
+        """
         if change_type in ("upsert", "path_changed"):
             if aspect_value is None:
                 return
@@ -255,12 +258,14 @@ class _MCLProcessor:
                 payload,
                 created_by="reindex",
                 zone_id=zone_id,
+                record_mcl=False,
             )
         elif change_type == "delete":
             self._aspect_service.delete_aspect(
                 entity_urn,
                 aspect_name,
                 zone_id=zone_id,
+                record_mcl=False,
             )
 
     def _rebuild_versions(

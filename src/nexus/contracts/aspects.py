@@ -268,6 +268,27 @@ class SchemaMetadataAspect(AspectBase):
         self.warnings = warnings or []
 
 
+@register_aspect("file_metadata", max_versions=10)
+class FileMetadataAspect(AspectBase):
+    """Full file metadata snapshot emitted by MCLRecorder on writes/deletes.
+
+    Stores the metadata dict from FileMetadata.to_dict(). Fields are
+    intentionally loose (**kwargs) because the exact shape depends on the
+    backend and may evolve — the aspect store treats it as an opaque blob.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AspectBase:
+        return cls(**data)
+
+
 @register_aspect("ownership", max_versions=5)
 class OwnershipAspect(AspectBase):
     """Tracks entity ownership for access control and audit."""

@@ -116,8 +116,15 @@ class AspectService:
         *,
         created_by: str = "system",
         zone_id: str | None = None,
+        record_mcl: bool = True,
     ) -> int:
-        """Create or update an aspect using version-0 swap pattern."""
+        """Create or update an aspect using version-0 swap pattern.
+
+        Args:
+            record_mcl: If False, skip MCL recording (used during reindex replay
+                to avoid self-amplification — replaying MCL rows should not
+                generate new MCL rows).
+        """
         registry = AspectRegistry.get()
         registry.validate_payload(aspect_name, payload)
 
@@ -207,16 +214,17 @@ class AspectService:
         max_versions = registry.max_versions_for(aspect_name)
         self._compact_versions(entity_urn, aspect_name, max_versions)
 
-        # Record MCL
-        self._record_mcl(
-            entity_urn=entity_urn,
-            aspect_name=aspect_name,
-            change_type=MCLChangeType.UPSERT,
-            aspect_value=payload,
-            previous_value=previous_value,
-            zone_id=zone_id,
-            changed_by=created_by,
-        )
+        # Record MCL (skipped during reindex replay to avoid self-amplification)
+        if record_mcl:
+            self._record_mcl(
+                entity_urn=entity_urn,
+                aspect_name=aspect_name,
+                change_type=MCLChangeType.UPSERT,
+                aspect_value=payload,
+                previous_value=previous_value,
+                zone_id=zone_id,
+                changed_by=created_by,
+            )
 
         self._session.flush()
         return new_history_version
@@ -257,8 +265,13 @@ class AspectService:
         aspect_name: str,
         *,
         zone_id: str | None = None,
+        record_mcl: bool = True,
     ) -> bool:
-        """Soft-delete an aspect (all versions)."""
+        """Soft-delete an aspect (all versions).
+
+        Args:
+            record_mcl: If False, skip MCL recording (used during reindex replay).
+        """
         # Get current value for MCL
         current = self.get_aspect(entity_urn, aspect_name)
         if current is None:
@@ -275,13 +288,14 @@ class AspectService:
             .values(deleted_at=now)
         )
 
-        self._record_mcl(
-            entity_urn=entity_urn,
-            aspect_name=aspect_name,
-            change_type=MCLChangeType.DELETE,
-            previous_value=current,
-            zone_id=zone_id,
-        )
+        if record_mcl:
+            self._record_mcl(
+                entity_urn=entity_urn,
+                aspect_name=aspect_name,
+                change_type=MCLChangeType.DELETE,
+                previous_value=current,
+                zone_id=zone_id,
+            )
 
         self._session.flush()
         return True

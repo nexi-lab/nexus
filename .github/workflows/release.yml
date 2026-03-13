@@ -165,10 +165,11 @@ jobs:
           if-no-files-found: error
 
   publish-rust:
-    if: ${{ secrets.NEXUS_FAST_PYPI_API_TOKEN != '' }}
     name: Publish nexus-fast to PyPI
     needs: [build-rust-wheel, build-rust-sdist]
     runs-on: ubuntu-latest
+    env:
+      NEXUS_FAST_PYPI_API_TOKEN: ${{ secrets.NEXUS_FAST_PYPI_API_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -186,10 +187,15 @@ jobs:
           find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-rust/ \;
           ls -lh dist-rust/
 
+      - name: Skip nexus-fast PyPI publish
+        if: ${{ env.NEXUS_FAST_PYPI_API_TOKEN == '' }}
+        run: echo "NEXUS_FAST_PYPI_API_TOKEN not configured; skipping nexus-fast publish."
+
       - name: Publish nexus-fast to PyPI
+        if: ${{ env.NEXUS_FAST_PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.NEXUS_FAST_PYPI_API_TOKEN }}
+          password: ${{ env.NEXUS_FAST_PYPI_API_TOKEN }}
           packages-dir: dist-rust
 
   publish:

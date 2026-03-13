@@ -521,10 +521,7 @@ class WriteBackService:
         """
         ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
         if hasattr(backend, "delete"):
-            result = await asyncio.to_thread(backend.delete, backend_path, ctx)
-            # delete() is a service method that may still return HandlerResponse
-            if hasattr(result, "success") and not result.success:
-                raise RuntimeError(f"Backend delete failed: {getattr(result, 'error', 'unknown')}")
+            await asyncio.to_thread(backend.delete, backend_path, ctx)
         else:
             # delete_content raises on error, returns None on success
             await asyncio.to_thread(backend.delete_content, backend_path, ctx)
@@ -560,9 +557,7 @@ class WriteBackService:
 
         # Prefer native rename if available
         if hasattr(backend, "rename"):
-            result = await asyncio.to_thread(backend.rename, old_backend_path, backend_path, ctx)
-            if hasattr(result, "success") and not result.success:
-                raise RuntimeError(f"Backend rename failed: {getattr(result, 'error', 'unknown')}")
+            await asyncio.to_thread(backend.rename, old_backend_path, backend_path, ctx)
         elif hasattr(backend, "rename_file"):
             await asyncio.to_thread(backend.rename_file, old_backend_path, backend_path, ctx)
         else:

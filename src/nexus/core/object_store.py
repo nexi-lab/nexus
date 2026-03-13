@@ -8,7 +8,7 @@ Design:
     - 6 abstract methods: write_content, read_content, delete_content,
       get_content_size, mkdir, rmdir
     - WriteResult returned from write operations (content_hash + size)
-    - No HandlerResponse -- callers get raw types, errors are exceptions
+    - Callers get raw types, errors are exceptions
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class ObjectStoreABC(ABC):
     """ObjectStore pillar -- kernel ``file_operations`` contract.
 
     Linux analogue: ``struct file_operations``.
-    Exception-based errors (no HandlerResponse).
+    Exception-based errors.
 
     Subclasses must implement the 6 abstract methods.  Streaming, batch,
     capability flags, and lifecycle have concrete defaults that work out of

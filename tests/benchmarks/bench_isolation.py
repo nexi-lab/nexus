@@ -52,42 +52,30 @@ class BenchMockBackend:
         return HandlerStatusResponse(success=True)
 
     def write_content(self, content: bytes, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
+        from nexus.core.object_store import WriteResult
 
         h = hashlib.sha256(content).hexdigest()
         self._store[h] = content
         self._refs[h] = self._refs.get(h, 0) + 1
-        return HandlerResponse.ok(data=h, backend_name=self.name)
+        return WriteResult(content_hash=h, size=len(content))
 
-    def read_content(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
+    def read_content(self, content_hash: str, context: Any = None) -> bytes:  # noqa: ARG002
         if content_hash not in self._store:
-            return HandlerResponse.not_found(path=content_hash, backend_name=self.name)
-        return HandlerResponse.ok(data=self._store[content_hash], backend_name=self.name)
+            raise FileNotFoundError(f"CAS blob {content_hash} not found")
+        return self._store[content_hash]
 
-    def delete_content(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
+    def delete_content(self, content_hash: str, context: Any = None) -> None:  # noqa: ARG002
         self._store.pop(content_hash, None)
         self._refs.pop(content_hash, None)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
 
-    def content_exists(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
+    def content_exists(self, content_hash: str, context: Any = None) -> bool:  # noqa: ARG002
+        return content_hash in self._store
 
-        return HandlerResponse.ok(data=content_hash in self._store, backend_name=self.name)
+    def get_content_size(self, content_hash: str, context: Any = None) -> int:  # noqa: ARG002
+        return len(self._store.get(content_hash, b""))
 
-    def get_content_size(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
-        size = len(self._store.get(content_hash, b""))
-        return HandlerResponse.ok(data=size, backend_name=self.name)
-
-    def get_ref_count(self, content_hash: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=self._refs.get(content_hash, 0), backend_name=self.name)
+    def get_ref_count(self, content_hash: str, context: Any = None) -> int:  # noqa: ARG002
+        return self._refs.get(content_hash, 0)
 
     def mkdir(
         self,
@@ -95,22 +83,14 @@ class BenchMockBackend:
         parents: bool = False,  # noqa: ARG002
         exist_ok: bool = False,  # noqa: ARG002
         context: Any = None,  # noqa: ARG002
-    ) -> Any:
-        from nexus.lib.response import HandlerResponse
-
+    ) -> None:
         self._dirs.add(path)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
 
-    def rmdir(self, path: str, recursive: bool = False, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
+    def rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:  # noqa: ARG002
         self._dirs.discard(path)
-        return HandlerResponse.ok(data=None, backend_name=self.name)
 
-    def is_directory(self, path: str, context: Any = None) -> Any:  # noqa: ARG002
-        from nexus.lib.response import HandlerResponse
-
-        return HandlerResponse.ok(data=path in self._dirs, backend_name=self.name)
+    def is_directory(self, path: str, context: Any = None) -> bool:  # noqa: ARG002
+        return path in self._dirs
 
     def list_dir(self, path: str, context: Any = None) -> list[str]:  # noqa: ARG002
         return []

@@ -36,30 +36,40 @@ PORT_LABELS: dict[str, str] = {
 VALID_STRATEGIES = ("auto", "prompt", "fail")
 
 
-def check_port_available(port: int, host: str = "127.0.0.1") -> bool:
+def check_port_available(port: int, host: str = "0.0.0.0") -> bool:
     """Check if a TCP port is available for binding.
+
+    Attempts an actual bind on the port (both 0.0.0.0 and 127.0.0.1) to
+    reliably detect ports held by Docker or other services.  A simple
+    ``connect_ex`` probe misses ports that are *allocated* (e.g. by
+    ``docker-proxy``) but not yet *listening*.
 
     Args:
         port: Port number to check (1-65535).
-        host: Host address to check against.
+        host: Host address to bind against.
 
     Returns:
         True if the port is free, False if occupied.
     """
     if not 1 <= port <= 65535:
         return False
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.settimeout(1)
-            result = sock.connect_ex((host, port))
-            # connect_ex returns 0 if connection succeeded (port is in use)
-            return result != 0
-    except OSError:
-        # If we can't even create the socket, treat port as unavailable
-        return False
+
+    # Try binding on the requested host AND 127.0.0.1 — Docker binds on
+    # 0.0.0.0, so a port may appear free on 127.0.0.1 while Docker holds it.
+    hosts_to_check = {host, "0.0.0.0", "127.0.0.1"}
+    for bind_host in hosts_to_check:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                # Do NOT set SO_REUSEADDR — we want the bind to fail if
+                # anything already holds this port.
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+                sock.bind((bind_host, port))
+        except OSError:
+            return False
+    return True
 
 
-def find_free_port(preferred: int, host: str = "127.0.0.1", max_attempts: int = 100) -> int:
+def find_free_port(preferred: int, host: str = "0.0.0.0", max_attempts: int = 100) -> int:
     """Find a free port starting from the preferred port.
 
     Tries the preferred port first, then increments until a free port is found.
@@ -88,7 +98,7 @@ def find_free_port(preferred: int, host: str = "127.0.0.1", max_attempts: int = 
 def resolve_ports(
     ports: dict[str, int],
     strategy: str = "auto",
-    host: str = "127.0.0.1",
+    host: str = "0.0.0.0",
     services: Sequence[str] | None = None,
 ) -> tuple[dict[str, int], list[str]]:
     """Resolve port conflicts for a set of service ports.

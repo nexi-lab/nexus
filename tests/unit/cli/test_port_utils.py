@@ -35,7 +35,7 @@ class TestCheckPortAvailable:
         """A port with an active listener should be detected as occupied."""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(("127.0.0.1", 0))
+            s.bind(("0.0.0.0", 0))
             s.listen(1)
             _, port = s.getsockname()
             # Port is occupied — should return False
@@ -80,7 +80,7 @@ class TestFindFreePort:
         """If preferred port is occupied, return the next free one."""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(("127.0.0.1", 0))
+            s.bind(("0.0.0.0", 0))
             s.listen(1)
             _, occupied_port = s.getsockname()
             result = find_free_port(occupied_port)
@@ -92,7 +92,7 @@ class TestFindFreePort:
         # but 65536 would overflow. Use an occupied port + max_attempts=1.
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(("127.0.0.1", 0))
+            s.bind(("0.0.0.0", 0))
             s.listen(1)
             _, occupied_port = s.getsockname()
             # Only allow 1 attempt starting from the occupied port
@@ -110,7 +110,7 @@ class TestResolvePorts:
     def test_all_ports_free(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When all ports are free, return them unchanged."""
         monkeypatch.setattr(
-            "nexus.cli.port_utils.check_port_available", lambda port, host="127.0.0.1": True
+            "nexus.cli.port_utils.check_port_available", lambda port, host="0.0.0.0": True
         )
         ports = {"http": 2026, "postgres": 5432}
         resolved, messages = resolve_ports(ports, strategy="auto")
@@ -135,7 +135,7 @@ class TestResolvePorts:
     def test_fail_strategy_exits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Fail strategy should exit when a port is occupied."""
         monkeypatch.setattr(
-            "nexus.cli.port_utils.check_port_available", lambda port, host="127.0.0.1": False
+            "nexus.cli.port_utils.check_port_available", lambda port, host="0.0.0.0": False
         )
         with pytest.raises(SystemExit):
             resolve_ports({"http": 2026}, strategy="fail")

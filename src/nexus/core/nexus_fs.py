@@ -1193,6 +1193,90 @@ class NexusFS(  # type: ignore[misc]
         finally:
             self._vfs_lock_manager.release(handle)
 
+    # ── Distributed lock helpers (sync bridge for write(lock=True)) ──
+
+    def _acquire_lock_sync(
+        self,
+        path: str,
+        timeout: float,
+        context: OperationContext | None,
+    ) -> str | None:
+        """Acquire distributed lock synchronously (for use in sync write()).
+
+        This method bridges sync write() with async lock operations.
+        For async contexts, use `async with locked()` instead.
+        """
+        import asyncio
+
+        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
+            raise RuntimeError(
+                "write(lock=True) called but distributed lock manager not configured. "
+                "Ensure NexusFS is initialized with enable_distributed_locks=True."
+            )
+
+        from nexus.contracts.exceptions import LockTimeout
+
+        try:
+            asyncio.get_running_loop()
+            raise RuntimeError(
+                "write(lock=True) cannot be used from async context (event loop detected). "
+                "Use `async with nx.events_service.locked(path):` and `write(lock=False)` instead."
+            )
+        except RuntimeError as e:
+            if "event loop detected" in str(e):
+                raise
+
+        zone_id = (
+            context.zone_id
+            if context and hasattr(context, "zone_id") and context.zone_id
+            else ROOT_ZONE_ID
+        )
+
+        async def acquire_lock() -> str | None:
+            return await self._lock_manager.acquire(
+                zone_id=zone_id,
+                path=path,
+                timeout=timeout,
+            )
+
+        from nexus.lib.sync_bridge import run_sync
+
+        lock_id = run_sync(acquire_lock())
+
+        if lock_id is None:
+            raise LockTimeout(path=path, timeout=timeout)
+
+        return lock_id
+
+    def _release_lock_sync(
+        self,
+        lock_id: str,
+        path: str,
+        context: OperationContext | None,
+    ) -> None:
+        """Release distributed lock synchronously."""
+        if not lock_id:
+            return
+
+        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
+            return
+
+        zone_id = (
+            context.zone_id
+            if context and hasattr(context, "zone_id") and context.zone_id
+            else ROOT_ZONE_ID
+        )
+
+        async def release_lock() -> None:
+            await self._lock_manager.release(lock_id, zone_id, path)
+
+        from nexus.lib.sync_bridge import run_sync
+
+        try:
+            run_sync(release_lock())
+        except Exception as e:
+            logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
+
     @rpc_expose(description="Read file content")
     def sys_read(
         self,

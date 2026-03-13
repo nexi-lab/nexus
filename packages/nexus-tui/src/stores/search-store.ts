@@ -92,7 +92,7 @@ export interface RlmAnswer {
   readonly model: string | null;
 }
 
-export type SearchTab = "search" | "knowledge" | "memories" | "playbooks" | "ask";
+export type SearchTab = "search" | "knowledge" | "memories" | "playbooks" | "ask" | "columns";
 export type SearchMode = "keyword" | "semantic" | "hybrid";
 
 const SEARCH_MODE_ORDER: readonly SearchMode[] = ["keyword", "semantic", "hybrid"];

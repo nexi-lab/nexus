@@ -10,8 +10,12 @@ import { Breadcrumb } from "../../shared/components/breadcrumb.js";
 import { FileTree } from "./file-tree.js";
 import { FilePreview } from "./file-preview.js";
 import { FileMetadata } from "./file-metadata.js";
+import { FileAspects } from "./file-aspects.js";
+import { FileSchema } from "./file-schema.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useKnowledgeStore } from "../../stores/knowledge-store.js";
+import crypto from "node:crypto";
 
 export default function FileExplorerPanel(): React.ReactNode {
   const client = useApi();
@@ -32,6 +36,18 @@ export default function FileExplorerPanel(): React.ReactNode {
 
   // Get visible node count for bounds checking
   const visibleNodeCount = cachedFiles.length;
+
+  // Active metadata sub-tab
+  const [metadataTab, setMetadataTab] = React.useState<
+    "metadata" | "aspects" | "schema"
+  >("metadata");
+
+  // Aspect count badge for the selected file
+  const aspectsCache = useKnowledgeStore((s) => s.aspectsCache);
+  const selectedUrn = selectedItem?.path && selectedItem?.zoneId
+    ? `urn:nexus:file:${selectedItem.zoneId}:${crypto.createHash("sha256").update(selectedItem.path).digest("hex").slice(0, 32)}`
+    : null;
+  const aspectCount = selectedUrn ? (aspectsCache.get(selectedUrn)?.length ?? 0) : 0;
 
   useKeyboard({
     "j": () => setSelectedIndex(Math.min(selectedIndex + 1, visibleNodeCount - 1)),
@@ -61,6 +77,9 @@ export default function FileExplorerPanel(): React.ReactNode {
       }
     },
     "tab": () => setFocusPane(focusPane === "tree" ? "preview" : "tree"),
+    "m": () => setMetadataTab("metadata"),
+    "a": () => setMetadataTab("aspects"),
+    "s": () => setMetadataTab("schema"),
   });
 
   return (
@@ -82,9 +101,18 @@ export default function FileExplorerPanel(): React.ReactNode {
             <FilePreview />
           </box>
 
+          {/* Metadata tab bar with aspect count badge */}
+          <box height={1} width="100%">
+            <text>
+              {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "} ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}`}
+            </text>
+          </box>
+
           {/* Metadata sidebar (bottom 30%) */}
           <box flexGrow={3} borderStyle="single">
-            <FileMetadata item={selectedItem} />
+            {metadataTab === "metadata" && <FileMetadata item={selectedItem} />}
+            {metadataTab === "aspects" && <FileAspects item={selectedItem} />}
+            {metadataTab === "schema" && <FileSchema item={selectedItem} />}
           </box>
         </box>
       </box>
@@ -92,7 +120,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         <text>
-          {"j/k:navigate  l/Enter:expand  h:collapse  Tab:switch pane  /:search  q:quit"}
+          {"j/k:navigate  l/Enter:expand  h:collapse  Tab:pane  m/a/s:meta/aspects/schema  q:quit"}
         </text>
       </box>
     </box>

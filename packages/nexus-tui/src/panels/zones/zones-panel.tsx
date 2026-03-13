@@ -11,12 +11,14 @@ import { ZoneList } from "./zone-list.js";
 import { BrickList } from "./brick-list.js";
 import { BrickDetail } from "./brick-detail.js";
 import { DriftView } from "./drift-view.js";
+import { ReindexStatus } from "./reindex-status.js";
 
-const TAB_ORDER: readonly ZoneTab[] = ["zones", "bricks", "drift"];
+const TAB_ORDER: readonly ZoneTab[] = ["zones", "bricks", "drift", "reindex"];
 const TAB_LABELS: Readonly<Record<ZoneTab, string>> = {
   zones: "Zones",
   bricks: "Bricks",
   drift: "Drift",
+  reindex: "Reindex",
 };
 
 export default function ZonesPanel(): React.ReactNode {
@@ -173,6 +175,8 @@ export default function ZonesPanel(): React.ReactNode {
         {activeTab === "drift" && (
           <DriftView drift={driftReport} loading={driftLoading} />
         )}
+
+        {activeTab === "reindex" && <ReindexStatus />}
       </box>
 
       {/* Help bar */}

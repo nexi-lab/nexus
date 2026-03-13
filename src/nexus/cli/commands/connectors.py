@@ -178,6 +178,89 @@ def connector_info(
         handle_error(e)
 
 
+@connectors_group.command(name="capabilities")
+@click.argument("name", required=False, default=None)
+@add_output_options
+@add_backend_options
+def connectors_capabilities(
+    name: str | None,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Show connector capabilities.
+
+    Without arguments, shows capabilities for all connectors.
+    With a connector name, shows detailed capabilities for that connector.
+
+    Examples:
+        nexus connectors capabilities
+        nexus connectors capabilities gcs_connector
+    """
+    timing = CommandTiming()
+    try:
+        nx: Any = get_filesystem(remote_url, remote_api_key)
+        try:
+            with timing.phase("server"):
+                all_connectors = _list_connectors_remote(nx, None)
+        except AttributeError:
+            console.print("[red]Error:[/red] Server doesn't support list_connectors")
+            console.print("[yellow]Hint:[/yellow] Update server to latest Nexus version")
+            sys.exit(1)
+
+        if name:
+            match = [
+                c for c in all_connectors if c.get("name") == name or c.get("connector_id") == name
+            ]
+            if not match:
+                available = ", ".join(c["name"] for c in all_connectors)
+                console.print(f"[red]Error:[/red] Connector '{name}' not found")
+                console.print(f"[dim]Available: {available}[/dim]")
+                sys.exit(1)
+            connectors_to_show = match
+        else:
+            connectors_to_show = all_connectors
+
+        def _render(data: list[dict[str, Any]]) -> None:
+            from rich.table import Table
+
+            table = Table(
+                title="Connector Capabilities",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            table.add_column("Name", style="cyan")
+            table.add_column("Type", style="green")
+            table.add_column("Capabilities", style="yellow")
+
+            for c in data:
+                caps = c.get("capabilities", [])
+                if isinstance(caps, list):
+                    caps_str = ", ".join(str(cap) for cap in caps) if caps else "none"
+                else:
+                    caps_str = str(caps)
+                table.add_row(
+                    c.get("name", "?"),
+                    c.get("category", c.get("type", "?")),
+                    caps_str,
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Total: {len(data)} connectors[/dim]")
+
+        render_output(
+            data=connectors_to_show,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+
+    except SystemExit:
+        raise
+    except Exception as e:
+        handle_error(e)
+
+
 def register_commands(cli: click.Group) -> None:
     """Register connector commands to the main CLI group."""
     cli.add_command(connectors_group)

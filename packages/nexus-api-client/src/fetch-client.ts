@@ -18,7 +18,15 @@ import {
   ServerError,
   TimeoutError,
 } from "./errors.js";
-import type { ApiErrorResponse, NexusClientOptions, RequestOptions } from "./types.js";
+import type {
+  ApiErrorResponse,
+  AspectEnvelope,
+  CatalogSchemaResponse,
+  ColumnSearchResponse,
+  NexusClientOptions,
+  ReplayResponse,
+  RequestOptions,
+} from "./types.js";
 import { camelToSnakeKeys, snakeToCamelKeys } from "./case-transform.js";
 
 const DEFAULT_BASE_URL = "http://localhost:2026";
@@ -347,6 +355,74 @@ export class FetchClient {
     const exponentialDelay = INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1);
     const cappedDelay = Math.min(exponentialDelay, MAX_RETRY_DELAY);
     return Math.random() * cappedDelay;
+  }
+
+  // ===========================================================================
+  // Knowledge platform helpers (Issue #2930)
+  // ===========================================================================
+
+  /**
+   * List all aspect names attached to an entity.
+   */
+  async getAspects(urn: string): Promise<string[]> {
+    const result = await this.get<{ aspects: string[] }>(
+      `/api/v2/aspects/${encodeURIComponent(urn)}`,
+    );
+    return result.aspects ?? [];
+  }
+
+  /**
+   * Get a specific aspect for an entity. Returns null if not found.
+   */
+  async getAspect(urn: string, name: string): Promise<AspectEnvelope | null> {
+    try {
+      return await this.get<AspectEnvelope>(
+        `/api/v2/aspects/${encodeURIComponent(urn)}/${encodeURIComponent(name)}`,
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get extracted schema for a data file. Returns null if no schema.
+   */
+  async getCatalogSchema(
+    path: string,
+  ): Promise<CatalogSchemaResponse["schema"]> {
+    const encodedPath = encodeURIComponent(path.replace(/^\//, ""));
+    const result = await this.get<CatalogSchemaResponse>(
+      `/api/v2/catalog/schema/${encodedPath}`,
+    );
+    return result.schema ?? null;
+  }
+
+  /**
+   * Search for data files containing a specific column name.
+   */
+  async searchByColumn(
+    column: string,
+  ): Promise<ColumnSearchResponse["results"]> {
+    const result = await this.get<ColumnSearchResponse>(
+      `/api/v2/catalog/search?column=${encodeURIComponent(column)}`,
+    );
+    return result.results ?? [];
+  }
+
+  /**
+   * Replay metadata change log records.
+   */
+  async replayChanges(opts?: {
+    fromSequence?: number;
+    entityUrn?: string;
+    limit?: number;
+  }): Promise<ReplayResponse> {
+    const params = new URLSearchParams();
+    if (opts?.fromSequence !== undefined) params.set("from_sequence", String(opts.fromSequence));
+    if (opts?.entityUrn) params.set("entity_urn", opts.entityUrn);
+    if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return this.get<ReplayResponse>(`/api/v2/ops/replay${qs ? `?${qs}` : ""}`);
   }
 }
 

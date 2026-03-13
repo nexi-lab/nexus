@@ -257,6 +257,30 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Connectors routes: %s", e)
 
+    # ---- Aspects router (Issue #2930) ----
+    try:
+        from nexus.server.api.v2.routers.aspects import router as aspects_router
+
+        registry.add(RouterEntry(router=aspects_router, name="aspects", endpoint_count=5))
+    except ImportError as e:
+        logger.warning("Failed to import Aspects routes: %s", e)
+
+    # ---- Catalog router (Issue #2930) ----
+    try:
+        from nexus.server.api.v2.routers.catalog import router as catalog_router
+
+        registry.add(RouterEntry(router=catalog_router, name="catalog", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Catalog routes: %s", e)
+
+    # ---- Replay router (Issue #2930) ----
+    try:
+        from nexus.server.api.v2.routers.replay import router as replay_router
+
+        registry.add(RouterEntry(router=replay_router, name="replay", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Replay routes: %s", e)
+
     # ---- Batch operations router (Issue #1242) ----
     try:
         from nexus.server.api.v2.routers.batch import create_batch_router

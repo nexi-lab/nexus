@@ -257,6 +257,70 @@ def ops_log(
         handle_error(e)
 
 
+@ops_group.command(name="replay")
+@click.option("--limit", "-n", type=int, default=10, help="Number of records to show")
+@click.option("--entity-urn", type=str, default=None, help="Filter by entity URN")
+@click.option("--from-sequence", type=int, default=0, help="Start from sequence number")
+@add_backend_options
+@click.pass_context
+def ops_replay(
+    ctx: click.Context,
+    limit: int,
+    entity_urn: str | None,
+    from_sequence: int,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Replay MCL records.
+
+    Shows metadata change log entries from the operation log, ordered
+    by sequence number. Useful for debugging and auditing.
+
+    Examples:
+        nexus ops replay --limit 5
+        nexus ops replay --entity-urn urn:nexus:file:default:abc123
+    """
+    from nexus.cli.api_client import get_api_client_from_options
+
+    profile_name = (ctx.obj or {}).get("profile")
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
+
+    params: dict[str, str | int] = {
+        "from_sequence": from_sequence,
+        "limit": limit,
+    }
+    if entity_urn:
+        params["entity_urn"] = entity_urn
+
+    try:
+        result = client.get("/api/v2/ops/replay", params=params)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from e
+
+    records = result.get("records", [])
+    if not records:
+        console.print("[yellow]No MCL records found[/yellow]")
+        return
+
+    console.print(f"[bold]MCL Records (from seq {from_sequence}):[/bold]")
+    console.print()
+
+    for r in records:
+        seq = r.get("sequence_number", "?")
+        urn = r.get("entity_urn", "?")
+        aspect = r.get("aspect_name", "?")
+        change = r.get("change_type", "?")
+        ts = r.get("timestamp", "?")
+        console.print(f"  #{seq:>6}  {change:>12}  {aspect:20s}  {urn}")
+        console.print(f"          {ts}")
+        console.print()
+
+    if result.get("has_more"):
+        next_cursor = result.get("next_cursor", "?")
+        console.print(f"[dim]More records available. Use --from-sequence {next_cursor}[/dim]")
+
+
 @click.command(name="undo")
 @click.option("--agent", "-a", help="Filter by agent ID (undo last operation by this agent)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")

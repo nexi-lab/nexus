@@ -324,18 +324,21 @@ class AspectService:
     def find_entities_with_aspect(
         self,
         aspect_name: str,
+        *,
+        limit: int = 1000,
     ) -> dict[str, dict[str, Any]]:
         """Find all entities that have a given aspect (current version).
 
         Scans entity_aspects WHERE aspect_name=? AND version=0 AND deleted_at IS NULL.
-        Returns dict mapping entity_urn → payload.
+        Returns dict mapping entity_urn → payload. Capped at `limit` entities
+        to prevent unbounded memory usage (default 1000).
         """
         stmt = select(EntityAspectModel).where(
             EntityAspectModel.aspect_name == aspect_name,
             EntityAspectModel.version == 0,
             EntityAspectModel.deleted_at.is_(None),
         )
-        rows = self._session.execute(stmt).scalars().all()
+        rows = self._session.execute(stmt.limit(limit)).scalars().all()
         result: dict[str, dict[str, Any]] = {}
         for row in rows:
             result[row.entity_urn] = json.loads(row.payload)

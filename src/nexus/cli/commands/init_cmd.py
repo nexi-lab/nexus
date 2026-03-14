@@ -10,9 +10,11 @@ Writes a project-local ``nexus.yaml`` with all defaults materialized.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,38 +24,63 @@ import yaml
 from nexus.cli.port_utils import DEFAULT_PORTS
 from nexus.cli.utils import console
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
-# Preset definitions
+# Default image registry / repo
+# ---------------------------------------------------------------------------
+
+DEFAULT_IMAGE_REGISTRY = "ghcr.io/nexi-lab/nexus"
+
+# ---------------------------------------------------------------------------
+# Preset definitions (frozen dataclass — single source of truth per preset)
 # ---------------------------------------------------------------------------
 
 VALID_PRESETS = ("local", "shared", "demo")
+VALID_CHANNELS = ("stable", "edge")
+VALID_ACCELERATORS = ("cpu", "cuda")
 
-# Services activated per preset (maps to Docker Compose profiles)
-PRESET_SERVICES: dict[str, list[str]] = {
-    "local": [],
-    "shared": ["nexus", "postgres", "dragonfly", "zoekt"],
-    "demo": ["nexus", "postgres", "dragonfly", "zoekt"],
+
+@dataclass(frozen=True)
+class PresetConfig:
+    """Immutable preset configuration — one entry per preset."""
+
+    services: tuple[str, ...]
+    auth: str
+    compose_profiles: tuple[str, ...]
+    port_keys: tuple[str, ...]
+    image_channel: str = "stable"
+    image_accelerator: str = "cpu"
+
+
+PRESETS: dict[str, PresetConfig] = {
+    "local": PresetConfig(
+        services=(),
+        auth="none",
+        compose_profiles=(),
+        port_keys=(),
+    ),
+    "shared": PresetConfig(
+        services=("nexus", "postgres", "dragonfly", "zoekt"),
+        auth="static",
+        compose_profiles=("core", "cache", "search"),
+        port_keys=("http", "grpc", "postgres", "dragonfly", "zoekt"),
+    ),
+    "demo": PresetConfig(
+        services=("nexus", "postgres", "dragonfly", "zoekt"),
+        auth="database",
+        compose_profiles=("core", "cache", "search"),
+        port_keys=("http", "grpc", "postgres", "dragonfly", "zoekt"),
+    ),
 }
 
-# Default auth mode per preset
-PRESET_AUTH: dict[str, str] = {
-    "local": "none",
-    "shared": "static",
-    "demo": "database",
-}
-
-# Compose profiles activated per preset
-PRESET_COMPOSE_PROFILES: dict[str, list[str]] = {
-    "local": [],
-    "shared": ["core", "cache", "search"],
-    "demo": ["core", "cache", "search"],
-}
-
-# Port keys relevant to each preset
-PRESET_PORT_KEYS: dict[str, list[str]] = {
-    "local": [],
-    "shared": ["http", "grpc", "postgres", "dragonfly", "zoekt"],
-    "demo": ["http", "grpc", "postgres", "dragonfly", "zoekt"],
+# Addon-to-compose-profile mapping (single source of truth — Issue #2961)
+ADDON_PROFILE_MAP: dict[str, str] = {
+    "nats": "events",
+    "mcp": "mcp",
+    "frontend": "frontend",
+    "langgraph": "langgraph",
+    "observability": "observability",
 }
 
 
@@ -79,6 +106,89 @@ def _bundled_compose_file() -> Path | None:
     return None
 
 
+def _query_latest_stable_tag() -> str | None:
+    """Query GHCR for the latest stable (semver) tag.
+
+    Returns the tag string (e.g. '0.9.2') or None if the query fails.
+    This is a best-effort network call — callers must handle None.
+    """
+    import urllib.request
+
+    # GHCR token endpoint (public, no auth needed for public images)
+    token_url = "https://ghcr.io/token?scope=repository:nexi-lab/nexus:pull"
+    tags_url = "https://ghcr.io/v2/nexi-lab/nexus/tags/list"
+
+    try:
+        # Get anonymous token
+        with urllib.request.urlopen(token_url, timeout=5) as resp:
+            import json
+
+            token_data = json.loads(resp.read())
+            token = token_data.get("token", "")
+
+        # List tags
+        req = urllib.request.Request(tags_url)
+        req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            tags_data = json.loads(resp.read())
+            tags: list[str] = tags_data.get("tags", [])
+
+        # Filter to semver-like tags (X.Y.Z), exclude edge/latest/sha-*
+        import re
+
+        semver_re = re.compile(r"^\d+\.\d+\.\d+$")
+        semver_tags = [t for t in tags if semver_re.match(t)]
+        if not semver_tags:
+            return None
+
+        # Sort by semver and return latest
+        semver_tags.sort(key=lambda t: tuple(int(x) for x in t.split(".")))
+        return semver_tags[-1]
+    except Exception:
+        return None
+
+
+def _resolve_image_ref(
+    channel: str,
+    accelerator: str,
+    image_tag: str | None = None,
+    image_digest: str | None = None,
+) -> str:
+    """Resolve a concrete image reference from channel/accelerator/overrides.
+
+    Priority:
+      1. Explicit digest → ghcr.io/nexi-lab/nexus@sha256:...
+      2. Explicit tag → ghcr.io/nexi-lab/nexus:<tag>
+      3. Channel resolution:
+         - ``stable``: query GHCR for latest semver tag, fall back to CLI version
+         - ``edge``: use ``edge`` mutable tag
+    """
+    registry = DEFAULT_IMAGE_REGISTRY
+
+    if image_digest:
+        return f"{registry}@{image_digest}"
+
+    if image_tag:
+        tag = image_tag
+    elif channel == "edge":
+        tag = "edge"
+    else:
+        # Stable channel: try remote resolution first, fall back to CLI version
+        remote_tag = _query_latest_stable_tag()
+        if remote_tag:
+            tag = remote_tag
+        else:
+            import nexus as _nexus_mod
+
+            tag = getattr(_nexus_mod, "__version__", "latest")
+            logger.debug("GHCR query failed, falling back to CLI version: %s", tag)
+
+    if accelerator == "cuda" and not image_digest:
+        tag = f"{tag}-cuda"
+
+    return f"{registry}:{tag}"
+
+
 def _build_config(
     preset: str,
     data_dir: str,
@@ -86,6 +196,11 @@ def _build_config(
     ports: dict[str, int],
     addons: tuple[str, ...],
     compose_file_override: str | None = None,
+    *,
+    channel: str = "stable",
+    accelerator: str = "cpu",
+    image_tag: str | None = None,
+    image_digest: str | None = None,
 ) -> dict[str, Any]:
     """Build the materialized nexus.yaml config dict.
 
@@ -93,18 +208,19 @@ def _build_config(
     **absolute** paths so that ``nexus up`` works regardless of the
     working directory at runtime.
     """
+    preset_cfg = PRESETS[preset]
     abs_data_dir = str(Path(data_dir).resolve())
     config: dict[str, Any] = {
         "preset": preset,
         "data_dir": abs_data_dir,
-        "auth": PRESET_AUTH[preset],
+        "auth": preset_cfg.auth,
         "tls": tls,
     }
 
     if preset != "local":
-        config["services"] = list(PRESET_SERVICES[preset])
-        config["ports"] = {k: v for k, v in ports.items() if k in PRESET_PORT_KEYS[preset]}
-        config["compose_profiles"] = list(PRESET_COMPOSE_PROFILES[preset])
+        config["services"] = list(preset_cfg.services)
+        config["ports"] = {k: v for k, v in ports.items() if k in preset_cfg.port_keys}
+        config["compose_profiles"] = list(preset_cfg.compose_profiles)
 
         # Generate a random admin API key so the CLI can authenticate
         # against the stack without relying on docker-entrypoint.sh
@@ -124,12 +240,26 @@ def _build_config(
                 # Mark as needing the bundled copy (resolved later in init())
                 config["compose_file"] = ""
 
-        # Pin the image tag to the installed CLI version so portable
-        # stacks pull an image that matches the CLI.  Repo-checkout
-        # stacks use build: and ignore this value.
-        import nexus as _nexus_mod
+        # Resolve and pin the full image reference (Issue #2961)
+        effective_channel = channel or preset_cfg.image_channel
+        effective_accel = accelerator or preset_cfg.image_accelerator
+        config["image_accelerator"] = effective_accel
+        config["image_ref"] = _resolve_image_ref(
+            effective_channel,
+            effective_accel,
+            image_tag=image_tag,
+            image_digest=image_digest,
+        )
 
-        config["image_tag"] = getattr(_nexus_mod, "__version__", "latest")
+        # Track whether the ref is channel-following or explicitly pinned.
+        # When pinned (--image-tag or --image-digest), nexus upgrade should
+        # warn instead of silently re-resolving the channel.
+        if image_digest:
+            config["image_pin"] = "digest"
+        elif image_tag:
+            config["image_pin"] = "tag"
+        else:
+            config["image_channel"] = effective_channel
 
     if addons:
         config.setdefault("addons", []).extend(addons)
@@ -281,6 +411,10 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     console.print(f"  Config:     {config_path}")
     console.print(f"  Data dir:   {data_dir}")
     console.print(f"  Services:   {services}")
+    if config.get("image_ref"):
+        console.print(f"  Image:      {config['image_ref']}")
+    if config.get("image_channel"):
+        console.print(f"  Channel:    {config['image_channel']}")
     if config.get("tls"):
         console.print("  TLS:        enabled")
         console.print(f"  TLS dir:    {config.get('tls_dir', '')}")
@@ -345,6 +479,30 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     default=False,
     help="Overwrite existing nexus.yaml without prompting.",
 )
+@click.option(
+    "--channel",
+    type=click.Choice(VALID_CHANNELS),
+    default="stable",
+    show_default=True,
+    help="Release channel for the prebuilt image.",
+)
+@click.option(
+    "--accelerator",
+    type=click.Choice(VALID_ACCELERATORS),
+    default="cpu",
+    show_default=True,
+    help="Hardware accelerator variant: cpu (default) or cuda.",
+)
+@click.option(
+    "--image-tag",
+    default=None,
+    help="Explicit image tag override (e.g. 0.9.2, pr-123). Overrides channel resolution.",
+)
+@click.option(
+    "--image-digest",
+    default=None,
+    help="Explicit image digest (sha256:...). Overrides tag and channel.",
+)
 def init(
     preset: str,
     data_dir: str,
@@ -353,6 +511,10 @@ def init(
     config_path: str,
     compose_file: str | None,
     force: bool,
+    channel: str,
+    accelerator: str,
+    image_tag: str | None,
+    image_digest: str | None,
 ) -> None:
     """Initialize a new Nexus project with a preset.
 
@@ -360,11 +522,14 @@ def init(
     the next command to run.
 
     Examples:
-        nexus init                         # local embedded (default)
-        nexus init --preset shared         # one shared node
-        nexus init --preset shared --tls   # secure shared node
-        nexus init --preset demo           # demo-ready with seed settings
+        nexus init                                  # local embedded (default)
+        nexus init --preset shared                  # one shared node
+        nexus init --preset shared --tls            # secure shared node
+        nexus init --preset demo                    # demo-ready with seed settings
         nexus init --preset shared --with nats --with mcp
+        nexus init --preset shared --channel edge   # pre-release image
+        nexus init --preset shared --accelerator cuda
+        nexus init --preset shared --image-tag 0.9.2
     """
     cfg_path = Path(config_path)
     d_dir = Path(data_dir)
@@ -380,7 +545,18 @@ def init(
     ports = dict(DEFAULT_PORTS)
 
     # Build and write config
-    config = _build_config(preset, str(d_dir), tls, ports, addons, compose_file)
+    config = _build_config(
+        preset,
+        str(d_dir),
+        tls,
+        ports,
+        addons,
+        compose_file,
+        channel=channel,
+        accelerator=accelerator,
+        image_tag=image_tag,
+        image_digest=image_digest,
+    )
 
     # Resolve compose file for non-local presets:
     # 1) Explicit --compose-file passed → must exist, error if not
@@ -427,9 +603,12 @@ def init(
             nx.sys_mkdir("/workspace", exist_ok=True)
             nx.sys_mkdir("/shared", exist_ok=True)
             nx.close()
+        except ImportError:
+            logger.debug("nexus package not available for local workspace init")
+        except FileExistsError:
+            pass  # Directories already created — expected on re-init
         except Exception:
-            # Non-fatal — directories were already created
-            pass
+            logger.warning("Failed to initialize local workspace", exc_info=True)
         _print_local_summary(cfg_path, d_dir)
     else:
         _print_shared_summary(config, cfg_path, d_dir)

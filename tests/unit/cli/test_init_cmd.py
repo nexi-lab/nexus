@@ -11,13 +11,14 @@ import yaml
 from click.testing import CliRunner
 
 from nexus.cli.commands.init_cmd import (
-    PRESET_AUTH,
-    PRESET_COMPOSE_PROFILES,
-    PRESET_SERVICES,
+    ADDON_PROFILE_MAP,
+    PRESETS,
     VALID_PRESETS,
+    PresetConfig,
     _build_config,
     _bundled_compose_file,
     _find_compose_file,
+    _resolve_image_ref,
     _scaffold_tls,
     init,
 )
@@ -40,6 +41,96 @@ def _compose_file(tmp_path: Path) -> Path:
     cf = tmp_path / "nexus-stack.yml"
     cf.write_text("services: {}\n")
     return cf
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — PresetConfig (Issue #2961, Issue 6)
+# ---------------------------------------------------------------------------
+
+
+class TestPresetConfig:
+    def test_frozen_dataclass(self) -> None:
+        cfg = PresetConfig(
+            services=("nexus",),
+            auth="static",
+            compose_profiles=("core",),
+            port_keys=("http",),
+        )
+        with pytest.raises(AttributeError):
+            cfg.auth = "none"
+
+    def test_all_presets_defined(self) -> None:
+        for preset in VALID_PRESETS:
+            assert preset in PRESETS
+
+    def test_local_preset_has_no_services(self) -> None:
+        assert PRESETS["local"].services == ()
+        assert PRESETS["local"].compose_profiles == ()
+        assert PRESETS["local"].port_keys == ()
+
+    def test_shared_and_demo_have_same_services(self) -> None:
+        assert PRESETS["shared"].services == PRESETS["demo"].services
+
+    def test_shared_and_demo_differ_in_auth(self) -> None:
+        assert PRESETS["shared"].auth == "static"
+        assert PRESETS["demo"].auth == "database"
+
+    def test_default_channel_and_accelerator(self) -> None:
+        for preset in VALID_PRESETS:
+            assert PRESETS[preset].image_channel == "stable"
+            assert PRESETS[preset].image_accelerator == "cpu"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — ADDON_PROFILE_MAP (Issue #2961, Issue 5)
+# ---------------------------------------------------------------------------
+
+
+class TestAddonProfileMap:
+    def test_all_addons_mapped(self) -> None:
+        expected = {"nats", "mcp", "frontend", "langgraph", "observability"}
+        assert set(ADDON_PROFILE_MAP.keys()) == expected
+
+    def test_nats_maps_to_events(self) -> None:
+        assert ADDON_PROFILE_MAP["nats"] == "events"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _resolve_image_ref (Issue #2961, Issue 1)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveImageRef:
+    def test_stable_channel_pins_to_version(self) -> None:
+        ref = _resolve_image_ref("stable", "cpu")
+        assert ref.startswith("ghcr.io/nexi-lab/nexus:")
+        assert ref != "ghcr.io/nexi-lab/nexus:latest"  # Should use __version__
+
+    def test_edge_channel_uses_edge_tag(self) -> None:
+        ref = _resolve_image_ref("edge", "cpu")
+        assert ref == "ghcr.io/nexi-lab/nexus:edge"
+
+    def test_cuda_accelerator_appends_suffix(self) -> None:
+        ref = _resolve_image_ref("edge", "cuda")
+        assert ref == "ghcr.io/nexi-lab/nexus:edge-cuda"
+
+    def test_explicit_tag_overrides_channel(self) -> None:
+        ref = _resolve_image_ref("stable", "cpu", image_tag="0.9.2")
+        assert ref == "ghcr.io/nexi-lab/nexus:0.9.2"
+
+    def test_explicit_tag_with_cuda(self) -> None:
+        ref = _resolve_image_ref("stable", "cuda", image_tag="0.9.2")
+        assert ref == "ghcr.io/nexi-lab/nexus:0.9.2-cuda"
+
+    def test_explicit_digest_overrides_everything(self) -> None:
+        digest = "sha256:abcdef1234567890"
+        ref = _resolve_image_ref("stable", "cuda", image_digest=digest)
+        assert ref == f"ghcr.io/nexi-lab/nexus@{digest}"
+
+    def test_explicit_digest_ignores_accelerator(self) -> None:
+        digest = "sha256:abcdef1234567890"
+        ref = _resolve_image_ref("stable", "cuda", image_digest=digest)
+        assert "-cuda" not in ref
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +181,14 @@ class TestBundledComposeFile:
         assert "services:" in content
         assert "postgres:" in content
 
+    def test_bundled_file_uses_image_ref(self) -> None:
+        """The bundled compose file should use NEXUS_IMAGE_REF, not NEXUS_IMAGE_TAG."""
+        bundled = _bundled_compose_file()
+        assert bundled is not None
+        content = bundled.read_text()
+        assert "NEXUS_IMAGE_REF" in content
+        assert "NEXUS_IMAGE_TAG" not in content
+
 
 # ---------------------------------------------------------------------------
 # Unit tests — _build_config (pure logic, no I/O)
@@ -107,6 +206,8 @@ class TestBuildConfig:
         assert "services" not in cfg
         assert "ports" not in cfg
         assert "compose_profiles" not in cfg
+        assert "image_ref" not in cfg
+        assert "image_channel" not in cfg
 
     def test_shared_preset(self) -> None:
         from nexus.cli.port_utils import DEFAULT_PORTS
@@ -122,6 +223,13 @@ class TestBuildConfig:
         # data_dir is absolute
         assert Path(cfg["data_dir"]).is_absolute()
 
+    def test_shared_preset_has_image_ref(self) -> None:
+        cfg = _build_config("shared", "./data", False, {}, ())
+        assert "image_ref" in cfg
+        assert cfg["image_ref"].startswith("ghcr.io/nexi-lab/nexus:")
+        assert cfg["image_channel"] == "stable"
+        assert cfg["image_accelerator"] == "cpu"
+
     def test_demo_preset(self) -> None:
         from nexus.cli.port_utils import DEFAULT_PORTS
 
@@ -130,6 +238,25 @@ class TestBuildConfig:
         assert cfg["auth"] == "database"
         assert "nexus" in cfg["services"]
         assert "postgres" in cfg["services"]
+
+    def test_channel_override(self) -> None:
+        cfg = _build_config("shared", "./data", False, {}, (), channel="edge")
+        assert cfg["image_channel"] == "edge"
+        assert "edge" in cfg["image_ref"]
+
+    def test_accelerator_override(self) -> None:
+        cfg = _build_config("shared", "./data", False, {}, (), accelerator="cuda")
+        assert cfg["image_accelerator"] == "cuda"
+        assert "-cuda" in cfg["image_ref"]
+
+    def test_explicit_image_tag(self) -> None:
+        cfg = _build_config("shared", "./data", False, {}, (), image_tag="0.9.2")
+        assert cfg["image_ref"] == "ghcr.io/nexi-lab/nexus:0.9.2"
+
+    def test_explicit_image_digest(self) -> None:
+        digest = "sha256:abc123"
+        cfg = _build_config("shared", "./data", False, {}, (), image_digest=digest)
+        assert cfg["image_ref"] == f"ghcr.io/nexi-lab/nexus@{digest}"
 
     def test_tls_flag(self) -> None:
         cfg = _build_config("shared", "./data", True, {}, ())
@@ -153,6 +280,12 @@ class TestBuildConfig:
     def test_no_addons_key_when_empty(self) -> None:
         cfg = _build_config("shared", "./data", False, {}, ())
         assert "addons" not in cfg
+
+    def test_no_image_tag_field(self) -> None:
+        """New configs should have image_ref, not image_tag."""
+        cfg = _build_config("shared", "./data", False, {}, ())
+        assert "image_tag" not in cfg
+        assert "image_ref" in cfg
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +338,91 @@ class TestInitCliCommand:
         assert cfg["preset"] == "shared"
         assert cfg["auth"] == "static"
         assert "postgres" in cfg["services"]
+        assert "image_ref" in cfg
+        assert cfg["image_channel"] == "stable"
+
+    def test_shared_preset_with_channel(
+        self, runner: CliRunner, tmp_project: Path, _compose_file: Path
+    ) -> None:
+        config_path = tmp_project / "nexus.yaml"
+        data_dir = tmp_project / "nexus-data"
+        result = runner.invoke(
+            init,
+            [
+                "--preset",
+                "shared",
+                "--channel",
+                "edge",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(data_dir),
+                "--compose-file",
+                str(_compose_file),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["image_channel"] == "edge"
+        assert "edge" in cfg["image_ref"]
+
+    def test_shared_preset_with_accelerator(
+        self, runner: CliRunner, tmp_project: Path, _compose_file: Path
+    ) -> None:
+        config_path = tmp_project / "nexus.yaml"
+        data_dir = tmp_project / "nexus-data"
+        result = runner.invoke(
+            init,
+            [
+                "--preset",
+                "shared",
+                "--accelerator",
+                "cuda",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(data_dir),
+                "--compose-file",
+                str(_compose_file),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["image_accelerator"] == "cuda"
+        assert "-cuda" in cfg["image_ref"]
+
+    def test_shared_preset_with_explicit_tag(
+        self, runner: CliRunner, tmp_project: Path, _compose_file: Path
+    ) -> None:
+        config_path = tmp_project / "nexus.yaml"
+        data_dir = tmp_project / "nexus-data"
+        result = runner.invoke(
+            init,
+            [
+                "--preset",
+                "shared",
+                "--image-tag",
+                "0.9.2",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(data_dir),
+                "--compose-file",
+                str(_compose_file),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["image_ref"] == "ghcr.io/nexi-lab/nexus:0.9.2"
 
     def test_demo_preset(self, runner: CliRunner, tmp_project: Path, _compose_file: Path) -> None:
         config_path = tmp_project / "nexus.yaml"
@@ -386,9 +604,31 @@ class TestInitCliCommand:
         assert data_dir.exists()
         assert (data_dir / "cas").exists()
 
+    def test_output_shows_image_info(
+        self, runner: CliRunner, tmp_project: Path, _compose_file: Path
+    ) -> None:
+        config_path = tmp_project / "nexus.yaml"
+        result = runner.invoke(
+            init,
+            [
+                "--preset",
+                "shared",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(tmp_project / "d"),
+                "--compose-file",
+                str(_compose_file),
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+        assert "Image:" in result.output
+        assert "Channel:" in result.output
+
 
 # ---------------------------------------------------------------------------
-# Constants tests
+# TLS scaffolding tests
 # ---------------------------------------------------------------------------
 
 
@@ -428,20 +668,3 @@ class TestTlsScaffolding:
         assert tls_dir.is_dir()
         # Certs should NOT exist since openssl is "missing"
         assert not (tls_dir / "server.crt").exists()
-
-
-class TestPresetConstants:
-    def test_valid_presets(self) -> None:
-        assert VALID_PRESETS == ("local", "shared", "demo")
-
-    def test_all_presets_have_services(self) -> None:
-        for preset in VALID_PRESETS:
-            assert preset in PRESET_SERVICES
-
-    def test_all_presets_have_auth(self) -> None:
-        for preset in VALID_PRESETS:
-            assert preset in PRESET_AUTH
-
-    def test_all_presets_have_compose_profiles(self) -> None:
-        for preset in VALID_PRESETS:
-            assert preset in PRESET_COMPOSE_PROFILES

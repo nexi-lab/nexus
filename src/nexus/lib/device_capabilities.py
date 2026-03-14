@@ -71,6 +71,7 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     "discovery": BrickRequirement(min_memory_mb=64),
     "mcp": BrickRequirement(min_memory_mb=64),
     "memory": BrickRequirement(min_memory_mb=128),
+    "skills": BrickRequirement(min_memory_mb=128),
     "federation": BrickRequirement(min_memory_mb=256, requires_network=True),
     # Infrastructure bricks
     "cache": BrickRequirement(min_memory_mb=64),

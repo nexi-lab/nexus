@@ -1,28 +1,37 @@
 # Nexus Development Environment - Docker Compose
-# Complete stack: PostgreSQL + Nexus + LangGraph + MCP + Frontend
+# Complete stack: PostgreSQL + Nexus + optional infra (Dragonfly, NATS, Zoekt)
 #
-# Usage:
+# Usage — toggle infra with profiles:
+#   docker compose up                         # Core: nexus + postgres
+#   docker compose --profile cache up         # + Dragonfly (embedding cache, 90% fewer API calls)
+#   docker compose --profile search up        # + Zoekt (sub-50ms code search)
+#   docker compose --profile events up        # + NATS JetStream (durable event streaming)
+#   docker compose --profile full up          # Everything
+#
+# Or via the helper script:
 #   ./scripts/docker-demo.sh                    # Start with local environment
 #   ./scripts/docker-demo.sh --env=production   # Start with production environment
 #
-# Or directly with docker compose:
-#   docker compose -f docker-compose.demo.yml up          # Start all services
-#   docker compose -f docker-compose.demo.yml up -d       # Start in background
-#   docker compose -f docker-compose.demo.yml down        # Stop all services
-#   docker compose -f docker-compose.demo.yml logs -f     # View logs
+# Direct compose commands:
+#   docker compose -f docker-compose.demo.yml --profile full up -d   # All services, background
+#   docker compose -f docker-compose.demo.yml down                   # Stop all
+#   docker compose -f docker-compose.demo.yml logs -f                # View logs
 #
 # Environment Files (loaded by docker-demo.sh):
 #   Local mode:      .env (or .env.example as fallback)
 #   Production mode: .env.production + .env.production.secrets
 #
-# Services:
+# Services (always on):
 #   - postgres:    PostgreSQL database (port 5432)
 #   - nexus:       Nexus RPC server (port 2026)
 #   - mcp-server:  Nexus MCP server (port 8081)
 #   - langgraph:   LangGraph agent server (port 2024)
 #   - frontend:    React web UI (port 5173)
-
-version: '3.8'
+#
+# Optional services (via profiles):
+#   - dragonfly:   Redis-compatible cache (--profile cache|full)
+#   - nats:        JetStream event bus (--profile events|full)
+#   - zoekt:       Code search engine (--profile search|full)
 
 services:
   # ============================================
@@ -97,8 +106,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      dragonfly:
-        condition: service_healthy
+      # Dragonfly is optional — nexus degrades gracefully to in-memory cache.
+      # Start with --profile cache to enable Dragonfly.
     environment:
       # Server configuration
       NEXUS_HOST: 0.0.0.0
@@ -172,7 +181,8 @@ services:
       # Set to 'false' for stricter security in production
       NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
 
-      # Configuration file path (defaults to config.demo.yaml if not specified)
+      # Configuration file path — explicitly set for demo stack.
+      # The release image defaults to no config file (env vars + profile).
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}
 
       # Zoekt code search (optional, requires --profile zoekt)
@@ -386,7 +396,9 @@ services:
     container_name: nexus-zoekt
     restart: unless-stopped
     profiles:
-      - zoekt  # Only starts with: docker compose --profile zoekt up
+      - search  # docker compose --profile search up
+      - zoekt   # legacy alias
+      - full    # docker compose --profile full up
     environment:
       # Index configuration
       ZOEKT_INDEX_DIR: /index
@@ -421,7 +433,7 @@ services:
     image: sourcegraph/zoekt-webserver:latest
     container_name: nexus-zoekt-indexer
     profiles:
-      - zoekt-index  # Only runs with: docker compose --profile zoekt-index up
+      - zoekt-index  # docker compose --profile zoekt-index run zoekt-indexer
     volumes:
       # Content directories (need write for temp files)
       - ../nexus-data:/data
@@ -449,6 +461,9 @@ services:
     image: nats:2.10-alpine
     container_name: nexus-nats
     restart: unless-stopped
+    profiles:
+      - events  # docker compose --profile events up
+      - full    # docker compose --profile full up
     command: ["--jetstream", "--store_dir=/data", "-m", "8222"]
     ports:
       - "${NATS_PORT:-4222}:4222"
@@ -480,6 +495,9 @@ services:
     image: docker.dragonflydb.io/dragonflydb/dragonfly
     container_name: nexus-dragonfly
     restart: unless-stopped
+    profiles:
+      - cache   # docker compose --profile cache up
+      - full    # docker compose --profile full up
     # Dragonfly optimizations:
     # --cache_mode=true: Smart eviction for cache workloads
     # --maxmemory=512mb: Memory limit for cache

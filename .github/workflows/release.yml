@@ -1,5 +1,9 @@
 name: Release
 
+# PyPI release pipeline. Triggered on v* tags.
+# Docker images are published by docker-publish.yml (also triggered on v* tags).
+# Both workflows must succeed for a release to be considered complete (Issue #2946).
+
 on:
   push:
     tags:

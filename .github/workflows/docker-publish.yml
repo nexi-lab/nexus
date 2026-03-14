@@ -1,5 +1,9 @@
 name: Publish Docker Image
 
+# Builds, smoke-tests, and publishes Docker images to GHCR.
+# Pattern: build → load locally → smoke test → push (Issue #2946).
+# See: https://docs.docker.com/build/ci/github-actions/test-before-push/
+
 on:
   workflow_dispatch:
   push:
@@ -19,6 +23,7 @@ jobs:
   build-and-push:
     name: Build & Push (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     strategy:
       matrix:
         include:
@@ -57,6 +62,58 @@ jobs:
             echo "tags=ghcr.io/nexi-lab/nexus:${PKG_VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:sha-${SHA}${SUFFIX},ghcr.io/nexi-lab/nexus:edge${SUFFIX}" >> "$GITHUB_OUTPUT"
           fi
 
+      # ---- Build locally for smoke testing (Issue #2946) ----
+      - name: Build image (local load for smoke tests)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: ghcr.io/nexi-lab/nexus:smoke-test
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+
+      # ---- Smoke tests — must pass before push ----
+      - name: Smoke test — critical imports
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          import nexus_fast
+          from _nexus_raft import Metastore, RaftConsensus
+          import txtai
+          import pgvector
+          import docker
+          import fastembed
+          import psutil
+          print('All critical imports OK')
+          "
+
+      - name: Smoke test — CLI entrypoints
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            sh -c "nexus --version && nexusd --help > /dev/null 2>&1 && echo 'CLI OK'"
+
+      - name: Smoke test — Zoekt binaries
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            sh -c "which zoekt-index && which zoekt-webserver && echo 'Zoekt binaries OK'"
+
+      - name: Smoke test — env-var config (no config file)
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          from nexus.config import load_config
+          cfg = load_config()
+          assert cfg.profile == 'full', f'Expected profile=full, got {cfg.profile}'
+          print(f'Config OK: profile={cfg.profile}')
+          "
+
+      # ---- Push to GHCR (only after smoke tests pass) ----
       - name: Build and push
         uses: docker/build-push-action@v6
         with:

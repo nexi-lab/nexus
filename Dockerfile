@@ -77,15 +77,9 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
     else \
         uv pip install --system -i $PIP_INDEX torch; \
     fi && \
-    uv pip install --system -i $PIP_INDEX ".[semantic-search]" "txtai[ann]>=9.0"
-
-# ---------- Install sandbox providers ----------
-RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
-        PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
-    else \
-        PIP_INDEX="https://pypi.org/simple"; \
-    fi && \
-    uv pip install --system -i $PIP_INDEX docker e2b e2b-code-interpreter
+    uv pip install --system -i $PIP_INDEX \
+        ".[all,performance,compression,monitoring,docker,event-streaming,sentry]" \
+        "txtai[ann]>=9.0"
 
 # ---------- Build Rust extensions ----------
 COPY proto/ ./proto/
@@ -110,11 +104,13 @@ ARG USE_CHINA_MIRROR
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- Runtime dependencies ----------
+# libgomp1: OpenMP runtime required by txtai, scikit-learn, numpy (Issue #2946)
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         curl \
         netcat-openbsd \
         ca-certificates \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- Copy Python packages + Rust extension ----------
@@ -127,12 +123,19 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 COPY --from=builder /root/go/bin/zoekt-index /usr/local/bin/zoekt-index
 COPY --from=builder /root/go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 
-# ---------- Optional verifications ----------
-RUN python3 -c "import nexus_fast; print('✓ nexus_fast available')" || echo "⚠ nexus_fast not available"
-RUN python3 -c "from _nexus_raft import Metastore; print('✓ nexus_raft Metastore available')" || echo "⚠ nexus_raft Metastore not available"
-RUN python3 -c "from _nexus_raft import RaftConsensus; print('✓ nexus_raft RaftConsensus available')" || echo "⚠ nexus_raft RaftConsensus not available"
-RUN python3 -c "import docker; print('✓ Docker Python package available')" || echo "⚠ Docker package not available"
-RUN zoekt-index -h > /dev/null 2>&1 && echo "✓ Zoekt binaries available" || echo "⚠ Zoekt not available"
+# ---------- Build-time smoke tests (Issue #2946) ----------
+# Critical imports MUST succeed — fail the build if they don't.
+# This catches missing native libs (libgomp1) and broken wheels early.
+RUN python3 -c "\
+import nexus_fast; \
+from _nexus_raft import Metastore, RaftConsensus; \
+import txtai; \
+import pgvector; \
+import docker; \
+import fastembed; \
+import psutil; \
+print('✓ All critical imports passed')"
+RUN which zoekt-index > /dev/null && which zoekt-webserver > /dev/null && echo "✓ Zoekt binaries available"
 
 # ---------- Copy application files ----------
 WORKDIR /app
@@ -168,6 +171,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
     NEXUS_PORT=2026 \
+    NEXUS_PROFILE=full \
     NEXUS_DATA_DIR=/app/data \
     ZOEKT_ENABLED=true \
     ZOEKT_URL=http://localhost:6070 \

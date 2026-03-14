@@ -10,7 +10,13 @@ use pyo3::types::{PyDict, PyList};
 use rayon::prelude::*;
 use regex::bytes::RegexBuilder;
 use simdutf8::basic::from_utf8 as simd_from_utf8;
+use std::cell::RefCell;
 use std::fs::File;
+use std::num::NonZeroUsize;
+
+use ahash::AHasher;
+use lru::LruCache;
+use std::hash::{Hash, Hasher};
 
 /// Search mode for PyO3 layer — stores pre-built Finder for SIMD acceleration.
 /// Distinct from `nexus_core::search::SearchMode` which stores owned strings
@@ -33,6 +39,110 @@ const GREP_MMAP_PARALLEL_THRESHOLD: usize = 10;
 
 /// Maximum file size to mmap.
 const GREP_MMAP_MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
+
+// ---------------------------------------------------------------------------
+// Regex compilation cache (thread-local LRU, 16 entries)
+// ---------------------------------------------------------------------------
+
+const REGEX_CACHE_CAPACITY: usize = 16;
+
+/// Cached regex entry: stores pattern metadata for collision detection.
+struct CachedRegex {
+    pattern: String,
+    case_insensitive: bool,
+    regex: regex::bytes::Regex,
+}
+
+thread_local! {
+    static REGEX_CACHE: RefCell<LruCache<u64, CachedRegex>> =
+        RefCell::new(LruCache::new(NonZeroUsize::new(REGEX_CACHE_CAPACITY).unwrap()));
+}
+
+/// Compute cache key from pattern + case flag using ahash (zero allocation).
+fn regex_cache_key(pattern: &str, case_insensitive: bool) -> u64 {
+    let mut hasher = AHasher::default();
+    pattern.hash(&mut hasher);
+    case_insensitive.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Get a compiled regex from cache or compile and cache it.
+///
+/// Uses u64 hash key for zero-alloc cache lookup. On hit, verifies the stored
+/// pattern matches (collision detection). On miss, compiles and stores.
+fn get_or_compile_regex(
+    pattern: &str,
+    case_insensitive: bool,
+) -> Result<regex::bytes::Regex, String> {
+    let key = regex_cache_key(pattern, case_insensitive);
+
+    REGEX_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+
+        if let Some(cached) = cache.get(&key) {
+            if cached.pattern == pattern && cached.case_insensitive == case_insensitive {
+                return Ok(cached.regex.clone());
+            }
+            // Hash collision: fall through to recompile.
+        }
+
+        let regex = RegexBuilder::new(pattern)
+            .case_insensitive(case_insensitive)
+            .build()
+            .map_err(|e| format!("Invalid regex pattern: {}", e))?;
+
+        cache.put(
+            key,
+            CachedRegex {
+                pattern: pattern.to_string(),
+                case_insensitive,
+                regex: regex.clone(),
+            },
+        );
+
+        Ok(regex)
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Case-insensitive matching with thread-local buffer
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static LOWER_BUF: RefCell<String> = RefCell::new(String::with_capacity(4096));
+}
+
+/// Find a case-insensitive literal match in `line` using a thread-local buffer.
+///
+/// Lowercases `line` into a reusable buffer (avoiding per-line allocation),
+/// searches for `pattern_lower` using the SIMD-accelerated `finder`, and
+/// maps the match back to the original-case text.
+///
+/// Returns `(match_start, match_end, original_case_match_text)` or None.
+fn find_literal_ignore_case(
+    line: &str,
+    finder: &memmem::Finder,
+    pattern_lower_len: usize,
+) -> Option<(usize, usize, String)> {
+    LOWER_BUF.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        buf.clear();
+        for c in line.chars() {
+            for lc in c.to_lowercase() {
+                buf.push(lc);
+            }
+        }
+        finder.find(buf.as_bytes()).map(|start| {
+            let end = start + pattern_lower_len;
+            let match_text = extract_original_match(line, &buf, start, end);
+            (start, end, match_text)
+        })
+    })
+}
+
+// ---------------------------------------------------------------------------
+// PyO3 exports
+// ---------------------------------------------------------------------------
 
 /// Fast content search using Rust regex or SIMD-accelerated memchr for literals.
 #[pyfunction]
@@ -61,12 +171,8 @@ pub fn grep_bulk<'py>(
             }
         }
     } else {
-        let regex = RegexBuilder::new(pattern)
-            .case_insensitive(ignore_case)
-            .build()
-            .map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
-            })?;
+        let regex = get_or_compile_regex(pattern, ignore_case)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
         SearchMode::Regex(regex)
     };
 
@@ -103,35 +209,29 @@ pub fn grep_bulk<'py>(
 
                 let line_bytes = line.as_bytes();
 
-                let match_result: Option<(usize, usize)> = match &search_mode {
-                    SearchMode::Literal { finder, pattern } => finder
-                        .find(line_bytes)
-                        .map(|start| (start, start + pattern.len())),
+                let match_result: Option<(usize, usize, String)> = match &search_mode {
+                    SearchMode::Literal { finder, pattern } => {
+                        finder.find(line_bytes).map(|start| {
+                            let end = start + pattern.len();
+                            let match_text = simd_from_utf8(&line_bytes[start..end])
+                                .unwrap_or("")
+                                .to_string();
+                            (start, end, match_text)
+                        })
+                    }
                     SearchMode::LiteralIgnoreCase {
                         finder,
                         pattern_lower,
-                    } => {
-                        let line_lower = line.to_lowercase();
-                        finder
-                            .find(line_lower.as_bytes())
-                            .map(|start| (start, start + pattern_lower.len()))
-                    }
-                    SearchMode::Regex(regex) => {
-                        regex.find(line_bytes).map(|m| (m.start(), m.end()))
-                    }
+                    } => find_literal_ignore_case(line, finder, pattern_lower.len()),
+                    SearchMode::Regex(regex) => regex.find(line_bytes).map(|m| {
+                        let match_text = simd_from_utf8(&line_bytes[m.start()..m.end()])
+                            .unwrap_or("")
+                            .to_string();
+                        (m.start(), m.end(), match_text)
+                    }),
                 };
 
-                if let Some((start, end)) = match_result {
-                    let match_text = if matches!(&search_mode, SearchMode::LiteralIgnoreCase { .. })
-                    {
-                        let line_lower = line.to_lowercase();
-                        extract_original_match(line, &line_lower, start, end)
-                    } else {
-                        simd_from_utf8(&line_bytes[start..end])
-                            .unwrap_or("")
-                            .to_string()
-                    };
-
+                if let Some((_start, _end, match_text)) = match_result {
                     results.push(GrepMatch {
                         file: file_path.clone(),
                         line: line_num + 1,
@@ -173,12 +273,8 @@ pub fn grep_files_mmap<'py>(
 
     let regex_opt: Option<regex::bytes::Regex> = if !is_literal {
         Some(
-            RegexBuilder::new(pattern)
-                .case_insensitive(ignore_case)
-                .build()
-                .map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid regex pattern: {}", e))
-                })?,
+            get_or_compile_regex(pattern, ignore_case)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?,
         )
     } else {
         None
@@ -347,12 +443,9 @@ fn grep_single_file_mmap(
                     break;
                 }
 
-                let line_lower = line.to_lowercase();
-                if let Some(start) = finder.find(line_lower.as_bytes()) {
-                    let end = start + pattern_lower.len();
-                    let match_text =
-                        extract_original_match(line, &line_lower, start, end);
-
+                if let Some((_start, _end, match_text)) =
+                    find_literal_ignore_case(line, &finder, pattern_lower.len())
+                {
                     results.push(GrepMatch {
                         file: file_path.to_string(),
                         line: line_num + 1,
@@ -408,4 +501,200 @@ fn grep_single_file_mmap(
     }
 
     Some(results)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    // -- Regex cache --------------------------------------------------------
+
+    #[test]
+    fn test_regex_cache_key_deterministic() {
+        let k1 = regex_cache_key("foo", true);
+        let k2 = regex_cache_key("foo", true);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn test_regex_cache_key_varies_by_pattern() {
+        let k1 = regex_cache_key("foo", false);
+        let k2 = regex_cache_key("bar", false);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn test_regex_cache_key_varies_by_case_flag() {
+        let k1 = regex_cache_key("foo", true);
+        let k2 = regex_cache_key("foo", false);
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn test_get_or_compile_regex_basic() {
+        let re = get_or_compile_regex("hello", false).unwrap();
+        assert!(re.is_match(b"say hello world"));
+        assert!(!re.is_match(b"Say HELLO World"));
+    }
+
+    #[test]
+    fn test_get_or_compile_regex_case_insensitive() {
+        let re = get_or_compile_regex("hello", true).unwrap();
+        assert!(re.is_match(b"Say HELLO World"));
+    }
+
+    #[test]
+    fn test_get_or_compile_regex_cache_hit() {
+        // Compile once.
+        let re1 = get_or_compile_regex("test_pattern_123", false).unwrap();
+        // Should hit cache.
+        let re2 = get_or_compile_regex("test_pattern_123", false).unwrap();
+        // Both should produce the same match results.
+        assert_eq!(re1.is_match(b"test_pattern_123"), re2.is_match(b"test_pattern_123"));
+    }
+
+    #[test]
+    fn test_get_or_compile_regex_invalid_pattern() {
+        let result = get_or_compile_regex("[invalid", false);
+        assert!(result.is_err());
+    }
+
+    // -- find_literal_ignore_case -------------------------------------------
+
+    #[test]
+    fn test_find_ignore_case_basic() {
+        let pattern = "hello";
+        let finder = memmem::Finder::new(pattern.as_bytes());
+        let result = find_literal_ignore_case("Say Hello World", &finder, pattern.len());
+        assert!(result.is_some());
+        let (_start, _end, match_text) = result.unwrap();
+        assert_eq!(match_text, "Hello");
+    }
+
+    #[test]
+    fn test_find_ignore_case_no_match() {
+        let pattern = "xyz";
+        let finder = memmem::Finder::new(pattern.as_bytes());
+        let result = find_literal_ignore_case("Say Hello World", &finder, pattern.len());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_ignore_case_unicode() {
+        // German: "straße" should match "STRASSE" when lowercased.
+        // Note: 'ß'.to_lowercase() = "ß" (stays same), not "ss".
+        // So searching for "straße" in "Straße" should work.
+        let pattern = "straße";
+        let finder = memmem::Finder::new(pattern.as_bytes());
+        let result = find_literal_ignore_case("Die Straße ist lang", &finder, pattern.len());
+        assert!(result.is_some());
+        let (_, _, match_text) = result.unwrap();
+        assert_eq!(match_text, "Straße");
+    }
+
+    #[test]
+    fn test_find_ignore_case_all_caps() {
+        let pattern = "hello";
+        let finder = memmem::Finder::new(pattern.as_bytes());
+        let result = find_literal_ignore_case("HELLO WORLD", &finder, pattern.len());
+        assert!(result.is_some());
+        let (_, _, match_text) = result.unwrap();
+        assert_eq!(match_text, "HELLO");
+    }
+
+    #[test]
+    fn test_find_ignore_case_empty_line() {
+        let pattern = "test";
+        let finder = memmem::Finder::new(pattern.as_bytes());
+        let result = find_literal_ignore_case("", &finder, pattern.len());
+        assert!(result.is_none());
+    }
+
+    // -- grep_single_file_mmap ----------------------------------------------
+
+    fn write_temp_file(content: &str) -> (tempfile::NamedTempFile, String) {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f.flush().unwrap();
+        let path = f.path().to_string_lossy().to_string();
+        (f, path)
+    }
+
+    #[test]
+    fn test_grep_mmap_literal_case_sensitive() {
+        let (_f, path) = write_temp_file("Hello World\nhello world\nHELLO WORLD\n");
+        let results =
+            grep_single_file_mmap(&path, "hello", "", true, false, None, 100).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].line, 2);
+        assert_eq!(results[0].match_text, "hello");
+    }
+
+    #[test]
+    fn test_grep_mmap_literal_case_insensitive() {
+        let (_f, path) = write_temp_file("Hello World\nhello world\nHELLO WORLD\n");
+        let results =
+            grep_single_file_mmap(&path, "hello", "hello", true, true, None, 100).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].match_text, "Hello");
+        assert_eq!(results[1].match_text, "hello");
+        assert_eq!(results[2].match_text, "HELLO");
+    }
+
+    #[test]
+    fn test_grep_mmap_regex() {
+        let (_f, path) = write_temp_file("fn main() {}\nlet x = 42;\nfn helper() {}\n");
+        let regex = RegexBuilder::new(r"fn \w+")
+            .build()
+            .unwrap();
+        let results =
+            grep_single_file_mmap(&path, r"fn \w+", "", false, false, Some(&regex), 100)
+                .unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].match_text, "fn main");
+        assert_eq!(results[1].match_text, "fn helper");
+    }
+
+    #[test]
+    fn test_grep_mmap_max_results() {
+        let (_f, path) = write_temp_file("aaa\naaa\naaa\naaa\naaa\n");
+        let results =
+            grep_single_file_mmap(&path, "aaa", "", true, false, None, 2).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_grep_mmap_empty_file() {
+        let (_f, path) = write_temp_file("");
+        let results =
+            grep_single_file_mmap(&path, "test", "", true, false, None, 100).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_grep_mmap_no_match() {
+        let (_f, path) = write_temp_file("Hello World\n");
+        let results =
+            grep_single_file_mmap(&path, "xyz", "", true, false, None, 100).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_grep_mmap_nonexistent_file() {
+        let result = grep_single_file_mmap(
+            "/nonexistent/path/file.txt",
+            "test",
+            "",
+            true,
+            false,
+            None,
+            100,
+        );
+        assert!(result.is_none());
+    }
 }

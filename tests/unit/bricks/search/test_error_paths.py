@@ -7,6 +7,7 @@ Validates error handling at brick boundaries:
 """
 
 import logging
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -55,6 +56,40 @@ class TestSearchDaemonErrors:
         assert results == []
         assert "Legacy semantic search unavailable: no embedding provider configured" in caplog.text
         assert "Could not generate query embedding" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_index_documents_uses_backend_upsert(self) -> None:
+        """Explicit indexing should delegate to the active backend."""
+        from nexus.bricks.search.daemon import SearchDaemon
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        daemon = SearchDaemon()
+        daemon._initialized = True
+        daemon._backend = AsyncMock()
+        daemon._backend.upsert.return_value = 1
+
+        docs = [{"id": "doc-1", "text": "hello", "path": "/skill-hub/search/doc.md"}]
+        count = await daemon.index_documents(docs)
+
+        assert count == 1
+        daemon._backend.upsert.assert_awaited_once_with(docs, zone_id=ROOT_ZONE_ID)
+        assert daemon.stats.last_index_refresh is not None
+
+    @pytest.mark.asyncio
+    async def test_delete_documents_uses_backend_delete(self) -> None:
+        """Explicit deletion should delegate to the active backend."""
+        from nexus.bricks.search.daemon import SearchDaemon
+
+        daemon = SearchDaemon()
+        daemon._initialized = True
+        daemon._backend = AsyncMock()
+        daemon._backend.delete.return_value = 2
+
+        count = await daemon.delete_documents(["doc-1", "doc-2"], zone_id="corp")
+
+        assert count == 2
+        daemon._backend.delete.assert_awaited_once_with(["doc-1", "doc-2"], zone_id="corp")
+        assert daemon.stats.last_index_refresh is not None
 
 
 # =============================================================================

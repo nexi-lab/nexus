@@ -63,7 +63,7 @@ class ConcurrencyTuning:
 class NetworkTuning:
     """HTTP and webhook timeout configuration.
 
-    Consumers: batch_executor, subscriptions/manager, a2a/streaming, mcp/mount.
+    Consumers: batch_executor, subscriptions/manager, mcp/mount.
     """
 
     default_http_timeout: float

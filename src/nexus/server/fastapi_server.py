@@ -167,7 +167,7 @@ def create_app(
         database_url: Database URL for async operations
         thread_pool_size: Thread pool size for sync operations (default: 200)
         operation_timeout: Timeout for sync operations in seconds (default: 30.0)
-        data_dir: Server data directory for persistent storage (A2A tasks, etc.)
+        data_dir: Server data directory for persistent storage
 
     Returns:
         Configured FastAPI application

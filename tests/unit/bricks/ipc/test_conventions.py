@@ -94,7 +94,7 @@ class TestFullPaths:
 
 
 class TestTaskPaths:
-    """Tests for A2A task path builders (§17.6 convergence)."""
+    """Tests for task path builders."""
 
     def test_tasks_path(self) -> None:
         assert tasks_path("reviewer") == "/agents/reviewer/tasks"

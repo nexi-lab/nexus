@@ -52,7 +52,7 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
             await context.abort(exc.grpc_status, exc.message)
         except Exception as exc:
             logger.exception("SendMessage failed: %s", exc)
-            await context.abort(grpc.StatusCode.INTERNAL, str(exc))
+            await context.abort(grpc.StatusCode.INTERNAL, "Internal server error")
 
     async def SendStreamingMessage(
         self,
@@ -72,7 +72,7 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
             return
         except Exception as exc:
             logger.exception("SendStreamingMessage failed: %s", exc)
-            await context.abort(grpc.StatusCode.INTERNAL, str(exc))
+            await context.abort(grpc.StatusCode.INTERNAL, "Internal server error")
             return
 
         # Yield the initial task
@@ -104,7 +104,7 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
             await context.abort(exc.grpc_status, exc.message)
         except Exception as exc:
             logger.exception("GetTask failed: %s", exc)
-            await context.abort(grpc.StatusCode.INTERNAL, str(exc))
+            await context.abort(grpc.StatusCode.INTERNAL, "Internal server error")
 
     async def CancelTask(
         self,
@@ -119,7 +119,7 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
             await context.abort(exc.grpc_status, exc.message)
         except Exception as exc:
             logger.exception("CancelTask failed: %s", exc)
-            await context.abort(grpc.StatusCode.INTERNAL, str(exc))
+            await context.abort(grpc.StatusCode.INTERNAL, "Internal server error")
 
     async def SubscribeToTask(
         self,
@@ -134,7 +134,7 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
             return
         except Exception as exc:
             logger.exception("SubscribeToTask failed: %s", exc)
-            await context.abort(grpc.StatusCode.INTERNAL, str(exc))
+            await context.abort(grpc.StatusCode.INTERNAL, "Internal server error")
             return
 
         # Yield current task state
@@ -257,8 +257,12 @@ async def create_grpc_server(
         server.add_secure_port(f"[::]:{port}", creds)
         logger.info("A2A gRPC server configured with TLS on port %d", port)
     else:
-        server.add_insecure_port(f"[::]:{port}")
-        logger.info("A2A gRPC server configured (insecure) on port %d", port)
+        server.add_insecure_port(f"127.0.0.1:{port}")
+        logger.warning(
+            "A2A gRPC server configured (insecure, loopback only) on port %d. "
+            "Configure TLS to bind on all interfaces.",
+            port,
+        )
 
     return server
 

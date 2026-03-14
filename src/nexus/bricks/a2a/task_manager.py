@@ -5,6 +5,7 @@ goes through a pluggable ``TaskStoreProtocol``; active SSE streams are
 managed by a ``StreamRegistry`` (injected via DI).
 """
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
@@ -33,8 +34,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 ArtifactCallback = Callable[[Any, str, str], Awaitable[None]]
 
 if TYPE_CHECKING:
-    import asyncio
-
     from nexus.bricks.a2a.stream_registry import StreamRegistry
     from nexus.bricks.a2a.task_store import TaskStoreProtocol
 
@@ -77,8 +76,7 @@ class TaskManager:
             self._stream_registry = _SR()
 
         self._artifact_observers = artifact_observers or []
-        # Per-task locks to prevent TOCTOU races in state transitions
-        self._task_locks: dict[str, "asyncio.Lock"] = {}
+        self._task_locks: dict[str, asyncio.Lock] = {}
 
     @property
     def stream_registry(self) -> "StreamRegistry":
@@ -173,17 +171,19 @@ class TaskManager:
         Raises ``TaskNotFoundError`` if the task does not exist.
         Raises ``TaskNotCancelableError`` if the task is in a terminal state.
         """
-        task = await self._store.get(task_id, zone_id=zone_id)
-        if task is None:
-            raise TaskNotFoundError(data={"taskId": task_id})
+        lock = self._task_locks.setdefault(task_id, asyncio.Lock())
+        async with lock:
+            task = await self._store.get(task_id, zone_id=zone_id)
+            if task is None:
+                raise TaskNotFoundError(data={"taskId": task_id})
 
-        if task.status.state in TERMINAL_STATES:
-            raise TaskNotCancelableError(
-                data={
-                    "taskId": task_id,
-                    "currentState": task.status.state.value,
-                }
-            )
+            if task.status.state in TERMINAL_STATES:
+                raise TaskNotCancelableError(
+                    data={
+                        "taskId": task_id,
+                        "currentState": task.status.state.value,
+                    }
+                )
 
         return await self.update_task_state(task_id, TaskState.CANCELED, zone_id=zone_id)
 
@@ -203,13 +203,8 @@ class TaskManager:
         Raises ``TaskNotFoundError`` if the task does not exist.
         Raises ``InvalidStateTransitionError`` if the transition is invalid.
         """
-        import asyncio
-
-        # Per-task lock prevents TOCTOU race on concurrent transitions.
-        if task_id not in self._task_locks:
-            self._task_locks[task_id] = asyncio.Lock()
-
-        async with self._task_locks[task_id]:
+        lock = self._task_locks.setdefault(task_id, asyncio.Lock())
+        async with lock:
             task = await self._store.get(task_id, zone_id=zone_id)
             if task is None:
                 raise TaskNotFoundError(data={"taskId": task_id})
@@ -234,7 +229,7 @@ class TaskManager:
 
             await self._store.save(task, zone_id=zone_id)
 
-        # Push status update to active streams
+        # Push status update to active streams (outside lock — no store mutation)
         event = TaskStatusUpdateEvent(
             taskId=task_id,
             status=new_status,
@@ -258,13 +253,15 @@ class TaskManager:
         then notifies artifact observers for downstream indexing
         (Issue #1861).
         """
-        task = await self._store.get(task_id, zone_id=zone_id)
-        if task is None:
-            raise TaskNotFoundError(data={"taskId": task_id})
+        lock = self._task_locks.setdefault(task_id, asyncio.Lock())
+        async with lock:
+            task = await self._store.get(task_id, zone_id=zone_id)
+            if task is None:
+                raise TaskNotFoundError(data={"taskId": task_id})
 
-        new_artifacts = [*task.artifacts, artifact]
-        task = task.model_copy(update={"artifacts": new_artifacts})
-        await self._store.save(task, zone_id=zone_id)
+            new_artifacts = [*task.artifacts, artifact]
+            task = task.model_copy(update={"artifacts": new_artifacts})
+            await self._store.save(task, zone_id=zone_id)
 
         event = TaskArtifactUpdateEvent(
             taskId=task_id,

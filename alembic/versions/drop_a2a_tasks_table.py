@@ -28,7 +28,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Re-creating the table is not supported — the A2A brick code that
-    # defines the schema has been deleted.  Restore from a backup or
-    # check out the commit before #2979 if rollback is needed.
-    pass
+    raise NotImplementedError(
+        "Cannot reverse a2a_tasks DROP TABLE — the A2A brick code that defines "
+        "the schema has been deleted (#2979). Restore from a database backup or "
+        "check out the commit before #2979 to recreate the table."
+    )

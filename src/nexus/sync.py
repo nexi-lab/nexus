@@ -339,10 +339,18 @@ def move_file(
             return True
 
         elif not is_source_local and not is_dest_local:
-            # Nexus to Nexus - use efficient rename API
-            # This is metadata-only, instant operation that preserves ReBAC permissions
-            nx.sys_rename(source, dest)
-            return True
+            # Nexus to Nexus - prefer efficient rename (metadata-only).
+            # Falls back to copy+delete if rename fails (e.g. gRPC transport
+            # not available on REMOTE profile).  Issue #341.
+            try:
+                nx.sys_rename(source, dest)
+                return True
+            except Exception:
+                # Fallback: copy content then delete source
+                content = nx.sys_read(source)
+                nx.sys_write(dest, content)
+                nx.sys_unlink(source)
+                return True
 
         else:
             # Cross-boundary move - copy then delete
@@ -357,4 +365,7 @@ def move_file(
 
     except (OSError, ValueError, TypeError):
         # File operation or path validation failed
+        return False
+    except Exception:
+        # Catch NexusError subclasses (Issue #341)
         return False

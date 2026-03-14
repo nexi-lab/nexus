@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -43,6 +44,26 @@ class ExtractionResult:
     error: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DocumentExtractionResult:
+    """Result of a document structure extraction attempt.
+
+    Unlike ExtractionResult (tabular schema), this captures document-level
+    structure: headings, front matter, code blocks, etc.
+    """
+
+    title: str | None
+    headings: list[dict[str, Any]]
+    front_matter: dict[str, Any] | None
+    word_count: int
+    link_count: int
+    code_languages: list[str]
+    format: str
+    confidence: float
+    warnings: list[str] = field(default_factory=list)
+    error: str | None = None
+
+
 class SchemaExtractor(Protocol):
     """Protocol for format-specific schema extractors."""
 
@@ -54,12 +75,29 @@ class SchemaExtractor(Protocol):
         ...
 
 
+class DocumentExtractor(Protocol):
+    """Protocol for document structure extractors (Markdown, PDF, etc.)."""
+
+    mime_types: tuple[str, ...]
+    extensions: tuple[str, ...]
+
+    def extract(self, content: bytes) -> DocumentExtractionResult:
+        """Extract document structure from raw file content.
+
+        Must never raise. Return DocumentExtractionResult with error on failure.
+        """
+        ...
+
+
 class CSVExtractor:
     """CSV/TSV schema extractor with bounded row reading.
 
     Reads at most ``max_rows`` rows for type inference. Confidence
     reflects sample coverage.
     """
+
+    mime_types = ("text/csv", "application/csv")
+    extensions = ("csv", "tsv")
 
     def __init__(
         self,
@@ -171,6 +209,9 @@ class ParquetExtractor:
     since Parquet embeds the schema in the file footer.
     """
 
+    mime_types = ("application/parquet", "application/x-parquet")
+    extensions = ("parquet", "pq")
+
     def extract(self, content: bytes) -> ExtractionResult:
         """Extract schema from Parquet file content."""
         try:
@@ -231,6 +272,9 @@ class JSONExtractor:
     Infers schema from the first N bytes of JSON content. Supports
     both JSON arrays and newline-delimited JSON (NDJSON).
     """
+
+    mime_types = ("application/json", "text/json")
+    extensions = ("json", "jsonl", "ndjson")
 
     def __init__(
         self,
@@ -350,6 +394,377 @@ class JSONExtractor:
                 confidence=0.0,
                 error=f"JSON extraction failed: {e}",
             )
+
+
+class AvroExtractor:
+    """Avro schema extractor — reads header only (O(1)).
+
+    Avro stores its complete schema in the file header as JSON.
+    Extraction is always fast regardless of file size. Confidence
+    is always 1.0 since Avro embeds the native schema.
+    """
+
+    mime_types = ("application/avro", "application/x-avro")
+    extensions = ("avro",)
+
+    def extract(self, content: bytes) -> ExtractionResult:
+        """Extract schema from Avro file content."""
+        try:
+            import fastavro
+
+            buf = io.BytesIO(content)
+            try:
+                reader = fastavro.reader(buf)
+                avro_schema = reader.writer_schema
+            except Exception as e:
+                return ExtractionResult(
+                    schema=None,
+                    format="avro",
+                    confidence=0.0,
+                    error=f"Invalid Avro file: {e}",
+                )
+
+            if avro_schema is None:
+                return ExtractionResult(
+                    schema=None,
+                    format="avro",
+                    confidence=0.0,
+                    error="Avro file has no writer schema",
+                )
+
+            columns = _avro_schema_to_columns(avro_schema)
+
+            # Count rows (iterate without loading all into memory)
+            row_count = 0
+            try:
+                for _ in reader:
+                    row_count += 1
+            except Exception:
+                row_count = None  # Corrupted data section is OK — schema is valid
+
+            return ExtractionResult(
+                schema=columns,
+                format="avro",
+                confidence=1.0,
+                row_count=row_count,
+            )
+
+        except ImportError:
+            return ExtractionResult(
+                schema=None,
+                format="avro",
+                confidence=0.0,
+                error="fastavro not installed — cannot extract Avro schema",
+            )
+        except Exception as e:
+            return ExtractionResult(
+                schema=None,
+                format="avro",
+                confidence=0.0,
+                error=f"Avro extraction failed: {e}",
+            )
+
+    def extract_from_path(self, path: str) -> ExtractionResult:
+        """Extract schema from Avro file by path (header-only read)."""
+        try:
+            import fastavro
+
+            with open(path, "rb") as f:
+                reader = fastavro.reader(f)
+                avro_schema = reader.writer_schema
+
+                if avro_schema is None:
+                    return ExtractionResult(
+                        schema=None,
+                        format="avro",
+                        confidence=0.0,
+                        error="Avro file has no writer schema",
+                    )
+
+                columns = _avro_schema_to_columns(avro_schema)
+
+                row_count = 0
+                try:
+                    for _ in reader:
+                        row_count += 1
+                except Exception:
+                    row_count = None
+
+            return ExtractionResult(
+                schema=columns,
+                format="avro",
+                confidence=1.0,
+                row_count=row_count,
+            )
+
+        except ImportError:
+            return ExtractionResult(
+                schema=None,
+                format="avro",
+                confidence=0.0,
+                error="fastavro not installed — cannot extract Avro schema",
+            )
+        except Exception as e:
+            return ExtractionResult(
+                schema=None,
+                format="avro",
+                confidence=0.0,
+                error=f"Avro extraction failed: {e}",
+            )
+
+
+class MarkdownExtractor:
+    """Markdown document structure extractor.
+
+    Extracts headings, front matter, code blocks, and statistics.
+    Parses YAML front matter (--- delimiters) and ATX/Setext headings.
+    """
+
+    mime_types = ("text/markdown",)
+    extensions = ("md", "markdown")
+
+    def extract(self, content: bytes) -> DocumentExtractionResult:
+        """Extract document structure from Markdown content."""
+        try:
+            text = content.decode("utf-8", errors="replace")
+
+            if not text.strip():
+                return DocumentExtractionResult(
+                    title=None,
+                    headings=[],
+                    front_matter=None,
+                    word_count=0,
+                    link_count=0,
+                    code_languages=[],
+                    format="markdown",
+                    confidence=0.0,
+                    error="Empty Markdown file",
+                )
+
+            # Parse front matter
+            front_matter, body = _parse_front_matter(text)
+
+            # Parse headings (skip content inside code blocks)
+            headings = _extract_headings(body)
+
+            # Extract code block languages
+            code_languages = _extract_code_languages(body)
+
+            # Count words (excluding code blocks and front matter)
+            word_count = _count_words(body)
+
+            # Count links
+            link_count = _count_links(body)
+
+            # Derive title: front matter "title" key, or first H1
+            title = None
+            if front_matter and "title" in front_matter:
+                title = str(front_matter["title"])
+            elif headings:
+                for h in headings:
+                    if h["level"] == 1:
+                        title = h["text"]
+                        break
+
+            return DocumentExtractionResult(
+                title=title,
+                headings=headings,
+                front_matter=front_matter,
+                word_count=word_count,
+                link_count=link_count,
+                code_languages=code_languages,
+                format="markdown",
+                confidence=1.0,
+            )
+
+        except Exception as e:
+            return DocumentExtractionResult(
+                title=None,
+                headings=[],
+                front_matter=None,
+                word_count=0,
+                link_count=0,
+                code_languages=[],
+                format="markdown",
+                confidence=0.0,
+                error=f"Markdown extraction failed: {e}",
+            )
+
+
+# ============================================================================
+# Avro schema helpers
+# ============================================================================
+
+
+def _avro_type_to_str(avro_type: Any) -> str:
+    """Convert an Avro type to a string representation."""
+    if isinstance(avro_type, str):
+        return avro_type
+    if isinstance(avro_type, dict):
+        return avro_type.get("type", "unknown")
+    if isinstance(avro_type, list):
+        # Union type: filter out "null" and return the first non-null type
+        non_null = [t for t in avro_type if t != "null"]
+        if non_null:
+            return _avro_type_to_str(non_null[0])
+        return "null"
+    return "unknown"
+
+
+def _avro_schema_to_columns(schema: dict[str, Any]) -> list[dict[str, str]]:
+    """Convert an Avro schema to a list of column dicts."""
+    columns: list[dict[str, str]] = []
+    fields = schema.get("fields", [])
+
+    for field_def in fields:
+        name = field_def.get("name", "")
+        avro_type = field_def.get("type", "unknown")
+
+        # Detect nullable: union types containing "null"
+        nullable = False
+        if isinstance(avro_type, list) and "null" in avro_type:
+            nullable = True
+
+        columns.append(
+            {
+                "name": name,
+                "type": _avro_type_to_str(avro_type),
+                "nullable": str(nullable),
+            }
+        )
+
+    return columns
+
+
+# ============================================================================
+# Markdown parsing helpers
+# ============================================================================
+
+
+def _parse_front_matter(text: str) -> tuple[dict[str, Any] | None, str]:
+    """Parse YAML front matter from Markdown text.
+
+    Returns (front_matter_dict, remaining_body). Front matter values
+    are sanitized to JSON-safe primitives (strings, numbers, bools, lists).
+    """
+    if not text.startswith("---"):
+        return None, text
+
+    # Find closing ---
+    end_match = re.search(r"\n---\s*\n", text[3:])
+    if end_match is None:
+        return None, text
+
+    yaml_text = text[3 : 3 + end_match.start()]
+    body = text[3 + end_match.end() :]
+
+    try:
+        import yaml
+
+        raw = yaml.safe_load(yaml_text)
+        if not isinstance(raw, dict):
+            return None, text
+
+        # Sanitize to JSON-safe primitives
+        sanitized = _sanitize_front_matter(raw)
+        return sanitized, body
+    except Exception:
+        return None, text
+
+
+def _sanitize_front_matter(data: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize front matter values to JSON-safe primitives."""
+    result: dict[str, Any] = {}
+    for key, value in data.items():
+        result[str(key)] = _sanitize_value(value)
+    return result
+
+
+def _sanitize_value(value: Any) -> Any:
+    """Convert a value to JSON-safe primitive."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return [_sanitize_value(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _sanitize_value(v) for k, v in value.items()}
+    # datetime, date, or other complex types → string
+    return str(value)
+
+
+def _extract_headings(text: str) -> list[dict[str, Any]]:
+    """Extract headings from Markdown body, skipping content in code blocks."""
+    lines = text.split("\n")
+    headings: list[dict[str, Any]] = []
+    in_code_block = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Track fenced code blocks
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+
+        if in_code_block:
+            continue
+
+        # ATX headings: # to ######
+        atx_match = re.match(r"^(#{1,6})\s+(.+?)(?:\s+#+)?$", line)
+        if atx_match:
+            headings.append(
+                {
+                    "level": len(atx_match.group(1)),
+                    "text": atx_match.group(2).strip(),
+                }
+            )
+            continue
+
+        # Setext headings: === (H1) or --- (H2)
+        if i > 0 and not in_code_block:
+            prev_line = lines[i - 1].strip()
+            if prev_line and stripped and re.match(r"^={3,}$", stripped):
+                headings.append({"level": 1, "text": prev_line})
+            elif (
+                prev_line
+                and stripped
+                and re.match(r"^-{3,}$", stripped)
+                and (i > 1 or not text.startswith("---"))
+            ):
+                headings.append({"level": 2, "text": prev_line})
+
+    return headings
+
+
+def _extract_code_languages(text: str) -> list[str]:
+    """Extract language annotations from fenced code blocks."""
+    languages: list[str] = []
+    for match in re.finditer(r"^```(\w+)", text, re.MULTILINE):
+        languages.append(match.group(1).lower())
+    for match in re.finditer(r"^~~~(\w+)", text, re.MULTILINE):
+        languages.append(match.group(1).lower())
+    return languages
+
+
+def _count_words(text: str) -> int:
+    """Count words in Markdown body, excluding code blocks."""
+    # Remove fenced code blocks
+    no_code = re.sub(r"```[\s\S]*?```", "", text)
+    no_code = re.sub(r"~~~[\s\S]*?~~~", "", no_code)
+    # Count whitespace-delimited tokens
+    words = no_code.split()
+    return len(words)
+
+
+def _count_links(text: str) -> int:
+    """Count Markdown links (both inline and reference-style)."""
+    # Inline links: [text](url)
+    inline = len(re.findall(r"\[.*?\]\(.*?\)", text))
+    # Reference links: [text][ref]
+    reference = len(re.findall(r"\[.*?\]\[.*?\]", text))
+    return inline + reference
 
 
 # ============================================================================

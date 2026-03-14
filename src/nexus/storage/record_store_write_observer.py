@@ -27,7 +27,6 @@ in ``nexus.storage.piped_record_store_write_observer``.
 Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 """
 
-import hashlib
 import logging
 
 from nexus.contracts.metadata import FileMetadata
@@ -282,13 +281,12 @@ class RecordStoreWriteObserver:
     def _build_urn(path: str, zone_id: str | None) -> str:
         """Build a locator URN for a file from its virtual path.
 
-        URNs are locators (Issue #2929 Key Decision #3): they change on
-        rename. The identifier is a deterministic SHA-256 hash prefix of
-        the path, so any caller can compute the same URN without a
-        database lookup.
+        Delegates to NexusURN.for_file() — single source of truth for
+        URN construction (Issue #2978, Issue #2929 Key Decision #3).
         """
-        path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
-        return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
+        from nexus.contracts.urn import NexusURN
+
+        return str(NexusURN.for_file(zone_id or "default", path))
 
     def on_rmdir(
         self,

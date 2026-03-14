@@ -234,16 +234,18 @@ class TestCanonicalSmoke:
             env=env,
             cwd=cwd,
         )
-        # versions may return 0 or 1 depending on server state
-        assert r.returncode in (0, 1), f"versions list crashed: {r.stderr}"
+        assert r.returncode == 0, (
+            f"versions list failed (rc={r.returncode}):\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        )
 
     def test_ops_replay(self, stack_env: tuple[dict[str, str], Path]) -> None:
-        """Verify event log / operation replay."""
+        """Verify event log / operation replay returns results."""
         env, cwd = stack_env
         r = _run(["nexus", "ops", "replay", "--limit", "5"], env=env, cwd=cwd)
-        assert r.returncode in (0, 1), f"ops replay crashed: {r.stderr}"
-        if r.returncode == 1:
-            assert "Traceback" not in r.stderr
+        assert r.returncode == 0, (
+            f"ops replay failed (rc={r.returncode}):\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+        assert r.stdout.strip(), "ops replay returned empty output"
 
     def test_permissions(self, stack_env: tuple[dict[str, str], Path]) -> None:
         """Verify permission tuples were seeded and are queryable."""
@@ -263,10 +265,40 @@ class TestCanonicalSmoke:
                 env=env,
                 cwd=cwd,
             )
-            # rebac check may not be available in all deployments
-            assert r.returncode in (0, 1), f"rebac check crashed: {r.stderr}"
+            assert r.returncode == 0, (
+                f"rebac check failed (rc={r.returncode}):\nstdout: {r.stdout}\nstderr: {r.stderr}"
+            )
+            # Verify the check returned an allowed result
+            assert r.stdout.strip(), "rebac check returned empty output"
 
         print(f"\n[SMOKE_TIMING] permissions: {json.dumps(timings)}")
+
+    def test_agent_registry(self, stack_env: tuple[dict[str, str], Path]) -> None:
+        """Verify agent registry lists the demo agent."""
+        env, cwd = stack_env
+        r = _run(["nexus", "agent", "list"], env=env, cwd=cwd)
+        assert r.returncode == 0, (
+            f"agent list failed (rc={r.returncode}):\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+
+    def test_agent_ipc(self, stack_env: tuple[dict[str, str], Path]) -> None:
+        """Verify agent IPC surface is accessible (send/receive via Nexus)."""
+        env, cwd = stack_env
+        # Write a file as one identity, read as another — tests the IPC-via-filesystem path
+        r = _run(
+            ["nexus", "write", "/workspace/demo/ipc-test.txt", "ipc round-trip"],
+            env=env,
+            cwd=cwd,
+        )
+        assert r.returncode == 0, f"ipc write failed: {r.stderr}"
+
+        r = _run(
+            ["nexus", "cat", "/workspace/demo/ipc-test.txt"],
+            env=env,
+            cwd=cwd,
+        )
+        assert r.returncode == 0, f"ipc read failed: {r.stderr}"
+        assert "ipc round-trip" in r.stdout
 
     def test_grep_demo_corpus(self, stack_env: tuple[dict[str, str], Path]) -> None:
         """Verify grep works against demo and HERB corpus."""
@@ -358,22 +390,31 @@ class TestCanonicalSmoke:
                 continue
 
             output = r.stdout
-            # Parse results: check if expected file path appears in top-5
-            # and if the expected substring is in the result content
-            lines = output.strip().split("\n")
-            found_file = False
+            # Parse results: try JSON first, fall back to line scanning.
+            # The search output may be JSON ({"data": [...]}) or plain text.
+            result_paths: list[str] = []
+            try:
+                parsed = json.loads(output)
+                results_list = parsed.get("data", parsed.get("results", []))
+                if isinstance(results_list, list):
+                    for item in results_list[:5]:
+                        if isinstance(item, dict):
+                            p = item.get("path", item.get("file", ""))
+                            if p:
+                                result_paths.append(p)
+            except (json.JSONDecodeError, TypeError):
+                # Plain text: each line may contain a file path
+                for line in output.strip().split("\n")[:5]:
+                    result_paths.append(line)
+
+            # Check if expected file appears in top-5 results by path
             found_rank = 0
-            for rank, line in enumerate(lines, 1):
-                if expected_file in line:
-                    found_file = True
-                    found_rank = rank
-                    break
-                if expected_sub.lower() in line.lower():
-                    found_file = True
+            for rank, path in enumerate(result_paths, 1):
+                if expected_file in path:
                     found_rank = rank
                     break
 
-            if found_file:
+            if found_rank > 0:
                 hits += 1
                 reciprocal_ranks.append(1.0 / found_rank)
             else:

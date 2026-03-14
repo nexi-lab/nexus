@@ -23,6 +23,9 @@ pub struct TaskStore {
     running_idx: Keyspace,
     dead_letter: Keyspace,
     id_counter: AtomicU64,
+    /// Cached pending count — updated atomically on submit/claim/requeue.
+    /// Avoids O(n) scan on every admission control check.
+    pending_count: AtomicU64,
 }
 
 impl TaskStore {
@@ -55,6 +58,7 @@ impl TaskStore {
             running_idx,
             dead_letter,
             id_counter: AtomicU64::new(max_id + 1),
+            pending_count: AtomicU64::new(0), // Will be initialized by first count_pending call
         })
     }
 
@@ -94,6 +98,7 @@ impl TaskStore {
         batch
             .commit()
             .map_err(|e| TaskError::Storage(e.to_string()))?;
+        self.pending_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -209,6 +214,7 @@ impl TaskStore {
         batch
             .commit()
             .map_err(|e| TaskError::Storage(e.to_string()))?;
+        self.pending_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
         Ok(Some(task))
     }
@@ -474,16 +480,9 @@ impl TaskStore {
     }
 
     /// Count pending tasks (for admission control).
+    /// Uses cached atomic counter for O(1) performance instead of scanning the index.
     pub fn count_pending(&self) -> Result<usize> {
-        let mut count = 0usize;
-        for guard in self.pending_idx.iter() {
-            // Just need to verify the entry is valid
-            let _ = guard
-                .into_inner()
-                .map_err(|e| TaskError::Storage(e.to_string()))?;
-            count += 1;
-        }
-        Ok(count)
+        Ok(self.pending_count.load(std::sync::atomic::Ordering::Relaxed) as usize)
     }
 
     /// List tasks with optional filters.

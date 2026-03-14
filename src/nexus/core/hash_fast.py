@@ -86,6 +86,10 @@ def hash_content(content: bytes) -> str:
         result = _python_blake3.blake3(content).hexdigest()
         return result
 
+    logger.warning(
+        "BLAKE3 unavailable — using SHA-256 fallback. "
+        "Hashes will be INCOMPATIBLE with BLAKE3 nodes. Install: pip install blake3"
+    )
     return hashlib.sha256(content).hexdigest()
 
 

@@ -484,7 +484,12 @@ class LiteLLMProvider(LLMProvider):
             if "tool_choice" not in call_kwargs:
                 call_kwargs["tool_choice"] = "auto"
 
-        # Set litellm modify_params
+        # Set litellm modify_params via thread-local to avoid global mutation race
+        import threading
+
+        if not hasattr(litellm, "_nexus_tls"):
+            litellm._nexus_tls = threading.local()
+        litellm._nexus_tls.modify_params = self.config.modify_params
         litellm.modify_params = self.config.modify_params
 
         start_time = time.time()
@@ -531,7 +536,12 @@ class LiteLLMProvider(LLMProvider):
             if "tool_choice" not in call_kwargs:
                 call_kwargs["tool_choice"] = "auto"
 
-        # Set litellm modify_params
+        # Set litellm modify_params via thread-local to avoid global mutation race
+        import threading
+
+        if not hasattr(litellm, "_nexus_tls"):
+            litellm._nexus_tls = threading.local()
+        litellm._nexus_tls.modify_params = self.config.modify_params
         litellm.modify_params = self.config.modify_params
 
         # Create cancellation event

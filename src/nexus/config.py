@@ -82,7 +82,6 @@ class FeaturesConfig(BaseModel):
     skills: bool | None = Field(default=None, description="Enable skills brick")
     sandbox: bool | None = Field(default=None, description="Enable sandbox brick")
     workflows: bool | None = Field(default=None, description="Enable workflow brick")
-    a2a: bool | None = Field(default=None, description="Enable A2A protocol brick")
     discovery: bool | None = Field(default=None, description="Enable agent discovery")
     mcp: bool | None = Field(default=None, description="Enable MCP server brick")
     memory: bool | None = Field(default=None, description="Enable agent memory")

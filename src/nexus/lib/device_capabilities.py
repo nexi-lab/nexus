@@ -67,7 +67,6 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     "pay": BrickRequirement(min_memory_mb=128, requires_network=True),
     "sandbox": BrickRequirement(min_memory_mb=256),
     "workflows": BrickRequirement(min_memory_mb=128),
-    "a2a": BrickRequirement(min_memory_mb=64),
     "discovery": BrickRequirement(min_memory_mb=64),
     "mcp": BrickRequirement(min_memory_mb=64),
     "memory": BrickRequirement(min_memory_mb=128),

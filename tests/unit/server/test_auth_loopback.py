@@ -29,11 +29,13 @@ class TestIsLoopback:
     def test_public_ip_rejected(self) -> None:
         assert _is_loopback("8.8.8.8") is False
 
-    def test_none_rejected(self) -> None:
-        assert _is_loopback(None) is False
+    def test_none_treated_as_local(self) -> None:
+        """None client = no network (ASGI TestClient) = treat as local."""
+        assert _is_loopback(None) is True
 
-    def test_empty_string_rejected(self) -> None:
-        assert _is_loopback("") is False
+    def test_empty_string_treated_as_local(self) -> None:
+        """Empty string = no client info = treat as local."""
+        assert _is_loopback("") is True
 
     def test_ipv4_loopback_range(self) -> None:
         """127.0.0.0/8 is all loopback — not just 127.0.0.1."""
@@ -76,15 +78,16 @@ class TestOpenAccessLoopbackRestriction:
         assert result is None, "Remote client should be rejected in open-access mode"
 
     @pytest.mark.asyncio
-    async def test_open_access_rejects_none_client_host(self) -> None:
-        """If client_host is unknown, reject in open-access mode."""
+    @pytest.mark.asyncio
+    async def test_open_access_allows_none_client_host(self) -> None:
+        """None client_host = ASGI TestClient / no network = treat as local."""
         state = SimpleNamespace(api_key=None, auth_provider=None)
         result = await resolve_auth(
             app_state=state,
             x_nexus_subject="user:someone",
             client_host=None,
         )
-        assert result is None
+        assert result is not None
 
     @pytest.mark.asyncio
     async def test_api_key_auth_ignores_client_host(self) -> None:

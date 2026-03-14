@@ -357,7 +357,7 @@ class TestAvroExtractor:
         assert result.confidence == 1.0
         assert result.schema is not None
         assert len(result.schema) == 3
-        assert result.row_count == 2
+        assert result.row_count is None  # O(1) header-only — no row counting
 
         names = {c["name"] for c in result.schema}
         assert names == {"id", "name", "score"}
@@ -498,7 +498,7 @@ class TestAvroExtractor:
         assert result.error is None
         assert result.schema is not None
         assert len(result.schema) == 1
-        assert result.row_count == 0
+        assert result.row_count is None  # O(1) header-only — no row counting
 
     @pytest.mark.skipif(not _has_fastavro(), reason="fastavro not installed")
     def test_map_type(self) -> None:

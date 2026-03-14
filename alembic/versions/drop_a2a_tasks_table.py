@@ -1,7 +1,7 @@
 """Drop a2a_tasks table — A2A brick removed (#2979)
 
 Revision ID: drop_a2a_tasks
-Revises: tune_hnsw_index_for_100k_vectors
+Revises: f537c8b67980
 Create Date: 2026-03-14
 
 The A2A (Agent-to-Agent) protocol brick has been removed. MCP already
@@ -18,7 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "drop_a2a_tasks"
-down_revision: Union[str, None] = "tune_hnsw_index_for_100k_vectors"
+down_revision: Union[str, None] = "f537c8b67980"
 branch_labels: Sequence[str] | None = None
 depends_on: Union[str, Sequence[str], None] = None
 

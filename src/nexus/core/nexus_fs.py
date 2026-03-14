@@ -1277,6 +1277,126 @@ class NexusFS(  # type: ignore[misc]
         except Exception as e:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
+    def _resolve_and_read(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> tuple[bytes, Any, Any, str | None, str | None]:
+        """Core read pipeline: validate, resolve, route, read, post-hooks.
+
+        Returns (content, meta, route, zone_id, agent_id).
+        Extracted from sys_read() so that read_range() can share the logic
+        without duplicating virtual-path dispatch, overlay resolution,
+        hook invocation, and dynamic connector bypass.
+        """
+        path = self._validate_path(path)
+        context = self._parse_context(context)
+
+        # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        _handled, _resolve_hint = self._dispatch.resolve_read(
+            path, return_metadata=False, context=context
+        )
+        if _handled:
+            if isinstance(_resolve_hint, dict):
+                _resolve_hint = _resolve_hint.get("content", b"")
+            if isinstance(_resolve_hint, str):
+                _resolve_hint = _resolve_hint.encode("utf-8")
+            return (_resolve_hint, None, None, None, None)
+
+        # PRE-INTERCEPT: pre-read hooks (Issue #899)
+        perm_check_start = time.time()
+        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
+
+        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
+        perm_check_elapsed = time.time() - perm_check_start
+
+        if perm_check_elapsed > 0.010:
+            logger.warning(
+                "[READ-PERF] SLOW pre-intercept for %s: %.1fms",
+                path,
+                perm_check_elapsed * 1000,
+            )
+
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        route = self.router.route(path, is_admin=is_admin, check_write=False)
+
+        # DT_PIPE / DT_STREAM bypass
+        from nexus.core.router import PipeRouteResult, StreamRouteResult
+
+        if isinstance(route, PipeRouteResult | StreamRouteResult):
+            # Not applicable for range reads; return sentinel
+            if isinstance(route, PipeRouteResult):
+                content = self._pipe_read(path, count=None, offset=0)
+            else:
+                content = self._stream_read(path, count=None, offset=0)
+            return (content, None, route, zone_id, agent_id)
+
+        from dataclasses import replace
+
+        if context:
+            read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
+        else:
+            read_context = OperationContext(
+                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+            )
+
+        # Dynamic connector bypass
+        _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
+        is_dynamic_connector = (
+            route.backend.user_scoped is True and route.backend.has_token_manager is True
+        ) or "external_content" in _caps
+
+        if is_dynamic_connector:
+            content = route.backend.read_content("", context=read_context)
+            return (content, None, route, zone_id, agent_id)
+
+        # VFS I/O Lock
+        with self._vfs_locked(path, "read"):
+            meta = _resolve_hint if _resolve_hint is not None else self.metadata.get(path)
+
+            if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
+                overlay_config = self._get_overlay_config(path)
+                if overlay_config:
+                    meta = self._overlay_resolver.resolve_read(path, overlay_config)
+
+            if meta is None or meta.etag is None:
+                raise NexusFileNotFoundError(path)
+
+            if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(
+                meta
+            ):
+                raise NexusFileNotFoundError(path)
+
+            from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
+
+            if meta.physical_path.startswith(INLINE_PREFIX):
+                import base64
+
+                _raw = self.metadata.get_file_metadata(path, INLINE_CONTENT_KEY)
+                if _raw is None:
+                    raise NexusFileNotFoundError(path)
+                content = base64.b64decode(_raw)
+            else:
+                content = route.backend.read_content(meta.etag, context=read_context)
+
+        # Post-read hooks
+        if self._dispatch.read_hook_count > 0:
+            from nexus.contracts.vfs_hooks import ReadHookContext
+
+            _read_ctx = ReadHookContext(
+                path=path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                metadata=meta,
+                content=content,
+                content_hash=meta.etag,
+            )
+            self._dispatch.intercept_post_read(_read_ctx)
+            content = _read_ctx.content or content
+
+        return (content, meta, route, zone_id, agent_id)
+
     @rpc_expose(description="Read file content")
     def sys_read(
         self,
@@ -1857,47 +1977,55 @@ class NexusFS(  # type: ignore[misc]
             raise ValueError(f"end ({end}) must be >= start ({start})")
 
         path = self._validate_path(path)
+        context = self._parse_context(context)
 
-        # PRE-INTERCEPT: pre-read hooks (Issue #899)
+        # FAST PATH: check virtual path resolvers first
+        _handled, _resolve_hint = self._dispatch.resolve_read(
+            path, return_metadata=False, context=context
+        )
+        if _handled:
+            if isinstance(_resolve_hint, dict):
+                _resolve_hint = _resolve_hint.get("content", b"")
+            if isinstance(_resolve_hint, str):
+                _resolve_hint = _resolve_hint.encode("utf-8")
+            return _resolve_hint[start:end]
+
+        # OPTIMISED PATH: no post-read hooks + backend has read_content_range
         from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
+        has_post_hooks = self._dispatch.read_hook_count > 0
 
-        # Route to backend with access control
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=False,
-        )
+        if not has_post_hooks:
+            self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
-        # Check if file exists in metadata
-        meta = self.metadata.get(path)
-        if meta is None or meta.etag is None:
-            raise NexusFileNotFoundError(path)
+            zone_id, agent_id, is_admin = self._get_routing_params(context)
+            route = self.router.route(path, is_admin=is_admin, check_write=False)
 
-        # Add backend_path to context for path-based connectors
-        read_context = context
-        if context:
-            from dataclasses import replace
+            meta = self.metadata.get(path)
 
-            read_context = replace(context, backend_path=route.backend_path)
+            if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
+                overlay_config = self._get_overlay_config(path)
+                if overlay_config:
+                    meta = self._overlay_resolver.resolve_read(path, overlay_config)
 
-        # Read the full content and slice (backends can override for efficiency)
-        # Note: For true efficiency, backends could implement read_range() natively
-        from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
-
-        if meta.physical_path.startswith(INLINE_PREFIX):
-            import base64
-
-            _raw = self.metadata.get_file_metadata(path, INLINE_CONTENT_KEY)
-            if _raw is None:
+            if meta is None or meta.etag is None:
                 raise NexusFileNotFoundError(path)
-            content = base64.b64decode(_raw)
-        else:
-            content = route.backend.read_content(meta.etag, context=read_context)
 
-        # Apply range
+            if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(
+                meta
+            ):
+                raise NexusFileNotFoundError(path)
+
+            if hasattr(route.backend, "read_content_range"):
+                from dataclasses import replace as _replace
+
+                read_context = (
+                    _replace(context, backend_path=route.backend_path) if context else None
+                )
+                return route.backend.read_content_range(meta.etag, start, end, context=read_context)
+
+        # FALLBACK: full read via _resolve_and_read + slice
+        content, _meta, _route, _zone_id, _agent_id = self._resolve_and_read(path, context)
         return content[start:end]
 
     @rpc_expose(description="Stream file content in chunks")

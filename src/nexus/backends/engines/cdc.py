@@ -251,12 +251,10 @@ class CDCEngine:
 
         chunk_data: dict[int, bytes] = {}
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            futures: dict[Any, int] = {}
-            for ci in manifest.chunks:
-                future = executor.submit(self._read_single_chunk, ci.chunk_hash)
-                futures[future] = ci.offset
+            futures = [executor.submit(self._read_and_verify_chunk, ci) for ci in manifest.chunks]
             for future in as_completed(futures):
-                chunk_data[futures[future]] = future.result()
+                offset, data = future.result()
+                chunk_data[offset] = data
 
         content = b"".join(chunk_data[o] for o in sorted(chunk_data.keys()))
 
@@ -272,6 +270,62 @@ class CDCEngine:
             f"in {elapsed_ms:.1f}ms"
         )
         return content
+
+    def read_chunked_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """Read a byte range [start, end) from chunked content.
+
+        Only fetches and verifies the overlapping chunks, not all chunks.
+        """
+        b = self._backend
+
+        key = b._blob_key(content_hash)
+        manifest_data, _ = b._transport.get_blob(key)
+        manifest = ChunkedReference.from_json(manifest_data)
+
+        # Filter to overlapping chunks
+        overlapping = [
+            ci for ci in manifest.chunks if ci.offset < end and (ci.offset + ci.length) > start
+        ]
+
+        if not overlapping:
+            return b""
+
+        # Fetch and verify overlapping chunks in parallel
+        chunk_data: dict[int, bytes] = {}
+        with ThreadPoolExecutor(max_workers=self.workers) as executor:
+            futures = [executor.submit(self._read_and_verify_chunk, ci) for ci in overlapping]
+            for future in as_completed(futures):
+                offset, data = future.result()
+                chunk_data[offset] = data
+
+        # Assemble overlapping chunks in order and slice to exact range
+        assembled = b"".join(chunk_data[o] for o in sorted(chunk_data.keys()))
+
+        # Calculate the byte offset of the first overlapping chunk
+        first_chunk_offset = overlapping[0].offset
+        slice_start = start - first_chunk_offset
+        slice_end = end - first_chunk_offset
+
+        return assembled[slice_start:slice_end]
+
+    def _read_and_verify_chunk(self, chunk_info: ChunkInfo) -> tuple[int, bytes]:
+        """Read a single chunk and verify its hash. Returns (offset, data)."""
+        key = self._backend._blob_key(chunk_info.chunk_hash)
+        data, _ = self._backend._transport.get_blob(key)
+
+        actual_hash = hash_content(data)
+        if actual_hash != chunk_info.chunk_hash:
+            raise ValueError(
+                f"Chunk hash mismatch at offset {chunk_info.offset}: "
+                f"expected {chunk_info.chunk_hash}, got {actual_hash}"
+            )
+        return (chunk_info.offset, data)
 
     def _read_single_chunk(self, chunk_hash: str) -> bytes:
         key = self._backend._blob_key(chunk_hash)

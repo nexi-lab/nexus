@@ -29,6 +29,7 @@ from nexus.bricks.catalog.extractors import (
     AvroExtractor,
     CSVExtractor,
     DocumentExtractionResult,
+    DocumentExtractor,
     ExtractionResult,
     JSONExtractor,
     MarkdownExtractor,
@@ -127,7 +128,7 @@ class CatalogService:
         # Dual registries: schema extractors + document extractors
         self._schema_extractors: dict[str, SchemaExtractor] = {}
         self._schema_ext_map: dict[str, str] = {}  # extension → first mime_type
-        self._document_extractors: dict[str, Any] = {}
+        self._document_extractors: dict[str, DocumentExtractor] = {}
         self._document_ext_map: dict[str, str] = {}  # extension → first mime_type
 
         # Backward-compat alias (used by register_extractor)
@@ -138,7 +139,7 @@ class CatalogService:
     def _register_default_extractors(self) -> None:
         """Register built-in extractors via self-registration metadata."""
         # Schema extractors
-        schema_instances = [
+        schema_instances: list[SchemaExtractor] = [
             CSVExtractor(max_rows=self._inference_max_rows),
             JSONExtractor(max_bytes=self._inference_read_bytes),
             ParquetExtractor(),
@@ -152,15 +153,15 @@ class CatalogService:
                     self._schema_ext_map[extension] = ext.mime_types[0]
 
         # Document extractors
-        document_instances = [
+        document_instances: list[DocumentExtractor] = [
             MarkdownExtractor(),
         ]
-        for ext in document_instances:
-            for mime in ext.mime_types:
-                self._document_extractors[mime] = ext
-            for extension in ext.extensions:
+        for doc_ext in document_instances:
+            for mime in doc_ext.mime_types:
+                self._document_extractors[mime] = doc_ext
+            for extension in doc_ext.extensions:
                 if extension not in self._document_ext_map:
-                    self._document_ext_map[extension] = ext.mime_types[0]
+                    self._document_ext_map[extension] = doc_ext.mime_types[0]
 
     def register_extractor(
         self,
@@ -194,7 +195,7 @@ class CatalogService:
         self,
         mime_type: str | None,
         filename: str | None,
-    ) -> Any | None:
+    ) -> DocumentExtractor | None:
         """Detect appropriate document extractor from MIME type or filename."""
         if mime_type and mime_type in self._document_extractors:
             return self._document_extractors[mime_type]
@@ -329,7 +330,7 @@ class CatalogService:
         # Prefer path-based extraction for header-only formats
         extract_from_path = getattr(extractor, "extract_from_path", None)
         if extract_from_path is not None:
-            result = extract_from_path(path)
+            result: ExtractionResult = extract_from_path(path)
         else:
             # Fall back to content-based
             with open(path, "rb") as f:

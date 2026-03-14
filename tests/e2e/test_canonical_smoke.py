@@ -274,31 +274,39 @@ class TestCanonicalSmoke:
         print(f"\n[SMOKE_TIMING] permissions: {json.dumps(timings)}")
 
     def test_agent_registry(self, stack_env: tuple[dict[str, str], Path]) -> None:
-        """Verify agent registry lists the demo agent."""
+        """Verify agent registry lists the seeded demo agent."""
         env, cwd = stack_env
         r = _run(["nexus", "agent", "list"], env=env, cwd=cwd)
         assert r.returncode == 0, (
             f"agent list failed (rc={r.returncode}):\nstdout: {r.stdout}\nstderr: {r.stderr}"
         )
+        # Verify the demo_agent seeded by demo init is present
+        assert "demo_agent" in r.stdout, f"demo_agent not found in agent list output:\n{r.stdout}"
 
     def test_agent_ipc(self, stack_env: tuple[dict[str, str], Path]) -> None:
-        """Verify agent IPC surface is accessible (send/receive via Nexus)."""
+        """Verify agent IPC via Nexus filesystem (scratchpad pattern).
+
+        Tests the IPC-via-filesystem path: one agent writes to a shared
+        scratchpad path, another reads it — the Nexus VFS mediates the
+        handoff with permission checks and audit logging.
+        """
         env, cwd = stack_env
-        # Write a file as one identity, read as another — tests the IPC-via-filesystem path
-        r = _run(
-            ["nexus", "write", "/workspace/demo/ipc-test.txt", "ipc round-trip"],
-            env=env,
-            cwd=cwd,
-        )
+        ipc_path = "/workspace/demo/ipc/handoff.json"
+
+        # Create IPC directory
+        r = _run(["nexus", "mkdir", "/workspace/demo/ipc"], env=env, cwd=cwd)
+        assert r.returncode == 0, f"ipc mkdir failed: {r.stderr}"
+
+        # Agent writes to scratchpad
+        payload = '{"from": "demo_agent", "task": "search", "status": "complete"}'
+        r = _run(["nexus", "write", ipc_path, payload], env=env, cwd=cwd)
         assert r.returncode == 0, f"ipc write failed: {r.stderr}"
 
-        r = _run(
-            ["nexus", "cat", "/workspace/demo/ipc-test.txt"],
-            env=env,
-            cwd=cwd,
-        )
+        # Another agent reads from scratchpad
+        r = _run(["nexus", "cat", ipc_path], env=env, cwd=cwd)
         assert r.returncode == 0, f"ipc read failed: {r.stderr}"
-        assert "ipc round-trip" in r.stdout
+        assert "demo_agent" in r.stdout, "IPC payload not readable"
+        assert "complete" in r.stdout, "IPC payload content missing"
 
     def test_grep_demo_corpus(self, stack_env: tuple[dict[str, str], Path]) -> None:
         """Verify grep works against demo and HERB corpus."""
@@ -361,6 +369,14 @@ class TestCanonicalSmoke:
         timings: list[dict[str, Any]] = []
         hits = 0
         reciprocal_ranks: list[float] = []
+
+        # Check manifest for which search engine was used
+        manifest_path = list(cwd.glob("nexus-data/.demo-manifest.json"))
+        semantic_engine = "unknown"
+        if manifest_path:
+            with open(manifest_path[0]) as f:
+                manifest = json.loads(f.read())
+                semantic_engine = manifest.get("semantic_engine", "unknown")
 
         for qa in HERB_QA_SET:
             question = qa["question"]
@@ -425,13 +441,23 @@ class TestCanonicalSmoke:
         mrr = sum(reciprocal_ranks) / total if total else 0
 
         # Non-blocking metrics
-        print(f"\n[SMOKE_QUALITY] herb_hit_rate: {hit_rate:.2f} ({hits}/{total})")
+        print(f"\n[SMOKE_QUALITY] semantic_engine: {semantic_engine}")
+        print(f"[SMOKE_QUALITY] herb_hit_rate: {hit_rate:.2f} ({hits}/{total})")
         print(f"[SMOKE_QUALITY] herb_mrr: {mrr:.3f}")
         print(f"[SMOKE_TIMING] herb_qa: {json.dumps(timings)}")
 
+        # Report engine type — vector is the acceptance target, sql_fallback
+        # is degraded but functional
+        if semantic_engine == "sql_fallback":
+            print(
+                "[SMOKE_QUALITY] WARNING: Running on SQL fallback, not real "
+                "vector search. Quality results are indicative only."
+            )
+
         # Blocking gate: majority of questions should hit (>= 50%)
         assert hit_rate >= 0.5, (
-            f"HERB quality gate failed: hit_rate={hit_rate:.2f} ({hits}/{total}). "
+            f"HERB quality gate failed: hit_rate={hit_rate:.2f} ({hits}/{total}), "
+            f"engine={semantic_engine}. "
             "Expected >= 0.5. Check that HERB corpus was seeded and indexed."
         )
 

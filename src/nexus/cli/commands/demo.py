@@ -947,7 +947,7 @@ def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
         return False
 
 
-def _init_semantic_search(nx: Any, config: dict[str, Any]) -> bool:
+def _init_semantic_search(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> bool:
     """Initialize semantic search by triggering the real indexing pipeline.
 
     Attempts to index demo files through the server's semantic_search_index
@@ -955,7 +955,9 @@ def _init_semantic_search(nx: Any, config: dict[str, Any]) -> bool:
     Falls back to direct document_chunks insertion via docker exec if the
     RPC-based pipeline is unavailable.
 
-    Returns True if semantic search is ready.
+    Records the engine used in the manifest so tests can verify which path ran.
+
+    Returns True if semantic search is ready (by either path).
     """
     preset = config.get("preset", "local")
     if preset not in ("shared", "demo"):
@@ -969,13 +971,16 @@ def _init_semantic_search(nx: Any, config: dict[str, Any]) -> bool:
         results = search_svc.semantic_search_index("/workspace/demo", recursive=True)
         indexed = sum(1 for v in results.values() if v > 0)
         if indexed > 0:
-            logger.info("Semantic search: indexed %d files via pipeline", indexed)
+            logger.info("Semantic search: indexed %d files via real pipeline", indexed)
+            manifest["semantic_engine"] = "vector"
+            manifest["semantic_indexed_files"] = indexed
             return True
     except Exception as e:
         logger.debug("Real indexing pipeline unavailable: %s", e)
 
-    # Fallback: insert document_chunks directly for SQL-based search
-    logger.info("Falling back to direct document_chunks insertion")
+    # Fallback: insert document_chunks directly for SQL-based text search
+    logger.info("Falling back to direct document_chunks insertion (SQL text search)")
+    manifest["semantic_engine"] = "sql_fallback"
     return _seed_search_chunks_docker(nx, config)
 
 
@@ -1062,7 +1067,7 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     # 6. Initialize semantic search and index demo files (best-effort)
     semantic_ready = False
     if not skip_semantic:
-        semantic_ready = _init_semantic_search(nx, config)
+        semantic_ready = _init_semantic_search(nx, config, manifest)
 
     # 7. Seed catalog schemas (best-effort)
     schemas_extracted = 0

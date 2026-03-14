@@ -435,12 +435,18 @@ def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
 async def handle_semantic_search_index(
     nexus_fs: "NexusFS", params: Any, _context: Any
 ) -> dict[str, Any]:
-    """Handle semantic_search_index method.
+    """Index documents for semantic search via the SearchDaemon's txtai backend.
 
-    Routes indexing through the SearchDaemon's txtai backend (which uses
-    pgvector) so that indexed documents are immediately searchable.
+    Single indexing path: reads files via NexusFS, upserts through the daemon's
+    txtai backend which stores embeddings + BM25 tokens in pgvector. No separate
+    document_chunks table needed — txtai is the single source of truth.
+
     Falls back to the SearchService pipeline if the daemon is unavailable.
     """
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
     path = getattr(params, "path", "/")
     recursive = getattr(params, "recursive", True)
 
@@ -448,7 +454,60 @@ async def handle_semantic_search_index(
     if search is None:
         raise ValueError("SearchService required for semantic search")
 
-    # Index via SearchService pipeline (stores chunks in document_chunks table)
+    # Prefer single-path indexing through the SearchDaemon's txtai backend.
+    daemon = getattr(search, "_search_daemon", None)
+    if daemon is not None and getattr(daemon, "_backend", None) is not None:
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        context = _context
+
+        # Query file paths from the daemon's database connection
+        paths_to_index: list[str] = []
+        if hasattr(daemon, "_async_session") and daemon._async_session is not None:
+            from sqlalchemy import text as sa_text
+
+            like_pattern = path.rstrip("/") + "/%" if recursive else path
+            async with daemon._async_session() as sess:
+                if recursive:
+                    result = await sess.execute(
+                        sa_text("SELECT virtual_path FROM file_paths WHERE virtual_path LIKE :p"),
+                        {"p": like_pattern},
+                    )
+                    paths_to_index = [r[0] for r in result.fetchall()]
+                else:
+                    paths_to_index = [path]
+            _log.info("semantic_search_index: found %d files under %s", len(paths_to_index), path)
+
+        # Read content and build documents for txtai
+        documents: list[dict[str, Any]] = []
+        read_errors = 0
+        for file_path in paths_to_index:
+            try:
+                content = nexus_fs.sys_read(file_path, context=context)
+                if isinstance(content, bytes):
+                    content_str = content.decode("utf-8", errors="replace")
+                else:
+                    content_str = content
+                if content_str.strip():
+                    documents.append({"id": file_path, "text": content_str, "path": file_path})
+            except Exception as read_err:
+                read_errors += 1
+                _log.warning("Skipping %s: %s", file_path, read_err)
+
+        _log.info(
+            "semantic_search_index: %d documents read (%d errors)", len(documents), read_errors
+        )
+
+        # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
+        indexed = 0
+        if documents:
+            indexed = await daemon.index_documents(documents, zone_id=ROOT_ZONE_ID)
+            _log.info("semantic_search_index: txtai indexed %d documents", indexed)
+
+        results = {doc["path"]: 1 for doc in documents}
+        return {"indexed": results, "total_files": len(results), "total_chunks": indexed}
+
+    # Fallback: SearchService pipeline (when daemon is unavailable)
     try:
         await search.ainitialize_semantic_search(nx=nexus_fs, record_store_engine=None)
     except Exception as e:
@@ -461,22 +520,6 @@ async def handle_semantic_search_index(
             total_chunks += v
         elif isinstance(v, dict) and "chunks" in v:
             total_chunks += v["chunks"]
-
-    # Sync to SearchDaemon's live txtai index so queries find new documents
-    # immediately (the daemon's BM25/vector index is built at startup and
-    # won't include files indexed after boot without this refresh).
-    daemon = getattr(search, "_search_daemon", None)
-    if daemon is not None and getattr(daemon, "_backend", None) is not None:
-        indexed_paths = list(results.keys())
-        try:
-            await daemon._refresh_indexes(indexed_paths)
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).debug(
-                "Daemon index refresh failed for %d paths", len(indexed_paths), exc_info=True
-            )
-
     return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
 

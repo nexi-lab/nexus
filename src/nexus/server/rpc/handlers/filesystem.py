@@ -534,6 +534,7 @@ async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any
         path=getattr(params, "path", "/"),
         limit=getattr(params, "limit", 10),
         search_mode=getattr(params, "search_mode", "semantic"),
+        context=_context,
         adaptive_k=getattr(params, "adaptive_k", False),
     )
     return {"results": results}

@@ -26,9 +26,7 @@ script_dir = Path(__file__).parent
 src_dir = script_dir.parent / "src"
 sys.path.insert(0, str(src_dir))
 
-from nexus.backends.storage.cas_local import CASLocalBackend  # noqa: E402
-from nexus.core.nexus_fs import NexusFS  # noqa: E402
-from nexus.storage.raft_metadata_store import RaftMetadataStore  # noqa: E402
+from nexus import connect  # noqa: E402
 
 
 async def init_semantic_search() -> bool:
@@ -46,9 +44,25 @@ async def init_semantic_search() -> bool:
             print("ERROR: NEXUS_DATABASE_URL is required", file=sys.stderr)
             return False
 
-        backend = CASLocalBackend(data_dir)
-        metadata_store = RaftMetadataStore.embedded(str(database_url).replace(".db", ""))
-        nx = NexusFS(backend, metadata_store=metadata_store)
+        config_file = os.getenv("NEXUS_CONFIG_FILE")
+        if config_file and Path(config_file).exists():
+            nx = connect(config=config_file)
+        else:
+            nx = connect(
+                config={
+                    "profile": "full",
+                    "backend": "local",
+                    "data_dir": data_dir,
+                    "database": {"url": database_url},
+                    "features": {"search": True},
+                }
+            )
+
+        search = nx.service("search")
+        if search is None:
+            print("ERROR: Search service is not available", file=sys.stderr)
+            nx.close()
+            return False
 
         # Check if explicitly requested to use vector embeddings
         # Default: keyword-only mode (safer, more stable)
@@ -58,7 +72,9 @@ async def init_semantic_search() -> bool:
             # Only use embeddings if explicitly requested
             openai_api_key = os.getenv("OPENAI_API_KEY")
             if openai_api_key and openai_api_key != "your-openai-api-key":
-                await nx.initialize_semantic_search(
+                await search.ainitialize_semantic_search(
+                    nx=nx,
+                    record_store_engine=None,
                     embedding_provider="openai",
                     api_key=openai_api_key,
                     chunk_size=512,
@@ -74,7 +90,9 @@ async def init_semantic_search() -> bool:
                     file=sys.stderr,
                 )
                 print("Falling back to keyword-only mode", file=sys.stderr)
-                await nx.initialize_semantic_search(
+                await search.ainitialize_semantic_search(
+                    nx=nx,
+                    record_store_engine=None,
                     embedding_provider=None,
                     chunk_size=512,
                     chunk_strategy="semantic",
@@ -82,7 +100,9 @@ async def init_semantic_search() -> bool:
                 print("✓ Semantic search initialized (keyword-only mode)", file=sys.stderr)
         else:
             # Default: keyword-only mode (PostgreSQL FTS)
-            await nx.initialize_semantic_search(
+            await search.ainitialize_semantic_search(
+                nx=nx,
+                record_store_engine=None,
                 embedding_provider=None,
                 chunk_size=512,
                 chunk_strategy="semantic",

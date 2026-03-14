@@ -1,6 +1,6 @@
 //! Trigram index builder — accumulates files and their trigrams.
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use roaring::RoaringBitmap;
 
 use super::extract::is_binary;
@@ -74,26 +74,33 @@ impl TrigramIndexBuilder {
             return;
         }
 
-        // Insert trigrams directly from original content (case-sensitive search).
-        // No intermediate AHashSet/Vec — RoaringBitmap handles dedup via idempotent insert.
+        // Dedup trigrams with AHashSet then insert into posting lists.
+        // This avoids the old intermediate Vec allocation while preventing
+        // O(n) repeated HashMap lookups + RoaringBitmap inserts on repetitive content.
+        let mut seen = AHashSet::new();
         for window in content.windows(3) {
             let trigram = [window[0], window[1], window[2]];
-            self.posting_lists
-                .entry(trigram)
-                .or_default()
-                .insert(file_id);
-        }
-
-        // Also insert trigrams from lowercased content (case-insensitive search).
-        // Uses Unicode-aware to_lowercase() to handle non-ASCII correctly.
-        if let Ok(text) = std::str::from_utf8(content) {
-            let lower = text.to_lowercase();
-            for window in lower.as_bytes().windows(3) {
-                let trigram = [window[0], window[1], window[2]];
+            if seen.insert(trigram) {
                 self.posting_lists
                     .entry(trigram)
                     .or_default()
                     .insert(file_id);
+            }
+        }
+
+        // Also insert trigrams from lowercased content (case-insensitive search).
+        // Uses Unicode-aware to_lowercase() to handle non-ASCII correctly.
+        // Reuse the seen set — exact trigrams already inserted are skipped.
+        if let Ok(text) = std::str::from_utf8(content) {
+            let lower = text.to_lowercase();
+            for window in lower.as_bytes().windows(3) {
+                let trigram = [window[0], window[1], window[2]];
+                if seen.insert(trigram) {
+                    self.posting_lists
+                        .entry(trigram)
+                        .or_default()
+                        .insert(file_id);
+                }
             }
         }
     }

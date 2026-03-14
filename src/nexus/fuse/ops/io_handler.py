@@ -163,12 +163,14 @@ class IOHandler:
 
         # Per-path lock serializes concurrent writes to the same file (H13)
         import threading
+        from typing import Any
 
-        if not hasattr(ctx, "_write_locks"):
-            ctx._write_locks = {}
-            ctx._write_locks_guard = threading.Lock()
-        with ctx._write_locks_guard:
-            lock = ctx._write_locks.setdefault(original_path, threading.Lock())
+        _ctx_any: Any = ctx  # Dynamic attrs not on FUSESharedContext
+        if not hasattr(_ctx_any, "_write_locks"):
+            _ctx_any._write_locks = {}
+            _ctx_any._write_locks_guard = threading.Lock()
+        with _ctx_any._write_locks_guard:
+            lock = _ctx_any._write_locks.setdefault(original_path, threading.Lock())
 
         with lock:
             # Read existing content

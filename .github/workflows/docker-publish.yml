@@ -1,14 +1,13 @@
 name: Publish Docker Image
 
-# Builds, smoke-tests, and publishes Docker images to GHCR.
-# Pattern: build → load locally → smoke test → push (Issue #2946).
-# See: https://docs.docker.com/build/ci/github-actions/test-before-push/
+# Builds, smoke-tests, and publishes edge/dev Docker images to GHCR.
+# For release tags (v*), Docker build is handled inline by release.yml
+# to enable atomic releases (Issue #2946).
+# This workflow handles branch pushes only (develop → edge, main → latest).
 
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
     branches:
       - main
       - develop

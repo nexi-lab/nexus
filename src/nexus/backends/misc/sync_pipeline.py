@@ -495,12 +495,19 @@ class SyncPipelineService:
         new_context.virtual_path = virtual_path
         return new_context
 
+    _MAX_RECURSION_DEPTH = 100
+
     def _list_files_recursive(
         self,
         path: str,
         context: OperationContext | None = None,
+        _depth: int = 0,
     ) -> list[str]:
         """Recursively list all files under a path."""
+        if _depth >= self._MAX_RECURSION_DEPTH:
+            logger.warning("Max recursion depth reached listing %s", path)
+            return []
+
         connector = self._connector
         files: list[str] = []
 
@@ -518,7 +525,7 @@ class SyncPipelineService:
                     full_path = f"{path.rstrip('/')}/{entry_name}"
 
                 if entry.endswith("/"):
-                    files.extend(self._list_files_recursive(full_path, context))
+                    files.extend(self._list_files_recursive(full_path, context, _depth + 1))
                 else:
                     files.append(full_path)
         except Exception as e:

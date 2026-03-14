@@ -160,10 +160,17 @@ class PythonVFSLockManager:
             return 0
 
         deadline = time.monotonic() + timeout_ms / 1000.0
-        backoff_s = 0.00005  # 50μs
+
+        # Use condition variable instead of busy-wait spin loop.
+        # Waiters are notified on lock release for immediate wakeup.
+        if not hasattr(self, "_cv"):
+            import threading
+
+            self._cv = threading.Condition(threading.Lock())
 
         while True:
-            time.sleep(backoff_s)
+            with self._cv:
+                self._cv.wait(timeout=0.005)  # max 5ms between checks
             self._contention_count += 1
 
             handle = self._try_acquire_once(path, mode)
@@ -176,8 +183,6 @@ class PythonVFSLockManager:
             if time.monotonic() >= deadline:
                 self._timeout_count += 1
                 return 0
-
-            backoff_s = min(backoff_s * 2, 0.005)  # cap at 5ms
 
     def release(self, handle: int) -> bool:
         with self._mu:
@@ -197,6 +202,12 @@ class PythonVFSLockManager:
                     del self._locks[path]
 
             self._release_count += 1
+
+            # Wake up any waiters blocked in acquire()
+            if hasattr(self, "_cv"):
+                with self._cv:
+                    self._cv.notify_all()
+
             return True
 
     def is_locked(self, path: str) -> bool:

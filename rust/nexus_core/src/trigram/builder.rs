@@ -3,7 +3,7 @@
 use ahash::AHashMap;
 use roaring::RoaringBitmap;
 
-use super::extract::{extract_trigrams, is_binary};
+use super::extract::is_binary;
 
 /// Maximum content size for indexing (1 GB).
 const MAX_INDEX_FILE_SIZE: usize = 1024 * 1024 * 1024;
@@ -43,6 +43,10 @@ impl TrigramIndexBuilder {
     ///
     /// Extracts trigrams from the content and adds them to posting lists.
     /// Skips binary files and files exceeding the size limit.
+    ///
+    /// Inserts trigrams directly into posting lists (avoiding intermediate
+    /// AHashSet + Vec allocation). RoaringBitmap's `insert()` is idempotent,
+    /// so duplicate trigrams are handled without a dedup step.
     pub fn add_file(&mut self, path: &str, content: &[u8]) {
         // Skip oversized files.
         if content.len() > MAX_INDEX_FILE_SIZE {
@@ -70,23 +74,24 @@ impl TrigramIndexBuilder {
             return;
         }
 
-        // Extract trigrams from original content (for case-sensitive search).
-        let trigrams = extract_trigrams(content);
-        for trigram in &trigrams {
+        // Insert trigrams directly from original content (case-sensitive search).
+        // No intermediate AHashSet/Vec — RoaringBitmap handles dedup via idempotent insert.
+        for window in content.windows(3) {
+            let trigram = [window[0], window[1], window[2]];
             self.posting_lists
-                .entry(*trigram)
+                .entry(trigram)
                 .or_default()
                 .insert(file_id);
         }
 
-        // Also extract trigrams from lowercased content (for case-insensitive search).
-        // This ensures that case-insensitive queries with lowered patterns find matches.
+        // Also insert trigrams from lowercased content (case-insensitive search).
+        // Uses Unicode-aware to_lowercase() to handle non-ASCII correctly.
         if let Ok(text) = std::str::from_utf8(content) {
             let lower = text.to_lowercase();
-            let lower_trigrams = extract_trigrams(lower.as_bytes());
-            for trigram in &lower_trigrams {
+            for window in lower.as_bytes().windows(3) {
+                let trigram = [window[0], window[1], window[2]];
                 self.posting_lists
-                    .entry(*trigram)
+                    .entry(trigram)
                     .or_default()
                     .insert(file_id);
             }

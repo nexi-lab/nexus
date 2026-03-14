@@ -4,8 +4,7 @@ Manages a single ``grpc.aio.server()`` hosting ``NexusVFSService``.
 The server is disabled by default (port 0) and enabled by setting
 ``NEXUS_GRPC_PORT`` to a non-zero port number.
 
-A2A agent messaging is delivered over VFS (A2A-over-VFS), so there is
-no separate A2A gRPC servicer — all traffic flows through a single port.
+All agent messaging flows through a single port via VFS.
 """
 
 import asyncio

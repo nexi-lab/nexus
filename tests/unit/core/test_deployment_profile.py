@@ -16,7 +16,6 @@ import pytest
 
 from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
-    BRICK_A2A,
     BRICK_CACHE,
     BRICK_EVENTLOG,
     BRICK_FEDERATION,
@@ -90,7 +89,6 @@ class TestDefaultBrickSets:
         assert BRICK_LLM in bricks
         assert BRICK_SANDBOX in bricks
         assert BRICK_WORKFLOWS in bricks
-        assert BRICK_A2A in bricks
         # Federation is cloud-only
         assert BRICK_FEDERATION not in bricks
 

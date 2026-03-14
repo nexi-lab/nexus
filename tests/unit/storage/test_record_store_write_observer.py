@@ -447,3 +447,68 @@ class TestDeliveredColumn:
             ops = session.query(OperationLogModel).all()
             assert len(ops) == 2
             assert all(op.delivered is False for op in ops)
+
+
+# =========================================================================
+# Post-flush hook tests (Issue #2978)
+# =========================================================================
+
+
+class TestPostFlushHookSync:
+    """Verify the sync observer fires post-flush hooks after commit."""
+
+    def test_hook_called_on_write(
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_write() fires hooks with event data after commit."""
+        captured = []
+        syncer.register_post_flush_hook(lambda events: captured.extend(events))
+
+        metadata = _make_metadata("/hook.csv", etag="h1")
+        syncer.on_write(metadata, is_new=True, path="/hook.csv", zone_id="root")
+
+        assert len(captured) == 1
+        assert captured[0]["op"] == "write"
+        assert captured[0]["path"] == "/hook.csv"
+
+    def test_hook_called_on_write_batch(
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_write_batch() fires hooks with all events."""
+        captured = []
+        syncer.register_post_flush_hook(lambda events: captured.extend(events))
+
+        items = [
+            (_make_metadata("/a.csv", etag="ha"), True),
+            (_make_metadata("/b.csv", etag="hb"), True),
+        ]
+        syncer.on_write_batch(items, zone_id="root")
+
+        assert len(captured) == 2
+        paths = {e["path"] for e in captured}
+        assert paths == {"/a.csv", "/b.csv"}
+
+    def test_hook_failure_does_not_block_audit(
+        self, syncer: RecordStoreWriteObserver, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """A failing hook must not prevent the audit trail from committing."""
+        syncer.register_post_flush_hook(lambda events: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        metadata = _make_metadata("/safe.txt", etag="hs")
+        # Should not raise
+        syncer.on_write(metadata, is_new=True, path="/safe.txt", zone_id="root")
+
+        # Audit trail still committed
+        with record_store.session_factory() as session:
+            ops = (
+                session.query(OperationLogModel).filter(OperationLogModel.path == "/safe.txt").all()
+            )
+            assert len(ops) >= 1
+
+    def test_multiple_hooks(self, syncer: RecordStoreWriteObserver) -> None:
+        """Multiple hooks can be registered and all run."""
+        calls = []
+        syncer.register_post_flush_hook(lambda events: calls.append("hook1"))
+        syncer.register_post_flush_hook(lambda events: calls.append("hook2"))
+
+        assert len(syncer._post_flush_hooks) == 2

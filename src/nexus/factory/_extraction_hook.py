@@ -77,7 +77,11 @@ def make_extraction_hook(
                         if size and size > max_extract_bytes:
                             continue
 
-                        # Read content from backend via content hash
+                        # Read content from backend via content hash.
+                        # NOTE: This is a full-content read — the CAS backend
+                        # returns bytes by hash, not a file path. Path-based
+                        # O(1) extraction (Avro/Parquet header) is only possible
+                        # in the reindex path where filesystem paths are available.
                         content_hash = metadata.get("etag")
                         if not content_hash:
                             continue

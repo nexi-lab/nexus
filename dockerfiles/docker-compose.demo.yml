@@ -1,11 +1,14 @@
 # Nexus Development Environment - Docker Compose
 # Complete stack: PostgreSQL + Nexus + optional infra (Dragonfly, NATS, Zoekt)
 #
-# Usage — toggle infra with profiles:
-#   docker compose up                         # Core: nexus + postgres
+# Usage — toggle services with profiles:
+#   docker compose up                         # Core: nexus + postgres only
 #   docker compose --profile cache up         # + Dragonfly (embedding cache, 90% fewer API calls)
 #   docker compose --profile search up        # + Zoekt (sub-50ms code search)
 #   docker compose --profile events up        # + NATS JetStream (durable event streaming)
+#   docker compose --profile mcp up           # + MCP server
+#   docker compose --profile langgraph up     # + LangGraph agent server
+#   docker compose --profile frontend up      # + React web UI
 #   docker compose --profile full up          # Everything
 #
 # Or via the helper script:
@@ -21,17 +24,17 @@
 #   Local mode:      .env (or .env.example as fallback)
 #   Production mode: .env.production + .env.production.secrets
 #
-# Services (always on):
+# Always-on services:
 #   - postgres:    PostgreSQL database (port 5432)
 #   - nexus:       Nexus RPC server (port 2026)
-#   - mcp-server:  Nexus MCP server (port 8081)
-#   - langgraph:   LangGraph agent server (port 2024)
-#   - frontend:    React web UI (port 5173)
 #
 # Optional services (via profiles):
-#   - dragonfly:   Redis-compatible cache (--profile cache|full)
-#   - nats:        JetStream event bus (--profile events|full)
-#   - zoekt:       Code search engine (--profile search|full)
+#   - dragonfly:   Redis-compatible cache     (--profile cache|full)
+#   - nats:        JetStream event bus        (--profile events|full)
+#   - zoekt:       Code search engine         (--profile search|full)
+#   - mcp-server:  Nexus MCP server           (--profile mcp|full)
+#   - langgraph:   LangGraph agent server     (--profile langgraph|full)
+#   - frontend:    React web UI               (--profile frontend|full)
 
 services:
   # ============================================
@@ -251,6 +254,9 @@ services:
     image: nexus-server:latest
     container_name: nexus-mcp-server
     restart: unless-stopped
+    profiles:
+      - mcp       # docker compose --profile mcp up
+      - full      # docker compose --profile full up
     depends_on:
       nexus:
         condition: service_healthy
@@ -299,6 +305,9 @@ services:
     image: nexus-langgraph:latest
     container_name: nexus-langgraph
     restart: unless-stopped
+    profiles:
+      - langgraph  # docker compose --profile langgraph up
+      - full       # docker compose --profile full up
     env_file:
       - ../.env  # Load environment variables from nexus/.env
     depends_on:
@@ -354,6 +363,9 @@ services:
         # LangGraph server URL - use Docker service name for container-to-container
         VITE_NEXUS_SERVER_URL: ${VITE_NEXUS_SERVER_URL:-http://nexus:2026}
     image: nexus-frontend:latest
+    profiles:
+      - frontend  # docker compose --profile frontend up
+      - full      # docker compose --profile full up
     container_name: nexus-frontend
     restart: unless-stopped
     depends_on:

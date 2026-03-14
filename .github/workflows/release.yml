@@ -264,3 +264,44 @@ jobs:
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Gate: a release is only complete when Docker images are also published.
+  # docker-publish.yml runs in parallel on the same v* tag. This job polls
+  # its status and fails the release workflow if Docker publish failed.
+  verify-docker-publish:
+    name: Verify Docker images published
+    needs: [publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Docker publish workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Waiting for 'Publish Docker Image' workflow on ${GITHUB_SHA}..."
+          for i in $(seq 1 60); do
+            STATUS=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "docker-publish.yml" \
+              --commit "$GITHUB_SHA" \
+              --json status,conclusion \
+              --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null || echo "not_found")
+
+            case "$STATUS" in
+              "completed success")
+                echo "Docker publish succeeded"
+                exit 0
+                ;;
+              "completed failure"|"completed cancelled")
+                echo "::error::Docker publish failed: $STATUS"
+                echo "The release is incomplete — Docker images were not published."
+                echo "Check: https://github.com/$GITHUB_REPOSITORY/actions/workflows/docker-publish.yml"
+                exit 1
+                ;;
+              *)
+                echo "  [$i/60] Docker publish status: $STATUS — waiting 30s..."
+                sleep 30
+                ;;
+            esac
+          done
+          echo "::error::Timed out waiting for Docker publish workflow (30 min)"
+          exit 1

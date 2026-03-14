@@ -948,12 +948,12 @@ def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
 
 
 def _init_semantic_search(nx: Any, config: dict[str, Any]) -> bool:
-    """Initialize semantic search by inserting demo content into document_chunks.
+    """Initialize semantic search by triggering the real indexing pipeline.
 
-    The IndexingPipeline/PipelineIndexer paths are broken for the demo because
-    file_paths table is empty (NexusFS uses its own internal metastore).
-    Instead, we directly insert file_paths + document_chunks via docker exec
-    so the SQL fallback search can find demo content.
+    Attempts to index demo files through the server's semantic_search_index
+    RPC, which runs the full embedding pipeline (embeddings → pgvector HNSW).
+    Falls back to direct document_chunks insertion via docker exec if the
+    RPC-based pipeline is unavailable.
 
     Returns True if semantic search is ready.
     """
@@ -962,6 +962,20 @@ def _init_semantic_search(nx: Any, config: dict[str, Any]) -> bool:
         return False
 
     _ensure_pgvector_extension(config)
+
+    # Try the real indexing pipeline first (Issue #2961: use real embeddings)
+    try:
+        search_svc = nx.service("search")
+        results = search_svc.semantic_search_index("/workspace/demo", recursive=True)
+        indexed = sum(1 for v in results.values() if v > 0)
+        if indexed > 0:
+            logger.info("Semantic search: indexed %d files via pipeline", indexed)
+            return True
+    except Exception as e:
+        logger.debug("Real indexing pipeline unavailable: %s", e)
+
+    # Fallback: insert document_chunks directly for SQL-based search
+    logger.info("Falling back to direct document_chunks insertion")
     return _seed_search_chunks_docker(nx, config)
 
 

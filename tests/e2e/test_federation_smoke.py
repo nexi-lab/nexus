@@ -2,9 +2,9 @@
 
 Validates that federation is an explicit extension layered on top of the
 shared-node story, not a first-run preset. Tests the CLI surface for
-federation commands without requiring a multi-node cluster.
+federation commands and the init → federation enable flow shape.
 
-Gated behind ``e2e`` and ``federation`` markers. Skipped by default.
+Gated behind ``e2e`` and ``federation`` markers.
 
 Usage:
     pytest tests/e2e/test_federation_smoke.py -m "e2e and federation" -v
@@ -22,20 +22,6 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.federation,
 ]
-
-
-def _docker_available() -> bool:
-    try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-@pytest.fixture(autouse=True)
-def _skip_without_docker() -> None:
-    if not _docker_available():
-        pytest.skip("Docker is not available")
 
 
 class TestFederationIsNotFirstRunPreset:
@@ -91,10 +77,20 @@ class TestFederationCliSurface:
             timeout=15,
             cwd=str(tmp_path),
         )
-        # Should fail gracefully, not crash — various exit codes are acceptable
-        # (e.g. 78 = "Server URL required" is a graceful error)
+        # Should fail gracefully, not crash — various exit codes acceptable
         assert "Traceback" not in result.stderr
         assert result.stdout or result.stderr, "Should print some error message"
+
+    def test_federation_enable_help(self) -> None:
+        """nexus federation enable --help should document the extension flow."""
+        result = subprocess.run(
+            ["nexus", "federation", "enable", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        # Enable subcommand may or may not exist yet — test graceful behavior
+        assert "Traceback" not in result.stderr
 
 
 class TestSharedToFederationFlow:
@@ -136,3 +132,29 @@ class TestSharedToFederationFlow:
             timeout=15,
         )
         assert fed_result.returncode == 0
+
+    def test_shared_config_has_no_federation_preset(self, tmp_path: Path) -> None:
+        """Shared config should not include federation topology by default."""
+        config_path = tmp_path / "nexus.yaml"
+        init_result = subprocess.run(
+            [
+                "nexus",
+                "init",
+                "--preset",
+                "shared",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(tmp_path / "data"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert init_result.returncode == 0
+
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["preset"] == "shared"
+        assert "federation" not in cfg
+        assert "topology" not in cfg

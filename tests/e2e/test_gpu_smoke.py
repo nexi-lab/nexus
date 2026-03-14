@@ -2,9 +2,9 @@
 
 Validates the CUDA image variant init path. Does NOT require a GPU
 runner — it only tests that the CLI correctly generates CUDA image
-references. Actual GPU inference testing requires dedicated runners.
+references. These are CLI/config tests, not Docker tests.
 
-Gated behind ``e2e`` and ``gpu`` markers. Skipped by default.
+Gated behind ``e2e`` and ``gpu`` markers.
 
 Usage:
     pytest tests/e2e/test_gpu_smoke.py -m "e2e and gpu" -v
@@ -22,20 +22,6 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.gpu,
 ]
-
-
-def _docker_available() -> bool:
-    try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-@pytest.fixture(autouse=True)
-def _skip_without_docker() -> None:
-    if not _docker_available():
-        pytest.skip("Docker is not available")
 
 
 class TestGpuImageVariant:
@@ -105,6 +91,7 @@ class TestGpuImageVariant:
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
         assert cfg["image_ref"] == "ghcr.io/nexi-lab/nexus:0.9.2-cuda"
+        assert cfg.get("image_pin") == "tag", "Explicit tag should set image_pin"
 
     def test_cuda_with_edge_channel(self, project_dir: Path) -> None:
         """nexus init --accelerator cuda --channel edge produces edge-cuda."""
@@ -134,3 +121,36 @@ class TestGpuImageVariant:
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
         assert cfg["image_ref"] == "ghcr.io/nexi-lab/nexus:edge-cuda"
+        assert cfg.get("image_channel") == "edge"
+        # Channel-following: should NOT have image_pin
+        assert "image_pin" not in cfg
+
+    def test_cuda_upgrade_validates_channel(self, project_dir: Path) -> None:
+        """nexus upgrade --channel invalid should fail with clear error."""
+        config_path = project_dir / "nexus.yaml"
+        # First init
+        subprocess.run(
+            [
+                "nexus",
+                "init",
+                "--preset",
+                "shared",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(project_dir / "data"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        result = subprocess.run(
+            ["nexus", "upgrade", "--channel", "stabel"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=str(project_dir),
+        )
+        assert result.returncode != 0
+        assert "Unknown channel" in result.stdout or "stabel" in result.stdout

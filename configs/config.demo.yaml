@@ -91,9 +91,10 @@ backends:
   #   readonly: true
   #   description: "Gmail messages for joezhoujinjing@gmail.com organized by priority folders"
 
-# Cache configuration
+# Cache configuration — uses Dragonfly from docker-compose when available
 cache:
-  type: memory
+  type: ${NEXUS_CACHE_TYPE:-redis}
+  url: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
   ttl: 3600
   max_size_mb: 100
 
@@ -108,13 +109,18 @@ auth:
 enforce_permissions: true            # Enable permission enforcement by default (use --no-permissions to disable)
 enforce_zone_isolation: true         # Enable zone isolation by default (use --no-zone-isolation to disable)
 
-# Features — must match FeaturesConfig field names (extra="forbid")
+# Features — ALL enabled for demo (the whole point of a demo!)
+# Individual features degrade gracefully if their infra is unavailable.
+# Must match FeaturesConfig field names (extra="forbid")
 features:
-  search: true            # Enabled for demo (txtai local embeddings)
-  llm: false              # Disabled for demo (no LLM provider)
+  search: true
+  llm: true
+  memory: true
+  mcp: true
+  skills: true
   agent_registry: true
-  scheduler: false        # Disabled for demo
-  sandbox: false          # Disabled for demo
+  scheduler: true
+  sandbox: true
 
 # Monitoring
 monitoring:

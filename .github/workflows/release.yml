@@ -1,5 +1,11 @@
 name: Release
 
+# Atomic release pipeline (Issue #2946).
+# The GitHub Release (the user-visible "this version exists" signal) is only
+# created AFTER both PyPI publish AND Docker publish succeed.
+# PyPI publish is irreversible, but without a GitHub Release users won't
+# discover the version via the releases page or release notifications.
+
 on:
   push:
     tags:
@@ -7,7 +13,9 @@ on:
 
 permissions:
   contents: write
+  packages: write
   id-token: write
+  attestations: write
 
 jobs:
   verify-version:
@@ -198,7 +206,7 @@ jobs:
           password: ${{ env.NEXUS_FAST_PYPI_API_TOKEN }}
           packages-dir: dist-rust
 
-  publish:
+  publish-pypi:
     name: Publish nexus-ai-fs to PyPI
     needs: [build-wheel, build-sdist, build-rust-wheel, build-rust-sdist]
     runs-on: ubuntu-latest
@@ -214,15 +222,10 @@ jobs:
 
       - name: Collect nexus-ai-fs distributions
         run: |
-          mkdir -p dist-main dist-release
+          mkdir -p dist-main
           cp artifacts/sdist/* dist-main/ 2>/dev/null || true
-          cp artifacts/sdist/* dist-release/ 2>/dev/null || true
           cp artifacts/wheel/* dist-main/ 2>/dev/null || true
-          cp artifacts/wheel/* dist-release/ 2>/dev/null || true
-          cp artifacts/rust-sdist/* dist-release/ 2>/dev/null || true
-          find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-release/ \;
           ls -lh dist-main/
-          ls -lh dist-release/
 
       - name: Publish nexus-ai-fs to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -230,24 +233,143 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist-main
 
+  # Docker build, smoke test, and GHCR push — inline in release.yml so
+  # create-release can depend on it directly (Issue #2946 atomic release).
+  # docker-publish.yml handles branch pushes (develop/main) separately.
+  build-docker:
+    name: Build & push Docker (${{ matrix.variant }})
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        include:
+          - variant: cpu
+            suffix: ""
+          - variant: cuda
+            suffix: "-cuda"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # NOTE: The March 13, 2026 v0.9.2 "denied: write_package" failure was caused
+      # by the GHCR package not being linked to the repo. Fixed by deleting the
+      # orphaned package — next push auto-creates it with correct repo linkage.
+      # If this recurs: GitHub Settings → Packages → nexus → Manage Actions access.
+
+      - name: Extract version metadata
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          SUFFIX="${{ matrix.suffix }}"
+          echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image (local load for smoke tests)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ghcr.io/nexi-lab/nexus:smoke-test
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          cache-from: type=gha,scope=release-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.variant }}
+
+      - name: Smoke test — critical imports
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          import nexus_fast
+          from _nexus_raft import Metastore
+          import txtai
+          import pgvector
+          import docker
+          import fastembed
+          import psutil
+          print('All critical imports OK')
+          "
+
+      - name: Smoke test — CLI entrypoints
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            sh -c "nexus --version && nexusd --help > /dev/null 2>&1 && echo 'CLI OK'"
+
+      - name: Smoke test — env-var config (no config file)
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          from nexus.config import load_config
+          cfg = load_config()
+          assert cfg.profile == 'full', f'Expected profile=full, got {cfg.profile}'
+          print(f'Config OK: profile={cfg.profile}')
+          "
+
+      - name: Build and push to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          cache-from: type=gha,scope=release-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.variant }}
+
+  # GitHub Release is created ONLY after both PyPI and Docker succeed.
+  # This is the user-visible "released" signal — without it, the version
+  # doesn't appear on the releases page or trigger notifications.
+  create-release:
+    name: Create GitHub Release
+    needs: [publish-pypi, publish-rust, build-docker]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release artifacts
+        run: |
+          mkdir -p dist-release
+          cp artifacts/sdist/* dist-release/ 2>/dev/null || true
+          cp artifacts/wheel/* dist-release/ 2>/dev/null || true
+          cp artifacts/rust-sdist/* dist-release/ 2>/dev/null || true
+          find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-release/ \;
+          ls -lh dist-release/
+
       - name: Extract release notes
         id: extract-release-notes
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          # Extract release notes from CHANGELOG.md if it exists
           if [ -f CHANGELOG.md ]; then
-            # Try to extract section for this version
             NOTES=$(sed -n "/## \[${VERSION}\]/,/## \[/p" CHANGELOG.md | sed '$ d' | tail -n +2)
-            if [ -z "$NOTES" ]; then
-              NOTES="Release version ${VERSION}"
-            fi
+            [ -z "$NOTES" ] && NOTES="Release version ${VERSION}"
           else
             NOTES="Release version ${VERSION}"
           fi
-
-          # Save to file for multiline support
           echo "$NOTES" > release_notes.txt
 
       - name: Create GitHub Release

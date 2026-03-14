@@ -117,17 +117,18 @@ fn top_k_by_similarity<T: Sync>(
 }
 
 /// Cosine similarity helper: converts SimSIMD distance to similarity.
-/// Returns NaN on failure so `top_k_by_similarity` can filter it.
+/// Returns 0.0 on SimSIMD failure to preserve backward compatibility
+/// (callers expect exactly k results; batch_cosine_similarity also uses 0.0).
 fn cosine_sim_f32(a: &[f32], b: &[f32]) -> f64 {
     <f32 as SpatialSimilarity>::cos(a, b)
         .map(|dist| 1.0 - dist)
-        .unwrap_or(f64::NAN)
+        .unwrap_or(0.0)
 }
 
 fn cosine_sim_i8(a: &[i8], b: &[i8]) -> f64 {
     <i8 as SpatialSimilarity>::cos(a, b)
         .map(|dist| 1.0 - dist)
-        .unwrap_or(f64::NAN)
+        .unwrap_or(0.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +433,7 @@ mod tests {
 
     #[test]
     fn test_top_k_nan_filtered() {
+        // NaN scores (if produced by the sim function) are filtered out.
         fn sim_with_nan(a: &[f32], b: &[f32]) -> f64 {
             if b[0] == 0.0 {
                 f64::NAN
@@ -461,6 +463,20 @@ mod tests {
         let vectors = vec![vec![1.0], vec![2.0]];
         let result = top_k_by_similarity(&query, &vectors, 10, always_nan);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_top_k_simsimd_failure_returns_zero() {
+        // SimSIMD failures use unwrap_or(0.0) for backward compatibility.
+        // Callers always get exactly min(k, n) results.
+        let query = vec![1.0f32, 0.0, 0.0];
+        let vectors = vec![
+            vec![1.0, 0.0, 0.0], // valid
+            vec![0.5, 0.5, 0.0], // valid
+        ];
+        let result = top_k_similar_f32(query, vectors, 5).unwrap();
+        // Should always return all vectors (2), not fewer.
+        assert_eq!(result.len(), 2);
     }
 
     #[test]

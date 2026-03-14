@@ -2529,6 +2529,29 @@ class SearchService:
             )
             return [_result_to_dict(r) for r in results]
 
+        # Delegate to SearchDaemon's txtai backend when wired (Issue #2965)
+        daemon = getattr(self, "_search_daemon", None)
+        if daemon is not None and getattr(daemon, "_backend", None) is not None:
+            daemon_results = await daemon.search(
+                query=query,
+                search_type=search_mode if search_mode != "semantic" else "hybrid",
+                limit=limit,
+                path_filter=path if path != "/" else None,
+            )
+            return [
+                {
+                    "path": r.path,
+                    "chunk_text": getattr(r, "chunk_text", ""),
+                    "score": round(r.score, 4),
+                    "chunk_index": getattr(r, "chunk_index", 0),
+                    "start_offset": getattr(r, "start_offset", 0) or 0,
+                    "end_offset": getattr(r, "end_offset", 0) or 0,
+                    "line_start": getattr(r, "line_start", 0) or 0,
+                    "line_end": getattr(r, "line_end", 0) or 0,
+                }
+                for r in daemon_results
+            ]
+
         if self._record_store is not None:
             return await self._sql_chunk_search(query, path, limit)
 

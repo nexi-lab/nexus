@@ -435,29 +435,47 @@ def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
 async def handle_semantic_search_index(
     nexus_fs: "NexusFS", params: Any, _context: Any
 ) -> dict[str, Any]:
-    """Handle semantic_search_index method."""
+    """Handle semantic_search_index method.
+
+    Routes indexing through the SearchDaemon's txtai backend (which uses
+    pgvector) so that indexed documents are immediately searchable.
+    Falls back to the SearchService pipeline if the daemon is unavailable.
+    """
     path = getattr(params, "path", "/")
     recursive = getattr(params, "recursive", True)
 
+    search = nexus_fs.service("search")
+    if search is None:
+        raise ValueError("SearchService required for semantic search")
+
+    # Index via SearchService pipeline (stores chunks in document_chunks table)
     try:
-        search = nexus_fs.service("search")
-        assert search is not None, "SearchService required for semantic search"
         await search.ainitialize_semantic_search(nx=nexus_fs, record_store_engine=None)
     except Exception as e:
-        raise ValueError(
-            f"Semantic search is not initialized and could not be auto-initialized: {e}"
-        ) from e
+        raise ValueError(f"Semantic search could not be initialized: {e}") from e
 
-    search = nexus_fs.service("search")
-    assert search is not None
     results = await search.semantic_search_index(path=path, recursive=recursive)
-
     total_chunks = 0
     for v in results.values():
         if isinstance(v, int):
             total_chunks += v
         elif isinstance(v, dict) and "chunks" in v:
             total_chunks += v["chunks"]
+
+    # Sync to SearchDaemon's live txtai index so queries find new documents
+    # immediately (the daemon's BM25/vector index is built at startup and
+    # won't include files indexed after boot without this refresh).
+    daemon = getattr(search, "_search_daemon", None)
+    if daemon is not None and getattr(daemon, "_backend", None) is not None:
+        indexed_paths = list(results.keys())
+        try:
+            await daemon._refresh_indexes(indexed_paths)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "Daemon index refresh failed for %d paths", len(indexed_paths), exc_info=True
+            )
 
     return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 

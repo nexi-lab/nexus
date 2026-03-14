@@ -94,6 +94,13 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
             app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
 
+        # Wire SearchDaemon into SearchService so semantic_search queries
+        # use the txtai backend instead of falling back to SQL ILIKE.
+        with contextlib.suppress(AttributeError):
+            search_svc = svc.nexus_fs.service("search")
+            if search_svc is not None:
+                search_svc._search_daemon = app.state.search_daemon
+
         # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
         with contextlib.suppress(ImportError):
             from nexus.bricks.llm.llm_context_builder import ContextBuilder

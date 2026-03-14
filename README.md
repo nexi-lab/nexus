@@ -166,20 +166,17 @@ Storage is abstracted by **capability** (access pattern + consistency guarantee)
 | **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, vector search | Services only — optional |
 | **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | Optional — defaults to `NullCacheStore` |
 
-### Deployment Profiles (Distros)
+### Presets
 
-Same kernel, different service sets — like Linux distros:
+| Preset | Use Case | Stack |
+|--------|----------|-------|
+| **local** | Embedded SDK, no Docker | In-process only |
+| **shared** | One shared node | Nexus + PostgreSQL + Dragonfly + Zoekt |
+| **demo** | Shared + seed data | Same as shared + demo corpus |
 
-| Profile | Linux Analogue | Target | Services |
-|---------|---------------|--------|----------|
-| **minimal** | initramfs | Bare minimum | 1 |
-| **embedded** | BusyBox | MCU, WASM (<1 MB) | 2 |
-| **lite** | Alpine | Pi, Jetson, mobile | 8 |
-| **full** | Ubuntu Desktop | Desktop, laptop | 21 |
-| **cloud** | Ubuntu Server | k8s, serverless | 22 (all) |
-| **remote** | NFS client | Client-side proxy | 0 |
+Federation and GPU are explicit extensions layered on top of the shared preset, not separate presets.
 
-See [Kernel Architecture](https://nexi-lab.github.io/nexus/architecture/kernel-architecture/) for the full design.
+See [Kernel Architecture](https://nexi-lab.github.io/nexus/architecture/kernel-architecture/) for internal deployment profiles and the full design.
 
 ## Examples
 

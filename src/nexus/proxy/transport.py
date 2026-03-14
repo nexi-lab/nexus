@@ -46,6 +46,11 @@ class HttpTransport:
         self._config = config
         self._remote_url = config.remote_url.rstrip("/")
 
+        # Validate remote_url against SSRF (Issue #2960 H12)
+        from nexus.security.url_validator import validate_outbound_url
+
+        validate_outbound_url(self._remote_url)
+
         if client is not None:
             self._client = client
             self._owns_client = False

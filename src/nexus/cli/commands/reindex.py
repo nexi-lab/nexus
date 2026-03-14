@@ -313,37 +313,24 @@ def _run_semantic_reindex(
                     progress.update(task, advance=1)
                     continue
 
-                # Try path-based extraction first for O(1) header/footer
-                # formats (Avro, Parquet) to avoid full-content reads.
-                schema_ext = catalog._detect_schema_extractor(mime_type, filename)
-                physical_path = _get_physical_path(nx, file_path)
-                if (
-                    schema_ext is not None
-                    and physical_path is not None
-                    and hasattr(schema_ext, "extract_from_path")
-                ):
-                    result = catalog.extract_schema_from_path(
-                        entity_urn=urn,
-                        path=physical_path,
-                        mime_type=mime_type,
-                        filename=filename,
-                        zone_id=zone_id,
-                        created_by="reindex",
-                    )
-                else:
-                    # Full-content read for CSV/JSON/Markdown
-                    content = nx.read(file_path)
-                    if isinstance(content, str):
-                        content = content.encode()
+                # Read file content via NexusFS (CAS-backed).
+                # NOTE: extract_from_path() exists for external callers with
+                # real OS paths, but NexusFS.physical_path is a CAS content
+                # hash, not a filesystem path. Reindex always reads full
+                # content; the 100MB size gate in CatalogService protects
+                # against oversized files.
+                content = nx.read(file_path)
+                if isinstance(content, str):
+                    content = content.encode()
 
-                    result = catalog.extract_auto(
-                        entity_urn=urn,
-                        content=content,
-                        mime_type=mime_type,
-                        filename=filename,
-                        zone_id=zone_id,
-                        created_by="reindex",
-                    )
+                result = catalog.extract_auto(
+                    entity_urn=urn,
+                    content=content,
+                    mime_type=mime_type,
+                    filename=filename,
+                    zone_id=zone_id,
+                    created_by="reindex",
+                )
 
                 processed += 1
 
@@ -375,21 +362,6 @@ def _run_semantic_reindex(
     table.add_row("Documents extracted", str(documents_extracted))
     table.add_row("Errors", str(errors))
     console.print(table)
-
-
-def _get_physical_path(nx: Any, file_path: str) -> str | None:
-    """Get the physical (CAS blob) path for a file, if available.
-
-    Used by semantic reindex to enable O(1) header/footer-only extraction
-    for Avro/Parquet without reading the full content (Issue #2978).
-    """
-    try:
-        stat = nx.stat(file_path)
-        if isinstance(stat, dict):
-            return stat.get("physical_path")
-        return getattr(stat, "physical_path", None)
-    except Exception:
-        return None
 
 
 def _walk_filesystem(nx: Any, root: str) -> list[str]:

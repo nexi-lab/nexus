@@ -86,7 +86,7 @@ ghcr.io/nexi-lab/nexus:edge          # Pre-release (develop branch)
 ```
 
 `nexus init` resolves and pins a full image reference (`image_ref`) into `nexus.yaml`.
-The default channel is `stable`, which pins to the installed CLI version.
+The default channel is `stable`, which queries GHCR for the latest release (falls back to the installed CLI version if offline).
 Override during init:
 
 ```bash

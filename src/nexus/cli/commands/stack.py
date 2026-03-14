@@ -144,6 +144,11 @@ def _derive_project_env(
         env["NEXUS_TLS_CERT"] = "/app/data/tls/server.crt"
         env["NEXUS_TLS_KEY"] = "/app/data/tls/server.key"
         env["NEXUS_TLS_CA"] = "/app/data/tls/ca.crt"
+        # TLS enabled — let the server use mTLS for gRPC
+        env["NEXUS_GRPC_INSECURE"] = "false"
+    else:
+        # No TLS — skip TOFU mTLS so CLI can connect without certs
+        env["NEXUS_GRPC_INSECURE"] = "true"
 
     return env
 
@@ -704,12 +709,32 @@ def upgrade(
         nexus upgrade --image-tag 0.10.0     # pin to specific version
         nexus upgrade --image-digest sha256:abc123...
     """
+    from nexus.cli.commands.init_cmd import VALID_CHANNELS
+
     config = _load_project_config()
     preset = config.get("preset", "local")
 
     if preset == "local":
         console.print("[yellow]Preset 'local' does not use a prebuilt image.[/yellow]")
         raise SystemExit(0)
+
+    # Validate --channel against known channels
+    if channel and channel not in VALID_CHANNELS:
+        console.print(
+            f"[red]Error:[/red] Unknown channel '{channel}'. "
+            f"Valid channels: {', '.join(VALID_CHANNELS)}"
+        )
+        raise SystemExit(1)
+
+    # Warn if config is explicitly pinned (--image-tag or --image-digest at init)
+    pin_mode = config.get("image_pin", "")
+    if pin_mode and not (image_tag or image_digest or channel):
+        console.print(
+            f"[yellow]Warning:[/yellow] This config is pinned via {pin_mode}. "
+            "Use --image-tag or --image-digest to change the pin, "
+            "or --channel to switch to channel-following mode."
+        )
+        return
 
     current_ref = config.get("image_ref", config.get("image_tag", "(unknown)"))
     effective_channel = channel or config.get("image_channel", "stable")
@@ -736,9 +761,16 @@ def upgrade(
         return
 
     config["image_ref"] = new_ref
-    config["image_channel"] = effective_channel
-    if channel:
-        config["image_channel"] = channel
+    # Update pin/channel tracking
+    if image_digest:
+        config["image_pin"] = "digest"
+        config.pop("image_channel", None)
+    elif image_tag:
+        config["image_pin"] = "tag"
+        config.pop("image_channel", None)
+    else:
+        config["image_channel"] = effective_channel
+        config.pop("image_pin", None)
     # Clean up deprecated image_tag if present
     config.pop("image_tag", None)
 

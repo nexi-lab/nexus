@@ -58,6 +58,7 @@ BRICK_A2A = "a2a"
 BRICK_DISCOVERY = "discovery"
 BRICK_MCP = "mcp"
 BRICK_MEMORY = "memory"
+BRICK_SKILLS = "skills"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -85,6 +86,7 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_SKILLS,
         BRICK_FEDERATION,
         BRICK_AGENT_RUNTIME,
     }
@@ -165,6 +167,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_SEARCH,
         BRICK_PAY,
         BRICK_LLM,
+        BRICK_SKILLS,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
         BRICK_A2A,

@@ -64,7 +64,7 @@ services:
   # Nexus RPC Server
   # ============================================================================
   nexus:
-    image: ghcr.io/nexi-lab/nexus:${NEXUS_IMAGE_TAG:-latest}
+    image: ${NEXUS_IMAGE_REF:-ghcr.io/nexi-lab/nexus:latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -121,6 +121,7 @@ services:
       NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
       # gRPC
       NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
+      NEXUS_GRPC_INSECURE: "${NEXUS_GRPC_INSECURE:-true}"
       # Runtime
       NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
     volumes:

@@ -767,6 +767,16 @@ disable_error_code = ["import-untyped"]
 module = "nexus.system_services.agents.agent_rpc_service"
 disable_error_code = ["import-untyped"]
 
+[[tool.mypy.overrides]]
+module = [
+    "nexus.cli.commands.init_cmd",
+    "nexus.cli.commands.stack",
+    "nexus.cli.commands.status",
+    "nexus.cli.commands.demo",
+]
+# PyYAML stubs — same as other CLI modules (config.py, config_resolver.py)
+disable_error_code = ["import-untyped", "no-any-return"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

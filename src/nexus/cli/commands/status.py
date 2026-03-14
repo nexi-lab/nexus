@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
@@ -19,6 +20,35 @@ from nexus.cli.utils import console, handle_error
 
 if TYPE_CHECKING:
     from rich.table import Table
+
+
+# ---------------------------------------------------------------------------
+# Project config helpers
+# ---------------------------------------------------------------------------
+
+CONFIG_SEARCH_PATHS = ("./nexus.yaml", "./nexus.yml")
+
+
+def _load_project_config_optional() -> dict[str, Any]:
+    """Try loading nexus.yaml; return empty dict if not found."""
+    import yaml
+
+    for candidate in CONFIG_SEARCH_PATHS:
+        p = Path(candidate)
+        if p.exists():
+            with open(p) as f:
+                return yaml.safe_load(f) or {}
+    return {}
+
+
+def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
+    """Add image_ref/channel/accelerator from nexus.yaml into *data*."""
+    project_cfg = _load_project_config_optional()
+    if project_cfg:
+        data["image_ref"] = project_cfg.get("image_ref", project_cfg.get("image_tag", ""))
+        data["image_channel"] = project_cfg.get("image_channel", "")
+        data["image_accelerator"] = project_cfg.get("image_accelerator", "")
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +126,14 @@ def _build_table(data: dict[str, Any]) -> Table:
     table.add_column("Status", style="bold")
     table.add_column("Health")
     table.add_column("Details", style="dim")
+
+    # Image row (from nexus.yaml project config)
+    image_ref = data.get("image_ref", "")
+    if image_ref:
+        channel = data.get("image_channel", "")
+        accelerator = data.get("image_accelerator", "")
+        detail_parts = [p for p in (channel, accelerator) if p]
+        table.add_row("image", image_ref, "", ", ".join(detail_parts) if detail_parts else "")
 
     # Server row
     if data["server_reachable"]:
@@ -208,7 +246,7 @@ def status(
         else:
             timing = CommandTiming()
             with timing.phase("collect"):
-                data = _collect_status(server_url, profile_list)
+                data = _enrich_with_image_info(_collect_status(server_url, profile_list))
             render_output(
                 data=data,
                 output_opts=output_opts,
@@ -225,12 +263,14 @@ def _watch_loop(server_url: str, profiles: list[str] | None) -> None:
     """Continuously refresh the status table every 2 seconds."""
     from rich.live import Live
 
-    data = _collect_status(server_url, profiles)
+    data = _enrich_with_image_info(_collect_status(server_url, profiles))
 
     with Live(_build_table(data), refresh_per_second=1, console=console) as live:
         while True:
             time.sleep(2)
-            live.update(_build_table(_collect_status(server_url, profiles)))
+            live.update(
+                _build_table(_enrich_with_image_info(_collect_status(server_url, profiles)))
+            )
 
 
 def register_commands(cli: click.Group) -> None:

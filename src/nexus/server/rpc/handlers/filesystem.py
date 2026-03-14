@@ -498,7 +498,8 @@ async def handle_semantic_search_index(
                 else:
                     content_str = content
                 if content_str.strip():
-                    documents.append({"id": file_path, "text": content_str, "path": file_path})
+                    doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
+                    documents.append({"id": doc_id, "text": content_str, "path": file_path})
             except Exception as read_err:
                 read_errors += 1
                 _log.warning("Skipping %s: %s", file_path, read_err)

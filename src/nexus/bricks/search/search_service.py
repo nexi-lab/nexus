@@ -2535,11 +2535,14 @@ class SearchService:
         if daemon is not None and getattr(daemon, "_backend", None) is not None:
             # Over-fetch to compensate for permission filtering
             fetch_limit = limit * 3 if self._permission_enforcer else limit
+            zone_id = getattr(context, "zone_id", None) if context else None
             daemon_results = await daemon.search(
                 query=query,
                 search_type=search_mode if search_mode != "semantic" else "hybrid",
                 limit=fetch_limit,
                 path_filter=path if path != "/" else None,
+                zone_id=zone_id,
+                adaptive_k=adaptive_k,
             )
             hits = [
                 {

@@ -457,21 +457,24 @@ async def handle_semantic_search_index(
     # Prefer single-path indexing through the SearchDaemon's txtai backend.
     daemon = getattr(search, "_search_daemon", None)
     if daemon is not None and getattr(daemon, "_backend", None) is not None:
-        from nexus.contracts.constants import ROOT_ZONE_ID
-
         context = _context
+        zone_id = getattr(context, "zone_id", None) or "root"
 
         # Query file paths from the daemon's database connection
         paths_to_index: list[str] = []
         if hasattr(daemon, "_async_session") and daemon._async_session is not None:
             from sqlalchemy import text as sa_text
 
-            like_pattern = path.rstrip("/") + "/%" if recursive else path
             async with daemon._async_session() as sess:
                 if recursive:
+                    # Match both the path itself (single file) and children (directory)
+                    like_pattern = path.rstrip("/") + "/%"
                     result = await sess.execute(
-                        sa_text("SELECT virtual_path FROM file_paths WHERE virtual_path LIKE :p"),
-                        {"p": like_pattern},
+                        sa_text(
+                            "SELECT virtual_path FROM file_paths"
+                            " WHERE virtual_path LIKE :like OR virtual_path = :exact"
+                        ),
+                        {"like": like_pattern, "exact": path},
                     )
                     paths_to_index = [r[0] for r in result.fetchall()]
                 else:
@@ -501,7 +504,7 @@ async def handle_semantic_search_index(
         # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
         indexed = 0
         if documents:
-            indexed = await daemon.index_documents(documents, zone_id=ROOT_ZONE_ID)
+            indexed = await daemon.index_documents(documents, zone_id=zone_id)
             _log.info("semantic_search_index: txtai indexed %d documents", indexed)
 
         results = {doc["path"]: 1 for doc in documents}

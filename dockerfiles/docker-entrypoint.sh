@@ -26,7 +26,7 @@ fi
 # Configuration
 ADMIN_USER="${NEXUS_ADMIN_USER:-admin}"
 API_KEY_FILE="${NEXUS_API_KEY_FILE:-/app/data/.admin-api-key}"
-CONFIG_FILE="${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}"
+CONFIG_FILE="${NEXUS_CONFIG_FILE:-}"
 APP_DIR="${APP_DIR:-/app}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-/app/scripts}"
 NEXUS_PORT="${NEXUS_PORT:-2026}"
@@ -211,9 +211,9 @@ setup_admin_api_key() {
 }
 
 init_semantic_search_if_enabled() {
-    if [ ! -f "$CONFIG_FILE" ]; then
+    if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
         echo ""
-        echo "ℹ️  No config file found, skipping semantic search initialization"
+        echo "ℹ️  No config file — semantic search controlled by deployment profile (${NEXUS_PROFILE:-full})"
         return 0
     fi
 
@@ -278,10 +278,15 @@ start_zoekt_if_enabled() {
 
 build_serve_cmd() {
     local auth_type="${NEXUS_AUTH_TYPE:-database}"
-    if [ -f "$CONFIG_FILE" ]; then
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         echo "nexusd --config $CONFIG_FILE --auth-type $auth_type"
     else
+        # No config file — use env vars and deployment profile (Grafana/Gitea pattern).
+        # NEXUS_PROFILE env var controls which bricks are enabled (default: full).
         local cmd="nexusd --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-2026} --auth-type $auth_type"
+        if [ -n "${NEXUS_PROFILE:-}" ]; then
+            cmd="$cmd --profile ${NEXUS_PROFILE}"
+        fi
         if [ "${NEXUS_BACKEND:-}" = "gcs" ]; then
             cmd="$cmd --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET:-}"
             [ -n "${NEXUS_GCS_PROJECT:-}" ] && cmd="$cmd --gcs-project ${NEXUS_GCS_PROJECT}"
@@ -306,7 +311,7 @@ wait_for_health() {
 }
 
 load_saved_mounts_if_needed() {
-    if [ -f "$CONFIG_FILE" ]; then
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         echo ""
         echo -e "${GREEN}✓ Backends loaded from configuration file${NC}"
         return 0
@@ -366,13 +371,14 @@ start_nexus_server() {
     echo "  Port: ${NEXUS_PORT:-2026}"
     echo "  Backend: ${NEXUS_BACKEND:-local}"
 
-    if [ -f "$CONFIG_FILE" ]; then
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         echo "  Config: $CONFIG_FILE"
         echo ""
         echo -e "${GREEN}✓ Using configuration file${NC}"
     else
-        echo "  Config: Not found (using CLI options)"
+        echo "  Config: env vars + profile (${NEXUS_PROFILE:-full})"
         echo ""
+        echo -e "${GREEN}✓ Using deployment profile — no config file needed${NC}"
     fi
 
     local cmd

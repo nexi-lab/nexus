@@ -1,10 +1,13 @@
 name: Publish Docker Image
 
+# Builds, smoke-tests, and publishes edge/dev Docker images to GHCR.
+# For release tags (v*), Docker build is handled inline by release.yml
+# to enable atomic releases (Issue #2946).
+# This workflow handles branch pushes only (develop → edge, main → latest).
+
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
     branches:
       - main
       - develop
@@ -19,6 +22,7 @@ jobs:
   build-and-push:
     name: Build & Push (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     strategy:
       matrix:
         include:
@@ -47,16 +51,65 @@ jobs:
       - name: Extract version metadata
         id: meta
         run: |
-          PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           SHA="${GITHUB_SHA::8}"
           SUFFIX="${{ matrix.suffix }}"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tags=ghcr.io/nexi-lab/nexus:${PKG_VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:sha-${SHA}${SUFFIX},ghcr.io/nexi-lab/nexus:edge${SUFFIX}" >> "$GITHUB_OUTPUT"
-          fi
+          # Branch pushes only get channel tags (edge/sha-*), never semver.
+          # Semver tags (0.9.2, latest) are owned exclusively by release.yml
+          # to prevent mutable version tags appearing before atomic release.
+          echo "tags=ghcr.io/nexi-lab/nexus:sha-${SHA}${SUFFIX},ghcr.io/nexi-lab/nexus:edge${SUFFIX}" >> "$GITHUB_OUTPUT"
 
+      # ---- Build locally for smoke testing (Issue #2946) ----
+      - name: Build image (local load for smoke tests)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: ghcr.io/nexi-lab/nexus:smoke-test
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+
+      # ---- Smoke tests — must pass before push ----
+      - name: Smoke test — critical imports
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          import nexus_fast
+          from _nexus_raft import Metastore
+          import txtai
+          import pgvector
+          import docker
+          import fastembed
+          import psutil
+          print('All critical imports OK')
+          "
+
+      - name: Smoke test — CLI entrypoints
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            sh -c "nexus --version && nexusd --help > /dev/null 2>&1 && echo 'CLI OK'"
+
+      - name: Smoke test — Zoekt binaries
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            sh -c "which zoekt-index && which zoekt-webserver && echo 'Zoekt binaries OK'"
+
+      - name: Smoke test — env-var config (no config file)
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          from nexus.config import load_config
+          cfg = load_config()
+          assert cfg.profile == 'full', f'Expected profile=full, got {cfg.profile}'
+          print(f'Config OK: profile={cfg.profile}')
+          "
+
+      # ---- Push to GHCR (only after smoke tests pass) ----
       - name: Build and push
         uses: docker/build-push-action@v6
         with:

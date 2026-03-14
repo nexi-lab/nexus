@@ -193,19 +193,9 @@ class AgentRPCService:
         agent: dict,
         _logger: logging.Logger,
     ) -> str | None:
-        if not self._key_service:
-            return None
-        try:
-            key_record = self._key_service.ensure_keypair(agent_id)
-            agent["did"] = key_record.did
-            agent["key_id"] = key_record.key_id
-            _logger.info(
-                "[KYA] Provisioned identity for agent %s (did=%s)", agent_id, key_record.did
-            )
-            return str(key_record.did)
-        except Exception as e:
-            _logger.warning("[KYA] Failed to provision identity for agent %s: %s", agent_id, e)
-            return None
+        from nexus.contracts.agent_utils import provision_agent_identity
+
+        return provision_agent_identity(agent_id, agent, self._key_service, _logger)
 
     def _provision_agent_wallet(
         self,
@@ -213,44 +203,14 @@ class AgentRPCService:
         zone_id: str,
         _logger: logging.Logger,
     ) -> None:
-        if self._wallet_provisioner is None:
-            return
-        try:
-            self._wallet_provisioner(agent_id, zone_id)
-            _logger.info("[WALLET] Provisioned wallet for agent %s", agent_id)
-        except Exception as e:
-            _logger.warning("[WALLET] Failed to provision wallet for agent %s: %s", agent_id, e)
+        from nexus.contracts.agent_utils import provision_agent_wallet
+
+        provision_agent_wallet(agent_id, zone_id, self._wallet_provisioner, _logger)
 
     def _determine_agent_key_expiration(self, user_id: str, session: Any) -> datetime:
-        from datetime import UTC, timedelta
+        from nexus.contracts.agent_utils import determine_agent_key_expiration
 
-        from sqlalchemy import select
-
-        from nexus.storage.models import APIKeyModel
-
-        stmt = (
-            select(APIKeyModel)
-            .where(
-                APIKeyModel.user_id == user_id,
-                APIKeyModel.revoked == 0,
-                APIKeyModel.subject_type != "agent",
-            )
-            .order_by(APIKeyModel.created_at.desc())
-        )
-        owner_key = session.scalar(stmt)
-
-        if owner_key and owner_key.expires_at:
-            now = datetime.now(UTC)
-            owner_expires: datetime = owner_key.expires_at
-            if owner_expires.tzinfo is None:
-                owner_expires = owner_expires.replace(tzinfo=UTC)
-            if owner_expires > now:
-                return owner_expires
-            raise ValueError(
-                f"Cannot generate API key for agent: Your API key has expired on {owner_expires.isoformat()}. "
-                "Please renew your API key before creating agent API keys."
-            )
-        return datetime.now(UTC) + timedelta(days=365)
+        return determine_agent_key_expiration(user_id, session)
 
     def _create_agent_api_key(self, agent_id: str, user_id: str, context: dict | Any | None) -> str:
         if self._api_key_creator is None:

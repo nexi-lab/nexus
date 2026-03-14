@@ -281,6 +281,15 @@ def main(
 
             if data_dir:
                 connect_config["data_dir"] = data_dir
+
+            # Respect NEXUS_ENFORCE_PERMISSIONS env var
+            import os as _os
+
+            _enforce = _os.environ.get("NEXUS_ENFORCE_PERMISSIONS", "")
+            if _enforce.lower() in ("true", "1", "yes"):
+                connect_config["enforce_permissions"] = True
+            if connect_config.get("enforce_permissions"):
+                click.echo("  Perms:   enforce=True")
             if config_path:
                 from nexus.config import load_config
 

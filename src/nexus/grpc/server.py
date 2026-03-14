@@ -108,8 +108,12 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
         server.add_secure_port(f"[::]:{port}", creds)
         logger.info("gRPC server started on port %d (mTLS)", port)
     else:
-        server.add_insecure_port(f"[::]:{port}")
-        logger.info("gRPC server started on port %d (insecure)", port)
+        server.add_insecure_port(f"127.0.0.1:{port}")
+        logger.warning(
+            "gRPC server started on port %d (insecure, loopback only). "
+            "Configure TLS to bind on all interfaces.",
+            port,
+        )
 
     await server.start()
 

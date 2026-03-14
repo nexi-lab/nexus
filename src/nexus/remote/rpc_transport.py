@@ -89,6 +89,20 @@ class RPCTransport:
                 server_address, creds, options=_CHANNEL_OPTIONS
             )
         else:
+            host = server_address.rsplit(":", 1)[0].strip("[]")
+            import ipaddress as _ipaddress
+
+            _is_local = host == "localhost"
+            if not _is_local:
+                try:
+                    _is_local = _ipaddress.ip_address(host).is_loopback
+                except ValueError:
+                    _is_local = False
+            if not _is_local:
+                raise ValueError(
+                    f"Insecure gRPC channel refused for non-loopback address '{server_address}'. "
+                    "Configure TLS for remote connections."
+                )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
         self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
 

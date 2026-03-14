@@ -383,7 +383,7 @@ class PathRouter:
         if "\0" in path:
             raise InvalidPathError(path, "Path contains null byte")
 
-        if any(ord(c) < 32 for c in path if c not in ("\t", "\n")):
+        if any(ord(c) < 32 for c in path):
             raise InvalidPathError(path, "Path contains control characters")
 
         # SECURITY: Normalize BEFORE checking for path traversal

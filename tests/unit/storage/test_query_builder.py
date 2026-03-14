@@ -65,7 +65,7 @@ class TestGetReadyWork:
         session.execute.assert_called_once()
         call_args = session.execute.call_args[0][0]
         assert "SELECT * FROM ready_work_items" in str(call_args)
-        assert "LIMIT 10" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_ready_work_null_status(self):
         """Test getting ready work with null status and priority."""
@@ -164,7 +164,7 @@ class TestGetPendingWork:
 
         # Verify
         call_args = session.execute.call_args[0][0]
-        assert "LIMIT 5" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_pending_work_error(self):
         """Test error handling in get_pending_work."""
@@ -231,7 +231,7 @@ class TestGetBlockedWork:
 
         # Verify
         call_args = session.execute.call_args[0][0]
-        assert "LIMIT 20" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_blocked_work_error(self):
         """Test error handling in get_blocked_work."""
@@ -297,7 +297,7 @@ class TestGetInProgressWork:
 
         # Verify
         call_args = session.execute.call_args[0][0]
-        assert "LIMIT 15" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_in_progress_work_null_fields(self):
         """Test getting in-progress work with null fields."""
@@ -395,7 +395,7 @@ class TestGetWorkByPriority:
 
         # Verify
         call_args = session.execute.call_args[0][0]
-        assert "LIMIT 100" in str(call_args)
+        assert "LIMIT :limit" in str(call_args)
 
     def test_get_work_by_priority_multiple_results(self):
         """Test getting multiple work items by priority."""

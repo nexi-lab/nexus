@@ -6,9 +6,10 @@ Extracted from fastapi_server.py (#1602).
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
+from nexus.server.dependencies import require_admin
 from nexus.server.rate_limiting import limiter
 
 logger = logging.getLogger(__name__)
@@ -64,8 +65,7 @@ async def health_check(request: Request) -> HealthResponse | Any:
     )
 
 
-@router.get("/health/detailed")
-@limiter.exempt
+@router.get("/health/detailed", dependencies=[Depends(require_admin)])
 async def health_check_detailed(request: Request) -> dict[str, Any]:
     """Detailed health check including all components.
 

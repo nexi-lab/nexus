@@ -73,3 +73,30 @@ def test_init_semantic_search_fails_when_search_service_missing(monkeypatch) -> 
 
     assert asyncio.run(module.init_semantic_search()) is False
     assert fake_nx.closed is True
+
+
+def test_init_semantic_search_inline_config_relies_on_env_database_url(monkeypatch) -> None:
+    module = _load_module()
+    fake_search = _FakeSearch()
+    fake_nx = _FakeNx(fake_search)
+    captured: dict[str, object] = {}
+
+    def fake_connect(*, config=None):
+        captured["config"] = config
+        return fake_nx
+
+    monkeypatch.setattr(module, "connect", fake_connect)
+    monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://skillhub:skillhub@db:5432/nexus")
+    monkeypatch.setenv("NEXUS_DATA_DIR", "/tmp/nexus-data")
+    monkeypatch.delenv("NEXUS_CONFIG_FILE", raising=False)
+
+    assert asyncio.run(module.init_semantic_search()) is True
+    assert captured["config"] == {
+        "profile": "full",
+        "backend": "local",
+        "data_dir": "/tmp/nexus-data",
+        "features": {"search": True},
+    }
+    assert fake_search.calls[0]["nx"] is fake_nx
+    assert fake_search.calls[0]["record_store_engine"] is None
+    assert fake_nx.closed is True

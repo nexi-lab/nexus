@@ -53,7 +53,6 @@ async def init_semantic_search() -> bool:
                     "profile": "full",
                     "backend": "local",
                     "data_dir": data_dir,
-                    "database": {"url": database_url},
                     "features": {"search": True},
                 }
             )

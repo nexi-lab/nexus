@@ -54,7 +54,6 @@ BRICK_PAY = "pay"
 BRICK_LLM = "llm"
 BRICK_SANDBOX = "sandbox"
 BRICK_WORKFLOWS = "workflows"
-BRICK_A2A = "a2a"
 BRICK_DISCOVERY = "discovery"
 BRICK_MCP = "mcp"
 BRICK_MEMORY = "memory"
@@ -82,7 +81,6 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_LLM,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
-        BRICK_A2A,
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
@@ -170,7 +168,6 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_SKILLS,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
-        BRICK_A2A,
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,

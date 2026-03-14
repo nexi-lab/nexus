@@ -597,14 +597,10 @@ def _boot_dependent_bricks(
     """Boot Tier 2b (DEPENDENT BRICK) — requires services from independent bricks.
 
     Discovers ``brick_factory.py`` modules with ``TIER="dependent"`` and
-    collects their artifact callbacks into ``bricks["artifact_observers"]``.
+    collects their handler callbacks into ``bricks["artifact_observers"]``.
 
     Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
     factory layer and injected into brick factories to respect LEGO Principle 3.
-
-    Currently handles:
-    - Artifact auto-indexing (Issue #1861): collects ``ArtifactCallback``
-      handlers for direct invocation by ``TaskManager``.
     """
     # Build cross-brick factories in the factory layer (not inside bricks)
     tool_info_factory: Callable[..., Any] | None = None

@@ -672,8 +672,6 @@ module = [
     "nexus.raft.commands_pb2_grpc",
     "nexus.raft.transport_pb2",
     "nexus.raft.transport_pb2_grpc",
-    "nexus.bricks.a2a.a2a_pb2",
-    "nexus.bricks.a2a.a2a_pb2_grpc",
     "nexus.grpc.vfs.vfs_pb2",
     "nexus.grpc.vfs.vfs_pb2_grpc",
     "nexus.grpc.vfs",
@@ -686,11 +684,6 @@ ignore_missing_imports = true
 module = "nexus.raft.client"
 # gRPC client interacts heavily with generated pb2 modules (metadata_pb2, commands_pb2)
 # that have no type stubs — attribute access on implicit Any modules
-disable_error_code = ["attr-defined"]
-
-[[tool.mypy.overrides]]
-module = ["nexus.bricks.a2a.grpc_server", "nexus.bricks.a2a.proto_converter"]
-# gRPC server and proto converter interact with generated a2a_pb2 module
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
@@ -785,8 +778,6 @@ exclude = [
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
     "src/nexus/core/_compact_generated.py",    # Generated at install time
     "src/nexus/core/protocols/",               # Generated at install time
-    "src/nexus/bricks/a2a/a2a_pb2.py",         # Generated gRPC stub
-    "src/nexus/bricks/a2a/a2a_pb2_grpc.py",   # Generated gRPC stub
     "src/nexus/grpc/vfs/vfs_pb2.py",           # Generated gRPC stub
     "src/nexus/grpc/vfs/vfs_pb2_grpc.py",      # Generated gRPC stub
 ]
@@ -856,9 +847,7 @@ id = "brick-independence"
 name = "Bricks must not import from each other (LEGO Principle 3)"
 type = "independence"
 modules = [
-    "nexus.bricks.a2a",
     "nexus.bricks.access_manifest",
-    "nexus.bricks.artifact_index",
     "nexus.bricks.auth",
     "nexus.bricks.context_manifest",
     "nexus.bricks.delegation",
@@ -888,8 +877,6 @@ ignore_imports = [
     # (removed: nexus.storage -> nexus.cache.protocols — both are non-brick pillar modules now)
     # cache -> rebac transitive chain (via nexus.server.telemetry, Issue #2179)
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
-    # a2a -> ipc: TYPE_CHECKING imports only (runtime imports now use importlib)
-    "nexus.bricks.a2a.messaging_adapters -> nexus.bricks.ipc.envelope",
     # mcp -> rebac: TYPE_CHECKING imports for middleware/profiles (Issue #2429)
     "nexus.bricks.mcp.middleware -> nexus.bricks.rebac.manager",
     "nexus.bricks.mcp.profiles -> nexus.bricks.rebac.manager",

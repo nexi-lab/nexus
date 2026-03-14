@@ -81,7 +81,6 @@ class LifespanServices:
     observability_subsystem: Any = None
 
     # --- From app.state (set by server init, not factory) ----------------
-    a2a_task_manager: Any = None
     observability_registry: Any = None
 
     @classmethod
@@ -140,6 +139,5 @@ class LifespanServices:
                 getattr(_sys, "observability_subsystem", None) if _sys else None
             ),
             # From app.state (set by server init)
-            a2a_task_manager=getattr(app.state, "a2a_task_manager", None),
             observability_registry=getattr(app.state, "observability_registry", None),
         )

@@ -2502,6 +2502,7 @@ class SearchService:
         filters: dict[str, Any] | None = None,  # noqa: ARG002
         search_mode: str = "semantic",
         adaptive_k: bool = False,
+        context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """Search documents using natural language queries.
 
@@ -2532,13 +2533,15 @@ class SearchService:
         # Delegate to SearchDaemon's txtai backend when wired (Issue #2965)
         daemon = getattr(self, "_search_daemon", None)
         if daemon is not None and getattr(daemon, "_backend", None) is not None:
+            # Over-fetch to compensate for permission filtering
+            fetch_limit = limit * 3 if self._permission_enforcer else limit
             daemon_results = await daemon.search(
                 query=query,
                 search_type=search_mode if search_mode != "semantic" else "hybrid",
-                limit=limit,
+                limit=fetch_limit,
                 path_filter=path if path != "/" else None,
             )
-            return [
+            hits = [
                 {
                     "path": r.path,
                     "chunk_text": getattr(r, "chunk_text", ""),
@@ -2551,6 +2554,14 @@ class SearchService:
                 }
                 for r in daemon_results
             ]
+
+            # Filter by read permission — only return files the caller can access
+            if self._permission_enforcer and hits and context is not None:
+                all_paths = [h["path"] for h in hits]
+                accessible = set(self._permission_enforcer.filter_list(all_paths, context))
+                hits = [h for h in hits if h["path"] in accessible]
+
+            return hits[:limit]
 
         if self._record_store is not None:
             return await self._sql_chunk_search(query, path, limit)

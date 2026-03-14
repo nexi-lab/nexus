@@ -22,8 +22,15 @@ class TestInsecureChannelLoopbackValidation:
     @staticmethod
     def _is_allowed_insecure(server_address: str) -> bool:
         """Check if insecure channel would be allowed for this address."""
-        host = server_address.rsplit(":", 1)[0]
-        return host in ("localhost", "127.0.0.1", "::1", "[::1]")
+        import ipaddress
+
+        host = server_address.rsplit(":", 1)[0].strip("[]")
+        if host == "localhost":
+            return True
+        try:
+            return ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return False
 
     def test_remote_ip_rejected(self) -> None:
         assert not self._is_allowed_insecure("192.168.1.100:2028")

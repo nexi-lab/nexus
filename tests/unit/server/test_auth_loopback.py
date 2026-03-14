@@ -35,6 +35,18 @@ class TestIsLoopback:
     def test_empty_string_rejected(self) -> None:
         assert _is_loopback("") is False
 
+    def test_ipv4_loopback_range(self) -> None:
+        """127.0.0.0/8 is all loopback — not just 127.0.0.1."""
+        assert _is_loopback("127.0.0.2") is True
+        assert _is_loopback("127.255.255.255") is True
+
+    def test_ipv4_mapped_ipv6_loopback(self) -> None:
+        """::ffff:127.0.0.1 is IPv4-mapped IPv6 loopback."""
+        assert _is_loopback("::ffff:127.0.0.1") is True
+
+    def test_ipv4_mapped_ipv6_non_loopback(self) -> None:
+        assert _is_loopback("::ffff:192.168.1.1") is False
+
 
 class TestOpenAccessLoopbackRestriction:
     """Regression: H4 — open access mode trusts headers from any client."""

@@ -85,10 +85,22 @@ if _STATIC_ADMINS:
 
 
 def _is_loopback(host: str | None) -> bool:
-    """Check whether a client IP is a loopback address."""
+    """Check whether a client IP is a loopback address.
+
+    Handles IPv4 (127.0.0.0/8), IPv6 (::1), IPv4-mapped IPv6
+    (::ffff:127.x.x.x), and "localhost".
+    """
     if not host:
         return False
-    return host in ("127.0.0.1", "::1", "localhost")
+    if host == "localhost":
+        return True
+    import ipaddress
+
+    try:
+        addr = ipaddress.ip_address(host)
+        return addr.is_loopback
+    except ValueError:
+        return False
 
 
 async def resolve_auth(

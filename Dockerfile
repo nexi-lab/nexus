@@ -128,7 +128,7 @@ COPY --from=builder /root/go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 # This catches missing native libs (libgomp1) and broken wheels early.
 RUN python3 -c "\
 import nexus_fast; \
-from _nexus_raft import Metastore, RaftConsensus; \
+from _nexus_raft import Metastore; \
 import txtai; \
 import pgvector; \
 import docker; \

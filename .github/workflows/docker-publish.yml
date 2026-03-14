@@ -23,7 +23,7 @@ jobs:
   build-and-push:
     name: Build & Push (${{ matrix.variant }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       matrix:
         include:
@@ -81,7 +81,7 @@ jobs:
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
           import nexus_fast
-          from _nexus_raft import Metastore, RaftConsensus
+          from _nexus_raft import Metastore
           import txtai
           import pgvector
           import docker

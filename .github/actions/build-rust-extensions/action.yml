@@ -48,6 +48,6 @@ runs:
 
         mkdir -p ${{ inputs.output-dir }}
         cd rust/nexus_pyo3 && maturin build $PROFILE_FLAG --out ../../${{ inputs.output-dir }} && cd ../..
-        cd rust/nexus_raft && maturin build $PROFILE_FLAG --features python --out ../../${{ inputs.output-dir }} && cd ../..
-        cd rust/nexus_tasks && maturin build $PROFILE_FLAG --out ../../${{ inputs.output-dir }} && cd ../..
+        cd rust/nexus_raft && maturin build $PROFILE_FLAG --features full --out ../../${{ inputs.output-dir }} && cd ../..
+        cd rust/nexus_tasks && maturin build $PROFILE_FLAG --features mimalloc --out ../../${{ inputs.output-dir }} && cd ../..
       shell: bash

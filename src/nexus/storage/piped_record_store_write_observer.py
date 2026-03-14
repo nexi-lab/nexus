@@ -32,7 +32,6 @@ Architecture:
 
 import asyncio
 import contextlib
-import hashlib
 import json
 import logging
 import time
@@ -104,6 +103,10 @@ class PipedRecordStoreWriteObserver:
         self._total_retries = 0
         self._total_dropped = 0
 
+        # Post-flush hooks: called after successful commit (Issue #2978)
+        # Used by CatalogService for async-on-write extraction
+        self._post_flush_hooks: list[Any] = []
+
     # ------------------------------------------------------------------
     # Deferred injection
     # ------------------------------------------------------------------
@@ -111,6 +114,15 @@ class PipedRecordStoreWriteObserver:
     def set_pipe_manager(self, pm: "PipeManager") -> None:
         """Inject PipeManager after factory boot."""
         self._pipe_manager = pm
+
+    def register_post_flush_hook(self, hook: Any) -> None:
+        """Register a callback invoked after each successful flush.
+
+        Hooks receive the list of flushed events. They run AFTER the
+        audit trail commit, so failures do not block the audit path.
+        Used by CatalogService for async-on-write extraction (Issue #2978).
+        """
+        self._post_flush_hooks.append(hook)
 
     # ------------------------------------------------------------------
     # WriteObserverProtocol — sync hot path
@@ -376,13 +388,12 @@ class PipedRecordStoreWriteObserver:
     def _build_urn(path: str, zone_id: str | None) -> str:
         """Build a locator URN for a file from its virtual path.
 
-        URNs are locators (Issue #2929 Key Decision #3): they change on
-        rename. The identifier is a deterministic SHA-256 hash prefix of
-        the path, so any caller can compute the same URN without a
-        database lookup.
+        Delegates to NexusURN.for_file() — single source of truth for
+        URN construction (Issue #2978, Issue #2929 Key Decision #3).
         """
-        path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
-        return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
+        from nexus.contracts.urn import NexusURN
+
+        return str(NexusURN.for_file(zone_id or "default", path))
 
     def _record_mcl_for_event(
         self,
@@ -568,6 +579,18 @@ class PipedRecordStoreWriteObserver:
                 len(events),
                 duration,
             )
+
+            # Post-flush hooks: extraction, etc. (Issue #2978)
+            # Runs AFTER commit — failures do not block audit trail.
+            for hook in self._post_flush_hooks:
+                try:
+                    hook(events)
+                except Exception as hook_err:
+                    logger.debug(
+                        "Post-flush hook %s failed (non-critical): %s",
+                        getattr(hook, "__name__", hook),
+                        hook_err,
+                    )
 
         except Exception as e:
             if attempt < _MAX_RETRIES:

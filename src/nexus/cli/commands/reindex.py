@@ -260,10 +260,11 @@ def _run_semantic_reindex(
     zone_id: str | None,
     dry_run: bool,
 ) -> None:
-    """Walk the filesystem and re-extract schemas via CatalogService.
+    """Walk the filesystem and re-extract schemas + document structure.
 
     For each file, computes its URN, reads content, and runs
-    CatalogService.extract_schema() to rebuild the schema_metadata aspect.
+    CatalogService.extract_auto() to rebuild schema_metadata or
+    document_structure aspects (Issue #2978).
     """
     import mimetypes
 
@@ -287,7 +288,8 @@ def _run_semantic_reindex(
         return
 
     processed = 0
-    extracted = 0
+    schemas_extracted = 0
+    documents_extracted = 0
     errors = 0
 
     with Progress(
@@ -299,31 +301,42 @@ def _run_semantic_reindex(
 
         for file_path in all_files:
             try:
-                # Compute URN from path
                 from nexus.contracts.urn import NexusURN
 
                 urn = str(NexusURN.for_file(zone_id or "default", file_path))
+                filename = file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path
+                mime_type, _ = mimetypes.guess_type(file_path)
+
+                # Format-gate: skip files with no extractor (Issue #2978)
+                if not catalog.has_extractor(mime_type=mime_type, filename=filename):
+                    processed += 1
+                    progress.update(task, advance=1)
+                    continue
 
                 # Read file content
                 content = nx.read(file_path)
                 if isinstance(content, str):
                     content = content.encode()
 
-                # Detect MIME type from filename
-                mime_type, _ = mimetypes.guess_type(file_path)
-
-                result = catalog.extract_schema(
+                result = catalog.extract_auto(
                     entity_urn=urn,
                     content=content,
                     mime_type=mime_type,
-                    filename=file_path.rsplit("/", 1)[-1] if "/" in file_path else file_path,
+                    filename=filename,
                     zone_id=zone_id,
                     created_by="reindex",
                 )
 
                 processed += 1
-                if result.schema is not None:
-                    extracted += 1
+
+                # Track what was extracted
+                from nexus.bricks.catalog.extractors import DocumentExtractionResult
+
+                if isinstance(result, DocumentExtractionResult):
+                    if result.error is None:
+                        documents_extracted += 1
+                elif hasattr(result, "schema") and result.schema is not None:
+                    schemas_extracted += 1
 
             except Exception as e:
                 errors += 1
@@ -340,7 +353,8 @@ def _run_semantic_reindex(
     table.add_column("Value", style="green")
     table.add_row("Total files", str(len(all_files)))
     table.add_row("Processed", str(processed))
-    table.add_row("Schemas extracted", str(extracted))
+    table.add_row("Schemas extracted", str(schemas_extracted))
+    table.add_row("Documents extracted", str(documents_extracted))
     table.add_row("Errors", str(errors))
     console.print(table)
 

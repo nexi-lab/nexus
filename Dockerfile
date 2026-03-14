@@ -74,7 +74,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     fi && \
     uv pip install --system -i $(cat /tmp/pip_index) \
         ".[all,performance,compression,monitoring,docker,event-streaming,sentry]" \
-        "txtai[ann]>=9.0"
+        "txtai[ann]>=9.0" \
+        "sentence-transformers>=5.3"
 
 # ---------- Build Rust extensions (shared target dir for dep reuse) ----------
 COPY proto/ ./proto/
@@ -184,7 +185,10 @@ ENV PYTHONUNBUFFERED=1 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data \
     FAISS_OPT_LEVEL=generic \
-    OMP_NUM_THREADS=1
+    OMP_NUM_THREADS=1 \
+    GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384 \
+    NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2 \
+    NEXUS_TXTAI_SPARSE=true
 
 EXPOSE 2026 2126 6070
 

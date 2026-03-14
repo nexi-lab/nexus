@@ -310,6 +310,10 @@ class CatalogService:
     ) -> ExtractionResult:
         """Extract schema using path-based I/O for header-only formats (Avro, Parquet).
 
+        ``path`` must be a real OS filesystem path (not a CAS content hash).
+        This method is for external callers with local files. Internal CAS-backed
+        paths (reindex, on-write hook) use content-based extract_auto() instead.
+
         Falls back to content-based extraction if the extractor doesn't
         support extract_from_path.
         """

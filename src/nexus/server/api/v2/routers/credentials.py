@@ -134,7 +134,8 @@ async def issue_credential(
 ) -> dict:
     """Issue a JWT-VC capability credential to an agent.
 
-    Requires authentication. The agent must have a provisioned identity (DID).
+    Requires authentication. The caller must own the target agent (matching
+    subject_id) or be an admin.
     """
     _authorize_agent_credential_access(auth_result, body.agent_id, "issue")
     # Resolve agent's DID

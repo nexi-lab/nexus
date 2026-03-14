@@ -84,12 +84,20 @@ if _STATIC_ADMINS:
     )
 
 
+def _is_loopback(host: str | None) -> bool:
+    """Check whether a client IP is a loopback address."""
+    if not host:
+        return False
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
 async def resolve_auth(
     app_state: Any,
     authorization: str | None = None,
     x_agent_id: str | None = None,
     x_nexus_subject: str | None = None,
     x_nexus_zone_id: str | None = None,
+    client_host: str | None = None,
 ) -> dict[str, Any] | None:
     """Core authentication logic — usable from both HTTP and WebSocket contexts.
 
@@ -116,6 +124,15 @@ async def resolve_auth(
 
     # No auth configured = open access
     if not getattr(_state, "api_key", None) and not getattr(_state, "auth_provider", None):
+        # Restrict open-access mode to loopback to prevent remote privilege escalation.
+        if not _is_loopback(client_host):
+            logger.warning(
+                "[AUTH] Open access request rejected from non-loopback address %s. "
+                "Configure an API key or auth provider for remote access.",
+                client_host,
+            )
+            return None
+
         # In open access mode, we still want a stable identity for permission checks.
         # Prefer explicit identity headers; otherwise, best-effort infer from sk- style keys.
         subject_type: str | None = None
@@ -262,12 +279,14 @@ async def get_auth_result(
     For WebSocket endpoints (where ``Depends()`` is unsupported), call
     :func:`resolve_auth` directly with ``websocket.app.state``.
     """
+    client_host = request.client.host if request.client else None
     return await resolve_auth(
         app_state=request.app.state,
         authorization=authorization,
         x_agent_id=x_agent_id,
         x_nexus_subject=x_nexus_subject,
         x_nexus_zone_id=x_nexus_zone_id,
+        client_host=client_host,
     )
 
 

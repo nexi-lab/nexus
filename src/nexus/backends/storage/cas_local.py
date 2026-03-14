@@ -128,12 +128,18 @@ class CASLocalBackend(CASBackend, MultipartUpload):
         bloom = _init_bloom(self.cas_root, bloom_capacity, bloom_fp_rate)
         stripe = _StripeLock()
 
+        # Feature DI: LRU metadata cache for hot-path _read_meta()
+        import cachetools
+
+        meta_cache: Any = cachetools.LRUCache(maxsize=10_000)
+
         # Initialize CASBackend with Feature DI
         super().__init__(
             transport,
             backend_name="local",
             bloom_filter=bloom,
             content_cache=content_cache,
+            meta_cache=meta_cache,
             stripe_lock=stripe,
             on_write_callback=on_write_callback,
         )
@@ -203,6 +209,62 @@ class CASLocalBackend(CASBackend, MultipartUpload):
 
         # Single blob: delegate to CASBackend (has cache wiring)
         return super().read_content(content_hash, context=context)
+
+    def read_content_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        context: "OperationContext | None" = None,
+    ) -> bytes:
+        """Read a byte range [start, end) without loading the full file.
+
+        Optimised path for CASLocalBackend:
+        - Content cache hit: slice cached content.
+        - Chunked content: delegate to CDCEngine.read_chunked_range().
+        - Single blob: read full content, verify hash, then slice.
+        """
+        # Feature DI: content cache hit → slice
+        if self._cache is not None:
+            cached: bytes | None = self._cache.get(content_hash)
+            if cached is not None:
+                return cached[start:end]
+
+        # Chunked content → range-aware chunk read
+        if self._cdc.is_chunked(content_hash):
+            return self._cdc.read_chunked_range(content_hash, start, end)
+
+        # Single blob: read, verify integrity, then slice
+        key = self._blob_key(content_hash)
+        try:
+            data, _ = self._transport.get_blob(key)
+
+            actual_hash = hash_content(data)
+            if actual_hash != content_hash:
+                raise BackendError(
+                    f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                    backend=self.name,
+                    path=content_hash,
+                )
+
+            content = bytes(data)
+
+            # Populate content cache on miss
+            if self._cache is not None:
+                self._cache.put(content_hash, content)
+
+            return content[start:end]
+
+        except NexusFileNotFoundError:
+            raise
+        except BackendError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to read content range: {e}",
+                backend=self.name,
+                path=content_hash,
+            ) from e
 
     def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         # Check if chunked

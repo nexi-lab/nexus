@@ -367,6 +367,116 @@ class TestBackwardCompatibility:
         assert not backend.content_exists(large_hash)
 
 
+class TestPerChunkVerification:
+    """Tests for per-chunk hash verification during read."""
+
+    @pytest.fixture
+    def backend(self, tmp_path: Path) -> CASLocalBackend:
+        return CASLocalBackend(root_path=tmp_path / "backend")
+
+    def test_read_chunked_verifies_each_chunk(self, backend: CASLocalBackend) -> None:
+        """Test that read_chunked verifies per-chunk hashes."""
+        large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
+        content_hash = backend.write_content(large_content).content_hash
+
+        # Read should succeed with intact chunks
+        assert backend.read_content(content_hash) == large_content
+
+    def test_corrupted_chunk_raises_value_error(self, backend: CASLocalBackend) -> None:
+        """Test that corrupted chunk data raises ValueError."""
+        large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
+        content_hash = backend.write_content(large_content).content_hash
+
+        # Corrupt a chunk on disk
+        manifest = ChunkedReference.from_json(_hash_to_path(backend, content_hash).read_bytes())
+        first_chunk = manifest.chunks[0]
+        chunk_path = _hash_to_path(backend, first_chunk.chunk_hash)
+        chunk_path.write_bytes(b"CORRUPTED DATA")
+
+        with pytest.raises(ValueError, match="Chunk hash mismatch"):
+            backend.read_content(content_hash)
+
+
+class TestRangeReads:
+    """Tests for read_content_range and read_chunked_range."""
+
+    @pytest.fixture
+    def backend(self, tmp_path: Path) -> CASLocalBackend:
+        return CASLocalBackend(root_path=tmp_path / "backend")
+
+    def test_range_read_small_file(self, backend: CASLocalBackend) -> None:
+        """Test range read on a non-chunked file."""
+        content = b"Hello, World! This is a range read test."
+        content_hash = backend.write_content(content).content_hash
+
+        result = backend.read_content_range(content_hash, 0, 5)
+        assert result == b"Hello"
+
+        result = backend.read_content_range(content_hash, 7, 12)
+        assert result == b"World"
+
+    def test_range_read_full_file(self, backend: CASLocalBackend) -> None:
+        """Test range read for full file returns same content."""
+        content = b"Full file range read"
+        content_hash = backend.write_content(content).content_hash
+
+        result = backend.read_content_range(content_hash, 0, len(content))
+        assert result == content
+
+    def test_range_read_empty_range(self, backend: CASLocalBackend) -> None:
+        """Test range read with start == end returns empty."""
+        content = b"empty range"
+        content_hash = backend.write_content(content).content_hash
+
+        result = backend.read_content_range(content_hash, 5, 5)
+        assert result == b""
+
+    def test_range_read_chunked_file(self, backend: CASLocalBackend) -> None:
+        """Test range read on a chunked file."""
+        large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
+        content_hash = backend.write_content(large_content).content_hash
+
+        # Read a range from the middle
+        start = CDC_THRESHOLD_BYTES // 2
+        end = start + 4096
+        result = backend.read_content_range(content_hash, start, end)
+        assert result == large_content[start:end]
+
+    def test_range_read_chunked_first_bytes(self, backend: CASLocalBackend) -> None:
+        """Test reading first few bytes of chunked content."""
+        large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
+        content_hash = backend.write_content(large_content).content_hash
+
+        result = backend.read_content_range(content_hash, 0, 100)
+        assert result == large_content[:100]
+
+    def test_range_read_chunked_last_bytes(self, backend: CASLocalBackend) -> None:
+        """Test reading last few bytes of chunked content."""
+        large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
+        content_hash = backend.write_content(large_content).content_hash
+
+        end = len(large_content)
+        start = end - 100
+        result = backend.read_content_range(content_hash, start, end)
+        assert result == large_content[start:end]
+
+    def test_range_read_from_cache(self, backend: CASLocalBackend) -> None:
+        """Test that range read uses content cache if available."""
+        from unittest.mock import MagicMock
+
+        content = b"cached content for range"
+        content_hash = backend.write_content(content).content_hash
+
+        # Mock content cache
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = content
+        backend._cache = mock_cache
+
+        result = backend.read_content_range(content_hash, 0, 6)
+        assert result == b"cached"
+        mock_cache.get.assert_called_once_with(content_hash)
+
+
 class TestCDCChunking:
     """Tests specifically for CDC chunking behavior."""
 

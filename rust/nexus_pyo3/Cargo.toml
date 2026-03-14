@@ -38,6 +38,7 @@ mimalloc = ["dep:mimalloc"]
 
 [dev-dependencies]
 criterion = "0.5"
+tempfile = "3"
 
 [[bench]]
 name = "prefix_bench"

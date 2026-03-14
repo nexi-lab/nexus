@@ -26,10 +26,15 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
     """Resolve TLS config from env vars, ZoneManager, or auto-detection.
 
     Priority:
+    0. NEXUS_GRPC_INSECURE=true → skip all TLS (for demo/local dev)
     1. Explicit env vars: NEXUS_TLS_CERT / NEXUS_TLS_KEY / NEXUS_TLS_CA
     2. ZoneManager.tls_config (auto-generated or passed via --tls-* flags)
     3. Auto-detect from {NEXUS_DATA_DIR}/tls/
     """
+    # 0. Allow explicit insecure mode for demo/dev (Issue #2961)
+    if os.environ.get("NEXUS_GRPC_INSECURE", "").lower() in ("true", "1", "yes"):
+        return None
+
     from nexus.security.tls.config import ZoneTlsConfig
 
     # 1. Explicit env vars

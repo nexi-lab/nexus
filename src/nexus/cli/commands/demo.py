@@ -30,6 +30,7 @@ from nexus.cli.commands.demo_data import (
     DEMO_FILES,
     DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
+    HERB_CORPUS,
     MANIFEST_FILENAME,
     PLAN_VERSIONS,
 )
@@ -158,7 +159,9 @@ def _seed_files(
     seeded = manifest.get("files", [])
     created = 0
 
-    for path, content, _description in DEMO_FILES:
+    # Seed both core demo files and HERB-derived corpus
+    all_files = list(DEMO_FILES) + list(HERB_CORPUS)
+    for path, content, _description in all_files:
         if path in seeded:
             continue
         try:
@@ -898,9 +901,10 @@ def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
 
     compose_env = _derive_project_env(config)
 
-    # Read file contents via RPC
+    # Read file contents via RPC (include HERB corpus for semantic search)
     docs = []
-    for path, _content, _desc in DEMO_FILES:
+    all_files = list(DEMO_FILES) + list(HERB_CORPUS)
+    for path, _content, _desc in all_files:
         try:
             raw = nx.sys_read(path)
             text = raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else str(raw)
@@ -943,21 +947,40 @@ def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
         return False
 
 
-def _init_semantic_search(nx: Any, config: dict[str, Any]) -> bool:
-    """Initialize semantic search by inserting demo content into document_chunks.
+def _init_semantic_search(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> bool:
+    """Initialize semantic search by triggering the real indexing pipeline.
 
-    The IndexingPipeline/PipelineIndexer paths are broken for the demo because
-    file_paths table is empty (NexusFS uses its own internal metastore).
-    Instead, we directly insert file_paths + document_chunks via docker exec
-    so the SQL fallback search can find demo content.
+    Attempts to index demo files through the server's semantic_search_index
+    RPC, which runs the full embedding pipeline (embeddings → pgvector HNSW).
+    Falls back to direct document_chunks insertion via docker exec if the
+    RPC-based pipeline is unavailable.
 
-    Returns True if semantic search is ready.
+    Records the engine used in the manifest so tests can verify which path ran.
+
+    Returns True if semantic search is ready (by either path).
     """
     preset = config.get("preset", "local")
     if preset not in ("shared", "demo"):
         return False
 
     _ensure_pgvector_extension(config)
+
+    # Try the real indexing pipeline first (Issue #2961: use real embeddings)
+    try:
+        search_svc = nx.service("search")
+        results = search_svc.semantic_search_index("/workspace/demo", recursive=True)
+        indexed = sum(1 for v in results.values() if v > 0)
+        if indexed > 0:
+            logger.info("Semantic search: indexed %d files via real pipeline", indexed)
+            manifest["semantic_engine"] = "vector"
+            manifest["semantic_indexed_files"] = indexed
+            return True
+    except Exception as e:
+        logger.debug("Real indexing pipeline unavailable: %s", e)
+
+    # Fallback: insert document_chunks directly for SQL-based text search
+    logger.info("Falling back to direct document_chunks insertion (SQL text search)")
+    manifest["semantic_engine"] = "sql_fallback"
     return _seed_search_chunks_docker(nx, config)
 
 
@@ -1044,7 +1067,7 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     # 6. Initialize semantic search and index demo files (best-effort)
     semantic_ready = False
     if not skip_semantic:
-        semantic_ready = _init_semantic_search(nx, config)
+        semantic_ready = _init_semantic_search(nx, config, manifest)
 
     # 7. Seed catalog schemas (best-effort)
     schemas_extracted = 0

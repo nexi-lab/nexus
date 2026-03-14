@@ -184,9 +184,99 @@ class TestFirstRunInit:
         assert compose_file, "compose_file not set in config"
         assert Path(compose_file).exists(), f"compose file not found: {compose_file}"
 
-        # image_tag should be set to the installed CLI version
-        image_tag = cfg.get("image_tag", "")
-        assert image_tag, "image_tag not set in config for portable path"
+        # image_ref should be set to the resolved prebuilt image
+        image_ref = cfg.get("image_ref", "")
+        assert image_ref, "image_ref not set in config for portable path"
+        assert image_ref.startswith("ghcr.io/nexi-lab/nexus:"), (
+            f"image_ref should be a full GHCR reference, got: {image_ref}"
+        )
+        assert cfg.get("image_channel") == "stable", "default channel should be stable"
+        assert cfg.get("image_accelerator") == "cpu", "default accelerator should be cpu"
+        # Deprecated image_tag should not be present in new configs
+        assert "image_tag" not in cfg, "new configs should use image_ref, not image_tag"
+
+    def test_init_with_channel_edge(self, project_dir: Path) -> None:
+        """nexus init --preset shared --channel edge pins to edge image."""
+        config_path = project_dir / "nexus.yaml"
+
+        result = subprocess.run(
+            [
+                "nexus",
+                "init",
+                "--preset",
+                "shared",
+                "--channel",
+                "edge",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(project_dir / "data"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 0
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["image_channel"] == "edge"
+        assert "edge" in cfg["image_ref"]
+
+    def test_init_with_explicit_image_tag(self, project_dir: Path) -> None:
+        """nexus init --preset shared --image-tag 0.9.2 pins to exact tag."""
+        config_path = project_dir / "nexus.yaml"
+
+        result = subprocess.run(
+            [
+                "nexus",
+                "init",
+                "--preset",
+                "shared",
+                "--image-tag",
+                "0.9.2",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(project_dir / "data"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 0
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["image_ref"] == "ghcr.io/nexi-lab/nexus:0.9.2"
+
+    def test_init_with_cuda_accelerator(self, project_dir: Path) -> None:
+        """nexus init --preset shared --accelerator cuda appends -cuda suffix."""
+        config_path = project_dir / "nexus.yaml"
+
+        result = subprocess.run(
+            [
+                "nexus",
+                "init",
+                "--preset",
+                "shared",
+                "--accelerator",
+                "cuda",
+                "--config-path",
+                str(config_path),
+                "--data-dir",
+                str(project_dir / "data"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert result.returncode == 0
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        assert cfg["image_accelerator"] == "cuda"
+        assert "-cuda" in cfg["image_ref"]
 
 
 class TestFullWorkflow:

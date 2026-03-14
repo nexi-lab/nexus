@@ -47,6 +47,7 @@ nexus up
 ```
 
 Same services as demo (PostgreSQL, Dragonfly, Zoekt) with `static` auth and production-oriented defaults.
+Both presets default to the `stable` release channel. Use `nexus status` to see the active image.
 
 ### Local SDK (no Docker)
 
@@ -78,11 +79,24 @@ nexus ls /workspace
 The prebuilt multi-arch image (amd64 + arm64) is published to GHCR:
 
 ```
-ghcr.io/nexi-lab/nexus:latest        # Latest release (CPU-only PyTorch)
+ghcr.io/nexi-lab/nexus:latest        # Latest stable release
 ghcr.io/nexi-lab/nexus:<version>     # Pinned to a specific release
+ghcr.io/nexi-lab/nexus:<version>-cuda # GPU-accelerated variant
+ghcr.io/nexi-lab/nexus:edge          # Pre-release (develop branch)
 ```
 
-`nexus init` pins the image tag to the installed CLI version. To build locally from source instead of pulling, pass `--build` to `nexus up`. A CUDA variant (`ghcr.io/nexi-lab/nexus:<version>-cuda`) is also published for GPU-accelerated workloads — set `image_tag` in `nexus.yaml` to use it.
+`nexus init` resolves and pins a full image reference (`image_ref`) into `nexus.yaml`.
+The default channel is `stable`, which queries GHCR for the latest release (falls back to the installed CLI version if offline).
+Override during init:
+
+```bash
+nexus init --preset shared --channel edge          # pre-release channel
+nexus init --preset shared --image-tag 0.9.2       # explicit version
+nexus init --preset shared --accelerator cuda       # GPU variant
+nexus init --preset shared --image-digest sha256:...  # immutable digest
+```
+
+To upgrade the pinned image later, use `nexus upgrade`. To build locally from source instead of pulling, pass `--build` to `nexus up`.
 
 ## Optional Capabilities
 
@@ -152,20 +166,17 @@ Storage is abstracted by **capability** (access pattern + consistency guarantee)
 | **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, vector search | Services only — optional |
 | **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | Optional — defaults to `NullCacheStore` |
 
-### Deployment Profiles (Distros)
+### Presets
 
-Same kernel, different service sets — like Linux distros:
+| Preset | Use Case | Stack |
+|--------|----------|-------|
+| **local** | Embedded SDK, no Docker | In-process only |
+| **shared** | One shared node | Nexus + PostgreSQL + Dragonfly + Zoekt |
+| **demo** | Shared + seed data | Same as shared + demo corpus |
 
-| Profile | Linux Analogue | Target | Services |
-|---------|---------------|--------|----------|
-| **minimal** | initramfs | Bare minimum | 1 |
-| **embedded** | BusyBox | MCU, WASM (<1 MB) | 2 |
-| **lite** | Alpine | Pi, Jetson, mobile | 8 |
-| **full** | Ubuntu Desktop | Desktop, laptop | 21 |
-| **cloud** | Ubuntu Server | k8s, serverless | 22 (all) |
-| **remote** | NFS client | Client-side proxy | 0 |
+Federation and GPU are explicit extensions layered on top of the shared preset, not separate presets.
 
-See [Kernel Architecture](https://nexi-lab.github.io/nexus/architecture/kernel-architecture/) for the full design.
+See [Kernel Architecture](https://nexi-lab.github.io/nexus/architecture/kernel-architecture/) for internal deployment profiles and the full design.
 
 ## Examples
 

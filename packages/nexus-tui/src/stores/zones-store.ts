@@ -22,10 +22,19 @@ export interface BrickStatusResponse {
   readonly unmounted_at: number | null;
 }
 
+export interface BrickTransitionItem {
+  readonly timestamp: number;
+  readonly event: string;
+  readonly from_state: string;
+  readonly to_state: string;
+}
+
 export interface BrickDetailResponse extends BrickStatusResponse {
   readonly enabled: boolean;
   readonly depends_on: readonly string[];
   readonly depended_by: readonly string[];
+  readonly retry_count: number;
+  readonly transitions: readonly BrickTransitionItem[];
 }
 
 export interface DriftReportItem {

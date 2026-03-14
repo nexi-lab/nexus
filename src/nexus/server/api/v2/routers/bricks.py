@@ -45,12 +45,23 @@ class BrickStatusResponse(BaseModel):
     unmounted_at: float | None = None
 
 
+class BrickTransitionItem(BaseModel):
+    """Single FSM state transition entry."""
+
+    timestamp: float
+    event: str
+    from_state: str
+    to_state: str
+
+
 class BrickDetailResponse(BrickStatusResponse):
-    """Extended brick detail with spec and dependency info (Issue #2980)."""
+    """Extended brick detail with spec, dependency info, and transition history."""
 
     enabled: bool = True
     depends_on: list[str] = []
     depended_by: list[str] = []
+    retry_count: int = 0
+    transitions: list[BrickTransitionItem] = []
 
 
 class BrickHealthResponse(BaseModel):
@@ -238,7 +249,7 @@ async def brick_status(
     name: str,
     manager: Any = Depends(_get_lifecycle_manager),
 ) -> BrickDetailResponse:
-    """Individual brick lifecycle status with spec and dependency info."""
+    """Individual brick lifecycle status with spec, dependency, and transition info."""
     status = manager.get_status(name)
     if status is None:
         raise HTTPException(status_code=404, detail=f"Brick {name!r} not found")
@@ -255,6 +266,14 @@ async def brick_status(
         if name in other_spec.depends_on:
             depended_by.append(other_name)
 
+    # Transition history and retry count
+    retry_count = manager.get_retry_count(name)
+    raw_transitions = manager.get_transitions(name)
+    transitions = [
+        BrickTransitionItem(timestamp=ts, event=evt, from_state=frm, to_state=to)
+        for ts, evt, frm, to in raw_transitions
+    ]
+
     return BrickDetailResponse(
         name=status.name,
         state=status.state.value,
@@ -266,6 +285,8 @@ async def brick_status(
         enabled=enabled,
         depends_on=depends_on,
         depended_by=sorted(depended_by),
+        retry_count=retry_count,
+        transitions=transitions,
     )
 
 

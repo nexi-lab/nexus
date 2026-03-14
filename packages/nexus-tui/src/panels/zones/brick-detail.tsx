@@ -2,7 +2,7 @@
  * Brick detail view: shows individual brick info from GET /api/v2/bricks/{name}.
  *
  * Displays: name, state, protocol, error, dependency graph, config (spec),
- * state history (timestamps), and available actions.
+ * real FSM transition history, and available actions.
  */
 
 import React from "react";
@@ -56,18 +56,6 @@ export function BrickDetail({ brick, loading }: BrickDetailProps): React.ReactNo
     })
     .join("  ");
 
-  // Build state history from available timestamps (chronological order)
-  const history: { label: string; time: string }[] = [];
-  if (brick.started_at !== null) {
-    history.push({ label: "Started", time: formatEpoch(brick.started_at) });
-  }
-  if (brick.stopped_at !== null) {
-    history.push({ label: "Stopped", time: formatEpoch(brick.stopped_at) });
-  }
-  if (brick.unmounted_at !== null) {
-    history.push({ label: "Unmounted", time: formatEpoch(brick.unmounted_at) });
-  }
-
   return (
     <scrollbox height="100%" width="100%">
       {/* Identity */}
@@ -91,6 +79,9 @@ export function BrickDetail({ brick, loading }: BrickDetailProps): React.ReactNo
       <box height={1} width="100%">
         <text>{`Enabled:      ${brick.enabled ? "yes" : "no"}`}</text>
       </box>
+      <box height={1} width="100%">
+        <text>{`Retry count:  ${brick.retry_count}`}</text>
+      </box>
 
       {/* Dependency graph */}
       <box height={1} width="100%" marginTop={1}>
@@ -103,20 +94,34 @@ export function BrickDetail({ brick, loading }: BrickDetailProps): React.ReactNo
         <text>{`Depended by:  ${brick.depended_by.length > 0 ? brick.depended_by.join(", ") : "(none)"}`}</text>
       </box>
 
-      {/* State history */}
+      {/* Timestamps */}
+      <box height={1} width="100%" marginTop={1}>
+        <text>--- Timestamps ---</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`Started at:   ${formatEpoch(brick.started_at)}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`Stopped at:   ${formatEpoch(brick.stopped_at)}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`Unmounted at: ${formatEpoch(brick.unmounted_at)}`}</text>
+      </box>
+
+      {/* State history (real FSM transitions) */}
       <box height={1} width="100%" marginTop={1}>
         <text>--- State History ---</text>
       </box>
-      {history.length > 0 ? (
-        history.map((entry) => (
-          <box key={entry.label} height={1} width="100%">
-            <text>{`${entry.label.padEnd(12)} ${entry.time}`}</text>
+      {brick.transitions.length === 0 ? (
+        <box height={1} width="100%">
+          <text>  No transitions recorded</text>
+        </box>
+      ) : (
+        brick.transitions.map((t, i) => (
+          <box key={i} height={1} width="100%">
+            <text>{`  ${t.from_state} → ${t.to_state}  (${t.event})`}</text>
           </box>
         ))
-      ) : (
-        <box height={1} width="100%">
-          <text>(no transitions recorded)</text>
-        </box>
       )}
 
       {/* Available actions */}
@@ -124,7 +129,7 @@ export function BrickDetail({ brick, loading }: BrickDetailProps): React.ReactNo
         <text>--- Available Actions ---</text>
       </box>
       <box height={1} width="100%">
-        <text>{actionHints || "(none \u2014 brick is in a transient state)"}</text>
+        <text>{actionHints || "(none — brick is in a transient state)"}</text>
       </box>
     </scrollbox>
   );

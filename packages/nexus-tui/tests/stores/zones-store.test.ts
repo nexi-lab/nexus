@@ -220,6 +220,11 @@ describe("ZonesStore", () => {
         enabled: true,
         depends_on: ["brick-gamma"],
         depended_by: ["brick-beta"],
+        retry_count: 2,
+        transitions: [
+          { timestamp: 1000.0, event: "mount", from_state: "REGISTERED", to_state: "STARTING" },
+          { timestamp: 1001.0, event: "started", from_state: "STARTING", to_state: "ACTIVE" },
+        ],
       };
 
       const client = mockClient({
@@ -238,6 +243,11 @@ describe("ZonesStore", () => {
       expect(state.brickDetail!.enabled).toBe(true);
       expect(state.brickDetail!.depends_on).toEqual(["brick-gamma"]);
       expect(state.brickDetail!.depended_by).toEqual(["brick-beta"]);
+      expect(state.brickDetail!.retry_count).toBe(2);
+      expect(state.brickDetail!.transitions).toHaveLength(2);
+      expect(state.brickDetail!.transitions[0]!.event).toBe("mount");
+      expect(state.brickDetail!.transitions[0]!.from_state).toBe("REGISTERED");
+      expect(state.brickDetail!.transitions[1]!.to_state).toBe("ACTIVE");
       expect(state.detailLoading).toBe(false);
     });
 

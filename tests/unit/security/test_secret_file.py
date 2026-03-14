@@ -4,6 +4,7 @@ Ensures private keys and other secrets are written with restrictive
 permissions atomically, never briefly world-readable.
 """
 
+import os
 import stat
 from pathlib import Path
 
@@ -45,6 +46,19 @@ class TestWriteSecretFile:
         assert path.read_text() == "new data"
         mode = stat.S_IMODE(path.stat().st_mode)
         assert mode == 0o600
+
+    def test_tightens_permissions_on_existing_loose_file(self, tmp_path: Path) -> None:
+        """Regression: overwriting a pre-existing 0o644 file must tighten to 0o600."""
+        path = tmp_path / "secret.key"
+        path.write_text("old data")  # Creates with default umask (typically 0o644)
+        os.chmod(path, 0o644)  # Ensure it's world-readable
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+        write_secret_file(path, "new secret")
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o600, (
+            f"Overwriting a 0o644 file must tighten to 0o600, got {oct(mode)}"
+        )
 
     def test_custom_mode(self, tmp_path: Path) -> None:
         path = tmp_path / "secret.key"

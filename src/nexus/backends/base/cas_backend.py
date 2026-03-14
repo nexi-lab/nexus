@@ -16,6 +16,7 @@ features (batch reads, signed URLs, versioning).
 Feature DI (optional, local-only optimizations):
     bloom_filter  — Bloom pre-check for fast content_exists() miss
     content_cache — In-memory cache for read_content() hot path
+    meta_cache    — LRU cache for _read_meta() hot path (e.g. cachetools.LRUCache)
     stripe_lock   — Per-hash threading.Lock for metadata read-modify-write
     on_write_callback — Write notification (e.g. Zoekt reindex)
 
@@ -82,6 +83,7 @@ class CASBackend(Backend):
         # Feature DI — local-only optimizations, all None-safe
         bloom_filter: Any | None = None,
         content_cache: Any | None = None,
+        meta_cache: Any | None = None,
         stripe_lock: Any | None = None,
         on_write_callback: Any | None = None,
     ) -> None:
@@ -90,12 +92,27 @@ class CASBackend(Backend):
         # Feature DI: None means feature disabled (cloud backends pass nothing)
         self._bloom = bloom_filter  # nexus_fast.BloomFilter
         self._cache = content_cache  # storage.content_cache.ContentCache
+        self._meta_cache: Any | None = meta_cache  # cachetools.LRUCache
+        self._meta_cache_hits = 0
+        self._meta_cache_misses = 0
         self._stripe_lock = stripe_lock  # stripe_lock._StripeLock
         self._on_write_callback = on_write_callback
 
     @property
     def name(self) -> str:
         return self._backend_name
+
+    @property
+    def cache_stats(self) -> dict[str, int]:
+        """Return metadata cache hit/miss statistics."""
+        size = len(self._meta_cache) if self._meta_cache is not None else 0
+        maxsize = getattr(self._meta_cache, "maxsize", 0) if self._meta_cache is not None else 0
+        return {
+            "hits": self._meta_cache_hits,
+            "misses": self._meta_cache_misses,
+            "size": size,
+            "maxsize": maxsize,
+        }
 
     # === CAS Path Helpers ===
 
@@ -113,14 +130,23 @@ class CASBackend(Backend):
         """Read metadata sidecar.  Returns default dict if not found.
 
         When stripe_lock is injected, caller must hold the lock before calling.
+        Uses meta_cache (read-through) when injected via Feature DI.
         """
+        # Feature DI: meta cache read-through
+        if self._meta_cache is not None:
+            cached: dict[str, Any] | None = self._meta_cache.get(content_hash)
+            if cached is not None:
+                self._meta_cache_hits += 1
+                return cached
+
+        self._meta_cache_misses += 1 if self._meta_cache is not None else 0
+
         key = self._meta_key(content_hash)
         try:
             data, _ = self._transport.get_blob(key)
             meta: dict[str, Any] = json.loads(data)
-            return meta
         except (NexusFileNotFoundError, FileNotFoundError):
-            return {"ref_count": 0, "size": 0}
+            meta = {"ref_count": 0, "size": 0}
         except (json.JSONDecodeError, Exception) as e:
             raise BackendError(
                 f"Failed to read CAS metadata: {e}",
@@ -128,10 +154,17 @@ class CASBackend(Backend):
                 path=content_hash,
             ) from e
 
+        # Populate cache on miss
+        if self._meta_cache is not None:
+            self._meta_cache[content_hash] = meta
+
+        return meta
+
     def _write_meta(self, content_hash: str, meta: dict[str, Any]) -> None:
         """Write metadata sidecar (JSON).
 
         When stripe_lock is injected, caller must hold the lock before calling.
+        Updates meta_cache when injected via Feature DI.
         """
         key = self._meta_key(content_hash)
         try:
@@ -142,6 +175,10 @@ class CASBackend(Backend):
                 backend=self.name,
                 path=content_hash,
             ) from e
+
+        # Feature DI: update meta cache after successful write
+        if self._meta_cache is not None:
+            self._meta_cache[content_hash] = meta
 
     def _meta_update_locked(
         self,
@@ -272,6 +309,9 @@ class CASBackend(Backend):
                     meta_key = self._meta_key(content_hash)
                     if self._transport.blob_exists(meta_key):
                         self._transport.delete_blob(meta_key)
+                    # Feature DI: evict from meta cache
+                    if self._meta_cache is not None:
+                        self._meta_cache.pop(content_hash, None)
                 else:
                     meta["ref_count"] = ref_count - 1
                     self._write_meta(content_hash, meta)

@@ -42,7 +42,7 @@ runs:
     - name: Install protoc
       uses: arduino/setup-protoc@v3
       with:
-        version: "28.x"
+        version: "3.20.3"
         repo-token: ${{ inputs.github-token }}
 
     - name: Install maturin

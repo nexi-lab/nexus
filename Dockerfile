@@ -92,8 +92,8 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic/alembic.ini ./alembic.ini
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --no-deps -i $(cat /tmp/pip_index) .
+RUN rm -rf src/*.egg-info build/ && \
+    pip install --no-cache-dir --no-deps --force-reinstall .
 
 # ---------- Production image ----------
 FROM python:3.13-slim

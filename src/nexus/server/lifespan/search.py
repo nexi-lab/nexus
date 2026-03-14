@@ -101,6 +101,35 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             if search_svc is not None:
                 search_svc._search_daemon = app.state.search_daemon
 
+        # Auto-index on write: register a VFS write hook that notifies the
+        # search daemon whenever a file is created or updated, so new content
+        # is searchable within the refresh debounce window (~5s).
+        with contextlib.suppress(AttributeError, ImportError):
+            _daemon_ref = app.state.search_daemon
+            _dispatch = getattr(svc.nexus_fs, "_dispatch", None)
+            if _dispatch is not None:
+                from nexus.contracts.vfs_hooks import WriteHookContext
+
+                class _SearchIndexWriteHook:
+                    """Notify search daemon on file write for auto-indexing."""
+
+                    @property
+                    def name(self) -> str:
+                        return "search_auto_index"
+
+                    def on_post_write(self, ctx: WriteHookContext) -> None:
+                        import asyncio
+
+                        path = ctx.path
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.create_task(_daemon_ref.notify_file_change(path, "update"))
+                        except RuntimeError:
+                            pass  # No event loop — skip (e.g., sync test context)
+
+                _dispatch.register_intercept_write(_SearchIndexWriteHook())
+                logger.info("Search auto-index hook registered (write → daemon refresh)")
+
         # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
         with contextlib.suppress(ImportError):
             from nexus.bricks.llm.llm_context_builder import ContextBuilder

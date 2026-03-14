@@ -101,34 +101,56 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             if search_svc is not None:
                 search_svc._search_daemon = app.state.search_daemon
 
-        # Auto-index on write: register a VFS write hook that notifies the
-        # search daemon whenever a file is created or updated, so new content
-        # is searchable within the refresh debounce window (~5s).
+        # Auto-index on write/delete/rename: register VFS hooks that notify
+        # the search daemon so the index stays fresh automatically.
         with contextlib.suppress(AttributeError, ImportError):
             _daemon_ref = app.state.search_daemon
             _dispatch = getattr(svc.nexus_fs, "_dispatch", None)
             if _dispatch is not None:
-                from nexus.contracts.vfs_hooks import WriteHookContext
+                import asyncio as _asyncio
 
-                class _SearchIndexWriteHook:
-                    """Notify search daemon on file write for auto-indexing."""
+                from nexus.contracts.vfs_hooks import (
+                    DeleteHookContext,
+                    RenameHookContext,
+                    WriteHookContext,
+                )
 
+                def _notify(path: str, change_type: str) -> None:
+                    try:
+                        loop = _asyncio.get_running_loop()
+                        loop.create_task(_daemon_ref.notify_file_change(path, change_type))
+                    except RuntimeError:
+                        pass
+
+                class _SearchWriteHook:
                     @property
                     def name(self) -> str:
                         return "search_auto_index"
 
                     def on_post_write(self, ctx: WriteHookContext) -> None:
-                        import asyncio
+                        _notify(ctx.path, "update")
 
-                        path = ctx.path
-                        try:
-                            loop = asyncio.get_running_loop()
-                            loop.create_task(_daemon_ref.notify_file_change(path, "update"))
-                        except RuntimeError:
-                            pass  # No event loop — skip (e.g., sync test context)
+                class _SearchDeleteHook:
+                    @property
+                    def name(self) -> str:
+                        return "search_auto_delete"
 
-                _dispatch.register_intercept_write(_SearchIndexWriteHook())
-                logger.info("Search auto-index hook registered (write → daemon refresh)")
+                    def on_post_delete(self, ctx: DeleteHookContext) -> None:
+                        _notify(ctx.path, "delete")
+
+                class _SearchRenameHook:
+                    @property
+                    def name(self) -> str:
+                        return "search_auto_rename"
+
+                    def on_post_rename(self, ctx: RenameHookContext) -> None:
+                        _notify(ctx.old_path, "delete")
+                        _notify(ctx.new_path, "update")
+
+                _dispatch.register_intercept_write(_SearchWriteHook())
+                _dispatch.register_intercept_delete(_SearchDeleteHook())
+                _dispatch.register_intercept_rename(_SearchRenameHook())
+                logger.info("Search auto-index hooks registered (write/delete/rename)")
 
         # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
         with contextlib.suppress(ImportError):

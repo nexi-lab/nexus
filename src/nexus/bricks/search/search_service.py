@@ -2536,11 +2536,15 @@ class SearchService:
             # Over-fetch to compensate for permission filtering
             fetch_limit = limit * 3 if self._permission_enforcer else limit
             zone_id = getattr(context, "zone_id", None) if context else None
+            # RPC may scope paths as /zone/{id}/...; daemon stores unscoped.
+            from nexus.server.path_utils import unscope_internal_path as _unscope
+
+            db_path = _unscope(path) if path != "/" else None
             daemon_results = await daemon.search(
                 query=query,
                 search_type=search_mode if search_mode != "semantic" else "hybrid",
                 limit=fetch_limit,
-                path_filter=path if path != "/" else None,
+                path_filter=db_path,
                 zone_id=zone_id,
                 adaptive_k=adaptive_k,
             )

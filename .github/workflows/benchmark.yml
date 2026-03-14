@@ -36,24 +36,15 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build Rust extensions (release for benchmarks)
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: release
+          rust-cache-shared-key: "rust-bench"
+          output-dir: dist
 
-      - name: Build Rust extension (nexus_fast)
-        run: |
-          cd rust/nexus_pyo3
-          pip install maturin
-          maturin develop --release
-
-      - name: Build Rust extension (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          maturin develop --release --features python
-
-      - name: Build Rust extension (nexus_tasks)
-        run: |
-          cd rust/nexus_tasks
-          maturin develop --release
+      - name: Install Rust extensions
+        run: pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -126,24 +117,15 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build Rust extensions (release for benchmarks)
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: release
+          rust-cache-shared-key: "rust-bench"
+          output-dir: dist
 
-      - name: Build Rust extension (nexus_fast)
-        run: |
-          cd rust/nexus_pyo3
-          pip install maturin
-          maturin develop --release
-
-      - name: Build Rust extension (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          maturin develop --release --features python
-
-      - name: Build Rust extension (nexus_tasks)
-        run: |
-          cd rust/nexus_tasks
-          maturin develop --release
+      - name: Install Rust extensions
+        run: pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"

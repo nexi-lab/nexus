@@ -1,0 +1,53 @@
+name: Build Rust Extensions
+description: Build nexus_fast, nexus_raft, and nexus_tasks Python wheels from Rust source
+
+inputs:
+  profile:
+    description: 'Cargo build profile (dev or release)'
+    required: false
+    default: 'dev'
+  rust-cache-shared-key:
+    description: 'Shared key for Swatinem/rust-cache'
+    required: false
+    default: 'rust-build'
+  output-dir:
+    description: 'Directory to output built wheels'
+    required: false
+    default: 'dist'
+
+outputs:
+  wheels-dir:
+    description: 'Path to directory containing built wheels'
+    value: ${{ inputs.output-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "${{ inputs.rust-cache-shared-key }}-${{ runner.os }}"
+        workspaces: |
+          rust/nexus_pyo3
+          rust/nexus_raft
+          rust/nexus_tasks
+
+    - name: Install maturin
+      run: pip install maturin
+      shell: bash
+
+    - name: Build Rust extensions
+      run: |
+        PROFILE_FLAG=""
+        if [ "${{ inputs.profile }}" = "release" ]; then
+          PROFILE_FLAG="--release"
+        fi
+
+        mkdir -p ${{ inputs.output-dir }}
+        cd rust/nexus_pyo3 && maturin build $PROFILE_FLAG --out ../../${{ inputs.output-dir }} && cd ../..
+        cd rust/nexus_raft && maturin build $PROFILE_FLAG --features python --out ../../${{ inputs.output-dir }} && cd ../..
+        cd rust/nexus_tasks && maturin build $PROFILE_FLAG --out ../../${{ inputs.output-dir }} && cd ../..
+      shell: bash

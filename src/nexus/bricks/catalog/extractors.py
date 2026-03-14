@@ -432,21 +432,23 @@ class AvroExtractor:
                     error="Avro file has no writer schema",
                 )
 
+            if not isinstance(avro_schema, dict):
+                return ExtractionResult(
+                    schema=None,
+                    format="avro",
+                    confidence=0.0,
+                    error="Avro writer schema is not a record",
+                )
+
             columns = _avro_schema_to_columns(avro_schema)
 
-            # Count rows (iterate without loading all into memory)
-            row_count = 0
-            try:
-                for _ in reader:
-                    row_count += 1
-            except Exception:
-                row_count = None  # Corrupted data section is OK — schema is valid
-
+            # Avro does not store row count in the header — skip data
+            # section entirely to keep extraction O(1).
             return ExtractionResult(
                 schema=columns,
                 format="avro",
                 confidence=1.0,
-                row_count=row_count,
+                row_count=None,
             )
 
         except ImportError:
@@ -481,20 +483,21 @@ class AvroExtractor:
                         error="Avro file has no writer schema",
                     )
 
-                columns = _avro_schema_to_columns(avro_schema)
+                if not isinstance(avro_schema, dict):
+                    return ExtractionResult(
+                        schema=None,
+                        format="avro",
+                        confidence=0.0,
+                        error="Avro writer schema is not a record",
+                    )
 
-                row_count = 0
-                try:
-                    for _ in reader:
-                        row_count += 1
-                except Exception:
-                    row_count = None
+                columns = _avro_schema_to_columns(avro_schema)
 
             return ExtractionResult(
                 schema=columns,
                 format="avro",
                 confidence=1.0,
-                row_count=row_count,
+                row_count=None,
             )
 
         except ImportError:
@@ -601,7 +604,7 @@ def _avro_type_to_str(avro_type: Any) -> str:
     if isinstance(avro_type, str):
         return avro_type
     if isinstance(avro_type, dict):
-        return avro_type.get("type", "unknown")
+        return str(avro_type.get("type", "unknown"))
     if isinstance(avro_type, list):
         # Union type: filter out "null" and return the first non-null type
         non_null = [t for t in avro_type if t != "null"]

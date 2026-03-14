@@ -485,13 +485,13 @@ DEMO_PERMISSION_TUPLES = [
     },
     {
         "subject": ["user", "demo_user"],
-        "relation": "viewer",
+        "relation": "direct_viewer",
         "object": ["file", "/workspace/demo"],
         "zone_id": "root",
     },
     {
         "subject": ["agent", "demo_agent"],
-        "relation": "editor",
+        "relation": "direct_editor",
         "object": ["file", "/workspace/demo"],
         "zone_id": "root",
     },

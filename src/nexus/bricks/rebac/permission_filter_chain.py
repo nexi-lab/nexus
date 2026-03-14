@@ -268,6 +268,7 @@ class BulkReBACStrategy:
             return FilterResult()
 
         subject = ctx.subject
+
         checks = []
         for path in remaining:
             obj_type = "file"

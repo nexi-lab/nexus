@@ -141,9 +141,8 @@ class IOHandler:
     def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
         """Write file content.
 
-        TODO(Issue #13B): Current implementation uses read-modify-write pattern,
-        which is not optimal for large files. A write-buffering layer that batches
-        writes and flushes on fsync/release would improve performance significantly.
+        Uses per-path locking to serialize concurrent writes and prevent
+        data loss from interleaved read-modify-write cycles (H13).
         """
         ctx = self._ctx
 
@@ -162,23 +161,33 @@ class IOHandler:
             logger.debug(f"Blocked write to OS metadata file: {original_path}")
             raise FuseOSError(errno.EPERM)
 
-        # Read existing content
-        existing_content = b""
-        if ctx.nexus_fs.sys_access(original_path):
-            raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
-            assert isinstance(raw_content, bytes), "Expected bytes from read()"
-            existing_content = raw_content
+        # Per-path lock serializes concurrent writes to the same file (H13)
+        import threading
 
-        # Handle offset writes
-        if offset > len(existing_content):
-            existing_content += b"\x00" * (offset - len(existing_content))
+        if not hasattr(ctx, "_write_locks"):
+            ctx._write_locks = {}
+            ctx._write_locks_guard = threading.Lock()
+        with ctx._write_locks_guard:
+            lock = ctx._write_locks.setdefault(original_path, threading.Lock())
 
-        new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
+        with lock:
+            # Read existing content
+            existing_content = b""
+            if ctx.nexus_fs.sys_access(original_path):
+                raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
+                assert isinstance(raw_content, bytes), "Expected bytes from read()"
+                existing_content = raw_content
 
-        # Write via Rust or Python
-        ok, _ = try_rust(ctx, "WRITE", "sys_write", original_path, new_content)
-        if not ok:
-            ctx.nexus_fs.sys_write(original_path, new_content, context=ctx.context)
+            # Handle offset writes
+            if offset > len(existing_content):
+                existing_content += b"\x00" * (offset - len(existing_content))
+
+            new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
+
+            # Write via Rust or Python
+            ok, _ = try_rust(ctx, "WRITE", "sys_write", original_path, new_content)
+            if not ok:
+                ctx.nexus_fs.sys_write(original_path, new_content, context=ctx.context)
 
         # Invalidate caches
         ctx.cache.invalidate_path(original_path)

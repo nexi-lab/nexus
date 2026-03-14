@@ -90,6 +90,12 @@ class NexusFS(  # type: ignore[misc]
         sys_svc = system_services or SystemServices()
         brk_svc = brick_services or BrickServices()
 
+        # Per-instance VFS revision counter (H21: must not be class-level)
+        import threading as _threading
+
+        self._vfs_revision: int = 0
+        self._vfs_revision_lock = _threading.Lock()
+
         self._cache_config = cache
         self._perm_config = permissions
         self._distributed_config = distributed

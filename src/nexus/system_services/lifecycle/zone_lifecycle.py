@@ -148,10 +148,10 @@ class ZoneLifecycleService:
                 finalizer_keys = [f.finalizer_key for f, _phase in self._finalizers]
                 zone.phase = ZonePhase.TERMINATING
                 zone.finalizers = json.dumps(finalizer_keys)
-                # Update in-memory set BEFORE commit to close the race window
-                # where a concurrent write could slip through (CRITICAL-3 fix)
-                self._terminating_zones.add(zone_id)
+                # Commit first, then update in-memory state.  If commit fails,
+                # the in-memory set stays consistent with the database.
                 session.commit()
+                self._terminating_zones.add(zone_id)
                 logger.info(
                     "[ZoneLifecycle] Zone %s → Terminating (finalizers=%s)",
                     zone_id,

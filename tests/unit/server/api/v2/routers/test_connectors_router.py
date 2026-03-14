@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from nexus.backends.base.registry import ConnectorInfo
 from nexus.contracts.capabilities import ConnectorCapability
 from nexus.server.api.v2.routers.connectors import router
+from nexus.server.dependencies import require_auth
 
 # ---------------------------------------------------------------------------
 # Test app setup
@@ -19,6 +20,9 @@ from nexus.server.api.v2.routers.connectors import router
 
 _test_app = FastAPI()
 _test_app.include_router(router)
+
+
+_test_app.dependency_overrides[require_auth] = lambda: {"authenticated": True, "is_admin": True}
 _client = TestClient(_test_app)
 
 

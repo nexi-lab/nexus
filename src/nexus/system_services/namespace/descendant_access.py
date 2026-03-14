@@ -286,9 +286,7 @@ class DescendantAccessChecker:
                     (subject_tuple, rebac_permission, ("file", meta.path))
                     for meta in all_descendants
                 ]
-                results = self._rebac_service.rebac_check_bulk_sync(
-                    checks, zone_id=context.zone_id
-                )
+                results = self._rebac_service.rebac_check_bulk_sync(checks, zone_id=context.zone_id)
                 for check in checks:
                     if results.get(check, False):
                         if self._dir_visibility_cache is not None:

@@ -123,15 +123,17 @@ async def create_manifest(
     )
 
     # H5: Enforce zone isolation — use authenticated zone, not request body
-    caller_zone = _auth_result.get("zone_id")
-    if body.zone_id and caller_zone and body.zone_id != caller_zone:
-        if not _auth_result.get("is_admin", False):
-            from fastapi import HTTPException
-
-            raise HTTPException(
-                status_code=403,
-                detail=f"Cannot create manifest in zone '{body.zone_id}' — authenticated for zone '{caller_zone}'",
-            )
+    caller_zone = auth_result.get("zone_id")
+    if (
+        body.zone_id
+        and caller_zone
+        and body.zone_id != caller_zone
+        and not auth_result.get("is_admin", False)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot create manifest in zone '{body.zone_id}' — authenticated for zone '{caller_zone}'",
+        )
     effective_zone = body.zone_id or caller_zone
 
     manifest = await asyncio.to_thread(

@@ -56,9 +56,7 @@ class TestWriteSecretFile:
 
         write_secret_file(path, "new secret")
         mode = stat.S_IMODE(path.stat().st_mode)
-        assert mode == 0o600, (
-            f"Overwriting a 0o644 file must tighten to 0o600, got {oct(mode)}"
-        )
+        assert mode == 0o600, f"Overwriting a 0o644 file must tighten to 0o600, got {oct(mode)}"
 
     def test_custom_mode(self, tmp_path: Path) -> None:
         path = tmp_path / "secret.key"

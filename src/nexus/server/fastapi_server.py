@@ -478,9 +478,7 @@ def create_app(
             f"Premium: {RATE_LIMIT_PREMIUM}"
         )
     else:
-        logger.warning(
-            "Rate limiting is DISABLED (set NEXUS_RATE_LIMIT_ENABLED=true to re-enable)"
-        )
+        logger.warning("Rate limiting is DISABLED (set NEXUS_RATE_LIMIT_ENABLED=true to re-enable)")
 
     # Initialize authentication provider for user registration/login endpoints
     if auth_provider is not None:

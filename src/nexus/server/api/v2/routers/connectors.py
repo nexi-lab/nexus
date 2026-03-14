@@ -11,9 +11,9 @@ Endpoints:
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from nexus.server.dependencies import require_auth
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 

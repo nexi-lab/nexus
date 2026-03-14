@@ -289,7 +289,7 @@ def main(
             if _enforce.lower() in ("true", "1", "yes"):
                 connect_config["enforce_permissions"] = True
             if connect_config.get("enforce_permissions"):
-                click.echo(f"  Perms:   enforce=True")
+                click.echo("  Perms:   enforce=True")
             if config_path:
                 from nexus.config import load_config
 

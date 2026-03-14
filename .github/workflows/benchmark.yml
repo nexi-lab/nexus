@@ -42,9 +42,10 @@ jobs:
           profile: release
           rust-cache-shared-key: "rust-bench"
           output-dir: dist
+          github-token: ${{ github.token }}
 
       - name: Install Rust extensions
-        run: pip install dist/*.whl
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -123,9 +124,10 @@ jobs:
           profile: release
           rust-cache-shared-key: "rust-bench"
           output-dir: dist
+          github-token: ${{ github.token }}
 
       - name: Install Rust extensions
-        run: pip install dist/*.whl
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"

@@ -78,6 +78,7 @@ jobs:
           profile: dev
           rust-cache-shared-key: "rust-test"
           output-dir: dist
+          github-token: ${{ github.token }}
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4

@@ -14,6 +14,10 @@ inputs:
     description: 'Directory to output built wheels'
     required: false
     default: 'dist'
+  github-token:
+    description: 'GitHub token for authenticated API calls (avoids rate limits)'
+    required: false
+    default: ''
 
 outputs:
   wheels-dir:
@@ -39,6 +43,7 @@ runs:
       uses: arduino/setup-protoc@v3
       with:
         version: "28.x"
+        repo-token: ${{ inputs.github-token }}
 
     - name: Install maturin
       run: pip install maturin

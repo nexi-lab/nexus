@@ -51,15 +51,12 @@ jobs:
       - name: Extract version metadata
         id: meta
         run: |
-          PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           SHA="${GITHUB_SHA::8}"
           SUFFIX="${{ matrix.suffix }}"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-            echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tags=ghcr.io/nexi-lab/nexus:${PKG_VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:sha-${SHA}${SUFFIX},ghcr.io/nexi-lab/nexus:edge${SUFFIX}" >> "$GITHUB_OUTPUT"
-          fi
+          # Branch pushes only get channel tags (edge/sha-*), never semver.
+          # Semver tags (0.9.2, latest) are owned exclusively by release.yml
+          # to prevent mutable version tags appearing before atomic release.
+          echo "tags=ghcr.io/nexi-lab/nexus:sha-${SHA}${SUFFIX},ghcr.io/nexi-lab/nexus:edge${SUFFIX}" >> "$GITHUB_OUTPUT"
 
       # ---- Build locally for smoke testing (Issue #2946) ----
       - name: Build image (local load for smoke tests)

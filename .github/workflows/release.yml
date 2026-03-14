@@ -266,18 +266,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pre-flight: verify GHCR push will work before spending time building.
-      # The March 13, 2026 v0.9.2 failure was "denied: permission_denied: write_package".
-      # Fix: GitHub Settings → Packages → nexus → Manage Actions access → grant repo write.
-      - name: Pre-flight — verify GHCR write access
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "Verifying GHCR write access for ghcr.io/${{ github.repository }}..."
-          TOKEN=$(echo "$GH_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin 2>&1)
-          # Try a dummy manifest check — if the package doesn't grant write, we'll know
-          # before wasting 60+ min on a build. This step is best-effort.
-          echo "GHCR login succeeded — write access assumed OK"
+      # NOTE: The March 13, 2026 v0.9.2 "denied: write_package" failure was caused
+      # by the GHCR package not being linked to the repo. Fixed by deleting the
+      # orphaned package — next push auto-creates it with correct repo linkage.
+      # If this recurs: GitHub Settings → Packages → nexus → Manage Actions access.
 
       - name: Extract version metadata
         id: meta

@@ -4,28 +4,12 @@
 
 import React from "react";
 import type { BrickStatusResponse } from "../../stores/zones-store.js";
+import { stateIndicator } from "../../shared/brick-states.js";
 
 interface BrickListProps {
   readonly bricks: readonly BrickStatusResponse[];
   readonly selectedIndex: number;
   readonly loading: boolean;
-}
-
-function stateIndicator(state: string): string {
-  switch (state) {
-    case "running":
-      return "[ON]";
-    case "stopped":
-      return "[--]";
-    case "failed":
-      return "[!!]";
-    case "mounted":
-      return "[MT]";
-    case "unmounted":
-      return "[UM]";
-    default:
-      return "[??]";
-  }
 }
 
 export function BrickList({

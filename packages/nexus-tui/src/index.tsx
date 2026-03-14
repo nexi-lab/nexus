@@ -97,21 +97,33 @@ async function main(): Promise<void> {
   // Initialize global store
   useGlobalStore.getState().initConfig(config);
 
-  // Test connection in background (non-blocking — TUI renders immediately)
+  // Test connection + fetch features in background (non-blocking — TUI renders immediately)
   const client = useGlobalStore.getState().client;
   if (client) {
     useGlobalStore.getState().setConnectionStatus("connecting");
-    client
+
+    const healthPromise = client
       .get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
         "/api/v2/bricks/health",
-      )
-      .then((info) => {
-        useGlobalStore.getState().setConnectionStatus("connected");
-        useGlobalStore.getState().setServerInfo({
-          version: info.version,
-          zoneId: info.zone_id,
-          uptime: info.uptime_seconds,
+      );
+
+    const featuresPromise = client
+      .get<{ profile: string; mode: string; enabled_bricks: string[]; disabled_bricks: string[]; version: string | null; rate_limit_enabled: boolean }>(
+        "/api/v2/features",
+      );
+
+    Promise.all([healthPromise, featuresPromise.catch(() => null)])
+      .then(([health, features]) => {
+        const store = useGlobalStore.getState();
+        store.setConnectionStatus("connected");
+        store.setServerInfo({
+          version: health.version,
+          zoneId: health.zone_id,
+          uptime: health.uptime_seconds,
         });
+        if (features) {
+          store.setFeatures(features);
+        }
       })
       .catch(() => {
         useGlobalStore.getState().setConnectionStatus("error", "Failed to connect to server");

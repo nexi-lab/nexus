@@ -360,10 +360,9 @@ class MetadataExportService:
         created_at: datetime | None,
         modified_at: datetime | None,
     ) -> None:
-        suffix = 1
-        while self._metadata.exists(f"{path}_imported{suffix}"):
-            suffix += 1
-        remapped_path = f"{path}_imported{suffix}"
+        import uuid as _uuid
+
+        remapped_path = f"{path}_imported{_uuid.uuid4().hex[:8]}"
 
         if options.dry_run:
             result.remapped += 1

@@ -278,7 +278,31 @@ class DescendantAccessChecker:
                 )
                 # Fall through to original implementation
 
-        # Fallback: Check ReBAC permissions on each descendant (with early exit)
+        # Fallback: Check ReBAC permissions on descendants.
+        # Use rebac_service batch if available, otherwise individual checks with early exit.
+        if hasattr(self._rebac_service, "rebac_check_bulk_sync"):
+            try:
+                checks = [
+                    (subject_tuple, rebac_permission, ("file", meta.path))
+                    for meta in all_descendants
+                ]
+                results = self._rebac_service.rebac_check_bulk_sync(checks, zone_id=context.zone_id)
+                for check in checks:
+                    if results.get(check, False):
+                        if self._dir_visibility_cache is not None:
+                            self._dir_visibility_cache.set_visible(
+                                zone_id,
+                                context.subject_type,
+                                subject_id,
+                                path,
+                                True,
+                                f"fallback_bulk:{check[2][1]}",
+                            )
+                        return True
+            except Exception:
+                logger.debug("has_access: rebac_check_bulk_sync failed, using individual checks")
+
+        # Final fallback: individual checks with early exit
         for meta in all_descendants:
             descendant_access = self._rebac_service.rebac_check_sync(
                 subject=subject_tuple,
@@ -287,8 +311,6 @@ class DescendantAccessChecker:
                 zone_id=zone_id,
             )
             if descendant_access:
-                # Found accessible descendant! User can see this parent
-                # Cache positive result
                 if self._dir_visibility_cache is not None:
                     self._dir_visibility_cache.set_visible(
                         zone_id,

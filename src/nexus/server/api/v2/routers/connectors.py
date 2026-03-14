@@ -10,8 +10,10 @@ Endpoints:
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ class ConnectorCapabilitiesResponse(BaseModel):
 
 
 @router.get("", response_model=ConnectorsListResponse)
-def list_connectors() -> ConnectorsListResponse:
+def list_connectors(_: dict = Depends(require_auth)) -> ConnectorsListResponse:
     """List all registered connectors with their capabilities."""
     from nexus.backends.base.registry import ConnectorRegistry
 

@@ -51,7 +51,7 @@ def _sign_stream_token(path: str, expires_in: int, zone_id: str = ROOT_ZONE_ID) 
     """
     expires_at = int(time.time()) + expires_in
     payload = f"{path}:{expires_at}:{zone_id}"
-    signature = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()[:16]
+    signature = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()
     return f"{expires_at}.{signature}"
 
 
@@ -80,7 +80,7 @@ def _verify_stream_token(token: str, path: str, zone_id: str = ROOT_ZONE_ID) -> 
 
         # Verify signature
         payload = f"{path}:{expires_at}:{zone_id}"
-        expected_sig = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()[:16]
+        expected_sig = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()
 
         return hmac.compare_digest(signature, expected_sig)
     except (ValueError, TypeError):

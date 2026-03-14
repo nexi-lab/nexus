@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel
 
-from nexus.server.dependencies import get_auth_result
+from nexus.server.dependencies import get_auth_result, require_admin
 from nexus.server.rate_limiting import RATE_LIMIT_ANONYMOUS, limiter
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class WhoamiResponse(BaseModel):
     user: str | None = None
 
 
-@router.get("/debug/asyncio", tags=["debug"])
+@router.get("/debug/asyncio", tags=["debug"], dependencies=[Depends(require_admin)])
 async def debug_asyncio() -> dict[str, Any]:
     """Debug endpoint for asyncio task introspection."""
     result: dict[str, Any] = {

@@ -269,20 +269,31 @@ impl NexusFs {
     }
 
     /// Invalidate caches for a path.
+    ///
+    /// H22 fix: Release inodes lock before acquiring attr_cache/dir_cache
+    /// to prevent deadlock from inconsistent lock ordering.
     fn invalidate_path(&self, path: &str) {
-        let mut inodes = self.inodes.lock().unwrap();
-        if let Some(inode) = inodes.get_inode(path) {
-            self.attr_cache.lock().unwrap().pop(&inode);
-            self.dir_cache.lock().unwrap().pop(&inode);
-        }
+        // Extract inode info while holding inodes lock, then release
+        let (inode, parent_inode) = {
+            let inodes = self.inodes.lock().unwrap();
+            let inode = inodes.get_inode(path);
+            let parent_inode = if let Some(parent) = std::path::Path::new(path).parent() {
+                let parent_path = parent.to_string_lossy().to_string();
+                let parent_path = if parent_path.is_empty() { "/".to_string() } else { parent_path };
+                inodes.get_inode(&parent_path)
+            } else {
+                None
+            };
+            (inode, parent_inode)
+        }; // inodes lock released here
 
-        // Also invalidate parent directory cache
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            let parent_path = parent.to_string_lossy().to_string();
-            let parent_path = if parent_path.is_empty() { "/".to_string() } else { parent_path };
-            if let Some(inode) = inodes.get_inode(&parent_path) {
-                self.dir_cache.lock().unwrap().pop(&inode);
-            }
+        // Now acquire secondary locks without holding inodes
+        if let Some(ino) = inode {
+            self.attr_cache.lock().unwrap().pop(&ino);
+            self.dir_cache.lock().unwrap().pop(&ino);
+        }
+        if let Some(ino) = parent_inode {
+            self.dir_cache.lock().unwrap().pop(&ino);
         }
 
         // Invalidate persistent cache

@@ -97,7 +97,7 @@ class AsyncTaskRunner:
 
         while not self._shutdown:
             try:
-                task = self.engine.claim_next(wid, self.lease_secs)
+                task = await asyncio.to_thread(self.engine.claim_next, wid, self.lease_secs)
             except Exception:
                 logger.exception("Error claiming task (worker %s)", wid)
                 await asyncio.sleep(backoff)
@@ -120,7 +120,8 @@ class AsyncTaskRunner:
                     task.task_id,
                 )
                 try:
-                    self.engine.fail(
+                    await asyncio.to_thread(
+                        self.engine.fail,
                         task.task_id,
                         f"No executor registered for task type: {task.task_type}",
                     )
@@ -132,7 +133,7 @@ class AsyncTaskRunner:
 
             try:
                 result = await executor(task.params, progress)
-                self.engine.complete(task.task_id, result or b"")
+                await asyncio.to_thread(self.engine.complete, task.task_id, result or b"")
                 logger.debug("Task %d (%s) completed", task.task_id, task.task_type)
             except asyncio.CancelledError:
                 # Graceful shutdown — don't fail the task, let it be requeued via lease expiry
@@ -145,7 +146,7 @@ class AsyncTaskRunner:
             except Exception as exc:
                 logger.exception("Task %d (%s) failed", task.task_id, task.task_type)
                 try:
-                    self.engine.fail(task.task_id, str(exc))
+                    await asyncio.to_thread(self.engine.fail, task.task_id, str(exc))
                 except Exception:
                     logger.exception("Error reporting failure for task %d", task.task_id)
 
@@ -153,7 +154,7 @@ class AsyncTaskRunner:
         """Periodically reclaim tasks with expired leases."""
         while not self._shutdown:
             try:
-                count = self.engine.requeue_abandoned()
+                count = await asyncio.to_thread(self.engine.requeue_abandoned)
                 if count > 0:
                     logger.info("Requeued %d abandoned tasks", count)
             except Exception:

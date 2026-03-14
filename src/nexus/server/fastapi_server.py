@@ -435,10 +435,10 @@ def create_app(
     import nexus.server.rate_limiting as _rate_limiting_mod
 
     global limiter
-    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in (
-        "true",
-        "1",
-        "yes",
+    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "true").lower() not in (
+        "false",
+        "0",
+        "no",
     )
     from nexus.lib.env import get_dragonfly_url, get_redis_url
 
@@ -478,9 +478,7 @@ def create_app(
             f"Premium: {RATE_LIMIT_PREMIUM}"
         )
     else:
-        logger.info(
-            "Rate limiting is DISABLED (default, set NEXUS_RATE_LIMIT_ENABLED=true to enable)"
-        )
+        logger.warning("Rate limiting is DISABLED (set NEXUS_RATE_LIMIT_ENABLED=true to re-enable)")
 
     # Initialize authentication provider for user registration/login endpoints
     if auth_provider is not None:

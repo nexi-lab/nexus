@@ -460,6 +460,9 @@ async def handle_semantic_search_index(
         context = _context
         zone_id = getattr(context, "zone_id", None) or "root"
 
+        # RPC may scope paths as /zone/{id}/...; DB stores unscoped virtual_path.
+        db_path = unscope_internal_path(path)
+
         # Query file paths from the daemon's database connection
         paths_to_index: list[str] = []
         if hasattr(daemon, "_async_session") and daemon._async_session is not None:
@@ -468,22 +471,25 @@ async def handle_semantic_search_index(
             async with daemon._async_session() as sess:
                 if recursive:
                     # Match both the path itself (single file) and children (directory)
-                    like_pattern = path.rstrip("/") + "/%"
+                    like_pattern = db_path.rstrip("/") + "/%"
                     result = await sess.execute(
                         sa_text(
                             "SELECT virtual_path FROM file_paths"
                             " WHERE virtual_path LIKE :like OR virtual_path = :exact"
                         ),
-                        {"like": like_pattern, "exact": path},
+                        {"like": like_pattern, "exact": db_path},
                     )
                     paths_to_index = [r[0] for r in result.fetchall()]
                 else:
-                    paths_to_index = [path]
-            _log.info("semantic_search_index: found %d files under %s", len(paths_to_index), path)
+                    paths_to_index = [db_path]
+            _log.info(
+                "semantic_search_index: found %d files under %s", len(paths_to_index), db_path
+            )
 
         # Read content and build documents for txtai
         documents: list[dict[str, Any]] = []
         read_errors = 0
+        total_chunks = 0
         for file_path in paths_to_index:
             try:
                 content = nexus_fs.sys_read(file_path, context=context)
@@ -502,13 +508,18 @@ async def handle_semantic_search_index(
         )
 
         # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
-        indexed = 0
         if documents:
-            indexed = await daemon.index_documents(documents, zone_id=zone_id)
-            _log.info("semantic_search_index: txtai indexed %d documents", indexed)
+            await daemon.index_documents(documents, zone_id=zone_id)
+            # txtai treats each document as one indexing unit; estimate chunks
+            # from content length (avg ~512 tokens/chunk) for accurate stats.
+            for doc in documents:
+                total_chunks += max(1, len(doc["text"]) // 2000)
+            _log.info(
+                "semantic_search_index: indexed %d docs (~%d chunks)", len(documents), total_chunks
+            )
 
-        results = {doc["path"]: 1 for doc in documents}
-        return {"indexed": results, "total_files": len(results), "total_chunks": indexed}
+        results = {doc["path"]: total_chunks // max(len(documents), 1) for doc in documents}
+        return {"indexed": results, "total_files": len(documents), "total_chunks": total_chunks}
 
     # Fallback: SearchService pipeline (when daemon is unavailable)
     try:

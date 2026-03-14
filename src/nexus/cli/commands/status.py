@@ -42,10 +42,17 @@ def _load_project_config_optional() -> dict[str, Any]:
 
 
 def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
-    """Add image_ref/channel/accelerator from nexus.yaml into *data*."""
+    """Add the *effective* image_ref into *data*.
+
+    Uses the same precedence logic as ``nexus up`` (env vars > config ref >
+    deprecated config tag) so ``nexus status`` always shows the image that
+    would actually run, not just the raw config value.
+    """
+    from nexus.cli.commands.stack import _resolve_image_ref_from_config
+
     project_cfg = _load_project_config_optional()
     if project_cfg:
-        data["image_ref"] = project_cfg.get("image_ref", project_cfg.get("image_tag", ""))
+        data["image_ref"] = _resolve_image_ref_from_config(project_cfg)
         data["image_channel"] = project_cfg.get("image_channel", "")
         data["image_accelerator"] = project_cfg.get("image_accelerator", "")
     return data

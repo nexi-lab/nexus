@@ -106,6 +106,48 @@ def _bundled_compose_file() -> Path | None:
     return None
 
 
+def _query_latest_stable_tag() -> str | None:
+    """Query GHCR for the latest stable (semver) tag.
+
+    Returns the tag string (e.g. '0.9.2') or None if the query fails.
+    This is a best-effort network call — callers must handle None.
+    """
+    import urllib.request
+
+    # GHCR token endpoint (public, no auth needed for public images)
+    token_url = "https://ghcr.io/token?scope=repository:nexi-lab/nexus:pull"
+    tags_url = "https://ghcr.io/v2/nexi-lab/nexus/tags/list"
+
+    try:
+        # Get anonymous token
+        with urllib.request.urlopen(token_url, timeout=5) as resp:
+            import json
+
+            token_data = json.loads(resp.read())
+            token = token_data.get("token", "")
+
+        # List tags
+        req = urllib.request.Request(tags_url)
+        req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            tags_data = json.loads(resp.read())
+            tags: list[str] = tags_data.get("tags", [])
+
+        # Filter to semver-like tags (X.Y.Z), exclude edge/latest/sha-*
+        import re
+
+        semver_re = re.compile(r"^\d+\.\d+\.\d+$")
+        semver_tags = [t for t in tags if semver_re.match(t)]
+        if not semver_tags:
+            return None
+
+        # Sort by semver and return latest
+        semver_tags.sort(key=lambda t: tuple(int(x) for x in t.split(".")))
+        return semver_tags[-1]
+    except Exception:
+        return None
+
+
 def _resolve_image_ref(
     channel: str,
     accelerator: str,
@@ -117,10 +159,9 @@ def _resolve_image_ref(
     Priority:
       1. Explicit digest → ghcr.io/nexi-lab/nexus@sha256:...
       2. Explicit tag → ghcr.io/nexi-lab/nexus:<tag>
-      3. Channel + version → ghcr.io/nexi-lab/nexus:<version>[-cuda]
-
-    For ``stable`` channel without an explicit tag, pins to the installed
-    CLI version.  For ``edge``, uses ``edge`` as the tag.
+      3. Channel resolution:
+         - ``stable``: query GHCR for latest semver tag, fall back to CLI version
+         - ``edge``: use ``edge`` mutable tag
     """
     registry = DEFAULT_IMAGE_REGISTRY
 
@@ -132,10 +173,15 @@ def _resolve_image_ref(
     elif channel == "edge":
         tag = "edge"
     else:
-        # Pin to installed CLI version for stable channel
-        import nexus as _nexus_mod
+        # Stable channel: try remote resolution first, fall back to CLI version
+        remote_tag = _query_latest_stable_tag()
+        if remote_tag:
+            tag = remote_tag
+        else:
+            import nexus as _nexus_mod
 
-        tag = getattr(_nexus_mod, "__version__", "latest")
+            tag = getattr(_nexus_mod, "__version__", "latest")
+            logger.debug("GHCR query failed, falling back to CLI version: %s", tag)
 
     if accelerator == "cuda" and not image_digest:
         tag = f"{tag}-cuda"
@@ -197,7 +243,6 @@ def _build_config(
         # Resolve and pin the full image reference (Issue #2961)
         effective_channel = channel or preset_cfg.image_channel
         effective_accel = accelerator or preset_cfg.image_accelerator
-        config["image_channel"] = effective_channel
         config["image_accelerator"] = effective_accel
         config["image_ref"] = _resolve_image_ref(
             effective_channel,
@@ -205,6 +250,16 @@ def _build_config(
             image_tag=image_tag,
             image_digest=image_digest,
         )
+
+        # Track whether the ref is channel-following or explicitly pinned.
+        # When pinned (--image-tag or --image-digest), nexus upgrade should
+        # warn instead of silently re-resolving the channel.
+        if image_digest:
+            config["image_pin"] = "digest"
+        elif image_tag:
+            config["image_pin"] = "tag"
+        else:
+            config["image_channel"] = effective_channel
 
     if addons:
         config.setdefault("addons", []).extend(addons)

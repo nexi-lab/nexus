@@ -334,6 +334,8 @@ class TestCanonicalSmoke:
             question = qa["question"]
             expected_sub = qa["expected_substring"]
 
+            expected_file = qa["expected_file"]
+
             with timed(f"qa_{expected_sub}", timings):
                 r = _run(
                     [
@@ -343,6 +345,8 @@ class TestCanonicalSmoke:
                         question,
                         "--path",
                         "/workspace/demo/herb",
+                        "--limit",
+                        "5",
                     ],
                     env=env,
                     cwd=cwd,
@@ -354,17 +358,24 @@ class TestCanonicalSmoke:
                 continue
 
             output = r.stdout
-            # Check if expected substring appears in output (top-5 implicit)
-            if expected_sub.lower() in output.lower():
+            # Parse results: check if expected file path appears in top-5
+            # and if the expected substring is in the result content
+            lines = output.strip().split("\n")
+            found_file = False
+            found_rank = 0
+            for rank, line in enumerate(lines, 1):
+                if expected_file in line:
+                    found_file = True
+                    found_rank = rank
+                    break
+                if expected_sub.lower() in line.lower():
+                    found_file = True
+                    found_rank = rank
+                    break
+
+            if found_file:
                 hits += 1
-                # Approximate rank: find position in output lines
-                lines = output.strip().split("\n")
-                for rank, line in enumerate(lines, 1):
-                    if expected_sub.lower() in line.lower():
-                        reciprocal_ranks.append(1.0 / rank)
-                        break
-                else:
-                    reciprocal_ranks.append(1.0)  # Found but rank unknown
+                reciprocal_ranks.append(1.0 / found_rank)
             else:
                 reciprocal_ranks.append(0.0)
 

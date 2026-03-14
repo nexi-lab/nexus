@@ -67,6 +67,9 @@ class DocumentExtractionResult:
 class SchemaExtractor(Protocol):
     """Protocol for format-specific schema extractors."""
 
+    mime_types: tuple[str, ...]
+    extensions: tuple[str, ...]
+
     def extract(self, content: bytes) -> ExtractionResult:
         """Extract schema from raw file content.
 
@@ -96,8 +99,8 @@ class CSVExtractor:
     reflects sample coverage.
     """
 
-    mime_types = ("text/csv", "application/csv")
-    extensions = ("csv", "tsv")
+    mime_types: tuple[str, ...] = ("text/csv", "application/csv")
+    extensions: tuple[str, ...] = ("csv", "tsv")
 
     def __init__(
         self,
@@ -209,8 +212,8 @@ class ParquetExtractor:
     since Parquet embeds the schema in the file footer.
     """
 
-    mime_types = ("application/parquet", "application/x-parquet")
-    extensions = ("parquet", "pq")
+    mime_types: tuple[str, ...] = ("application/parquet", "application/x-parquet")
+    extensions: tuple[str, ...] = ("parquet", "pq")
 
     def extract(self, content: bytes) -> ExtractionResult:
         """Extract schema from Parquet file content."""
@@ -273,8 +276,8 @@ class JSONExtractor:
     both JSON arrays and newline-delimited JSON (NDJSON).
     """
 
-    mime_types = ("application/json", "text/json")
-    extensions = ("json", "jsonl", "ndjson")
+    mime_types: tuple[str, ...] = ("application/json", "text/json")
+    extensions: tuple[str, ...] = ("json", "jsonl", "ndjson")
 
     def __init__(
         self,
@@ -404,8 +407,8 @@ class AvroExtractor:
     is always 1.0 since Avro embeds the native schema.
     """
 
-    mime_types = ("application/avro", "application/x-avro")
-    extensions = ("avro",)
+    mime_types: tuple[str, ...] = ("application/avro", "application/x-avro")
+    extensions: tuple[str, ...] = ("avro",)
 
     def extract(self, content: bytes) -> ExtractionResult:
         """Extract schema from Avro file content."""
@@ -523,8 +526,8 @@ class MarkdownExtractor:
     Parses YAML front matter (--- delimiters) and ATX/Setext headings.
     """
 
-    mime_types = ("text/markdown",)
-    extensions = ("md", "markdown")
+    mime_types: tuple[str, ...] = ("text/markdown",)
+    extensions: tuple[str, ...] = ("md", "markdown")
 
     def extract(self, content: bytes) -> DocumentExtractionResult:
         """Extract document structure from Markdown content."""

@@ -54,6 +54,22 @@ class BrickHealthResponse(BaseModel):
     bricks: list[BrickStatusResponse]
 
 
+class BrickTransitionItem(BaseModel):
+    """Single FSM state transition entry."""
+
+    timestamp: float
+    event: str
+    from_state: str
+    to_state: str
+
+
+class BrickDetailResponse(BrickStatusResponse):
+    """Extended brick detail with transition history and retry count."""
+
+    retry_count: int = 0
+    transitions: list[BrickTransitionItem] = []
+
+
 class BrickActionResponse(BaseModel):
     """Response for mount/unmount actions."""
 
@@ -225,16 +241,24 @@ async def brick_health(
     )
 
 
-@router.get("/{name}", response_model=BrickStatusResponse)
+@router.get("/{name}", response_model=BrickDetailResponse)
 async def brick_status(
     name: str,
     manager: Any = Depends(_get_lifecycle_manager),
-) -> BrickStatusResponse:
-    """Individual brick lifecycle status."""
+) -> BrickDetailResponse:
+    """Individual brick lifecycle status with transition history."""
     status = manager.get_status(name)
     if status is None:
         raise HTTPException(status_code=404, detail=f"Brick {name!r} not found")
-    return BrickStatusResponse(
+
+    retry_count = manager.get_retry_count(name)
+    raw_transitions = manager.get_transitions(name)
+    transitions = [
+        BrickTransitionItem(timestamp=ts, event=evt, from_state=frm, to_state=to)
+        for ts, evt, frm, to in raw_transitions
+    ]
+
+    return BrickDetailResponse(
         name=status.name,
         state=status.state.value,
         protocol_name=status.protocol_name,
@@ -242,6 +266,8 @@ async def brick_status(
         started_at=status.started_at,
         stopped_at=status.stopped_at,
         unmounted_at=status.unmounted_at,
+        retry_count=retry_count,
+        transitions=transitions,
     )
 
 

@@ -9,7 +9,7 @@
 use parking_lot::{Condvar, Mutex};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -57,7 +57,7 @@ struct HandleInfo {
 /// is ~15-25ns uncontended (parking_lot), acceptable given the correctness requirement.
 #[derive(Debug)]
 struct LockState {
-    locks: HashMap<String, LockEntry>,
+    locks: BTreeMap<String, LockEntry>,
     handles: HashMap<u64, HandleInfo>,
 }
 
@@ -140,7 +140,7 @@ pub struct VFSLockManager {
 
 impl VFSLockManager {
     /// Check whether `path` in `mode` conflicts with any *ancestor* locks.
-    fn ancestor_conflict(locks: &HashMap<String, LockEntry>, path: &str, mode: LockMode) -> bool {
+    fn ancestor_conflict(locks: &BTreeMap<String, LockEntry>, path: &str, mode: LockMode) -> bool {
         for anc in ancestors(path) {
             if let Some(entry) = locks.get(anc) {
                 match mode {
@@ -161,17 +161,27 @@ impl VFSLockManager {
     }
 
     /// Check whether any *descendant* path is locked in a way that conflicts.
-    fn descendant_conflict(locks: &HashMap<String, LockEntry>, path: &str, mode: LockMode) -> bool {
+    ///
+    /// Uses BTreeMap range scan for O(log n + m) where m = matching descendants,
+    /// instead of O(n) full iteration over all locks.
+    ///
+    /// The range `prefix.."upper"` captures exactly keys starting with `prefix`,
+    /// where `upper` replaces the trailing '/' (0x2F) with '0' (0x30, the next
+    /// ASCII codepoint). Since '/' and '0' are adjacent in ASCII, no valid path
+    /// character falls between them.
+    fn descendant_conflict(locks: &BTreeMap<String, LockEntry>, path: &str, mode: LockMode) -> bool {
         let prefix = if path.ends_with('/') {
             path.to_string()
         } else {
             format!("{}/", path)
         };
 
-        for (key, entry) in locks.iter() {
-            if !key.starts_with(&prefix) {
-                continue;
-            }
+        // Exclusive upper bound: replace trailing '/' with '0' (next ASCII char).
+        let mut upper = prefix.clone();
+        upper.pop();
+        upper.push('0');
+
+        for (_key, entry) in locks.range(prefix..upper) {
             match mode {
                 LockMode::Read => {
                     if entry.writer.is_some() {
@@ -254,7 +264,7 @@ impl VFSLockManager {
     fn new() -> Self {
         Self {
             state: Mutex::new(LockState {
-                locks: HashMap::new(),
+                locks: BTreeMap::new(),
                 handles: HashMap::new(),
             }),
             notify: Condvar::new(),
@@ -768,5 +778,76 @@ mod tests {
         assert_eq!(mgr.active_locks(), 1);
         mgr.release(h);
         assert_eq!(mgr.active_locks(), 0);
+    }
+
+    // -- BTreeMap range boundary tests (Issue #2941) -------------------------
+
+    #[test]
+    fn test_sibling_path_no_conflict() {
+        // "/a/bc" is a sibling of "/a/b", NOT a descendant.
+        let mgr = make();
+        let _w = acquire(&mgr, "/a/bc", LockMode::Write).unwrap();
+        // Acquiring write on "/a/b" should succeed — "/a/bc" is not a descendant.
+        assert!(acquire(&mgr, "/a/b", LockMode::Write).is_some());
+    }
+
+    #[test]
+    fn test_sibling_path_with_dash_no_conflict() {
+        // "/a/b-special" is a sibling, not a descendant of "/a/b".
+        let mgr = make();
+        let _w = acquire(&mgr, "/a/b-special", LockMode::Write).unwrap();
+        assert!(acquire(&mgr, "/a/b", LockMode::Write).is_some());
+    }
+
+    #[test]
+    fn test_sibling_path_with_dot_no_conflict() {
+        // "/a/b.txt" is a sibling, not a descendant of "/a/b".
+        let mgr = make();
+        let _w = acquire(&mgr, "/a/b.txt", LockMode::Write).unwrap();
+        assert!(acquire(&mgr, "/a/b", LockMode::Write).is_some());
+    }
+
+    #[test]
+    fn test_true_descendant_still_conflicts() {
+        // "/a/b/c" IS a descendant of "/a/b" — should conflict.
+        let mgr = make();
+        let _w = acquire(&mgr, "/a/b/c", LockMode::Write).unwrap();
+        assert!(acquire(&mgr, "/a/b", LockMode::Write).is_none());
+    }
+
+    #[test]
+    fn test_deep_descendant_conflicts() {
+        let mgr = make();
+        let _r = acquire(&mgr, "/a/b/c/d/e/f", LockMode::Read).unwrap();
+        assert!(acquire(&mgr, "/a/b", LockMode::Write).is_none());
+    }
+
+    #[test]
+    fn test_root_descendant_range() {
+        // All paths are descendants of "/".
+        let mgr = make();
+        let _r = acquire(&mgr, "/x/y/z", LockMode::Read).unwrap();
+        assert!(acquire(&mgr, "/", LockMode::Write).is_none());
+    }
+
+    #[test]
+    fn test_many_siblings_only_descendant_conflicts() {
+        let mgr = make();
+        // Lock many siblings of "/a/b".
+        let _w1 = acquire(&mgr, "/a/ba", LockMode::Write).unwrap();
+        let _w2 = acquire(&mgr, "/a/bb", LockMode::Write).unwrap();
+        let _w3 = acquire(&mgr, "/a/b-x", LockMode::Write).unwrap();
+        let _w4 = acquire(&mgr, "/a/b.y", LockMode::Write).unwrap();
+        // None of these are descendants of "/a/b" — should succeed.
+        assert!(acquire(&mgr, "/a/b", LockMode::Write).is_some());
+    }
+
+    #[test]
+    fn test_sibling_and_descendant_mixed() {
+        let mgr = make();
+        let _w1 = acquire(&mgr, "/a/bc", LockMode::Write).unwrap(); // sibling
+        let _w2 = acquire(&mgr, "/a/b/child", LockMode::Write).unwrap(); // descendant
+        // "/a/b" should fail due to descendant "/a/b/child".
+        assert!(acquire(&mgr, "/a/b", LockMode::Write).is_none());
     }
 }

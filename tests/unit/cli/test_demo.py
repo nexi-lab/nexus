@@ -11,6 +11,7 @@ from nexus.cli.commands.demo import (
     DEMO_FILES,
     DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
+    HERB_CORPUS,
     MANIFEST_FILENAME,
     PLAN_VERSIONS,
     _delete_demo_files,
@@ -102,9 +103,9 @@ class TestIdempotency:
         mock_nx = MagicMock()
         manifest: dict = {"files": []}
 
-        # First seed
+        # First seed — includes both DEMO_FILES and HERB_CORPUS
         count1 = _seed_files(mock_nx, manifest)
-        assert count1 == len(DEMO_FILES)
+        assert count1 == len(DEMO_FILES) + len(HERB_CORPUS)
 
         # Second seed — all paths already in manifest
         count2 = _seed_files(mock_nx, manifest)

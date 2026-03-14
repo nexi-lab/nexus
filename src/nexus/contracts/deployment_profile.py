@@ -60,6 +60,8 @@ BRICK_MCP = "mcp"
 BRICK_MEMORY = "memory"
 BRICK_SKILLS = "skills"
 BRICK_ACCESS_MANIFEST = "access_manifest"
+BRICK_CATALOG = "catalog"
+BRICK_DELEGATION = "delegation"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -89,6 +91,8 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_MEMORY,
         BRICK_SKILLS,
         BRICK_ACCESS_MANIFEST,
+        BRICK_CATALOG,
+        BRICK_DELEGATION,
         BRICK_FEDERATION,
         BRICK_AGENT_RUNTIME,
     }
@@ -180,6 +184,8 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_UPLOADS,
         BRICK_RESILIENCY,
         BRICK_ACCESS_MANIFEST,
+        BRICK_CATALOG,
+        BRICK_DELEGATION,
     }
 )
 

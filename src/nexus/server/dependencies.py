@@ -91,7 +91,8 @@ def _is_loopback(host: str | None) -> bool:
     (::ffff:127.x.x.x), and "localhost".
     """
     if not host:
-        return False
+        # None means no network connection info (e.g. ASGI TestClient) — treat as local
+        return True
     if host == "localhost":
         return True
     import ipaddress

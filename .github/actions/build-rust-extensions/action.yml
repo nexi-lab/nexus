@@ -35,6 +35,15 @@ runs:
           rust/nexus_raft
           rust/nexus_tasks
 
+    - name: Install protoc
+      run: |
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        elif [ "$RUNNER_OS" = "macOS" ]; then
+          brew install protobuf
+        fi
+      shell: bash
+
     - name: Install maturin
       run: pip install maturin
       shell: bash

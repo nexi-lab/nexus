@@ -238,37 +238,9 @@ class AgentService:
         session: Any,
     ) -> datetime:
         """Determine expiration date for agent API key based on owner's key."""
-        from sqlalchemy import select
+        from nexus.contracts.agent_utils import determine_agent_key_expiration
 
-        from nexus.storage.models import APIKeyModel
-
-        stmt = (
-            select(APIKeyModel)
-            .where(
-                APIKeyModel.user_id == user_id,
-                APIKeyModel.revoked == 0,
-                APIKeyModel.subject_type != "agent",
-            )
-            .order_by(APIKeyModel.created_at.desc())
-        )
-        owner_key = session.scalar(stmt)
-
-        if owner_key and owner_key.expires_at:
-            now = datetime.now(UTC)
-            owner_expires: datetime = owner_key.expires_at
-            if owner_expires.tzinfo is None:
-                owner_expires = owner_expires.replace(tzinfo=UTC)
-
-            if owner_expires > now:
-                return owner_expires
-            else:
-                raise ValueError(
-                    f"Cannot generate API key for agent: Your API key has expired on "
-                    f"{owner_expires.isoformat()}. "
-                    "Please renew your API key before creating agent API keys."
-                )
-        else:
-            return datetime.now(UTC) + timedelta(days=365)
+        return determine_agent_key_expiration(user_id, session)
 
     def _create_agent_api_key(
         self,
@@ -331,26 +303,9 @@ class AgentService:
         _logger: logging.Logger,
     ) -> str | None:
         """Provision Ed25519 keypair + DID for the agent (Issue #1355)."""
-        if not self._key_service:
-            return None
-        try:
-            key_record = self._key_service.ensure_keypair(agent_id)
-            agent_did = key_record.did
-            agent["did"] = agent_did
-            agent["key_id"] = key_record.key_id
-            _logger.info(
-                "[KYA] Provisioned identity for agent %s (did=%s)",
-                agent_id,
-                agent_did,
-            )
-            return cast(str | None, agent_did)
-        except Exception as kya_err:
-            _logger.warning(
-                "[KYA] Failed to provision identity for agent %s: %s",
-                agent_id,
-                kya_err,
-            )
-            return None
+        from nexus.contracts.agent_utils import provision_agent_identity
+
+        return provision_agent_identity(agent_id, agent, self._key_service, _logger)
 
     def _provision_agent_wallet(
         self,
@@ -359,17 +314,9 @@ class AgentService:
         _logger: logging.Logger,
     ) -> None:
         """Auto-provision a TigerBeetle wallet for the agent (Issue #1210)."""
-        if self._wallet_provisioner is None:
-            return
-        try:
-            self._wallet_provisioner(agent_id, zone_id)
-            _logger.info("[WALLET] Provisioned wallet for agent %s", agent_id)
-        except Exception as wallet_err:
-            _logger.warning(
-                "[WALLET] Failed to provision wallet for agent %s: %s",
-                agent_id,
-                wallet_err,
-            )
+        from nexus.contracts.agent_utils import provision_agent_wallet
+
+        provision_agent_wallet(agent_id, zone_id, self._wallet_provisioner, _logger)
 
     def _grant_agent_self_permission(
         self,

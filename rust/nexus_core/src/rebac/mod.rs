@@ -396,7 +396,7 @@ pub fn expand_permission(
                 graph,
                 namespaces,
                 subjects,
-                &mut visited.clone(),
+                visited,
                 depth + 1,
             );
         }

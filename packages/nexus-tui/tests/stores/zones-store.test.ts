@@ -208,7 +208,7 @@ describe("ZonesStore", () => {
   });
 
   describe("fetchBrickDetail", () => {
-    it("fetches and stores individual brick detail", async () => {
+    it("fetches and stores individual brick detail with extended fields", async () => {
       const brickData = {
         name: "brick-alpha",
         state: "running",
@@ -217,6 +217,9 @@ describe("ZonesStore", () => {
         started_at: 1717243200,
         stopped_at: null,
         unmounted_at: null,
+        enabled: true,
+        depends_on: ["brick-gamma"],
+        depended_by: ["brick-beta"],
       };
 
       const client = mockClient({
@@ -232,6 +235,9 @@ describe("ZonesStore", () => {
       expect(state.brickDetail!.protocol_name).toBe("grpc");
       expect(state.brickDetail!.error).toBeNull();
       expect(state.brickDetail!.started_at).toBe(1717243200);
+      expect(state.brickDetail!.enabled).toBe(true);
+      expect(state.brickDetail!.depends_on).toEqual(["brick-gamma"]);
+      expect(state.brickDetail!.depended_by).toEqual(["brick-beta"]);
       expect(state.detailLoading).toBe(false);
     });
 
@@ -457,6 +463,112 @@ describe("ZonesStore", () => {
 
       await useZonesStore.getState().fetchBricks(client);
       expect(useZonesStore.getState().error).toBe("Failed to fetch bricks");
+    });
+  });
+
+  describe("mountBrick", () => {
+    it("calls POST mount and refreshes bricks list", async () => {
+      const client = mockClient({
+        "/api/v2/bricks/brick-alpha/mount": undefined,
+        "/api/v2/bricks/health": SAMPLE_BRICKS_HEALTH,
+      });
+
+      await useZonesStore.getState().mountBrick("brick-alpha", client);
+      const state = useZonesStore.getState();
+
+      expect(state.error).toBeNull();
+      expect(state.bricks).toHaveLength(3);
+      expect((client.post as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+    });
+
+    it("sets error on mount failure", async () => {
+      const client = {
+        get: mock(async () => ({ total: 0, active: 0, failed: 0, bricks: [] })),
+        post: mock(async () => { throw new Error("Invalid state transition"); }),
+      } as unknown as FetchClient;
+
+      await useZonesStore.getState().mountBrick("brick-alpha", client);
+      const state = useZonesStore.getState();
+
+      expect(state.error).toBe("Invalid state transition");
+    });
+
+    it("clears previous error before mount", async () => {
+      useZonesStore.setState({ error: "old error" });
+
+      const client = mockClient({
+        "/api/v2/bricks/brick-alpha/mount": undefined,
+        "/api/v2/bricks/health": { total: 0, active: 0, failed: 0, bricks: [] },
+      });
+
+      await useZonesStore.getState().mountBrick("brick-alpha", client);
+      expect(useZonesStore.getState().error).toBeNull();
+    });
+  });
+
+  describe("unmountBrick", () => {
+    it("calls POST unmount and refreshes bricks list", async () => {
+      const client = mockClient({
+        "/api/v2/bricks/brick-alpha/unmount": undefined,
+        "/api/v2/bricks/health": SAMPLE_BRICKS_HEALTH,
+      });
+
+      await useZonesStore.getState().unmountBrick("brick-alpha", client);
+      const state = useZonesStore.getState();
+
+      expect(state.error).toBeNull();
+      expect(state.bricks).toHaveLength(3);
+      expect((client.post as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+    });
+
+    it("sets error on unmount failure", async () => {
+      const client = {
+        get: mock(async () => ({ total: 0, active: 0, failed: 0, bricks: [] })),
+        post: mock(async () => { throw new Error("Brick is not active"); }),
+      } as unknown as FetchClient;
+
+      await useZonesStore.getState().unmountBrick("brick-alpha", client);
+      const state = useZonesStore.getState();
+
+      expect(state.error).toBe("Brick is not active");
+    });
+  });
+
+  describe("unregisterBrick", () => {
+    it("calls POST unregister and refreshes bricks list", async () => {
+      const client = mockClient({
+        "/api/v2/bricks/brick-gamma/unregister": undefined,
+        "/api/v2/bricks/health": SAMPLE_BRICKS_HEALTH,
+      });
+
+      await useZonesStore.getState().unregisterBrick("brick-gamma", client);
+      const state = useZonesStore.getState();
+
+      expect(state.error).toBeNull();
+      expect(state.bricks).toHaveLength(3);
+      expect((client.post as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+    });
+
+    it("sets error on unregister failure", async () => {
+      const client = {
+        get: mock(async () => ({ total: 0, active: 0, failed: 0, bricks: [] })),
+        post: mock(async () => { throw new Error("Brick must be unmounted"); }),
+      } as unknown as FetchClient;
+
+      await useZonesStore.getState().unregisterBrick("brick-gamma", client);
+      const state = useZonesStore.getState();
+
+      expect(state.error).toBe("Brick must be unmounted");
+    });
+
+    it("non-Error exceptions produce fallback message", async () => {
+      const client = {
+        get: mock(async () => ({ total: 0, active: 0, failed: 0, bricks: [] })),
+        post: mock(async () => { throw 42; }),
+      } as unknown as FetchClient;
+
+      await useZonesStore.getState().unregisterBrick("brick-gamma", client);
+      expect(useZonesStore.getState().error).toBe("Failed to unregister brick");
     });
   });
 });

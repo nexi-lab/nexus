@@ -45,6 +45,14 @@ class BrickStatusResponse(BaseModel):
     unmounted_at: float | None = None
 
 
+class BrickDetailResponse(BrickStatusResponse):
+    """Extended brick detail with spec and dependency info (Issue #2980)."""
+
+    enabled: bool = True
+    depends_on: list[str] = []
+    depended_by: list[str] = []
+
+
 class BrickHealthResponse(BaseModel):
     """Aggregated brick health report."""
 
@@ -225,16 +233,29 @@ async def brick_health(
     )
 
 
-@router.get("/{name}", response_model=BrickStatusResponse)
+@router.get("/{name}", response_model=BrickDetailResponse)
 async def brick_status(
     name: str,
     manager: Any = Depends(_get_lifecycle_manager),
-) -> BrickStatusResponse:
-    """Individual brick lifecycle status."""
+) -> BrickDetailResponse:
+    """Individual brick lifecycle status with spec and dependency info."""
     status = manager.get_status(name)
     if status is None:
         raise HTTPException(status_code=404, detail=f"Brick {name!r} not found")
-    return BrickStatusResponse(
+
+    # Enrich with spec data (depends_on, enabled)
+    spec = manager.get_spec(name)
+    depends_on: list[str] = list(spec.depends_on) if spec else []
+    enabled: bool = spec.enabled if spec else True
+
+    # Compute reverse dependencies (which bricks depend on this one)
+    depended_by: list[str] = []
+    all_specs = manager.all_specs()
+    for other_name, other_spec in all_specs.items():
+        if name in other_spec.depends_on:
+            depended_by.append(other_name)
+
+    return BrickDetailResponse(
         name=status.name,
         state=status.state.value,
         protocol_name=status.protocol_name,
@@ -242,6 +263,9 @@ async def brick_status(
         started_at=status.started_at,
         stopped_at=status.stopped_at,
         unmounted_at=status.unmounted_at,
+        enabled=enabled,
+        depends_on=depends_on,
+        depended_by=sorted(depended_by),
     )
 
 

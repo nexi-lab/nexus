@@ -1,8 +1,11 @@
 /**
  * Zones panel: tabbed layout with Zones list, Bricks health, and Drift report.
+ *
+ * Keybindings are context-aware — only actions valid for the selected brick's
+ * current state are active and displayed in the help bar.
  */
 
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useZonesStore } from "../../stores/zones-store.js";
 import type { ZoneTab } from "../../stores/zones-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -12,6 +15,8 @@ import { BrickList } from "./brick-list.js";
 import { BrickDetail } from "./brick-detail.js";
 import { DriftView } from "./drift-view.js";
 import { ReindexStatus } from "./reindex-status.js";
+import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
+import { allowedActionsForState } from "../../shared/brick-states.js";
 
 const TAB_ORDER: readonly ZoneTab[] = ["zones", "bricks", "drift", "reindex"];
 const TAB_LABELS: Readonly<Record<ZoneTab, string>> = {
@@ -41,13 +46,28 @@ export default function ZonesPanel(): React.ReactNode {
   const fetchBricks = useZonesStore((s) => s.fetchBricks);
   const fetchBrickDetail = useZonesStore((s) => s.fetchBrickDetail);
   const fetchDrift = useZonesStore((s) => s.fetchDrift);
+  const mountBrick = useZonesStore((s) => s.mountBrick);
+  const unmountBrick = useZonesStore((s) => s.unmountBrick);
+  const unregisterBrick = useZonesStore((s) => s.unregisterBrick);
   const remountBrick = useZonesStore((s) => s.remountBrick);
   const resetBrick = useZonesStore((s) => s.resetBrick);
   const setSelectedIndex = useZonesStore((s) => s.setSelectedIndex);
   const setActiveTab = useZonesStore((s) => s.setActiveTab);
 
+  // Confirmation dialog state for destructive unregister action
+  const [confirmUnregister, setConfirmUnregister] = useState(false);
+
+  // Currently selected brick (if on bricks tab)
+  const selectedBrick = activeTab === "bricks" ? bricks[selectedIndex] ?? null : null;
+
+  // Allowed actions for the selected brick's current state
+  const allowed = useMemo(
+    () => (selectedBrick ? allowedActionsForState(selectedBrick.state) : new Set<string>()),
+    [selectedBrick?.state],
+  );
+
   // Refresh data for the current tab
-  const refreshActiveTab = (): void => {
+  const refreshActiveTab = useCallback((): void => {
     if (!client) return;
 
     if (activeTab === "zones") {
@@ -57,13 +77,12 @@ export default function ZonesPanel(): React.ReactNode {
     } else if (activeTab === "drift") {
       fetchDrift(client);
     }
-  };
+  }, [activeTab, client, fetchZones, fetchBricks, fetchDrift]);
 
   // Auto-fetch data on mount and when tab changes
   useEffect(() => {
     refreshActiveTab();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, client]);
+  }, [refreshActiveTab]);
 
   // Fetch brick detail when selection changes in bricks tab
   useEffect(() => {
@@ -75,47 +94,87 @@ export default function ZonesPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex, bricks, activeTab, client]);
 
-  useKeyboard({
-    j: () => {
-      const maxLen = activeTab === "zones" ? zones.length : bricks.length;
-      setSelectedIndex(Math.min(selectedIndex + 1, maxLen - 1));
-    },
-    down: () => {
-      const maxLen = activeTab === "zones" ? zones.length : bricks.length;
-      setSelectedIndex(Math.min(selectedIndex + 1, maxLen - 1));
-    },
-    k: () => {
-      setSelectedIndex(Math.max(selectedIndex - 1, 0));
-    },
-    up: () => {
-      setSelectedIndex(Math.max(selectedIndex - 1, 0));
-    },
-    tab: () => {
-      const currentIdx = TAB_ORDER.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-      const nextTab = TAB_ORDER[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
-    },
-    m: () => {
-      if (!client || activeTab !== "bricks") return;
-      const brick = bricks[selectedIndex];
-      if (brick) {
-        remountBrick(brick.name, client);
-      }
-    },
-    x: () => {
-      if (!client || activeTab !== "bricks") return;
-      const brick = bricks[selectedIndex];
-      if (brick) {
-        resetBrick(brick.name, client);
-      }
-    },
-    r: () => {
-      refreshActiveTab();
-    },
-  });
+  // Confirmation handlers
+  const handleConfirmUnregister = useCallback(() => {
+    if (!client || !selectedBrick) return;
+    unregisterBrick(selectedBrick.name, client);
+    setConfirmUnregister(false);
+  }, [client, selectedBrick, unregisterBrick]);
+
+  const handleCancelUnregister = useCallback(() => {
+    setConfirmUnregister(false);
+  }, []);
+
+  // Build context-aware help text for the bricks tab
+  const brickHelpText = useMemo(() => {
+    const parts: string[] = ["j/k:navigate", "Tab:switch tab"];
+    if (allowed.has("mount")) parts.push("M:mount");
+    if (allowed.has("remount")) parts.push("m:remount");
+    if (allowed.has("unmount")) parts.push("U:unmount");
+    if (allowed.has("unregister")) parts.push("D:unregister");
+    if (allowed.has("reset")) parts.push("x:reset");
+    parts.push("r:refresh", "q:quit");
+    return parts.join("  ");
+  }, [allowed]);
+
+  useKeyboard(
+    confirmUnregister
+      ? {} // ConfirmDialog handles its own keys when visible
+      : {
+          j: () => {
+            const maxLen = activeTab === "zones" ? zones.length : bricks.length;
+            setSelectedIndex(Math.min(selectedIndex + 1, maxLen - 1));
+          },
+          down: () => {
+            const maxLen = activeTab === "zones" ? zones.length : bricks.length;
+            setSelectedIndex(Math.min(selectedIndex + 1, maxLen - 1));
+          },
+          k: () => {
+            setSelectedIndex(Math.max(selectedIndex - 1, 0));
+          },
+          up: () => {
+            setSelectedIndex(Math.max(selectedIndex - 1, 0));
+          },
+          tab: () => {
+            const currentIdx = TAB_ORDER.indexOf(activeTab);
+            const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
+            const nextTab = TAB_ORDER[nextIdx];
+            if (nextTab) {
+              setActiveTab(nextTab);
+            }
+          },
+          // M (shift+m): Mount — valid for registered/unmounted
+          "shift+m": () => {
+            if (!client || !selectedBrick || !allowed.has("mount")) return;
+            mountBrick(selectedBrick.name, client);
+          },
+          // U: Unmount — valid for active
+          "shift+u": () => {
+            if (!client || !selectedBrick || !allowed.has("unmount")) return;
+            unmountBrick(selectedBrick.name, client);
+          },
+          // D: Unregister — valid for unmounted (with confirmation)
+          "shift+d": () => {
+            if (!client || !selectedBrick || !allowed.has("unregister")) return;
+            setConfirmUnregister(true);
+          },
+          // m: Remount (existing) — valid for unmounted only
+          m: () => {
+            if (!client || !selectedBrick || !allowed.has("remount")) return;
+            remountBrick(selectedBrick.name, client);
+          },
+          // x: Reset (existing) — valid for failed
+          x: () => {
+            if (!client || !selectedBrick || !allowed.has("reset")) return;
+            resetBrick(selectedBrick.name, client);
+          },
+          r: () => {
+            refreshActiveTab();
+          },
+        },
+  );
+
+  const defaultHelp = "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
 
   return (
     <box height="100%" width="100%" flexDirection="column">
@@ -179,12 +238,21 @@ export default function ZonesPanel(): React.ReactNode {
         {activeTab === "reindex" && <ReindexStatus />}
       </box>
 
-      {/* Help bar */}
+      {/* Context-aware help bar */}
       <box height={1} width="100%">
         <text>
-          {"j/k:navigate  Tab:switch tab  m:remount  x:reset  r:refresh  q:quit"}
+          {activeTab === "bricks" ? brickHelpText : defaultHelp}
         </text>
       </box>
+
+      {/* Unregister confirmation dialog */}
+      <ConfirmDialog
+        visible={confirmUnregister}
+        title="Unregister Brick"
+        message={`Permanently unregister "${selectedBrick?.name ?? ""}"? This cannot be undone.`}
+        onConfirm={handleConfirmUnregister}
+        onCancel={handleCancelUnregister}
+      />
     </box>
   );
 }

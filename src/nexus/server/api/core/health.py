@@ -7,10 +7,9 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-
-from nexus.server.dependencies import require_admin
 from pydantic import BaseModel
 
+from nexus.server.dependencies import require_admin
 from nexus.server.rate_limiting import limiter
 
 logger = logging.getLogger(__name__)

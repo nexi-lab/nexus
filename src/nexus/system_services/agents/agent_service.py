@@ -15,7 +15,7 @@ ARCHITECTURAL DECISION (KERNEL-ARCHITECTURE.md §3):
 import contextlib
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.contracts.constants import ROOT_ZONE_ID

@@ -236,7 +236,7 @@ async def rpc_endpoint(
     except NexusError as e:
         logger.warning("NexusError in method %s: %s", method, e)
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
-    except Exception as e:
+    except Exception:
         logger.exception(f"Error executing method {method}")
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
 

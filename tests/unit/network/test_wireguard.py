@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.network.constants import WG_DEFAULT_PORT, WG_SUBNET
+from nexus.network.constants import WG_SUBNET
 from nexus.network.wireguard import (
     add_peer,
     generate_wg_config,
@@ -56,12 +56,13 @@ class TestInitIdentity:
         """Regression: C4 — identity file must be 0o600, not world-readable."""
         mock_keygen.return_value = ("fake_privkey", "fake_pubkey")
 
-        with patch("nexus.network.wireguard.NETWORK_DIR", tmp_path / "network"), patch(
-            "nexus.network.wireguard.PEERS_DIR", tmp_path / "network" / "peers"
+        with (
+            patch("nexus.network.wireguard.NETWORK_DIR", tmp_path / "network"),
+            patch("nexus.network.wireguard.PEERS_DIR", tmp_path / "network" / "peers"),
         ):
             from nexus.network.wireguard import init_identity
 
-            identity = init_identity(node_id=1)
+            init_identity(node_id=1)
 
         identity_path = tmp_path / "network" / "identity.json"
         assert identity_path.exists()
@@ -76,13 +77,12 @@ class TestInitIdentity:
         assert data["node_id"] == 1
 
     @patch("nexus.network.wireguard.generate_keypair")
-    def test_identity_contains_all_fields(
-        self, mock_keygen: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_identity_contains_all_fields(self, mock_keygen: MagicMock, tmp_path: Path) -> None:
         mock_keygen.return_value = ("priv", "pub")
 
-        with patch("nexus.network.wireguard.NETWORK_DIR", tmp_path / "network"), patch(
-            "nexus.network.wireguard.PEERS_DIR", tmp_path / "network" / "peers"
+        with (
+            patch("nexus.network.wireguard.NETWORK_DIR", tmp_path / "network"),
+            patch("nexus.network.wireguard.PEERS_DIR", tmp_path / "network" / "peers"),
         ):
             from nexus.network.wireguard import init_identity
 
@@ -99,9 +99,11 @@ class TestLoadIdentity:
     """Test identity loading."""
 
     def test_load_missing_identity(self, tmp_path: Path) -> None:
-        with patch("nexus.network.wireguard.NETWORK_DIR", tmp_path / "network"):
-            with pytest.raises(FileNotFoundError):
-                load_identity()
+        with (
+            patch("nexus.network.wireguard.NETWORK_DIR", tmp_path / "network"),
+            pytest.raises(FileNotFoundError),
+        ):
+            load_identity()
 
 
 class TestPeerManagement:

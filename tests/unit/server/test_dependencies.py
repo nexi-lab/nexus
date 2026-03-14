@@ -56,6 +56,7 @@ def _make_mock_request(
     )
     request = MagicMock()
     request.app.state = state
+    request.client.host = "127.0.0.1"  # Loopback for open-access tests
     return request
 
 
@@ -63,6 +64,7 @@ def _make_mock_request_from_state(state: MagicMock) -> MagicMock:
     """Create a mock Request wrapping an existing state mock."""
     request = MagicMock()
     request.app.state = state
+    request.client.host = "127.0.0.1"
     return request
 
 

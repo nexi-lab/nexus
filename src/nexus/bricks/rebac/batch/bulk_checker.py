@@ -372,15 +372,14 @@ class BulkPermissionChecker:
                         f"[BULK-UNNEST] Fetched {cross_zone_count} cross-zone tuples in single query"
                     )
 
-                # Compute parent relationships in memory
-                if ancestor_paths:
-                    computed_parent_count = self._compute_parent_tuples(
-                        ancestor_paths, tuples_graph
+            # Compute parent relationships in memory (needed for directory
+            # inheritance regardless of zone isolation setting)
+            if ancestor_paths:
+                computed_parent_count = self._compute_parent_tuples(ancestor_paths, tuples_graph)
+                if computed_parent_count > 0:
+                    logger.debug(
+                        f"Computed {computed_parent_count} parent tuples in memory for file hierarchy"
                     )
-                    if computed_parent_count > 0:
-                        logger.debug(
-                            f"Computed {computed_parent_count} parent tuples in memory for file hierarchy"
-                        )
 
             logger.debug(
                 f"Fetched {len(tuples_graph)} tuples in bulk for graph computation (includes parent hierarchy)"

@@ -634,6 +634,52 @@ class SearchDaemon:
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
             return []
 
+    async def index_documents(
+        self,
+        documents: list[dict[str, Any]],
+        *,
+        zone_id: str | None = None,
+    ) -> int:
+        """Explicitly upsert documents into the active search backend.
+
+        This powers ``POST /api/v2/search/index`` for synthetic or externally
+        generated documents that do not rely on the file-refresh pipeline.
+        """
+        if not self._initialized:
+            raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
+
+        if not documents or self._backend is None:
+            return 0
+
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        effective_zone_id = zone_id or ROOT_ZONE_ID
+        count = int(await self._backend.upsert(documents, zone_id=effective_zone_id))
+        if count:
+            self.stats.last_index_refresh = time.time()
+        return count
+
+    async def delete_documents(
+        self,
+        ids: list[str],
+        *,
+        zone_id: str | None = None,
+    ) -> int:
+        """Delete indexed documents from the active search backend."""
+        if not self._initialized:
+            raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
+
+        if not ids or self._backend is None:
+            return 0
+
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        effective_zone_id = zone_id or ROOT_ZONE_ID
+        count = int(await self._backend.delete(ids, zone_id=effective_zone_id))
+        if count:
+            self.stats.last_index_refresh = time.time()
+        return count
+
     async def _keyword_search(
         self,
         query: str,

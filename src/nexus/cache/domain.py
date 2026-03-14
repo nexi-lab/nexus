@@ -69,7 +69,10 @@ class PermissionCache:
         object_id: str,
         zone_id: str,
     ) -> str:
-        return f"perm:{zone_id}:{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}"
+        from urllib.parse import quote
+
+        fields = [zone_id, subject_type, subject_id, permission, object_type, object_id]
+        return "perm:" + ":".join(quote(f, safe="") for f in fields)
 
     async def get(
         self,

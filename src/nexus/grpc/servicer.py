@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hmac
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -112,7 +113,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             return {}  # Will fail later
 
         # Static API key check
-        if self._api_key and token == self._api_key:
+        if self._api_key and hmac.compare_digest(token, self._api_key):
             return {
                 "authenticated": True,
                 "subject_type": "user",

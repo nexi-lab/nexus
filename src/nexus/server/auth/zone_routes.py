@@ -398,6 +398,13 @@ async def delete_zone_endpoint(
                 detail=f"Zone '{zone_id}' not found",
             )
 
+        # Enforce ownership for zone deletion (not just membership)
+        if not is_admin and getattr(zone, "owner_id", None) and zone.owner_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the zone owner can delete a zone",
+            )
+
         if zone.phase == "Terminated":
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

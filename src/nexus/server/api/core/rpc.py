@@ -229,16 +229,16 @@ async def rpc_endpoint(
         )
     except DatabaseError as e:
         logger.warning("Database error in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Database error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
     except ConnectorError as e:
         logger.warning("Connector error in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Backend error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
     except NexusError as e:
         logger.warning("NexusError in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Nexus error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
     except Exception as e:
         logger.exception(f"Error executing method {method}")
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
 
 
 def get_cache_headers(method: str, result: Any) -> dict[str, str]:

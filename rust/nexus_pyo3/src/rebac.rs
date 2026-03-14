@@ -165,21 +165,45 @@ fn compute_permission_interned_shared(
             InternedRelationConfig::TupleToUserset {
                 tupleset,
                 computed_userset,
-            } => graph
-                .find_related_objects(object, *tupleset)
-                .iter()
-                .any(|&obj| {
-                    compute_permission_interned_shared(
-                        subject,
-                        *computed_userset,
-                        obj,
-                        graph,
-                        namespaces,
-                        memo_cache,
-                        &mut visited.clone(),
-                        depth + 1,
-                    )
-                }),
+            } => {
+                // Forward: object as subject → find objects it relates to
+                let forward = graph
+                    .find_related_objects(object, *tupleset)
+                    .iter()
+                    .any(|&obj| {
+                        compute_permission_interned_shared(
+                            subject,
+                            *computed_userset,
+                            obj,
+                            graph,
+                            namespaces,
+                            memo_cache,
+                            &mut visited.clone(),
+                            depth + 1,
+                        )
+                    });
+                if forward {
+                    true
+                } else {
+                    // Reverse: find subjects that have tupleset relation ON object
+                    // (H25: must match graph.rs which checks both directions)
+                    graph
+                        .find_subjects_for_object(object, *tupleset)
+                        .iter()
+                        .any(|&target| {
+                            compute_permission_interned_shared(
+                                subject,
+                                *computed_userset,
+                                target,
+                                graph,
+                                namespaces,
+                                memo_cache,
+                                &mut visited.clone(),
+                                depth + 1,
+                            )
+                        })
+                }
+            }
         }
     } else {
         check_relation_with_usersets_interned_shared(

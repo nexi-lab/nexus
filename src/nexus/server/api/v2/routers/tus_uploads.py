@@ -12,6 +12,7 @@ Every endpoint (except OPTIONS) validates the Tus-Resumable header.
 
 import base64
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -104,7 +105,7 @@ def create_tus_uploads_router(
             status_code=204,
             headers={
                 **caps,
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": os.environ.get("NEXUS_CORS_ORIGIN", ""),
                 "Access-Control-Allow-Methods": "OPTIONS, POST, PATCH, HEAD, DELETE",
                 "Access-Control-Allow-Headers": (
                     "Tus-Resumable, Upload-Length, Upload-Offset, "

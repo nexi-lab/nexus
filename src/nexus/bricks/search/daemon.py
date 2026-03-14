@@ -1075,12 +1075,21 @@ class SearchDaemon:
                     delete_paths = list(self._pending_delete_paths)
                     self._pending_delete_paths.clear()
 
-                # Delete removed files from the index (IDs = unscoped virtual_path)
+                # Delete removed files from the index
+                # Doc IDs are "zone:path" for non-root, plain path for root
                 if delete_paths and self._backend is not None:
                     from nexus.contracts.constants import ROOT_ZONE_ID
 
-                    unscoped = [self._strip_zone_prefix(p) for p in delete_paths]
-                    await self.delete_documents(unscoped, zone_id=ROOT_ZONE_ID)
+                    delete_ids = []
+                    for dp in delete_paths:
+                        vp = self._strip_zone_prefix(dp)
+                        # Infer zone from the scoped path prefix
+                        import re as _re_del
+
+                        zm = _re_del.match(r"^/zone/([^/]+)/", dp)
+                        zone = zm.group(1) if zm else ROOT_ZONE_ID
+                        delete_ids.append(f"{zone}:{vp}" if zone != ROOT_ZONE_ID else vp)
+                    await self.delete_documents(delete_ids, zone_id=ROOT_ZONE_ID)
 
                 # Refresh indexes for changed paths
                 if paths:
@@ -1260,9 +1269,10 @@ class SearchDaemon:
 
                     _zm = _re.match(r"^/zone/([^/]+)/", path)
                     _zone = _zm.group(1) if _zm else "root"
+                    _doc_id = f"{_zone}:{virtual_path}" if _zone != "root" else virtual_path
                     _txtai_batch.setdefault(_zone, []).append(
                         {
-                            "id": virtual_path,
+                            "id": _doc_id,
                             "text": content,
                             "path": virtual_path,
                             "zone_id": _zone,

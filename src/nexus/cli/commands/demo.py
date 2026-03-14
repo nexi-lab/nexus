@@ -30,6 +30,7 @@ from nexus.cli.commands.demo_data import (
     DEMO_FILES,
     DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
+    HERB_CORPUS,
     MANIFEST_FILENAME,
     PLAN_VERSIONS,
 )
@@ -158,7 +159,9 @@ def _seed_files(
     seeded = manifest.get("files", [])
     created = 0
 
-    for path, content, _description in DEMO_FILES:
+    # Seed both core demo files and HERB-derived corpus
+    all_files = list(DEMO_FILES) + list(HERB_CORPUS)
+    for path, content, _description in all_files:
         if path in seeded:
             continue
         try:
@@ -898,9 +901,10 @@ def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
 
     compose_env = _derive_project_env(config)
 
-    # Read file contents via RPC
+    # Read file contents via RPC (include HERB corpus for semantic search)
     docs = []
-    for path, _content, _desc in DEMO_FILES:
+    all_files = list(DEMO_FILES) + list(HERB_CORPUS)
+    for path, _content, _desc in all_files:
         try:
             raw = nx.sys_read(path)
             text = raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else str(raw)

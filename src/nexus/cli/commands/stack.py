@@ -1,4 +1,4 @@
-"""Stack lifecycle commands — up, down, logs, restart.
+"""Stack lifecycle commands — up, down, logs, restart, upgrade.
 
 These commands manage the Docker Compose stack for ``shared`` and ``demo``
 presets.  They wrap ``docker compose`` via subprocess, adding pre-flight
@@ -8,17 +8,24 @@ port conflict detection, parallel health polling, and rich status output.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import os
 import shutil
 import subprocess
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
 import click
 import yaml
 
+from nexus.cli.commands.init_cmd import (
+    ADDON_PROFILE_MAP,
+    DEFAULT_IMAGE_REGISTRY,
+    _resolve_image_ref,
+)
 from nexus.cli.port_utils import (
     VALID_STRATEGIES,
     check_port_available,
@@ -58,18 +65,57 @@ def _save_project_config(config: dict[str, Any], path: str | None = None) -> Non
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
-def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
+def _resolve_image_ref_from_config(config: dict[str, Any]) -> str:
+    """Resolve the effective image reference from config + env overrides.
+
+    Precedence (highest to lowest):
+      1. NEXUS_IMAGE_REF environment variable
+      2. config["image_ref"]
+      3. NEXUS_IMAGE_TAG environment variable (deprecated compat)
+      4. config["image_tag"] (deprecated compat — maps to full ref)
+      5. Empty string (no image pinning)
+    """
+    # New model: NEXUS_IMAGE_REF env var wins
+    env_ref = os.environ.get("NEXUS_IMAGE_REF", "")
+    if env_ref:
+        return env_ref
+
+    # Config image_ref (set by nexus init)
+    config_ref = config.get("image_ref", "")
+    if config_ref:
+        return config_ref
+
+    # Deprecated: NEXUS_IMAGE_TAG env var → expand to full ref
+    env_tag = os.environ.get("NEXUS_IMAGE_TAG", "")
+    if env_tag:
+        return f"{DEFAULT_IMAGE_REGISTRY}:{env_tag}"
+
+    # Deprecated: config image_tag → expand to full ref
+    config_tag = config.get("image_tag", "")
+    if config_tag:
+        return f"{DEFAULT_IMAGE_REGISTRY}:{config_tag}"
+
+    return ""
+
+
+def _derive_project_env(
+    config: dict[str, Any],
+    resolved_ports: dict[str, int] | None = None,
+) -> dict[str, str]:
     """Build the compose environment from nexus.yaml config.
 
     Returns a dict with COMPOSE_PROJECT_NAME, NEXUS_HOST_DATA_DIR,
-    port vars, auth type, and TLS settings — everything compose
-    commands need to target the correct project.
+    port vars, auth type, image ref, and TLS settings — everything
+    compose commands need to target the correct project.
+
+    When *resolved_ports* is provided (e.g. after conflict resolution),
+    those values are used instead of config["ports"].
     """
     data_dir = str(Path(config.get("data_dir", "./nexus-data")).resolve())
     project_hash = hashlib.md5(data_dir.encode()).hexdigest()[:8]
     project_name = f"nexus-{project_hash}"
 
-    ports = config.get("ports", {})
+    ports = resolved_ports or config.get("ports", {})
     env: dict[str, str] = {
         "COMPOSE_PROJECT_NAME": project_name,
         "NEXUS_PORT": str(ports.get("http", 2026)),
@@ -88,11 +134,10 @@ def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
     if api_key:
         env["NEXUS_API_KEY"] = api_key
 
-    # Pin the prebuilt image tag.  Environment variable wins so users can
-    # override with e.g. ``NEXUS_IMAGE_TAG=pr-2918-arm64 nexus up``.
-    image_tag = os.environ.get("NEXUS_IMAGE_TAG") or config.get("image_tag", "")
-    if image_tag:
-        env["NEXUS_IMAGE_TAG"] = image_tag
+    # Resolve the image reference (supports new image_ref and deprecated image_tag)
+    image_ref = _resolve_image_ref_from_config(config)
+    if image_ref:
+        env["NEXUS_IMAGE_REF"] = image_ref
 
     if config.get("tls"):
         env["NEXUS_TLS_ENABLED"] = "true"
@@ -101,6 +146,29 @@ def _derive_project_env(config: dict[str, Any]) -> dict[str, str]:
         env["NEXUS_TLS_CA"] = "/app/data/tls/ca.crt"
 
     return env
+
+
+def _resolve_profiles(
+    config: dict[str, Any],
+    cli_addons: tuple[str, ...] = (),
+) -> list[str]:
+    """Build the complete list of compose profiles from config + CLI addons.
+
+    Single source of truth for addon → profile mapping. Used by up, down,
+    logs, and restart.
+    """
+    profiles = list(config.get("compose_profiles", []))
+    # Add CLI add-ons
+    for addon in cli_addons:
+        profile = ADDON_PROFILE_MAP.get(addon, addon)
+        if profile not in profiles:
+            profiles.append(profile)
+    # Add configured add-ons from nexus.yaml
+    for addon in config.get("addons", []):
+        profile = ADDON_PROFILE_MAP.get(addon, addon)
+        if profile not in profiles:
+            profiles.append(profile)
+    return profiles
 
 
 # ---------------------------------------------------------------------------
@@ -113,17 +181,27 @@ def _compose_profiles(compose_file: str) -> set[str]:
     try:
         with open(compose_file) as f:
             stack = yaml.safe_load(f) or {}
-        profiles: set[str] = set()
-        for svc in (stack.get("services") or {}).values():
-            for p in svc.get("profiles") or []:
-                profiles.add(p)
-        return profiles
-    except Exception:
+    except FileNotFoundError:
+        return set()
+    except yaml.YAMLError as exc:
+        console.print(f"[yellow]Warning:[/yellow] Failed to parse {compose_file}: {exc}")
         return set()
 
+    if not isinstance(stack, dict):
+        console.print(f"[yellow]Warning:[/yellow] {compose_file} does not contain a valid mapping")
+        return set()
 
+    profiles: set[str] = set()
+    for svc in (stack.get("services") or {}).values():
+        if isinstance(svc, dict):
+            for p in svc.get("profiles") or []:
+                profiles.add(p)
+    return profiles
+
+
+@functools.lru_cache(maxsize=1)
 def _find_docker_compose() -> str:
-    """Return the docker compose command prefix."""
+    """Return the docker compose command prefix (cached for the process lifetime)."""
     # Prefer `docker compose` (Compose V2, plugin)
     if shutil.which("docker"):
         result = subprocess.run(
@@ -166,8 +244,6 @@ def _run_compose(
     capture: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Execute a docker compose command."""
-    import os
-
     cmd = _compose_cmd(compose_file, profiles, *args)
     run_env = {**os.environ, **(extra_env or {})}
     return subprocess.run(
@@ -226,8 +302,6 @@ async def _poll_service_health(
                 # Also verify HTTP health endpoint
                 url = url_template.format(**ports)
                 try:
-                    import urllib.request
-
                     req = urllib.request.Request(url, method="GET")
                     with urllib.request.urlopen(req, timeout=3) as resp:
                         if resp.status == 200:
@@ -265,6 +339,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(down)
     cli.add_command(logs)
     cli.add_command(restart)
+    cli.add_command(upgrade)
 
 
 @click.command()
@@ -351,25 +426,8 @@ def up(
     if build is None:
         build = False
 
-    # Build profiles list
-    profiles = list(config.get("compose_profiles", []))
-    # Add add-on profiles
-    addon_profile_map = {
-        "nats": "events",
-        "mcp": "mcp",
-        "frontend": "frontend",
-        "langgraph": "langgraph",
-        "observability": "observability",
-    }
-    for addon in addons:
-        profile = addon_profile_map.get(addon, addon)
-        if profile not in profiles:
-            profiles.append(profile)
-    # Also add configured add-ons
-    for addon in config.get("addons", []):
-        profile = addon_profile_map.get(addon, addon)
-        if profile not in profiles:
-            profiles.append(profile)
+    # Build profiles list (single source of truth via _resolve_profiles)
+    profiles = _resolve_profiles(config, addons)
 
     # Validate profiles against what the compose file actually defines.
     # This catches attempts to use repo-only add-ons (frontend, langgraph,
@@ -393,6 +451,9 @@ def up(
     console.print()
     console.print(f"[bold]Starting Nexus preset: {preset}[/bold]")
     console.print(f"  Using stack: {cf}")
+    image_ref = _resolve_image_ref_from_config(config)
+    if image_ref:
+        console.print(f"  Image: {image_ref}")
     if addons:
         console.print(f"  Add-ons: {', '.join(addons)}")
     console.print()
@@ -406,15 +467,8 @@ def up(
         config["ports"] = resolved_ports
         _save_project_config(config)
 
-    # Build environment from config (project name, ports, data dir, auth, TLS)
-    compose_env = _derive_project_env(config)
-
-    # Override ports with resolved values (may differ from config if conflicts)
-    compose_env["NEXUS_PORT"] = str(resolved_ports.get("http", 2026))
-    compose_env["NEXUS_GRPC_PORT"] = str(resolved_ports.get("grpc", 2028))
-    compose_env["POSTGRES_PORT"] = str(resolved_ports.get("postgres", 5432))
-    compose_env["DRAGONFLY_PORT"] = str(resolved_ports.get("dragonfly", 6379))
-    compose_env["ZOEKT_PORT"] = str(resolved_ports.get("zoekt", 6070))
+    # Build environment from config (project name, ports, data dir, auth, image, TLS)
+    compose_env = _derive_project_env(config, resolved_ports=resolved_ports)
 
     data_dir = compose_env["NEXUS_HOST_DATA_DIR"]
 
@@ -519,17 +573,7 @@ def down(volumes: bool) -> None:
         raise SystemExit(0)
 
     cf = config.get("compose_file", "./nexus-stack.yml")
-    profiles = list(config.get("compose_profiles", []))
-    for addon in config.get("addons", []):
-        addon_map = {
-            "nats": "events",
-            "mcp": "mcp",
-            "frontend": "frontend",
-            "langgraph": "langgraph",
-        }
-        profile = addon_map.get(addon, addon)
-        if profile not in profiles:
-            profiles.append(profile)
+    profiles = _resolve_profiles(config)
 
     args: list[str] = ["down"]
     if volumes:
@@ -562,7 +606,7 @@ def logs(follow: bool, tail: int, service: str | None) -> None:
     """
     config = _load_project_config()
     cf = config.get("compose_file", "./nexus-stack.yml")
-    profiles = list(config.get("compose_profiles", []))
+    profiles = _resolve_profiles(config)
     compose_env = _derive_project_env(config)
 
     args: list[str] = ["logs", "--tail", str(tail)]
@@ -598,19 +642,7 @@ def restart(build: bool | None) -> None:
         raise SystemExit(0)
 
     cf = config.get("compose_file", "./nexus-stack.yml")
-    profiles = list(config.get("compose_profiles", []))
-    # Expand configured add-ons into profiles (same as down/up)
-    addon_profile_map = {
-        "nats": "events",
-        "mcp": "mcp",
-        "frontend": "frontend",
-        "langgraph": "langgraph",
-        "observability": "observability",
-    }
-    for addon in config.get("addons", []):
-        profile = addon_profile_map.get(addon, addon)
-        if profile not in profiles:
-            profiles.append(profile)
+    profiles = _resolve_profiles(config)
     compose_env = _derive_project_env(config)
 
     # Default: pull prebuilt image (same as `up`)
@@ -629,3 +661,87 @@ def restart(build: bool | None) -> None:
     else:
         console.print("[red]Error:[/red] Failed to restart stack.")
         raise SystemExit(result.returncode)
+
+
+@click.command()
+@click.option(
+    "--channel",
+    default=None,
+    help="Override the channel to resolve from (default: use config channel).",
+)
+@click.option(
+    "--image-tag",
+    default=None,
+    help="Pin to an explicit tag instead of resolving from channel.",
+)
+@click.option(
+    "--image-digest",
+    default=None,
+    help="Pin to an explicit digest (sha256:...).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt.",
+)
+def upgrade(
+    channel: str | None,
+    image_tag: str | None,
+    image_digest: str | None,
+    yes: bool,
+) -> None:
+    """Upgrade the pinned image reference.
+
+    Re-resolves the release channel to a new concrete image ref and
+    updates nexus.yaml.  Does NOT restart the stack — run ``nexus restart``
+    after reviewing the change.
+
+    Examples:
+        nexus upgrade                        # re-resolve stable channel
+        nexus upgrade --channel edge         # switch to edge
+        nexus upgrade --image-tag 0.10.0     # pin to specific version
+        nexus upgrade --image-digest sha256:abc123...
+    """
+    config = _load_project_config()
+    preset = config.get("preset", "local")
+
+    if preset == "local":
+        console.print("[yellow]Preset 'local' does not use a prebuilt image.[/yellow]")
+        raise SystemExit(0)
+
+    current_ref = config.get("image_ref", config.get("image_tag", "(unknown)"))
+    effective_channel = channel or config.get("image_channel", "stable")
+    effective_accel = config.get("image_accelerator", "cpu")
+
+    new_ref = _resolve_image_ref(
+        effective_channel,
+        effective_accel,
+        image_tag=image_tag,
+        image_digest=image_digest,
+    )
+
+    if new_ref == current_ref:
+        console.print(f"[green]Already up to date:[/green] {current_ref}")
+        return
+
+    console.print("[bold]Image upgrade:[/bold]")
+    console.print(f"  Current: {current_ref}")
+    console.print(f"  New:     {new_ref}")
+    console.print(f"  Channel: {effective_channel}")
+
+    if not yes and not click.confirm("  Apply this change?", default=True):
+        console.print("  Cancelled.")
+        return
+
+    config["image_ref"] = new_ref
+    config["image_channel"] = effective_channel
+    if channel:
+        config["image_channel"] = channel
+    # Clean up deprecated image_tag if present
+    config.pop("image_tag", None)
+
+    _save_project_config(config)
+    console.print(f"[green]✓[/green] Updated nexus.yaml → {new_ref}")
+    console.print("  Run `nexus restart` to apply.")

@@ -47,6 +47,7 @@ nexus up
 ```
 
 Same services as demo (PostgreSQL, Dragonfly, Zoekt) with `static` auth and production-oriented defaults.
+Both presets default to the `stable` release channel. Use `nexus status` to see the active image.
 
 ### Local SDK (no Docker)
 
@@ -78,11 +79,24 @@ nexus ls /workspace
 The prebuilt multi-arch image (amd64 + arm64) is published to GHCR:
 
 ```
-ghcr.io/nexi-lab/nexus:latest        # Latest release (CPU-only PyTorch)
+ghcr.io/nexi-lab/nexus:latest        # Latest stable release
 ghcr.io/nexi-lab/nexus:<version>     # Pinned to a specific release
+ghcr.io/nexi-lab/nexus:<version>-cuda # GPU-accelerated variant
+ghcr.io/nexi-lab/nexus:edge          # Pre-release (develop branch)
 ```
 
-`nexus init` pins the image tag to the installed CLI version. To build locally from source instead of pulling, pass `--build` to `nexus up`. A CUDA variant (`ghcr.io/nexi-lab/nexus:<version>-cuda`) is also published for GPU-accelerated workloads — set `image_tag` in `nexus.yaml` to use it.
+`nexus init` resolves and pins a full image reference (`image_ref`) into `nexus.yaml`.
+The default channel is `stable`, which pins to the installed CLI version.
+Override during init:
+
+```bash
+nexus init --preset shared --channel edge          # pre-release channel
+nexus init --preset shared --image-tag 0.9.2       # explicit version
+nexus init --preset shared --accelerator cuda       # GPU variant
+nexus init --preset shared --image-digest sha256:...  # immutable digest
+```
+
+To upgrade the pinned image later, use `nexus upgrade`. To build locally from source instead of pulling, pass `--build` to `nexus up`.
 
 ## Optional Capabilities
 

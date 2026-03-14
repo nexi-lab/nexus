@@ -73,6 +73,10 @@ class FeaturesConfig(BaseModel):
 
     # Feature bricks
     search: bool | None = Field(default=None, description="Enable search brick")
+    semantic_search: bool | None = Field(
+        default=None,
+        description="Enable semantic search initialization/config wiring",
+    )
     pay: bool | None = Field(default=None, description="Enable payment brick")
     llm: bool | None = Field(default=None, description="Enable LLM brick")
     skills: bool | None = Field(default=None, description="Enable skills brick")
@@ -94,6 +98,8 @@ class FeaturesConfig(BaseModel):
         """
         overrides: dict[str, bool] = {}
         for field_name, value in self:
+            if field_name == "semantic_search":
+                continue
             if value is not None:
                 overrides[field_name] = value
         return overrides

@@ -218,6 +218,13 @@ class TestFeaturesConfigOverrides:
         overrides = fc.to_overrides()
         assert overrides == {"search": True, "pay": False}
 
+    def test_semantic_search_is_config_only_not_brick_override(self) -> None:
+        from nexus.config import FeaturesConfig
+
+        fc = FeaturesConfig(search=True, semantic_search=True)
+        overrides = fc.to_overrides()
+        assert overrides == {"search": True}
+
     def test_overrides_integrate_with_resolve(self) -> None:
         from nexus.config import FeaturesConfig
 
@@ -253,3 +260,10 @@ class TestNexusConfigProfile:
 
         with pytest.raises(ValueError, match="profile must be one of"):
             NexusConfig(profile="invalid")
+
+    def test_semantic_search_feature_flag_is_accepted(self) -> None:
+        from nexus.config import NexusConfig
+
+        cfg = NexusConfig(features={"semantic_search": True, "search": True})
+        assert cfg.features.semantic_search is True
+        assert cfg.features.search is True

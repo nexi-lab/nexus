@@ -508,17 +508,18 @@ async def handle_semantic_search_index(
         )
 
         # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
+        results: dict[str, int] = {}
         if documents:
             await daemon.index_documents(documents, zone_id=zone_id)
-            # txtai treats each document as one indexing unit; estimate chunks
-            # from content length (avg ~512 tokens/chunk) for accurate stats.
+            # Estimate per-file chunk counts from content length (~2KB/chunk)
             for doc in documents:
-                total_chunks += max(1, len(doc["text"]) // 2000)
+                chunks = max(1, len(doc["text"]) // 2000)
+                results[doc["path"]] = chunks
+                total_chunks += chunks
             _log.info(
                 "semantic_search_index: indexed %d docs (~%d chunks)", len(documents), total_chunks
             )
 
-        results = {doc["path"]: total_chunks // max(len(documents), 1) for doc in documents}
         return {"indexed": results, "total_files": len(documents), "total_chunks": total_chunks}
 
     # Fallback: SearchService pipeline (when daemon is unavailable)

@@ -1,4 +1,4 @@
-"""DT_PIPE-backed dispatch consumer for task lifecycle events.
+"""DT_PIPE-backed dispatch consumer for task lifecycle signals.
 
 Produces task signals into a kernel ring buffer pipe and consumes them
 in a background asyncio task, following the same pattern as
@@ -7,13 +7,16 @@ in a background asyncio task, following the same pattern as
 Flow::
 
     TaskWriteHook.on_post_write() [sync, kernel dispatch]
-      → TaskDispatchPipeConsumer.on_task_created/updated() [TaskEventHandler]
+      → TaskDispatchPipeConsumer.on_task_signal(signal_type, payload)
         → JSON → pipe_write_nowait("/nexus/pipes/task-dispatch")
 
     Background _consume() [asyncio.Task]
       → pipe_read() → JSON → _dispatch()
-        → "task_created" → log (placeholder: worker starts)
-        → "task_updated" + status="in_review" → log (placeholder: copilot reviews)
+        → "task_created" → start worker via VFS syscalls
+        → "task_updated" + status="in_review" → copilot review via VFS
+
+All state mutations use TaskManagerService (VFS-backed) directly —
+no HTTP loopback, no subprocess calls.
 """
 
 from __future__ import annotations
@@ -22,17 +25,11 @@ import asyncio
 import contextlib
 import json
 import logging
-import subprocess
-from dataclasses import asdict
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.task_manager.events import (
-    TaskCreatedEvent,
-    TaskUpdatedEvent,
-)
-
 if TYPE_CHECKING:
+    from nexus.bricks.task_manager.service import TaskManagerService
     from nexus.core.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
@@ -40,28 +37,43 @@ logger = logging.getLogger(__name__)
 _TASK_DISPATCH_PIPE_PATH = "/nexus/pipes/task-dispatch"
 _TASK_DISPATCH_PIPE_CAPACITY = 65_536  # 64KB
 
+# Type alias for injectable LLM provider
+LLMCallable = Callable[[str], Awaitable[str]]
+
+
+async def _no_llm(_prompt: str) -> str:
+    """Placeholder LLM provider — returns a stub until VFS-routed LLM is wired."""
+    return "(LLM provider not configured — VFS-routed LLM pending)"
+
 
 class TaskDispatchPipeConsumer:
     """Produces and consumes task dispatch signals via DT_PIPE.
 
-    Implements ``TaskEventHandler`` so it can be registered with
-    :class:`TaskWriteHook`.  The producer side serialises events to JSON
+    Implements ``TaskSignalHandler`` so it can be registered with
+    :class:`TaskWriteHook`.  The producer side serialises signals to JSON
     and writes them into the kernel pipe.  The consumer side runs a
     background ``asyncio.Task`` that reads from the pipe and routes
     signals via ``_dispatch()``.
+
+    All state mutations go through ``TaskManagerService`` which uses
+    NexusFS ``sys_read``/``sys_write`` — getting file events, permissions,
+    and audit trail for free.
 
     Lifecycle (deferred injection)::
 
         consumer = TaskDispatchPipeConsumer()
         task_write_hook.register_handler(consumer)
         consumer.set_pipe_manager(pipe_manager)
+        consumer.set_task_service(task_manager_service)
         await consumer.start()
         ...
         await consumer.stop()
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, llm_fn: LLMCallable | None = None) -> None:
         self._pipe_manager: PipeManager | None = None
+        self._task_svc: TaskManagerService | None = None
+        self._llm_fn: LLMCallable = llm_fn or _no_llm
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
 
@@ -73,22 +85,17 @@ class TaskDispatchPipeConsumer:
         """Inject PipeManager after server lifespan initialization."""
         self._pipe_manager = pipe_manager
 
+    def set_task_service(self, task_svc: TaskManagerService) -> None:
+        """Inject TaskManagerService for direct VFS-backed operations."""
+        self._task_svc = task_svc
+
     # ------------------------------------------------------------------
-    # TaskEventHandler (producer side)
+    # TaskSignalHandler (producer side)
     # ------------------------------------------------------------------
 
-    def on_task_created(self, event: TaskCreatedEvent) -> None:
-        """Serialize task_created event and write to pipe."""
-        self._fire("task_created", asdict(event))
-
-    def on_task_updated(self, event: TaskUpdatedEvent) -> None:
-        """Serialize task_updated event and write to pipe."""
-        self._fire("task_updated", asdict(event))
-
-    def _fire(self, signal_type: str, payload: dict[str, Any]) -> None:
-        """Encode signal as JSON and push into the pipe (non-blocking)."""
+    def on_task_signal(self, signal_type: str, payload: dict[str, Any]) -> None:
+        """Serialize signal and write to pipe (non-blocking)."""
         if self._pipe_manager is None or not self._pipe_ready:
-            # Pipe not ready yet — drop the signal (dispatch hints, not audit)
             return
 
         from nexus.core.pipe import PipeClosedError, PipeFullError
@@ -170,255 +177,139 @@ class TaskDispatchPipeConsumer:
                 logger.error("[TASK-DISPATCH] event processing failed: %s", e)
 
     # ------------------------------------------------------------------
-    # Dispatch routing
+    # Dispatch routing — all ops via VFS-backed TaskManagerService
     # ------------------------------------------------------------------
-
-    _LOG_FILE = "/tmp/nexus-log"
-    _API_BASE = "http://localhost:2026/api/v2"
 
     async def _dispatch(self, msg: dict[str, Any]) -> None:
         """Route a deserialized pipe message by signal type."""
+        if self._task_svc is None:
+            logger.warning("[TASK-DISPATCH] no TaskManagerService — dropping signal")
+            return
+
         signal_type = msg.get("type")
         payload = msg.get("payload", {})
-        ts = datetime.now(UTC).isoformat()
 
         if signal_type == "task_created":
             task_id = payload.get("task_id", "?")
             mission_id = payload.get("mission_id", "?")
-            await self._api_audit(task_id, "task_created", detail="task created")
+
+            # Record audit via VFS
+            self._task_svc.create_audit_entry(task_id, "task_created", detail="task created")
 
             # Check if task is blocked
             blocked_by = payload.get("blocked_by") or []
             if blocked_by:
-                self._shell_log(
-                    f"[{ts}] task_created task_id={task_id} "
-                    f"mission_id={mission_id} → blocked by {blocked_by}"
+                logger.info(
+                    "[TASK-DISPATCH] task_created task_id=%s mission_id=%s blocked_by=%s",
+                    task_id,
+                    mission_id,
+                    blocked_by,
                 )
                 return
 
-            self._shell_log(
-                f"[{ts}] task_created task_id={task_id} "
-                f"mission_id={mission_id} → worker starts work"
+            logger.info(
+                "[TASK-DISPATCH] task_created task_id=%s mission_id=%s → starting worker",
+                task_id,
+                mission_id,
             )
             await self._start_worker(task_id)
 
         elif signal_type == "task_updated":
             task_id = payload.get("task_id", "?")
             status = payload.get("status", "?")
+
             if status == "in_review":
-                self._shell_log(
-                    f"[{ts}] task_updated task_id={task_id} status={status} → copilot reviews"
-                )
-                try:
-                    worker_comment = await self._api_get_last_comment(task_id)
-                    review = await self._llm_prompt(
-                        f"Review this worker output and give brief feedback:\n\n{worker_comment}"
-                    )
-                    await self._api_comment(task_id, "copilot", review)
-                    await self._api_patch_status(task_id, "completed")
-                    await self._api_audit(
-                        task_id,
-                        "status_changed",
-                        actor="copilot",
-                        detail="task completed by copilot",
-                    )
-                except Exception as e:
-                    self._shell_log(f"  copilot failed: {e}")
-                    await self._api_comment(task_id, "copilot", f"Review failed: {e}")
-                    await self._api_patch_status(task_id, "failed")
-                    await self._api_audit(
-                        task_id, "status_changed", actor="copilot", detail=f"review failed: {e}"
-                    )
+                logger.info("[TASK-DISPATCH] task_id=%s in_review → copilot review", task_id)
+                await self._copilot_review(task_id)
             elif status in ("completed", "failed", "cancelled"):
-                self._shell_log(
-                    f"[{ts}] task_updated task_id={task_id} status={status} "
-                    f"→ checking for unblocked tasks"
+                logger.info(
+                    "[TASK-DISPATCH] task_id=%s %s → checking unblocked tasks",
+                    task_id,
+                    status,
                 )
-                await self._dispatch_unblocked_tasks()
+                self._dispatch_unblocked_tasks()
             else:
-                self._shell_log(f"[{ts}] task_updated task_id={task_id} status={status}")
+                logger.debug("[TASK-DISPATCH] task_id=%s status=%s (no action)", task_id, status)
         else:
-            self._shell_log(f"[{ts}] unknown signal type: {signal_type}")
+            logger.warning("[TASK-DISPATCH] unknown signal type: %s", signal_type)
 
     async def _start_worker(self, task_id: str) -> None:
         """Run the worker phase: fetch instruction → LLM → comment → in_review."""
+        assert self._task_svc is not None
+        svc = self._task_svc
+
         try:
-            instruction = await self._api_get_instruction(task_id)
-            await self._api_patch_status(task_id, "running")
-            await self._api_audit(
+            task = svc.get_task(task_id)
+            instruction = task.get("instruction", "do the task")
+
+            svc.update_task(task_id, status="running")
+            svc.create_audit_entry(
                 task_id, "status_changed", actor="worker", detail="task started by worker"
             )
-            worker_response = await self._llm_prompt(instruction)
-            await self._api_comment(task_id, "worker", worker_response)
-            await self._api_patch_status(task_id, "in_review")
-            await self._api_audit(
-                task_id, "status_changed", actor="worker", detail="status changed to in_review"
+
+            worker_response = await self._llm_fn(instruction)
+
+            svc.create_comment(task_id, "worker", worker_response)
+            svc.update_task(task_id, status="in_review")
+            svc.create_audit_entry(
+                task_id, "status_changed", actor="worker", detail="submitted for review"
             )
         except Exception as e:
-            self._shell_log(f"  worker failed: {e}")
-            await self._api_comment(task_id, "worker", f"Worker failed: {e}")
-            await self._api_patch_status(task_id, "failed")
-            await self._api_audit(
-                task_id, "status_changed", actor="worker", detail=f"task failed: {e}"
+            logger.error("[TASK-DISPATCH] worker failed for task %s: %s", task_id, e)
+            try:
+                svc.create_comment(task_id, "worker", f"Worker failed: {e}")
+                svc.update_task(task_id, status="failed")
+                svc.create_audit_entry(
+                    task_id, "status_changed", actor="worker", detail=f"task failed: {e}"
+                )
+            except Exception:
+                logger.error(
+                    "[TASK-DISPATCH] cleanup after worker failure also failed", exc_info=True
+                )
+
+    async def _copilot_review(self, task_id: str) -> None:
+        """Copilot reviews the worker output and completes or fails the task."""
+        assert self._task_svc is not None
+        svc = self._task_svc
+
+        try:
+            comments = svc.get_comments(task_id)
+            last_content = comments[-1].get("content", "") if comments else "(no worker comment)"
+
+            review = await self._llm_fn(
+                f"Review this worker output and give brief feedback:\n\n{last_content}"
             )
 
-    async def _dispatch_unblocked_tasks(self) -> None:
+            svc.create_comment(task_id, "copilot", review)
+            svc.update_task(task_id, status="completed")
+            svc.create_audit_entry(
+                task_id, "status_changed", actor="copilot", detail="task completed by copilot"
+            )
+        except Exception as e:
+            logger.error("[TASK-DISPATCH] copilot review failed for task %s: %s", task_id, e)
+            try:
+                svc.create_comment(task_id, "copilot", f"Review failed: {e}")
+                svc.update_task(task_id, status="failed")
+                svc.create_audit_entry(
+                    task_id, "status_changed", actor="copilot", detail=f"review failed: {e}"
+                )
+            except Exception:
+                logger.error(
+                    "[TASK-DISPATCH] cleanup after copilot failure also failed", exc_info=True
+                )
+
+    def _dispatch_unblocked_tasks(self) -> None:
         """Check for dispatchable tasks (created + unblocked) and start them."""
-        proc = await asyncio.create_subprocess_exec(
-            "curl",
-            "-s",
-            f"{self._API_BASE}/tasks",
-            "-H",
-            "Content-Type: application/json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
+        assert self._task_svc is not None
+
         try:
-            tasks = json.loads(stdout.decode())
+            dispatchable = self._task_svc.list_dispatchable_tasks()
         except Exception:
+            logger.warning("[TASK-DISPATCH] failed to list dispatchable tasks", exc_info=True)
             return
-        for t in tasks:
-            tid = t.get("id", "?")
-            self._shell_log(f"  unblocked: dispatching task {tid}")
-            await self._start_worker(tid)
 
-    async def _api_comment(self, task_id: str, author: str, content: str) -> None:
-        """Add a comment to a task via REST API."""
-        data = json.dumps({"task_id": task_id, "author": author, "content": content})
-        proc = await asyncio.create_subprocess_exec(
-            "curl",
-            "-s",
-            "-X",
-            "POST",
-            f"{self._API_BASE}/comments",
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            data,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        self._shell_log(f"  comment({author}): {stdout.decode().strip()}")
-
-    async def _api_patch_status(self, task_id: str, status: str) -> None:
-        """Transition a task's status via REST API."""
-        data = json.dumps({"status": status})
-        proc = await asyncio.create_subprocess_exec(
-            "curl",
-            "-s",
-            "-X",
-            "PATCH",
-            f"{self._API_BASE}/tasks/{task_id}",
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            data,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        self._shell_log(f"  patch({status}): {stdout.decode().strip()}")
-
-    async def _llm_prompt(self, prompt: str) -> str:
-        """Run `gemini -p <prompt>` and return stdout."""
-        proc = await asyncio.create_subprocess_exec(
-            "gemini",
-            "-p",
-            prompt,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        result = stdout.decode().strip()
-        # gemini may prefix MCP/tool warnings — strip lines before actual content
-        clean_lines = []
-        for line in result.splitlines():
-            stripped = line.strip()
-            if stripped.startswith(("MCP ", "Run /mcp", "[MCP")):
-                continue
-            clean_lines.append(line)
-        result = "\n".join(clean_lines).strip()
-        if not result:
-            result = "(no response)"
-        self._shell_log(f"  gemini: {result[:120]}...")
-        return result
-
-    async def _api_get_instruction(self, task_id: str) -> str:
-        """Fetch task instruction via REST API."""
-        proc = await asyncio.create_subprocess_exec(
-            "curl",
-            "-s",
-            f"{self._API_BASE}/tasks/{task_id}",
-            "-H",
-            "Content-Type: application/json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        try:
-            return json.loads(stdout.decode()).get("instruction", "do the task")
-        except Exception:
-            return "do the task"
-
-    async def _api_get_last_comment(self, task_id: str) -> str:
-        """Fetch the last comment content for a task."""
-        proc = await asyncio.create_subprocess_exec(
-            "curl",
-            "-s",
-            f"{self._API_BASE}/comments?task_id={task_id}",
-            "-H",
-            "Content-Type: application/json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        try:
-            comments = json.loads(stdout.decode())
-            if comments:
-                return comments[-1].get("content", "")
-        except Exception:
-            pass
-        return "(no worker comment found)"
-
-    async def _api_audit(
-        self,
-        task_id: str,
-        action: str,
-        *,
-        actor: str | None = None,
-        detail: str | None = None,
-    ) -> None:
-        """Create an audit trail entry via REST API."""
-        payload: dict[str, Any] = {"action": action}
-        if actor is not None:
-            payload["actor"] = actor
-        if detail is not None:
-            payload["detail"] = detail
-        data = json.dumps(payload)
-        proc = await asyncio.create_subprocess_exec(
-            "curl",
-            "-s",
-            "-X",
-            "POST",
-            f"{self._API_BASE}/tasks/{task_id}/audit",
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            data,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        self._shell_log(f"  audit({action}): {stdout.decode().strip()}")
-
-    def _shell_log(self, line: str) -> None:
-        """Append a line to /tmp/nexus-log via bash."""
-        try:
-            subprocess.run(
-                ["bash", "-c", f"echo {line!r} >> {self._LOG_FILE}"],
-                timeout=2,
-            )
-        except Exception as e:
-            logger.warning("[TASK-DISPATCH] shell_log failed: %s", e)
+        for task in dispatchable:
+            tid = task.get("id", "?")
+            logger.info("[TASK-DISPATCH] unblocked: dispatching task %s", tid)
+            # Schedule worker start as a separate task to avoid blocking the consumer
+            asyncio.create_task(self._start_worker(tid))

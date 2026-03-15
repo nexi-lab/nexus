@@ -31,7 +31,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: .venv/bin/python -m mypy
+        entry: bash -c 'if [ -x .venv/bin/python ]; then exec .venv/bin/python -m mypy "$@"; else exec .venv/Scripts/python -m mypy "$@"; fi' --
         language: system
         types: [python]
         exclude: ^(tests/|alembic/|examples/|benchmarks/|\.claude/|scripts/|nexus-plugin-)|_pb2(_grpc)?\.py$

@@ -569,7 +569,8 @@ def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
     try:
         from nexus.bricks.task_manager.service import TaskManagerService
 
-        app.state.task_manager_service = TaskManagerService(nexus_fs=svc.nexus_fs)
+        task_svc = TaskManagerService(nexus_fs=svc.nexus_fs)
+        app.state.task_manager_service = task_svc
         logger.info("[TASK-MGR] TaskManagerService initialized")
 
         task_write_hook = getattr(svc.nexus_fs, "_task_write_hook", None)
@@ -580,8 +581,22 @@ def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
             from nexus.bricks.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
 
             dispatch_consumer = TaskDispatchPipeConsumer()
+            dispatch_consumer.set_task_service(task_svc)
             task_write_hook.register_handler(dispatch_consumer)
             app.state.task_dispatch_consumer = dispatch_consumer
+
+        # Set up DT_STREAM for SSE notifications
+        stream_manager = getattr(svc.nexus_fs, "_stream_manager", None)
+        if stream_manager is not None:
+            from nexus.core.stream import StreamError
+
+            _SSE_STREAM_PATH = "/nexus/streams/task-events"
+            try:
+                stream_manager.create(_SSE_STREAM_PATH, capacity=65_536, owner_id="kernel")
+            except StreamError:
+                stream_manager.open(_SSE_STREAM_PATH, capacity=65_536)
+            app.state.task_stream_manager = stream_manager
+            logger.info("[TASK-MGR] DT_STREAM for SSE initialized at %s", _SSE_STREAM_PATH)
     except Exception as e:
         logger.warning("[TASK-MGR] Failed to initialize TaskManagerService: %s", e, exc_info=True)
         app.state.task_manager_service = None

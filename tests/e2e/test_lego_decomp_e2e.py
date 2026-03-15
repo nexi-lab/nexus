@@ -1,10 +1,7 @@
 """E2E tests for Issue #2033 LEGO decomposition — verify delegated methods work.
 
-Tests all APIs that were refactored from NexusFS to services:
-- sync_mount → _SERVICE_ALIASES → SyncService.sync_mount_flat
-- sync_mount_async → _SERVICE_ALIASES → SyncJobService.sync_mount_async
-- cancel_sync_job → _SERVICE_ALIASES → SyncJobService.cancel_sync_job
-- Version methods → _SERVICE_ALIASES → VersionService
+Tests APIs refactored from NexusFS to services, now accessed via
+``nx.service("name").method()`` (ServiceRegistry pattern).
 
 Uses factory-wired NexusFS with PostgreSQL record store and FastAPI TestClient.
 
@@ -330,46 +327,7 @@ class TestVersionDelegation:
 
 
 # ---------------------------------------------------------------------------
-# 5. __getattr__ service forwarding completeness
-# ---------------------------------------------------------------------------
-
-
-class TestServiceForwarding:
-    """Verify __getattr__ routes to correct services."""
-
-    def test_workspace_methods_accessible(self, nx):
-        """Workspace RPC methods should be forwarded."""
-        assert callable(nx.register_workspace)
-        assert callable(nx.list_workspaces)
-
-    def test_agent_methods_accessible(self, nx):
-        """Agent RPC methods should be forwarded."""
-        assert callable(nx.register_agent)
-        assert callable(nx.list_agents)
-
-    def test_sandbox_methods_accessible(self, nx):
-        """Sandbox RPC methods should be forwarded."""
-        assert callable(nx.sandbox_create)
-        assert callable(nx.sandbox_list)
-
-    def test_export_import_accessible(self, nx):
-        """Export/import methods should be forwarded."""
-        assert callable(nx.export_metadata)
-        assert callable(nx.import_metadata)
-
-    def test_mount_methods_accessible(self, nx):
-        """Mount methods should be forwarded."""
-        assert callable(nx.add_mount)
-        assert callable(nx.list_mounts)
-
-    def test_unknown_attr_raises(self, nx):
-        """Unknown attributes should raise AttributeError."""
-        with pytest.raises(AttributeError, match="no attribute"):
-            _ = nx.nonexistent_method_xyz
-
-
-# ---------------------------------------------------------------------------
-# 6. Permission enforcement with factory-wired ReBAC + PG
+# 5. Permission enforcement with factory-wired ReBAC + PG
 # ---------------------------------------------------------------------------
 
 

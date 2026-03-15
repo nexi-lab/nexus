@@ -172,35 +172,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
         # KernelDispatch OBSERVE registration (Issue #900) - server-side observer registration
         "register_observe",  # Internal - registers VFS observers for workflow dispatch
-        # ABC compliance stubs (Issue #2033 LEGO decomposition)
-        # These delegate to extracted services which already have @rpc_expose.
-        # NexusFS defines them only to satisfy NexusFilesystem ABC requirements.
-        # Workspace snapshots — delegates to _workspace_rpc_service
-        "workspace_snapshot",  # ABC stub → _workspace_rpc_service.workspace_snapshot()
-        "workspace_restore",  # ABC stub → _workspace_rpc_service.workspace_restore()
-        "workspace_log",  # ABC stub → _workspace_rpc_service.workspace_log()
-        "workspace_diff",  # ABC stub → _workspace_rpc_service.workspace_diff()
-        # Workspace registry — delegates to _workspace_rpc_service
-        "register_workspace",  # ABC stub → _workspace_rpc_service.register_workspace()
-        "unregister_workspace",  # ABC stub → _workspace_rpc_service.unregister_workspace()
-        "list_workspaces",  # ABC stub → _workspace_rpc_service.list_workspaces()
-        "get_workspace_info",  # ABC stub → _workspace_rpc_service.get_workspace_info()
-        # Sandbox — delegates to _sandbox_rpc_service
-        "sandbox_create",  # ABC stub → _sandbox_rpc_service.sandbox_create()
-        "sandbox_get_or_create",  # ABC stub → _sandbox_rpc_service.sandbox_get_or_create()
-        "sandbox_run",  # ABC stub → _sandbox_rpc_service.sandbox_run()
-        "sandbox_pause",  # ABC stub → _sandbox_rpc_service.sandbox_pause()
-        "sandbox_resume",  # ABC stub → _sandbox_rpc_service.sandbox_resume()
-        "sandbox_stop",  # ABC stub → _sandbox_rpc_service.sandbox_stop()
-        "sandbox_list",  # ABC stub → _sandbox_rpc_service.sandbox_list()
-        "sandbox_status",  # ABC stub → _sandbox_rpc_service.sandbox_status()
-        "sandbox_connect",  # ABC stub → _sandbox_rpc_service.sandbox_connect()
-        "sandbox_disconnect",  # ABC stub → _sandbox_rpc_service.sandbox_disconnect()
-        # Mount — delegates to _mount_core_service
-        "add_mount",  # ABC stub → _mount_core_service.add_mount()
-        "remove_mount",  # ABC stub → _mount_core_service.remove_mount()
-        "list_mounts",  # ABC stub → _mount_core_service.list_mounts()
-        "get_mount",  # ABC stub → _mount_core_service.get_mount()
         # Search/list — delegates to search_service
         "list",  # ABC stub → overrides NexusFS.list()
         "glob",  # ABC stub → search_service.glob()

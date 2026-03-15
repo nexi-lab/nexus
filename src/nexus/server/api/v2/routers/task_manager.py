@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -244,7 +245,7 @@ async def task_events(request: Request) -> StreamingResponse:
     """SSE stream of task mutation notifications."""
     q = _broadcaster.subscribe()
 
-    async def _stream():
+    async def _stream() -> AsyncGenerator[str, None]:
         try:
             while True:
                 if await request.is_disconnected():

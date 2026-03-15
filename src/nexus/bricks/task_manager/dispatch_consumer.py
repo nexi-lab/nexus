@@ -358,7 +358,8 @@ class TaskDispatchPipeConsumer:
         )
         stdout, _ = await proc.communicate()
         try:
-            return json.loads(stdout.decode()).get("instruction", "do the task")
+            result: str = json.loads(stdout.decode()).get("instruction", "do the task")
+            return result
         except Exception:
             return "do the task"
 
@@ -377,7 +378,8 @@ class TaskDispatchPipeConsumer:
         try:
             comments = json.loads(stdout.decode())
             if comments:
-                return comments[-1].get("content", "")
+                content: str = comments[-1].get("content", "")
+                return content
         except Exception:
             pass
         return "(no worker comment found)"

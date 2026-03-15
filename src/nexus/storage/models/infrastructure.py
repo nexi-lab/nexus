@@ -12,7 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import ValidationError
-from nexus.storage.models._base import Base, ResourceConfigMixin, TimestampMixin, uuid_pk
+from nexus.storage.models._base import Base, TimestampMixin, uuid_pk
 
 
 class SandboxMetadataModel(Base):
@@ -252,32 +252,6 @@ class MigrationHistoryModel(Base):
             f"{self.from_version}->{self.to_version}, "
             f"type={self.migration_type}, status={self.status})>"
         )
-
-
-class WorkspaceConfigModel(ResourceConfigMixin, Base):
-    """Workspace configuration registry.
-
-    Tracks which directories are registered as workspaces.
-    """
-
-    __tablename__ = "workspace_configs"
-
-    path: Mapped[str] = mapped_column(Text, primary_key=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    __table_args__ = (
-        Index("idx_workspace_configs_created_at", "created_at"),
-        Index("idx_workspace_configs_user", "user_id"),
-        Index("idx_workspace_configs_agent", "agent_id"),
-        Index("idx_workspace_configs_session", "session_id"),
-        Index("idx_workspace_configs_expires", "expires_at"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<WorkspaceConfigModel(path={self.path}, name={self.name})>"
 
 
 class UserSessionModel(Base):

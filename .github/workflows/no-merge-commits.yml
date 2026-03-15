@@ -24,11 +24,13 @@ jobs:
           fi
 
           HEAD_REF="${{ github.head_ref }}"
+          HEAD_REPO="${{ github.event.pull_request.head.repo.full_name }}"
           BASE_REF=${{ github.event.pull_request.base.ref }}
 
-          # develop→main merges naturally contain merge commits from merged PRs
-          if [ "$HEAD_REF" = "develop" ] && [ "$BASE_REF" = "main" ]; then
-            echo "✅ develop → main merge — skipping merge commit check"
+          # develop→main merges naturally contain merge commits from merged PRs.
+          # Only skip for the canonical repo — not forks with a branch also named "develop".
+          if [ "$HEAD_REF" = "develop" ] && [ "$BASE_REF" = "main" ] && [ "$HEAD_REPO" = "${{ github.repository }}" ]; then
+            echo "✅ develop → main merge (same repo) — skipping merge commit check"
             exit 0
           fi
 

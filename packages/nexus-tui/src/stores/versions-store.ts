@@ -301,7 +301,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
 
     try {
       const response = await client.get<ConflictsResponse>(
-        "/api/v2/conflicts",
+        "/api/v2/sync/conflicts",
       );
       set({
         conflicts: response.conflicts ?? [],

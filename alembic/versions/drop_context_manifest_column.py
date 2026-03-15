@@ -1,7 +1,7 @@
 """feat(#2984): Drop context_manifest column from agent_records
 
 Revision ID: drop_context_manifest_col
-Revises: add_credentials_and_manifests
+Revises: drop_reputation_memory_configs
 Create Date: 2026-03-15
 
 Phase 2 of the context_manifest removal (Issue #2984). Phase 1 stopped
@@ -21,7 +21,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "drop_context_manifest_col"
-down_revision: Union[str, Sequence[str], None] = "add_credentials_and_manifests"
+down_revision: Union[str, Sequence[str], None] = "drop_reputation_memory_configs"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

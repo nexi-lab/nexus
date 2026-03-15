@@ -155,8 +155,8 @@ class TestStandardWarmup:
     def test_is_tuple(self) -> None:
         assert isinstance(STANDARD_WARMUP, tuple)
 
-    def test_has_six_steps(self) -> None:
-        assert len(STANDARD_WARMUP) == 6
+    def test_has_five_steps(self) -> None:
+        assert len(STANDARD_WARMUP) == 5
 
     def test_step_names(self) -> None:
         names = [s.name for s in STANDARD_WARMUP]
@@ -166,7 +166,6 @@ class TestStandardWarmup:
             "verify_bricks",
             "warm_caches",
             "connect_mcp",
-            "load_context",
         ]
 
     def test_optional_steps(self) -> None:
@@ -179,7 +178,6 @@ class TestStandardWarmup:
             "load_credentials",
             "mount_namespace",
             "verify_bricks",
-            "load_context",
         }
 
     def test_all_steps_are_frozen(self) -> None:

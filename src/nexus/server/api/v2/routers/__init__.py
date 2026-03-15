@@ -12,7 +12,6 @@ from nexus.server.api.v2.routers import (
     operations,
     pay,
     replay,
-    reputation,
     sync_push,
     workflows,
 )
@@ -28,7 +27,6 @@ __all__ = [
     "operations",
     "pay",
     "replay",
-    "reputation",
     "sync_push",
     "workflows",
 ]

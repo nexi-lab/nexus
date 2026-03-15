@@ -35,7 +35,6 @@ EXPECTED_MODELS = [
     "TigerDirectoryGrantsModel",
     # Memory
     "MemoryModel",
-    "MemoryConfigModel",
     "EntityRegistryModel",
     "EntityModel",
     "RelationshipModel",
@@ -79,10 +78,6 @@ EXPECTED_MODELS = [
     "ConflictLogModel",
     # Namespace
     "PersistentNamespaceViewModel",
-    # Reputation & Trust (Issue #1356)
-    "DisputeModel",
-    "ReputationEventModel",
-    "ReputationScoreModel",
     # Chunked Uploads (Issue #788)
     "UploadSessionModel",
     # Spending Policy (Issue #1358)

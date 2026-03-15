@@ -24,7 +24,6 @@ Errors:
     DelegationChainError  - Delegated agent tries to delegate
     DepthExceededError    - Sub-delegation depth exceeded
     InvalidPrefixError    - Malformed scope_prefix
-    InsufficientTrustError - Trust score below threshold (#1619)
 """
 
 from nexus.bricks.delegation.derivation import GrantSpec as GrantSpec
@@ -34,7 +33,6 @@ from nexus.bricks.delegation.errors import DelegationError as DelegationError
 from nexus.bricks.delegation.errors import DelegationNotFoundError as DelegationNotFoundError
 from nexus.bricks.delegation.errors import DepthExceededError as DepthExceededError
 from nexus.bricks.delegation.errors import EscalationError as EscalationError
-from nexus.bricks.delegation.errors import InsufficientTrustError as InsufficientTrustError
 from nexus.bricks.delegation.errors import (
     InvalidDelegationModeError as InvalidDelegationModeError,
 )

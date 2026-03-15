@@ -387,21 +387,7 @@ def _boot_independent_bricks(
         except ImportError as _snap_exc:
             logger.debug("[BOOT:BRICK] TransactionalSnapshotService unavailable: %s", _snap_exc)
 
-    # --- ReputationService (Issue #2131: extracted to bricks) ---
-    reputation_service: Any = auto_results.pop("reputation_service", None)
-    if reputation_service is None and ctx.record_store is not None:
-        try:
-            from nexus.bricks.reputation.reputation_service import ReputationService
-
-            reputation_service = ReputationService(
-                record_store=ctx.record_store,
-            )
-            logger.debug("[BOOT:BRICK] ReputationService created")
-        except Exception as _rep_exc:
-            logger.debug("[BOOT:BRICK] ReputationService unavailable: %s", _rep_exc)
-
     # --- DelegationService (Issue #2131: extracted to bricks) ---
-    # Always recreate with reputation_service (cross-brick dep wired by kernel)
     auto_results.pop("delegation_service", None)
     delegation_service: Any = None
     if ctx.record_store is not None:
@@ -412,7 +398,6 @@ def _boot_independent_bricks(
                 record_store=ctx.record_store,
                 rebac_manager=system["rebac_manager"],
                 entity_registry=system.get("entity_registry"),
-                reputation_service=reputation_service,
             )
             logger.debug("[BOOT:BRICK] DelegationService created")
         except Exception as _del_exc:
@@ -539,7 +524,6 @@ def _boot_independent_bricks(
         "ipc_provisioner": ipc_provisioner,
         "agent_event_log": agent_event_log,
         "delegation_service": delegation_service,
-        "reputation_service": reputation_service,
         "version_service": version_service,
         "rebac_circuit_breaker": rebac_circuit_breaker,
         # Governance Brick (Issue #2129)

@@ -16,7 +16,6 @@ Current bricks:
   - discovery        — BM25-based MCP tool discovery
   - governance       — Anti-fraud & anti-collusion governance graphs
   - pay              — NexusPay credits + X402 payments
-  - reputation       — Agent reputation & dispute resolution (Bayesian Beta)
   - sandbox          — Sandboxed code execution (Docker / E2B / Monty)
   - search           — Hot search daemon (semantic, BM25, Zoekt, hybrid fusion)
   - snapshot         — Transactional filesystem snapshots (begin/commit/rollback)

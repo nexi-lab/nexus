@@ -212,9 +212,6 @@ test = [
     "freezegun>=1.4.0",  # Time mocking for tests
     "hypothesis>=6.0.0",  # Property-based testing (kernel invariant tests)
     "pydantic-monty>=0.0.4",  # Monty sandbox integration/e2e tests (#1317)
-    # LangGraph integration tests
-    "langchain-core>=0.3.0",
-    "langgraph>=0.2.0",
 ]
 
 fuse = [
@@ -453,13 +450,8 @@ module = "nexus.backends.cas_backend"
 disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
-module = [
-    "nexus.bricks.tools.langgraph.nexus_tools",
-    "nexus.tools.langgraph.nexus_tools",
-]
-# These modules call methods on RemoteServiceProxy that are
-# dispatched via __getattr__. The proxy returns Any for dynamically-dispatched
-# methods, triggering no-any-return warnings.
+module = "nexus.tools.langgraph.nexus_tools"
+# RemoteServiceProxy dispatches via __getattr__, returning Any
 warn_return_any = false
 disable_error_code = ["no-any-return"]
 
@@ -840,11 +832,9 @@ modules = [
     "nexus.bricks.pay",
     "nexus.bricks.portability",
     "nexus.bricks.rebac",
-    "nexus.bricks.reputation",
     "nexus.bricks.sandbox",
     "nexus.bricks.search",
     "nexus.bricks.snapshot",
-    "nexus.bricks.tools",
     "nexus.bricks.workflows",
 ]
 # Known violations — ratchet baseline. Remove entries as fixes land.
@@ -869,8 +859,6 @@ ignore_imports = [
     "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",
     # portability -> * : export_service imports top-level nexus package (transitive hub, Issue #2436)
     "nexus.bricks.portability.export_service -> nexus",
-    # tools -> nexus: _client.py uses nexus.connect() — same transitive hub pattern (Issue #1065)
-    "nexus.bricks.tools._client -> nexus",
     # mcp -> nexus: server.py imports top-level nexus package — same transitive hub pattern
     "nexus.bricks.mcp.server -> nexus",
 ]

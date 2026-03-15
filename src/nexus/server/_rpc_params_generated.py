@@ -32,7 +32,6 @@ __all__ = [
     "ExistsBatchParams",
     "GetAgentParams",
     "GetEtagParams",
-    "GetMemoryInfoParams",
     "GetMountParams",
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
@@ -50,7 +49,7 @@ __all__ = [
     "ListMountsParams",
     "ListOutgoingSharesParams",
     "ListParams",
-    "ListRegisteredMemoriesParams",
+    "ListQueueTasksParams",
     "ListSavedMountsParams",
     "ListShareLinksParams",
     "ListSyncJobsParams",
@@ -78,7 +77,6 @@ __all__ = [
     "RebacListObjectsParams",
     "RebacListTuplesParams",
     "RegisterAgentParams",
-    "RegisterMemoryParams",
     "RegisterWorkspaceParams",
     "RemoveMountParams",
     "RenameBulkParams",
@@ -106,7 +104,6 @@ __all__ = [
     "SysStatParams",
     "SysUnlinkParams",
     "SysWriteParams",
-    "UnregisterMemoryParams",
     "UnregisterWorkspaceParams",
     "UpdateAgentParams",
     "UpdateWorkspaceParams",
@@ -289,13 +286,6 @@ class GetEtagParams:
 
 
 @dataclass
-class GetMemoryInfoParams:
-    """Parameters for get_memory_info(): Get information about a registered memory."""
-
-    path: str
-
-
-@dataclass
 class GetMountParams:
     """Parameters for get_mount(): Get details about a specific mount."""
 
@@ -446,10 +436,13 @@ class ListOutgoingSharesParams:
 
 
 @dataclass
-class ListRegisteredMemoriesParams:
-    """Parameters for list_registered_memories(): List all registered memory paths."""
+class ListQueueTasksParams:
+    """Parameters for list_queue_tasks(): List tasks with optional filters."""
 
-    pass
+    task_type: str | None = None
+    status: int | None = None
+    limit: int = 50
+    offset: int = 0
 
 
 @dataclass
@@ -747,21 +740,6 @@ class RegisterAgentParams:
 
 
 @dataclass
-class RegisterMemoryParams:
-    """Parameters for register_memory(): Register a directory as a memory."""
-
-    path: str
-    name: str | None = None
-    description: str | None = None
-    created_by: str | None = None
-    tags: list[str] | None = None
-    metadata: dict[str, Any] | None = None
-    session_id: str | None = None
-    ttl: str | None = None
-    context: Any | None = None
-
-
-@dataclass
 class RegisterWorkspaceParams:
     """Parameters for register_workspace(): Register a directory as a workspace."""
 
@@ -1032,16 +1010,17 @@ class SysWriteParams:
     """Parameters for sys_write(): Write content to a file (POSIX pwrite(2))."""
 
     path: str
-    buf: bytes | str
+    buf: bytes | str = b""
     count: int | None = None
     offset: int = 0
+    content: bytes | str = b""
 
-
-@dataclass
-class UnregisterMemoryParams:
-    """Parameters for unregister_memory(): Unregister a memory (does NOT delete files)."""
-
-    path: str
+    def __post_init__(self) -> None:
+        """Accept both 'buf' (POSIX) and 'content' (handler) as the payload field."""
+        if self.content and not self.buf:
+            self.buf = self.content
+        elif self.buf and not self.content:
+            self.content = self.buf
 
 
 @dataclass
@@ -1140,7 +1119,6 @@ METHOD_PARAMS: dict[str, type] = {
     "exists_batch": ExistsBatchParams,
     "get_agent": GetAgentParams,
     "get_etag": GetEtagParams,
-    "get_memory_info": GetMemoryInfoParams,
     "get_mount": GetMountParams,
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
@@ -1158,7 +1136,7 @@ METHOD_PARAMS: dict[str, type] = {
     "list_incoming_shares": ListIncomingSharesParams,
     "list_mounts": ListMountsParams,
     "list_outgoing_shares": ListOutgoingSharesParams,
-    "list_registered_memories": ListRegisteredMemoriesParams,
+    "list_queue_tasks": ListQueueTasksParams,
     "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
     "list_sync_jobs": ListSyncJobsParams,
@@ -1186,7 +1164,6 @@ METHOD_PARAMS: dict[str, type] = {
     "rebac_list_objects": RebacListObjectsParams,
     "rebac_list_tuples": RebacListTuplesParams,
     "register_agent": RegisterAgentParams,
-    "register_memory": RegisterMemoryParams,
     "register_workspace": RegisterWorkspaceParams,
     "remove_mount": RemoveMountParams,
     "rename_bulk": RenameBulkParams,
@@ -1214,7 +1191,6 @@ METHOD_PARAMS: dict[str, type] = {
     "sys_stat": SysStatParams,
     "sys_unlink": SysUnlinkParams,
     "sys_write": SysWriteParams,
-    "unregister_memory": UnregisterMemoryParams,
     "unregister_workspace": UnregisterWorkspaceParams,
     "update_agent": UpdateAgentParams,
     "update_workspace": UpdateWorkspaceParams,

@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 from nexus.storage.models import (
-    MemoryConfigModel,
     MemoryModel,
     UserSessionModel,
     WorkspaceConfigModel,
@@ -148,7 +147,7 @@ def delete_session_resources(session: "Session", session_id: str) -> dict[str, i
         session_id: Session to clean up
 
     Returns:
-        Dict with counts: {"workspaces": N, "memories": N, "memory_configs": N}
+        Dict with counts: {"workspaces": N, "memories": N}
     """
     from typing import Any
 
@@ -161,12 +160,6 @@ def delete_session_resources(session: "Session", session_id: str) -> dict[str, i
         delete(WorkspaceConfigModel).where(WorkspaceConfigModel.session_id == session_id)
     )
     counts["workspace_configs"] = ws_result.rowcount
-
-    # Delete session-scoped memory configs
-    mc_result: Any = session.execute(
-        delete(MemoryConfigModel).where(MemoryConfigModel.session_id == session_id)
-    )
-    counts["memory_configs"] = mc_result.rowcount
 
     # Delete session-scoped memories
     mem_result: Any = session.execute(
@@ -234,7 +227,7 @@ def cleanup_expired_sessions(session: "Session") -> dict[str, int | dict[str, in
         .all()
     )
 
-    total_resources = {"workspace_configs": 0, "memory_configs": 0, "memories": 0}
+    total_resources = {"workspace_configs": 0, "memories": 0}
 
     for user_session in expired:
         # Delete resources
@@ -311,8 +304,6 @@ def cleanup_inactive_sessions(
     session.execute(
         delete(WorkspaceConfigModel).where(WorkspaceConfigModel.session_id.in_(inactive_ids))
     )
-
-    session.execute(delete(MemoryConfigModel).where(MemoryConfigModel.session_id.in_(inactive_ids)))
 
     session.execute(delete(MemoryModel).where(MemoryModel.session_id.in_(inactive_ids)))
 

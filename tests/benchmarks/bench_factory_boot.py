@@ -363,7 +363,6 @@ class TestPerTierBreakdown:
             "skill_service",
             "skill_package_service",
             "delegation_service",
-            "reputation_service",
             "version_service",
             "rebac_circuit_breaker",
             "memory_router",

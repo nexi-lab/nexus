@@ -181,6 +181,8 @@ class NexusFS(  # type: ignore[misc]
         # (PipeManager + StreamManager constructed above as kernel-internal primitives)
         # Process lifecycle — kernel process table (Issue #1509)
         self._process_table = sys_svc.process_table
+        # ACP — stateless coding agent CLI caller
+        self._acp_service = sys_svc.acp_service
 
         # =====================================================================
         # Tier 2: BRICK services (Issue #2034: from BrickServices)
@@ -5129,6 +5131,10 @@ class NexusFS(  # type: ignore[misc]
         # Close ProcessTable — kill all processes, clear state
         if hasattr(self, "_process_table") and self._process_table is not None:
             self._process_table.close_all()
+
+        # Close AcpService — kill running agent subprocesses
+        if hasattr(self, "_acp_service") and self._acp_service is not None:
+            self._acp_service.close_all()
 
         # Stop DeferredPermissionBuffer first to flush pending permissions
         if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:

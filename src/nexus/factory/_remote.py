@@ -45,6 +45,7 @@ _WIRED_FIELDS: list[str] = [
     "events_service",
     "workspace_rpc_service",
     "agent_rpc_service",
+    "acp_rpc_service",
     "user_provisioning_service",
     "sandbox_rpc_service",
     "metadata_export_service",

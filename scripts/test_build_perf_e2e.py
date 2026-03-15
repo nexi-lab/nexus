@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 
 NEXUS_CLI = os.environ.get("NEXUS_CLI", "nexus")
 NEXUS_URL = os.environ.get("NEXUS_URL", "http://localhost:2027")
@@ -64,9 +65,25 @@ def main() -> None:
         print("ERROR: NEXUS_API_KEY not set")
         sys.exit(1)
 
+    t = rpc_transport()
+
     # =========================================================================
-    print("=== 1. INFRA ===")
+    print("=== 1. INFRA & STATUS ===")
     # =========================================================================
+
+    # Health check via HTTP
+    try:
+        resp = urllib.request.urlopen(f"{NEXUS_URL}/healthz/ready", timeout=5)
+        health = resp.read().decode()
+        check("Health endpoint", "ready" in health)
+    except Exception as e:
+        check("Health endpoint", False, str(e))
+
+    # nexus status
+    r = cli("status")
+    check("nexus status", "server_reachable" in r.stdout or "healthy" in r.stdout.lower())
+
+    # ls
     r = cli("ls", "/workspace/demo")
     check("Server reachable (ls)", r.returncode == 0 or "data" in r.stdout)
     check("Demo files exist", "README.md" in r.stdout)
@@ -74,17 +91,33 @@ def main() -> None:
     r = cli("ls", "/workspace/demo/herb/customers")
     check("HERB corpus (5 customers)", "cust-005" in r.stdout)
 
+    r = cli("ls", "/workspace/demo/herb/employees")
+    check("HERB corpus (employees)", "emp-003" in r.stdout)
+
+    r = cli("ls", "/workspace/demo/herb/products")
+    check("HERB corpus (products)", "prod-003" in r.stdout)
+
     # =========================================================================
     print("\n=== 2. FILE CRUD ===")
     # =========================================================================
     r = cli("cat", "/workspace/demo/README.md")
     check("cat README.md", "Nexus Demo Workspace" in r.stdout)
 
-    # =========================================================================
-    print("\n=== 3. EDIT ===")
-    # =========================================================================
-    t = rpc_transport()
+    r = cli("cat", "/workspace/demo/auth-flow.md")
+    check("cat auth-flow.md", "authentication" in r.stdout.lower())
 
+    # =========================================================================
+    print("\n=== 3. GREP / KEYWORD SEARCH ===")
+    # =========================================================================
+    r = cli("grep", "authentication", "/workspace/demo")
+    check("grep 'authentication'", "data" in r.stdout)
+
+    r = cli("grep", "vector", "/workspace/demo")
+    check("grep 'vector'", "data" in r.stdout)
+
+    # =========================================================================
+    print("\n=== 4. EDIT (exact, fuzzy, preview, OCC) ===")
+    # =========================================================================
     result = t.call_rpc(
         "edit",
         {
@@ -115,7 +148,10 @@ def main() -> None:
             "fuzzy_threshold": 0.7,
         },
     )
-    check("edit (fuzzy restore)", result.get("success") and result.get("applied_count") == 1)
+    check(
+        "edit (fuzzy restore)",
+        result.get("success") and result.get("applied_count") == 1,
+    )
 
     try:
         t.call_rpc(
@@ -128,16 +164,19 @@ def main() -> None:
         )
         check("edit (OCC conflict)", False, "should have raised")
     except Exception as e:
-        check("edit (OCC conflict)", "conflict" in str(e).lower() or "etag" in str(e).lower())
+        check(
+            "edit (OCC conflict)",
+            "conflict" in str(e).lower() or "etag" in str(e).lower(),
+        )
 
     # =========================================================================
-    print("\n=== 4. VERSION HISTORY ===")
+    print("\n=== 5. VERSION HISTORY ===")
     # =========================================================================
     r = cli("versions", "history", "/workspace/demo/plan.md")
     check("version history", "Version" in r.stdout or "version" in r.stdout)
 
     # =========================================================================
-    print("\n=== 5. HERB QUALITY GATE ===")
+    print("\n=== 6. HERB QUALITY GATE (BM25+pgvector+SPLADE+reranker) ===")
     # =========================================================================
     qa_set = [
         ("Which customer uses Nexus for medical document management?", "cust-002"),
@@ -150,14 +189,21 @@ def main() -> None:
         ("What product integrates with existing search infrastructure?", "prod-002"),
     ]
     hits = 0
+    search_latencies: list[float] = []
     for q, expected in qa_set:
+        start = time.perf_counter()
         r = cli("search", "query", q, "--limit", "5")
+        elapsed = (time.perf_counter() - start) * 1000
+        search_latencies.append(elapsed)
         if expected in r.stdout:
             hits += 1
     check(f"HERB hit rate {hits}/8 >= 90%", hits >= 7, f"{hits}/8")
+    search_latencies.sort()
+    p50 = search_latencies[len(search_latencies) // 2]
+    print(f"    Search latency (incl CLI): p50={p50:.0f}ms")
 
     # =========================================================================
-    print("\n=== 6. PERMISSION-FILTERED SEARCH ===")
+    print("\n=== 7. PERMISSION-FILTERED SEARCH ===")
     # =========================================================================
     if USER_KEY:
         r = cli("search", "query", "Meridian Health", "--limit", "3")
@@ -180,7 +226,31 @@ def main() -> None:
         print("  (skipped \u2014 NEXUS_DEMO_USER_KEY not set)")
 
     # =========================================================================
-    print("\n=== 7. AUTO-INDEX ON EDIT ===")
+    print("\n=== 8. PERMISSION LATENCY ===")
+    # =========================================================================
+    import contextlib
+
+    perm_latencies: list[float] = []
+    for _ in range(20):
+        start = time.perf_counter()
+        with contextlib.suppress(Exception):
+            t.call_rpc(
+                "edit",
+                {
+                    "path": "/workspace/demo/plan.md",
+                    "edits": [["nonexistent_string_12345", "x"]],
+                    "preview": True,
+                },
+            )
+        perm_latencies.append((time.perf_counter() - start) * 1000)
+    perm_latencies.sort()
+    p50 = perm_latencies[len(perm_latencies) // 2]
+    p95 = perm_latencies[int(len(perm_latencies) * 0.95)]
+    check(f"RPC latency p50={p50:.0f}ms < 50ms", p50 < 50, f"{p50:.1f}ms")
+    print(f"    p50={p50:.1f}ms  p95={p95:.1f}ms")
+
+    # =========================================================================
+    print("\n=== 9. AUTO-INDEX ON EDIT ===")
     # =========================================================================
     t.call_rpc(
         "edit",
@@ -189,6 +259,7 @@ def main() -> None:
             "edits": [["Deploy to production", "Deploy using Kubernetes orchestration"]],
         },
     )
+    print("    Waiting 8s for daemon auto-index...")
     time.sleep(8)
     r = cli("search", "query", "Kubernetes orchestration", "--limit", "3")
     check("auto-index after edit", "plan.md" in r.stdout)
@@ -202,12 +273,43 @@ def main() -> None:
         },
     )
 
+    # =========================================================================
+    print("\n=== 10. DELETE → STALE INDEX CHECK ===")
+    # =========================================================================
+    # Write a test file, wait for auto-index, verify searchable
+    t.call_rpc(
+        "sys_write",
+        {"path": "/workspace/demo/delete-test.md", "buf": "Quantum entanglement teleportation"},
+    )
+    print("    Waiting 8s for auto-index...")
+    time.sleep(8)
+    r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
+    indexed = "delete-test" in r.stdout
+    check("file indexed before delete", indexed)
+
+    # Delete the file
+    t.call_rpc("sys_unlink", {"path": "/workspace/demo/delete-test.md"})
+    print("    Waiting 8s for delete to propagate...")
+    time.sleep(8)
+    r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
+    stale = "delete-test" in r.stdout
+    check(
+        "deleted file removed from search", not stale, "stale result still present" if stale else ""
+    )
+
     t.close()
 
     # =========================================================================
     print(f"\n{'=' * 60}")
     print(f"RESULTS: {passed} passed, {failed} failed")
     print(f"{'=' * 60}")
+
+    if failed:
+        print("\nFailed tests:")
+        for name, ok, detail in results:
+            if not ok:
+                print(f"  \u2717 {name}: {detail}")
+
     sys.exit(1 if failed else 0)
 
 

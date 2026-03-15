@@ -3,7 +3,7 @@
 These tests verify workspace registration functionality.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -126,15 +126,16 @@ class TestWorkspaceRegistry:
         with patch.object(registry, "_save_workspace_to_db"):
             registry.register_workspace("/workspace")
 
-        with patch.object(registry, "_delete_workspace_from_db"):
+        with patch.object(registry, "_delete_workspace_from_db", return_value=True):
             result = registry.unregister_workspace("/workspace")
             assert result is True
             assert "/workspace" not in registry._workspaces
 
     def test_unregister_workspace_not_found(self, registry: WorkspaceRegistry) -> None:
         """Test unregistering non-existent workspace."""
-        result = registry.unregister_workspace("/nonexistent")
-        assert result is False
+        with patch.object(registry, "_delete_workspace_from_db", return_value=False):
+            result = registry.unregister_workspace("/nonexistent")
+            assert result is False
 
     def test_get_workspace(self, registry: WorkspaceRegistry) -> None:
         """Test getting workspace by path."""
@@ -203,3 +204,116 @@ class TestWorkspaceRegistry:
                 metadata={"key": "value", "count": 42},
             )
             assert config.metadata == {"key": "value", "count": 42}
+
+
+_has_dry_helpers = hasattr(WorkspaceRegistry, "_extract_context")
+
+
+@pytest.mark.skipif(not _has_dry_helpers, reason="requires Issue #2987 refactor")
+class TestUpdateWorkspace:
+    """Tests for update_workspace() method (DB-first)."""
+
+    @pytest.fixture
+    def registry(self) -> WorkspaceRegistry:
+        mock_rs = MagicMock()
+        mock_session = MagicMock()
+        mock_session.__enter__ = lambda self: mock_session
+        mock_session.__exit__ = lambda self, *args: None
+        # Make the query chain return a proper mock model
+        mock_ws_model = MagicMock()
+        mock_ws_model.path = "/ws"
+        mock_ws_model.name = "Old"
+        mock_ws_model.description = "Also keep"
+        mock_ws_model.created_at = datetime.now()
+        mock_ws_model.created_by = "test"
+        mock_ws_model.extra_metadata = None
+        mock_session.execute.return_value.scalars.return_value.first.return_value = mock_ws_model
+        mock_rs.session_factory = MagicMock(return_value=mock_session)
+        with patch.object(WorkspaceRegistry, "_load_from_db"):
+            reg = WorkspaceRegistry(MagicMock(), record_store=mock_rs)
+            reg._workspaces = {}
+            reg._mock_ws_model = mock_ws_model  # stash for tests
+            return reg
+
+    def test_update_name(self, registry: WorkspaceRegistry) -> None:
+        with patch.object(registry, "_save_workspace_to_db"):
+            registry.register_workspace("/ws", name="Old")
+        config = registry.update_workspace("/ws", name="New")
+        assert config.name == "New"
+
+    def test_update_preserves_unchanged_fields(self, registry: WorkspaceRegistry) -> None:
+        with patch.object(registry, "_save_workspace_to_db"):
+            registry.register_workspace("/ws", name="Keep", description="Also keep")
+        config = registry.update_workspace("/ws", name="Changed")
+        assert config.name == "Changed"
+        assert config.description == "Also keep"
+
+    def test_update_nonexistent_raises(self, registry: WorkspaceRegistry) -> None:
+        # Make the DB return None for the query
+        session_mock = registry.metadata_session_factory()
+        session_mock.execute.return_value.scalars.return_value.first.return_value = None
+        with pytest.raises(ValueError, match="Workspace not found"):
+            registry.update_workspace("/nonexistent", name="X")
+
+
+@pytest.mark.skipif(not _has_dry_helpers, reason="requires Issue #2987 refactor")
+class TestDRYHelpers:
+    """Tests for extracted DRY helper methods (Issue #2987)."""
+
+    @pytest.fixture
+    def registry(self) -> WorkspaceRegistry:
+        mock_rs = MagicMock()
+        mock_session = MagicMock()
+        mock_session.__enter__ = lambda self: mock_session
+        mock_session.__exit__ = lambda self, *args: None
+        mock_rs.session_factory = MagicMock(return_value=mock_session)
+        with patch.object(WorkspaceRegistry, "_load_from_db"):
+            reg = WorkspaceRegistry(MagicMock(), record_store=mock_rs)
+            reg._workspaces = {}
+            return reg
+
+    def test_extract_context_none(self, registry: WorkspaceRegistry) -> None:
+        assert registry._extract_context(None) == (None, None, None)
+
+    def test_extract_context_dict(self, registry: WorkspaceRegistry) -> None:
+        ctx = {"user_id": "alice", "agent_id": "bot-1", "zone_id": "z1"}
+        assert registry._extract_context(ctx) == ("alice", "bot-1", "z1")
+
+    def test_extract_context_object(self, registry: WorkspaceRegistry) -> None:
+        ctx = MagicMock()
+        ctx.user_id = "bob"
+        ctx.agent_id = "agent-2"
+        ctx.zone_id = "z2"
+        assert registry._extract_context(ctx) == ("bob", "agent-2", "z2")
+
+    def test_validate_agent_ownership_no_agent(self, registry: WorkspaceRegistry) -> None:
+        registry._validate_agent_ownership(None, "alice")  # should not raise
+
+    def test_validate_agent_ownership_invalid(self, registry: WorkspaceRegistry) -> None:
+        mock_agent_reg = MagicMock()
+        mock_agent_reg.validate_ownership.return_value = False
+        registry._agent_registry = mock_agent_reg
+        with pytest.raises(PermissionError, match="not owned"):
+            registry._validate_agent_ownership("agent-1", "alice")
+
+    def test_compute_expiry_none(self, registry: WorkspaceRegistry) -> None:
+        assert registry._compute_expiry(None) is None
+
+    def test_compute_expiry_timedelta(self, registry: WorkspaceRegistry) -> None:
+        result = registry._compute_expiry(timedelta(hours=1))
+        assert result is not None
+        assert isinstance(result, datetime)
+
+    def test_auto_grant_no_rebac(self, registry: WorkspaceRegistry) -> None:
+        registry.rebac_manager = None
+        registry._auto_grant_ownership("/ws", "alice", "z1")  # should not raise
+
+    def test_auto_grant_success(self, registry: WorkspaceRegistry) -> None:
+        registry.rebac_manager = MagicMock()
+        registry._auto_grant_ownership("/ws", "alice", "z1")
+        registry.rebac_manager.rebac_write.assert_called_once()
+
+    def test_auto_grant_error_is_nonfatal(self, registry: WorkspaceRegistry) -> None:
+        registry.rebac_manager = MagicMock()
+        registry.rebac_manager.rebac_write.side_effect = RuntimeError("DB error")
+        registry._auto_grant_ownership("/ws", "alice", "z1")  # should not raise

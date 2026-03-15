@@ -263,6 +263,16 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Replay routes: %s", e)
 
+    # ---- Task Manager router ----
+    try:
+        from nexus.server.api.v2.routers.task_manager import router as task_manager_router
+
+        registry.add(
+            RouterEntry(router=task_manager_router, name="task_manager", endpoint_count=14)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Task manager routes: %s", e)
+
     # ---- Batch operations router (Issue #1242) ----
     try:
         from nexus.server.api.v2.routers.batch import create_batch_router

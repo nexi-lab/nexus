@@ -504,6 +504,16 @@ def connect(
     overrides = cfg.features.to_overrides() if cfg.features else {}
     enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
+    # Audit strict mode: env var override (default True for compliance)
+    from nexus.contracts.types import AuditConfig
+
+    _audit_strict = os.environ.get("NEXUS_AUDIT_STRICT_MODE", "true").lower() not in (
+        "false",
+        "0",
+        "no",
+    )
+    audit_cfg = AuditConfig(strict_mode=_audit_strict)
+
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
@@ -517,6 +527,7 @@ def connect(
         distributed=dist_cfg,
         parsing=parse_cfg,
         enabled_bricks=enabled_bricks,
+        audit=audit_cfg,
     )
 
     # Set memory config for Memory API

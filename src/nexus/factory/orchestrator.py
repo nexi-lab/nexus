@@ -243,6 +243,7 @@ def create_nexus_fs(
     is_admin: bool = False,
     cache: "CacheConfig | None" = None,
     permissions: "PermissionConfig | None" = None,
+    audit: "AuditConfig | None" = None,
     distributed: "DistributedConfig | None" = None,
     memory: Any = None,
     parsing: Any = None,
@@ -335,6 +336,7 @@ def create_nexus_fs(
             backend=backend,
             router=router,
             permissions=permissions,
+            audit=audit,
             cache=cache,
             distributed=distributed,
             zone_id=zone_id,
@@ -532,6 +534,14 @@ def _register_vfs_hooks(
     )
     dispatch.register_resolver(_vview_resolver)
     hook_refs["vview_resolver"] = _vview_resolver
+
+    # ── TaskWriteHook (post-write: emit task lifecycle events) ─────────
+    from nexus.bricks.task_manager.write_hook import TaskWriteHook
+
+    _task_write_hook = TaskWriteHook()
+    dispatch.register_intercept_write(_task_write_hook)
+    hook_refs["task_write_hook"] = _task_write_hook
+    nx._task_write_hook = _task_write_hook
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).

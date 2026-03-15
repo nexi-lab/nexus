@@ -1,15 +1,13 @@
 /**
- * Access Control panel: tabbed layout for manifests, alerts, reputation,
- * credentials, disputes, fraud scores, and delegations.
+ * Access Control panel: tabbed layout for manifests, alerts,
+ * credentials, fraud scores, and delegations.
  *
  * Key bindings:
  *   j/k or up/down : navigate within lists
  *   Tab            : cycle tabs
  *   Enter          : manifests → fetch detail (tuple entries)
  *   p              : open permission checker (+ governance edge check)
- *   f              : (disputes tab) file a new dispute
- *   g              : (disputes tab) look up dispute by ID
- *   Shift+R        : (disputes tab) resolve selected / (alerts tab) resolve selected
+ *   Shift+R        : (alerts tab) resolve selected
  *   c              : (fraud tab) compute fraud scores
  *   n              : (delegations tab) create new delegation
  *   x              : (delegations tab) revoke selected delegation
@@ -27,14 +25,10 @@ import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { ManifestList } from "./manifest-list.js";
 import { AlertList } from "./alert-list.js";
-import { ReputationView } from "./reputation-view.js";
 import { CredentialList } from "./credential-list.js";
-import { DisputeList } from "./dispute-list.js";
 import { FraudScoreView } from "./fraud-score-view.js";
 import { DelegationList } from "./delegation-list.js";
 import { PermissionChecker } from "./permission-checker.js";
-import { DisputeFiler } from "./dispute-filer.js";
-import { DisputeLookup } from "./dispute-lookup.js";
 import { DelegationCreator } from "./delegation-creator.js";
 import { DelegationCompleter } from "./delegation-completer.js";
 import { DelegationChainView } from "./delegation-chain-view.js";
@@ -43,18 +37,14 @@ import { NamespaceConfigView } from "./namespace-config-view.js";
 const TAB_ORDER: readonly AccessTab[] = [
   "manifests",
   "alerts",
-  "reputation",
   "credentials",
-  "disputes",
   "fraud",
   "delegations",
 ];
 const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
   manifests: "Manifests",
   alerts: "Alerts",
-  reputation: "Reputation",
   credentials: "Credentials",
-  disputes: "Disputes",
   fraud: "Fraud",
   delegations: "Delegations",
 };
@@ -62,8 +52,6 @@ const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
 type OverlayMode =
   | "none"
   | "permissionChecker"
-  | "disputeFiler"
-  | "disputeLookup"
   | "delegationCreator"
   | "delegationCompleter"
   | "delegationChainView"
@@ -86,13 +74,8 @@ export default function AccessPanel(): React.ReactNode {
   const alerts = useAccessStore((s) => s.alerts);
   const alertsLoading = useAccessStore((s) => s.alertsLoading);
   const selectedAlertIndex = useAccessStore((s) => s.selectedAlertIndex);
-  const leaderboard = useAccessStore((s) => s.leaderboard);
-  const leaderboardLoading = useAccessStore((s) => s.leaderboardLoading);
   const credentials = useAccessStore((s) => s.credentials);
   const credentialsLoading = useAccessStore((s) => s.credentialsLoading);
-  const disputes = useAccessStore((s) => s.disputes);
-  const disputesLoading = useAccessStore((s) => s.disputesLoading);
-  const selectedDisputeIndex = useAccessStore((s) => s.selectedDisputeIndex);
   const fraudScores = useAccessStore((s) => s.fraudScores);
   const fraudScoresLoading = useAccessStore((s) => s.fraudScoresLoading);
   const selectedFraudIndex = useAccessStore((s) => s.selectedFraudIndex);
@@ -108,10 +91,7 @@ export default function AccessPanel(): React.ReactNode {
   const fetchManifestDetail = useAccessStore((s) => s.fetchManifestDetail);
   const fetchAlerts = useAccessStore((s) => s.fetchAlerts);
   const resolveAlert = useAccessStore((s) => s.resolveAlert);
-  const fetchLeaderboard = useAccessStore((s) => s.fetchLeaderboard);
   const fetchCredentials = useAccessStore((s) => s.fetchCredentials);
-  const fetchDispute = useAccessStore((s) => s.fetchDispute);
-  const resolveDispute = useAccessStore((s) => s.resolveDispute);
   const fetchFraudScores = useAccessStore((s) => s.fetchFraudScores);
   const computeFraudScores = useAccessStore((s) => s.computeFraudScores);
   const fetchDelegations = useAccessStore((s) => s.fetchDelegations);
@@ -119,7 +99,6 @@ export default function AccessPanel(): React.ReactNode {
   const setActiveTab = useAccessStore((s) => s.setActiveTab);
   const setSelectedManifestIndex = useAccessStore((s) => s.setSelectedManifestIndex);
   const setSelectedAlertIndex = useAccessStore((s) => s.setSelectedAlertIndex);
-  const setSelectedDisputeIndex = useAccessStore((s) => s.setSelectedDisputeIndex);
   const setSelectedFraudIndex = useAccessStore((s) => s.setSelectedFraudIndex);
   const setSelectedDelegationIndex = useAccessStore((s) => s.setSelectedDelegationIndex);
 
@@ -131,16 +110,10 @@ export default function AccessPanel(): React.ReactNode {
       fetchManifests(client);
     } else if (activeTab === "alerts") {
       fetchAlerts(effectiveZoneId, client);
-    } else if (activeTab === "reputation") {
-      fetchLeaderboard(client);
     } else if (activeTab === "credentials") {
       const selected = manifests[selectedManifestIndex];
       if (selected) {
         fetchCredentials(selected.agent_id, client);
-      }
-    } else if (activeTab === "disputes") {
-      for (const d of disputes) {
-        fetchDispute(d.id, client);
       }
     } else if (activeTab === "fraud") {
       fetchFraudScores(effectiveZoneId, client);
@@ -161,8 +134,6 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(Math.min(selectedManifestIndex + 1, manifests.length - 1));
       } else if (activeTab === "alerts") {
         setSelectedAlertIndex(Math.min(selectedAlertIndex + 1, alerts.length - 1));
-      } else if (activeTab === "disputes") {
-        setSelectedDisputeIndex(Math.min(selectedDisputeIndex + 1, disputes.length - 1));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.min(selectedFraudIndex + 1, fraudScores.length - 1));
       } else if (activeTab === "delegations") {
@@ -174,8 +145,6 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(Math.min(selectedManifestIndex + 1, manifests.length - 1));
       } else if (activeTab === "alerts") {
         setSelectedAlertIndex(Math.min(selectedAlertIndex + 1, alerts.length - 1));
-      } else if (activeTab === "disputes") {
-        setSelectedDisputeIndex(Math.min(selectedDisputeIndex + 1, disputes.length - 1));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.min(selectedFraudIndex + 1, fraudScores.length - 1));
       } else if (activeTab === "delegations") {
@@ -187,8 +156,6 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(Math.max(selectedManifestIndex - 1, 0));
       } else if (activeTab === "alerts") {
         setSelectedAlertIndex(Math.max(selectedAlertIndex - 1, 0));
-      } else if (activeTab === "disputes") {
-        setSelectedDisputeIndex(Math.max(selectedDisputeIndex - 1, 0));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
       } else if (activeTab === "delegations") {
@@ -200,8 +167,6 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(Math.max(selectedManifestIndex - 1, 0));
       } else if (activeTab === "alerts") {
         setSelectedAlertIndex(Math.max(selectedAlertIndex - 1, 0));
-      } else if (activeTab === "disputes") {
-        setSelectedDisputeIndex(Math.max(selectedDisputeIndex - 1, 0));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
       } else if (activeTab === "delegations") {
@@ -229,16 +194,6 @@ export default function AccessPanel(): React.ReactNode {
     p: () => {
       if (overlay === "none") {
         setOverlay("permissionChecker");
-      }
-    },
-    f: () => {
-      if (activeTab === "disputes" && overlay === "none") {
-        setOverlay("disputeFiler");
-      }
-    },
-    g: () => {
-      if (activeTab === "disputes" && overlay === "none") {
-        setOverlay("disputeLookup");
       }
     },
     n: () => {
@@ -286,12 +241,7 @@ export default function AccessPanel(): React.ReactNode {
     },
     "shift+r": () => {
       if (!client || overlay !== "none") return;
-      if (activeTab === "disputes") {
-        const selected = disputes[selectedDisputeIndex];
-        if (selected && selected.status !== "resolved" && selected.status !== "dismissed") {
-          resolveDispute(selected.id, "Resolved via TUI", client);
-        }
-      } else if (activeTab === "alerts") {
+      if (activeTab === "alerts") {
         const selected = alerts[selectedAlertIndex];
         if (selected && !selected.resolved) {
           resolveAlert(selected.alert_id, "tui-operator", effectiveZoneId, client);
@@ -310,8 +260,6 @@ export default function AccessPanel(): React.ReactNode {
   const OVERLAY_LABELS: Readonly<Record<OverlayMode, string>> = {
     none: "",
     permissionChecker: " | Permission Checker",
-    disputeFiler: " | File Dispute",
-    disputeLookup: " | Lookup Dispute",
     delegationCreator: " | New Delegation",
     delegationCompleter: " | Complete Delegation",
     delegationChainView: " | Delegation Chain",
@@ -343,12 +291,6 @@ export default function AccessPanel(): React.ReactNode {
               onClose={closeOverlay}
             />
           )}
-          {overlay === "disputeFiler" && (
-            <DisputeFiler onClose={closeOverlay} />
-          )}
-          {overlay === "disputeLookup" && (
-            <DisputeLookup onClose={closeOverlay} />
-          )}
           {overlay === "delegationCreator" && (
             <DelegationCreator onClose={closeOverlay} />
           )}
@@ -379,9 +321,7 @@ export default function AccessPanel(): React.ReactNode {
   const HELP: Readonly<Record<AccessTab, string>> = {
     manifests: "j/k:navigate  Enter:show entries  p:perm check  Tab:tab  r:refresh  q:quit",
     alerts: "j/k:navigate  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
-    reputation: "Tab:tab  r:refresh  q:quit",
     credentials: "Tab:tab  r:refresh  q:quit",
-    disputes: "j/k:navigate  f:file  g:lookup  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
     fraud: "j/k:navigate  c:compute  Tab:tab  r:refresh  q:quit",
     delegations: "j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  Tab:tab  r:refresh  q:quit",
   };
@@ -430,23 +370,10 @@ export default function AccessPanel(): React.ReactNode {
             loading={alertsLoading}
           />
         )}
-        {activeTab === "reputation" && (
-          <ReputationView
-            leaderboard={leaderboard}
-            leaderboardLoading={leaderboardLoading}
-          />
-        )}
         {activeTab === "credentials" && (
           <CredentialList
             credentials={credentials}
             loading={credentialsLoading}
-          />
-        )}
-        {activeTab === "disputes" && (
-          <DisputeList
-            disputes={disputes}
-            selectedIndex={selectedDisputeIndex}
-            loading={disputesLoading}
           />
         )}
         {activeTab === "fraud" && (

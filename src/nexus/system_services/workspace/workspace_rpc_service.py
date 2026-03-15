@@ -258,17 +258,14 @@ class WorkspaceRPCService:
     # ------------------------------------------------------------------
 
     @rpc_expose()
-    def load_workspace_memory_config(
+    def load_workspace_config(
         self,
         workspaces: list[dict] | None = None,
-        memories: list[dict] | None = None,
     ) -> dict[str, Any]:
-        """Load workspaces and memories from configuration."""
+        """Load workspaces from configuration."""
         results = {
             "workspaces_registered": 0,
             "workspaces_skipped": 0,
-            "memories_registered": 0,
-            "memories_skipped": 0,
         }
 
         if workspaces:
@@ -287,23 +284,6 @@ class WorkspaceRPCService:
                     metadata=ws_config.get("metadata"),
                 )
                 results["workspaces_registered"] += 1
-
-        if memories:
-            for mem_config in memories:
-                path = mem_config.get("path")
-                if not path:
-                    continue
-                if self._wr.get_memory(path):
-                    results["memories_skipped"] += 1
-                    continue
-                self._wr.register_memory(
-                    path=path,
-                    name=mem_config.get("name"),
-                    description=mem_config.get("description", ""),
-                    created_by=mem_config.get("created_by"),
-                    metadata=mem_config.get("metadata"),
-                )
-                results["memories_registered"] += 1
 
         return results
 
@@ -381,60 +361,4 @@ class WorkspaceRPCService:
     def get_workspace_info(self, path: str) -> dict | None:
         """Get information about a registered workspace."""
         config = self._wr.get_workspace(path)
-        return config.to_dict() if config else None
-
-    # ------------------------------------------------------------------
-    # Memory Registry Management
-    # ------------------------------------------------------------------
-
-    @rpc_expose()
-    def register_memory(
-        self,
-        path: str,
-        name: str | None = None,
-        description: str | None = None,
-        created_by: str | None = None,
-        tags: list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-        session_id: str | None = None,
-        ttl: timedelta | None = None,
-        context: Any | None = None,
-    ) -> dict[str, Any]:
-        """Register a directory as a memory."""
-        _ = tags  # reserved for future use
-
-        if context is None and hasattr(self, "_operation_context"):
-            context = self._operation_context
-
-        config = self._wr.register_memory(
-            path=path,
-            name=name,
-            description=description or "",
-            created_by=created_by,
-            metadata=metadata,
-            context=context,
-            session_id=session_id,
-            ttl=ttl,
-        )
-        return config.to_dict()
-
-    @rpc_expose()
-    def unregister_memory(self, path: str) -> bool:
-        """Unregister a memory (does NOT delete files)."""
-        return self._wr.unregister_memory(path)
-
-    @rpc_expose()
-    def list_registered_memories(self) -> list[dict]:
-        """List all registered memory paths."""
-        configs = self._wr.list_memories()
-        return [c.to_dict() for c in configs]
-
-    def list_memories(self) -> list[dict]:
-        """Alias for list_registered_memories() for backward compatibility."""
-        return self.list_registered_memories()
-
-    @rpc_expose()
-    def get_memory_info(self, path: str) -> dict | None:
-        """Get information about a registered memory."""
-        config = self._wr.get_memory(path)
         return config.to_dict() if config else None

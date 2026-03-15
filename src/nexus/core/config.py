@@ -305,9 +305,8 @@ class BrickServices:
     # --- Sandbox Brick (Issue #1307) ---
     agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
 
-    # --- Delegation & Reputation Bricks (Issue #2131) ---
+    # --- Delegation Brick (Issue #2131) ---
     delegation_service: Any = None  # DELEGATION brick
-    reputation_service: Any = None  # REPUTATION brick
 
     # --- Version Brick (Issue #2034: moved from KernelServices) ---
     version_service: Any = None  # VersionService (file history, rollback, diff)

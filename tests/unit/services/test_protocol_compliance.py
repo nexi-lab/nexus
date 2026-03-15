@@ -349,7 +349,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("payment", "nexus/contracts/protocols/payment.py"),
     ("permission", "nexus/contracts/protocols/permission.py"),
     ("rebac", "nexus/contracts/protocols/rebac.py"),
-    ("reputation", "nexus/contracts/protocols/reputation.py"),
     ("scheduler", "nexus/contracts/protocols/scheduler.py"),
     ("search", "nexus/contracts/protocols/search.py"),
     ("share_link", "nexus/contracts/protocols/share_link.py"),

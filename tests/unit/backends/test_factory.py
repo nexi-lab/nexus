@@ -76,8 +76,10 @@ class TestBackendFactoryWrap:
 
     def test_wrap_compressed(self, tmp_path: Any) -> None:
         """wrap("compress") creates a CompressedStorage."""
-        from nexus.backends.wrappers.compressed import CompressedStorage
+        from nexus.backends.wrappers.compressed import CompressedStorage, is_zstd_available
 
+        if not is_zstd_available():
+            pytest.skip("zstd not available")
         base = BackendFactory.create("cas_local", {"data_dir": str(tmp_path / "data")})
         wrapped = BackendFactory.wrap(base, "compress")
         assert isinstance(wrapped, CompressedStorage)

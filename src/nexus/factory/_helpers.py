@@ -39,7 +39,6 @@ _FACTORY_BRICKS: list[tuple[str, str]] = [
     ("ipc_vfs_driver", "IPCProtocol"),
     ("wallet_provisioner", "WalletProtocol"),
     ("delegation_service", "DelegationProtocol"),
-    ("reputation_service", "ReputationProtocol"),
     ("version_service", "VersionProtocol"),  # Issue #2034: moved from kernel
 ]
 

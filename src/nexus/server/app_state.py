@@ -108,7 +108,6 @@ class NexusAppState:
     governance_response_service: Any = None
 
     # === Services (brick-sourced) ===
-    reputation_service: Any = None
     delegation_service: Any = None
     chunked_upload_service: Any = None
 

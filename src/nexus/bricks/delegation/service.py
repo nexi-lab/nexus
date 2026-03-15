@@ -35,7 +35,6 @@ from nexus.bricks.delegation.errors import (
     DelegationError,
     DelegationNotFoundError,
     DepthExceededError,
-    InsufficientTrustError,
 )
 from nexus.bricks.delegation.models import (
     DelegationMode,
@@ -51,7 +50,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.contracts.protocols.reputation import ReputationProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -77,14 +75,12 @@ class DelegationService:
         namespace_manager: Any = None,
         entity_registry: "EntityRegistryProtocol | None" = None,
         agent_registry: Any = None,
-        reputation_service: "ReputationProtocol | None" = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._rebac_manager = rebac_manager
         self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
         self._agent_registry: Any = agent_registry
-        self._reputation_service = reputation_service
         logger.info("[DelegationService] Initialized")
 
     @contextmanager
@@ -121,7 +117,6 @@ class DelegationService:
         intent: str = "",
         can_sub_delegate: bool = False,
         scope: DelegationScope | None = None,
-        min_trust_score: float = 0.0,
     ) -> DelegationResult:
         """Create a delegated worker agent with narrowed permissions.
 
@@ -140,7 +135,6 @@ class DelegationService:
             intent: Immutable purpose description for audit trail.
             can_sub_delegate: Whether worker can create further delegations.
             scope: Fine-grained operation/resource/budget constraints.
-            min_trust_score: Minimum trust score for coordinator (0.0 = disabled).
 
         Returns:
             DelegationResult with worker agent ID, API key, and mount table.
@@ -150,21 +144,10 @@ class DelegationService:
             DepthExceededError: If chain depth exceeds max_depth.
             DelegationError: If coordinator is not registered.
             EscalationError: If grants would exceed parent's permissions.
-            InsufficientTrustError: If coordinator trust score < min_trust_score.
             TooManyGrantsError: If too many grants derived.
         """
         # 1. Validate coordinator is registered and can delegate
         parent_delegation = self._validate_coordinator(coordinator_agent_id)
-
-        # 1b. Trust gate: reject if coordinator trust score is below threshold (#1619)
-        if min_trust_score > 0.0 and self._reputation_service is not None:
-            score = self._reputation_service.get_reputation(coordinator_agent_id)
-            if score is None or score.composite_score < min_trust_score:
-                raise InsufficientTrustError(
-                    agent_id=coordinator_agent_id,
-                    score=score.composite_score if score else None,
-                    threshold=min_trust_score,
-                )
 
         # 2. Compute chain depth
         depth = 0
@@ -441,10 +424,10 @@ class DelegationService:
     def complete_delegation(
         self,
         delegation_id: str,
-        outcome: DelegationOutcome,
+        outcome: DelegationOutcome,  # noqa: ARG002 — API contract (callers pass this)
         quality_score: float | None = None,
     ) -> DelegationRecord:
-        """Complete a delegation and submit feedback to the reputation system (#1619).
+        """Complete a delegation (#1619).
 
         Args:
             delegation_id: The delegation to complete.
@@ -473,70 +456,11 @@ class DelegationService:
         # Update status to COMPLETED
         self._update_delegation_status(delegation_id, DelegationStatus.COMPLETED)
 
-        # Submit feedback to reputation service if available
-        if self._reputation_service is not None:
-            self._submit_delegation_feedback(record, outcome, quality_score)
-
         # Return updated record
         updated = self._load_delegation_record(delegation_id)
         if updated is None:
             raise DelegationNotFoundError(f"Delegation {delegation_id} not found after update")
         return updated
-
-    def _submit_delegation_feedback(
-        self,
-        record: DelegationRecord,
-        outcome: DelegationOutcome,
-        quality_score: float | None,
-    ) -> None:
-        """Submit delegation outcome as reputation feedback (#1619).
-
-        Coordinator (parent) rates the worker based on delegation outcome:
-        - COMPLETED → positive reliability (1.0) + quality (quality_score or 0.8)
-        - FAILED → negative reliability (0.0)
-        - TIMEOUT → negative timeliness (0.0)
-        """
-        if self._reputation_service is None:
-            return  # Caller should have checked; defensive no-op
-
-        zone_id = record.zone_id or ROOT_ZONE_ID
-
-        try:
-            if outcome == DelegationOutcome.COMPLETED:
-                self._reputation_service.submit_feedback(
-                    rater_agent_id=record.parent_agent_id,
-                    rated_agent_id=record.agent_id,
-                    exchange_id=record.delegation_id,
-                    zone_id=zone_id,
-                    outcome="positive",
-                    reliability_score=1.0,
-                    quality_score=quality_score if quality_score is not None else 0.8,
-                )
-            elif outcome == DelegationOutcome.FAILED:
-                self._reputation_service.submit_feedback(
-                    rater_agent_id=record.parent_agent_id,
-                    rated_agent_id=record.agent_id,
-                    exchange_id=record.delegation_id,
-                    zone_id=zone_id,
-                    outcome="negative",
-                    reliability_score=0.0,
-                )
-            elif outcome == DelegationOutcome.TIMEOUT:
-                self._reputation_service.submit_feedback(
-                    rater_agent_id=record.parent_agent_id,
-                    rated_agent_id=record.agent_id,
-                    exchange_id=record.delegation_id,
-                    zone_id=zone_id,
-                    outcome="negative",
-                    timeliness_score=0.0,
-                )
-        except Exception as e:
-            # Feedback is best-effort; don't fail the completion
-            logger.warning(
-                "[Delegation] Failed to submit reputation feedback for delegation=%s: %s",
-                record.delegation_id,
-                e,
-            )
 
     # Sentinel for "clear this field" vs "leave unchanged"
     _CLEAR: str = "__CLEAR__"

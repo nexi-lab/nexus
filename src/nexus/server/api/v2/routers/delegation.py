@@ -113,12 +113,6 @@ class DelegateRequest(BaseModel):
     scope: DelegationScopeModel | None = Field(
         default=None, description="Fine-grained scope constraints"
     )
-    min_trust_score: float = Field(
-        default=0.0,
-        ge=0.0,
-        le=1.0,
-        description="Minimum trust score threshold for coordinator (0.0 = disabled)",
-    )
 
 
 class DelegateResponse(BaseModel):
@@ -257,7 +251,6 @@ async def create_delegation(
             intent=body.intent,
             can_sub_delegate=body.can_sub_delegate,
             scope=scope,
-            min_trust_score=body.min_trust_score,
         )
     except Exception as e:
         _handle_delegation_error(e)
@@ -645,13 +638,10 @@ def _handle_delegation_error(e: Exception) -> None:
         DelegationNotFoundError,
         DepthExceededError,
         EscalationError,
-        InsufficientTrustError,
         InvalidPrefixError,
         TooManyGrantsError,
     )
 
-    if isinstance(e, InsufficientTrustError):
-        raise HTTPException(status_code=403, detail=str(e)) from e
     if isinstance(e, EscalationError):
         raise HTTPException(status_code=403, detail=str(e)) from e
     if isinstance(e, TooManyGrantsError):

@@ -32,7 +32,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_agent_registry(app, svc)
     _startup_key_service(app, svc)
     _startup_credential_service(app, svc)
-    _startup_reputation_delegation_from_bricks(app, svc)
+    _startup_delegation_from_bricks(app, svc)
     _startup_governance(app, svc)
     _startup_sandbox_auth(app, svc)
     _startup_transactional_snapshot(app, svc)
@@ -298,25 +298,21 @@ def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None
         app.state.credential_service = None
 
 
-def _startup_reputation_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Expose ReputationService and DelegationService from factory brick_dict (Issue #2131).
+def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Expose DelegationService from factory brick_dict (Issue #2131).
 
-    These services are now created in ``factory._boot_brick_services()`` and
-    stored in ``BrickServices``. This function wires them onto ``app.state``
+    The DelegationService is created in ``factory._boot_brick_services()`` and
+    stored in ``BrickServices``. This function wires it onto ``app.state``
     for backward-compatible access by routers and dependencies.
     """
     if svc.nexus_fs is None:
-        app.state.reputation_service = None
         app.state.delegation_service = None
         return
 
     # Get from BrickServices (created by factory)
     brk = svc.brick_services
-    app.state.reputation_service = getattr(brk, "reputation_service", None) if brk else None
     app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
 
-    if app.state.reputation_service is not None:
-        logger.info("[REPUTATION] ReputationService wired from brick_dict")
     if app.state.delegation_service is not None:
         # Wire system-tier dependencies that weren't available during factory boot
         deleg = app.state.delegation_service

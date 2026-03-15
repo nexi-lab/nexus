@@ -136,13 +136,26 @@ class SchedulerService:
         await self.sync_fair_share()
         logger.info("SchedulerService initialized (pool connected, fair-share synced)")
 
-    async def shutdown(self) -> None:
-        """Close the asyncpg pool and mark as uninitialized."""
+    async def start(self) -> None:
+        """PersistentService: no-op — lifecycle managed by initialize(pool)/shutdown().
+
+        The scheduler has two-phase init: factory creates with db_pool=None,
+        lifespan calls initialize(pool) before enlisting.  start() exists
+        solely for PersistentService protocol conformance.
+        """
+        if not self._initialized:
+            logger.warning("SchedulerService.start() called before initialize(pool)")
+
+    async def stop(self) -> None:
+        """PersistentService: close the asyncpg pool and mark as uninitialized."""
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
             self._initialized = False
             logger.info("SchedulerService shutdown (pool closed)")
+
+    # Legacy alias
+    shutdown = stop
 
     # =========================================================================
     # SchedulerProtocol — 8 methods

@@ -92,7 +92,7 @@ def provision_system_resources(nx: Any) -> None:
         nx.sys_write(template_path, b'{"type": "template", "version": "1.0"}', context=context)
 
         # Grant system ownership
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("system", "admin"),
             relation="owner-of",
             object=("file", template_path),
@@ -110,7 +110,7 @@ def provision_system_resources(nx: Any) -> None:
         nx.sys_write(f"{skill_path}/skill.py", b"# Summarize skill", context=context)
 
         # Grant system ownership
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("system", "admin"),
             relation="owner-of",
             object=("file", skill_path),
@@ -142,7 +142,7 @@ def provision_zone_resources(nx: Any, zone_id: str) -> None:
         nx.sys_write(logo_path, b"# Company logo placeholder", context=context)
 
         # Grant zone ownership
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("zone", zone_id),
             relation="owner-of",
             object=("file", logo_path),
@@ -188,7 +188,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
         nx.sys_write(placeholder_path, b"", context=context)
 
         # Grant admin user ownership on the user directory
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", admin_user_id),
             relation="owner-of",
             object=("file", user_dir_path),
@@ -213,7 +213,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
             nx.sys_write(placeholder_path, b"", context=context)
 
             # Grant admin user ownership on the directory (CRITICAL: admin user must own these folders)
-            nx.rebac_service.rebac_create_sync(
+            nx.service("rebac").rebac_create_sync(
                 subject=("user", admin_user_id),
                 relation="owner-of",
                 object=("file", folder_path),
@@ -251,7 +251,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
 
         # Explicitly grant admin user ownership via ReBAC (in case auto-grant didn't work)
         try:
-            nx.rebac_service.rebac_create_sync(
+            nx.service("rebac").rebac_create_sync(
                 subject=("user", admin_user_id),
                 relation="owner-of",
                 object=("file", workspace_path),
@@ -352,7 +352,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
                 # Grant direct_viewer on the skill-creator directory itself (without trailing slash)
                 # Files inside should inherit via parent_viewer from this permission
                 # The parent tuples point to paths without trailing slash, so we must match that format
-                nx.rebac_service.rebac_create_sync(
+                nx.service("rebac").rebac_create_sync(
                     subject=("agent", agent_id),
                     relation="direct_viewer",  # Read-only access
                     object=("file", skill_creator_path_normalized),
@@ -373,7 +373,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
                     )
 
                     # Also check permission directly
-                    check_result = nx.rebac_service.rebac_check_sync(
+                    check_result = nx.service("rebac").rebac_check_sync(
                         subject=("agent", agent_id),
                         permission="read",
                         object=("file", skill_creator_path),
@@ -645,7 +645,7 @@ def provision_user_resources(nx: Any, zone_id: str, user_id: str) -> None:
         )
 
         # CRITICAL: Grant ownership via ReBAC
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", user_id),
             relation="owner-of",
             object=("file", workspace_path),
@@ -665,7 +665,7 @@ def provision_user_resources(nx: Any, zone_id: str, user_id: str) -> None:
         )
 
         # CRITICAL: Grant ownership via ReBAC
-        nx.rebac_service.rebac_create_sync(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", user_id),
             relation="owner-of",
             object=("file", default_workspace_path),

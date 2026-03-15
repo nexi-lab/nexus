@@ -29,16 +29,15 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """
     bg_tasks: list[asyncio.Task] = []
 
-    _startup_agent_registry(app, svc)
-    _startup_key_service(app, svc)
-    _startup_credential_service(app, svc)
-    _startup_delegation_from_bricks(app, svc)
-    _startup_governance(app, svc)
-    _startup_sandbox_auth(app, svc)
-    _startup_transactional_snapshot(app, svc)
-
+    await _startup_agent_registry(app, svc)
+    await _startup_key_service(app, svc)
+    await _startup_credential_service(app, svc)
+    await _startup_reputation_delegation_from_bricks(app, svc)
+    await _startup_governance(app, svc)
+    await _startup_sandbox_auth(app, svc)
+    await _startup_transactional_snapshot(app, svc)
     # Agent background tasks depend on agent_registry
-    agent_tasks = _startup_agent_tasks(app, svc)
+    agent_tasks = await _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
 
     await _startup_scheduler(app, svc)
@@ -49,38 +48,16 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
 
 
 async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Shutdown services in reverse order."""
-    # Issue #809/#810: Stop DT_PIPE consumers
-    await _shutdown_pipe_consumers(app)
+    """Shutdown services in reverse order.
 
-    # Issue #625: Stop workflow dispatch consumer
-    wds = app.state.workflow_dispatch
-    if wds is not None:
-        try:
-            await wds.stop()
-            logger.info("Workflow dispatch service stopped")
-        except Exception as e:
-            logger.warning("Error stopping workflow dispatch service: %s", e, exc_info=True)
+    Q3 PersistentService instances are stopped by coordinator via
+    aclose() → stop_persistent_services():
+    - task_runner, scheduler_service (#1598-#1601)
+    - directory_grant_expander, workflow_dispatch, write_observer
+    - zoekt_pipe_consumer, search_daemon
 
-    # Stop Task Queue runner (Issue #574)
-    task_runner = app.state.task_runner
-    if task_runner:
-        try:
-            await task_runner.shutdown()
-            logger.info("Task Queue runner stopped")
-        except Exception as e:
-            logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
-
-    # Shutdown scheduler (Issue #1212, #2360)
-    # Both SchedulerService and InMemoryScheduler implement shutdown().
-    scheduler_svc = getattr(app.state, "scheduler_service", None)
-    if scheduler_svc is not None:
-        try:
-            await scheduler_svc.shutdown()
-            logger.info("Scheduler service shut down")
-        except Exception as e:
-            logger.warning("Error shutting down scheduler: %s", e, exc_info=True)
-
+    Only non-PersistentService cleanup remains here.
+    """
     # Cancel agent background tasks and final flush (Issue #1240, #2170)
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
     stale_detection_task = getattr(app.state, "_stale_detection_task", None)
@@ -109,21 +86,8 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
             "[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)"
         )
 
-    # Shutdown Search Daemon (Issue #951)
-    if app.state.search_daemon:
-        try:
-            await app.state.search_daemon.shutdown()
-            logger.info("Search Daemon stopped")
-        except Exception as e:
-            logger.warning("Error shutting down Search Daemon: %s", e, exc_info=True)
-
-    # Stop DirectoryGrantExpander worker
-    if app.state.directory_grant_expander:
-        try:
-            app.state.directory_grant_expander.stop()
-            logger.info("DirectoryGrantExpander worker stopped")
-        except Exception as e:
-            logger.warning("Error stopping DirectoryGrantExpander: %s", e, exc_info=True)
+    # search_daemon, workflow_dispatch, directory_grant_expander (Q3)
+    # — stopped by coordinator via aclose() → stop_persistent_services()
 
     # Cancel pending event tasks in NexusFS (Issue #913)
     if svc.nexus_fs and hasattr(svc.nexus_fs, "_event_tasks"):
@@ -141,7 +105,7 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if svc.nexus_fs and svc.session_factory:
         try:
@@ -186,6 +150,13 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
                 )
                 app.state.agent_warmup_service = None
 
+            # Enlist with coordinator (Q1 — no lifecycle)
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("agent_registry", app.state.agent_registry)
+                if app.state.agent_warmup_service is not None:
+                    await coord.enlist("agent_warmup_service", app.state.agent_warmup_service)
+
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
             logger.warning("[AGENT-REG] Failed to initialize AgentRegistry: %s", e, exc_info=True)
@@ -196,7 +167,7 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
         app.state.async_agent_registry = None
 
 
-def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if svc.nexus_fs and svc.session_factory:
         try:
@@ -227,6 +198,11 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
             # Inject into NexusFS for register_agent integration
             svc.nexus_fs._key_service = app.state.key_service
 
+            # Enlist with coordinator (Q1 — no lifecycle)
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("key_service", app.state.key_service)
+
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
             logger.warning("[KYA] Failed to initialize KeyService: %s", e, exc_info=True)
@@ -235,7 +211,7 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
         app.state.key_service = None
 
 
-def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize CredentialService for agent capability attestation (Issue #1753).
 
     Depends on KeyService being initialized first. Pre-decrypts the kernel's
@@ -289,6 +265,12 @@ def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None
         )
 
         app.state.credential_service = credential_service
+
+        # Enlist with coordinator (Q1 — no lifecycle)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("credential_service", credential_service)
+
         logger.info(
             "[VC] CredentialService initialized (kernel DID=%s)",
             kernel_key_record.did,
@@ -298,8 +280,10 @@ def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None
         app.state.credential_service = None
 
 
-def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Expose DelegationService from factory brick_dict (Issue #2131).
+async def _startup_reputation_delegation_from_bricks(
+    app: "FastAPI", svc: "LifespanServices"
+) -> None:
+    """Expose ReputationService and DelegationService from factory brick_dict (Issue #2131).
 
     The DelegationService is created in ``factory._boot_brick_services()`` and
     stored in ``BrickServices``. This function wires it onto ``app.state``
@@ -311,6 +295,7 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
 
     # Get from BrickServices (created by factory)
     brk = svc.brick_services
+    app.state.reputation_service = getattr(brk, "reputation_service", None) if brk else None
     app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
 
     if app.state.delegation_service is not None:
@@ -322,8 +307,16 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
             deleg._agent_registry = app.state.agent_registry
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
+    # Enlist with coordinator (Q1 — no lifecycle)
+    coord = svc.service_coordinator
+    if coord is not None:
+        if app.state.reputation_service is not None:
+            await coord.enlist("reputation_service", app.state.reputation_service)
+        if app.state.delegation_service is not None:
+            await coord.enlist("delegation_service", app.state.delegation_service)
 
-def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
+
+async def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
     """Expose governance brick services from factory BrickServices (Issue #2129).
 
     Governance services are created in ``factory._boot_brick_services()`` and
@@ -350,8 +343,20 @@ def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
     if app.state.governance_response_service is not None:
         logger.info("[GOV] Governance services wired from brick_dict")
 
+    # Enlist with coordinator (Q1 — no lifecycle)
+    coord = svc.service_coordinator
+    if coord is not None:
+        for _name, _attr in (
+            ("governance_anomaly", app.state.governance_anomaly_service),
+            ("governance_collusion", app.state.governance_collusion_service),
+            ("governance_graph", app.state.governance_graph_service),
+            ("governance_response", app.state.governance_response_service),
+        ):
+            if _attr is not None:
+                await coord.enlist(_name, _attr)
 
-def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
+
+async def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
     if svc.nexus_fs and not app.state.agent_registry:
         logger.info(
@@ -379,6 +384,11 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
             app.state.agent_event_log = _factory_event_log
         else:
             app.state.agent_event_log = AgentEventLog(record_store=_sandbox_rs)
+
+        # Enlist agent_event_log with coordinator (Q1 — no lifecycle)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("agent_event_log", app.state.agent_event_log)
 
         # Create SandboxManager
         sandbox_config = svc.nexus_config
@@ -426,6 +436,12 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
             event_log=app.state.agent_event_log,
             budget_enforcement=False,
         )
+
+        # Enlist with coordinator (Q1 — no lifecycle)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("sandbox_auth", app.state.sandbox_auth_service)
+
         logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
     except Exception as e:
         logger.warning(
@@ -433,17 +449,21 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
         )
 
 
-def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> None:
     """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
     snap_svc = svc.snapshot_service
     app.state.transactional_snapshot_service = snap_svc
     if snap_svc is not None:
+        # Enlist with coordinator (Q1 — no lifecycle)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("transactional_snapshot", snap_svc)
         logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
     else:
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
 
 
-def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
+async def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
     if not app.state.agent_registry:
         return []
@@ -520,6 +540,10 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                 policy=eviction_policy,
                 tuning=_eviction_tuning,
             )
+            # Enlist fallback eviction_manager (Q1 — no lifecycle)
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("eviction_manager", app.state.eviction_manager)
             app.state._eviction_task = asyncio.create_task(
                 agent_eviction_task(
                     app.state.eviction_manager,
@@ -551,6 +575,11 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
 
     # Always expose the scheduler on app.state (Issue #2360)
     app.state.scheduler_service = scheduler
+
+    # Q3 PersistentService — coordinator auto-calls start() (no-op for scheduler)
+    coord = svc.service_coordinator
+    if coord is not None:
+        await coord.enlist("scheduler_service", scheduler)
 
     # InMemoryScheduler doesn't need PostgreSQL init
     from nexus.system_services.scheduler.in_memory import InMemoryScheduler
@@ -619,7 +648,11 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
     wds = app.state.workflow_dispatch
     if wds is not None:
         try:
-            await wds.start()
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("workflow_dispatch", wds)
+            else:
+                await wds.start()
             logger.info("Workflow dispatch service started")
         except Exception as e:
             logger.warning("Workflow dispatch service start failed (non-fatal): %s", e)
@@ -640,12 +673,17 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     if pipe_manager is None:
         return
 
+    coord = svc.service_coordinator
+
     # Issue #809: PipedRecordStoreWriteObserver
     wo = svc.write_observer
     if wo is not None and hasattr(wo, "set_pipe_manager"):
         try:
             wo.set_pipe_manager(pipe_manager)
-            await wo.start()
+            if coord is not None:
+                await coord.enlist("write_observer", wo)
+            else:
+                await wo.start()
             app.state.write_observer = wo
             logger.info("[PIPE] PipedRecordStoreWriteObserver started")
         except Exception as e:
@@ -658,31 +696,13 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     if zpc is not None and hasattr(zpc, "set_pipe_manager"):
         try:
             zpc.set_pipe_manager(pipe_manager)
-            await zpc.start()
+            if coord is not None:
+                await coord.enlist("zoekt_pipe_consumer", zpc)
+            else:
+                await zpc.start()
             app.state.zoekt_pipe_consumer = zpc
             logger.info("[PIPE] ZoektPipeConsumer started")
         except Exception as e:
             logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
 
-
-async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
-    """Stop DT_PIPE consumers (Issue #809, #810)."""
-    # Issue #809: PipedRecordStoreWriteObserver
-    wo = getattr(app.state, "write_observer", None)
-    if wo is not None and hasattr(wo, "stop"):
-        try:
-            await wo.stop()
-            logger.info("[PIPE] PipedRecordStoreWriteObserver stopped")
-        except Exception as e:
-            logger.warning(
-                "[PIPE] Error stopping PipedRecordStoreWriteObserver: %s", e, exc_info=True
-            )
-
-    # Issue #810: ZoektPipeConsumer
-    zpc = getattr(app.state, "zoekt_pipe_consumer", None)
-    if zpc is not None and hasattr(zpc, "stop"):
-        try:
-            await zpc.stop()
-            logger.info("[PIPE] ZoektPipeConsumer stopped")
-        except Exception as e:
-            logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)
+    # write_observer (Q3), zoekt_pipe_consumer (Q3) — stopped by coordinator via aclose()

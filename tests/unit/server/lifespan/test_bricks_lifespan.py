@@ -107,22 +107,16 @@ class TestShutdownBricks:
         await shutdown_bricks(app, svc)  # Should not raise
 
     @pytest.mark.asyncio
-    async def test_stops_reconciler_before_unmount(self) -> None:
-        """shutdown_bricks should stop reconciler before unmounting."""
-        call_order: list[str] = []
+    async def test_unmounts_without_manual_reconciler_stop(self) -> None:
+        """shutdown_bricks should unmount (reconciler stop handled by coordinator)."""
         manager = MagicMock()
-        manager.unmount_all = AsyncMock(
-            side_effect=lambda: call_order.append("unmount") or _make_health_report(active=0)
-        )
-        reconciler = MagicMock()
-        reconciler.stop = AsyncMock(side_effect=lambda: call_order.append("stop"))
+        manager.unmount_all = AsyncMock(return_value=_make_health_report(active=0))
 
         app = MagicMock()
         svc = _make_svc(
             nexus_fs=MagicMock(),
             brick_lifecycle_manager=manager,
-            brick_reconciler=reconciler,
         )
         await shutdown_bricks(app, svc)
 
-        assert call_order == ["stop", "unmount"]
+        manager.unmount_all.assert_awaited_once()

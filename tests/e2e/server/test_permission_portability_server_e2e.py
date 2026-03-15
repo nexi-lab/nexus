@@ -108,7 +108,7 @@ def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
 
 
 @pytest.fixture(scope="module")
-def e2e_env():
+async def e2e_env():
     """Set up source -> export -> import -> start target server.
 
     Creates source NexusFS with files and ReBAC permissions, exports a zone
@@ -137,17 +137,17 @@ def e2e_env():
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write test files
-        source_fs.sys_write(
+        await source_fs.sys_write(
             "/workspace/readme.md",
             b"# Permissions E2E Test",
             context=admin,
         )
-        source_fs.sys_write(
+        await source_fs.sys_write(
             "/workspace/src/main.py",
             b"print('hello')",
             context=admin,
         )
-        source_fs.sys_write(
+        await source_fs.sys_write(
             "/docs/guide.txt",
             b"User guide content",
             context=admin,

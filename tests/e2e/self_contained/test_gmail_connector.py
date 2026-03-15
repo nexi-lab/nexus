@@ -320,7 +320,8 @@ class TestSkillDocGeneration:
         assert "/mnt/gmail/" not in doc
         assert "/custom/mount/path/" in doc
 
-    def test_write_skill_docs(self, gmail_backend, isolated_db, tmp_path):
+    @pytest.mark.asyncio
+    async def test_write_skill_docs(self, gmail_backend, isolated_db, tmp_path):
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
         backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
@@ -339,7 +340,7 @@ class TestSkillDocGeneration:
 
             if skill_path:
                 # Read back and verify
-                content = nx.sys_read(skill_path)
+                content = await nx.sys_read(skill_path)
                 assert b"Gmail Connector" in content
                 assert b"agent_intent" in content
                 assert b"Send Email" in content

@@ -36,7 +36,7 @@ def temp_dir():
 
 
 @pytest.fixture
-def nexus_fs(temp_dir):
+async def nexus_fs(temp_dir):
     """Create NexusFS instance with test data."""
     data_dir = temp_dir / "data"
     data_dir.mkdir()
@@ -50,10 +50,10 @@ def nexus_fs(temp_dir):
     )
 
     # Create test files
-    fs.sys_write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
-    fs.sys_write("/workspace/src/main.py", b'print("Hello, World!")')
-    fs.sys_write("/workspace/src/utils.py", b"def helper(): pass")
-    fs.sys_write("/docs/guide.txt", b"User guide content here.")
+    await fs.sys_write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
+    await fs.sys_write("/workspace/src/main.py", b'print("Hello, World!")')
+    await fs.sys_write("/workspace/src/utils.py", b"def helper(): pass")
+    await fs.sys_write("/docs/guide.txt", b"User guide content here.")
 
     yield fs
     fs.close()

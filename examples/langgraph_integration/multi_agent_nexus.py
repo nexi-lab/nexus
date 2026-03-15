@@ -48,7 +48,7 @@ def get_demo_user_key():
     return demo_key
 
 
-def setup_nexus_permissions(admin_nx, workspace: str):
+async def setup_nexus_permissions(admin_nx, workspace: str):
     """
     Setup permission structure for multi-agent workflow.
 
@@ -60,9 +60,9 @@ def setup_nexus_permissions(admin_nx, workspace: str):
     print("\n🔐 Setting up Nexus permissions...")
 
     # Create workspace structure
-    admin_nx.sys_mkdir(f"{workspace}/research", parents=True)
-    admin_nx.sys_mkdir(f"{workspace}/code", parents=True)
-    admin_nx.sys_mkdir(f"{workspace}/reviews", parents=True)
+    await admin_nx.sys_mkdir(f"{workspace}/research", parents=True)
+    await admin_nx.sys_mkdir(f"{workspace}/code", parents=True)
+    await admin_nx.sys_mkdir(f"{workspace}/reviews", parents=True)
 
     # Grant permissions for researcher agent
     # Researcher can write to /workspace/research/ directory
@@ -104,7 +104,7 @@ def setup_nexus_permissions(admin_nx, workspace: str):
     print("🔐 Permission setup complete!\n")
 
 
-def researcher_node(state: AgentState) -> AgentState:
+async def researcher_node(state: AgentState) -> AgentState:
     """Researcher agent: analyzes task and writes requirements."""
     print(f"\n🔍 Researcher is analyzing task: {state['task']}")
 
@@ -135,7 +135,7 @@ def researcher_node(state: AgentState) -> AgentState:
 
     # Write requirements using Nexus (drop-in replacement!)
     research_file = "/workspace/research/requirements.txt"
-    nx.sys_write(research_file, requirements)
+    await nx.sys_write(research_file, requirements)
 
     print(f"✓ Requirements written to {research_file}")
     print("  (Researcher has write permission to /workspace/research/)")
@@ -143,7 +143,7 @@ def researcher_node(state: AgentState) -> AgentState:
     return {**state, "research_file": research_file, "current_agent": "coder"}
 
 
-def coder_node(state: AgentState) -> AgentState:
+async def coder_node(state: AgentState) -> AgentState:
     """Coder agent: reads requirements and writes code."""
     print("\n💻 Coder is implementing solution...")
 
@@ -159,7 +159,7 @@ def coder_node(state: AgentState) -> AgentState:
     nx.agent_id = "coder"  # Set agent identity for permission checks
 
     # Read requirements using Nexus
-    requirements = nx.sys_read(state["research_file"])
+    requirements = await nx.sys_read(state["research_file"])
     print("  (Coder has read permission to /workspace/research/)")
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
@@ -178,7 +178,7 @@ def coder_node(state: AgentState) -> AgentState:
 
     # Write code using Nexus
     code_file = "/workspace/code/implementation.py"
-    nx.sys_write(code_file, code)
+    await nx.sys_write(code_file, code)
 
     print(f"✓ Code written to {code_file}")
     print("  (Coder has write permission to /workspace/code/)")
@@ -186,7 +186,7 @@ def coder_node(state: AgentState) -> AgentState:
     return {**state, "code_file": code_file, "current_agent": "reviewer"}
 
 
-def reviewer_node(state: AgentState) -> AgentState:
+async def reviewer_node(state: AgentState) -> AgentState:
     """Reviewer agent: reviews code and provides feedback."""
     print("\n📋 Reviewer is evaluating code...")
 
@@ -202,7 +202,7 @@ def reviewer_node(state: AgentState) -> AgentState:
     nx.agent_id = "reviewer"  # Set agent identity for permission checks
 
     # Read code using Nexus
-    code = nx.sys_read(state["code_file"])
+    code = await nx.sys_read(state["code_file"])
     print("  (Reviewer has read permission to /workspace/code/)")
 
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
@@ -219,7 +219,7 @@ def reviewer_node(state: AgentState) -> AgentState:
 
     # Write review using Nexus
     review_file = "/workspace/reviews/review.txt"
-    nx.sys_write(review_file, review)
+    await nx.sys_write(review_file, review)
 
     print(f"✓ Review written to {review_file}")
     print("  (Reviewer has write permission to /workspace/reviews/)")
@@ -297,7 +297,7 @@ def demonstrate_permission_enforcement():
     print("\n🔒 Permission enforcement verified!")
 
 
-def main():
+async def main():
     """Main function to run the multi-agent workflow with Nexus."""
     print("=" * 60)
     print("Multi-Agent Workflow: Nexus with Permissions")
@@ -316,7 +316,7 @@ def main():
 
     # Clean up previous workspace
     with contextlib.suppress(BaseException):
-        admin_nx.sys_rmdir(workspace, recursive=True)
+        await admin_nx.sys_rmdir(workspace, recursive=True)
 
     # Setup permissions (Nexus value-add!)
     setup_nexus_permissions(admin_nx, workspace)

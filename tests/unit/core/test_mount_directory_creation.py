@@ -41,7 +41,8 @@ def nx_with_mount():
         nx.close()
 
 
-def test_mount_creates_directory_entry(nx_with_mount):
+@pytest.mark.asyncio
+async def test_mount_creates_directory_entry(nx_with_mount):
     """Test that adding a mount creates directory metadata entry."""
     nx, tmpdir = nx_with_mount
 
@@ -53,27 +54,28 @@ def test_mount_creates_directory_entry(nx_with_mount):
     nx.router.add_mount("/mnt/test", mount_backend, readonly=False)
 
     # Create directory entry (this is what server.py now does)
-    nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
+    await nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify directory exists in metadata
     assert nx.metadata.exists("/mnt")
     assert nx.metadata.exists("/mnt/test")
 
     # Verify /mnt is recognized as a directory by the kernel
-    assert nx.sys_is_directory("/mnt")
+    assert await nx.sys_is_directory("/mnt")
     mnt_meta = nx.metadata.get("/mnt")
     assert mnt_meta is not None
 
     # Verify mount point is a DT_MOUNT entry (created by PathRouter.add_mount,
     # not overwritten by sys_mkdir which honours the existing entry) and is
     # recognized as a directory by the kernel.
-    assert nx.sys_is_directory("/mnt/test")
+    assert await nx.sys_is_directory("/mnt/test")
     test_meta = nx.metadata.get("/mnt/test")
     assert test_meta is not None
     assert test_meta.is_mount, f"Expected DT_MOUNT entry, got entry_type={test_meta.entry_type}"
 
 
-def test_mount_appears_in_listing(nx_with_mount):
+@pytest.mark.asyncio
+async def test_mount_appears_in_listing(nx_with_mount):
     """Test that mount points appear when listing parent directories."""
     nx, tmpdir = nx_with_mount
 
@@ -83,22 +85,23 @@ def test_mount_appears_in_listing(nx_with_mount):
 
     # Add mount and create directory
     nx.router.add_mount("/mnt/gcs_demo", mount_backend, readonly=False)
-    nx.sys_mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
+    await nx.sys_mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
 
     # List root directory (non-recursive)
-    root_list = nx.sys_readdir("/", recursive=False, details=False)
+    root_list = await nx.sys_readdir("/", recursive=False, details=False)
 
     # /mnt should appear in root listing
     assert "/mnt" in root_list, f"Expected /mnt in {root_list}"
 
     # List /mnt directory (non-recursive)
-    mnt_list = nx.sys_readdir("/mnt", recursive=False, details=False)
+    mnt_list = await nx.sys_readdir("/mnt", recursive=False, details=False)
 
     # /mnt/gcs_demo should appear in /mnt listing
     assert "/mnt/gcs_demo" in mnt_list, f"Expected /mnt/gcs_demo in {mnt_list}"
 
 
-def test_mount_appears_in_detailed_listing(nx_with_mount):
+@pytest.mark.asyncio
+async def test_mount_appears_in_detailed_listing(nx_with_mount):
     """Test that mount points appear with correct metadata in detailed listings."""
     nx, tmpdir = nx_with_mount
 
@@ -108,10 +111,10 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
 
     # Add mount and create directory
     nx.router.add_mount("/personal/alice", mount_backend, readonly=False)
-    nx.sys_mkdir("/personal/alice", parents=True, exist_ok=True)
+    await nx.sys_mkdir("/personal/alice", parents=True, exist_ok=True)
 
     # List with details
-    root_list = nx.sys_readdir("/", recursive=False, details=True)
+    root_list = await nx.sys_readdir("/", recursive=False, details=True)
 
     # Find /personal in results
     personal_entry = next((e for e in root_list if e["path"] == "/personal"), None)
@@ -120,10 +123,10 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     assert "size" in personal_entry
     assert "etag" in personal_entry
     # Confirm the kernel recognises /personal as a directory
-    assert nx.sys_is_directory("/personal")
+    assert await nx.sys_is_directory("/personal")
 
     # List /personal with details
-    personal_list = nx.sys_readdir("/personal", recursive=False, details=True)
+    personal_list = await nx.sys_readdir("/personal", recursive=False, details=True)
 
     # Find /personal/alice in results
     alice_entry = next((e for e in personal_list if e["path"] == "/personal/alice"), None)
@@ -131,10 +134,11 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     assert "size" in alice_entry
     assert "etag" in alice_entry
     # Confirm the kernel recognises /personal/alice as a directory
-    assert nx.sys_is_directory("/personal/alice")
+    assert await nx.sys_is_directory("/personal/alice")
 
 
-def test_nested_mount_creates_all_parents(nx_with_mount):
+@pytest.mark.asyncio
+async def test_nested_mount_creates_all_parents(nx_with_mount):
     """Test that mounting at /a/b/c/mount creates /a, /a/b, /a/b/c, /a/b/c/mount."""
     nx, tmpdir = nx_with_mount
 
@@ -144,7 +148,7 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
 
     # Add mount and create directory with parents
     nx.router.add_mount("/a/b/c/mount", mount_backend, readonly=False)
-    nx.sys_mkdir("/a/b/c/mount", parents=True, exist_ok=True)
+    await nx.sys_mkdir("/a/b/c/mount", parents=True, exist_ok=True)
 
     # Verify all parents exist
     assert nx.metadata.exists("/a")
@@ -157,7 +161,7 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
     # itself is a DT_MOUNT created by PathRouter.add_mount.  Both are
     # treated as directory-like by sys_is_directory.
     for p in ["/a", "/a/b", "/a/b/c", "/a/b/c/mount"]:
-        assert nx.sys_is_directory(p), f"Expected {p} to be a directory"
+        assert await nx.sys_is_directory(p), f"Expected {p} to be a directory"
 
     # The mount point should be a DT_MOUNT entry
     mount_meta = nx.metadata.get("/a/b/c/mount")
@@ -205,7 +209,8 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     assert result.files_scanned >= 0
 
 
-def test_add_mount_via_api_creates_directory(nx_with_mount):
+@pytest.mark.asyncio
+async def test_add_mount_via_api_creates_directory(nx_with_mount):
     """Test that add_mount() API creates directory entry via _grant_mount_owner_permission."""
     nx, tmpdir = nx_with_mount
 
@@ -228,25 +233,27 @@ def test_add_mount_via_api_creates_directory(nx_with_mount):
     assert nx.metadata.exists("/api/mount")
 
     # Verify mount appears in listing
-    api_list = nx.sys_readdir("/api", recursive=False, details=False)
+    api_list = await nx.sys_readdir("/api", recursive=False, details=False)
     assert "/api/mount" in api_list
 
 
-def test_mount_exist_ok_does_not_fail(nx_with_mount):
+@pytest.mark.asyncio
+async def test_mount_exist_ok_does_not_fail(nx_with_mount):
     """Test that creating mount directory with exist_ok=True doesn't fail if already exists."""
     nx, tmpdir = nx_with_mount
 
     # Create directory first
-    nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
+    await nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Create it again with exist_ok=True (should not raise)
-    nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
+    await nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify it still exists
     assert nx.metadata.exists("/mnt/test")
 
 
-def test_multiple_mounts_in_same_parent(nx_with_mount):
+@pytest.mark.asyncio
+async def test_multiple_mounts_in_same_parent(nx_with_mount):
     """Test that multiple mounts under same parent all appear in listing."""
     nx, tmpdir = nx_with_mount
 
@@ -255,10 +262,10 @@ def test_multiple_mounts_in_same_parent(nx_with_mount):
         mount_backend = MagicMock()
         mount_backend.name = name
         nx.router.add_mount(f"/mnt/{name}", mount_backend, readonly=False)
-        nx.sys_mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
+        await nx.sys_mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
 
     # List /mnt
-    mnt_list = nx.sys_readdir("/mnt", recursive=False, details=False)
+    mnt_list = await nx.sys_readdir("/mnt", recursive=False, details=False)
 
     # All mounts should appear
     assert "/mnt/mount1" in mnt_list

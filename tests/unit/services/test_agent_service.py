@@ -476,7 +476,10 @@ class TestDeleteAgentCleanup:
         finally:
             session.close()
 
-    def test_delete_agent_removes_directory(self, agent_service: AgentService, nx: NexusFS) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_agent_removes_directory(
+        self, agent_service: AgentService, nx: NexusFS
+    ) -> None:
         """Test that delete_agent removes agent directory."""
         context = {"user_id": "alice", "zone_id": "root"}
         agent_service.register_agent(
@@ -490,7 +493,7 @@ class TestDeleteAgentCleanup:
         ctx = nx._parse_context(context)
         # Directory may or may not exist depending on test environment
         # Just verify delete_agent succeeds
-        directory_existed = nx.sys_access(agent_dir, context=ctx)
+        directory_existed = await nx.sys_access(agent_dir, context=ctx)
 
         # Delete agent
         result = agent_service.delete_agent("alice,test_agent", _context=context)
@@ -498,7 +501,7 @@ class TestDeleteAgentCleanup:
 
         # Verify directory is removed (if it existed)
         if directory_existed:
-            assert not nx.sys_access(agent_dir, context=ctx)
+            assert not await nx.sys_access(agent_dir, context=ctx)
 
     def test_delete_agent_removes_rebac_tuples(self, agent_service: AgentService) -> None:
         """Test that delete_agent removes ReBAC tuples for the agent."""
@@ -538,7 +541,8 @@ class TestDeleteAgentCleanup:
         # Restore original manager
         agent_service._rebac_manager = original_rebac_manager
 
-    def test_delete_agent_handles_missing_directory(
+    @pytest.mark.asyncio
+    async def test_delete_agent_handles_missing_directory(
         self, agent_service: AgentService, nx: NexusFS
     ) -> None:
         """Test that delete_agent handles missing directory gracefully."""
@@ -567,7 +571,7 @@ class TestDeleteAgentCleanup:
         original_enforce = nx._enforce_permissions
         nx._enforce_permissions = False
         try:
-            nx.sys_rmdir(agent_dir, recursive=True, context=admin_ctx)
+            await nx.sys_rmdir(agent_dir, recursive=True, context=admin_ctx)
         finally:
             nx._enforce_permissions = original_enforce
 

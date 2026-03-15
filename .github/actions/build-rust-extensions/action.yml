@@ -48,7 +48,7 @@ runs:
           sudo apt-get update && sudo apt-get install -y protobuf-compiler
         elif [ "$RUNNER_OS" = "macOS" ]; then
           PROTOC_VERSION="3.20.3"
-          PROTOC_ARCH="osx-aarch_64"
+          PROTOC_ARCH="osx-x86_64"
           curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${PROTOC_ARCH}.zip" -o /tmp/protoc.zip
           sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
           protoc --version

@@ -123,16 +123,9 @@ class TokenManager:
         else:
             raise ValueError("One of db_path, db_url, or session_factory must be provided")
 
-        # Pass record_store to OAuthCrypto for shared pool (Issue #1597)
-        _crypto_rs = getattr(self, "_record_store", None)
-        if _crypto_rs is None and session_factory is not None:
-            from types import SimpleNamespace
-
-            _crypto_rs = SimpleNamespace(session_factory=session_factory)
-        self.crypto = OAuthCrypto(
-            encryption_key=encryption_key,
-            record_store=_crypto_rs,
-        )
+        # OAuthCrypto: use explicit key or fall back to random (no settings_store here;
+        # callers that need persistent keys should pass encryption_key).
+        self.crypto = OAuthCrypto(encryption_key=encryption_key)
         self.providers: dict[str, Any] = {}
         self._audit_logger = audit_logger
         self._rotation_store = TokenRotationStore()

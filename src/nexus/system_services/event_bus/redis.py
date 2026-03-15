@@ -15,6 +15,7 @@ from nexus.system_services.event_bus.protocol import AckableEvent, PubSubClientP
 from nexus.system_services.event_bus.types import FileEvent
 
 if TYPE_CHECKING:
+    from nexus.contracts.auth_store_protocols import SystemSettingsStoreProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class RedisEventBus(EventBusBase):
         redis_client: PubSubClientProtocol,
         record_store: "RecordStoreABC | None" = None,
         node_id: str | None = None,
+        settings_store: "SystemSettingsStoreProtocol | None" = None,
     ):
         """Initialize RedisEventBus.
 
@@ -59,8 +61,9 @@ class RedisEventBus(EventBusBase):
             redis_client: PubSubClientProtocol provider (e.g., DragonflyClient)
             record_store: RecordStoreABC for PG SSOT (optional)
             node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
+            settings_store: SystemSettingsStoreProtocol for checkpoint persistence (optional)
         """
-        super().__init__(record_store=record_store, node_id=node_id)
+        super().__init__(record_store=record_store, node_id=node_id, settings_store=settings_store)
         self._redis = redis_client
         self._pubsub: Any = None
 

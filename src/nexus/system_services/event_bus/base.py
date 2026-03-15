@@ -11,6 +11,7 @@ from nexus.system_services.event_bus.protocol import AckableEvent
 from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 if TYPE_CHECKING:
+    from nexus.contracts.auth_store_protocols import SystemSettingsStoreProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,10 @@ class EventBusBase(ABC):
         record_store: "RecordStoreABC | None" = None,
         node_id: str | None = None,
         max_sync_events: int = 10_000,
+        settings_store: "SystemSettingsStoreProtocol | None" = None,
     ) -> None:
         self._session_factory = record_store.session_factory if record_store else None
+        self._settings_store = settings_store
         self._node_id = node_id or self._generate_node_id()
         self._max_sync_events = max_sync_events
         self._started = False
@@ -171,75 +174,32 @@ class EventBusBase(ABC):
         return f"{self.CHECKPOINT_KEY_PREFIX}:{self._node_id}"
 
     async def _get_checkpoint(self) -> datetime | None:
-        """Get the last sync checkpoint from the database.
-
-        Runs synchronous SQLAlchemy in a thread executor to avoid blocking
-        the event loop. Handles missing system_settings table gracefully
-        (e.g. SQLite embedded mode).
-        """
-        if not self._session_factory:
+        """Get the last sync checkpoint from the settings store."""
+        if not self._settings_store:
             return None
 
-        session_factory = self._session_factory  # bind for mypy narrowing
-
-        def _query() -> datetime | None:
-            from sqlalchemy import select
-            from sqlalchemy.exc import OperationalError, ProgrammingError
-
-            from nexus.storage.models import SystemSettingsModel
-
-            try:
-                with session_factory() as session:
-                    stmt = select(SystemSettingsModel).where(
-                        SystemSettingsModel.key == self._get_checkpoint_key()
-                    )
-                    setting = session.execute(stmt).scalar_one_or_none()
-
-                    if setting:
-                        return datetime.fromisoformat(setting.value)
-                    return None
-            except (OperationalError, ProgrammingError):
-                # Table may not exist in SQLite embedded mode
-                return None
-
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _query)
+        try:
+            setting = self._settings_store.get_setting(self._get_checkpoint_key())
+            if setting:
+                return datetime.fromisoformat(setting.value)
+            return None
+        except Exception:
+            logger.warning("Failed to read checkpoint", exc_info=True)
+            return None
 
     async def _update_checkpoint(self, timestamp: datetime) -> None:
-        """Update the sync checkpoint in the database.
-
-        Runs synchronous SQLAlchemy in a thread executor to avoid blocking
-        the event loop.
-        """
-        if not self._session_factory:
+        """Update the sync checkpoint in the settings store."""
+        if not self._settings_store:
             return
 
-        session_factory = self._session_factory  # bind for mypy narrowing
-
-        def _update() -> None:
-            from sqlalchemy import select
-
-            from nexus.storage.models import SystemSettingsModel
-
-            with session_factory() as session:
-                key = self._get_checkpoint_key()
-                stmt = select(SystemSettingsModel).where(SystemSettingsModel.key == key)
-                setting = session.execute(stmt).scalar_one_or_none()
-
-                if setting:
-                    setting.value = timestamp.isoformat()
-                else:
-                    setting = SystemSettingsModel(
-                        key=key,
-                        value=timestamp.isoformat(),
-                        description=f"Event sync checkpoint for node {self._node_id}",
-                    )
-                    session.add(setting)
-
-                session.commit()
-
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _update)
+        try:
+            self._settings_store.set_setting(
+                self._get_checkpoint_key(),
+                timestamp.isoformat(),
+                description=f"Event sync checkpoint for node {self._node_id}",
+            )
+        except Exception:
+            logger.warning("Failed to update checkpoint", exc_info=True)
 
     async def startup_sync(
         self,

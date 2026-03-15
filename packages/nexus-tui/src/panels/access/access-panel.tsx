@@ -98,6 +98,8 @@ export default function AccessPanel(): React.ReactNode {
   const fetchAlerts = useAccessStore((s) => s.fetchAlerts);
   const resolveAlert = useAccessStore((s) => s.resolveAlert);
   const fetchCredentials = useAccessStore((s) => s.fetchCredentials);
+  const issueCredential = useAccessStore((s) => s.issueCredential);
+  const fetchCollusionRings = useAccessStore((s) => s.fetchCollusionRings);
   const revokeCredential = useAccessStore((s) => s.revokeCredential);
   const fetchFraudScores = useAccessStore((s) => s.fetchFraudScores);
   const computeFraudScores = useAccessStore((s) => s.computeFraudScores);
@@ -302,6 +304,21 @@ export default function AccessPanel(): React.ReactNode {
         if (client) fetchDelegations(client, next);
       }
     },
+    i: () => {
+      // Issue credential for the selected agent (from manifests tab's agent_id)
+      if (activeTab === "credentials" && client) {
+        const manifest = manifests[selectedManifestIndex];
+        if (manifest) {
+          issueCredential(manifest.agent_id, {}, client);
+        }
+      }
+    },
+    g: () => {
+      // Fetch collusion rings (fraud tab)
+      if (activeTab === "fraud" && client) {
+        fetchCollusionRings(effectiveZoneId, client);
+      }
+    },
   });
 
   // Derive selected items for overlays
@@ -379,8 +396,8 @@ export default function AccessPanel(): React.ReactNode {
   const HELP: Readonly<Record<AccessTab, string>> = {
     manifests: "j/k:navigate  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  Tab:tab  r:refresh  q:quit",
     alerts: "j/k:navigate  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
-    credentials: "j/k:navigate  x:revoke  Tab:tab  r:refresh  q:quit",
-    fraud: "j/k:navigate  c:compute  Tab:tab  r:refresh  q:quit",
+    credentials: "j/k:navigate  i:issue  x:revoke  Tab:tab  r:refresh  q:quit",
+    fraud: "j/k:navigate  c:compute  g:collusion rings  Tab:tab  r:refresh  q:quit",
     delegations: `j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  f:filter${delegationFilterLabel}  Tab:tab  r:refresh  q:quit`,
   };
 

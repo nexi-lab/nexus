@@ -729,7 +729,7 @@ async def create_mcp_server(
         }
     )
     @handle_tool_errors("searching file contents (grep)")
-    def nexus_grep(
+    async def nexus_grep(
         pattern: str,
         path: str = "/",
         ignore_case: bool = False,
@@ -765,7 +765,7 @@ async def create_mcp_server(
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — grep requires the search brick")
-        all_results = _search.grep(pattern, path, ignore_case=ignore_case)
+        all_results = await _search.grep(pattern, path, ignore_case=ignore_case)
         total = len(all_results)
 
         # Apply pagination

@@ -169,6 +169,9 @@ async def _startup_writeback(
                 record_store=gw.record_store, is_postgresql=_is_pg
             )
             app.state.conflict_log_store = conflict_log_store
+            # Enlist conflict_log_store (Q1 — static, no lifecycle)
+            if coord is not None:
+                await coord.enlist("conflict_log_store", conflict_log_store)
 
             wb_event_bus = svc.event_bus
             if wb_event_bus:

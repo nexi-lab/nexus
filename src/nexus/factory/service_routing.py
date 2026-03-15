@@ -38,7 +38,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     "user_provisioning": (),
     "sandbox_rpc": (),
     "metadata_export": (),
-    "descendant_checker": (),
 }
 
 # ---------------------------------------------------------------------------
@@ -65,7 +64,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "user_provisioning_service": "user_provisioning",
     "sandbox_rpc_service": "sandbox_rpc",
     "metadata_export_service": "metadata_export",
-    "descendant_checker": "descendant_checker",
 }
 
 

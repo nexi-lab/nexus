@@ -175,7 +175,7 @@ def _build_config(
         # to write .admin-api-key (portable image runs nexusd directly).
         import secrets
 
-        config["api_key"] = f"nx_admin_{secrets.token_urlsafe(32)}"
+        config["api_key"] = f"sk-{secrets.token_urlsafe(32)}"
 
         # Compose file: CLI override → search CWD + ancestors → bundled copy
         if compose_file_override:

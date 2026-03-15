@@ -32,7 +32,7 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
 
     await _startup_async_rebac(app, svc)
     await _startup_cache_brick(app, svc)
-    bg_tasks.extend(_startup_tiger_cache(app, svc))
+    bg_tasks.extend(await _startup_tiger_cache(app, svc))
     bg_tasks.extend(_startup_backfill(app, svc))
     _startup_cache_warmup(app, svc)
     _startup_circuit_breaker(app, svc)
@@ -67,6 +67,12 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
             _sync_mgr = ReBACManager(engine=_store.engine)
             app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
             logger.info("Async ReBAC manager initialized (fresh sync manager via RecordStore)")
+
+        # Enlist with coordinator (Q1 — wrapper is the consumer-facing service)
+        if app.state.async_rebac_manager is not None:
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("async_rebac_manager", app.state.async_rebac_manager)
 
     except Exception as e:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
@@ -122,7 +128,7 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.warning("Failed to initialize cache: %s", e, exc_info=True)
 
 
-def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
+async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start Tiger Cache worker, warm-up, and DirectoryGrantExpander."""
     bg_tasks: list[asyncio.Task] = []
 
@@ -182,6 +188,11 @@ def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                         metadata_store=svc.nexus_fs.metadata,
                     )
                     app.state.directory_grant_expander = expander
+
+                    # Enlist with coordinator (Q1 for now — #1598 will refactor to Q3)
+                    coord = svc.service_coordinator
+                    if coord is not None:
+                        await coord.enlist("directory_grant_expander", expander)
 
                     async def _run_grant_expander() -> None:
                         await expander.run_worker()

@@ -32,10 +32,10 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     await _startup_agent_registry(app, svc)
     await _startup_key_service(app, svc)
     await _startup_credential_service(app, svc)
-    _startup_delegation_from_bricks(app, svc)
-    _startup_governance(app, svc)
+    await _startup_reputation_delegation_from_bricks(app, svc)
+    await _startup_governance(app, svc)
     await _startup_sandbox_auth(app, svc)
-    _startup_transactional_snapshot(app, svc)
+    await _startup_transactional_snapshot(app, svc)
     await _startup_rlm_service(app, svc)
 
     # Agent background tasks depend on agent_registry
@@ -313,8 +313,10 @@ async def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -
         app.state.credential_service = None
 
 
-def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Expose DelegationService from factory brick_dict (Issue #2131).
+async def _startup_reputation_delegation_from_bricks(
+    app: "FastAPI", svc: "LifespanServices"
+) -> None:
+    """Expose ReputationService and DelegationService from factory brick_dict (Issue #2131).
 
     The DelegationService is created in ``factory._boot_brick_services()`` and
     stored in ``BrickServices``. This function wires it onto ``app.state``
@@ -337,8 +339,16 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
             deleg._agent_registry = app.state.agent_registry
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
+    # Enlist with coordinator (Q1 — no lifecycle)
+    coord = svc.service_coordinator
+    if coord is not None:
+        if app.state.reputation_service is not None:
+            await coord.enlist("reputation_service", app.state.reputation_service)
+        if app.state.delegation_service is not None:
+            await coord.enlist("delegation_service", app.state.delegation_service)
 
-def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
+
+async def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
     """Expose governance brick services from factory BrickServices (Issue #2129).
 
     Governance services are created in ``factory._boot_brick_services()`` and
@@ -364,6 +374,18 @@ def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
 
     if app.state.governance_response_service is not None:
         logger.info("[GOV] Governance services wired from brick_dict")
+
+    # Enlist with coordinator (Q1 — no lifecycle)
+    coord = svc.service_coordinator
+    if coord is not None:
+        for _name, _attr in (
+            ("governance_anomaly", app.state.governance_anomaly_service),
+            ("governance_collusion", app.state.governance_collusion_service),
+            ("governance_graph", app.state.governance_graph_service),
+            ("governance_response", app.state.governance_response_service),
+        ):
+            if _attr is not None:
+                await coord.enlist(_name, _attr)
 
 
 async def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
@@ -394,6 +416,11 @@ async def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None
             app.state.agent_event_log = _factory_event_log
         else:
             app.state.agent_event_log = AgentEventLog(record_store=_sandbox_rs)
+
+        # Enlist agent_event_log with coordinator (Q1 — no lifecycle)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("agent_event_log", app.state.agent_event_log)
 
         # Create SandboxManager
         sandbox_config = svc.nexus_config
@@ -454,11 +481,15 @@ async def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None
         )
 
 
-def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> None:
     """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
     snap_svc = svc.snapshot_service
     app.state.transactional_snapshot_service = snap_svc
     if snap_svc is not None:
+        # Enlist with coordinator (Q1 — no lifecycle)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("transactional_snapshot", snap_svc)
         logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
     else:
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")

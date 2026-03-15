@@ -103,8 +103,7 @@ class EncryptedStorage(DelegatingBackend):
     CAS dedup guarantee: same key + same plaintext → identical ciphertext
     → same hash. Key rotation breaks dedup for previously-written content.
 
-    Encryption/decryption errors raise exceptions (DelegatingBackend
-    catches and returns HandlerResponse.error).
+    Encryption/decryption errors raise exceptions.
     """
 
     # Fixed zero nonce for GCM-SIV deterministic encryption.

@@ -22,7 +22,7 @@ Example:
 import logging
 from datetime import UTC
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.backend import Backend, FileInfo
 from nexus.backends.base.registry import (
@@ -35,17 +35,11 @@ from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
-from nexus.lib.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.context import OperationContext
 
 logger = logging.getLogger(__name__)
-
-# Type alias for casting error responses (service methods only)
-_ListDictResponse = HandlerResponse[list[dict[str, Any]]]
-_DictResponse = HandlerResponse[dict[str, Any]]
-_ListStrResponse = HandlerResponse[list[str]]
 
 
 @register_connector(
@@ -449,12 +443,11 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except (PermissionError, OSError):
             return []
 
-    @timed_response
     def list_dir_detailed(
         self,
         path: str = "",
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[list[dict[str, Any]]]:
+    ) -> list[dict[str, Any]]:
         """List directory contents with detailed metadata.
 
         Args:
@@ -462,17 +455,18 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context (unused for local connector)
 
         Returns:
-            HandlerResponse with list of entry dicts on success
+            List of entry dicts with name, type, size, modified.
+
+        Raises:
+            NexusFileNotFoundError: If directory does not exist.
+            BackendError: If path is not a directory, permission denied, or OS error.
         """
         physical = self._to_physical(path)
 
         if not physical.exists():
-            return cast(
-                _ListDictResponse,
-                HandlerResponse.not_found(path=path, message=f"Directory not found: {path}"),
-            )
+            raise NexusFileNotFoundError(path, message=f"Directory not found: {path}")
         if not physical.is_dir():
-            return cast(_ListDictResponse, HandlerResponse.error(f"Not a directory: {path}"))
+            raise BackendError(f"Not a directory: {path}", backend="local_connector", path=path)
 
         try:
             entries = []
@@ -491,13 +485,11 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
                     # Skip entries we can't stat (broken symlinks, permission issues)
                     logger.debug(f"Skipping unreadable entry: {item}")
                     continue
-            return HandlerResponse.ok(data=entries)
+            return entries
         except PermissionError as e:
-            return cast(
-                _ListDictResponse, HandlerResponse.error(f"Permission denied: {path} - {e}")
-            )
+            raise BackendError(f"Permission denied: {path} - {e}") from e
         except OSError as e:
-            return cast(_ListDictResponse, HandlerResponse.error(f"List error: {e}"))
+            raise BackendError(f"List error: {e}") from e
 
     def exists(
         self,
@@ -538,23 +530,23 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except BackendError:
             return False
 
-    @timed_response
     def delete(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Delete file or empty directory.
 
         Args:
             path: Virtual path relative to mount point
             context: Operation context (unused)
 
-        Returns:
-            HandlerResponse with None on success, error message on failure
+        Raises:
+            BackendError: If read-only, permission denied, or OS error.
+            NexusFileNotFoundError: If path does not exist.
         """
         if self.readonly:
-            return HandlerResponse.error("Backend is read-only")
+            raise BackendError("Backend is read-only", backend="local_connector", path=path)
 
         physical = self._to_physical(path)
 
@@ -564,12 +556,13 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             elif physical.is_dir():
                 physical.rmdir()  # Only empty directories
             else:
-                return HandlerResponse.not_found(path=path, message=f"Path not found: {path}")
-            return HandlerResponse.ok(data=None)
+                raise NexusFileNotFoundError(path, message=f"Path not found: {path}")
+        except NexusFileNotFoundError:
+            raise
         except PermissionError as e:
-            return HandlerResponse.error(f"Permission denied: {path} - {e}")
+            raise BackendError(f"Permission denied: {path} - {e}") from e
         except OSError as e:
-            return HandlerResponse.error(f"Delete error: {e}")
+            raise BackendError(f"Delete error: {e}") from e
 
     # =========================================================================
     # Backend Interface Methods (for Backend abstract base class)
@@ -697,13 +690,12 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """Check if path is a directory."""
         return self.is_dir(path, context)
 
-    @timed_response
     def rename(
         self,
         old_path: str,
         new_path: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[None]:
+    ) -> None:
         """Rename/move a file or directory.
 
         Args:
@@ -711,34 +703,33 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             new_path: New virtual path
             context: Operation context (unused)
 
-        Returns:
-            HandlerResponse with None on success
+        Raises:
+            BackendError: If read-only, permission denied, or OS error.
+            NexusFileNotFoundError: If source path does not exist.
         """
         if self.readonly:
-            return HandlerResponse.error("Backend is read-only")
+            raise BackendError("Backend is read-only", backend="local_connector", path=old_path)
 
         old_physical = self._to_physical(old_path)
         new_physical = self._to_physical(new_path)
 
         if not old_physical.exists():
-            return HandlerResponse.not_found(path=old_path, message=f"Source not found: {old_path}")
+            raise NexusFileNotFoundError(old_path, message=f"Source not found: {old_path}")
 
         try:
             # Create parent directories for destination if needed
             new_physical.parent.mkdir(parents=True, exist_ok=True)
             old_physical.rename(new_physical)
-            return HandlerResponse.ok(data=None)
         except PermissionError as e:
-            return HandlerResponse.error(f"Permission denied: {e}")
+            raise BackendError(f"Permission denied: {e}") from e
         except OSError as e:
-            return HandlerResponse.error(f"Rename error: {e}")
+            raise BackendError(f"Rename error: {e}") from e
 
-    @timed_response
     def stat(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """Get file or directory metadata.
 
         Args:
@@ -746,41 +737,39 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context (unused)
 
         Returns:
-            HandlerResponse with stat dict containing size, mtime, ctime, is_dir
+            Dict with size, mtime, ctime, atime, is_dir, is_file, is_symlink, mode.
+
+        Raises:
+            NexusFileNotFoundError: If path does not exist.
+            BackendError: If permission denied or OS error.
         """
         physical = self._to_physical(path)
 
         if not physical.exists():
-            return cast(
-                _DictResponse,
-                HandlerResponse.not_found(path=path, message=f"Path not found: {path}"),
-            )
+            raise NexusFileNotFoundError(path, message=f"Path not found: {path}")
 
         try:
             st = physical.stat(follow_symlinks=self.follow_symlinks)
-            return HandlerResponse.ok(
-                data={
-                    "size": st.st_size,
-                    "mtime": st.st_mtime,
-                    "ctime": st.st_ctime,
-                    "atime": st.st_atime,
-                    "is_dir": physical.is_dir(),
-                    "is_file": physical.is_file(),
-                    "is_symlink": physical.is_symlink(),
-                    "mode": st.st_mode,
-                }
-            )
+            return {
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+                "ctime": st.st_ctime,
+                "atime": st.st_atime,
+                "is_dir": physical.is_dir(),
+                "is_file": physical.is_file(),
+                "is_symlink": physical.is_symlink(),
+                "mode": st.st_mode,
+            }
         except PermissionError as e:
-            return cast(_DictResponse, HandlerResponse.error(f"Permission denied: {path} - {e}"))
+            raise BackendError(f"Permission denied: {path} - {e}") from e
         except OSError as e:
-            return cast(_DictResponse, HandlerResponse.error(f"Stat error: {e}"))
+            raise BackendError(f"Stat error: {e}") from e
 
-    @timed_response
     def glob(
         self,
         pattern: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse[list[str]]:
+    ) -> list[str]:
         """Find files matching a glob pattern.
 
         Args:
@@ -788,7 +777,10 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context (unused)
 
         Returns:
-            HandlerResponse with list of matching paths (relative to mount)
+            List of matching paths (relative to mount).
+
+        Raises:
+            BackendError: If permission denied or OS error.
         """
         try:
             matches = []
@@ -800,8 +792,8 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
                 except ValueError:
                     # Path escapes mount root (shouldn't happen with glob)
                     continue
-            return HandlerResponse.ok(data=sorted(matches))
+            return sorted(matches)
         except PermissionError as e:
-            return cast(_ListStrResponse, HandlerResponse.error(f"Permission denied: {e}"))
+            raise BackendError(f"Permission denied: {e}") from e
         except OSError as e:
-            return cast(_ListStrResponse, HandlerResponse.error(f"Glob error: {e}"))
+            raise BackendError(f"Glob error: {e}") from e

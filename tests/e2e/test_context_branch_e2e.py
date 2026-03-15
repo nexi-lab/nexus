@@ -25,7 +25,6 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
 )
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.lib.response import HandlerResponse
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
 from nexus.system_services.workspace.context_branch import ContextBranchService
@@ -45,12 +44,14 @@ class InMemoryCAS:
         data = self.blobs.get(content_hash)
         if data is None:
             raise FileNotFoundError(f"CAS blob {content_hash} not found")
-        return HandlerResponse.ok(data)
+        return data
 
     def write_content(self, data, context=None):
+        from nexus.core.object_store import WriteResult
+
         h = hashlib.sha256(data).hexdigest()
         self.blobs[h] = data
-        return HandlerResponse.ok(h)
+        return WriteResult(content_hash=h, size=len(data))
 
 
 class InMemoryMetadata:

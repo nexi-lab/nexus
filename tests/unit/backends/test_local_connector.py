@@ -253,20 +253,17 @@ class TestDirectoryOperations:
         (tmp_path / "to_delete.txt").write_text("content")
 
         connector = LocalConnectorBackend(tmp_path)
-        result = connector.delete("to_delete.txt")
+        connector.delete("to_delete.txt")
 
-        assert result.success is True
         assert not (tmp_path / "to_delete.txt").exists()
 
     def test_delete_readonly_rejected(self, tmp_path: Path):
-        """Should reject delete in readonly mode."""
+        """Should raise BackendError in readonly mode."""
         (tmp_path / "file.txt").write_text("content")
 
         connector = LocalConnectorBackend(tmp_path, readonly=True)
-        result = connector.delete("file.txt")
-
-        assert result.success is False
-        assert "read-only" in result.error_message
+        with pytest.raises(BackendError, match="read-only"):
+            connector.delete("file.txt")
 
 
 class TestBackendInterface:

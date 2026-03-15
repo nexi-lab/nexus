@@ -20,8 +20,13 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.exceptions import (
+    AccessDeniedError,
+    NexusFileNotFoundError,
+    ServiceUnavailableError,
+    ValidationError,
+)
 from nexus.lib.path_utils import validate_path
-from nexus.lib.response import HandlerResponse
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -146,7 +151,7 @@ class ShareLinkService:
         max_access_count: int | None = None,
         password: str | None = None,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse:
+    ) -> dict[str, Any]:
         """Create a shareable link for a file or directory.
 
         Args:
@@ -158,34 +163,35 @@ class ShareLinkService:
             context: Operation context with user/zone info
 
         Returns:
-            HandlerResponse with link_id and share URL on success
+            Dict with link_id, path, permission_level, etc.
+
+        Raises:
+            ValidationError: If permission_level or path is invalid.
+            AccessDeniedError: If user lacks write permission.
+            ServiceUnavailableError: If database not configured.
         """
 
-        def _impl() -> HandlerResponse:
+        def _impl() -> dict[str, Any]:
             from nexus.storage.models import ShareLinkModel
 
             valid_levels = {"viewer", "editor", "owner"}
             if permission_level not in valid_levels:
-                return HandlerResponse.error(
+                raise ValidationError(
                     f"Invalid permission_level '{permission_level}'. Must be one of: {valid_levels}",
-                    code=400,
-                    is_expected=True,
                 )
 
             try:
                 normalized_path = validate_path(path, allow_root=True)
             except Exception as e:
-                return HandlerResponse.error(f"Invalid path: {e}", code=400, is_expected=True)
+                raise ValidationError(f"Invalid path: {e}") from e
 
             zone_id, created_by, _ = self._extract_context_info(context)
 
             # Check write permission to create share link
             if self._enforce_permissions:
                 if not context:
-                    return HandlerResponse.error(
+                    raise AccessDeniedError(
                         "Permission denied: authentication required to create share links",
-                        code=403,
-                        is_expected=True,
                     )
                 has_perm = self._gw.rebac_check(
                     subject=("user", created_by),
@@ -194,10 +200,8 @@ class ShareLinkService:
                     zone_id=zone_id,
                 )
                 if not has_perm:
-                    return HandlerResponse.error(
+                    raise AccessDeniedError(
                         f"Permission denied: cannot create share link for '{path}'",
-                        code=403,
-                        is_expected=True,
                     )
 
             # Determine resource type
@@ -224,38 +228,33 @@ class ShareLinkService:
                 else self._gw.session_factory
             )
             if session_factory is None:
-                return HandlerResponse.error("Database not configured for share links", code=500)
+                raise ServiceUnavailableError("Database not configured for share links")
 
-            try:
-                with session_factory() as session:
-                    share_link = ShareLinkModel(
-                        resource_type=resource_type,
-                        resource_id=normalized_path,
-                        permission_level=permission_level,
-                        zone_id=zone_id,
-                        created_by=created_by,
-                        password_hash=password_hash,
-                        expires_at=expires_at,
-                        max_access_count=max_access_count,
-                        access_count=0,
-                    )
-                    session.add(share_link)
-                    session.commit()
+            with session_factory() as session:
+                share_link = ShareLinkModel(
+                    resource_type=resource_type,
+                    resource_id=normalized_path,
+                    permission_level=permission_level,
+                    zone_id=zone_id,
+                    created_by=created_by,
+                    password_hash=password_hash,
+                    expires_at=expires_at,
+                    max_access_count=max_access_count,
+                    access_count=0,
+                )
+                session.add(share_link)
+                session.commit()
 
-                    return HandlerResponse.ok(
-                        {
-                            "link_id": share_link.link_id,
-                            "path": normalized_path,
-                            "permission_level": permission_level,
-                            "resource_type": resource_type,
-                            "expires_at": expires_at.isoformat() if expires_at else None,
-                            "max_access_count": max_access_count,
-                            "has_password": password_hash is not None,
-                            "created_at": share_link.created_at.isoformat(),
-                        }
-                    )
-            except Exception as e:
-                return HandlerResponse.error(f"Failed to create share link: {e}", code=500)
+                return {
+                    "link_id": share_link.link_id,
+                    "path": normalized_path,
+                    "permission_level": permission_level,
+                    "resource_type": resource_type,
+                    "expires_at": expires_at.isoformat() if expires_at else None,
+                    "max_access_count": max_access_count,
+                    "has_password": password_hash is not None,
+                    "created_at": share_link.created_at.isoformat(),
+                }
 
         return await asyncio.to_thread(_impl)
 
@@ -264,7 +263,7 @@ class ShareLinkService:
         self,
         link_id: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse:
+    ) -> dict[str, Any]:
         """Get details of a share link.
 
         Args:
@@ -272,10 +271,14 @@ class ShareLinkService:
             context: Operation context (used for authorization)
 
         Returns:
-            HandlerResponse with link details
+            Dict with link details.
+
+        Raises:
+            NexusFileNotFoundError: If link not found.
+            ServiceUnavailableError: If database not configured.
         """
 
-        def _impl() -> HandlerResponse:
+        def _impl() -> dict[str, Any]:
             from sqlalchemy import select
 
             from nexus.storage.models import ShareLinkModel
@@ -286,57 +289,50 @@ class ShareLinkService:
                 else self._gw.session_factory
             )
             if session_factory is None:
-                return HandlerResponse.error("Database not configured", code=500)
+                raise ServiceUnavailableError("Database not configured")
 
-            try:
-                with session_factory() as session:
-                    link = (
-                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
-                        .scalars()
-                        .first()
+            with session_factory() as session:
+                link = (
+                    session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
+                    .scalars()
+                    .first()
+                )
+                if not link:
+                    raise NexusFileNotFoundError(
+                        link_id, message=f"Share link not found: {link_id}"
                     )
-                    if not link:
-                        return HandlerResponse.error(
-                            f"Share link not found: {link_id}", code=404, is_expected=True
-                        )
 
-                    zone_id, user_id, is_admin = self._extract_context_info(context)
-                    is_owner = link.created_by == user_id and link.zone_id == zone_id
+                zone_id, user_id, is_admin = self._extract_context_info(context)
+                is_owner = link.created_by == user_id and link.zone_id == zone_id
 
-                    if not is_owner and not is_admin:
-                        return HandlerResponse.ok(
-                            {
-                                "link_id": link.link_id,
-                                "resource_type": link.resource_type,
-                                "permission_level": link.permission_level,
-                                "is_valid": link.is_valid(),
-                                "has_password": link.password_hash is not None,
-                            }
-                        )
+                if not is_owner and not is_admin:
+                    return {
+                        "link_id": link.link_id,
+                        "resource_type": link.resource_type,
+                        "permission_level": link.permission_level,
+                        "is_valid": link.is_valid(),
+                        "has_password": link.password_hash is not None,
+                    }
 
-                    return HandlerResponse.ok(
-                        {
-                            "link_id": link.link_id,
-                            "path": link.resource_id,
-                            "resource_type": link.resource_type,
-                            "permission_level": link.permission_level,
-                            "zone_id": link.zone_id,
-                            "created_by": link.created_by,
-                            "created_at": link.created_at.isoformat(),
-                            "expires_at": link.expires_at.isoformat() if link.expires_at else None,
-                            "max_access_count": link.max_access_count,
-                            "access_count": link.access_count,
-                            "last_accessed_at": (
-                                link.last_accessed_at.isoformat() if link.last_accessed_at else None
-                            ),
-                            "revoked_at": link.revoked_at.isoformat() if link.revoked_at else None,
-                            "revoked_by": link.revoked_by,
-                            "has_password": link.password_hash is not None,
-                            "is_valid": link.is_valid(),
-                        }
-                    )
-            except Exception as e:
-                return HandlerResponse.error(f"Failed to get share link: {e}", code=500)
+                return {
+                    "link_id": link.link_id,
+                    "path": link.resource_id,
+                    "resource_type": link.resource_type,
+                    "permission_level": link.permission_level,
+                    "zone_id": link.zone_id,
+                    "created_by": link.created_by,
+                    "created_at": link.created_at.isoformat(),
+                    "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+                    "max_access_count": link.max_access_count,
+                    "access_count": link.access_count,
+                    "last_accessed_at": (
+                        link.last_accessed_at.isoformat() if link.last_accessed_at else None
+                    ),
+                    "revoked_at": link.revoked_at.isoformat() if link.revoked_at else None,
+                    "revoked_by": link.revoked_by,
+                    "has_password": link.password_hash is not None,
+                    "is_valid": link.is_valid(),
+                }
 
         return await asyncio.to_thread(_impl)
 
@@ -347,7 +343,7 @@ class ShareLinkService:
         include_revoked: bool = False,
         include_expired: bool = False,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse:
+    ) -> dict[str, Any]:
         """List share links created by the current user.
 
         Args:
@@ -357,10 +353,13 @@ class ShareLinkService:
             context: Operation context with user/zone info
 
         Returns:
-            HandlerResponse with list of share links
+            Dict with links list and count.
+
+        Raises:
+            ServiceUnavailableError: If database not configured.
         """
 
-        def _impl() -> HandlerResponse:
+        def _impl() -> dict[str, Any]:
             from sqlalchemy import select
 
             from nexus.storage.models import ShareLinkModel
@@ -371,54 +370,50 @@ class ShareLinkService:
                 else self._gw.session_factory
             )
             if session_factory is None:
-                return HandlerResponse.error("Database not configured", code=500)
+                raise ServiceUnavailableError("Database not configured")
 
             zone_id, user_id, is_admin = self._extract_context_info(context)
 
-            try:
-                with session_factory() as session:
-                    stmt = select(ShareLinkModel).filter_by(zone_id=zone_id)
+            with session_factory() as session:
+                stmt = select(ShareLinkModel).filter_by(zone_id=zone_id)
 
-                    if not is_admin:
-                        stmt = stmt.filter_by(created_by=user_id)
+                if not is_admin:
+                    stmt = stmt.filter_by(created_by=user_id)
 
-                    if path:
-                        normalized_path = validate_path(path, allow_root=True)
-                        stmt = stmt.filter_by(resource_id=normalized_path)
+                if path:
+                    normalized_path = validate_path(path, allow_root=True)
+                    stmt = stmt.filter_by(resource_id=normalized_path)
 
-                    if not include_revoked:
-                        stmt = stmt.filter(ShareLinkModel.revoked_at.is_(None))
+                if not include_revoked:
+                    stmt = stmt.filter(ShareLinkModel.revoked_at.is_(None))
 
-                    if not include_expired:
-                        now = datetime.now(UTC)
-                        stmt = stmt.filter(
-                            (ShareLinkModel.expires_at.is_(None))
-                            | (ShareLinkModel.expires_at >= now)
-                        )
+                if not include_expired:
+                    now = datetime.now(UTC)
+                    stmt = stmt.filter(
+                        (ShareLinkModel.expires_at.is_(None)) | (ShareLinkModel.expires_at >= now)
+                    )
 
-                    stmt = stmt.order_by(ShareLinkModel.created_at.desc())
-                    links = session.execute(stmt).scalars().all()
+                stmt = stmt.order_by(ShareLinkModel.created_at.desc())
+                links = session.execute(stmt).scalars().all()
 
-                    result = [
-                        {
-                            "link_id": link.link_id,
-                            "path": link.resource_id,
-                            "resource_type": link.resource_type,
-                            "permission_level": link.permission_level,
-                            "created_at": link.created_at.isoformat(),
-                            "expires_at": link.expires_at.isoformat() if link.expires_at else None,
-                            "max_access_count": link.max_access_count,
-                            "access_count": link.access_count,
-                            "has_password": link.password_hash is not None,
-                            "is_valid": link.is_valid(),
-                            "revoked_at": link.revoked_at.isoformat() if link.revoked_at else None,
-                        }
-                        for link in links
-                    ]
+                result = [
+                    {
+                        "link_id": link.link_id,
+                        "path": link.resource_id,
+                        "resource_type": link.resource_type,
+                        "permission_level": link.permission_level,
+                        "created_at": link.created_at.isoformat(),
+                        "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+                        "max_access_count": link.max_access_count,
+                        "access_count": link.access_count,
+                        "has_password": link.password_hash is not None,
+                        "is_valid": link.is_valid(),
+                        "revoked_at": link.revoked_at.isoformat() if link.revoked_at else None,
+                    }
+                    for link in links
+                ]
 
-                    return HandlerResponse.ok({"links": result, "count": len(result)})
-            except Exception as e:
-                return HandlerResponse.error(f"Failed to list share links: {e}", code=500)
+                return {"links": result, "count": len(result)}
 
         return await asyncio.to_thread(_impl)
 
@@ -427,7 +422,7 @@ class ShareLinkService:
         self,
         link_id: str,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse:
+    ) -> dict[str, Any]:
         """Revoke a share link, immediately disabling access.
 
         Args:
@@ -435,10 +430,16 @@ class ShareLinkService:
             context: Operation context with user/zone info
 
         Returns:
-            HandlerResponse indicating success/failure
+            Dict with link_id, revoked status, timestamps.
+
+        Raises:
+            NexusFileNotFoundError: If link not found.
+            AccessDeniedError: If user is not owner or admin.
+            ValidationError: If link is already revoked.
+            ServiceUnavailableError: If database not configured.
         """
 
-        def _impl() -> HandlerResponse:
+        def _impl() -> dict[str, Any]:
             from sqlalchemy import select
 
             from nexus.storage.models import ShareLinkModel
@@ -449,49 +450,40 @@ class ShareLinkService:
                 else self._gw.session_factory
             )
             if session_factory is None:
-                return HandlerResponse.error("Database not configured", code=500)
+                raise ServiceUnavailableError("Database not configured")
 
             zone_id, user_id, is_admin = self._extract_context_info(context)
 
-            try:
-                with session_factory() as session:
-                    link = (
-                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
-                        .scalars()
-                        .first()
+            with session_factory() as session:
+                link = (
+                    session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
+                    .scalars()
+                    .first()
+                )
+                if not link:
+                    raise NexusFileNotFoundError(
+                        link_id, message=f"Share link not found: {link_id}"
                     )
-                    if not link:
-                        return HandlerResponse.error(
-                            f"Share link not found: {link_id}", code=404, is_expected=True
-                        )
 
-                    is_owner = link.created_by == user_id and link.zone_id == zone_id
-                    if not is_owner and not is_admin:
-                        return HandlerResponse.error(
-                            "Permission denied: only link creator or admin can revoke",
-                            code=403,
-                            is_expected=True,
-                        )
-
-                    if link.revoked_at is not None:
-                        return HandlerResponse.error(
-                            "Share link is already revoked", code=400, is_expected=True
-                        )
-
-                    link.revoked_at = datetime.now(UTC)
-                    link.revoked_by = user_id
-                    session.commit()
-
-                    return HandlerResponse.ok(
-                        {
-                            "link_id": link_id,
-                            "revoked": True,
-                            "revoked_at": link.revoked_at.isoformat(),
-                            "revoked_by": link.revoked_by,
-                        }
+                is_owner = link.created_by == user_id and link.zone_id == zone_id
+                if not is_owner and not is_admin:
+                    raise AccessDeniedError(
+                        "Permission denied: only link creator or admin can revoke",
                     )
-            except Exception as e:
-                return HandlerResponse.error(f"Failed to revoke share link: {e}", code=500)
+
+                if link.revoked_at is not None:
+                    raise ValidationError("Share link is already revoked")
+
+                link.revoked_at = datetime.now(UTC)
+                link.revoked_by = user_id
+                session.commit()
+
+                return {
+                    "link_id": link_id,
+                    "revoked": True,
+                    "revoked_at": link.revoked_at.isoformat(),
+                    "revoked_by": link.revoked_by,
+                }
 
         return await asyncio.to_thread(_impl)
 
@@ -503,7 +495,7 @@ class ShareLinkService:
         ip_address: str | None = None,
         user_agent: str | None = None,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse:
+    ) -> dict[str, Any]:
         """Validate and access a shared resource via share link.
 
         This method:
@@ -520,10 +512,16 @@ class ShareLinkService:
             context: Optional operation context (for authenticated access)
 
         Returns:
-            HandlerResponse with resource access info or error
+            Dict with link_id, path, permission_level, access_granted, etc.
+
+        Raises:
+            NexusFileNotFoundError: If link not found.
+            AccessDeniedError: If link revoked, expired, or wrong password.
+            ValidationError: If access limit exceeded or password required.
+            ServiceUnavailableError: If database not configured.
         """
 
-        def _impl() -> HandlerResponse:
+        def _impl() -> dict[str, Any]:
             from sqlalchemy import select
 
             from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
@@ -534,7 +532,7 @@ class ShareLinkService:
                 else self._gw.session_factory
             )
             if session_factory is None:
-                return HandlerResponse.error("Database not configured", code=500)
+                raise ServiceUnavailableError("Database not configured")
 
             accessed_by_user_id = None
             accessed_by_zone_id = None
@@ -544,115 +542,94 @@ class ShareLinkService:
                 )
                 accessed_by_zone_id = getattr(context, "zone_id", None)
 
-            try:
-                with session_factory() as session:
-                    link = (
-                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
-                        .scalars()
-                        .first()
+            with session_factory() as session:
+                link = (
+                    session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
+                    .scalars()
+                    .first()
+                )
+
+                def log_access(success: bool, failure_reason: str | None = None) -> None:
+                    log_entry = ShareLinkAccessLogModel(
+                        link_id=link_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                        success=1 if success else 0,
+                        failure_reason=failure_reason,
+                        accessed_by_user_id=accessed_by_user_id,
+                        accessed_by_zone_id=accessed_by_zone_id,
                     )
+                    session.add(log_entry)
 
-                    def log_access(success: bool, failure_reason: str | None = None) -> None:
-                        log_entry = ShareLinkAccessLogModel(
-                            link_id=link_id,
-                            ip_address=ip_address,
-                            user_agent=user_agent,
-                            success=1 if success else 0,
-                            failure_reason=failure_reason,
-                            accessed_by_user_id=accessed_by_user_id,
-                            accessed_by_zone_id=accessed_by_zone_id,
-                        )
-                        session.add(log_entry)
+                if not link:
+                    raise NexusFileNotFoundError(link_id, message="Share link not found or invalid")
 
-                    if not link:
-                        return HandlerResponse.error(
-                            "Share link not found or invalid", code=404, is_expected=True
-                        )
+                if link.revoked_at is not None:
+                    log_access(False, "revoked")
+                    session.commit()
+                    raise AccessDeniedError("Share link has been revoked")
 
-                    if link.revoked_at is not None:
-                        log_access(False, "revoked")
+                now = datetime.now(UTC)
+                if link.expires_at is not None and link.expires_at < now:
+                    log_access(False, "expired")
+                    session.commit()
+                    raise AccessDeniedError("Share link has expired")
+
+                if link.password_hash is not None:
+                    if not password:
+                        log_access(False, "password_required")
                         session.commit()
-                        return HandlerResponse.error(
-                            "Share link has been revoked", code=403, is_expected=True
-                        )
-
-                    now = datetime.now(UTC)
-                    if link.expires_at is not None and link.expires_at < now:
-                        log_access(False, "expired")
+                        raise ValidationError("Password required for this share link")
+                    if not self._verify_password(password, link.password_hash):
+                        log_access(False, "wrong_password")
                         session.commit()
-                        return HandlerResponse.error(
-                            "Share link has expired", code=410, is_expected=True
+                        raise AccessDeniedError("Incorrect password")
+
+                # Atomic access-count increment with row-level guard
+                # to prevent races from exceeding max_access_count.
+                if link.max_access_count is not None:
+                    from sqlalchemy import update as sa_update
+
+                    from nexus.storage.models import ShareLinkModel as SLM
+
+                    result = session.execute(
+                        sa_update(SLM)
+                        .where(SLM.link_id == link_id)
+                        .where(
+                            (SLM.max_access_count.is_(None))
+                            | (SLM.access_count < SLM.max_access_count)
                         )
-
-                    if link.password_hash is not None:
-                        if not password:
-                            log_access(False, "password_required")
-                            session.commit()
-                            return HandlerResponse.error(
-                                "Password required for this share link",
-                                code=401,
-                                is_expected=True,
-                            )
-                        if not self._verify_password(password, link.password_hash):
-                            log_access(False, "wrong_password")
-                            session.commit()
-                            return HandlerResponse.error(
-                                "Incorrect password", code=401, is_expected=True
-                            )
-
-                    # Atomic access-count increment with row-level guard
-                    # to prevent races from exceeding max_access_count.
-                    if link.max_access_count is not None:
-                        from sqlalchemy import update as sa_update
-
-                        from nexus.storage.models import ShareLinkModel as SLM
-
-                        result = session.execute(
-                            sa_update(SLM)
-                            .where(SLM.link_id == link_id)
-                            .where(
-                                (SLM.max_access_count.is_(None))
-                                | (SLM.access_count < SLM.max_access_count)
-                            )
-                            .values(
-                                access_count=SLM.access_count + 1,
-                                last_accessed_at=now,
-                            )
+                        .values(
+                            access_count=SLM.access_count + 1,
+                            last_accessed_at=now,
                         )
-                        if getattr(result, "rowcount", 0) == 0:
-                            log_access(False, "limit_exceeded")
-                            session.commit()
-                            return HandlerResponse.error(
-                                "Share link access limit exceeded", code=429, is_expected=True
-                            )
-                        log_access(True)
-                        session.commit()
-                        # Refresh to get updated values
-                        session.refresh(link)
-                    else:
-                        link.access_count += 1
-                        link.last_accessed_at = now
-                        log_access(True)
-                        session.commit()
-
-                    return HandlerResponse.ok(
-                        {
-                            "link_id": link.link_id,
-                            "path": link.resource_id,
-                            "resource_type": link.resource_type,
-                            "permission_level": link.permission_level,
-                            "zone_id": link.zone_id,
-                            "access_granted": True,
-                            "remaining_accesses": (
-                                link.max_access_count - link.access_count
-                                if link.max_access_count
-                                else None
-                            ),
-                            "expires_at": link.expires_at.isoformat() if link.expires_at else None,
-                        }
                     )
-            except Exception as e:
-                return HandlerResponse.error(f"Failed to access share link: {e}", code=500)
+                    if getattr(result, "rowcount", 0) == 0:
+                        log_access(False, "limit_exceeded")
+                        session.commit()
+                        raise ValidationError("Share link access limit exceeded")
+                    log_access(True)
+                    session.commit()
+                    # Refresh to get updated values
+                    session.refresh(link)
+                else:
+                    link.access_count += 1
+                    link.last_accessed_at = now
+                    log_access(True)
+                    session.commit()
+
+                return {
+                    "link_id": link.link_id,
+                    "path": link.resource_id,
+                    "resource_type": link.resource_type,
+                    "permission_level": link.permission_level,
+                    "zone_id": link.zone_id,
+                    "access_granted": True,
+                    "remaining_accesses": (
+                        link.max_access_count - link.access_count if link.max_access_count else None
+                    ),
+                    "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+                }
 
         return await asyncio.to_thread(_impl)
 
@@ -662,7 +639,7 @@ class ShareLinkService:
         link_id: str,
         limit: int = 100,
         context: "OperationContext | None" = None,
-    ) -> HandlerResponse:
+    ) -> dict[str, Any]:
         """Get access logs for a share link.
 
         Args:
@@ -671,10 +648,15 @@ class ShareLinkService:
             context: Operation context (must be owner or admin)
 
         Returns:
-            HandlerResponse with access log entries
+            Dict with logs list and count.
+
+        Raises:
+            NexusFileNotFoundError: If link not found.
+            AccessDeniedError: If user is not owner or admin.
+            ServiceUnavailableError: If database not configured.
         """
 
-        def _impl() -> HandlerResponse:
+        def _impl() -> dict[str, Any]:
             from sqlalchemy import select
 
             from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
@@ -685,57 +667,52 @@ class ShareLinkService:
                 else self._gw.session_factory
             )
             if session_factory is None:
-                return HandlerResponse.error("Database not configured", code=500)
+                raise ServiceUnavailableError("Database not configured")
 
             zone_id, user_id, is_admin = self._extract_context_info(context)
 
-            try:
-                with session_factory() as session:
-                    link = (
-                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
-                        .scalars()
-                        .first()
-                    )
-                    if not link:
-                        return HandlerResponse.error(
-                            f"Share link not found: {link_id}", code=404, is_expected=True
-                        )
-
-                    is_owner = link.created_by == user_id and link.zone_id == zone_id
-                    if not is_owner and not is_admin:
-                        return HandlerResponse.error(
-                            "Permission denied: only link creator or admin can view logs",
-                            code=403,
-                            is_expected=True,
-                        )
-
-                    logs = (
-                        session.execute(
-                            select(ShareLinkAccessLogModel)
-                            .filter_by(link_id=link_id)
-                            .order_by(ShareLinkAccessLogModel.accessed_at.desc())
-                            .limit(limit)
-                        )
-                        .scalars()
-                        .all()
+            with session_factory() as session:
+                link = (
+                    session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
+                    .scalars()
+                    .first()
+                )
+                if not link:
+                    raise NexusFileNotFoundError(
+                        link_id, message=f"Share link not found: {link_id}"
                     )
 
-                    result = [
-                        {
-                            "log_id": log.log_id,
-                            "accessed_at": log.accessed_at.isoformat(),
-                            "ip_address": log.ip_address,
-                            "user_agent": log.user_agent,
-                            "success": bool(log.success),
-                            "failure_reason": log.failure_reason,
-                            "accessed_by_user_id": log.accessed_by_user_id,
-                            "accessed_by_zone_id": log.accessed_by_zone_id,
-                        }
-                        for log in logs
-                    ]
+                is_owner = link.created_by == user_id and link.zone_id == zone_id
+                if not is_owner and not is_admin:
+                    raise AccessDeniedError(
+                        "Permission denied: only link creator or admin can view logs",
+                    )
 
-                    return HandlerResponse.ok({"logs": result, "count": len(result)})
-            except Exception as e:
-                return HandlerResponse.error(f"Failed to get access logs: {e}", code=500)
+                logs = (
+                    session.execute(
+                        select(ShareLinkAccessLogModel)
+                        .filter_by(link_id=link_id)
+                        .order_by(ShareLinkAccessLogModel.accessed_at.desc())
+                        .limit(limit)
+                    )
+                    .scalars()
+                    .all()
+                )
+
+                result = [
+                    {
+                        "log_id": log.log_id,
+                        "accessed_at": log.accessed_at.isoformat(),
+                        "ip_address": log.ip_address,
+                        "user_agent": log.user_agent,
+                        "success": bool(log.success),
+                        "failure_reason": log.failure_reason,
+                        "accessed_by_user_id": log.accessed_by_user_id,
+                        "accessed_by_zone_id": log.accessed_by_zone_id,
+                    }
+                    for log in logs
+                ]
+
+                return {"logs": result, "count": len(result)}
 
         return await asyncio.to_thread(_impl)

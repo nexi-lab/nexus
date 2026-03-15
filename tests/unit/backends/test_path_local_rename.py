@@ -11,7 +11,8 @@ from tests.helpers.dict_metastore import DictMetastore
 _LARGE_CONTENT = b"x" * (INLINE_THRESHOLD + 1)
 
 
-def test_directory_rename_path_local(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_directory_rename_path_local(tmp_path: Path):
     """Verify that renaming a directory also renames it in the physical storage for PathLocalBackend."""
     data_dir = tmp_path / "data"
     data_dir.mkdir()
@@ -19,7 +20,7 @@ def test_directory_rename_path_local(tmp_path: Path):
     backend = PathLocalBackend(root_path=data_dir)
     from nexus.core.config import PermissionConfig
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=DictMetastore(),
         record_store=None,
@@ -27,20 +28,20 @@ def test_directory_rename_path_local(tmp_path: Path):
     )
 
     # Create a directory and a file inside it (large content to ensure backend storage)
-    nx.sys_mkdir("/old_dir")
-    nx.sys_write("/old_dir/test.txt", _LARGE_CONTENT)
+    await nx.sys_mkdir("/old_dir")
+    await nx.sys_write("/old_dir/test.txt", _LARGE_CONTENT)
 
     # Check physical existence
     assert (data_dir / "old_dir").is_dir()
     assert (data_dir / "old_dir" / "test.txt").is_file()
 
     # Rename the directory
-    nx.sys_rename("/old_dir", "/new_dir")
+    await nx.sys_rename("/old_dir", "/new_dir")
 
     # Check metadata
-    assert nx.sys_access("/new_dir")
-    assert nx.sys_access("/new_dir/test.txt")
-    assert not nx.sys_access("/old_dir")
+    assert await nx.sys_access("/new_dir")
+    assert await nx.sys_access("/new_dir/test.txt")
+    assert not await nx.sys_access("/old_dir")
 
     # Check physical existence — THIS IS WHAT WE WANT TO VERIFY
     assert (data_dir / "new_dir").is_dir()

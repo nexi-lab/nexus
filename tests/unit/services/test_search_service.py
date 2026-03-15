@@ -8,7 +8,7 @@ PermissionEnforcer, PathRouter, and NexusFSGateway.
 """
 
 import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -62,7 +62,7 @@ def mock_router():
 def mock_gateway():
     """Create a mock NexusFSGateway."""
     gw = MagicMock()
-    gw.read_file.return_value = b"test content"
+    gw.read_file = AsyncMock(return_value=b"test content")
     gw.read_bulk.return_value = {}
     gw.get_routing_params.return_value = (None, None, False)
     gw.has_descendant_access.return_value = True
@@ -232,23 +232,23 @@ class TestIgnorePatterns:
 class TestGatewayDelegation:
     """Tests for gateway delegation methods."""
 
-    def test_read_delegates_to_gateway(self, service, mock_gateway):
+    async def test_read_delegates_to_gateway(self, service, mock_gateway):
         """_read delegates to gateway.read_file."""
         mock_gateway.read_file.return_value = b"file content"
-        result = service._read("/test.txt")
+        result = await service._read("/test.txt")
         assert result == b"file content"
         mock_gateway.read_file.assert_called_once()
 
-    def test_read_raises_without_gateway(self, mock_metadata_store):
+    async def test_read_raises_without_gateway(self, mock_metadata_store):
         """_read raises NotImplementedError without gateway."""
         svc = SearchService(metadata_store=mock_metadata_store)
         with pytest.raises(NotImplementedError, match="gateway not provided"):
-            svc._read("/test.txt")
+            await svc._read("/test.txt")
 
-    def test_read_converts_str_to_bytes(self, service, mock_gateway):
+    async def test_read_converts_str_to_bytes(self, service, mock_gateway):
         """_read converts string response to bytes."""
         mock_gateway.read_file.return_value = "string content"
-        result = service._read("/test.txt")
+        result = await service._read("/test.txt")
         assert result == b"string content"
 
     def test_read_bulk_delegates_to_gateway(self, service, mock_gateway):
@@ -433,17 +433,17 @@ class TestCrossZoneCache:
 class TestGrepValidation:
     """Tests for grep input validation."""
 
-    def test_invalid_regex_raises_value_error(self, service, context):
+    async def test_invalid_regex_raises_value_error(self, service, context):
         """grep raises ValueError for invalid regex patterns."""
         with pytest.raises(ValueError, match="Invalid regex pattern"):
-            service.grep(pattern="[invalid", context=context)
+            await service.grep(pattern="[invalid", context=context)
 
-    def test_valid_regex_accepted(self, service, mock_metadata_store, context):
+    async def test_valid_regex_accepted(self, service, mock_metadata_store, context):
         """grep accepts valid regex patterns."""
         mock_metadata_store.list_paths.return_value = []
         # list() returns empty so grep short-circuits
         with patch.object(service, "list", return_value=[]):
-            results = service.grep(pattern="def\\s+\\w+", context=context)
+            results = await service.grep(pattern="def\\s+\\w+", context=context)
             assert results == []
 
 

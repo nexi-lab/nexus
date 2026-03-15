@@ -34,14 +34,14 @@ class IOHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def open(self, path: str, flags: int) -> int:
+    async def open(self, path: str, flags: int) -> int:
         """Open a file and return a file descriptor."""
         ctx = self._ctx
 
         original_path, view_type = parse_virtual_path_for_fuse(ctx, path)
 
         # A1-B: Validate namespace visibility at open time
-        check_namespace_visible(ctx, original_path)
+        await check_namespace_visible(ctx, original_path)
 
         # Check if file exists - use cache first
         content_cached = ctx.cache.get_content(original_path) is not None
@@ -55,7 +55,7 @@ class IOHandler:
             )
         else:
             logger.debug(f"[FUSE-OPEN] Cache MISS for {original_path}, checking remote")
-            if not ctx.nexus_fs.sys_access(original_path):
+            if not await ctx.nexus_fs.sys_access(original_path):
                 raise FuseOSError(errno.ENOENT)
 
         # Generate file descriptor (thread-safe)
@@ -98,7 +98,7 @@ class IOHandler:
 
         return fd
 
-    def read(self, _path: str, size: int, offset: int, fh: int) -> bytes:
+    async def read(self, _path: str, size: int, offset: int, fh: int) -> bytes:
         """Read file content."""
         ctx = self._ctx
 
@@ -134,11 +134,13 @@ class IOHandler:
         except (ImportError, ValueError):
             pass
 
-        content = get_file_content(ctx, original_path, view_type, cache_priority=cache_priority)
+        content = await get_file_content(
+            ctx, original_path, view_type, cache_priority=cache_priority
+        )
 
         return content[offset : offset + size]
 
-    def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
+    async def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
         """Write file content.
 
         Uses per-path locking to serialize concurrent writes and prevent
@@ -175,8 +177,8 @@ class IOHandler:
         with lock:
             # Read existing content
             existing_content = b""
-            if ctx.nexus_fs.sys_access(original_path):
-                raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
+            if await ctx.nexus_fs.sys_access(original_path):
+                raw_content = await ctx.nexus_fs.sys_read(original_path, context=ctx.context)
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 existing_content = raw_content
 
@@ -189,7 +191,7 @@ class IOHandler:
             # Write via Rust or Python
             ok, _ = try_rust(ctx, "WRITE", "sys_write", original_path, new_content)
             if not ok:
-                ctx.nexus_fs.sys_write(original_path, new_content, context=ctx.context)
+                await ctx.nexus_fs.sys_write(original_path, new_content, context=ctx.context)
 
         # Invalidate caches
         ctx.cache.invalidate_path(original_path)

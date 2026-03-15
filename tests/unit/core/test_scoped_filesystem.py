@@ -3,7 +3,7 @@
 Tests path scoping/unscoping for multi-zone isolation.
 """
 
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
@@ -12,11 +12,27 @@ from nexus.bricks.filesystem.scoped_filesystem import ScopedFilesystem
 
 @pytest.fixture
 def mock_fs() -> MagicMock:
-    """Create a mock filesystem."""
+    """Create a mock filesystem with async syscall support."""
     fs = MagicMock()
     # Set up property mocks
     type(fs).agent_id = PropertyMock(return_value="test-agent")
     type(fs).zone_id = PropertyMock(return_value="test-zone")
+    # Make syscalls and Tier 2 methods async (they're now async def)
+    fs.sys_read = AsyncMock()
+    fs.sys_write = AsyncMock()
+    fs.sys_stat = AsyncMock()
+    fs.sys_setattr = AsyncMock()
+    fs.sys_unlink = AsyncMock()
+    fs.sys_rename = AsyncMock()
+    fs.sys_mkdir = AsyncMock()
+    fs.sys_rmdir = AsyncMock()
+    fs.sys_readdir = AsyncMock()
+    fs.sys_access = AsyncMock()
+    fs.sys_is_directory = AsyncMock()
+    fs.read = AsyncMock()
+    fs.write = AsyncMock()
+    fs.append = AsyncMock()
+    fs.write_batch = AsyncMock()
     return fs
 
 
@@ -130,10 +146,11 @@ class TestProperties:
 class TestCoreFileOperations:
     """Test core file operation path scoping."""
 
-    def test_read(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_read(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test sys_read with path scoping (POSIX pread returns bytes)."""
         mock_fs.sys_read.return_value = b"content"
-        result = scoped_fs.sys_read("/workspace/file.txt")
+        result = await scoped_fs.sys_read("/workspace/file.txt")
         mock_fs.sys_read.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
             count=None,
@@ -142,24 +159,28 @@ class TestCoreFileOperations:
         )
         assert result == b"content"
 
-    def test_read_with_metadata(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_read_with_metadata(
+        self, scoped_fs: ScopedFilesystem, mock_fs: AsyncMock
+    ) -> None:
         """Test read() with metadata unscopes path (Tier 2 convenience)."""
         mock_fs.read.return_value = {
             "content": b"data",
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "etag": "abc",
         }
-        result = scoped_fs.read("/workspace/file.txt", return_metadata=True)
+        result = await scoped_fs.read("/workspace/file.txt", return_metadata=True)
         assert result["path"] == "/workspace/file.txt"
 
-    def test_write(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_write(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test sys_write with path scoping (returns dict with bytes_written + created)."""
         mock_fs.sys_write.return_value = {
             "path": "/zones/team_12/users/user_1/workspace/file.txt",
             "bytes_written": 7,
             "created": True,
         }
-        result = scoped_fs.sys_write("/workspace/file.txt", b"content")
+        result = await scoped_fs.sys_write("/workspace/file.txt", b"content")
         mock_fs.sys_write.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt",
             b"content",
@@ -169,49 +190,54 @@ class TestCoreFileOperations:
         )
         assert result["bytes_written"] == 7
 
-    def test_write_batch(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_write_batch(self, scoped_fs: ScopedFilesystem, mock_fs: AsyncMock) -> None:
         """Test write_batch with path scoping."""
         mock_fs.write_batch.return_value = [
             {"path": "/zones/team_12/users/user_1/workspace/a.txt"},
             {"path": "/zones/team_12/users/user_1/workspace/b.txt"},
         ]
         files = [("/workspace/a.txt", b"a"), ("/workspace/b.txt", b"b")]
-        result = scoped_fs.write_batch(files)
+        result = await scoped_fs.write_batch(files)
         mock_fs.write_batch.assert_called_once()
         call_args = mock_fs.write_batch.call_args[0][0]
         assert call_args[0][0] == "/zones/team_12/users/user_1/workspace/a.txt"
         assert result[0]["path"] == "/workspace/a.txt"
 
-    def test_append(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_append(self, scoped_fs: ScopedFilesystem, mock_fs: AsyncMock) -> None:
         """Test append with path scoping."""
         mock_fs.append.return_value = {"path": "/zones/team_12/users/user_1/workspace/log.txt"}
-        scoped_fs.append("/workspace/log.txt", b"log entry")
+        await scoped_fs.append("/workspace/log.txt", b"log entry")
         mock_fs.append.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/log.txt",
             b"log entry",
             context=None,
         )
 
-    def test_delete(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_delete(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test delete with path scoping."""
-        scoped_fs.sys_unlink("/workspace/file.txt")
+        await scoped_fs.sys_unlink("/workspace/file.txt")
         mock_fs.sys_unlink.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt", None
         )
 
-    def test_rename(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_rename(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test rename with path scoping for both paths."""
-        scoped_fs.sys_rename("/workspace/old.txt", "/workspace/new.txt")
+        await scoped_fs.sys_rename("/workspace/old.txt", "/workspace/new.txt")
         mock_fs.sys_rename.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/old.txt",
             "/zones/team_12/users/user_1/workspace/new.txt",
             None,
         )
 
-    def test_exists(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_exists(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test exists with path scoping."""
         mock_fs.sys_access.return_value = True
-        result = scoped_fs.sys_access("/workspace/file.txt")
+        result = await scoped_fs.sys_access("/workspace/file.txt")
         mock_fs.sys_access.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt", None
         )
@@ -221,22 +247,24 @@ class TestCoreFileOperations:
 class TestFileDiscoveryOperations:
     """Test file discovery operation path scoping."""
 
-    def test_list_paths_only(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_list_paths_only(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test list returns unscoped paths."""
         mock_fs.sys_readdir.return_value = [
             "/zones/team_12/users/user_1/workspace/a.txt",
             "/zones/team_12/users/user_1/workspace/b.txt",
         ]
-        result = scoped_fs.sys_readdir("/workspace")
+        result = await scoped_fs.sys_readdir("/workspace")
         assert result == ["/workspace/a.txt", "/workspace/b.txt"]
 
-    def test_list_with_details(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_list_with_details(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test list with details unscopes paths."""
         mock_fs.sys_readdir.return_value = [
             {"path": "/zones/team_12/users/user_1/workspace/a.txt", "size": 100},
             {"path": "/zones/team_12/users/user_1/workspace/b.txt", "size": 200},
         ]
-        result = scoped_fs.sys_readdir("/workspace", details=True)
+        result = await scoped_fs.sys_readdir("/workspace", details=True)
         assert result[0]["path"] == "/workspace/a.txt"
         assert result[1]["path"] == "/workspace/b.txt"
 
@@ -269,24 +297,27 @@ class TestFileDiscoveryOperations:
 class TestDirectoryOperations:
     """Test directory operation path scoping."""
 
-    def test_mkdir(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_mkdir(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test mkdir with path scoping."""
-        scoped_fs.sys_mkdir("/workspace/new_dir", parents=True, exist_ok=True)
+        await scoped_fs.sys_mkdir("/workspace/new_dir", parents=True, exist_ok=True)
         mock_fs.sys_mkdir.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/new_dir", True, True, None
         )
 
-    def test_rmdir(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_rmdir(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test rmdir with path scoping."""
-        scoped_fs.sys_rmdir("/workspace/old_dir", recursive=True)
+        await scoped_fs.sys_rmdir("/workspace/old_dir", recursive=True)
         mock_fs.sys_rmdir.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/old_dir", True, None
         )
 
-    def test_is_directory(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_is_directory(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test is_directory with path scoping."""
         mock_fs.sys_is_directory.return_value = True
-        result = scoped_fs.sys_is_directory("/workspace/dir")
+        result = await scoped_fs.sys_is_directory("/workspace/dir")
         mock_fs.sys_is_directory.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/dir", None
         )

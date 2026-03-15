@@ -100,7 +100,7 @@ class TestZoneScopedPathUnscopingE2E:
     then verifies RPC responses strip the internal prefixes.
     """
 
-    def _write_zone_scoped_file(
+    async def _write_zone_scoped_file(
         self,
         nexus_fs: NexusFS,
         zone_id: str,
@@ -114,7 +114,7 @@ class TestZoneScopedPathUnscopingE2E:
         /zone/{zone_id}/user:{user_id}/{resource_path}
         """
         internal_path = f"/zone/{zone_id}/user:{user_id}/{resource_path}"
-        nexus_fs.sys_write(internal_path, content)
+        await nexus_fs.sys_write(internal_path, content)
 
     def test_list_strips_zone_prefix_from_provisioned_paths(
         self, rpc_client: TestClient, nexus_fs_local: NexusFS
@@ -232,12 +232,13 @@ class TestTenantPrefixUnscopingE2E:
     Directly inserts metadata with /tenant: prefix to simulate legacy data.
     """
 
-    def test_list_strips_tenant_prefix(
+    @pytest.mark.asyncio
+    async def test_list_strips_tenant_prefix(
         self, rpc_client: TestClient, nexus_fs_local: NexusFS
     ) -> None:
         """Legacy /tenant:default/... paths get stripped by list()."""
         # Write using legacy tenant-prefixed path
-        nexus_fs_local.sys_write(
+        await nexus_fs_local.sys_write(
             "/tenant:default/connector/gcs_demo/auto-test.txt",
             b"test data",
         )

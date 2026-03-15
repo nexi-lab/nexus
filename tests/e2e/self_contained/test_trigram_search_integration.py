@@ -124,7 +124,8 @@ class TestStrategySelection:
 class TestTrigramFallback:
     """Test fallback behavior when trigram search fails."""
 
-    def test_try_grep_with_trigram_no_index(self):
+    @pytest.mark.asyncio
+    async def test_try_grep_with_trigram_no_index(self):
         """Should return None when index doesn't exist."""
         from nexus.bricks.search.search_service import SearchService
 
@@ -132,7 +133,7 @@ class TestTrigramFallback:
         service._gw = None
         service._permission_enforcer = None
 
-        result = service._try_grep_with_trigram(
+        result = await service._try_grep_with_trigram(
             pattern="hello",
             ignore_case=False,
             max_results=100,
@@ -140,7 +141,8 @@ class TestTrigramFallback:
         )
         assert result is None
 
-    def test_try_grep_with_trigram_success(self, built_index):
+    @pytest.mark.asyncio
+    async def test_try_grep_with_trigram_success(self, built_index):
         """Should return results when index exists."""
         from nexus.bricks.search.search_service import SearchService
 
@@ -148,7 +150,7 @@ class TestTrigramFallback:
         service._gw = None
         service._permission_enforcer = None
 
-        def _mock_read(path, context=None):
+        async def _mock_read(path, context=None):
             """Read from real filesystem for integration test."""
             with open(path, "rb") as f:
                 return f.read()
@@ -157,7 +159,7 @@ class TestTrigramFallback:
             patch.object(trigram_fast, "get_index_path", return_value=built_index),
             patch.object(service, "_read", side_effect=_mock_read),
         ):
-            result = service._try_grep_with_trigram(
+            result = await service._try_grep_with_trigram(
                 pattern="hello",
                 ignore_case=False,
                 max_results=100,

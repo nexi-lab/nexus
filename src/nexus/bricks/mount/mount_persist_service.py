@@ -6,21 +6,22 @@ in the database for persistence across server restarts.
 Phase 2: Mount Mixin Refactoring
 Extracted from: nexus_fs_mounts.py (persistence methods)
 
-All methods are synchronous. FastAPI auto-wraps with to_thread.
+Mount activation methods (save_mount, load_mount, load_all_mounts) are async
+because MountCoreService.add_mount is async. Database-only methods remain sync.
 
 Example:
     ```python
     persist_service = MountPersistService(mount_manager, mount_service, sync_service)
 
     # Save mount config
-    mount_id = persist_service.save_mount(
+    mount_id = await persist_service.save_mount(
         mount_point="/mnt/gcs",
         backend_type="path_gcs",
         backend_config={"bucket": "my-bucket"},
     )
 
     # Load on startup
-    result = persist_service.load_all_mounts()
+    result = await persist_service.load_all_mounts()
     print(f"Loaded {result['loaded']} mounts")
     ```
 """
@@ -42,9 +43,11 @@ logger = logging.getLogger(__name__)
 
 
 class MountPersistService:
-    """Handles mount configuration persistence (SYNC).
+    """Handles mount configuration persistence.
 
-    All methods are synchronous. FastAPI auto-wraps with to_thread.
+    Mount activation methods (save_mount, load_mount, load_all_mounts)
+    are async because MountCoreService.add_mount is async.
+    Database-only methods remain sync.
     """
 
     def __init__(
@@ -75,7 +78,7 @@ class MountPersistService:
                 "Mount manager not available. Ensure NexusFS is initialized with a database."
             )
 
-    def save_mount(
+    async def save_mount(
         self,
         mount_point: str,
         backend_type: str,
@@ -131,7 +134,7 @@ class MountPersistService:
 
         # Also activate the mount via MountCoreService
         try:
-            self._mounts.add_mount(
+            await self._mounts.add_mount(
                 mount_point=mount_point,
                 backend_type=backend_type,
                 backend_config=backend_config,
@@ -144,7 +147,7 @@ class MountPersistService:
 
         return mount_id
 
-    def load_mount(
+    async def load_mount(
         self,
         mount_point: str,
         context: "OperationContext | None" = None,
@@ -181,7 +184,7 @@ class MountPersistService:
         if isinstance(backend_config, str):
             backend_config = json.loads(backend_config)
 
-        return self._mounts.add_mount(
+        return await self._mounts.add_mount(
             mount_point=config["mount_point"],
             backend_type=config["backend_type"],
             backend_config=backend_config,
@@ -190,7 +193,7 @@ class MountPersistService:
             context=context,
         )
 
-    def load_all_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
+    async def load_all_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
         """Load all saved mount configurations.
 
         Args:
@@ -231,7 +234,7 @@ class MountPersistService:
                     backend_config = json.loads(backend_config)
 
                 # Activate the mount
-                self._mounts.add_mount(
+                await self._mounts.add_mount(
                     mount_point=mount_point,
                     backend_type=mount["backend_type"],
                     backend_config=backend_config,

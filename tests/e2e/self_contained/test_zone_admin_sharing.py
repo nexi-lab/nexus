@@ -27,14 +27,14 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, None, None]:
+async def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with ReBAC enabled and permissions enforced."""
     rebac_db = temp_dir / "rebac.db"
     monkeypatch.setenv("NEXUS_DATABASE_URL", f"sqlite:///{rebac_db}")
     monkeypatch.delenv("POSTGRES_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -52,7 +52,7 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
     )
 
     # Create /zone directory for zone-based paths
-    nx.sys_mkdir("/zone", context=OperationContext(**admin_context))
+    await nx.sys_mkdir("/zone", context=OperationContext(**admin_context))
 
     yield nx
     nx.close()
@@ -61,7 +61,8 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
 class TestZoneAdminSharing:
     """Test that zone admins can share resources within their zone."""
 
-    def test_zone_admin_can_share_file(self, nx: NexusFS) -> None:
+    @pytest.mark.asyncio
+    async def test_zone_admin_can_share_file(self, nx: NexusFS) -> None:
         """Test that zone admin can share files in their zone."""
         # Setup: Create zone structure
         zone_id = "acme"
@@ -69,11 +70,11 @@ class TestZoneAdminSharing:
 
         # Create zone directory (using Windows-compatible path)
         zone_path = f"/zone/{zone_id}"
-        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
+        await nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
 
         # Create a file owned by a regular user (bob)
         file_path = f"{zone_path}/doc.txt"
-        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.service("rebac").rebac_create_sync(
@@ -111,7 +112,8 @@ class TestZoneAdminSharing:
             object=("file", file_path),
         )
 
-    def test_zone_owner_can_share_file(self, nx: NexusFS) -> None:
+    @pytest.mark.asyncio
+    async def test_zone_owner_can_share_file(self, nx: NexusFS) -> None:
         """Test that zone owner can share files (owners are also admins)."""
         # Setup
         zone_id = "acme"
@@ -119,11 +121,11 @@ class TestZoneAdminSharing:
 
         # Create zone directory
         zone_path = f"/zone/{zone_id}"
-        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
+        await nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
 
         # Create a file
         file_path = f"{zone_path}/doc.txt"
-        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership of file
         nx.service("rebac").rebac_create_sync(
@@ -154,16 +156,17 @@ class TestZoneAdminSharing:
 
         assert share_id
 
-    def test_zone_admin_cannot_share_in_other_zone(self, nx: NexusFS) -> None:
+    @pytest.mark.asyncio
+    async def test_zone_admin_cannot_share_in_other_zone(self, nx: NexusFS) -> None:
         """Test that zone admin cannot share files in other zones."""
         # Setup: Create two zones
         admin_context = {"user_id": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone1
         zone1_path = "/zone/acme"
-        nx.sys_mkdir(zone1_path, context=OperationContext(**admin_context))
+        await nx.sys_mkdir(zone1_path, context=OperationContext(**admin_context))
         file1_path = f"{zone1_path}/doc.txt"
-        nx.sys_write(file1_path, b"test", context=OperationContext(**admin_context))
+        await nx.sys_write(file1_path, b"test", context=OperationContext(**admin_context))
         nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_owner",
@@ -173,9 +176,9 @@ class TestZoneAdminSharing:
 
         # Create zone2
         zone2_path = "/zone/techcorp"
-        nx.sys_mkdir(zone2_path, context=OperationContext(**admin_context))
+        await nx.sys_mkdir(zone2_path, context=OperationContext(**admin_context))
         file2_path = f"{zone2_path}/doc.txt"
-        nx.sys_write(file2_path, b"test", context=OperationContext(**admin_context))
+        await nx.sys_write(file2_path, b"test", context=OperationContext(**admin_context))
         nx.service("rebac").rebac_create_sync(
             subject=("user", "dave"),
             relation="direct_owner",
@@ -203,7 +206,8 @@ class TestZoneAdminSharing:
                 context=alice_context,
             )
 
-    def test_regular_member_cannot_share(self, nx: NexusFS) -> None:
+    @pytest.mark.asyncio
+    async def test_regular_member_cannot_share(self, nx: NexusFS) -> None:
         """Test that regular zone member cannot share files they don't own."""
         # Setup
         zone_id = "acme"
@@ -211,9 +215,9 @@ class TestZoneAdminSharing:
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
-        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
+        await nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.service("rebac").rebac_create_sync(
@@ -244,7 +248,8 @@ class TestZoneAdminSharing:
                 context=alice_context,
             )
 
-    def test_zone_admin_can_share_with_group(self, nx: NexusFS) -> None:
+    @pytest.mark.asyncio
+    async def test_zone_admin_can_share_with_group(self, nx: NexusFS) -> None:
         """Test that zone admin can share files with groups."""
         # Setup
         zone_id = "acme"
@@ -252,9 +257,9 @@ class TestZoneAdminSharing:
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
-        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
+        await nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.service("rebac").rebac_create_sync(
@@ -315,7 +320,8 @@ class TestZoneAdminSharing:
 class TestBackwardCompatibility:
     """Test that existing owner-based sharing still works."""
 
-    def test_owner_can_still_share(self, nx: NexusFS) -> None:
+    @pytest.mark.asyncio
+    async def test_owner_can_still_share(self, nx: NexusFS) -> None:
         """Test that file owners can still share their files."""
         # Setup
         zone_id = "acme"
@@ -323,9 +329,9 @@ class TestBackwardCompatibility:
 
         # Create zone directory and file
         zone_path = f"/zone/{zone_id}"
-        nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
+        await nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.service("rebac").rebac_create_sync(

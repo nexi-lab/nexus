@@ -78,7 +78,7 @@ def _rpc_post(
     return resp.status_code, resp.json()
 
 
-def _create_nexus_fs(
+async def _create_nexus_fs(
     tmp_path: Path,
     *,
     enforce_permissions: bool = False,
@@ -96,7 +96,7 @@ def _create_nexus_fs(
 
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / f'records{suffix}.db'}")
 
-    return create_nexus_fs(
+    return await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -126,17 +126,17 @@ def _session_factory(_db_engine):
 
 
 @pytest.fixture()
-def nexus_fs_enforced(tmp_path: Path):
+async def nexus_fs_enforced(tmp_path: Path):
     """NexusFS with enforce_permissions=True and services (ReBAC, etc.)."""
-    nx = _create_nexus_fs(tmp_path, enforce_permissions=True, suffix="_enforced")
+    nx = await _create_nexus_fs(tmp_path, enforce_permissions=True, suffix="_enforced")
     yield nx
     nx.close()
 
 
 @pytest.fixture()
-def nexus_fs_open(tmp_path: Path):
+async def nexus_fs_open(tmp_path: Path):
     """NexusFS with enforce_permissions=False (for writing seed data)."""
-    nx = _create_nexus_fs(tmp_path, enforce_permissions=False, suffix="_open")
+    nx = await _create_nexus_fs(tmp_path, enforce_permissions=False, suffix="_open")
     yield nx
     nx.close()
 
@@ -203,11 +203,12 @@ def _make_app_with_static_key(
 class TestAPIKeyLifecycle:
     """Verify create / authenticate / expire / revoke lifecycle for DB API keys."""
 
-    def test_valid_api_key_authenticates(
+    @pytest.mark.asyncio
+    async def test_valid_api_key_authenticates(
         self, tmp_path: Path, nexus_fs_open: NexusFS, _session_factory, monkeypatch
     ):
         """Create a key, send a request with it, expect 200."""
-        nexus_fs_open.sys_write("/hello.txt", b"world")
+        await nexus_fs_open.sys_write("/hello.txt", b"world")
 
         with _session_factory() as session:
             _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -321,38 +322,41 @@ class TestZoneIsolation:
             is_admin=True,
         )
 
-    def test_user_cannot_read_other_zone_files(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_user_cannot_read_other_zone_files(self, nexus_fs_enforced: NexusFS):
         """Write file in zone A path, read from zone B context => denied."""
         nx = nexus_fs_enforced
         zone_a_path = "/zone/zone_a/user:admin/secret.txt"
 
         # Write as admin in zone_a
         admin_a = self._admin_ctx("zone_a")
-        nx.sys_write(zone_a_path, b"top secret", context=admin_a)
+        await nx.sys_write(zone_a_path, b"top secret", context=admin_a)
 
         # Attempt read from zone_b context (admin but NO MANAGE_ZONES capability)
         admin_b = self._admin_ctx("zone_b")
         with pytest.raises(PermissionError, match="[Cc]ross.zone"):
-            nx.sys_read(zone_a_path, context=admin_b)
+            await nx.sys_read(zone_a_path, context=admin_b)
 
-    def test_user_cannot_list_other_zone_files(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_user_cannot_list_other_zone_files(self, nexus_fs_enforced: NexusFS):
         """Listing zone A prefix from zone B context must return empty (no visibility)."""
         nx = nexus_fs_enforced
         admin_a = self._admin_ctx("zone_a")
-        nx.sys_write("/zone/zone_a/user:admin/data.csv", b"a,b,c", context=admin_a)
+        await nx.sys_write("/zone/zone_a/user:admin/data.csv", b"a,b,c", context=admin_a)
 
         # List from zone_b context at the zone_a prefix — returns empty, no cross-zone visibility
         admin_b = self._admin_ctx("zone_b")
-        results = nx.sys_readdir("/zone/zone_a/", context=admin_b)
+        results = await nx.sys_readdir("/zone/zone_a/", context=admin_b)
         assert len(results) == 0, "Cross-zone list should return no results"
 
-    def test_cross_zone_write_denied(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_cross_zone_write_denied(self, nexus_fs_enforced: NexusFS):
         """Writing to zone A path from zone B context must be denied."""
         nx = nexus_fs_enforced
         admin_b = self._admin_ctx("zone_b")
 
         with pytest.raises(PermissionError, match="[Cc]ross.zone"):
-            nx.sys_write(
+            await nx.sys_write(
                 "/zone/zone_a/user:admin/injected.txt",
                 b"evil",
                 context=admin_b,
@@ -384,7 +388,8 @@ class TestPermissionEnforcement:
 
         assert status == 401, f"Expected 401, got {status}: {body}"
 
-    def test_read_requires_permission(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_read_requires_permission(self, nexus_fs_enforced: NexusFS):
         """An unprivileged user cannot read a file they have no grant for."""
         nx = nexus_fs_enforced
         admin_ctx = OperationContext(
@@ -393,7 +398,7 @@ class TestPermissionEnforcement:
             zone_id="root",
             is_admin=True,
         )
-        nx.sys_write("/workspace/confidential.txt", b"secret stuff", context=admin_ctx)
+        await nx.sys_write("/workspace/confidential.txt", b"secret stuff", context=admin_ctx)
 
         # Unprivileged user with no grants
         user_ctx = OperationContext(
@@ -402,9 +407,10 @@ class TestPermissionEnforcement:
             zone_id="root",
         )
         with pytest.raises(PermissionError, match="[Aa]ccess denied"):
-            nx.sys_read("/workspace/confidential.txt", context=user_ctx)
+            await nx.sys_read("/workspace/confidential.txt", context=user_ctx)
 
-    def test_write_requires_permission(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_write_requires_permission(self, nexus_fs_enforced: NexusFS):
         """A viewer (read-only grant) cannot write to a file."""
         nx = nexus_fs_enforced
         file_path = "/zone/default/user:admin/readme.md"
@@ -415,7 +421,7 @@ class TestPermissionEnforcement:
             zone_id="root",
             is_admin=True,
         )
-        nx.sys_write(file_path, b"# readme", context=admin_ctx)
+        await nx.sys_write(file_path, b"# readme", context=admin_ctx)
 
         # Create a read-only grant for "viewer" via ReBAC
         if nx._rebac_manager:
@@ -433,14 +439,15 @@ class TestPermissionEnforcement:
         )
 
         # Read should succeed (viewer has read permission)
-        content = nx.sys_read(file_path, context=viewer_ctx)
+        content = await nx.sys_read(file_path, context=viewer_ctx)
         assert content == b"# readme"
 
         # Write should fail (viewer has no write permission)
         with pytest.raises(PermissionError, match="[Aa]ccess denied"):
-            nx.sys_write(file_path, b"overwritten!", context=viewer_ctx)
+            await nx.sys_write(file_path, b"overwritten!", context=viewer_ctx)
 
-    def test_edit_denied_without_permission(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_denied_without_permission(self, nexus_fs_enforced: NexusFS):
         """An unprivileged user cannot edit a file they have no grant for."""
         nx = nexus_fs_enforced
         admin_ctx = OperationContext(
@@ -450,7 +457,7 @@ class TestPermissionEnforcement:
             is_admin=True,
         )
         file_path = "/workspace/protected.py"
-        nx.sys_write(file_path, b"def foo():\n    return 1\n", context=admin_ctx)
+        await nx.sys_write(file_path, b"def foo():\n    return 1\n", context=admin_ctx)
 
         # Unprivileged user with no grants
         user_ctx = OperationContext(
@@ -465,7 +472,8 @@ class TestPermissionEnforcement:
                 context=user_ctx,
             )
 
-    def test_edit_requires_write_permission(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_requires_write_permission(self, nexus_fs_enforced: NexusFS):
         """A viewer (read-only grant) cannot edit a file — edit needs write permission."""
         nx = nexus_fs_enforced
         file_path = "/zone/default/user:admin/editable.py"
@@ -476,7 +484,7 @@ class TestPermissionEnforcement:
             zone_id="root",
             is_admin=True,
         )
-        nx.sys_write(file_path, b"def hello():\n    return 'world'\n", context=admin_ctx)
+        await nx.sys_write(file_path, b"def hello():\n    return 'world'\n", context=admin_ctx)
 
         # Create a read-only grant for "viewer" via ReBAC
         if nx._rebac_manager:
@@ -494,7 +502,7 @@ class TestPermissionEnforcement:
         )
 
         # Read should succeed (viewer has read permission)
-        content = nx.sys_read(file_path, context=viewer_ctx)
+        content = await nx.sys_read(file_path, context=viewer_ctx)
         assert content == b"def hello():\n    return 'world'\n"
 
         # Edit should fail — edit delegates to write(), viewer has no write permission
@@ -506,10 +514,11 @@ class TestPermissionEnforcement:
             )
 
         # Verify file unchanged
-        content_after = nx.sys_read(file_path, context=viewer_ctx)
+        content_after = await nx.sys_read(file_path, context=viewer_ctx)
         assert content_after == b"def hello():\n    return 'world'\n"
 
-    def test_edit_succeeds_with_write_permission(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_edit_succeeds_with_write_permission(self, nexus_fs_enforced: NexusFS):
         """A user with write permission can successfully edit a file."""
         nx = nexus_fs_enforced
         file_path = "/zone/default/user:admin/writable.py"
@@ -520,7 +529,7 @@ class TestPermissionEnforcement:
             zone_id="root",
             is_admin=True,
         )
-        nx.sys_write(file_path, b"x = 1\n", context=admin_ctx)
+        await nx.sys_write(file_path, b"x = 1\n", context=admin_ctx)
 
         # Create a write grant for "editor" via ReBAC
         if nx._rebac_manager:
@@ -547,7 +556,7 @@ class TestPermissionEnforcement:
         assert result["applied_count"] == 1
 
         # Verify content changed
-        content = nx.sys_read(file_path, context=editor_ctx)
+        content = await nx.sys_read(file_path, context=editor_ctx)
         assert content == b"x = 42\n"
 
 
@@ -567,7 +576,8 @@ class TestStaleSessionDetection:
       3. Mismatch → StaleSessionError (409 Conflict)
     """
 
-    def test_stale_jwt_rejected_by_permission_enforcer(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_stale_jwt_rejected_by_permission_enforcer(self, nexus_fs_enforced: NexusFS):
         """Agent JWT with outdated generation is rejected during permission check."""
         from nexus.contracts.exceptions import StaleSessionError
         from nexus.contracts.types import OperationContext
@@ -581,7 +591,7 @@ class TestStaleSessionDetection:
             zone_id="root",
             is_admin=True,
         )
-        nx.sys_write("/workspace/agent-test.txt", b"hello", context=admin_ctx)
+        await nx.sys_write("/workspace/agent-test.txt", b"hello", context=admin_ctx)
 
         # Grant the agent read access via ReBAC
         if nx._rebac_manager:
@@ -618,11 +628,12 @@ class TestStaleSessionDetection:
                 agent_generation=3,  # Stale: JWT says 3, DB says 5
             )
             with pytest.raises(StaleSessionError):
-                nx.sys_read("/workspace/agent-test.txt", context=stale_ctx)
+                await nx.sys_read("/workspace/agent-test.txt", context=stale_ctx)
         finally:
             perm_enforcer.agent_registry = original_registry
 
-    def test_current_jwt_generation_passes(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_current_jwt_generation_passes(self, nexus_fs_enforced: NexusFS):
         """Agent JWT with current generation is NOT rejected."""
         from nexus.contracts.types import OperationContext
 
@@ -634,7 +645,7 @@ class TestStaleSessionDetection:
             zone_id="root",
             is_admin=True,
         )
-        nx.sys_write("/workspace/agent-ok.txt", b"ok", context=admin_ctx)
+        await nx.sys_write("/workspace/agent-ok.txt", b"ok", context=admin_ctx)
 
         if nx._rebac_manager:
             nx._rebac_manager.rebac_write(
@@ -666,12 +677,13 @@ class TestStaleSessionDetection:
                 agent_id="agent_current",
                 agent_generation=5,  # Current: matches DB
             )
-            content = nx.sys_read("/workspace/agent-ok.txt", context=current_ctx)
+            content = await nx.sys_read("/workspace/agent-ok.txt", context=current_ctx)
             assert content == b"ok"
         finally:
             perm_enforcer.agent_registry = original_registry
 
-    def test_deleted_agent_jwt_rejected(self, nexus_fs_enforced: NexusFS):
+    @pytest.mark.asyncio
+    async def test_deleted_agent_jwt_rejected(self, nexus_fs_enforced: NexusFS):
         """Agent deleted from registry but JWT still valid should be rejected."""
         from nexus.contracts.exceptions import StaleSessionError
         from nexus.contracts.types import OperationContext
@@ -684,7 +696,7 @@ class TestStaleSessionDetection:
             zone_id="root",
             is_admin=True,
         )
-        nx.sys_write("/workspace/deleted-agent.txt", b"secret", context=admin_ctx)
+        await nx.sys_write("/workspace/deleted-agent.txt", b"secret", context=admin_ctx)
 
         from unittest.mock import MagicMock
 
@@ -707,7 +719,7 @@ class TestStaleSessionDetection:
                 agent_generation=3,  # From old JWT
             )
             with pytest.raises(StaleSessionError):
-                nx.sys_read("/workspace/deleted-agent.txt", context=deleted_ctx)
+                await nx.sys_read("/workspace/deleted-agent.txt", context=deleted_ctx)
         finally:
             perm_enforcer.agent_registry = original_registry
 

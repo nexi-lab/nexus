@@ -26,7 +26,7 @@ class NexusFSUserProvisioner:
     def __init__(self, nexus_fs: Any) -> None:
         self._nx = nexus_fs
 
-    def provision_user(
+    async def provision_user(
         self,
         *,
         user_id: str,
@@ -49,7 +49,7 @@ class NexusFSUserProvisioner:
             is_admin=True,
         )
 
-        result: dict[str, Any] = self._nx.service("user_provisioning").provision_user(
+        result: dict[str, Any] = await self._nx.service("user_provisioning").provision_user(
             user_id=user_id,
             email=email,
             display_name=display_name,

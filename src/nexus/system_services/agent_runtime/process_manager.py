@@ -99,7 +99,7 @@ class ProcessManager:
         # Create home directory structure (sync: one-time setup, not hot path)
         system_prompt_path = f"{cwd}/SYSTEM.md"
         prompt_text = config.system_prompt or _DEFAULT_SYSTEM_PROMPT
-        self._vfs.sys_write(
+        await self._vfs.sys_write(
             system_prompt_path,
             prompt_text.encode("utf-8"),
             context=ctx,
@@ -115,7 +115,7 @@ class ProcessManager:
             "agent_type": config.agent_type,
             "mode": config.mode,
         }
-        self._vfs.sys_write(
+        await self._vfs.sys_write(
             f"{cwd}/settings.json",
             json.dumps(settings, indent=2).encode("utf-8"),
             context=ctx,
@@ -211,7 +211,7 @@ class ProcessManager:
         system_prompt = _DEFAULT_SYSTEM_PROMPT
         if process.system_prompt_path:
             try:
-                raw = self._vfs.sys_read(process.system_prompt_path, context=ctx)
+                raw = await self._vfs.sys_read(process.system_prompt_path, context=ctx)
                 if isinstance(raw, dict):
                     raw = raw.get("content", b"")
                 if isinstance(raw, bytes):
@@ -223,8 +223,8 @@ class ProcessManager:
         memory_path = f"{process.cwd}/MEMORY.md"
         memory_content = ""
         try:
-            if self._vfs.sys_access(memory_path, context=ctx):
-                raw = self._vfs.sys_read(memory_path, context=ctx)
+            if await self._vfs.sys_access(memory_path, context=ctx):
+                raw = await self._vfs.sys_read(memory_path, context=ctx)
                 if isinstance(raw, dict):
                     raw = raw.get("content", b"")
                 if isinstance(raw, bytes):

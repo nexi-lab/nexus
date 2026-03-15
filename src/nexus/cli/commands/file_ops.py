@@ -1,6 +1,6 @@
 """File operation commands - read, write, cat, cp, mv, rm, sync."""
 
-import contextlib
+import asyncio
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -54,31 +54,35 @@ def init(path: str) -> None:
     Example:
         nexus init ./my-workspace
     """
-    workspace_path = Path(path)
-    data_dir = workspace_path / "nexus-data"
 
-    try:
-        # Create workspace structure
-        workspace_path.mkdir(parents=True, exist_ok=True)
-        data_dir.mkdir(parents=True, exist_ok=True)
+    async def _impl() -> None:
+        workspace_path = Path(path)
+        data_dir = workspace_path / "nexus-data"
 
-        # Initialize Nexus
-        nx = connect_local_workspace(str(data_dir))
+        try:
+            # Create workspace structure
+            workspace_path.mkdir(parents=True, exist_ok=True)
+            data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create default directories
-        nx.sys_mkdir("/workspace", exist_ok=True)
-        nx.sys_mkdir("/shared", exist_ok=True)
+            # Initialize Nexus
+            nx = await connect_local_workspace(str(data_dir))
 
-        nx.close()
+            # Create default directories
+            await nx.sys_mkdir("/workspace", exist_ok=True)
+            await nx.sys_mkdir("/shared", exist_ok=True)
 
-        console.print(
-            f"[green]✓[/green] Initialized Nexus workspace at [cyan]{workspace_path}[/cyan]"
-        )
-        console.print(f"  Data directory: [cyan]{data_dir}[/cyan]")
-        console.print(f"  Workspace: [cyan]{workspace_path / 'workspace'}[/cyan]")
-        console.print(f"  Shared: [cyan]{workspace_path / 'shared'}[/cyan]")
-    except Exception as e:
-        handle_error(e)
+            nx.close()
+
+            console.print(
+                f"[green]✓[/green] Initialized Nexus workspace at [cyan]{workspace_path}[/cyan]"
+            )
+            console.print(f"  Data directory: [cyan]{data_dir}[/cyan]")
+            console.print(f"  Workspace: [cyan]{workspace_path / 'workspace'}[/cyan]")
+            console.print(f"  Shared: [cyan]{workspace_path / 'shared'}[/cyan]")
+        except Exception as e:
+            handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @click.command()
@@ -114,100 +118,110 @@ def cat(
         nexus cat /workspace/data.txt --json
         nexus cat /workspace/data.txt --at-operation op_abc123
     """
-    timing = CommandTiming()
 
-    try:
-        with contextlib.ExitStack() as stack:
-            with timing.phase("connect"):
-                nx = stack.enter_context(
-                    open_filesystem(
-                        remote_url,
-                        remote_api_key,
-                        allow_local_default=True,
-                    )
-                )
-            if at_operation:
-                _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
+    async def _impl() -> None:
+        timing = CommandTiming()
+
+        try:
+            async with open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx:
+                with timing.phase("connect"):
+                    pass  # connection already established by async with
+
+                if at_operation:
+                    _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
+                    return
+
+                with timing.phase("server"):
+                    if metadata:
+                        read_result = await nx.read(
+                            path, context=cast(Any, operation_context), return_metadata=True
+                        )
+                        assert isinstance(read_result, dict), (
+                            "Expected dict when return_metadata=True"
+                        )
+                        content = read_result["content"]
+                        meta_data = {
+                            "path": path,
+                            "etag": read_result["etag"],
+                            "version": read_result["version"],
+                            "size": read_result["size"],
+                            "modified_at": str(read_result["modified_at"]),
+                        }
+                    else:
+                        # Check file size to decide between read() and stream()
+                        STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
+                        file_size = 0
+                        if hasattr(nx, "metadata"):
+                            try:
+                                file_meta = nx.metadata.get(path)
+                                file_size = file_meta.size if file_meta else 0
+                            except Exception:
+                                file_size = 0
+
+                        if file_size > STREAM_THRESHOLD:
+                            console.print(
+                                f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]"
+                            )
+                            for chunk in nx.stream(  # type: ignore[attr-defined]
+                                path, chunk_size=65536, context=operation_context
+                            ):
+                                sys.stdout.buffer.write(chunk)
+                            sys.stdout.buffer.flush()
+                            return
+
+                        content = await nx.sys_read(path, context=cast(Any, operation_context))
+                        meta_data = None
+
+            # JSON mode: return structured data
+            if output_opts.json_output:
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = None
+
+                data: dict[str, Any] = {
+                    "path": path,
+                    "size": len(content),
+                    "content": text,
+                    "binary": text is None,
+                }
+                if meta_data:
+                    data["metadata"] = meta_data
+
+                render_output(data=data, output_opts=output_opts, timing=timing)
                 return
 
-            with timing.phase("server"):
-                if metadata:
-                    read_result = nx.read(
-                        path, context=cast(Any, operation_context), return_metadata=True
-                    )
-                    assert isinstance(read_result, dict), "Expected dict when return_metadata=True"
-                    content = read_result["content"]
-                    meta_data = {
-                        "path": path,
-                        "etag": read_result["etag"],
-                        "version": read_result["version"],
-                        "size": read_result["size"],
-                        "modified_at": str(read_result["modified_at"]),
-                    }
-                else:
-                    # Check file size to decide between read() and stream()
-                    STREAM_THRESHOLD = 10 * 1024 * 1024  # 10MB
-                    file_size = 0
-                    if hasattr(nx, "metadata"):
-                        try:
-                            file_meta = nx.metadata.get(path)
-                            file_size = file_meta.size if file_meta else 0
-                        except Exception:
-                            file_size = 0
+            # Human mode
+            if metadata and meta_data:
+                console.print("[bold]Metadata:[/bold]")
+                console.print(f"[dim]Path:[/dim]     {meta_data['path']}")
+                console.print(f"[dim]ETag:[/dim]     {meta_data['etag']}")
+                console.print(f"[dim]Version:[/dim]  {meta_data['version']}")
+                console.print(f"[dim]Size:[/dim]     {meta_data['size']} bytes")
+                console.print(f"[dim]Modified:[/dim] {meta_data['modified_at']}")
+                console.print()
+                console.print("[bold]Content:[/bold]")
 
-                    if file_size > STREAM_THRESHOLD:
-                        console.print(f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]")
-                        for chunk in nx.stream(  # type: ignore[attr-defined]
-                            path, chunk_size=65536, context=operation_context
-                        ):
-                            sys.stdout.buffer.write(chunk)
-                        sys.stdout.buffer.flush()
-                        return
+            _print_content(path, content)
 
-                    content = nx.sys_read(path, context=cast(Any, operation_context))
-                    meta_data = None
+        except Exception as e:
+            if output_opts.json_output:
+                from nexus.cli.exit_codes import ExitCode
 
-        # JSON mode: return structured data
-        if output_opts.json_output:
-            try:
-                text = content.decode("utf-8")
-            except UnicodeDecodeError:
-                text = None
+                render_error(
+                    error=e,
+                    output_opts=output_opts,
+                    exit_code=ExitCode.GENERAL_ERROR,
+                    timing=timing,
+                )
+            else:
+                handle_error(e)
 
-            data: dict[str, Any] = {
-                "path": path,
-                "size": len(content),
-                "content": text,
-                "binary": text is None,
-            }
-            if meta_data:
-                data["metadata"] = meta_data
-
-            render_output(data=data, output_opts=output_opts, timing=timing)
-            return
-
-        # Human mode
-        if metadata and meta_data:
-            console.print("[bold]Metadata:[/bold]")
-            console.print(f"[dim]Path:[/dim]     {meta_data['path']}")
-            console.print(f"[dim]ETag:[/dim]     {meta_data['etag']}")
-            console.print(f"[dim]Version:[/dim]  {meta_data['version']}")
-            console.print(f"[dim]Size:[/dim]     {meta_data['size']} bytes")
-            console.print(f"[dim]Modified:[/dim] {meta_data['modified_at']}")
-            console.print()
-            console.print("[bold]Content:[/bold]")
-
-        _print_content(path, content)
-
-    except Exception as e:
-        if output_opts.json_output:
-            from nexus.cli.exit_codes import ExitCode
-
-            render_error(
-                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
-            )
-        else:
-            handle_error(e)
+    asyncio.run(_impl())
 
 
 def _cat_time_travel(
@@ -349,44 +363,50 @@ def write(
         # Dry run (preview without writing)
         nexus write /workspace/data.txt "Hello" --dry-run
     """
-    try:
-        file_content = resolve_content(content, input_file)
 
-        if dry_run:
-            preview = dry_run_preview("write", path=path, details={"size": len(file_content)})
-            render_dry_run(preview)
-            return
+    async def _impl() -> None:
+        try:
+            file_content = resolve_content(content, input_file)
 
-        with open_filesystem(
-            remote_url,
-            remote_api_key,
-            allow_local_default=True,
-        ) as nx:
-            # OCC: use lib/occ helper if CAS params present (Issue #1323).
-            ctx = cast(Any, operation_context)
-            if (if_match or if_none_match) and not force:
-                from nexus.lib.occ import occ_write
+            if dry_run:
+                preview = dry_run_preview("write", path=path, details={"size": len(file_content)})
+                render_dry_run(preview)
+                return
 
-                result = occ_write(
-                    nx,
-                    path,
-                    file_content,
-                    context=ctx,
-                    if_match=if_match,
-                    if_none_match=if_none_match,
-                )
-            else:
-                result = nx.write(path, file_content, context=ctx)
+            async with open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx:
+                # OCC: use lib/occ helper if CAS params present (Issue #1323).
+                ctx = cast(Any, operation_context)
+                if (if_match or if_none_match) and not force:
+                    from nexus.lib.occ import occ_write
 
-        console.print(f"[green]✓[/green] Wrote {len(file_content)} bytes to [cyan]{path}[/cyan]")
+                    result = await occ_write(
+                        nx,
+                        path,
+                        file_content,
+                        context=ctx,
+                        if_match=if_match,
+                        if_none_match=if_none_match,
+                    )
+                else:
+                    result = await nx.write(path, file_content, context=ctx)
 
-        if show_metadata:
-            console.print(f"[dim]ETag:[/dim]     {result['etag']}")
-            console.print(f"[dim]Version:[/dim]  {result['version']}")
-            console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
-            console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
-    except Exception as e:
-        handle_error(e)
+            console.print(
+                f"[green]✓[/green] Wrote {len(file_content)} bytes to [cyan]{path}[/cyan]"
+            )
+
+            if show_metadata:
+                console.print(f"[dim]ETag:[/dim]     {result['etag']}")
+                console.print(f"[dim]Version:[/dim]  {result['version']}")
+                console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
+                console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
+        except Exception as e:
+            handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @click.command()
@@ -433,33 +453,39 @@ def append(
         nexus append /doc.txt "New content" --if-match abc123...
         nexus append /log.txt "Entry\\n" --show-metadata
     """
-    try:
-        file_content = resolve_content(content, input_file)
 
-        with open_filesystem(
-            remote_url,
-            remote_api_key,
-            allow_local_default=True,
-        ) as nx:
-            # Append with OCC parameters and context.
-            # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-            result = cast(Any, nx).append(
-                path,
-                file_content,
-                context=operation_context,
-                if_match=if_match,
-                force=force,
+    async def _impl() -> None:
+        try:
+            file_content = resolve_content(content, input_file)
+
+            async with open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx:
+                # Append with OCC parameters and context.
+                # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
+                result = await cast(Any, nx).append(
+                    path,
+                    file_content,
+                    context=operation_context,
+                    if_match=if_match,
+                    force=force,
+                )
+
+            console.print(
+                f"[green]✓[/green] Appended {len(file_content)} bytes to [cyan]{path}[/cyan]"
             )
 
-        console.print(f"[green]✓[/green] Appended {len(file_content)} bytes to [cyan]{path}[/cyan]")
+            if show_metadata:
+                console.print(f"[dim]ETag:[/dim]     {result['etag']}")
+                console.print(f"[dim]Version:[/dim]  {result['version']}")
+                console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
+                console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
+        except Exception as e:
+            handle_error(e)
 
-        if show_metadata:
-            console.print(f"[dim]ETag:[/dim]     {result['etag']}")
-            console.print(f"[dim]Version:[/dim]  {result['version']}")
-            console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
-            console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
-    except Exception as e:
-        handle_error(e)
+    asyncio.run(_impl())
 
 
 @click.command(name="write-batch")
@@ -527,108 +553,113 @@ def write_batch(
         # Use larger batch size for better performance
         nexus write-batch ./checkpoints --batch-size 200
     """
-    try:
-        import time
 
-        from rich.progress import (
-            BarColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeElapsedColumn,
-        )
+    async def _impl() -> None:
+        try:
+            import time
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
-        source_path = Path(source_dir)
+            from rich.progress import (
+                BarColumn,
+                Progress,
+                SpinnerColumn,
+                TextColumn,
+                TimeElapsedColumn,
+            )
 
-        # Ensure dest_prefix starts with /
-        if not dest_prefix.startswith("/"):
-            dest_prefix = "/" + dest_prefix
+            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+            source_path = Path(source_dir)
 
-        # Collect all files matching the pattern
-        console.print(f"[cyan]Scanning[/cyan] {source_path} for files...")
-        all_files = list(source_path.glob(pattern))
+            # Ensure dest_prefix starts with /
+            nonlocal dest_prefix
+            if not dest_prefix.startswith("/"):
+                dest_prefix = "/" + dest_prefix
 
-        # Filter out directories and excluded patterns
-        files_to_upload: list[Path] = []
-        for file_path in all_files:
-            if not file_path.is_file():
-                continue
+            # Collect all files matching the pattern
+            console.print(f"[cyan]Scanning[/cyan] {source_path} for files...")
+            all_files = list(source_path.glob(pattern))
 
-            # Check exclude patterns
-            excluded = False
-            for exclude_pattern in exclude:
-                if file_path.match(exclude_pattern):
-                    excluded = True
-                    break
+            # Filter out directories and excluded patterns
+            files_to_upload: list[Path] = []
+            for file_path in all_files:
+                if not file_path.is_file():
+                    continue
 
-            if not excluded:
-                files_to_upload.append(file_path)
+                # Check exclude patterns
+                excluded = False
+                for exclude_pattern in exclude:
+                    if file_path.match(exclude_pattern):
+                        excluded = True
+                        break
 
-        if not files_to_upload:
-            console.print("[yellow]No files found matching criteria[/yellow]")
+                if not excluded:
+                    files_to_upload.append(file_path)
+
+            if not files_to_upload:
+                console.print("[yellow]No files found matching criteria[/yellow]")
+                nx.close()
+                return
+
+            console.print(f"[cyan]Found {len(files_to_upload)} files to upload[/cyan]")
+
+            # Process files in batches
+            total_bytes = 0
+            total_files = 0
+            start_time = time.time()
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("({task.completed}/{task.total} files)"),
+                TimeElapsedColumn(),
+                console=console,
+                disable=not show_progress,
+            ) as progress:
+                task = progress.add_task("Uploading files...", total=len(files_to_upload))
+
+                for i in range(0, len(files_to_upload), batch_size):
+                    batch = files_to_upload[i : i + batch_size]
+                    batch_data: list[tuple[str, bytes]] = []
+
+                    # Prepare batch
+                    for file_path in batch:
+                        # Calculate relative path from source_dir
+                        rel_path = file_path.relative_to(source_path)
+                        # Create destination path
+                        dest_path = f"{dest_prefix.rstrip('/')}/{rel_path.as_posix()}"
+
+                        # Read file content
+                        content = file_path.read_bytes()
+                        batch_data.append((dest_path, content))
+                        total_bytes += len(content)
+
+                    # Write batch
+                    await nx.write_batch(batch_data)
+                    total_files += len(batch_data)
+
+                    # Update progress
+                    progress.update(task, advance=len(batch_data))
+
+            elapsed_time = time.time() - start_time
             nx.close()
-            return
 
-        console.print(f"[cyan]Found {len(files_to_upload)} files to upload[/cyan]")
+            # Display summary
+            console.print()
+            console.print("[green]✓ Batch upload complete![/green]")
+            console.print(f"  Files uploaded:  [cyan]{total_files}[/cyan]")
+            console.print(f"  Total size:      [cyan]{total_bytes:,}[/cyan] bytes")
+            console.print(f"  Time elapsed:    [cyan]{elapsed_time:.2f}[/cyan] seconds")
+            if elapsed_time > 0:
+                files_per_sec = total_files / elapsed_time
+                mb_per_sec = (total_bytes / 1024 / 1024) / elapsed_time
+                console.print(f"  Throughput:      [cyan]{files_per_sec:.1f}[/cyan] files/sec")
+                console.print(f"  Bandwidth:       [cyan]{mb_per_sec:.2f}[/cyan] MB/sec")
 
-        # Process files in batches
-        total_bytes = 0
-        total_files = 0
-        start_time = time.time()
+        except Exception as e:
+            handle_error(e)
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TextColumn("({task.completed}/{task.total} files)"),
-            TimeElapsedColumn(),
-            console=console,
-            disable=not show_progress,
-        ) as progress:
-            task = progress.add_task("Uploading files...", total=len(files_to_upload))
-
-            for i in range(0, len(files_to_upload), batch_size):
-                batch = files_to_upload[i : i + batch_size]
-                batch_data: list[tuple[str, bytes]] = []
-
-                # Prepare batch
-                for file_path in batch:
-                    # Calculate relative path from source_dir
-                    rel_path = file_path.relative_to(source_path)
-                    # Create destination path
-                    dest_path = f"{dest_prefix.rstrip('/')}/{rel_path.as_posix()}"
-
-                    # Read file content
-                    content = file_path.read_bytes()
-                    batch_data.append((dest_path, content))
-                    total_bytes += len(content)
-
-                # Write batch
-                nx.write_batch(batch_data)
-                total_files += len(batch_data)
-
-                # Update progress
-                progress.update(task, advance=len(batch_data))
-
-        elapsed_time = time.time() - start_time
-        nx.close()
-
-        # Display summary
-        console.print()
-        console.print("[green]✓ Batch upload complete![/green]")
-        console.print(f"  Files uploaded:  [cyan]{total_files}[/cyan]")
-        console.print(f"  Total size:      [cyan]{total_bytes:,}[/cyan] bytes")
-        console.print(f"  Time elapsed:    [cyan]{elapsed_time:.2f}[/cyan] seconds")
-        if elapsed_time > 0:
-            files_per_sec = total_files / elapsed_time
-            mb_per_sec = (total_bytes / 1024 / 1024) / elapsed_time
-            console.print(f"  Throughput:      [cyan]{files_per_sec:.1f}[/cyan] files/sec")
-            console.print(f"  Bandwidth:       [cyan]{mb_per_sec:.2f}[/cyan] MB/sec")
-
-    except Exception as e:
-        handle_error(e)
+    asyncio.run(_impl())
 
 
 @click.command()
@@ -649,28 +680,32 @@ def cp(
         nexus cp /workspace/source.txt /workspace/dest.txt
         nexus cp /workspace/source.txt /workspace/dest.txt --dry-run
     """
-    try:
-        if dry_run:
-            preview = dry_run_preview("cp", path=source, details={"dest": dest})
-            render_dry_run(preview)
-            return
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+    async def _impl() -> None:
+        try:
+            if dry_run:
+                preview = dry_run_preview("cp", path=source, details={"dest": dest})
+                render_dry_run(preview)
+                return
 
-        # Read source
-        content = nx.sys_read(source)
+            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
-        # Type narrowing: when return_metadata=False (default), result is bytes
-        assert isinstance(content, bytes), "Expected bytes from read()"
+            # Read source
+            content = await nx.sys_read(source)
 
-        # Write to destination
-        nx.sys_write(dest, content)
+            # Type narrowing: when return_metadata=False (default), result is bytes
+            assert isinstance(content, bytes), "Expected bytes from read()"
 
-        nx.close()
+            # Write to destination
+            await nx.sys_write(dest, content)
 
-        console.print(f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
-    except Exception as e:
-        handle_error(e)
+            nx.close()
+
+            console.print(f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
+        except Exception as e:
+            handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @click.command(name="copy")
@@ -711,52 +746,60 @@ def copy_cmd(
         # Copy single file
         nexus copy /workspace/file.txt /workspace/copy.txt
     """
-    try:
-        from nexus.sync import copy_file, copy_recursive, is_local_path
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+    async def _impl() -> None:
+        try:
+            from nexus.sync import copy_file, copy_recursive, is_local_path
 
-        # Handle --no-checksum flag
-        use_checksum = checksum and not no_checksum
+            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
-        if recursive:
-            # Use progress bar from sync module (tqdm)
-            stats = copy_recursive(nx, source, dest, checksum=use_checksum, progress=True)
-            nx.close()
+            # Handle --no-checksum flag
+            use_checksum = checksum and not no_checksum
 
-            # Display results
-            console.print("[bold green]✓ Copy Complete![/bold green]")
-            console.print(f"  Files checked: [cyan]{stats.files_checked}[/cyan]")
-            console.print(f"  Files copied: [green]{stats.files_copied}[/green]")
-            console.print(f"  Files skipped: [yellow]{stats.files_skipped}[/yellow] (identical)")
-            console.print(f"  Bytes transferred: [cyan]{stats.bytes_transferred:,}[/cyan]")
+            if recursive:
+                # Use progress bar from sync module (tqdm)
+                stats = await copy_recursive(nx, source, dest, checksum=use_checksum, progress=True)
+                nx.close()
 
-            if stats.errors:
-                console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
-                for error in stats.errors[:10]:  # Show first 10 errors
-                    console.print(f"  [red]•[/red] {error}")
-
-        else:
-            # Single file copy
-            is_source_local = is_local_path(source)
-            is_dest_local = is_local_path(dest)
-
-            bytes_copied = copy_file(nx, source, dest, is_source_local, is_dest_local, use_checksum)
-
-            nx.close()
-
-            if bytes_copied > 0:
+                # Display results
+                console.print("[bold green]✓ Copy Complete![/bold green]")
+                console.print(f"  Files checked: [cyan]{stats.files_checked}[/cyan]")
+                console.print(f"  Files copied: [green]{stats.files_copied}[/green]")
                 console.print(
-                    f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan] "
-                    f"({bytes_copied:,} bytes)"
+                    f"  Files skipped: [yellow]{stats.files_skipped}[/yellow] (identical)"
                 )
+                console.print(f"  Bytes transferred: [cyan]{stats.bytes_transferred:,}[/cyan]")
+
+                if stats.errors:
+                    console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
+                    for error in stats.errors[:10]:  # Show first 10 errors
+                        console.print(f"  [red]•[/red] {error}")
+
             else:
-                console.print(
-                    f"[yellow]⊘[/yellow] Skipped [cyan]{source}[/cyan] (identical content)"
+                # Single file copy
+                is_source_local = is_local_path(source)
+                is_dest_local = is_local_path(dest)
+
+                bytes_copied = await copy_file(
+                    nx, source, dest, is_source_local, is_dest_local, use_checksum
                 )
 
-    except Exception as e:
-        handle_error(e)
+                nx.close()
+
+                if bytes_copied > 0:
+                    console.print(
+                        f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan] "
+                        f"({bytes_copied:,} bytes)"
+                    )
+                else:
+                    console.print(
+                        f"[yellow]⊘[/yellow] Skipped [cyan]{source}[/cyan] (identical content)"
+                    )
+
+        except Exception as e:
+            handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @click.command(name="move")
@@ -783,35 +826,39 @@ def move_cmd(
         nexus move /workspace/old_dir/ /workspace/new_dir/ --force
         nexus move /workspace/old.txt /workspace/new.txt --dry-run
     """
-    try:
-        if dry_run:
-            preview = dry_run_preview("move", path=source, details={"dest": dest})
-            render_dry_run(preview)
-            return
 
-        from nexus.sync import move_file
+    async def _impl() -> None:
+        try:
+            if dry_run:
+                preview = dry_run_preview("move", path=source, details={"dest": dest})
+                render_dry_run(preview)
+                return
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+            from nexus.sync import move_file
 
-        # Confirm unless --force
-        if not force and not click.confirm(f"Move {source} to {dest}?"):
-            console.print("[yellow]Cancelled[/yellow]")
+            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+
+            # Confirm unless --force
+            if not force and not click.confirm(f"Move {source} to {dest}?"):
+                console.print("[yellow]Cancelled[/yellow]")
+                nx.close()
+                return
+
+            with console.status(f"[yellow]Moving {source} to {dest}...[/yellow]", spinner="dots"):
+                success = await move_file(nx, source, dest)
+
             nx.close()
-            return
 
-        with console.status(f"[yellow]Moving {source} to {dest}...[/yellow]", spinner="dots"):
-            success = move_file(nx, source, dest)
+            if success:
+                console.print(f"[green]✓[/green] Moved [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
+            else:
+                console.print(f"[red]Error:[/red] Failed to move {source}")
+                sys.exit(1)
 
-        nx.close()
+        except Exception as e:
+            handle_error(e)
 
-        if success:
-            console.print(f"[green]✓[/green] Moved [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
-        else:
-            console.print(f"[red]Error:[/red] Failed to move {source}")
-            sys.exit(1)
-
-    except Exception as e:
-        handle_error(e)
+    asyncio.run(_impl())
 
 
 @click.command(name="sync")
@@ -850,53 +897,63 @@ def sync_cmd(
         # Disable checksum (copy all files)
         nexus sync ./data/ /workspace/ --no-checksum
     """
-    try:
-        from nexus.sync import sync_directories
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+    async def _impl() -> None:
+        try:
+            from nexus.sync import sync_directories
 
-        use_checksum = not no_checksum
+            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
-        # Display sync configuration
-        console.print(f"[cyan]Syncing:[/cyan] {source} → {dest}")
-        if delete:
-            console.print("  [yellow]⚠ Delete mode enabled[/yellow]")
-        if dry_run:
-            console.print("  [yellow]DRY RUN - No changes will be made[/yellow]")
-        if not use_checksum:
-            console.print("  [yellow]Checksum disabled - copying all files[/yellow]")
-        console.print()
+            use_checksum = not no_checksum
 
-        # Use progress bar from sync module (tqdm)
-        stats = sync_directories(
-            nx, source, dest, delete=delete, dry_run=dry_run, checksum=use_checksum, progress=True
-        )
+            # Display sync configuration
+            console.print(f"[cyan]Syncing:[/cyan] {source} → {dest}")
+            if delete:
+                console.print("  [yellow]⚠ Delete mode enabled[/yellow]")
+            if dry_run:
+                console.print("  [yellow]DRY RUN - No changes will be made[/yellow]")
+            if not use_checksum:
+                console.print("  [yellow]Checksum disabled - copying all files[/yellow]")
+            console.print()
 
-        nx.close()
+            # Use progress bar from sync module (tqdm)
+            stats = await sync_directories(
+                nx,
+                source,
+                dest,
+                delete=delete,
+                dry_run=dry_run,
+                checksum=use_checksum,
+                progress=True,
+            )
 
-        # Display results
-        if dry_run:
-            console.print("[bold yellow]DRY RUN RESULTS:[/bold yellow]")
-        else:
-            console.print("[bold green]✓ Sync Complete![/bold green]")
+            nx.close()
 
-        console.print(f"  Files checked: [cyan]{stats.files_checked}[/cyan]")
-        console.print(f"  Files copied: [green]{stats.files_copied}[/green]")
-        console.print(f"  Files skipped: [yellow]{stats.files_skipped}[/yellow] (identical)")
+            # Display results
+            if dry_run:
+                console.print("[bold yellow]DRY RUN RESULTS:[/bold yellow]")
+            else:
+                console.print("[bold green]✓ Sync Complete![/bold green]")
 
-        if delete:
-            console.print(f"  Files deleted: [red]{stats.files_deleted}[/red]")
+            console.print(f"  Files checked: [cyan]{stats.files_checked}[/cyan]")
+            console.print(f"  Files copied: [green]{stats.files_copied}[/green]")
+            console.print(f"  Files skipped: [yellow]{stats.files_skipped}[/yellow] (identical)")
 
-        if not dry_run:
-            console.print(f"  Bytes transferred: [cyan]{stats.bytes_transferred:,}[/cyan]")
+            if delete:
+                console.print(f"  Files deleted: [red]{stats.files_deleted}[/red]")
 
-        if stats.errors:
-            console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
-            for error in stats.errors[:10]:  # Show first 10 errors
-                console.print(f"  [red]•[/red] {error}")
+            if not dry_run:
+                console.print(f"  Bytes transferred: [cyan]{stats.bytes_transferred:,}[/cyan]")
 
-    except Exception as e:
-        handle_error(e)
+            if stats.errors:
+                console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
+                for error in stats.errors[:10]:  # Show first 10 errors
+                    console.print(f"  [red]•[/red] {error}")
+
+        except Exception as e:
+            handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @click.command()
@@ -918,32 +975,36 @@ def rm(
         nexus rm /workspace/data.txt --force
         nexus rm /workspace/data.txt --dry-run
     """
-    try:
-        if dry_run:
-            preview = dry_run_preview("rm", path=path)
-            render_dry_run(preview)
-            return
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+    async def _impl() -> None:
+        try:
+            if dry_run:
+                preview = dry_run_preview("rm", path=path)
+                render_dry_run(preview)
+                return
 
-        # Check if file exists
-        if not nx.sys_access(path):
-            console.print(f"[yellow]File does not exist:[/yellow] {path}")
+            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+
+            # Check if file exists
+            if not await nx.sys_access(path):
+                console.print(f"[yellow]File does not exist:[/yellow] {path}")
+                nx.close()
+                return
+
+            # Confirm deletion unless --force
+            if not force and not click.confirm(f"Delete {path}?"):
+                console.print("[yellow]Cancelled[/yellow]")
+                nx.close()
+                return
+
+            await nx.sys_unlink(path)
             nx.close()
-            return
 
-        # Confirm deletion unless --force
-        if not force and not click.confirm(f"Delete {path}?"):
-            console.print("[yellow]Cancelled[/yellow]")
-            nx.close()
-            return
+            console.print(f"[green]✓[/green] Deleted [cyan]{path}[/cyan]")
+        except Exception as e:
+            handle_error(e)
 
-        nx.sys_unlink(path)
-        nx.close()
-
-        console.print(f"[green]✓[/green] Deleted [cyan]{path}[/cyan]")
-    except Exception as e:
-        handle_error(e)
+    asyncio.run(_impl())
 
 
 @click.command()
@@ -997,52 +1058,56 @@ def edit(
         # OCC: only edit if no one else modified the file
         nexus edit /workspace/doc.md "old" "new" --if-match abc123
     """
-    try:
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
-        kwargs: dict[str, Any] = {
-            "edits": [(old_string, new_string)],
-            "preview": preview,
-        }
-        if fuzzy is not None:
-            kwargs["fuzzy_threshold"] = fuzzy
-        if if_match is not None:
-            kwargs["if_match"] = if_match
+    async def _impl() -> None:
+        try:
+            nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
-        result = nx.edit(path, **kwargs)
-        nx.close()
+            kwargs: dict[str, Any] = {
+                "edits": [(old_string, new_string)],
+                "preview": preview,
+            }
+            if fuzzy is not None:
+                kwargs["fuzzy_threshold"] = fuzzy
+            if if_match is not None:
+                kwargs["if_match"] = if_match
 
-        success = result.get("success", False)
-        applied = result.get("applied_count", 0)
-        diff = result.get("diff", "")
-        matches = result.get("matches", [])
-        etag = result.get("etag", "")
+            result = await nx.edit(path, **kwargs)
+            nx.close()
 
-        if preview:
+            success = result.get("success", False)
+            applied = result.get("applied_count", 0)
+            diff = result.get("diff", "")
+            matches = result.get("matches", [])
+            etag = result.get("etag", "")
+
+            if preview:
+                if success and applied > 0:
+                    console.print(f"[yellow]Preview:[/yellow] {applied} edit(s) would apply")
+                    if diff:
+                        syntax = Syntax(diff, "diff", theme="monokai")
+                        console.print(syntax)
+                else:
+                    console.print("[yellow]Preview:[/yellow] No matches found")
+                return
+
             if success and applied > 0:
-                console.print(f"[yellow]Preview:[/yellow] {applied} edit(s) would apply")
+                console.print(f"[green]✓[/green] {applied} edit(s) applied to [cyan]{path}[/cyan]")
+                if etag:
+                    console.print(f"  [dim]etag: {etag}[/dim]")
+                for m in matches:
+                    sim = m.get("similarity")
+                    method = m.get("method", "exact")
+                    if sim and sim < 1.0:
+                        console.print(f"  [dim]match: similarity={sim:.2f} ({method})[/dim]")
                 if diff:
                     syntax = Syntax(diff, "diff", theme="monokai")
                     console.print(syntax)
             else:
-                console.print("[yellow]Preview:[/yellow] No matches found")
-            return
+                console.print(f"[yellow]No matches found[/yellow] for the search string in {path}")
+                if fuzzy is None:
+                    console.print("[dim]Hint: use --fuzzy 0.8 for approximate matching[/dim]")
+        except Exception as e:
+            handle_error(e)
 
-        if success and applied > 0:
-            console.print(f"[green]✓[/green] {applied} edit(s) applied to [cyan]{path}[/cyan]")
-            if etag:
-                console.print(f"  [dim]etag: {etag}[/dim]")
-            for m in matches:
-                sim = m.get("similarity")
-                method = m.get("method", "exact")
-                if sim and sim < 1.0:
-                    console.print(f"  [dim]match: similarity={sim:.2f} ({method})[/dim]")
-            if diff:
-                syntax = Syntax(diff, "diff", theme="monokai")
-                console.print(syntax)
-        else:
-            console.print(f"[yellow]No matches found[/yellow] for the search string in {path}")
-            if fuzzy is None:
-                console.print("[dim]Hint: use --fuzzy 0.8 for approximate matching[/dim]")
-    except Exception as e:
-        handle_error(e)
+    asyncio.run(_impl())

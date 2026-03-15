@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from nexus.cli.commands.demo import (
     DEMO_AGENTS,
@@ -96,33 +98,39 @@ class TestDemoConstants:
 
 
 class TestIdempotency:
-    def test_seed_files_idempotent(self) -> None:
+    @pytest.mark.asyncio
+    async def test_seed_files_idempotent(self) -> None:
         """Running seed twice should not duplicate files in manifest."""
         from nexus.cli.commands.demo import _seed_files
 
         mock_nx = MagicMock()
+        mock_nx.sys_write = AsyncMock()
+        mock_nx.sys_mkdir = AsyncMock()
+        mock_nx.sys_readdir = AsyncMock(return_value=[])
         manifest: dict = {"files": []}
 
         # First seed — includes both DEMO_FILES and HERB_CORPUS
-        count1 = _seed_files(mock_nx, manifest)
+        count1 = await _seed_files(mock_nx, manifest)
         assert count1 == len(DEMO_FILES) + len(HERB_CORPUS)
 
         # Second seed — all paths already in manifest
-        count2 = _seed_files(mock_nx, manifest)
+        count2 = await _seed_files(mock_nx, manifest)
         assert count2 == 0
 
-    def test_seed_versions_idempotent(self) -> None:
+    @pytest.mark.asyncio
+    async def test_seed_versions_idempotent(self) -> None:
         from nexus.cli.commands.demo import _seed_versions
 
         mock_nx = MagicMock()
+        mock_nx.sys_write = AsyncMock()
         manifest: dict = {}
 
-        _seed_versions(mock_nx, manifest)
+        await _seed_versions(mock_nx, manifest)
         assert manifest["versions_seeded"] is True
 
         # Second call — should skip
-        mock_nx.reset_mock()
-        result = _seed_versions(mock_nx, manifest)
+        mock_nx.sys_write = AsyncMock()
+        result = await _seed_versions(mock_nx, manifest)
         assert result == 0
         mock_nx.sys_write.assert_not_called()
 
@@ -195,12 +203,15 @@ class TestIdempotency:
 
 
 class TestDeleteDemoFiles:
-    def test_deletes_files_via_sys_unlink(self) -> None:
+    @pytest.mark.asyncio
+    async def test_deletes_files_via_sys_unlink(self) -> None:
         """Should call sys_unlink (not sys_rm) for each file."""
         mock_nx = MagicMock()
+        mock_nx.sys_unlink = AsyncMock()
+        mock_nx.sys_rmdir = AsyncMock()
         manifest = {"files": ["/workspace/demo/a.txt", "/workspace/demo/b.py"]}
 
-        removed = _delete_demo_files(mock_nx, manifest)
+        removed = await _delete_demo_files(mock_nx, manifest)
         assert removed == 2
 
         # Verify sys_unlink was called (not sys_rm)
@@ -208,19 +219,23 @@ class TestDeleteDemoFiles:
         # Should also try to remove directories
         assert mock_nx.sys_rmdir.call_count == len(DEMO_DIRS)
 
-    def test_delete_empty_manifest(self) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_empty_manifest(self) -> None:
         mock_nx = MagicMock()
-        removed = _delete_demo_files(mock_nx, {"files": []})
+        mock_nx.sys_unlink = AsyncMock()
+        mock_nx.sys_rmdir = AsyncMock()
+        removed = await _delete_demo_files(mock_nx, {"files": []})
         assert removed == 0
 
-    def test_delete_tolerates_errors(self) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_tolerates_errors(self) -> None:
         """Errors during deletion should not propagate."""
         mock_nx = MagicMock()
-        mock_nx.sys_unlink.side_effect = Exception("not found")
-        mock_nx.sys_rmdir.side_effect = Exception("not empty")
+        mock_nx.sys_unlink = AsyncMock(side_effect=Exception("not found"))
+        mock_nx.sys_rmdir = AsyncMock(side_effect=Exception("not empty"))
         manifest = {"files": ["/workspace/demo/a.txt"]}
 
-        removed = _delete_demo_files(mock_nx, manifest)
+        removed = await _delete_demo_files(mock_nx, manifest)
         assert removed == 0  # All failed, but no exception raised
 
 

@@ -243,7 +243,7 @@ def test_app(nexus_server):
 
 # Keep the old fixture for backward compatibility during transition
 @pytest.fixture(scope="function")
-def nexus_fs(isolated_db, tmp_path):
+async def nexus_fs(isolated_db, tmp_path):
     """Create a NexusFS instance for testing (direct, no server).
 
     This is useful for tests that need direct access to NexusFS
@@ -259,7 +259,7 @@ def nexus_fs(isolated_db, tmp_path):
 
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for tests
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

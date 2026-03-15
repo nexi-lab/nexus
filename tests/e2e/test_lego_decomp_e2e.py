@@ -60,7 +60,7 @@ pytestmark.append(
 # ---------------------------------------------------------------------------
 
 
-def _create_factory_nexus_fs(
+async def _create_factory_nexus_fs(
     tmp_path: Path,
     *,
     enforce_permissions: bool = False,
@@ -83,7 +83,7 @@ def _create_factory_nexus_fs(
 
     record_store = create_record_store(db_url=PG_URL, create_tables=True)
 
-    return create_nexus_fs(
+    return await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -105,17 +105,17 @@ def _create_factory_nexus_fs(
 
 
 @pytest.fixture()
-def nx(tmp_path):
+async def nx(tmp_path):
     """Factory-wired NexusFS with PostgreSQL, permissions disabled."""
-    fs = _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
+    fs = await _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
     yield fs
     fs.close()
 
 
 @pytest.fixture()
-def nx_perms(tmp_path):
+async def nx_perms(tmp_path):
     """Factory-wired NexusFS with PostgreSQL, permissions enabled."""
-    fs = _create_factory_nexus_fs(
+    fs = await _create_factory_nexus_fs(
         tmp_path,
         enforce_permissions=True,
         is_admin=True,
@@ -126,13 +126,13 @@ def nx_perms(tmp_path):
 
 
 @pytest.fixture()
-def client(tmp_path):
+async def client(tmp_path):
     """FastAPI TestClient with factory-wired NexusFS + PostgreSQL."""
     from starlette.testclient import TestClient
 
     from nexus.server.fastapi_server import create_app
 
-    fs = _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
+    fs = await _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
     api_key = "test-api-key-" + uuid.uuid4().hex[:16]
     app = create_app(fs, api_key=api_key, database_url=PG_URL)
     tc = TestClient(app)
@@ -149,13 +149,13 @@ def client(tmp_path):
 
 
 @pytest.fixture()
-def client_perms(tmp_path):
+async def client_perms(tmp_path):
     """FastAPI TestClient with factory-wired NexusFS + PostgreSQL + permissions."""
     from starlette.testclient import TestClient
 
     from nexus.server.fastapi_server import create_app
 
-    fs = _create_factory_nexus_fs(
+    fs = await _create_factory_nexus_fs(
         tmp_path,
         enforce_permissions=True,
         is_admin=True,
@@ -200,40 +200,47 @@ def _rpc(ctx: dict, method: str, params: dict | None = None) -> dict:
 class TestKernelSanity:
     """Verify basic VFS ops work after decomposition with factory + PostgreSQL."""
 
-    def test_write_read_roundtrip(self, nx):
-        nx.sys_write("/test.txt", b"hello world")
-        data = nx.sys_read("/test.txt")
+    @pytest.mark.asyncio
+    async def test_write_read_roundtrip(self, nx):
+        await nx.sys_write("/test.txt", b"hello world")
+        data = await nx.sys_read("/test.txt")
         assert data == b"hello world"
 
-    def test_mkdir_and_list(self, nx):
-        nx.sys_mkdir("/mydir", parents=True, exist_ok=True)
-        nx.sys_write("/mydir/file.txt", b"content")
-        entries = nx.sys_readdir("/mydir", recursive=False)
+    @pytest.mark.asyncio
+    async def test_mkdir_and_list(self, nx):
+        await nx.sys_mkdir("/mydir", parents=True, exist_ok=True)
+        await nx.sys_write("/mydir/file.txt", b"content")
+        entries = await nx.sys_readdir("/mydir", recursive=False)
         assert "/mydir/file.txt" in entries
 
-    def test_delete_file(self, nx):
-        nx.sys_write("/del.txt", b"bye")
-        nx.sys_unlink("/del.txt")
-        assert not nx.sys_access("/del.txt")
+    @pytest.mark.asyncio
+    async def test_delete_file(self, nx):
+        await nx.sys_write("/del.txt", b"bye")
+        await nx.sys_unlink("/del.txt")
+        assert not await nx.sys_access("/del.txt")
 
-    def test_exists(self, nx):
-        nx.sys_write("/exists.txt", b"yes")
-        assert nx.sys_access("/exists.txt")
-        assert not nx.sys_access("/nope.txt")
+    @pytest.mark.asyncio
+    async def test_exists(self, nx):
+        await nx.sys_write("/exists.txt", b"yes")
+        assert await nx.sys_access("/exists.txt")
+        assert not await nx.sys_access("/nope.txt")
 
-    def test_is_directory(self, nx):
-        nx.sys_mkdir("/somedir", parents=True, exist_ok=True)
-        assert nx.sys_is_directory("/somedir")
+    @pytest.mark.asyncio
+    async def test_is_directory(self, nx):
+        await nx.sys_mkdir("/somedir", parents=True, exist_ok=True)
+        assert await nx.sys_is_directory("/somedir")
 
-    def test_get_metadata(self, nx):
-        nx.sys_write("/meta.txt", b"metadata test")
-        meta = nx.sys_stat("/meta.txt")
+    @pytest.mark.asyncio
+    async def test_get_metadata(self, nx):
+        await nx.sys_write("/meta.txt", b"metadata test")
+        meta = await nx.sys_stat("/meta.txt")
         assert meta is not None
         assert meta["size"] == 13
         assert meta["is_directory"] is False
 
-    def test_get_etag(self, nx):
-        nx.sys_write("/etag.txt", b"etag test")
+    @pytest.mark.asyncio
+    async def test_get_etag(self, nx):
+        await nx.sys_write("/etag.txt", b"etag test")
         etag = nx.get_etag("/etag.txt")
         assert etag is not None
         assert isinstance(etag, str)
@@ -293,35 +300,38 @@ class TestVersionDelegation:
         vs = getattr(nx, "version_service", None) or getattr(nx, "_version_service", None)
         assert vs is not None, "VersionService should be wired by factory"
 
-    def test_list_versions_after_write(self, nx):
+    @pytest.mark.asyncio
+    async def test_list_versions_after_write(self, nx):
         """list_versions should return version history after writes."""
         path = f"/ver-{uuid.uuid4().hex[:8]}.txt"
-        nx.sys_write(path, b"v1")
+        await nx.sys_write(path, b"v1")
         from nexus.lib.sync_bridge import run_sync
 
         versions = run_sync(nx.version_service.list_versions(path))
         assert isinstance(versions, list)
         assert len(versions) >= 1
 
-    def test_get_version_returns_content(self, nx):
+    @pytest.mark.asyncio
+    async def test_get_version_returns_content(self, nx):
         """get_version should retrieve specific version content."""
         from nexus.lib.sync_bridge import run_sync
 
         path = f"/ver2-{uuid.uuid4().hex[:8]}.txt"
-        nx.sys_write(path, b"version-one")
+        await nx.sys_write(path, b"version-one")
         versions = run_sync(nx.version_service.list_versions(path))
         assert len(versions) >= 1
         ver_num = versions[0].get("version", 1)
         content = run_sync(nx.version_service.get_version(path, ver_num))
         assert isinstance(content, bytes)
 
-    def test_multiple_versions(self, nx):
+    @pytest.mark.asyncio
+    async def test_multiple_versions(self, nx):
         """Multiple writes should produce multiple versions."""
         from nexus.lib.sync_bridge import run_sync
 
         path = f"/multi-ver-{uuid.uuid4().hex[:8]}.txt"
-        nx.sys_write(path, b"v1")
-        nx.sys_write(path, b"v2")
+        await nx.sys_write(path, b"v1")
+        await nx.sys_write(path, b"v2")
         versions = run_sync(nx.version_service.list_versions(path))
         assert len(versions) >= 2
 
@@ -334,7 +344,8 @@ class TestVersionDelegation:
 class TestPermissionEnforcement:
     """Verify permission checks still work after decomposition with PG ReBAC."""
 
-    def test_write_with_admin_context(self, nx_perms):
+    @pytest.mark.asyncio
+    async def test_write_with_admin_context(self, nx_perms):
         """Admin should be able to write with permissions enabled."""
         ctx = OperationContext(
             user_id="admin",
@@ -344,11 +355,12 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-test-{uuid.uuid4().hex[:8]}.txt"
-        nx_perms.sys_write(path, b"admin write", context=ctx)
-        data = nx_perms.sys_read(path, context=ctx)
+        await nx_perms.sys_write(path, b"admin write", context=ctx)
+        data = await nx_perms.sys_read(path, context=ctx)
         assert data == b"admin write"
 
-    def test_mkdir_with_admin(self, nx_perms):
+    @pytest.mark.asyncio
+    async def test_mkdir_with_admin(self, nx_perms):
         """Admin should be able to mkdir."""
         ctx = OperationContext(
             user_id="admin",
@@ -358,10 +370,11 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         dirname = f"/admin-dir-{uuid.uuid4().hex[:8]}"
-        nx_perms.sys_mkdir(dirname, parents=True, exist_ok=True, context=ctx)
-        assert nx_perms.sys_is_directory(dirname, context=ctx)
+        await nx_perms.sys_mkdir(dirname, parents=True, exist_ok=True, context=ctx)
+        assert await nx_perms.sys_is_directory(dirname, context=ctx)
 
-    def test_read_after_write_with_permissions(self, nx_perms):
+    @pytest.mark.asyncio
+    async def test_read_after_write_with_permissions(self, nx_perms):
         """Read after write should work with admin permissions."""
         ctx = OperationContext(
             user_id="admin",
@@ -371,11 +384,12 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-rw-{uuid.uuid4().hex[:8]}.txt"
-        nx_perms.sys_write(path, b"perm data", context=ctx)
-        result = nx_perms.sys_read(path, context=ctx)
+        await nx_perms.sys_write(path, b"perm data", context=ctx)
+        result = await nx_perms.sys_read(path, context=ctx)
         assert result == b"perm data"
 
-    def test_version_with_permissions(self, nx_perms):
+    @pytest.mark.asyncio
+    async def test_version_with_permissions(self, nx_perms):
         """list_versions should work with admin permissions."""
         ctx = OperationContext(
             user_id="admin",
@@ -385,7 +399,7 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-ver-{uuid.uuid4().hex[:8]}.txt"
-        nx_perms.sys_write(path, b"version with perms", context=ctx)
+        await nx_perms.sys_write(path, b"version with perms", context=ctx)
         from nexus.lib.sync_bridge import run_sync
 
         versions = run_sync(nx_perms.version_service.list_versions(path, ctx))

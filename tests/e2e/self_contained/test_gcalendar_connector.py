@@ -292,11 +292,12 @@ class TestSkillDocGeneration:
         assert "```yaml" in doc
         assert "# agent_intent:" in doc
 
-    def test_write_skill_docs(self, calendar_backend, isolated_db, tmp_path):
+    @pytest.mark.asyncio
+    async def test_write_skill_docs(self, calendar_backend, isolated_db, tmp_path):
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
         backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
@@ -311,7 +312,7 @@ class TestSkillDocGeneration:
 
             if skill_path:
                 # Read back and verify
-                content = nx.sys_read(skill_path)
+                content = await nx.sys_read(skill_path)
                 assert b"Gcalendar Connector" in content
                 assert b"agent_intent" in content
         finally:

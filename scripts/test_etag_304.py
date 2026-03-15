@@ -923,7 +923,7 @@ class NexusTestServer:
         self.temp_dir: tempfile.TemporaryDirectory | None = None
         self.nexus_fs: NexusFS | None = None
 
-    def start(self) -> str:
+    async def start(self) -> str:
         """Start the server and return the URL."""
         # Create temp directory for storage
         self.temp_dir = tempfile.TemporaryDirectory(prefix="nexus_etag_test_")
@@ -943,7 +943,7 @@ class NexusTestServer:
 
         # Ensure workspace directory exists (may already exist by default)
         with contextlib.suppress(FileExistsError):
-            self.nexus_fs.sys_mkdir("/workspace")
+            await self.nexus_fs.sys_mkdir("/workspace")
 
         # Create FastAPI app
         app = create_app(

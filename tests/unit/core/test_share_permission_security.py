@@ -7,6 +7,7 @@ Tests cover:
 - Permission level validation
 """
 
+import asyncio
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -31,12 +32,14 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with ReBAC enabled and permissions enforced."""
-    nx = create_nexus_fs(
-        backend=CASLocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        parsing=ParseConfig(auto_parse=False),
-        permissions=PermissionConfig(enforce=True),
+    nx = asyncio.run(
+        create_nexus_fs(
+            backend=CASLocalBackend(temp_dir),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=True),
+        )
     )
 
     # Grant admin ownership of root directory for tests
@@ -61,11 +64,14 @@ def admin_context() -> dict:
 class TestIssue817ShareWithUserSecurity:
     """Test Issue #817: Security checks in share_with_user()."""
 
-    def test_owner_can_share_file(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    @pytest.mark.asyncio
+    async def test_owner_can_share_file(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test that file owner can share with another user."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         tuple_id = nx.service("rebac").rebac_create_sync(
@@ -92,13 +98,14 @@ class TestIssue817ShareWithUserSecurity:
             object=("file", test_file),
         )
 
-    def test_non_owner_cannot_share_file(
+    @pytest.mark.asyncio
+    async def test_non_owner_cannot_share_file(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
         """Test that non-owner (viewer) cannot share file."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -131,11 +138,14 @@ class TestIssue817ShareWithUserSecurity:
                 context=alice_context,
             )
 
-    def test_admin_can_always_share(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    @pytest.mark.asyncio
+    async def test_admin_can_always_share(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test that admin users can share any file."""
         # Create a file as regular user
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Admin can share without ownership
         share_id = nx.service("rebac").share_with_user_sync(
@@ -146,13 +156,14 @@ class TestIssue817ShareWithUserSecurity:
         )
         assert share_id
 
-    def test_system_context_can_always_share(
+    @pytest.mark.asyncio
+    async def test_system_context_can_always_share(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
         """Test that system context can share any file."""
         # Create a file
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # System context can share without ownership
         system_context = {
@@ -173,11 +184,14 @@ class TestIssue817ShareWithUserSecurity:
 class TestIssue818ShareWithGroup:
     """Test Issue #818: share_with_group() functionality."""
 
-    def test_share_with_group_basic(self, nx: NexusFS, temp_dir: Path, admin_context: dict) -> None:
+    @pytest.mark.asyncio
+    async def test_share_with_group_basic(
+        self, nx: NexusFS, temp_dir: Path, admin_context: dict
+    ) -> None:
         """Test basic share_with_group functionality."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -222,13 +236,14 @@ class TestIssue818ShareWithGroup:
             object=("file", test_file),
         )
 
-    def test_non_owner_cannot_share_with_group(
+    @pytest.mark.asyncio
+    async def test_non_owner_cannot_share_with_group(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
         """Test that non-owner cannot share with group."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -261,13 +276,14 @@ class TestIssue818ShareWithGroup:
                 context=alice_context,
             )
 
-    def test_share_with_group_permission_levels(
+    @pytest.mark.asyncio
+    async def test_share_with_group_permission_levels(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
         """Test different permission levels when sharing with group."""
         # Create a file as admin
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -398,13 +414,14 @@ class TestNonFileResourceSecurity:
 class TestHelperMethodIntegration:
     """Test the _check_share_permission helper method integration."""
 
-    def test_helper_used_in_rebac_create(
+    @pytest.mark.asyncio
+    async def test_helper_used_in_rebac_create(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
         """Test that helper is properly integrated in rebac_create."""
         # Create a file
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         nx.service("rebac").rebac_create_sync(
@@ -429,13 +446,14 @@ class TestHelperMethodIntegration:
                 context=alice_context,
             )
 
-    def test_no_context_allows_operation(
+    @pytest.mark.asyncio
+    async def test_no_context_allows_operation(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
         """Test that operations without context are allowed (backward compatibility)."""
         # Create a file
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Operation without context should succeed
         tuple_id = nx.service("rebac").rebac_create_sync(
@@ -446,9 +464,10 @@ class TestHelperMethodIntegration:
         )
         assert tuple_id
 
-    def test_enforce_permissions_false_allows_all(self, temp_dir: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_enforce_permissions_false_allows_all(self, temp_dir: Path) -> None:
         """Test that enforce_permissions=False bypasses checks."""
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -459,7 +478,7 @@ class TestHelperMethodIntegration:
         try:
             # Create a file
             test_file = "/test_file.txt"
-            nx.sys_write(test_file, b"test content")
+            await nx.sys_write(test_file, b"test content")
 
             # Non-owner can share when permissions are not enforced
             alice_context = {
@@ -482,13 +501,14 @@ class TestHelperMethodIntegration:
 class TestCrossZoneSharing:
     """Test cross-zone sharing functionality."""
 
-    def test_share_with_user_cross_zone(
+    @pytest.mark.asyncio
+    async def test_share_with_user_cross_zone(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
         """Test sharing file with user in different zone."""
         # Create a file as admin in zone1
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         admin_context_zone1 = {
@@ -517,13 +537,14 @@ class TestCrossZoneSharing:
         )
         assert share_id
 
-    def test_share_with_group_cross_zone(
+    @pytest.mark.asyncio
+    async def test_share_with_group_cross_zone(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
         """Test sharing file with group in different zone."""
         # Create a file as admin in zone1
         test_file = "/test_file.txt"
-        nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
+        await nx.sys_write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
         admin_context_zone1 = {

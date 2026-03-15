@@ -358,7 +358,7 @@ class WriteBackService:
                     return
 
         # Step 2: Read content from NexusFS and write to backend
-        content = self._read_nexus_content(entry.path)
+        content = await self._read_nexus_content(entry.path)
         if content is None:
             raise RuntimeError(f"Failed to read content for {entry.path}")
 
@@ -459,7 +459,8 @@ class WriteBackService:
                     f"[WRITE_BACK] Conflict on {entry.path}: creating conflict "
                     f"copy at {conflict_copy_path}"
                 )
-                self._create_conflict_copy(entry.path, conflict_copy_path)  # type: ignore[arg-type]
+                assert conflict_copy_path is not None  # always set for RENAME_CONFLICT
+                await self._create_conflict_copy(entry.path, conflict_copy_path)
                 return True
             case _:
                 logger.warning(
@@ -482,16 +483,16 @@ class WriteBackService:
                 pass
         return self._default_strategy
 
-    def _create_conflict_copy(self, original_path: str, conflict_path: str) -> None:
+    async def _create_conflict_copy(self, original_path: str, conflict_path: str) -> None:
         """Create a NexusFS-side conflict copy of the file.
 
         Reads the current content and writes it to the conflict copy path.
         NexusFS-side only (CAS), near-free — following the Syncthing model.
         """
         try:
-            content = self._read_nexus_content(original_path)
+            content = await self._read_nexus_content(original_path)
             if content is not None:
-                self._gw.sys_write(conflict_path, content)
+                await self._gw.sys_write(conflict_path, content)
         except Exception as e:
             logger.warning(f"[WRITE_BACK] Failed to create conflict copy: {e}")
 
@@ -563,7 +564,7 @@ class WriteBackService:
         else:
             # Fallback: delete old path, write new content
             await self._handle_delete(backend, old_backend_path)
-            content = self._read_nexus_content(entry.path)
+            content = await self._read_nexus_content(entry.path)
             if content is None:
                 raise RuntimeError(f"Failed to read content for rename of {entry.path}")
             op_ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
@@ -576,7 +577,7 @@ class WriteBackService:
         ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
         await asyncio.to_thread(backend.mkdir, backend_path, context=ctx)
 
-    def _read_nexus_content(self, path: str) -> bytes | None:
+    async def _read_nexus_content(self, path: str) -> bytes | None:
         """Read file content from NexusFS.
 
         Args:
@@ -592,7 +593,7 @@ class WriteBackService:
             content_hash = getattr(meta, "content_hash", None)
             if content_hash is None:
                 return None
-            result = self._gw.sys_read(path)
+            result = await self._gw.sys_read(path)
             if isinstance(result, bytes):
                 return result
             return getattr(result, "data", None) if result else None

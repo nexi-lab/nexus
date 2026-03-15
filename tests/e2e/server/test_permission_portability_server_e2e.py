@@ -81,7 +81,7 @@ def _rpc_call(
     return data.get("result")
 
 
-def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
+async def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
     """Create a NexusFS with RaftMetadataStore + persistent SQLAlchemyRecordStore.
 
     Uses RaftMetadataStore.embedded() for file metadata (sled KV) and
@@ -98,7 +98,7 @@ def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
     data_dir.mkdir(parents=True, exist_ok=True)
     db_path = data_dir / "metadata.db"
 
-    return create_nexus_fs(
+    return await create_nexus_fs(
         backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -108,7 +108,7 @@ def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
 
 
 @pytest.fixture(scope="module")
-def e2e_env():
+async def e2e_env():
     """Set up source -> export -> import -> start target server.
 
     Creates source NexusFS with files and ReBAC permissions, exports a zone
@@ -132,22 +132,22 @@ def e2e_env():
         # ============================================================
         # Phase 1: Create source NexusFS, write files, add permissions
         # ============================================================
-        source_fs = _make_nexus_fs(source_dir)
+        source_fs = await _make_nexus_fs(source_dir)
 
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write test files
-        source_fs.sys_write(
+        await source_fs.sys_write(
             "/workspace/readme.md",
             b"# Permissions E2E Test",
             context=admin,
         )
-        source_fs.sys_write(
+        await source_fs.sys_write(
             "/workspace/src/main.py",
             b"print('hello')",
             context=admin,
         )
-        source_fs.sys_write(
+        await source_fs.sys_write(
             "/docs/guide.txt",
             b"User guide content",
             context=admin,
@@ -200,7 +200,7 @@ def e2e_env():
         # ============================================================
         # Phase 3: Import into target NexusFS (persistent SQLite)
         # ============================================================
-        target_fs = _make_nexus_fs(target_dir)
+        target_fs = await _make_nexus_fs(target_dir)
 
         result = import_zone_bundle(
             nexus_fs=target_fs,

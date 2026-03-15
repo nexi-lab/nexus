@@ -217,9 +217,7 @@ class MCPService:
                 if self._filesystem is None:
                     raise RuntimeError("Filesystem not configured for MCPService")
 
-                items = await asyncio.to_thread(
-                    self._filesystem.sys_readdir, mount.tools_path, recursive=False
-                )
+                items = await self._filesystem.sys_readdir(mount.tools_path, recursive=False)
 
                 for item in items:
                     if isinstance(item, str) and item.endswith(".json"):
@@ -227,8 +225,8 @@ class MCPService:
                         if item.endswith("mount.json"):
                             continue
                         try:
-                            # Read tool definition file (run in thread)
-                            raw = await asyncio.to_thread(self._filesystem.sys_read, item)
+                            # Read tool definition file
+                            raw = await self._filesystem.sys_read(item)
                             if isinstance(raw, bytes):
                                 text = raw.decode("utf-8")
                             elif isinstance(raw, str):
@@ -750,8 +748,8 @@ class MCPService:
 
             try:
                 if self._filesystem is not None:
-                    self._filesystem.sys_mkdir(skill_path, parents=True, exist_ok=True)
-                    self._filesystem.sys_write(
+                    await self._filesystem.sys_mkdir(skill_path, parents=True, exist_ok=True)
+                    await self._filesystem.sys_write(
                         skill_file, skill_md.encode("utf-8"), context=context
                     )
                     logger.info("Generated MCP skill: %s", skill_file)
@@ -778,7 +776,7 @@ class MCPService:
                         tier="user",
                     )
                     mount_json = json_module.dumps(mount_config.to_dict(), indent=2)
-                    self._filesystem.sys_write(
+                    await self._filesystem.sys_write(
                         mount_file, mount_json.encode("utf-8"), context=context
                     )
                     logger.info("Generated mount config: %s", mount_file)
@@ -805,7 +803,7 @@ class MCPService:
                         )
                         tool_file = f"{skill_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
-                        self._filesystem.sys_write(
+                        await self._filesystem.sys_write(
                             tool_file,
                             tool_json.encode("utf-8"),
                             context=context,

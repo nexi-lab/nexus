@@ -28,10 +28,10 @@ Example:
     ... ))
     >>>
     >>> # Read timeline
-    >>> timeline = nx.sys_read("/x/timeline/recent.json")
+    >>> timeline = await nx.sys_read("/x/timeline/recent.json")
     >>>
     >>> # Post tweet
-    >>> nx.sys_write("/x/posts/new.json", json.dumps({"text": "Hello!")).encode())
+    >>> await nx.sys_write("/x/posts/new.json", json.dumps({"text": "Hello!")).encode())
 """
 
 import hashlib

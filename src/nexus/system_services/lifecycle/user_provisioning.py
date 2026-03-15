@@ -68,7 +68,7 @@ class UserProvisioningService:
     # ------------------------------------------------------------------
 
     @rpc_expose(description="Provision a new user account with all resources", admin_only=True)
-    def provision_user(
+    async def provision_user(
         self,
         user_id: str,
         email: str,
@@ -235,7 +235,7 @@ class UserProvisioningService:
 
         # 6. Create user directories
         try:
-            dir_paths = self._create_user_directories(user_id, zone_id, admin_context)
+            dir_paths = await self._create_user_directories(user_id, zone_id, admin_context)
             created_resources["directories"] = dir_paths
             logger.info("Created %d directories for user %s", len(dir_paths), user_id)
         except Exception as e:
@@ -250,8 +250,8 @@ class UserProvisioningService:
             workspace_id = f"ws_personal_{uuid_suffix}"
             workspace_path = f"/zone/{zone_id}/user/{user_id}/workspace/{workspace_id}"
 
-            if not self._vfs.sys_access(workspace_path, context=admin_context):
-                self._vfs.sys_mkdir(
+            if not await self._vfs.sys_access(workspace_path, context=admin_context):
+                await self._vfs.sys_mkdir(
                     workspace_path, parents=True, exist_ok=True, context=admin_context
                 )
                 if self._register_workspace_fn:
@@ -504,7 +504,7 @@ class UserProvisioningService:
     # Private Helpers
     # ------------------------------------------------------------------
 
-    def _delete_directory_recursive(
+    async def _delete_directory_recursive(
         self,
         dir_path: str,
         context: OperationContext,
@@ -533,13 +533,13 @@ class UserProvisioningService:
 
         directory_exists = False
         with suppress(Exception):
-            directory_exists = self._vfs.sys_access(dir_path, context=context)
+            directory_exists = await self._vfs.sys_access(dir_path, context=context)
 
         if not directory_exists:
             return False
 
         try:
-            result = self._vfs.sys_readdir(dir_path, recursive=False, context=context)
+            result = await self._vfs.sys_readdir(dir_path, recursive=False, context=context)
             if isinstance(result, dict) and "files" in result:
                 children = result["files"]
             elif isinstance(result, list):
@@ -557,7 +557,7 @@ class UserProvisioningService:
                 if isinstance(item, str):
                     child_path = item
                     try:
-                        self._vfs.sys_readdir(child_path, recursive=False, context=context)
+                        await self._vfs.sys_readdir(child_path, recursive=False, context=context)
                         is_dir = True
                     except Exception:
                         is_dir = False  # readdir failed → treat as file
@@ -572,9 +572,9 @@ class UserProvisioningService:
 
                 try:
                     if is_dir:
-                        self._delete_directory_recursive(child_path, context)
+                        await self._delete_directory_recursive(child_path, context)
                     else:
-                        self._vfs.sys_unlink(child_path, context=context)
+                        await self._vfs.sys_unlink(child_path, context=context)
                 except Exception as e:
                     logger.warning("Failed to delete %s: %s", child_path, e)
 
@@ -587,7 +587,7 @@ class UserProvisioningService:
                     logger.debug("rmdir failed for %s (will try unlink): %s", dir_path, e)
             if not directory_removed:
                 try:
-                    self._vfs.sys_unlink(dir_path, context=context)
+                    await self._vfs.sys_unlink(dir_path, context=context)
                     directory_removed = True
                 except Exception as e:
                     logger.debug("unlink fallback also failed for %s: %s", dir_path, e)
@@ -664,7 +664,7 @@ class UserProvisioningService:
             except Exception as e:
                 logger.debug("Tiger cache invalidation failed for %s: %s", dir_path, e)
 
-    def _create_user_directories(
+    async def _create_user_directories(
         self,
         user_id: str,
         zone_id: str,
@@ -677,7 +677,7 @@ class UserProvisioningService:
         for resource_type in all_types:
             folder_path = f"/zone/{zone_id}/user/{user_id}/{resource_type}"
             try:
-                self._vfs.sys_mkdir(folder_path, parents=True, exist_ok=True, context=context)
+                await self._vfs.sys_mkdir(folder_path, parents=True, exist_ok=True, context=context)
                 if self._rebac_create_fn:
                     try:
                         self._rebac_create_fn(

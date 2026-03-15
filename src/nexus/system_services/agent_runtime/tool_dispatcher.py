@@ -300,7 +300,7 @@ class ToolDispatcher:
 
     async def _read(self, ctx: OperationContext, args: dict[str, Any], cwd: str | None) -> str:
         path = self._resolve_path(args.get("path"), cwd)
-        content = self._vfs.sys_read(path, context=ctx)
+        content = await self._vfs.sys_read(path, context=ctx)
 
         if isinstance(content, dict):
             content = content.get("content", b"")
@@ -329,7 +329,7 @@ class ToolDispatcher:
         path = self._resolve_path(args.get("path"), cwd)
         content = args.get("content", "")
         content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-        result = self._vfs.sys_write(path, content_bytes, context=ctx)
+        result = await self._vfs.sys_write(path, content_bytes, context=ctx)
         size = (
             result.get("size", len(content_bytes))
             if isinstance(result, dict)
@@ -343,7 +343,7 @@ class ToolDispatcher:
         new_string = args.get("new_string", "")
 
         # Read current content
-        content = self._vfs.sys_read(path, context=ctx)
+        content = await self._vfs.sys_read(path, context=ctx)
         if isinstance(content, dict):
             content = content.get("content", b"")
         if isinstance(content, bytes):
@@ -356,7 +356,7 @@ class ToolDispatcher:
 
         # Apply edit
         new_text = text.replace(old_string, new_string, 1)
-        self._vfs.sys_write(path, new_text.encode("utf-8"), context=ctx)
+        await self._vfs.sys_write(path, new_text.encode("utf-8"), context=ctx)
         return f"Successfully edited {path}"
 
     async def _grep(
@@ -414,7 +414,7 @@ class ToolDispatcher:
         except Exception:
             # Fallback: use sys_readdir if glob not available
             try:
-                raw_entries = self._vfs.sys_readdir(path, recursive=True)
+                raw_entries = await self._vfs.sys_readdir(path, recursive=True)
                 assert isinstance(raw_entries, list)  # no limit → always list
                 files = [str(e) for e in raw_entries]
             except Exception:
@@ -440,7 +440,7 @@ class ToolDispatcher:
         recursive = args.get("recursive", False)
 
         try:
-            entries = self._vfs.sys_readdir(path, recursive=recursive, context=ctx)
+            entries = await self._vfs.sys_readdir(path, recursive=recursive, context=ctx)
         except Exception as exc:
             return f"Error listing {path}: {exc}"
 

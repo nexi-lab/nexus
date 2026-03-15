@@ -20,7 +20,7 @@ async def test_directory_rename_path_local(tmp_path: Path):
     backend = PathLocalBackend(root_path=data_dir)
     from nexus.core.config import PermissionConfig
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=DictMetastore(),
         record_store=None,

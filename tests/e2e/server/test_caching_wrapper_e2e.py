@@ -329,7 +329,7 @@ class TestCachingPermissions:
     """
 
     @pytest.fixture
-    def nexus_with_cache(self, tmp_path: Path):
+    async def nexus_with_cache(self, tmp_path: Path):
         """Create NexusFS with CachingBackendWrapper and permissions enabled."""
         storage_path = tmp_path / "storage"
         storage_path.mkdir()
@@ -348,7 +348,7 @@ class TestCachingPermissions:
         metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore()  # in-memory SQLite
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -492,7 +492,7 @@ class TestCachingPermissions:
         metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore()
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -577,7 +577,7 @@ class TestCachingWithFastAPIServer:
         metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore(db_path=db_path)
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,

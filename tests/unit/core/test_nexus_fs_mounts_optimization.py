@@ -27,10 +27,10 @@ def temp_dir():
 
 
 @pytest.fixture
-def nx_with_hierarchy(temp_dir: Path):
+async def nx_with_hierarchy(temp_dir: Path):
     """Create a NexusFS instance with hierarchy manager enabled."""
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -188,9 +188,10 @@ class TestMountSyncOptimization:
 class TestMountDatabaseVsConfig:
     """Test database vs config mount precedence."""
 
-    def test_database_mount_overrides_config(self, temp_dir: Path):
+    @pytest.mark.asyncio
+    async def test_database_mount_overrides_config(self, temp_dir: Path):
         """Test that database-saved mounts take precedence over config."""
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

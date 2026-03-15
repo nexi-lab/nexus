@@ -16,7 +16,7 @@ Tests cover ReBAC operations:
 # Check if pandas is available (required for dynamic viewer tests)
 import importlib.util
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -42,9 +42,9 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+async def nx(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance with ReBAC enabled."""
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -56,9 +56,9 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 
 
 @pytest.fixture
-def nx_no_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
+async def nx_no_permissions(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance without permissions enforcement."""
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-noperm")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

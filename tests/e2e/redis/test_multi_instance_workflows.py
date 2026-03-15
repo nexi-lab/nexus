@@ -115,7 +115,7 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        nexus = create_nexus_fs(
+        nexus = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(db_path_agent1).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent1),
@@ -155,7 +155,7 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        nexus = create_nexus_fs(
+        nexus = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(db_path_agent2).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent2),

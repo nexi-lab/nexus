@@ -89,7 +89,7 @@ def add_migration_tables(engine):
 
 
 @pytest.fixture
-def nexus_fs_with_tiger(db_with_migrations, tmp_path):
+async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     """Create NexusFS instance with Tiger Cache and directory grants enabled."""
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
@@ -101,7 +101,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     backend = CASLocalBackend(root_path=str(storage_path))
 
     # Create NexusFS with Tiger Cache enabled
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),

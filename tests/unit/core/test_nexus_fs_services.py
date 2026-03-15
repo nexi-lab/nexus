@@ -23,7 +23,7 @@ except Exception:
 pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 
 
-def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
+async def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     """Create NexusFS via factory (includes two-phase wired services)."""
     from nexus.factory import create_nexus_fs
     from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -36,7 +36,7 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     metadata_store = RaftMetadataStore.embedded(str(db_path))
     record_store = SQLAlchemyRecordStore(db_path=str(tmp_path / "nexus.db"))
 
-    return create_nexus_fs(
+    return await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -47,9 +47,10 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
 class TestNexusFSServiceComposition:
     """Test that NexusFS correctly instantiates all services."""
 
-    def test_all_services_instantiated(self, tmp_path: Path):
+    @pytest.mark.asyncio
+    async def test_all_services_instantiated(self, tmp_path: Path):
         """Test that all services are created during NexusFS initialization."""
-        fs = _make_fs(tmp_path, enforce_permissions=False)
+        fs = await _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify all services are instantiated
         assert hasattr(fs, "version_service"), "VersionService not instantiated"
@@ -71,9 +72,10 @@ class TestNexusFSServiceComposition:
         assert fs.service("share_link") is not None
         assert fs.service("events") is not None
 
-    def test_service_dependencies_correct(self, tmp_path: Path):
+    @pytest.mark.asyncio
+    async def test_service_dependencies_correct(self, tmp_path: Path):
         """Test that services receive correct dependencies."""
-        fs = _make_fs(tmp_path)
+        fs = await _make_fs(tmp_path)
 
         # VersionService dependencies (injected by _make_fs, mimicking factory)
         assert fs.version_service.metadata == fs.metadata
@@ -98,9 +100,10 @@ class TestNexusFSServiceComposition:
         # EventsService should exist
         assert fs.service("events") is not None
 
-    def test_version_service_delegation(self, tmp_path: Path):
+    @pytest.mark.asyncio
+    async def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService is available on NexusFS."""
-        fs = _make_fs(tmp_path, enforce_permissions=False)
+        fs = await _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify version_service exists and is not None
         assert hasattr(fs, "version_service"), "VersionService not instantiated"

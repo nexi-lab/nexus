@@ -60,7 +60,7 @@ pytestmark.append(
 # ---------------------------------------------------------------------------
 
 
-def _create_factory_nexus_fs(
+async def _create_factory_nexus_fs(
     tmp_path: Path,
     *,
     enforce_permissions: bool = False,
@@ -83,7 +83,7 @@ def _create_factory_nexus_fs(
 
     record_store = create_record_store(db_url=PG_URL, create_tables=True)
 
-    return create_nexus_fs(
+    return await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -105,17 +105,17 @@ def _create_factory_nexus_fs(
 
 
 @pytest.fixture()
-def nx(tmp_path):
+async def nx(tmp_path):
     """Factory-wired NexusFS with PostgreSQL, permissions disabled."""
-    fs = _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
+    fs = await _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
     yield fs
     fs.close()
 
 
 @pytest.fixture()
-def nx_perms(tmp_path):
+async def nx_perms(tmp_path):
     """Factory-wired NexusFS with PostgreSQL, permissions enabled."""
-    fs = _create_factory_nexus_fs(
+    fs = await _create_factory_nexus_fs(
         tmp_path,
         enforce_permissions=True,
         is_admin=True,
@@ -126,13 +126,13 @@ def nx_perms(tmp_path):
 
 
 @pytest.fixture()
-def client(tmp_path):
+async def client(tmp_path):
     """FastAPI TestClient with factory-wired NexusFS + PostgreSQL."""
     from starlette.testclient import TestClient
 
     from nexus.server.fastapi_server import create_app
 
-    fs = _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
+    fs = await _create_factory_nexus_fs(tmp_path, enforce_permissions=False, is_admin=True)
     api_key = "test-api-key-" + uuid.uuid4().hex[:16]
     app = create_app(fs, api_key=api_key, database_url=PG_URL)
     tc = TestClient(app)
@@ -149,13 +149,13 @@ def client(tmp_path):
 
 
 @pytest.fixture()
-def client_perms(tmp_path):
+async def client_perms(tmp_path):
     """FastAPI TestClient with factory-wired NexusFS + PostgreSQL + permissions."""
     from starlette.testclient import TestClient
 
     from nexus.server.fastapi_server import create_app
 
-    fs = _create_factory_nexus_fs(
+    fs = await _create_factory_nexus_fs(
         tmp_path,
         enforce_permissions=True,
         is_admin=True,

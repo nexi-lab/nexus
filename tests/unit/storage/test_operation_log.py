@@ -1,7 +1,7 @@
 """Unit tests for operation logging and undo capability."""
 
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
 import pytest
@@ -45,11 +45,11 @@ def local_backend(temp_dir: Path) -> CASLocalBackend:
 
 
 @pytest.fixture
-def nx(
+async def nx(
     temp_dir: Path, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
-) -> Generator[NexusFS, None, None]:
+) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance for testing."""
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=local_backend,
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,

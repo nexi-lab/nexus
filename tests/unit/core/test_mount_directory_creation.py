@@ -20,7 +20,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 @pytest.fixture
-def nx_with_mount():
+async def nx_with_mount():
     """Create NexusFS instance with mount manager support via factory."""
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.factory import create_nexus_fs
@@ -30,7 +30,7 @@ def nx_with_mount():
         db_file = Path(tmpdir) / "metadata.db"
         metadata_store = RaftMetadataStore.embedded(str(db_file).replace(".db", ""))
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=root_backend,
             metadata_store=metadata_store,
             permissions=PermissionConfig(enforce=False),
@@ -169,7 +169,8 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
     assert mount_meta.is_mount, f"Expected DT_MOUNT, got entry_type={mount_meta.entry_type}"
 
 
-def test_sync_mount_ensures_directory_exists(nx_with_mount):
+@pytest.mark.asyncio
+async def test_sync_mount_ensures_directory_exists(nx_with_mount):
     """Test that sync_mount creates directory entry if missing."""
     nx, tmpdir = nx_with_mount
 

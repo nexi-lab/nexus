@@ -157,12 +157,16 @@ class WorkspaceRegistry:
 
     def _load_from_db(self) -> None:
         """Load workspace configs from database."""
-        from nexus.storage.models import WorkspaceConfigModel
+        from nexus.storage.models import PathRegistrationModel
 
         with self.metadata_session_factory() as session:
             from sqlalchemy import select
 
-            workspaces = session.execute(select(WorkspaceConfigModel)).scalars().all()
+            workspaces = (
+                session.execute(select(PathRegistrationModel).filter_by(type="workspace"))
+                .scalars()
+                .all()
+            )
             for ws in workspaces:
                 metadata_dict = json.loads(ws.extra_metadata) if ws.extra_metadata else {}
                 self._workspaces[ws.path] = WorkspaceConfig(
@@ -229,13 +233,15 @@ class WorkspaceRegistry:
         metadata: dict | None = None,
     ) -> WorkspaceConfig:
         """Update an existing workspace configuration. DB is source of truth."""
-        from nexus.storage.models import WorkspaceConfigModel
+        from nexus.storage.models import PathRegistrationModel
 
         with self.metadata_session_factory() as session:
             from sqlalchemy import select
 
             ws_model = (
-                session.execute(select(WorkspaceConfigModel).filter_by(path=path)).scalars().first()
+                session.execute(select(PathRegistrationModel).filter_by(path=path))
+                .scalars()
+                .first()
             )
             if ws_model is None:
                 raise ValueError(f"Workspace not found: {path}")
@@ -299,11 +305,12 @@ class WorkspaceRegistry:
         expires_at: Any | None = None,
     ) -> None:
         """Persist workspace config to database."""
-        from nexus.storage.models import WorkspaceConfigModel
+        from nexus.storage.models import PathRegistrationModel
 
         with self.metadata_session_factory() as session:
-            model = WorkspaceConfigModel(
+            model = PathRegistrationModel(
                 path=config.path,
+                type="workspace",
                 name=config.name,
                 description=config.description,
                 created_at=config.created_at or datetime.now(UTC),
@@ -320,13 +327,15 @@ class WorkspaceRegistry:
 
     def _delete_workspace_from_db(self, path: str) -> bool:
         """Delete workspace config from database. Returns True if found and deleted."""
-        from nexus.storage.models import WorkspaceConfigModel
+        from nexus.storage.models import PathRegistrationModel
 
         with self.metadata_session_factory() as session:
             from sqlalchemy import select
 
             workspace = (
-                session.execute(select(WorkspaceConfigModel).filter_by(path=path)).scalars().first()
+                session.execute(select(PathRegistrationModel).filter_by(path=path))
+                .scalars()
+                .first()
             )
             if workspace:
                 session.delete(workspace)

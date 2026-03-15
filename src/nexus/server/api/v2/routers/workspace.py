@@ -123,7 +123,7 @@ def _get_caller_user_id(auth_result: dict[str, Any]) -> str | None:
 
 
 def _build_workspace_response(db_model: Any) -> WorkspaceResponse:
-    """Build a WorkspaceResponse from a DB model (WorkspaceConfigModel)."""
+    """Build a WorkspaceResponse from a DB model (PathRegistrationModel)."""
     metadata_dict = json.loads(db_model.extra_metadata) if db_model.extra_metadata else {}
     return WorkspaceResponse(
         path=db_model.path,
@@ -141,31 +141,33 @@ def _build_workspace_response(db_model: Any) -> WorkspaceResponse:
 
 
 def _get_workspace_db_model(registry: Any, path: str, *, user_id: str | None = None) -> Any:
-    """Fetch WorkspaceConfigModel from DB by path, optionally filtered by user_id."""
+    """Fetch PathRegistrationModel from DB by path, optionally filtered by user_id."""
     from sqlalchemy import select
 
-    from nexus.storage.models import WorkspaceConfigModel
+    from nexus.storage.models import PathRegistrationModel
 
     with registry.metadata_session_factory() as session:
-        stmt = select(WorkspaceConfigModel).filter_by(path=path)
+        stmt = select(PathRegistrationModel).filter_by(path=path, type="workspace")
         if user_id is not None:
             stmt = stmt.filter(
-                (WorkspaceConfigModel.user_id == user_id) | (WorkspaceConfigModel.user_id.is_(None))
+                (PathRegistrationModel.user_id == user_id)
+                | (PathRegistrationModel.user_id.is_(None))
             )
         return session.execute(stmt).scalars().first()
 
 
 def _list_workspace_db_models(registry: Any, *, user_id: str | None = None) -> list[Any]:
-    """Fetch WorkspaceConfigModel rows from DB, filtered by user_id."""
+    """Fetch PathRegistrationModel rows from DB, filtered by user_id."""
     from sqlalchemy import select
 
-    from nexus.storage.models import WorkspaceConfigModel
+    from nexus.storage.models import PathRegistrationModel
 
     with registry.metadata_session_factory() as session:
-        stmt = select(WorkspaceConfigModel)
+        stmt = select(PathRegistrationModel).filter_by(type="workspace")
         if user_id is not None:
             stmt = stmt.filter(
-                (WorkspaceConfigModel.user_id == user_id) | (WorkspaceConfigModel.user_id.is_(None))
+                (PathRegistrationModel.user_id == user_id)
+                | (PathRegistrationModel.user_id.is_(None))
             )
         return list(session.execute(stmt).scalars().all())
 

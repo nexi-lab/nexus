@@ -358,7 +358,7 @@ class WriteBackService:
                     return
 
         # Step 2: Read content from NexusFS and write to backend
-        content = self._read_nexus_content(entry.path)
+        content = await self._read_nexus_content(entry.path)
         if content is None:
             raise RuntimeError(f"Failed to read content for {entry.path}")
 
@@ -564,7 +564,7 @@ class WriteBackService:
         else:
             # Fallback: delete old path, write new content
             await self._handle_delete(backend, old_backend_path)
-            content = self._read_nexus_content(entry.path)
+            content = await self._read_nexus_content(entry.path)
             if content is None:
                 raise RuntimeError(f"Failed to read content for rename of {entry.path}")
             op_ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)

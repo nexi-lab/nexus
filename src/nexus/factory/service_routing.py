@@ -3,6 +3,12 @@
 Issue #1502: ``bind_wired_services()`` and the setattr wiring path have been
 deleted.  All service access now goes through ``nx.service("name")``.
 The sole registration path is ``populate_service_registry()``.
+
+Issue #1615: ``populate_service_registry()`` accepts either a raw
+``ServiceRegistry`` or a ``ServiceLifecycleCoordinator`` — both expose
+``register_service(name, instance, *, exports, is_remote)``.  When a
+coordinator is provided, services are registered in both the Registry
+and BrickLifecycleManager in one shot.
 """
 
 from __future__ import annotations
@@ -12,6 +18,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nexus.core.config import WiredServices
     from nexus.core.service_registry import ServiceRegistry
+    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+        ServiceLifecycleCoordinator,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -68,15 +77,17 @@ _CANONICAL_NAMES: dict[str, str] = {
 
 
 def populate_service_registry(
-    registry: "ServiceRegistry",
+    registrar: "ServiceRegistry | ServiceLifecycleCoordinator",
     wired: "WiredServices | dict[str, Any]",
     *,
     is_remote: bool = False,
 ) -> int:
-    """Dual-write companion — populate ServiceRegistry from WiredServices.
+    """Populate ServiceRegistry (or coordinator) from WiredServices.
 
-    Sole registration path — extracts non-None service instances and registers
-    them under canonical short names (e.g. ``"search"`` instead of ``"search_service"``).
+    Accepts either a raw ``ServiceRegistry`` or a ``ServiceLifecycleCoordinator``.
+    Both duck-type on ``register_service(name, instance, *, exports, is_remote)``.
+    When a coordinator is provided, services are registered in both the
+    ServiceRegistry and BrickLifecycleManager in one shot (Issue #1615).
 
     Returns the number of services registered.
     """
@@ -86,7 +97,7 @@ def populate_service_registry(
         if val is None:
             continue
         exports = _CANONICAL_EXPORTS.get(canonical, ())
-        registry.register_service(
+        registrar.register_service(
             canonical,
             val,
             exports=exports,

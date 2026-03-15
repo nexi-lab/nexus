@@ -30,6 +30,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.core.path_utils import validate_path
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -82,6 +83,22 @@ class EventsService:
         self._observe_registered = False
 
         logger.info("[EventsService] Initialized")
+
+    # =========================================================================
+    # HotSwappable protocol (Q2 — Issue #1611)
+    # =========================================================================
+
+    def hook_spec(self) -> HookSpec:
+        """Declare VFS hooks: EventsService registers itself as an OBSERVE observer."""
+        return HookSpec(observers=(self,))
+
+    async def drain(self) -> None:
+        """Stop accepting new waiter registrations."""
+        self._observe_registered = False
+
+    async def activate(self) -> None:
+        """Resume accepting waiter registrations."""
+        self._observe_registered = True
 
     # =========================================================================
     # Infrastructure Detection

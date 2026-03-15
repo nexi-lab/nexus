@@ -202,6 +202,10 @@ export interface AccessState {
   readonly governanceCheck: GovernanceCheckResult | null;
   readonly governanceCheckLoading: boolean;
 
+  // Collusion detection
+  readonly collusionRings: readonly unknown[];
+  readonly collusionLoading: boolean;
+
   // UI state
   readonly activeTab: AccessTab;
   readonly error: string | null;
@@ -221,6 +225,8 @@ export interface AccessState {
 
   // Actions — credentials
   readonly fetchCredentials: (agentId: string, client: FetchClient) => Promise<void>;
+  readonly issueCredential: (agentId: string, claims: Record<string, unknown>, client: FetchClient) => Promise<void>;
+  readonly revokeCredential: (credentialId: string, agentId: string, client: FetchClient) => Promise<void>;
 
   // Actions — fraud scores
   readonly fetchFraudScores: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
@@ -268,6 +274,23 @@ export interface AccessState {
     client: FetchClient,
   ) => Promise<void>;
 
+  // Actions — governance deep features
+  readonly fetchCollusionRings: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
+  readonly suspendAgent: (agentId: string, reason: string, zoneId: string | undefined, client: FetchClient) => Promise<void>;
+
+  // Actions — manifests (create/revoke)
+  readonly createManifest: (
+    payload: {
+      readonly agent_id: string;
+      readonly name: string;
+      readonly entries: readonly { readonly tool_pattern: string; readonly permission: string; readonly max_calls_per_minute?: number }[];
+      readonly valid_from?: string;
+      readonly valid_until?: string;
+    },
+    client: FetchClient,
+  ) => Promise<void>;
+  readonly revokeManifest: (manifestId: string, client: FetchClient) => Promise<void>;
+
   // Actions — UI
   readonly setActiveTab: (tab: AccessTab) => void;
   readonly setSelectedManifestIndex: (index: number) => void;
@@ -276,7 +299,7 @@ export interface AccessState {
   readonly setSelectedDelegationIndex: (index: number) => void;
 }
 
-export const useAccessStore = create<AccessState>((set) => ({
+export const useAccessStore = create<AccessState>((set, get) => ({
   manifests: [],
   selectedManifestIndex: 0,
   manifestsLoading: false,
@@ -300,6 +323,8 @@ export const useAccessStore = create<AccessState>((set) => ({
   namespaceDetailLoading: false,
   governanceCheck: null,
   governanceCheckLoading: false,
+  collusionRings: [],
+  collusionLoading: false,
   activeTab: "manifests",
   error: null,
 
@@ -447,6 +472,31 @@ export const useAccessStore = create<AccessState>((set) => ({
     }
   },
 
+  issueCredential: async (agentId, claims, client) => {
+    set({ credentialsLoading: true, error: null });
+    try {
+      await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/credentials`, { claims });
+      await get().fetchCredentials(agentId, client);
+    } catch (err) {
+      set({ credentialsLoading: false, error: err instanceof Error ? err.message : "Failed to issue credential" });
+    }
+  },
+
+  revokeCredential: async (credentialId, agentId, client) => {
+    set({ credentialsLoading: true, error: null });
+    try {
+      await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/credentials/${encodeURIComponent(credentialId)}/revoke`, {});
+      set((state) => ({
+        credentials: state.credentials.map((c) =>
+          c.credential_id === credentialId ? { ...c, is_active: false, revoked_at: new Date().toISOString() } : c,
+        ),
+        credentialsLoading: false,
+      }));
+    } catch (err) {
+      set({ credentialsLoading: false, error: err instanceof Error ? err.message : "Failed to revoke credential" });
+    }
+  },
+
   // ── Fraud scores ───────────────────────────────────────────────────────
 
   fetchFraudScores: async (zoneId, client) => {
@@ -488,6 +538,35 @@ export const useAccessStore = create<AccessState>((set) => ({
         fraudScoresLoading: false,
         error: err instanceof Error ? err.message : "Failed to compute fraud scores",
       });
+    }
+  },
+
+  // ── Manifests (create/revoke) ─────────────────────────────────────────
+
+  createManifest: async (payload, client) => {
+    set({ manifestsLoading: true, error: null });
+    try {
+      await client.post<AccessManifest>("/api/v2/access-manifests", payload);
+      // Re-fetch manifest list
+      const response = await client.get<{ manifests: readonly AccessManifest[]; }>("/api/v2/access-manifests");
+      set({ manifests: response.manifests, manifestsLoading: false, selectedManifestIndex: 0 });
+    } catch (err) {
+      set({ manifestsLoading: false, error: err instanceof Error ? err.message : "Failed to create manifest" });
+    }
+  },
+
+  revokeManifest: async (manifestId, client) => {
+    set({ manifestsLoading: true, error: null });
+    try {
+      await client.post(`/api/v2/access-manifests/${encodeURIComponent(manifestId)}/revoke`, {});
+      set((state) => ({
+        manifests: state.manifests.map((m) =>
+          m.manifest_id === manifestId ? { ...m, status: "revoked" } : m,
+        ),
+        manifestsLoading: false,
+      }));
+    } catch (err) {
+      set({ manifestsLoading: false, error: err instanceof Error ? err.message : "Failed to revoke manifest" });
     }
   },
 
@@ -673,6 +752,31 @@ export const useAccessStore = create<AccessState>((set) => ({
         governanceCheckLoading: false,
         error: err instanceof Error ? err.message : "Failed to check governance edge",
       });
+    }
+  },
+
+  // ── Governance deep features ───────────────────────────────────────────
+
+  fetchCollusionRings: async (zoneId, client) => {
+    set({ collusionLoading: true, error: null });
+    try {
+      const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
+      const response = await client.get<{ rings: readonly unknown[] }>(
+        `/api/v2/governance/collusion-rings${params}`,
+      );
+      set({ collusionRings: response.rings ?? [], collusionLoading: false });
+    } catch (err) {
+      set({ collusionLoading: false, error: err instanceof Error ? err.message : "Failed to fetch collusion rings" });
+    }
+  },
+
+  suspendAgent: async (agentId, reason, zoneId, client) => {
+    set({ error: null });
+    try {
+      const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
+      await client.post(`/api/v2/governance/suspend/${encodeURIComponent(agentId)}${params}`, { reason });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to suspend agent" });
     }
   },
 }));

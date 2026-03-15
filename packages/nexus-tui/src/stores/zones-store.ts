@@ -84,7 +84,7 @@ interface ZonesListResponse {
 // Tab type
 // =============================================================================
 
-export type ZoneTab = "zones" | "bricks" | "drift" | "reindex";
+export type ZoneTab = "zones" | "bricks" | "drift" | "reindex" | "workspaces" | "memories" | "mcp" | "cache";
 
 // =============================================================================
 // Store
@@ -113,6 +113,12 @@ export interface ZonesState {
   readonly driftReport: DriftReportResponse | null;
   readonly driftLoading: boolean;
 
+  // Cache management
+  readonly cacheStats: unknown | null;
+  readonly cacheStatsLoading: boolean;
+  readonly hotFiles: readonly unknown[];
+  readonly hotFilesLoading: boolean;
+
   // Actions
   readonly fetchZones: (client: FetchClient) => Promise<void>;
   readonly fetchBricks: (client: FetchClient) => Promise<void>;
@@ -123,6 +129,9 @@ export interface ZonesState {
   readonly unregisterBrick: (name: string, client: FetchClient) => Promise<void>;
   readonly remountBrick: (name: string, client: FetchClient) => Promise<void>;
   readonly resetBrick: (name: string, client: FetchClient) => Promise<void>;
+  readonly fetchCacheStats: (client: FetchClient) => Promise<void>;
+  readonly fetchHotFiles: (client: FetchClient) => Promise<void>;
+  readonly warmupCache: (paths: readonly string[], client: FetchClient) => Promise<void>;
   readonly setSelectedIndex: (index: number) => void;
   readonly setActiveTab: (tab: ZoneTab) => void;
 }
@@ -140,6 +149,10 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
   detailLoading: false,
   driftReport: null,
   driftLoading: false,
+  cacheStats: null,
+  cacheStatsLoading: false,
+  hotFiles: [],
+  hotFilesLoading: false,
 
   fetchZones: async (client) => {
     set({ zonesLoading: true, error: null });
@@ -287,6 +300,35 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       set({
         error: err instanceof Error ? err.message : "Failed to reset brick",
       });
+    }
+  },
+
+  fetchCacheStats: async (client) => {
+    set({ cacheStatsLoading: true, error: null });
+    try {
+      const stats = await client.get<unknown>("/api/v2/cache/stats");
+      set({ cacheStats: stats, cacheStatsLoading: false });
+    } catch (err) {
+      set({ cacheStatsLoading: false, error: err instanceof Error ? err.message : "Failed to fetch cache stats" });
+    }
+  },
+
+  fetchHotFiles: async (client) => {
+    set({ hotFilesLoading: true, error: null });
+    try {
+      const response = await client.get<{ files: readonly unknown[] }>("/api/v2/cache/hot-files");
+      set({ hotFiles: response.files ?? [], hotFilesLoading: false });
+    } catch (err) {
+      set({ hotFilesLoading: false, error: err instanceof Error ? err.message : "Failed to fetch hot files" });
+    }
+  },
+
+  warmupCache: async (paths, client) => {
+    set({ error: null });
+    try {
+      await client.post("/api/v2/cache/warmup", { paths });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to warmup cache" });
     }
   },
 

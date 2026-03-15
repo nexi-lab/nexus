@@ -62,6 +62,15 @@ export interface SecretAuditEntry {
   readonly metadata_hash: string | null;
 }
 
+export interface OperationItem {
+  readonly operation_id: string;
+  readonly agent_id: string | null;
+  readonly type: string;
+  readonly status: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+}
+
 export type InfraTab = "connectors" | "subscriptions" | "locks" | "secrets";
 
 // =============================================================================
@@ -88,6 +97,11 @@ export interface InfraState {
   readonly secretAuditEntries: readonly SecretAuditEntry[];
   readonly secretsLoading: boolean;
 
+  // Operations
+  readonly operations: readonly OperationItem[];
+  readonly operationsLoading: boolean;
+  readonly selectedOperationIndex: number;
+
   // Navigation
   readonly activeTab: InfraTab;
 
@@ -108,7 +122,9 @@ export interface InfraState {
   readonly releaseLock: (path: string, lockId: string, client: FetchClient) => Promise<void>;
   readonly extendLock: (path: string, lockId: string, ttlSeconds: number, client: FetchClient) => Promise<void>;
   readonly fetchSecretAudit: (client: FetchClient) => Promise<void>;
+  readonly fetchOperations: (client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: InfraTab) => void;
+  readonly setSelectedOperationIndex: (index: number) => void;
   readonly setSelectedConnectorIndex: (index: number) => void;
   readonly setSelectedSubscriptionIndex: (index: number) => void;
   readonly setSelectedLockIndex: (index: number) => void;
@@ -126,6 +142,9 @@ export const useInfraStore = create<InfraState>((set, get) => ({
   locksLoading: false,
   secretAuditEntries: [],
   secretsLoading: false,
+  operations: [],
+  operationsLoading: false,
+  selectedOperationIndex: 0,
   activeTab: "connectors",
   error: null,
 
@@ -272,8 +291,31 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     }
   },
 
+  fetchOperations: async (client) => {
+    set({ operationsLoading: true, error: null });
+    try {
+      const response = await client.get<{
+        readonly operations: readonly OperationItem[];
+      }>("/api/v2/operations?limit=20");
+      set({
+        operations: response.operations ?? [],
+        operationsLoading: false,
+        selectedOperationIndex: 0,
+      });
+    } catch (err) {
+      set({
+        operationsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch operations",
+      });
+    }
+  },
+
   setActiveTab: (tab) => {
     set({ activeTab: tab, error: null });
+  },
+
+  setSelectedOperationIndex: (index) => {
+    set({ selectedOperationIndex: index });
   },
 
   setSelectedConnectorIndex: (index) => {

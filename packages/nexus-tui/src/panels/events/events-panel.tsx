@@ -20,15 +20,17 @@ import { SubscriptionList } from "./subscription-list.js";
 import { LockList } from "./lock-list.js";
 import { SecretsAudit } from "./secrets-audit.js";
 import { MclReplay } from "./mcl-replay.js";
+import { OperationsTab } from "./operations-tab.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 
 type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect";
 
-type PanelTab = "events" | "mcl" | InfraTab;
+type PanelTab = "events" | "mcl" | "operations" | InfraTab;
 
 const ALL_TABS: readonly TabDef<PanelTab>[] = [
   { id: "events", label: "Events", brick: "eventlog" },
   { id: "mcl", label: "MCL", brick: "catalog" },
+  { id: "operations", label: "Operations", brick: "eventlog" },
   { id: "connectors", label: "Connectors", brick: null },
   { id: "subscriptions", label: "Subscriptions", brick: "eventlog" },
   { id: "locks", label: "Locks", brick: null },
@@ -38,6 +40,7 @@ const ALL_TABS: readonly TabDef<PanelTab>[] = [
 const TAB_LABELS: Readonly<Record<PanelTab, string>> = {
   events: "Events",
   mcl: "MCL",
+  operations: "Operations",
   connectors: "Connectors",
   subscriptions: "Subscriptions",
   locks: "Locks",
@@ -80,6 +83,9 @@ export default function EventsPanel(): React.ReactNode {
   const selectedLockIndex = useInfraStore((s) => s.selectedLockIndex);
   const secretAuditEntries = useInfraStore((s) => s.secretAuditEntries);
   const secretsLoading = useInfraStore((s) => s.secretsLoading);
+  const operations = useInfraStore((s) => s.operations);
+  const operationsLoading = useInfraStore((s) => s.operationsLoading);
+  const selectedOperationIndex = useInfraStore((s) => s.selectedOperationIndex);
   const infraError = useInfraStore((s) => s.error);
 
   const fetchConnectors = useInfraStore((s) => s.fetchConnectors);
@@ -89,6 +95,8 @@ export default function EventsPanel(): React.ReactNode {
   const fetchLocks = useInfraStore((s) => s.fetchLocks);
   const releaseLock = useInfraStore((s) => s.releaseLock);
   const fetchSecretAudit = useInfraStore((s) => s.fetchSecretAudit);
+  const fetchOperations = useInfraStore((s) => s.fetchOperations);
+  const setSelectedOperationIndex = useInfraStore((s) => s.setSelectedOperationIndex);
   const setInfraTab = useInfraStore((s) => s.setActiveTab);
   const setSelectedConnectorIndex = useInfraStore((s) => s.setSelectedConnectorIndex);
   const setSelectedSubscriptionIndex = useInfraStore((s) => s.setSelectedSubscriptionIndex);
@@ -130,11 +138,12 @@ export default function EventsPanel(): React.ReactNode {
     else if (activeTab === "subscriptions") fetchSubscriptions(apiClient);
     else if (activeTab === "locks") fetchLocks(apiClient);
     else if (activeTab === "secrets") fetchSecretAudit(apiClient);
-  }, [activeTab, apiClient, fetchConnectors, fetchSubscriptions, fetchLocks, fetchSecretAudit, fetchReplay]);
+    else if (activeTab === "operations") fetchOperations(apiClient);
+  }, [activeTab, apiClient, fetchConnectors, fetchSubscriptions, fetchLocks, fetchSecretAudit, fetchOperations, fetchReplay]);
 
   // Sync infra tab state
   useEffect(() => {
-    if (activeTab !== "events" && activeTab !== "mcl") {
+    if (activeTab !== "events" && activeTab !== "mcl" && activeTab !== "operations") {
       setInfraTab(activeTab as InfraTab);
     }
   }, [activeTab, setInfraTab]);
@@ -144,6 +153,7 @@ export default function EventsPanel(): React.ReactNode {
       case "connectors": return connectors.length;
       case "subscriptions": return subscriptions.length;
       case "locks": return locks.length;
+      case "operations": return operations.length;
       default: return 0;
     }
   };
@@ -153,6 +163,7 @@ export default function EventsPanel(): React.ReactNode {
       case "connectors": return selectedConnectorIndex;
       case "subscriptions": return selectedSubscriptionIndex;
       case "locks": return selectedLockIndex;
+      case "operations": return selectedOperationIndex;
       default: return 0;
     }
   };
@@ -162,6 +173,7 @@ export default function EventsPanel(): React.ReactNode {
       case "connectors": setSelectedConnectorIndex(index); break;
       case "subscriptions": setSelectedSubscriptionIndex(index); break;
       case "locks": setSelectedLockIndex(index); break;
+      case "operations": setSelectedOperationIndex(index); break;
     }
   };
 
@@ -183,6 +195,7 @@ export default function EventsPanel(): React.ReactNode {
       else if (activeTab === "subscriptions") fetchSubscriptions(apiClient);
       else if (activeTab === "locks") fetchLocks(apiClient);
       else if (activeTab === "secrets") fetchSecretAudit(apiClient);
+      else if (activeTab === "operations") fetchOperations(apiClient);
     }
   };
 
@@ -396,6 +409,14 @@ export default function EventsPanel(): React.ReactNode {
           <SecretsAudit
             entries={secretAuditEntries}
             loading={secretsLoading}
+          />
+        )}
+
+        {activeTab === "operations" && (
+          <OperationsTab
+            operations={operations}
+            selectedIndex={selectedOperationIndex}
+            loading={operationsLoading}
           />
         )}
       </box>

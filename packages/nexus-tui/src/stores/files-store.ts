@@ -72,6 +72,10 @@ export interface FilesState {
   readonly collapseNode: (path: string) => void;
   readonly toggleNode: (path: string, client: FetchClient) => Promise<void>;
   readonly invalidate: (path: string) => void;
+  readonly writeFile: (path: string, content: string, client: FetchClient) => Promise<void>;
+  readonly deleteFile: (path: string, client: FetchClient) => Promise<void>;
+  readonly mkdirFile: (path: string, client: FetchClient) => Promise<void>;
+  readonly renameFile: (oldPath: string, newPath: string, client: FetchClient) => Promise<void>;
 }
 
 export const useFilesStore = create<FilesState>((set, get) => ({
@@ -224,5 +228,51 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     const newCache = new Map(get().fileCache);
     newCache.delete(path);
     set({ fileCache: newCache });
+  },
+
+  writeFile: async (path, content, client) => {
+    set({ error: null });
+    try {
+      await client.put(`/api/v2/files/${encodeURIComponent(path)}`, { content });
+      get().invalidate(path.split("/").slice(0, -1).join("/") || "/");
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to write file" });
+    }
+  },
+
+  deleteFile: async (path, client) => {
+    set({ error: null });
+    try {
+      await client.delete(`/api/v2/files/${encodeURIComponent(path)}`);
+      const parentPath = path.split("/").slice(0, -1).join("/") || "/";
+      get().invalidate(parentPath);
+      await get().fetchFiles(parentPath, client);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to delete file" });
+    }
+  },
+
+  mkdirFile: async (path, client) => {
+    set({ error: null });
+    try {
+      await client.post(`/api/v2/files/${encodeURIComponent(path)}?mkdir=true`, {});
+      const parentPath = path.split("/").slice(0, -1).join("/") || "/";
+      get().invalidate(parentPath);
+      await get().fetchFiles(parentPath, client);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to create directory" });
+    }
+  },
+
+  renameFile: async (oldPath, newPath, client) => {
+    set({ error: null });
+    try {
+      await client.post(`/api/v2/files/${encodeURIComponent(oldPath)}?move_to=${encodeURIComponent(newPath)}`, {});
+      const parentPath = oldPath.split("/").slice(0, -1).join("/") || "/";
+      get().invalidate(parentPath);
+      await get().fetchFiles(parentPath, client);
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to rename file" });
+    }
   },
 }));

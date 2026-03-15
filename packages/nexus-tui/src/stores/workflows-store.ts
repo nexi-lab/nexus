@@ -108,6 +108,10 @@ export interface WorkflowsState {
   readonly executeWorkflow: (name: string, client: FetchClient) => Promise<void>;
   readonly fetchExecutions: (workflowName: string, client: FetchClient) => Promise<void>;
   readonly fetchSchedulerMetrics: (client: FetchClient) => Promise<void>;
+  readonly createWorkflow: (name: string, description: string, client: FetchClient) => Promise<void>;
+  readonly deleteWorkflow: (name: string, client: FetchClient) => Promise<void>;
+  readonly enableWorkflow: (name: string, client: FetchClient) => Promise<void>;
+  readonly disableWorkflow: (name: string, client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: WorkflowTab) => void;
   readonly setSelectedWorkflowIndex: (index: number) => void;
   readonly setSelectedExecutionIndex: (index: number) => void;
@@ -215,6 +219,79 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         schedulerMetrics: null,
         schedulerLoading: false,
         error: err instanceof Error ? err.message : "Failed to fetch scheduler metrics",
+      });
+    }
+  },
+
+  createWorkflow: async (name, description, client) => {
+    set({ error: null });
+
+    try {
+      await client.post("/api/v2/workflows", { name, description });
+      await get().fetchWorkflows(client);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to create workflow",
+      });
+    }
+  },
+
+  deleteWorkflow: async (name, client) => {
+    set({ error: null });
+
+    try {
+      await client.delete(`/api/v2/workflows/${encodeURIComponent(name)}`);
+      set((state) => ({
+        workflows: state.workflows.filter((w) => w.name !== name),
+        selectedWorkflowIndex: Math.min(
+          state.selectedWorkflowIndex,
+          Math.max(state.workflows.length - 2, 0),
+        ),
+      }));
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to delete workflow",
+      });
+    }
+  },
+
+  enableWorkflow: async (name, client) => {
+    set({ error: null });
+
+    try {
+      await client.post(
+        `/api/v2/workflows/${encodeURIComponent(name)}/enable`,
+        {},
+      );
+      set((state) => ({
+        workflows: state.workflows.map((w) =>
+          w.name === name ? { ...w, enabled: true } : w,
+        ),
+      }));
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to enable workflow",
+      });
+    }
+  },
+
+  disableWorkflow: async (name, client) => {
+    set({ error: null });
+
+    try {
+      await client.post(
+        `/api/v2/workflows/${encodeURIComponent(name)}/disable`,
+        {},
+      );
+      set((state) => ({
+        workflows: state.workflows.map((w) =>
+          w.name === name ? { ...w, enabled: false } : w,
+        ),
+      }));
+    } catch (err) {
+      set({
+        error:
+          err instanceof Error ? err.message : "Failed to disable workflow",
       });
     }
   },

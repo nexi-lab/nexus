@@ -100,6 +100,9 @@ export default function AccessPanel(): React.ReactNode {
   const fetchCredentials = useAccessStore((s) => s.fetchCredentials);
   const issueCredential = useAccessStore((s) => s.issueCredential);
   const fetchCollusionRings = useAccessStore((s) => s.fetchCollusionRings);
+  const suspendAgent = useAccessStore((s) => s.suspendAgent);
+  const fraudScores = useAccessStore((s) => s.fraudScores);
+  const selectedFraudIndex = useAccessStore((s) => s.selectedFraudIndex);
   const revokeCredential = useAccessStore((s) => s.revokeCredential);
   const fetchFraudScores = useAccessStore((s) => s.fetchFraudScores);
   const computeFraudScores = useAccessStore((s) => s.computeFraudScores);
@@ -319,6 +322,15 @@ export default function AccessPanel(): React.ReactNode {
         fetchCollusionRings(effectiveZoneId, client);
       }
     },
+    s: () => {
+      // Suspend selected agent (fraud tab — selected by fraud score index)
+      if (activeTab === "fraud" && client) {
+        const selected = fraudScores[selectedFraudIndex];
+        if (selected) {
+          suspendAgent(selected.agent_id, "Suspended via TUI", effectiveZoneId, client);
+        }
+      }
+    },
   });
 
   // Derive selected items for overlays
@@ -397,7 +409,7 @@ export default function AccessPanel(): React.ReactNode {
     manifests: "j/k:navigate  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  Tab:tab  r:refresh  q:quit",
     alerts: "j/k:navigate  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
     credentials: "j/k:navigate  i:issue  x:revoke  Tab:tab  r:refresh  q:quit",
-    fraud: "j/k:navigate  c:compute  g:collusion rings  Tab:tab  r:refresh  q:quit",
+    fraud: "j/k:navigate  c:compute  g:collusion  s:suspend agent  Tab:tab  r:refresh  q:quit",
     delegations: `j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  f:filter${delegationFilterLabel}  Tab:tab  r:refresh  q:quit`,
   };
 

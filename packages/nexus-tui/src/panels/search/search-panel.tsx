@@ -95,6 +95,7 @@ export default function SearchPanel(): React.ReactNode {
   const deletePlaybook = useSearchStore((s) => s.deletePlaybook);
   const deleteMemory = useSearchStore((s) => s.deleteMemory);
   const createMemory = useSearchStore((s) => s.createMemory);
+  const updateMemory = useSearchStore((s) => s.updateMemory);
   const setSelectedPlaybookIndex = useSearchStore((s) => s.setSelectedPlaybookIndex);
   const askRlm = useSearchStore((s) => s.askRlm);
   const addRlmContextPath = useSearchStore((s) => s.addRlmContextPath);
@@ -332,6 +333,16 @@ export default function SearchPanel(): React.ReactNode {
               createMemory(searchQuery.trim(), {}, client);
             }
           },
+          u: () => {
+            // Update selected memory with current search query as new content
+            if (activeTab === "memories" && client && searchQuery.trim()) {
+              const memory = memories[selectedMemoryIndex];
+              if (memory) {
+                const memId = String((memory as Record<string, unknown>).memory_id ?? "");
+                if (memId) updateMemory(memId, searchQuery.trim(), client);
+              }
+            }
+          },
           a: () => {
             // Add selected search result path to RLM document context
             if (activeTab === "search") {
@@ -432,7 +443,7 @@ export default function SearchPanel(): React.ReactNode {
           {inputMode
             ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
             : activeTab === "memories"
-              ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  n:create  d:delete  Esc:close  r:refresh  q:quit"
+              ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  n:create  u:update  d:delete  Esc:close  r:refresh  q:quit"
               : activeTab === "ask"
                 ? "/:ask  a:clear context  Tab:switch tab  r:refresh  q:quit"
                 : activeTab === "columns"

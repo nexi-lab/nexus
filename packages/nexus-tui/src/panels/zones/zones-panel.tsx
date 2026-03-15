@@ -78,6 +78,7 @@ export default function ZonesPanel(): React.ReactNode {
   const hotFilesLoading = useZonesStore((s) => s.hotFilesLoading);
   const fetchCacheStats = useZonesStore((s) => s.fetchCacheStats);
   const fetchHotFiles = useZonesStore((s) => s.fetchHotFiles);
+  const warmupCache = useZonesStore((s) => s.warmupCache);
   const setSelectedIndex = useZonesStore((s) => s.setSelectedIndex);
   const setActiveTab = useZonesStore((s) => s.setActiveTab);
 
@@ -445,6 +446,13 @@ export default function ZonesPanel(): React.ReactNode {
               const mount = mcpMounts[selectedMountIndex];
               if (mount) fetchTools(mount.name, client);
             },
+            w: () => {
+              // Warmup cache with hot files
+              if (activeTab === "cache" && client && hotFiles.length > 0) {
+                const paths = hotFiles.map((f) => String((f as Record<string, unknown>).path ?? "")).filter(Boolean);
+                if (paths.length > 0) warmupCache(paths, client);
+              }
+            },
             r: () => {
               refreshActiveTab();
             },
@@ -459,6 +467,7 @@ export default function ZonesPanel(): React.ReactNode {
     if (activeTab === "workspaces") return "j/k:navigate  n:register  d:unregister  Tab:tab  r:refresh  q:quit";
     if (activeTab === "memories") return "j/k:navigate  n:register  d:unregister  Tab:tab  r:refresh  q:quit";
     if (activeTab === "mcp") return "j/k:navigate  n:mount  d:unmount  s:sync  Enter:tools  Tab:tab  r:refresh  q:quit";
+    if (activeTab === "cache") return "w:warmup hot files  Tab:tab  r:refresh  q:quit";
     return base;
   }, [activeTab, brickHelpText]);
 

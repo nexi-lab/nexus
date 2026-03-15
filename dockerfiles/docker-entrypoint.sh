@@ -49,7 +49,11 @@ fix_data_dir_and_drop_privileges() {
     if [ "$(id -u)" = "0" ]; then
         # Create required subdirectories inside the (possibly bind-mounted) data dir
         mkdir -p /app/data/skills /app/data/.zoekt-index
-        chown -R nexus:nexus /app/data
+        # chown may fail on macOS Docker Desktop (VirtioFS/gRPC FUSE does not
+        # support ownership changes on bind-mounted host directories).  This is
+        # safe to ignore — macOS maps all container access through the host uid
+        # regardless of in-container ownership.
+        chown -R nexus:nexus /app/data 2>/dev/null || true
 
         # Re-exec the entrypoint as the nexus user
         exec gosu nexus "$0" "$@"

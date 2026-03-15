@@ -158,25 +158,42 @@ class TestRegisterFactoryBricks:
             "ipc_vfs_driver": MagicMock(),
             "wallet_provisioner": MagicMock(),
             "workflow_engine": MagicMock(),
-            # Infrastructure — should NOT be registered
             "event_bus": MagicMock(),
             "lock_manager": MagicMock(),
+            "delegation_service": MagicMock(),
+            "reputation_service": MagicMock(),
+            "version_service": MagicMock(),
         }
 
         _register_factory_bricks(manager, brick_dict)
 
-        # 6 standard bricks + 1 workflow engine = 7
+        # 11 standard bricks + 1 workflow engine = 12
         report = manager.health()
-        assert report.total == 7
+        assert report.total == 12
 
         # Verify workflow engine is wrapped in adapter
         status = manager.get_status("workflow_engine")
         assert status is not None
         assert status.protocol_name == "WorkflowProtocol"
 
-        # Verify infrastructure entries are NOT registered
-        assert manager.get_status("event_bus") is None
-        assert manager.get_status("lock_manager") is None
+        # Verify event_bus and lock_manager ARE registered (Issue #2991)
+        assert manager.get_status("event_bus") is not None
+        assert manager.get_status("event_bus").protocol_name == "EventBusProtocol"
+        assert manager.get_status("lock_manager") is not None
+        assert manager.get_status("lock_manager").protocol_name == "LockManagerProtocol"
+
+        # Verify dependency edges (Issue #2991)
+        ipc_spec = manager.get_spec("ipc_vfs_driver")
+        assert ipc_spec is not None
+        assert "event_bus" in ipc_spec.depends_on
+
+        delegation_spec = manager.get_spec("delegation_service")
+        assert delegation_spec is not None
+        assert "reputation_service" in delegation_spec.depends_on
+
+        wf_spec = manager.get_spec("workflow_engine")
+        assert wf_spec is not None
+        assert "event_bus" in wf_spec.depends_on
 
     def test_skips_none_values(self) -> None:
         """None entries in brick_dict should be silently skipped."""
@@ -301,7 +318,7 @@ class TestBrickDictCoverage:
 
         assert dict_keys, "Could not parse brick_dict keys from _boot_brick_services"
 
-        registered = {name for name, _ in _FACTORY_BRICKS}
+        registered = {name for name, _, _ in _FACTORY_BRICKS}
         registered.add("workflow_engine")  # special-cased with adapter
         known = registered | _FACTORY_SKIP
 

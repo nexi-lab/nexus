@@ -32,16 +32,19 @@ def _make_gate(brick_on: Callable[[str], bool] | None) -> Callable[[str], bool]:
 # Issue #1704: Register factory-created bricks with lifecycle manager
 # ---------------------------------------------------------------------------
 
-_FACTORY_BRICKS: list[tuple[str, str]] = [
-    ("manifest_resolver", "ManifestProtocol"),
-    ("chunked_upload_service", "ChunkedUploadProtocol"),
-    ("snapshot_service", "SnapshotProtocol"),
-    ("task_queue_service", "TaskQueueProtocol"),
-    ("ipc_vfs_driver", "IPCProtocol"),
-    ("wallet_provisioner", "WalletProtocol"),
-    ("delegation_service", "DelegationProtocol"),
-    ("reputation_service", "ReputationProtocol"),
-    ("version_service", "VersionProtocol"),  # Issue #2034: moved from kernel
+# (name, protocol_name, depends_on)
+_FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
+    ("event_bus", "EventBusProtocol", ()),
+    ("lock_manager", "LockManagerProtocol", ()),
+    ("manifest_resolver", "ManifestProtocol", ()),
+    ("chunked_upload_service", "ChunkedUploadProtocol", ()),
+    ("snapshot_service", "SnapshotProtocol", ()),
+    ("task_queue_service", "TaskQueueProtocol", ()),
+    ("ipc_vfs_driver", "IPCProtocol", ("event_bus",)),
+    ("wallet_provisioner", "WalletProtocol", ()),
+    ("delegation_service", "DelegationProtocol", ("reputation_service",)),
+    ("reputation_service", "ReputationProtocol", ()),
+    ("version_service", "VersionProtocol", ()),
 ]
 
 # Entries intentionally NOT registered with lifecycle manager.
@@ -50,8 +53,6 @@ _FACTORY_BRICKS: list[tuple[str, str]] = [
 # to ``_FACTORY_BRICKS``.
 _FACTORY_SKIP: frozenset[str] = frozenset(
     {
-        "event_bus",  # infrastructure, not a brick
-        "lock_manager",  # infrastructure, not a brick
         "api_key_creator",  # class reference, not instance
         "tool_namespace_middleware",  # stateless middleware, no lifecycle
         "manifest_metrics",  # observability helper, not a brick
@@ -82,10 +83,10 @@ def _register_factory_bricks(
     """
     from nexus.factory.adapters import _WorkflowLifecycleAdapter
 
-    for name, protocol in _FACTORY_BRICKS:
+    for name, protocol, depends_on in _FACTORY_BRICKS:
         instance = brick_dict.get(name)
         if instance is not None:
-            manager.register(name, instance, protocol_name=protocol)
+            manager.register(name, instance, protocol_name=protocol, depends_on=depends_on)
 
     # WorkflowEngine needs adapter (startup() != start())
     wf = brick_dict.get("workflow_engine")
@@ -94,7 +95,30 @@ def _register_factory_bricks(
             "workflow_engine",
             _WorkflowLifecycleAdapter(wf),
             protocol_name="WorkflowProtocol",
+            depends_on=("event_bus",),
         )
+
+
+# Bricks created in create_nexus_fs() rather than _boot_independent_bricks()
+_LATE_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
+    ("parsers", "ParsersProtocol", ()),
+    ("cache", "CacheProtocol", ()),
+]
+
+
+def _register_late_bricks(
+    manager: Any,
+    brick_dict: dict[str, Any],
+) -> None:
+    """Register bricks created in create_nexus_fs() with the lifecycle manager.
+
+    These bricks are created after _boot_independent_bricks() because they
+    require NexusFS configuration (parsing config, cache store, etc.).
+    """
+    for name, protocol, depends_on in _LATE_BRICKS:
+        instance = brick_dict.get(name)
+        if instance is not None:
+            manager.register(name, instance, protocol_name=protocol, depends_on=depends_on)
 
 
 def _safe_create(

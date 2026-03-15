@@ -105,7 +105,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Issue #2036: Register with BrickLifecycleManager
         _blm = svc.brick_lifecycle_manager
         if _blm is not None:
-            with contextlib.suppress(Exception):
+            try:
                 from nexus.bricks.search.lifecycle_adapter import (
                     SearchBrickLifecycleAdapter,
                 )
@@ -114,6 +114,12 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     "search",
                     SearchBrickLifecycleAdapter(app.state.search_daemon),
                     protocol_name="SearchBrickProtocol",
+                )
+            except ImportError:
+                logger.debug("SearchBrickLifecycleAdapter not available, skipping registration")
+            except Exception:
+                logger.warning(
+                    "Failed to register search brick with lifecycle manager", exc_info=True
                 )
 
         stats = app.state.search_daemon.get_stats()

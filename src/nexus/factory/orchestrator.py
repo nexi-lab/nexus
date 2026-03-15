@@ -446,11 +446,12 @@ def create_nexus_fs(
         enforce_permissions=nx._enforce_permissions,
     )
 
-    # Register bricks created in create_nexus_fs with lifecycle manager (Issue #1704)
+    # Register bricks created in create_nexus_fs with lifecycle manager (Issue #2991)
     _blm = getattr(system_services, "brick_lifecycle_manager", None)
     if _blm is not None:
-        _blm.register("parsers", parsers_brick, protocol_name="ParsersProtocol")
-        _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
+        from nexus.factory._helpers import _register_late_bricks
+
+        _register_late_bricks(_blm, {"parsers": parsers_brick, "cache": _cache_brick})
 
     # --- Register INTERCEPT hooks on KernelDispatch (Issue #900) ---
     _register_vfs_hooks(nx, permission_checker=_permission_checker)

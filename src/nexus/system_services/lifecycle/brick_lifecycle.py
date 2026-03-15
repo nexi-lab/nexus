@@ -197,6 +197,7 @@ class BrickLifecycleManager:
 
     def __init__(self) -> None:
         self._bricks: dict[str, _BrickEntry] = {}
+        self._depended_by: dict[str, set[str]] = {}
         self._zone_states: dict[str, ZoneState] = {}
 
     # ------------------------------------------------------------------
@@ -230,6 +231,10 @@ class BrickLifecycleManager:
             depends_on=tuple(depends_on),
         )
         self._bricks[name] = _BrickEntry(spec=spec, instance=instance)
+        for dep in depends_on:
+            self._depended_by.setdefault(dep, set()).add(name)
+        # Also ensure name has an entry even if nothing depends on it
+        self._depended_by.setdefault(name, set())
         logger.info("[LIFECYCLE] Registered brick %r (protocol=%s)", name, protocol_name)
 
     async def unregister(self, name: str) -> None:
@@ -253,6 +258,12 @@ class BrickLifecycleManager:
         """Force-remove a brick from the registry (testing only, no guards/hooks)."""
         if name not in self._bricks:
             raise KeyError(f"Brick {name!r} not found")
+        entry = self._bricks[name]
+        # Clean up reverse-edge index
+        for dep in entry.depends_on:
+            if dep in self._depended_by:
+                self._depended_by[dep].discard(name)
+        self._depended_by.pop(name, None)
         del self._bricks[name]
         logger.info("[LIFECYCLE] Force-unregistered brick %r", name)
 
@@ -661,6 +672,21 @@ class BrickLifecycleManager:
                 return False
         return True
 
+    def get_dependents(self, name: str) -> set[str]:
+        """Return names of bricks that depend on the given brick (reverse edges)."""
+        return set(self._depended_by.get(name, set()))
+
+    def get_all_dependents(self, name: str) -> set[str]:
+        """Return all transitive dependents of a brick (full reverse closure)."""
+        result: set[str] = set()
+        stack = list(self._depended_by.get(name, set()))
+        while stack:
+            dep = stack.pop()
+            if dep not in result:
+                result.add(dep)
+                stack.extend(self._depended_by.get(dep, set()) - result)
+        return result
+
     def compute_startup_order(self) -> list[list[str]]:
         """Compute DAG-ordered startup levels.
 
@@ -811,6 +837,9 @@ class BrickLifecycleManager:
     async def unmount(self, name: str) -> None:
         """Unmount a single brick: ACTIVE → STOPPING → UNMOUNTED.
 
+        If other bricks depend on this brick and are ACTIVE, they are
+        unmounted first in reverse-dependency order (cascade unmount).
+
         For lifecycle-aware bricks, calls ``stop()``. Stateless bricks
         transition directly to UNMOUNTED.
 
@@ -827,6 +856,32 @@ class BrickLifecycleManager:
         entry = self._bricks.get(name)
         if entry is None:
             raise KeyError(f"Brick {name!r} not found")
+
+        # Cascade: unmount active dependents first (reverse-DAG order)
+        active_dependents = [
+            dep_name
+            for dep_name in self.get_all_dependents(name)
+            if dep_name in self._bricks and self._bricks[dep_name].state == BrickState.ACTIVE
+        ]
+        if active_dependents:
+            # Sort dependents by DAG depth (deepest first) using shutdown order
+            shutdown_levels = self.compute_shutdown_order()
+            level_index: dict[str, int] = {}
+            for i, level in enumerate(shutdown_levels):
+                for brick_name in level:
+                    level_index[brick_name] = i
+            # Unmount in shutdown order (deepest dependents first)
+            sorted_deps = sorted(active_dependents, key=lambda n: level_index.get(n, 0))
+            for dep_name in sorted_deps:
+                dep_entry = self._bricks.get(dep_name)
+                if dep_entry is not None and dep_entry.state == BrickState.ACTIVE:
+                    logger.info(
+                        "[LIFECYCLE] Cascade unmount: %r depends on %r, unmounting first",
+                        dep_name,
+                        name,
+                    )
+                    async with dep_entry.lock:
+                        await self._do_unmount(dep_entry)
 
         async with entry.lock:
             await self._do_unmount(entry)
@@ -877,6 +932,11 @@ class BrickLifecycleManager:
 
             # Remove from registry
             brick_name = entry.name
+            # Clean up reverse-edge index
+            for dep in entry.depends_on:
+                if dep in self._depended_by:
+                    self._depended_by[dep].discard(brick_name)
+            self._depended_by.pop(brick_name, None)
             del self._bricks[brick_name]
             logger.info("[LIFECYCLE] Brick %r unregistered (removed from registry)", brick_name)
 

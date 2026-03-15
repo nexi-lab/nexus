@@ -22,7 +22,6 @@ EXPECTED_MODELS = [
     "DocumentChunkModel",
     # Permissions
     "ReBACTupleModel",
-    "ReBACNamespaceModel",
     "ReBACGroupClosureModel",
     "ReBACChangelogModel",
     "ReBACVersionSequenceModel",

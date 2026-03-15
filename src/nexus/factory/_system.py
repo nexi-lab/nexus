@@ -93,7 +93,12 @@ def _boot_system_services(
             _is_pg = not ctx.db_url.startswith("sqlite")
 
             # --- ReBAC Manager ---
+            from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+                MetastoreNamespaceStore,
+            )
             from nexus.bricks.rebac.manager import ReBACManager
+
+            _namespace_store = MetastoreNamespaceStore(ctx.metadata_store)
 
             rebac_manager = ReBACManager(
                 engine=ctx.engine,
@@ -104,6 +109,7 @@ def _boot_system_services(
                 enable_tiger_cache=ctx.perm.enable_tiger_cache,
                 read_engine=ctx.read_engine,
                 is_postgresql=_is_pg,
+                namespace_store=_namespace_store,
             )
 
             # --- Audit Store ---

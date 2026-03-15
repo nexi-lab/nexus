@@ -118,16 +118,27 @@ export default function ZonesPanel(): React.ReactNode {
     }
   }, [visibleIds.join(","), activeTab, setActiveTab]);
 
-  // Input mode state for create/register flows
+  // Input mode state for create/register flows (multi-field forms)
   const [inputMode, setInputMode] = useState<"none" | "workspace" | "memory" | "mcpMount">("none");
-  const [inputBuffer, setInputBuffer] = useState("");
+  const [inputFields, setInputFields] = useState<Record<string, string>>({});
+  const [inputActiveField, setInputActiveField] = useState(0);
+
+  const WS_FIELDS = ["path", "name", "description", "scope", "ttl_seconds"] as const;
+  const MEM_FIELDS = ["path", "name", "description"] as const;
+  const MCP_FIELDS = ["name", "command_or_url", "description"] as const;
+
+  const currentFields = inputMode === "workspace" ? WS_FIELDS
+    : inputMode === "memory" ? MEM_FIELDS
+    : inputMode === "mcpMount" ? MCP_FIELDS : [] as const;
+  const currentFieldName = currentFields[inputActiveField] ?? "";
 
   // Confirmation dialog state for destructive actions
   const [confirmUnregister, setConfirmUnregister] = useState(false);
   const [confirmWorkspaceUnregister, setConfirmWorkspaceUnregister] = useState(false);
+  const [confirmMemoryUnregister, setConfirmMemoryUnregister] = useState(false);
   const [confirmMcpUnmount, setConfirmMcpUnmount] = useState(false);
 
-  const anyDialogOpen = confirmUnregister || confirmWorkspaceUnregister || confirmMcpUnmount;
+  const anyDialogOpen = confirmUnregister || confirmWorkspaceUnregister || confirmMemoryUnregister || confirmMcpUnmount;
 
   // Currently selected brick (if on bricks tab)
   const selectedBrick = activeTab === "bricks" ? bricks[selectedIndex] ?? null : null;
@@ -200,6 +211,20 @@ export default function ZonesPanel(): React.ReactNode {
     setConfirmWorkspaceUnregister(false);
   }, []);
 
+  // Memory unregister confirmation handlers
+  const handleConfirmMemoryUnregister = useCallback(() => {
+    if (!client) return;
+    const mem = memories[selectedMemoryIndex];
+    if (mem) {
+      unregisterMemory(mem.path, client);
+    }
+    setConfirmMemoryUnregister(false);
+  }, [client, memories, selectedMemoryIndex, unregisterMemory]);
+
+  const handleCancelMemoryUnregister = useCallback(() => {
+    setConfirmMemoryUnregister(false);
+  }, []);
+
   // MCP unmount confirmation handlers
   const handleConfirmMcpUnmount = useCallback(() => {
     if (!client) return;
@@ -255,17 +280,19 @@ export default function ZonesPanel(): React.ReactNode {
     }
   }, [activeTab, setSelectedIndex, setSelectedWorkspaceIndex, setSelectedMemoryIndex, setSelectedMountIndex]);
 
-  // In input mode, capture printable characters via onUnhandled
+  // In input mode, capture printable characters into the active field
   const handleUnhandledKey = useCallback(
     (keyName: string) => {
       if (inputMode === "none") return;
+      const field = currentFieldName;
+      if (!field) return;
       if (keyName.length === 1) {
-        setInputBuffer((b) => b + keyName);
+        setInputFields((f) => ({ ...f, [field]: (f[field] ?? "") + keyName }));
       } else if (keyName === "space") {
-        setInputBuffer((b) => b + " ");
+        setInputFields((f) => ({ ...f, [field]: (f[field] ?? "") + " " }));
       }
     },
-    [inputMode],
+    [inputMode, currentFieldName],
   );
 
   useKeyboard(
@@ -274,32 +301,53 @@ export default function ZonesPanel(): React.ReactNode {
       : inputMode !== "none"
         ? {
             return: () => {
-              const value = inputBuffer.trim();
-              if (!value || !client) {
-                setInputMode("none");
-                setInputBuffer("");
-                return;
-              }
+              if (!client) { setInputMode("none"); return; }
+              const f = inputFields;
               if (inputMode === "workspace") {
-                registerWorkspace({ path: value, name: value.split("/").pop() || value }, client);
+                const path = (f.path ?? "").trim();
+                if (!path) { setInputMode("none"); return; }
+                registerWorkspace({
+                  path,
+                  name: (f.name ?? "").trim() || path.split("/").pop() || path,
+                  description: (f.description ?? "").trim() || undefined,
+                  scope: (f.scope ?? "").trim() || undefined,
+                  ttl_seconds: f.ttl_seconds?.trim() ? parseInt(f.ttl_seconds.trim(), 10) : undefined,
+                }, client);
               } else if (inputMode === "memory") {
-                registerMemory({ path: value, name: value.split("/").pop() || value }, client);
+                const path = (f.path ?? "").trim();
+                if (!path) { setInputMode("none"); return; }
+                registerMemory({
+                  path,
+                  name: (f.name ?? "").trim() || path.split("/").pop() || path,
+                  description: (f.description ?? "").trim() || undefined,
+                }, client);
               } else if (inputMode === "mcpMount") {
-                if (value.startsWith("http://") || value.startsWith("https://")) {
-                  mountServer({ name: value.split("/").pop() || "mcp-server", url: value }, client);
+                const val = (f.command_or_url ?? "").trim();
+                const name = (f.name ?? "").trim() || val.split(/[\s/]/).pop() || "mcp-server";
+                if (!val) { setInputMode("none"); return; }
+                if (val.startsWith("http://") || val.startsWith("https://")) {
+                  mountServer({ name, url: val, description: (f.description ?? "").trim() || undefined }, client);
                 } else {
-                  mountServer({ name: value.split(" ")[0] || "mcp-server", command: value }, client);
+                  mountServer({ name, command: val, description: (f.description ?? "").trim() || undefined }, client);
                 }
               }
               setInputMode("none");
-              setInputBuffer("");
+              setInputFields({});
+              setInputActiveField(0);
             },
             escape: () => {
               setInputMode("none");
-              setInputBuffer("");
+              setInputFields({});
+              setInputActiveField(0);
             },
             backspace: () => {
-              setInputBuffer((b) => b.slice(0, -1));
+              const field = currentFieldName;
+              if (field) {
+                setInputFields((ff) => ({ ...ff, [field]: (ff[field] ?? "").slice(0, -1) }));
+              }
+            },
+            tab: () => {
+              setInputActiveField((i) => (i + 1) % currentFields.length);
             },
           }
         : {
@@ -334,13 +382,16 @@ export default function ZonesPanel(): React.ReactNode {
             n: () => {
               if (activeTab === "workspaces") {
                 setInputMode("workspace");
-                setInputBuffer("");
+                setInputFields({});
+                setInputActiveField(0);
               } else if (activeTab === "memories") {
                 setInputMode("memory");
-                setInputBuffer("");
+                setInputFields({});
+                setInputActiveField(0);
               } else if (activeTab === "mcp") {
                 setInputMode("mcpMount");
-                setInputBuffer("");
+                setInputFields({});
+                setInputActiveField(0);
               }
             },
             // M (shift+m): Mount — valid for registered/unmounted
@@ -368,12 +419,15 @@ export default function ZonesPanel(): React.ReactNode {
               if (!client || !selectedBrick || !allowed.has("reset")) return;
               resetBrick(selectedBrick.name, client);
             },
-            // d: Unregister workspace or unmount MCP (with confirmation)
+            // d: Unregister workspace/memory or unmount MCP (with confirmation)
             d: () => {
               if (!client) return;
               if (activeTab === "workspaces") {
                 const ws = workspaces[selectedWorkspaceIndex];
                 if (ws) setConfirmWorkspaceUnregister(true);
+              } else if (activeTab === "memories") {
+                const mem = memories[selectedMemoryIndex];
+                if (mem) setConfirmMemoryUnregister(true);
               } else if (activeTab === "mcp") {
                 const mount = mcpMounts[selectedMountIndex];
                 if (mount) setConfirmMcpUnmount(true);
@@ -403,7 +457,7 @@ export default function ZonesPanel(): React.ReactNode {
     const base = "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
     if (activeTab === "bricks") return brickHelpText;
     if (activeTab === "workspaces") return "j/k:navigate  n:register  d:unregister  Tab:tab  r:refresh  q:quit";
-    if (activeTab === "memories") return "j/k:navigate  n:register  Tab:tab  r:refresh  q:quit";
+    if (activeTab === "memories") return "j/k:navigate  n:register  d:unregister  Tab:tab  r:refresh  q:quit";
     if (activeTab === "mcp") return "j/k:navigate  n:mount  d:unmount  s:sync  Enter:tools  Tab:tab  r:refresh  q:quit";
     return base;
   }, [activeTab, brickHelpText]);
@@ -419,16 +473,22 @@ export default function ZonesPanel(): React.ReactNode {
         </text>
       </box>
 
-      {/* Input bar for register/mount */}
+      {/* Multi-field input form for register/mount */}
       {inputMode !== "none" && (
-        <box height={1} width="100%">
-          <text>
-            {inputMode === "workspace"
-              ? `Register workspace path: ${inputBuffer}\u2588`
-              : inputMode === "memory"
-                ? `Register memory path: ${inputBuffer}\u2588`
-                : `Mount MCP server (URL or command): ${inputBuffer}\u2588`}
-          </text>
+        <box flexDirection="column" width="100%">
+          {currentFields.map((field, i) => {
+            const isActive = i === inputActiveField;
+            const val = inputFields[field] ?? "";
+            const hint = field === "scope" ? " (persistent|session)" : field === "ttl_seconds" ? " (seconds, blank=none)" : field === "command_or_url" ? " (URL for SSE, command for stdio)" : "";
+            return (
+              <box key={field} height={1} width="100%">
+                <text>{isActive ? `> ${field}: ${val}\u2588${hint}` : `  ${field}: ${val}`}</text>
+              </box>
+            );
+          })}
+          <box height={1} width="100%">
+            <text>{"Tab:next field  Enter:submit  Escape:cancel"}</text>
+          </box>
         </box>
       )}
 
@@ -518,7 +578,7 @@ export default function ZonesPanel(): React.ReactNode {
       <box height={1} width="100%">
         <text>
           {inputMode !== "none"
-            ? "Type path/URL, Enter:submit, Escape:cancel, Backspace:delete"
+            ? `${inputMode === "workspace" ? "Register Workspace" : inputMode === "memory" ? "Register Memory" : "Mount MCP Server"} — Tab:field  Enter:submit  Escape:cancel`
             : helpText}
         </text>
       </box>
@@ -539,6 +599,15 @@ export default function ZonesPanel(): React.ReactNode {
         message={`Unregister workspace "${workspaces[selectedWorkspaceIndex]?.name ?? ""}"?`}
         onConfirm={handleConfirmWorkspaceUnregister}
         onCancel={handleCancelWorkspaceUnregister}
+      />
+
+      {/* Memory unregister confirmation dialog */}
+      <ConfirmDialog
+        visible={confirmMemoryUnregister}
+        title="Unregister Memory"
+        message={`Unregister memory "${memories[selectedMemoryIndex]?.name ?? ""}"? (Does not delete files.)`}
+        onConfirm={handleConfirmMemoryUnregister}
+        onCancel={handleCancelMemoryUnregister}
       />
 
       {/* MCP unmount confirmation dialog */}

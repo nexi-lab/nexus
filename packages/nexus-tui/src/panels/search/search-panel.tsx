@@ -94,6 +94,7 @@ export default function SearchPanel(): React.ReactNode {
   const fetchPlaybooks = useSearchStore((s) => s.fetchPlaybooks);
   const deletePlaybook = useSearchStore((s) => s.deletePlaybook);
   const deleteMemory = useSearchStore((s) => s.deleteMemory);
+  const createMemory = useSearchStore((s) => s.createMemory);
   const setSelectedPlaybookIndex = useSearchStore((s) => s.setSelectedPlaybookIndex);
   const askRlm = useSearchStore((s) => s.askRlm);
   const addRlmContextPath = useSearchStore((s) => s.addRlmContextPath);
@@ -325,6 +326,12 @@ export default function SearchPanel(): React.ReactNode {
               }
             }
           },
+          n: () => {
+            // Create new memory from search query text
+            if (activeTab === "memories" && client && searchQuery.trim()) {
+              createMemory(searchQuery.trim(), {}, client);
+            }
+          },
           a: () => {
             // Add selected search result path to RLM document context
             if (activeTab === "search") {
@@ -425,7 +432,7 @@ export default function SearchPanel(): React.ReactNode {
           {inputMode
             ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
             : activeTab === "memories"
-              ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  d:delete  Esc:close  r:refresh  q:quit"
+              ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  n:create  d:delete  Esc:close  r:refresh  q:quit"
               : activeTab === "ask"
                 ? "/:ask  a:clear context  Tab:switch tab  r:refresh  q:quit"
                 : activeTab === "columns"

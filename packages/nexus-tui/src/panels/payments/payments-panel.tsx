@@ -32,6 +32,10 @@ const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
   const [showTransfer, setShowTransfer] = useState(false);
+  const [affordInputMode, setAffordInputMode] = useState(false);
+  const [affordBuffer, setAffordBuffer] = useState("");
+  const [policyInputMode, setPolicyInputMode] = useState(false);
+  const [policyBuffer, setPolicyBuffer] = useState("");
 
   const balance = usePaymentsStore((s) => s.balance);
   const balanceLoading = usePaymentsStore((s) => s.balanceLoading);
@@ -64,6 +68,7 @@ export default function PaymentsPanel(): React.ReactNode {
   const deletePolicy = usePaymentsStore((s) => s.deletePolicy);
   const checkAfford = usePaymentsStore((s) => s.checkAfford);
   const affordResult = usePaymentsStore((s) => s.affordResult);
+  const createPolicy = usePaymentsStore((s) => s.createPolicy);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
   const setSelectedReservationIndex = usePaymentsStore(
     (s) => s.setSelectedReservationIndex,
@@ -106,10 +111,42 @@ export default function PaymentsPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, client]);
 
+  const handleAffordUnhandled = useCallback(
+    (keyName: string) => {
+      if (!affordInputMode) return;
+      if (keyName.length === 1 && /[\d.]/.test(keyName)) {
+        setAffordBuffer((b) => b + keyName);
+      }
+    },
+    [affordInputMode],
+  );
+
   useKeyboard(
     showTransfer
       ? {}
-      : {
+      : affordInputMode
+        ? {
+            return: () => {
+              const amount = affordBuffer.trim();
+              if (amount && client) checkAfford(amount, client);
+              setAffordInputMode(false);
+              setAffordBuffer("");
+            },
+            escape: () => { setAffordInputMode(false); setAffordBuffer(""); },
+            backspace: () => { setAffordBuffer((b) => b.slice(0, -1)); },
+          }
+        : policyInputMode
+          ? {
+              return: () => {
+                const name = policyBuffer.trim();
+                if (name && client) createPolicy(name, {}, client);
+                setPolicyInputMode(false);
+                setPolicyBuffer("");
+              },
+              escape: () => { setPolicyInputMode(false); setPolicyBuffer(""); },
+              backspace: () => { setPolicyBuffer((b) => b.slice(0, -1)); },
+            }
+          : {
           j: () => {
             if (activeTab === "reservations") {
               setSelectedReservationIndex(
@@ -211,11 +248,27 @@ export default function PaymentsPanel(): React.ReactNode {
             }
           },
           a: () => {
-            if (activeTab === "balance" && client) {
-              checkAfford("1.0", client);
+            if (activeTab === "balance") {
+              setAffordInputMode(true);
+              setAffordBuffer("");
+            }
+          },
+          "shift+n": () => {
+            if (activeTab === "policies") {
+              setPolicyInputMode(true);
+              setPolicyBuffer("");
             }
           },
         },
+    (affordInputMode || policyInputMode) ? (keyName: string) => {
+      if (affordInputMode && keyName.length === 1 && /[\d.]/.test(keyName)) {
+        setAffordBuffer((b) => b + keyName);
+      } else if (policyInputMode && keyName.length === 1) {
+        setPolicyBuffer((b) => b + keyName);
+      } else if (policyInputMode && keyName === "space") {
+        setPolicyBuffer((b) => b + " ");
+      }
+    } : undefined,
   );
 
   return (
@@ -230,6 +283,20 @@ export default function PaymentsPanel(): React.ReactNode {
             }).join(" ")}
           </text>
         </box>
+
+        {/* Afford check input */}
+        {affordInputMode && (
+          <box height={1} width="100%">
+            <text>{`Check afford amount: ${affordBuffer}\u2588  (Enter:check  Escape:cancel)`}</text>
+          </box>
+        )}
+
+        {/* Policy create input */}
+        {policyInputMode && (
+          <box height={1} width="100%">
+            <text>{`New policy name: ${policyBuffer}\u2588  (Enter:create  Escape:cancel)`}</text>
+          </box>
+        )}
 
         {/* Error display */}
         {error && (
@@ -298,7 +365,7 @@ export default function PaymentsPanel(): React.ReactNode {
               : activeTab === "transactions"
                 ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  Tab:switch tab  r:refresh"
                 : activeTab === "policies"
-                  ? "j/k:navigate  Tab:switch tab  d:delete  b:budget  r:refresh  q:quit"
+                  ? "j/k:navigate  Tab:switch tab  Shift+N:new  d:delete  b:budget  r:refresh  q:quit"
                   : activeTab === "balance"
                   ? "Tab:switch tab  t:transfer  a:afford check  r:refresh  q:quit"
                   : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}

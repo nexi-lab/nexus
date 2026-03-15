@@ -617,6 +617,16 @@ def _register_routes(app: FastAPI) -> None:
     app.add_middleware(VersionHeaderMiddleware)
     app.add_middleware(DeprecationMiddleware, registry=v2_registry)
 
+    # Dashboard: Task Manager UI (self-contained HTML)
+    from pathlib import Path
+
+    from fastapi.responses import HTMLResponse
+
+    @app.get("/dashboard/tasks", response_class=HTMLResponse, include_in_schema=False)
+    async def task_manager_dashboard():
+        html_path = Path(__file__).parent / "static" / "task_manager.html"
+        return HTMLResponse(html_path.read_text())
+
     # Request correlation middleware (Issue #1002).
     # MUST be the last add_middleware call — Starlette applies in reverse order,
     # so last-added = outermost = first to execute on each request.

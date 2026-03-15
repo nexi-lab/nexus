@@ -41,6 +41,8 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     agent_tasks = _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
 
+    _startup_task_manager(app, svc)
+
     await _startup_scheduler(app, svc)
     await _startup_workflow_engine(app, svc)
     await _startup_pipe_consumers(app, svc)
@@ -534,6 +536,33 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
     return tasks
 
 
+def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Initialize TaskManagerService backed by NexusFS."""
+    if svc.nexus_fs is None:
+        app.state.task_manager_service = None
+        return
+
+    try:
+        from nexus.bricks.task_manager.service import TaskManagerService
+
+        app.state.task_manager_service = TaskManagerService(nexus_fs=svc.nexus_fs)
+        logger.info("[TASK-MGR] TaskManagerService initialized")
+
+        task_write_hook = getattr(svc.nexus_fs, "_task_write_hook", None)
+        if task_write_hook is not None:
+            app.state.task_write_hook = task_write_hook
+
+            # Wire up DT_PIPE dispatch consumer for task signals
+            from nexus.bricks.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
+
+            dispatch_consumer = TaskDispatchPipeConsumer()
+            task_write_hook.register_handler(dispatch_consumer)
+            app.state.task_dispatch_consumer = dispatch_consumer
+    except Exception as e:
+        logger.warning("[TASK-MGR] Failed to initialize TaskManagerService: %s", e, exc_info=True)
+        app.state.task_manager_service = None
+
+
 async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize factory-created SchedulerService with async pool (Issue #2195, #2360).
 
@@ -664,6 +693,16 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         except Exception as e:
             logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
 
+    # TaskDispatchPipeConsumer
+    tdc = getattr(app.state, "task_dispatch_consumer", None)
+    if tdc is not None and hasattr(tdc, "set_pipe_manager"):
+        try:
+            tdc.set_pipe_manager(pipe_manager)
+            await tdc.start()
+            logger.info("[PIPE] TaskDispatchPipeConsumer started")
+        except Exception as e:
+            logger.warning("[PIPE] TaskDispatchPipeConsumer start failed: %s", e, exc_info=True)
+
 
 async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     """Stop DT_PIPE consumers (Issue #809, #810)."""
@@ -686,3 +725,12 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
             logger.info("[PIPE] ZoektPipeConsumer stopped")
         except Exception as e:
             logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)
+
+    # TaskDispatchPipeConsumer
+    tdc = getattr(app.state, "task_dispatch_consumer", None)
+    if tdc is not None and hasattr(tdc, "stop"):
+        try:
+            await tdc.stop()
+            logger.info("[PIPE] TaskDispatchPipeConsumer stopped")
+        except Exception as e:
+            logger.warning("[PIPE] Error stopping TaskDispatchPipeConsumer: %s", e, exc_info=True)

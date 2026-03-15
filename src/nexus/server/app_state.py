@@ -80,6 +80,9 @@ class NexusAppState:
     credential_service: Any = None
     scheduler_service: Any = None
     task_runner: Any = None
+    task_manager_service: Any = None
+    task_write_hook: Any = None
+    task_dispatch_consumer: Any = None
     workflow_engine: Any = None
     workflow_dispatch: Any = None
     sandbox_auth_service: Any = None

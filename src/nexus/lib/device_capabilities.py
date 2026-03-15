@@ -85,6 +85,17 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     "agent_runtime": BrickRequirement(min_memory_mb=32),
     "permissions": BrickRequirement(min_memory_mb=32),
     "scheduler": BrickRequirement(min_memory_mb=32),
+    # Additional feature bricks
+    "access_manifest": BrickRequirement(min_memory_mb=32),
+    "catalog": BrickRequirement(min_memory_mb=64),
+    "delegation": BrickRequirement(min_memory_mb=32),
+    "identity": BrickRequirement(min_memory_mb=32),
+    "share_link": BrickRequirement(min_memory_mb=32),
+    "versioning": BrickRequirement(min_memory_mb=32),
+    "workspace": BrickRequirement(min_memory_mb=64),
+    "portability": BrickRequirement(min_memory_mb=64),
+    "parsers": BrickRequirement(min_memory_mb=128),
+    "snapshot": BrickRequirement(min_memory_mb=64),
     # Kernel (always on, listed for completeness)
     "storage": BrickRequirement(min_memory_mb=0),
 }

@@ -422,12 +422,19 @@ def search_index(
 
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
             search_svc = nx.service("search")
-            results: dict[str, int] = search_svc.semantic_search_index(path, recursive=recursive)
+            raw_results = search_svc.semantic_search_index(path, recursive=recursive)
+
+        # RPC handler wraps results as {"indexed": {path: count, ...}, ...}
+        if isinstance(raw_results, dict) and "indexed" in raw_results:
+            results = raw_results["indexed"]
+            total_chunks = raw_results.get("total_chunks", 0)
+        else:
+            results = raw_results
+            total_chunks = sum(v for v in results.values() if isinstance(v, int) and v > 0)
 
         # Display results
-        total_chunks = sum(v for v in results.values() if v > 0)
-        successful = sum(1 for v in results.values() if v > 0)
-        failed = sum(1 for v in results.values() if v < 0)
+        successful = sum(1 for v in results.values() if isinstance(v, int) and v > 0)
+        failed = sum(1 for v in results.values() if isinstance(v, int) and v < 0)
 
         console.print("\n[green]✓ Indexing complete![/green]")
         console.print(f"  Files indexed: [cyan]{successful}[/cyan]")

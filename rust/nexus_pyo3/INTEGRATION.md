@@ -6,10 +6,10 @@ This guide shows how to integrate the high-performance Rust permission checker w
 
 ```bash
 cd rust/nexus_pyo3
-maturin develop --release
+maturin develop
 ```
 
-Or for production:
+Or for production (optimized):
 ```bash
 cd rust/nexus_pyo3
 maturin build --release
@@ -240,7 +240,7 @@ If `maturin develop` fails:
 1. Check Rust installation: `rustc --version`
 2. Update Rust: `rustup update`
 3. Check Python version: `python --version` (3.8+ required)
-4. Try cleaning build: `cargo clean && maturin develop --release`
+4. Try cleaning build: `cargo clean && maturin develop`
 
 ### Import Errors
 
@@ -248,7 +248,7 @@ If `import nexus_fast` fails:
 
 1. Verify installation: `pip show nexus-fast`
 2. Check Python environment: `which python`
-3. Rebuild: `maturin develop --release`
+3. Rebuild: `maturin develop`
 
 ### Incorrect Results
 

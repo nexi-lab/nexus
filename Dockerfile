@@ -1,16 +1,29 @@
+# syntax=docker/dockerfile:1
 # Nexus RPC Server - Production Dockerfile
 # Multi-stage build for optimal image size
 # 国内镜像支持：APT、pip、Rust、Go
 ARG USE_CHINA_MIRROR=false
 ARG TORCH_VARIANT=cpu
+
+# ---------- Stage 1: Build Zoekt binaries (independent, cached separately) ----------
+FROM golang:1.24 AS zoekt-builder
+ARG USE_CHINA_MIRROR
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        go env -w GOPROXY=https://goproxy.cn,direct GOSUMDB=off; \
+    fi
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest && \
+    CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
+
+# ---------- Stage 2: Build Python + Rust ----------
 FROM python:3.13-slim AS builder
 
 # 设置国内镜像环境变量（默认 false，国外环境不使用）
 ARG USE_CHINA_MIRROR
 ARG TORCH_VARIANT
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
-ENV GOPROXY=https://goproxy.cn,direct
-ENV GOSUMDB=off
+
 # ---------- 系统依赖 ----------
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -32,70 +45,56 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
         rustup component add rustfmt clippy; \
     fi
 
-# ---------- Go Toolchain ----------
-RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" = "arm64" ]; then GO_ARCH="arm64"; else GO_ARCH="amd64"; fi && \
-    if [ "$USE_CHINA_MIRROR" = "true" ]; then \
-        GO_DL="https://golang.google.cn/dl"; \
+# ---------- Compute pip index URL once (DRY) ----------
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        echo "https://mirrors.cloud.tencent.com/pypi/simple" > /tmp/pip_index; \
     else \
-        GO_DL="https://go.dev/dl"; \
-    fi && \
-    curl -fsSL "${GO_DL}/go1.24.12.linux-${GO_ARCH}.tar.gz" | tar -C /usr/local -xzf -
-ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
-
-# ---------- Build Zoekt binaries ----------
-RUN CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest && \
-    CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
+        echo "https://pypi.org/simple" > /tmp/pip_index; \
+    fi
 
 # ---------- uv + maturin ----------
-RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
-        PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
-    else \
-        PIP_INDEX="https://pypi.org/simple"; \
-    fi && \
-    pip install --no-cache-dir -i $PIP_INDEX uv maturin
+RUN pip install --no-cache-dir -i $(cat /tmp/pip_index) uv maturin
 
-# ---------- Copy project files ----------
+# ---------- Install 3rd-party Python dependencies (stable cache layer) ----------
+# Copy only metadata — src/ changes won't invalidate this expensive layer
 WORKDIR /build
 COPY pyproject.toml uv.lock* README.md Cargo.toml Cargo.lock ./
-COPY src/ ./src/
-COPY alembic/ ./alembic/
-COPY alembic/alembic.ini ./alembic.ini
-
-# ---------- Install Python dependencies ----------
+# Create minimal package stub so setuptools can discover the package
+RUN mkdir -p src/nexus && echo '__version__ = "0.0.0"' > src/nexus/__init__.py
 ENV UV_HTTP_TIMEOUT=300
 # Pre-install torch before txtai[ann] to control the variant.
 # TORCH_VARIANT=cpu  → CPU-only wheels (~300 MB, no CUDA)
 # TORCH_VARIANT=cuda → Default PyPI wheels with CUDA (~2 GB)
-RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
-        PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
-    else \
-        PIP_INDEX="https://pypi.org/simple"; \
-    fi && \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=cache,target=/root/.cache/pip \
     if [ "$TORCH_VARIANT" = "cpu" ]; then \
         uv pip install --system --index-url https://download.pytorch.org/whl/cpu torch; \
     else \
-        uv pip install --system -i $PIP_INDEX torch; \
+        uv pip install --system -i $(cat /tmp/pip_index) torch; \
     fi && \
-    uv pip install --system -i $PIP_INDEX \
+    uv pip install --system -i $(cat /tmp/pip_index) \
         ".[all,performance,compression,monitoring,docker,event-streaming,sentry]" \
-        "txtai[ann]>=9.0"
+        "txtai[ann]>=9.0" \
+        "sentence-transformers>=5.3"
 
-# ---------- Build Rust extensions ----------
+# ---------- Build Rust extensions (shared target dir for dep reuse) ----------
 COPY proto/ ./proto/
 COPY rust/ ./rust/
 
-# Build nexus_fast (crate renamed to nexus_pyo3, but produces nexus_fast wheel)
-WORKDIR /build/rust/nexus_pyo3
-RUN maturin build --release --out /build/dist && \
-    pip install --no-cache-dir /build/dist/nexus_fast-*.whl
+ENV CARGO_TARGET_DIR=/build/target
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/build/target \
+    maturin build --release --out /build/dist -m rust/nexus_pyo3/Cargo.toml && \
+    maturin build --release --features full --out /build/dist -m rust/nexus_raft/Cargo.toml && \
+    pip install --no-cache-dir /build/dist/nexus_fast-*.whl /build/dist/nexus_raft-*.whl
 
-# Build nexus_raft
-WORKDIR /build/rust/nexus_raft
-RUN maturin build --release --features full --out /build/dist && \
-    pip install --no-cache-dir /build/dist/nexus_raft-*.whl
-
-WORKDIR /build
+# ---------- Copy real application source and reinstall local package ----------
+COPY src/ ./src/
+COPY alembic/ ./alembic/
+COPY alembic/alembic.ini ./alembic.ini
+RUN rm -rf src/*.egg-info build/ && \
+    pip install --no-cache-dir --no-deps --force-reinstall .
 
 # ---------- Production image ----------
 FROM python:3.13-slim
@@ -113,15 +112,15 @@ RUN set -eux; \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------- Copy Python packages + Rust extension ----------
+# ---------- Copy Python packages + Rust extensions ----------
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/nexusd /usr/local/bin/nexusd
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 
 # ---------- Copy Zoekt binaries ----------
-COPY --from=builder /root/go/bin/zoekt-index /usr/local/bin/zoekt-index
-COPY --from=builder /root/go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
+COPY --from=zoekt-builder /go/bin/zoekt-index /usr/local/bin/zoekt-index
+COPY --from=zoekt-builder /go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 
 # ---------- Build-time smoke tests (Issue #2946) ----------
 # Verify critical native imports are installed correctly.
@@ -186,7 +185,10 @@ ENV PYTHONUNBUFFERED=1 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data \
     FAISS_OPT_LEVEL=generic \
-    OMP_NUM_THREADS=1
+    OMP_NUM_THREADS=1 \
+    GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384 \
+    NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2 \
+    NEXUS_TXTAI_SPARSE=true
 
 EXPOSE 2026 2126 6070
 

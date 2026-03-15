@@ -44,7 +44,7 @@ except (ImportError, AttributeError):
     logger.info(
         "Optional Rust BLAKE3 extension not available; using Python blake3. "
         "Install with: pip install nexus-fast or, from a matching source "
-        "checkout in a Python 3.12+ environment, maturin develop --release "
+        "checkout in a Python 3.12+ environment, maturin develop "
         "-m rust/nexus_pyo3/Cargo.toml"
     )
 

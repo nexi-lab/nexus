@@ -305,6 +305,40 @@ NEXUS_TOOLS: list[dict[str, Any]] = [
         ],
         "related_tools": ["nexus_grep", "nexus_glob"],
     },
+    # Context Manifest Tools (Issue #2984)
+    {
+        "name": "nexus_resolve_context",
+        "description": "Resolve a context manifest by executing all sources in parallel (deterministic pre-execution)",
+        "category": "context",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sources": {
+                    "type": "string",
+                    "description": "JSON array of context sources. Each source needs a 'type' field (file_glob, memory_query, workspace_snapshot, mcp_tool).",
+                },
+                "variables": {
+                    "type": "string",
+                    "description": "JSON object of template variable values for substitution (optional, default: '{}')",
+                },
+            },
+            "required": ["sources"],
+        },
+        "output_schema": {
+            "type": "string",
+            "description": "JSON with resolved source results, timestamps, and per-source status/data",
+        },
+        "when_to_use": "Use before agent execution to pre-load context from multiple sources in parallel. Supports file globs, memory queries, workspace snapshots, and MCP tools. Implements the Stripe Minions deterministic pre-execution pattern.",
+        "examples": [
+            {
+                "use_case": "Pre-load Python files and memory",
+                "input": {
+                    "sources": '[{"type": "file_glob", "pattern": "src/**/*.py", "max_files": 20}, {"type": "memory_query", "query": "previous implementation", "top_k": 5}]',
+                },
+            },
+        ],
+        "related_tools": ["nexus_glob", "nexus_semantic_search", "nexus_query_memory"],
+    },
     # Workflow Tools
     {
         "name": "nexus_list_workflows",

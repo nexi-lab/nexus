@@ -426,12 +426,12 @@ disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gcs"
-# Legacy backend - not yet migrated to HandlerResponse
+# Legacy backend - return-type / override mismatches
 disable_error_code = ["attr-defined", "override", "return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gcs_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in connector methods
 disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
@@ -472,22 +472,22 @@ warn_return_any = false
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.s3_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in connector methods
 disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.local"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in backend methods
 disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.hn_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in connector methods
 disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gdrive_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in connector methods
 disable_error_code = ["return-value"]
 
 
@@ -498,17 +498,17 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gmail_connector"
-# Legacy backend - not yet migrated to HandlerResponse
+# Legacy backend - return-type / override mismatches
 disable_error_code = ["override", "return-value", "no-any-return", "import-untyped", "unused-ignore"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.x_connector"
-# Legacy backend - not yet migrated to HandlerResponse
+# Legacy backend - return-type / override mismatches
 disable_error_code = ["override", "return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.slack_connector"
-# New backend - HandlerResponse migration in progress
+# Backend - return-type / override mismatches
 disable_error_code = ["override", "return-value", "arg-type", "no-any-return"]
 
 [[tool.mypy.overrides]]
@@ -694,7 +694,7 @@ module = "nexus.bricks.search.semantic"
 disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
 
-# --- Backend / driver return-type mismatches (HandlerResponse covariance) ---
+# --- Backend / driver return-type mismatches ---
 [[tool.mypy.overrides]]
 module = [
     "nexus.cache.backend_wrapper",

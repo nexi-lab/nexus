@@ -237,11 +237,11 @@ class TestDirectoryOperations:
 
     def test_list_returns_type_info(self, connector: LocalConnectorBackend):
         """Should include type (file/directory) in detailed listing."""
-        # Use list_dir_detailed for detailed info
+        # list_dir_detailed now returns list[dict] directly
         result = connector.list_dir_detailed("")
 
-        assert result.success is True
-        entries_by_name = {e["name"]: e for e in result.data}
+        assert isinstance(result, list)
+        entries_by_name = {e["name"]: e for e in result}
         assert entries_by_name["readme.txt"]["type"] == "file"
         assert entries_by_name["subdir"]["type"] == "directory"
 
@@ -266,9 +266,9 @@ class TestDirectoryOperations:
 
     def test_delete_file(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should delete file."""
-        result = connector.delete("readme.txt")
+        # delete() now returns None on success
+        connector.delete("readme.txt")
 
-        assert result.success is True
         assert not (local_folder / "readme.txt").exists()
 
     def test_delete_empty_dir(self, connector: LocalConnectorBackend, local_folder: Path):
@@ -276,9 +276,9 @@ class TestDirectoryOperations:
         # Create empty dir
         (local_folder / "empty").mkdir()
 
-        result = connector.delete("empty")
+        # delete() now returns None on success
+        connector.delete("empty")
 
-        assert result.success is True
         assert not (local_folder / "empty").exists()
 
     def test_exists(self, connector: LocalConnectorBackend):
@@ -374,52 +374,45 @@ class TestRenameOperations:
 
     def test_rename_file(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should rename file."""
-        result = connector.rename("readme.txt", "readme_renamed.txt")
+        # rename() now returns None on success
+        connector.rename("readme.txt", "readme_renamed.txt")
 
-        assert result.success is True
         assert not (local_folder / "readme.txt").exists()
         assert (local_folder / "readme_renamed.txt").exists()
         assert (local_folder / "readme_renamed.txt").read_text() == "Hello from readme"
 
     def test_rename_to_different_dir(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should move file to different directory."""
-        result = connector.rename("readme.txt", "subdir/moved.txt")
+        connector.rename("readme.txt", "subdir/moved.txt")
 
-        assert result.success is True
         assert not (local_folder / "readme.txt").exists()
         assert (local_folder / "subdir" / "moved.txt").exists()
 
     def test_rename_creates_parent_dirs(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should create parent directories for destination."""
-        result = connector.rename("readme.txt", "new/nested/path/file.txt")
+        connector.rename("readme.txt", "new/nested/path/file.txt")
 
-        assert result.success is True
         assert (local_folder / "new" / "nested" / "path" / "file.txt").exists()
 
     def test_rename_directory(self, connector: LocalConnectorBackend, local_folder: Path):
         """Should rename directory."""
-        result = connector.rename("subdir", "subdir_renamed")
+        connector.rename("subdir", "subdir_renamed")
 
-        assert result.success is True
         assert not (local_folder / "subdir").exists()
         assert (local_folder / "subdir_renamed").is_dir()
         assert (local_folder / "subdir_renamed" / "file.txt").exists()
 
     def test_rename_nonexistent_fails(self, connector: LocalConnectorBackend):
-        """Should fail when source doesn't exist."""
-        result = connector.rename("nonexistent.txt", "new.txt")
-
-        assert result.success is False
-        assert "not found" in result.error_message.lower()
+        """Should raise NexusFileNotFoundError when source doesn't exist."""
+        with pytest.raises(NexusFileNotFoundError, match="(?i)not found"):
+            connector.rename("nonexistent.txt", "new.txt")
 
     def test_rename_readonly_rejected(self, local_folder: Path):
-        """Should reject rename in readonly mode."""
+        """Should raise BackendError in readonly mode."""
         connector = LocalConnectorBackend(local_folder, readonly=True)
 
-        result = connector.rename("readme.txt", "new.txt")
-
-        assert result.success is False
-        assert "read-only" in result.error_message
+        with pytest.raises(BackendError, match="read-only"):
+            connector.rename("readme.txt", "new.txt")
 
 
 # ============================================================================
@@ -432,36 +425,35 @@ class TestStatOperations:
 
     def test_stat_file(self, connector: LocalConnectorBackend):
         """Should return file metadata."""
+        # stat() now returns dict directly
         result = connector.stat("readme.txt")
 
-        assert result.success is True
-        assert result.data["size"] > 0
-        assert result.data["is_file"] is True
-        assert result.data["is_dir"] is False
-        assert "mtime" in result.data
-        assert "ctime" in result.data
+        assert isinstance(result, dict)
+        assert result["size"] > 0
+        assert result["is_file"] is True
+        assert result["is_dir"] is False
+        assert "mtime" in result
+        assert "ctime" in result
 
     def test_stat_directory(self, connector: LocalConnectorBackend):
         """Should return directory metadata."""
         result = connector.stat("subdir")
 
-        assert result.success is True
-        assert result.data["is_dir"] is True
-        assert result.data["is_file"] is False
+        assert isinstance(result, dict)
+        assert result["is_dir"] is True
+        assert result["is_file"] is False
 
     def test_stat_nonexistent(self, connector: LocalConnectorBackend):
-        """Should return not_found for nonexistent path."""
-        result = connector.stat("nonexistent.txt")
-
-        assert result.success is False
-        assert "not found" in result.error_message.lower()
+        """Should raise NexusFileNotFoundError for nonexistent path."""
+        with pytest.raises(NexusFileNotFoundError, match="(?i)not found"):
+            connector.stat("nonexistent.txt")
 
     def test_stat_nested_file(self, connector: LocalConnectorBackend):
         """Should stat nested files."""
         result = connector.stat("subdir/nested/deep.txt")
 
-        assert result.success is True
-        assert result.data["is_file"] is True
+        assert isinstance(result, dict)
+        assert result["is_file"] is True
 
 
 # ============================================================================
@@ -474,34 +466,35 @@ class TestGlobOperations:
 
     def test_glob_txt_files(self, connector: LocalConnectorBackend):
         """Should find all .txt files."""
+        # glob() now returns list[str] directly
         result = connector.glob("*.txt")
 
-        assert result.success is True
-        assert "readme.txt" in result.data
+        assert isinstance(result, list)
+        assert "readme.txt" in result
 
     def test_glob_recursive(self, connector: LocalConnectorBackend):
         """Should find files recursively with **."""
         result = connector.glob("**/*.txt")
 
-        assert result.success is True
-        assert "readme.txt" in result.data
-        assert "subdir/file.txt" in result.data
-        assert "subdir/nested/deep.txt" in result.data
+        assert isinstance(result, list)
+        assert "readme.txt" in result
+        assert "subdir/file.txt" in result
+        assert "subdir/nested/deep.txt" in result
 
     def test_glob_specific_dir(self, connector: LocalConnectorBackend):
         """Should find files in specific directory."""
         result = connector.glob("subdir/*.txt")
 
-        assert result.success is True
-        assert "subdir/file.txt" in result.data
-        assert "readme.txt" not in result.data
+        assert isinstance(result, list)
+        assert "subdir/file.txt" in result
+        assert "readme.txt" not in result
 
     def test_glob_no_matches(self, connector: LocalConnectorBackend):
         """Should return empty list for no matches."""
         result = connector.glob("*.nonexistent")
 
-        assert result.success is True
-        assert result.data == []
+        assert isinstance(result, list)
+        assert result == []
 
 
 # ============================================================================
@@ -692,10 +685,10 @@ class TestDirectoryEdgeCases:
         assert not (local_folder / "empty_dir").exists()
 
     def test_delete_nonempty_dir_fails(self, connector: LocalConnectorBackend, local_folder: Path):
-        """Should fail to delete non-empty directory."""
-        result = connector.delete("subdir")
+        """Should raise BackendError when deleting non-empty directory."""
+        with pytest.raises(BackendError):
+            connector.delete("subdir")
 
-        assert result.success is False
         # Directory should still exist
         assert (local_folder / "subdir").exists()
 
@@ -748,21 +741,17 @@ class TestErrorHandling:
         assert result == []
 
     def test_list_file_as_dir_detailed(self, connector: LocalConnectorBackend):
-        """Should return error when listing file as directory with detailed info."""
-        result = connector.list_dir_detailed("readme.txt")
-
-        assert result.success is False
-        assert "not a directory" in result.error_message.lower()
+        """Should raise BackendError when listing file as directory with detailed info."""
+        with pytest.raises(BackendError, match="(?i)not a directory"):
+            connector.list_dir_detailed("readme.txt")
 
     def test_stat_after_delete(self, connector: LocalConnectorBackend, local_folder: Path):
-        """Should return not_found after file is deleted."""
+        """Should raise NexusFileNotFoundError after file is deleted."""
         (local_folder / "temp.txt").write_text("temp")
         connector.delete("temp.txt")
 
-        result = connector.stat("temp.txt")
-
-        assert result.success is False
-        assert "not found" in result.error_message.lower()
+        with pytest.raises(NexusFileNotFoundError):
+            connector.stat("temp.txt")
 
     def test_invalid_path_with_context(
         self, connector: LocalConnectorBackend, context: OperationContext
@@ -775,10 +764,8 @@ class TestErrorHandling:
             connector.read_content("", context)
 
     def test_delete_readonly_rejected(self, local_folder: Path):
-        """Should reject delete in readonly mode."""
+        """Should raise BackendError for delete in readonly mode."""
         connector = LocalConnectorBackend(local_folder, readonly=True)
 
-        result = connector.delete("readme.txt")
-
-        assert result.success is False
-        assert "read-only" in result.error_message
+        with pytest.raises(BackendError, match="read-only"):
+            connector.delete("readme.txt")

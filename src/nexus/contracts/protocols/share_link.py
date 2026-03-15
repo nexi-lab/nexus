@@ -26,10 +26,8 @@ class ShareLinkProtocol(Protocol):
     - Revocation and access logging
 
     Note: The canonical implementation (ShareLinkService) returns
-    ``HandlerResponse`` from ``nexus.lib.response``.  This protocol uses
-    ``dict[str, Any]`` because the contracts tier cannot import from lib.
-    ``HandlerResponse`` is dict-like, so callers that treat the return
-    value as a dict will work in practice.
+    ``dict[str, Any]`` directly and raises exceptions on errors.
+    This matches the protocol signature.
     """
 
     async def create_share_link(

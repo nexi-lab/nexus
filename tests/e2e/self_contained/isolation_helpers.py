@@ -22,7 +22,7 @@ class MockBackend:
     directory (state NOT shared across instances — useful for cross-brick
     isolation tests).
 
-    Returns direct values (not HandlerResponse) following the ObjectStoreABC
+    Returns direct values following the ObjectStoreABC
     contract.  Errors are raised as exceptions.
     """
 

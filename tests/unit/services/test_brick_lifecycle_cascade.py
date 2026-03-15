@@ -294,12 +294,22 @@ class TestFactoryDependencyEdges:
         edges = {name: deps for name, _, deps in _FACTORY_BRICKS}
         assert "reputation_service" in edges.get("delegation_service", ())
 
-    def test_ipc_depends_on_event_bus(self) -> None:
-        """IPC brick depends on event_bus for inter-process messaging."""
+    def test_ipc_provisioner_depends_on_storage_driver(self) -> None:
+        """IPC provisioner depends on IPC storage driver."""
         from nexus.factory._helpers import _FACTORY_BRICKS
 
         edges = {name: deps for name, _, deps in _FACTORY_BRICKS}
-        assert "event_bus" in edges.get("ipc_vfs_driver", ())
+        assert "ipc_storage_driver" in edges.get("ipc_provisioner", ())
+
+    def test_governance_response_depends_on_other_governance(self) -> None:
+        """Governance response service depends on anomaly, collusion, graph services."""
+        from nexus.factory._helpers import _FACTORY_BRICKS
+
+        edges = {name: deps for name, _, deps in _FACTORY_BRICKS}
+        deps = edges.get("governance_response_service", ())
+        assert "governance_anomaly_service" in deps
+        assert "governance_collusion_service" in deps
+        assert "governance_graph_service" in deps
 
     def test_no_cycles_in_factory_bricks(self) -> None:
         """The declared dependency graph must be acyclic."""
@@ -310,12 +320,11 @@ class TestFactoryDependencyEdges:
             manager.register(
                 name, _make_stateless_brick(name), protocol_name=protocol, depends_on=depends_on
             )
-        # Also register workflow_engine
+        # Also register workflow_engine (nexus/bricks/workflows/)
         manager.register(
             "workflow_engine",
             _make_stateless_brick("workflow"),
             protocol_name="WorkflowProtocol",
-            depends_on=("event_bus",),
         )
         # Should not raise CyclicDependencyError
         levels = manager.compute_startup_order()
@@ -353,45 +362,40 @@ class TestGlobalRegistrationGuard:
 
         all_known = factory_names | late_names | lifespan_names
 
-        # These are ALL the brick names that should be registered with lifecycle manager
+        # All brick names (from nexus/bricks/) registered with lifecycle manager
         expected_minimum = {
-            # Infrastructure
-            "event_bus",
-            "lock_manager",
-            # Core bricks
+            # nexus/bricks/context_manifest/
             "manifest_resolver",
             "manifest_metrics",
-            "chunked_upload_service",
+            # nexus/bricks/snapshot/
             "snapshot_service",
-            "task_queue_service",
-            "ipc_vfs_driver",
+            # nexus/bricks/ipc/
             "ipc_storage_driver",
             "ipc_provisioner",
-            "wallet_provisioner",
+            # nexus/bricks/delegation/ + nexus/bricks/reputation/
             "delegation_service",
             "reputation_service",
-            "version_service",
+            # nexus/bricks/workflows/
             "workflow_engine",
-            # Middleware & tools
+            # nexus/bricks/auth/
             "api_key_creator",
+            # nexus/bricks/mcp/
             "tool_namespace_middleware",
-            # Observability & resilience
+            # nexus/bricks/sandbox/
             "agent_event_log",
+            # nexus/bricks/rebac/
             "rebac_circuit_breaker",
-            # Memory
             "memory_permission",
-            # Governance
+            # nexus/bricks/governance/
             "governance_anomaly_service",
             "governance_collusion_service",
             "governance_graph_service",
             "governance_response_service",
-            # Search
-            "zoekt_pipe_consumer",
             # Late bricks (create_nexus_fs)
-            "parsers",
-            "cache",
+            "parsers",  # nexus/bricks/parsers/
+            "cache",  # nexus/cache/brick.py
             # Lifespan
-            "search",
+            "search",  # nexus/bricks/search/
         }
 
         assert expected_minimum.issubset(all_known), (

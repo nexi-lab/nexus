@@ -32,33 +32,30 @@ def _make_gate(brick_on: Callable[[str], bool] | None) -> Callable[[str], bool]:
 # Issue #1704: Register factory-created bricks with lifecycle manager
 # ---------------------------------------------------------------------------
 
+# Bricks registered with lifecycle manager — only items from nexus/bricks/.
 # (name, protocol_name, depends_on)
 _FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
-    # --- Infrastructure ---
-    ("event_bus", "EventBusProtocol", ()),
-    ("lock_manager", "LockManagerProtocol", ()),
-    # --- Core bricks ---
+    # --- nexus/bricks/context_manifest/ ---
     ("manifest_resolver", "ManifestProtocol", ()),
     ("manifest_metrics", "ManifestMetricsProtocol", ()),
-    ("chunked_upload_service", "ChunkedUploadProtocol", ()),
+    # --- nexus/bricks/snapshot/ ---
     ("snapshot_service", "SnapshotProtocol", ()),
-    ("task_queue_service", "TaskQueueProtocol", ()),
-    ("ipc_vfs_driver", "IPCProtocol", ("event_bus",)),
-    ("ipc_storage_driver", "IPCStorageProtocol", ("ipc_vfs_driver",)),
+    # --- nexus/bricks/ipc/ ---
+    ("ipc_storage_driver", "IPCStorageProtocol", ()),
     ("ipc_provisioner", "IPCProvisionerProtocol", ("ipc_storage_driver",)),
-    ("wallet_provisioner", "WalletProtocol", ()),
+    # --- nexus/bricks/delegation/ + nexus/bricks/reputation/ ---
     ("delegation_service", "DelegationProtocol", ("reputation_service",)),
     ("reputation_service", "ReputationProtocol", ()),
-    ("version_service", "VersionProtocol", ()),
-    # --- Middleware & tools ---
+    # --- nexus/bricks/auth/ (auto-discovered) ---
     ("api_key_creator", "ApiKeyProtocol", ()),
+    # --- nexus/bricks/mcp/ ---
     ("tool_namespace_middleware", "ToolNamespaceProtocol", ()),
-    # --- Observability & resilience ---
+    # --- nexus/bricks/sandbox/ ---
     ("agent_event_log", "AgentEventLogProtocol", ()),
+    # --- nexus/bricks/rebac/ ---
     ("rebac_circuit_breaker", "CircuitBreakerProtocol", ()),
-    # --- Memory brick ---
     ("memory_permission", "MemoryPermissionProtocol", ()),
-    # --- Governance brick (Issue #2129) ---
+    # --- nexus/bricks/governance/ (Issue #2129) ---
     ("governance_anomaly_service", "GovernanceAnomalyProtocol", ()),
     ("governance_collusion_service", "GovernanceCollusionProtocol", ()),
     ("governance_graph_service", "GovernanceGraphProtocol", ()),
@@ -71,8 +68,6 @@ _FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
             "governance_graph_service",
         ),
     ),
-    # --- Search/DT_PIPE ---
-    ("zoekt_pipe_consumer", "ZoektPipeProtocol", ()),
 ]
 
 # Entries intentionally NOT registered with lifecycle manager.
@@ -81,8 +76,17 @@ _FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
 # to ``_FACTORY_BRICKS``.
 _FACTORY_SKIP: frozenset[str] = frozenset(
     {
-        "skill_service",  # always None at boot; wired later via NexusFS gateway adapters
-        "skill_package_service",  # always None at boot; wired later via NexusFS gateway adapters
+        # Not from nexus/bricks/ — services/infrastructure, not bricks
+        "event_bus",  # nexus/services/event_subsystem/
+        "lock_manager",  # nexus/raft/
+        "chunked_upload_service",  # nexus/services/upload/
+        "task_queue_service",  # nexus/system_services/lifecycle/
+        "wallet_provisioner",  # nexus/factory/wallet
+        "version_service",  # nexus/services/versioning/
+        "zoekt_pipe_consumer",  # nexus/factory/zoekt_pipe_consumer
+        # Always None at boot — wired later
+        "skill_service",  # wired later via NexusFS gateway adapters
+        "skill_package_service",  # wired later via NexusFS gateway adapters
     }
 )
 
@@ -103,14 +107,13 @@ def _register_factory_bricks(
         if instance is not None:
             manager.register(name, instance, protocol_name=protocol, depends_on=depends_on)
 
-    # WorkflowEngine needs adapter (startup() != start())
+    # WorkflowEngine (nexus/bricks/workflows/) needs adapter (startup() != start())
     wf = brick_dict.get("workflow_engine")
     if wf is not None:
         manager.register(
             "workflow_engine",
             _WorkflowLifecycleAdapter(wf),
             protocol_name="WorkflowProtocol",
-            depends_on=("event_bus",),
         )
 
 

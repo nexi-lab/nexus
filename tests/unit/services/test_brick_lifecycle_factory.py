@@ -175,17 +175,13 @@ class TestRegisterFactoryBricks:
             assert status.protocol_name == protocol
 
         # Verify dependency edges (Issue #2991)
-        ipc_spec = manager.get_spec("ipc_vfs_driver")
-        assert ipc_spec is not None
-        assert "event_bus" in ipc_spec.depends_on
-
         delegation_spec = manager.get_spec("delegation_service")
         assert delegation_spec is not None
         assert "reputation_service" in delegation_spec.depends_on
 
-        wf_spec = manager.get_spec("workflow_engine")
-        assert wf_spec is not None
-        assert "event_bus" in wf_spec.depends_on
+        ipc_prov_spec = manager.get_spec("ipc_provisioner")
+        assert ipc_prov_spec is not None
+        assert "ipc_storage_driver" in ipc_prov_spec.depends_on
 
         gov_spec = manager.get_spec("governance_response_service")
         assert gov_spec is not None

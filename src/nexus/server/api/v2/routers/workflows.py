@@ -140,7 +140,8 @@ def _get_workflow_engine(request: Request) -> Any:
             if blm is not None:
                 for _name, _spec, _state, _retries, brick_inst in blm.iter_bricks():
                     if _name == "workflow_engine" and brick_inst is not None:
-                        engine = brick_inst
+                        # Unwrap lifecycle adapter if needed
+                        engine = getattr(brick_inst, "_engine", brick_inst)
                         break
         if engine:
             request.app.state.workflow_engine = engine

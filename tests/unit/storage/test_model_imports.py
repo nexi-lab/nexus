@@ -59,7 +59,6 @@ EXPECTED_MODELS = [
     # Infrastructure
     "SandboxMetadataModel",
     "MountConfigModel",
-    "SystemSettingsModel",
     "SubscriptionModel",
     "MigrationHistoryModel",
     "WorkspaceConfigModel",

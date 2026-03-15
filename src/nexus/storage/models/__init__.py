@@ -77,7 +77,6 @@ from nexus.storage.models.infrastructure import MigrationHistoryModel as Migrati
 from nexus.storage.models.infrastructure import MountConfigModel as MountConfigModel
 from nexus.storage.models.infrastructure import SandboxMetadataModel as SandboxMetadataModel
 from nexus.storage.models.infrastructure import SubscriptionModel as SubscriptionModel
-from nexus.storage.models.infrastructure import SystemSettingsModel as SystemSettingsModel
 from nexus.storage.models.infrastructure import UserSessionModel as UserSessionModel
 from nexus.storage.models.infrastructure import WorkspaceConfigModel as WorkspaceConfigModel
 

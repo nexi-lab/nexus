@@ -27,6 +27,15 @@ def _create_distributed_infra(
     event_bus: Any = None
     lock_manager: Any = None
 
+    # Create settings store for event bus checkpoint persistence (Issue #184)
+    settings_store = None
+    try:
+        from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+
+        settings_store = MetastoreSettingsStore(metadata_store)
+    except Exception:
+        logger.debug("MetastoreSettingsStore unavailable; event bus checkpoints will not persist")
+
     try:
         # Initialize lock manager (uses Raft via metadata store)
         if dist.enable_locks:
@@ -51,6 +60,7 @@ def _create_distributed_infra(
                 backend="nats",
                 nats_url=dist.nats_url,
                 record_store=record_store,
+                settings_store=settings_store,
             )
             logger.info(
                 "Distributed event bus initialized (NATS JetStream: %s, SSOT: PostgreSQL)",
@@ -69,6 +79,7 @@ def _create_distributed_infra(
                 event_bus = RedisEventBus(
                     event_client,
                     record_store=record_store,
+                    settings_store=settings_store,
                 )
                 logger.info(
                     "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",

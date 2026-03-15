@@ -130,23 +130,6 @@ class MountConfigModel(TimestampMixin, Base):
             raise ValidationError(f"backend_config must be valid JSON: {e}") from None
 
 
-class SystemSettingsModel(TimestampMixin, Base):
-    """System-wide settings stored in the database."""
-
-    __tablename__ = "system_settings"
-
-    key: Mapped[str] = mapped_column(String(255), primary_key=True)
-
-    value: Mapped[str] = mapped_column(Text, nullable=False)
-
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_sensitive: Mapped[int] = mapped_column(Integer, default=0)
-
-    def __repr__(self) -> str:
-        value_display = "***" if self.is_sensitive else self.value[:50]
-        return f"<SystemSettingsModel(key={self.key}, value={value_display})>"
-
-
 class SubscriptionModel(TimestampMixin, Base):
     """Webhook subscriptions for event notifications."""
 

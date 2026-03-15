@@ -45,6 +45,7 @@ from nexus.system_services.event_bus.types import FileEvent, FileEventType
 if TYPE_CHECKING:
     from nats.aio.msg import Msg
 
+    from nexus.contracts.auth_store_protocols import SystemSettingsStoreProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class NatsEventBus(EventBusBase):
         node_id: str | None = None,
         max_reconnect_attempts: int = -1,
         reconnect_time_wait: float = 2.0,
+        settings_store: "SystemSettingsStoreProtocol | None" = None,
     ) -> None:
         """Initialize NatsEventBus.
 
@@ -94,8 +96,9 @@ class NatsEventBus(EventBusBase):
             node_id: Unique node identifier (auto-generated if None)
             max_reconnect_attempts: Max reconnect attempts (-1 = infinite)
             reconnect_time_wait: Seconds between reconnect attempts
+            settings_store: SystemSettingsStoreProtocol for checkpoint persistence (optional)
         """
-        super().__init__(record_store=record_store, node_id=node_id)
+        super().__init__(record_store=record_store, node_id=node_id, settings_store=settings_store)
         self._nats_url = nats_url
         self._max_reconnect_attempts = max_reconnect_attempts
         self._reconnect_time_wait = reconnect_time_wait

@@ -88,6 +88,44 @@ class TestEventsServiceInit:
 
 
 # =============================================================================
+# HotSwappable protocol (Q2 — Issue #1611)
+# =============================================================================
+
+
+class TestHotSwappableProtocol:
+    """EventsService satisfies HotSwappable protocol."""
+
+    def test_isinstance_hot_swappable(self):
+        """isinstance check passes — coordinator auto-detects Q2."""
+        from nexus.contracts.protocols.service_lifecycle import HotSwappable
+
+        svc = EventsService()
+        assert isinstance(svc, HotSwappable)
+
+    def test_hook_spec_returns_observer(self):
+        """hook_spec() declares self as the sole observer."""
+        svc = EventsService()
+        spec = svc.hook_spec()
+        assert spec.observers == (svc,)
+        assert spec.total_hooks == 1
+
+    @pytest.mark.asyncio
+    async def test_drain_disables_observe(self):
+        """drain() sets _observe_registered = False."""
+        svc = EventsService()
+        svc._observe_registered = True
+        await svc.drain()
+        assert svc._observe_registered is False
+
+    @pytest.mark.asyncio
+    async def test_activate_enables_observe(self):
+        """activate() sets _observe_registered = True."""
+        svc = EventsService()
+        await svc.activate()
+        assert svc._observe_registered is True
+
+
+# =============================================================================
 # Infrastructure detection
 # =============================================================================
 

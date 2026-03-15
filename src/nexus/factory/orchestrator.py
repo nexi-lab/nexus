@@ -412,14 +412,13 @@ def _register_vfs_hooks(
     if permission_checker is not None:
         from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
-        _dc_info = _raw_svc("descendant_checker")
         _perm_hook = PermissionCheckHook(
             checker=permission_checker,
             metadata_store=nx.metadata,
             default_context=nx._default_context,
             enforce_permissions=nx._enforce_permissions,
             permission_enforcer=nx._permission_enforcer,
-            descendant_checker=_dc_info.instance if _dc_info else None,
+            descendant_checker=getattr(nx, "_descendant_checker", None),
         )
         dispatch.register_intercept_read(_perm_hook)
         dispatch.register_intercept_write(_perm_hook)
@@ -545,15 +544,9 @@ def _register_vfs_hooks(
     dispatch.register_observe(_bus_observer)
     hook_refs["bus_observer"] = _bus_observer
 
-    # EventsService observer: receives FileEvents for wait_for_changes() internal path.
-    # Registered as VFSObserver so dispatch.notify() delivers events directly.
-    # Use raw instance (not ServiceRef) so identity-based unregister works.
-    _events_info = _raw_svc("events")
-    _events_instance = _events_info.instance if _events_info else None
-    if _events_instance is not None:
-        dispatch.register_observe(_events_instance)
-        _events_instance._observe_registered = True
-    hook_refs["events_observer"] = _events_instance
+    # EventsService observer: now self-registered via HotSwappable.hook_spec()
+    # at bootstrap() → activate_hot_swappable_services() (Issue #1611).
+    # Removed from factory — EventsService owns its own observer hook.
 
     # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
     # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).
@@ -588,10 +581,7 @@ def _build_retroactive_hook_specs(coordinator: Any, hook_refs: dict[str, Any]) -
     """
     from nexus.contracts.protocols.service_hooks import HookSpec
 
-    # events service → observer
-    _events_obs = hook_refs.get("events_observer")
-    if _events_obs is not None:
-        coordinator.set_hook_spec("events", HookSpec(observers=(_events_obs,)))
+    # events service → now owns its hook via HotSwappable.hook_spec() (Issue #1611)
 
     # permission → 6 dispatch channels
     _perm = hook_refs.get("perm_hook")

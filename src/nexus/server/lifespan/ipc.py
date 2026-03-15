@@ -72,11 +72,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
 
 
 async def shutdown_ipc(app: "FastAPI", _svc: "LifespanServices") -> None:
-    """Stop IPC background tasks."""
-    sweeper = getattr(app.state, "ipc_sweeper", None)
-    if sweeper is not None and hasattr(sweeper, "stop"):
-        try:
-            await sweeper.stop()
-            logger.info("[IPC] TTLSweeper stopped")
-        except Exception as exc:
-            logger.warning("[IPC] Error stopping TTLSweeper: %s", exc)
+    """Stop IPC background tasks.
+
+    ipc_sweeper (Q3) — stopped by coordinator via aclose().
+    """

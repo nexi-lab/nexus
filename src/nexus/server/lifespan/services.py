@@ -50,20 +50,14 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
 
 
 async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Shutdown services in reverse order."""
-    # Issue #809/#810: Stop DT_PIPE consumers
-    await _shutdown_pipe_consumers(app)
+    """Shutdown services in reverse order.
 
-    # Issue #625: Stop workflow dispatch consumer
-    wds = app.state.workflow_dispatch
-    if wds is not None:
-        try:
-            await wds.stop()
-            logger.info("Workflow dispatch service stopped")
-        except Exception as e:
-            logger.warning("Error stopping workflow dispatch service: %s", e, exc_info=True)
-
-    # Stop Task Queue runner (Issue #574)
+    Note: Q3 PersistentService instances (workflow_dispatch, write_observer,
+    zoekt_pipe_consumer, search_daemon) are stopped by coordinator via
+    aclose() → stop_persistent_services().  Only non-PersistentService
+    cleanup remains here.
+    """
+    # Stop Task Queue runner (Issue #574) — not yet PersistentService (#1601)
     task_runner = app.state.task_runner
     if task_runner:
         try:
@@ -110,13 +104,17 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
             "[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)"
         )
 
-    # Shutdown Search Daemon (Issue #951)
-    if app.state.search_daemon:
+    # Shutdown RLM thread pool (Issue #1306) — not yet PersistentService (#1599)
+    rlm_service = app.state.rlm_service
+    if rlm_service is not None:
         try:
-            await app.state.search_daemon.shutdown()
-            logger.info("Search Daemon stopped")
+            rlm_service.shutdown()
+            logger.info("[RLM] Thread pool shut down")
         except Exception as e:
-            logger.warning("Error shutting down Search Daemon: %s", e, exc_info=True)
+            logger.warning("[RLM] Error shutting down thread pool: %s", e, exc_info=True)
+
+    # search_daemon (Q3) — stopped by coordinator via aclose()
+    # workflow_dispatch (Q3) — stopped by coordinator via aclose()
 
     # Stop DirectoryGrantExpander worker
     if app.state.directory_grant_expander:
@@ -747,25 +745,4 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         except Exception as e:
             logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
 
-
-async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
-    """Stop DT_PIPE consumers (Issue #809, #810)."""
-    # Issue #809: PipedRecordStoreWriteObserver
-    wo = getattr(app.state, "write_observer", None)
-    if wo is not None and hasattr(wo, "stop"):
-        try:
-            await wo.stop()
-            logger.info("[PIPE] PipedRecordStoreWriteObserver stopped")
-        except Exception as e:
-            logger.warning(
-                "[PIPE] Error stopping PipedRecordStoreWriteObserver: %s", e, exc_info=True
-            )
-
-    # Issue #810: ZoektPipeConsumer
-    zpc = getattr(app.state, "zoekt_pipe_consumer", None)
-    if zpc is not None and hasattr(zpc, "stop"):
-        try:
-            await zpc.stop()
-            logger.info("[PIPE] ZoektPipeConsumer stopped")
-        except Exception as e:
-            logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)
+    # write_observer (Q3), zoekt_pipe_consumer (Q3) — stopped by coordinator via aclose()

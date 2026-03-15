@@ -451,7 +451,7 @@ def create_nexus_fs(
     if _blm is not None:
         from nexus.factory._helpers import _register_late_bricks
 
-        _register_late_bricks(_blm, {"parsers": parsers_brick, "cache": _cache_brick})
+        _register_late_bricks(_blm, {"cache": _cache_brick})
 
     # --- Register INTERCEPT hooks on KernelDispatch (Issue #900) ---
     _register_vfs_hooks(nx, permission_checker=_permission_checker)

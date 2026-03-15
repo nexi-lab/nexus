@@ -32,51 +32,25 @@ def _make_gate(brick_on: Callable[[str], bool] | None) -> Callable[[str], bool]:
 # Issue #1704: Register factory-created bricks with lifecycle manager
 # ---------------------------------------------------------------------------
 
-# Bricks registered with lifecycle manager — only items from nexus/bricks/.
+# Bricks registered with lifecycle manager.
+# Only stateful bricks (implementing start/stop/health_check) where
+# mount/unmount actually does something. Stateless bricks go to _FACTORY_SKIP
+# — unmounting them would only change a label, not disable functionality.
 # (name, protocol_name, depends_on)
 _FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
-    # --- nexus/bricks/context_manifest/ ---
-    ("manifest_resolver", "ManifestProtocol", ()),
-    ("manifest_metrics", "ManifestMetricsProtocol", ()),
-    # --- nexus/bricks/snapshot/ ---
-    ("snapshot_service", "SnapshotProtocol", ()),
-    # --- nexus/bricks/ipc/ ---
-    ("ipc_storage_driver", "IPCStorageProtocol", ()),
-    ("ipc_provisioner", "IPCProvisionerProtocol", ("ipc_storage_driver",)),
-    # --- nexus/bricks/delegation/ + nexus/bricks/reputation/ ---
-    ("delegation_service", "DelegationProtocol", ("reputation_service",)),
-    ("reputation_service", "ReputationProtocol", ()),
-    # --- nexus/bricks/auth/ (auto-discovered) ---
-    ("api_key_creator", "ApiKeyProtocol", ()),
-    # --- nexus/bricks/mcp/ ---
-    ("tool_namespace_middleware", "ToolNamespaceProtocol", ()),
-    # --- nexus/bricks/sandbox/ ---
-    ("agent_event_log", "AgentEventLogProtocol", ()),
-    # --- nexus/bricks/rebac/ ---
-    ("rebac_circuit_breaker", "CircuitBreakerProtocol", ()),
-    ("memory_permission", "MemoryPermissionProtocol", ()),
-    # --- nexus/bricks/governance/ (Issue #2129) ---
-    ("governance_anomaly_service", "GovernanceAnomalyProtocol", ()),
-    ("governance_collusion_service", "GovernanceCollusionProtocol", ()),
-    ("governance_graph_service", "GovernanceGraphProtocol", ()),
-    (
-        "governance_response_service",
-        "GovernanceResponseProtocol",
-        (
-            "governance_anomaly_service",
-            "governance_collusion_service",
-            "governance_graph_service",
-        ),
-    ),
+    # No stateful bricks in _boot_independent_bricks() currently.
+    # workflow_engine is registered separately with _WorkflowLifecycleAdapter.
+    # parsers + cache are registered via _register_late_bricks().
+    # search is registered in server/lifespan/search.py.
 ]
 
-# Entries intentionally NOT registered with lifecycle manager.
+# Entries NOT registered with lifecycle manager.
 # CI test ``test_all_brick_dict_keys_accounted_for`` will fail if a new
 # key appears in ``_boot_independent_bricks()`` without being added here or
 # to ``_FACTORY_BRICKS``.
 _FACTORY_SKIP: frozenset[str] = frozenset(
     {
-        # Not from nexus/bricks/ — services/infrastructure, not bricks
+        # --- Not from nexus/bricks/ (services/infrastructure) ---
         "event_bus",  # nexus/services/event_subsystem/
         "lock_manager",  # nexus/raft/
         "chunked_upload_service",  # nexus/services/upload/
@@ -84,7 +58,24 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "wallet_provisioner",  # nexus/factory/wallet
         "version_service",  # nexus/services/versioning/
         "zoekt_pipe_consumer",  # nexus/factory/zoekt_pipe_consumer
-        # Always None at boot — wired later
+        # --- Stateless bricks (no start/stop — unmount is cosmetic) ---
+        "manifest_resolver",  # nexus/bricks/context_manifest/
+        "manifest_metrics",  # nexus/bricks/context_manifest/
+        "snapshot_service",  # nexus/bricks/snapshot/
+        "ipc_storage_driver",  # nexus/bricks/ipc/
+        "ipc_provisioner",  # nexus/bricks/ipc/
+        "delegation_service",  # nexus/bricks/delegation/
+        "reputation_service",  # nexus/bricks/reputation/
+        "api_key_creator",  # nexus/bricks/auth/
+        "tool_namespace_middleware",  # nexus/bricks/mcp/
+        "agent_event_log",  # nexus/bricks/sandbox/
+        "rebac_circuit_breaker",  # nexus/bricks/rebac/
+        "memory_permission",  # nexus/bricks/rebac/
+        "governance_anomaly_service",  # nexus/bricks/governance/
+        "governance_collusion_service",  # nexus/bricks/governance/
+        "governance_graph_service",  # nexus/bricks/governance/
+        "governance_response_service",  # nexus/bricks/governance/
+        # --- Always None at boot ---
         "skill_service",  # wired later via NexusFS gateway adapters
         "skill_package_service",  # wired later via NexusFS gateway adapters
     }
@@ -117,9 +108,9 @@ def _register_factory_bricks(
         )
 
 
-# Bricks created in create_nexus_fs() rather than _boot_independent_bricks()
+# Stateful bricks created in create_nexus_fs() rather than _boot_independent_bricks().
+# Only bricks with start()/stop() — parsers is stateless so not included.
 _LATE_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
-    ("parsers", "ParsersProtocol", ()),
     ("cache", "CacheProtocol", ()),
 ]
 

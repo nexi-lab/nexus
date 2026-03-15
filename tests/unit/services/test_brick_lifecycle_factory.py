@@ -147,63 +147,42 @@ class TestBootIntegration:
 class TestRegisterFactoryBricks:
     """Verify _register_factory_bricks registers the correct bricks."""
 
-    def test_registers_non_none_bricks(self) -> None:
-        """Non-None brick entries should be registered with the manager."""
-        from nexus.factory._helpers import _FACTORY_BRICKS
-
+    def test_registers_workflow_engine(self) -> None:
+        """Only stateful bricks are registered — currently just workflow_engine."""
         manager = BrickLifecycleManager()
-        # Provide instances for ALL _FACTORY_BRICKS entries + workflow_engine
-        brick_dict = {name: MagicMock() for name, _, _ in _FACTORY_BRICKS}
-        brick_dict["workflow_engine"] = MagicMock()
+        brick_dict = {
+            "workflow_engine": MagicMock(),
+            # Stateless bricks — should NOT be registered
+            "manifest_resolver": MagicMock(),
+            "rebac_circuit_breaker": MagicMock(),
+            "event_bus": MagicMock(),
+        }
 
         _register_factory_bricks(manager, brick_dict)
 
-        # All _FACTORY_BRICKS + workflow_engine
-        expected_count = len(_FACTORY_BRICKS) + 1  # +1 for workflow_engine
+        # Only workflow_engine (stateful, has start/stop via adapter)
         report = manager.health()
-        assert report.total == expected_count
+        assert report.total == 1
 
         # Verify workflow engine is wrapped in adapter
         status = manager.get_status("workflow_engine")
         assert status is not None
         assert status.protocol_name == "WorkflowProtocol"
 
-        # Verify every _FACTORY_BRICKS entry is registered
-        for name, protocol, _ in _FACTORY_BRICKS:
-            status = manager.get_status(name)
-            assert status is not None, f"Brick {name!r} not registered"
-            assert status.protocol_name == protocol
+        # Stateless bricks are NOT registered
+        assert manager.get_status("manifest_resolver") is None
+        assert manager.get_status("rebac_circuit_breaker") is None
+        assert manager.get_status("event_bus") is None
 
-        # Verify dependency edges (Issue #2991)
-        delegation_spec = manager.get_spec("delegation_service")
-        assert delegation_spec is not None
-        assert "reputation_service" in delegation_spec.depends_on
-
-        ipc_prov_spec = manager.get_spec("ipc_provisioner")
-        assert ipc_prov_spec is not None
-        assert "ipc_storage_driver" in ipc_prov_spec.depends_on
-
-        gov_spec = manager.get_spec("governance_response_service")
-        assert gov_spec is not None
-        assert "governance_anomaly_service" in gov_spec.depends_on
-
-    def test_skips_none_values(self) -> None:
-        """None entries in brick_dict should be silently skipped."""
+    def test_skips_none_workflow_engine(self) -> None:
+        """None workflow_engine should be silently skipped."""
         manager = BrickLifecycleManager()
-        brick_dict = {
-            "manifest_resolver": MagicMock(),
-            "chunked_upload_service": None,
-            "snapshot_service": None,
-            "task_queue_service": None,
-            "ipc_vfs_driver": None,
-            "wallet_provisioner": None,
-            "workflow_engine": None,
-        }
+        brick_dict = {"workflow_engine": None}
 
         _register_factory_bricks(manager, brick_dict)
 
         report = manager.health()
-        assert report.total == 1  # Only manifest_resolver
+        assert report.total == 0
 
     def test_skips_missing_keys(self) -> None:
         """Missing keys in brick_dict should be silently skipped."""

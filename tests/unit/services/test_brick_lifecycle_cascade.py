@@ -285,62 +285,30 @@ class TestCascadeUnmount:
 
 
 class TestFactoryDependencyEdges:
-    """Verify that declared depends_on edges in _FACTORY_BRICKS match reality."""
+    """Verify registered bricks are stateful (have start/stop)."""
 
-    def test_delegation_depends_on_reputation(self) -> None:
-        """DelegationService constructor requires reputation_service."""
+    def test_only_stateful_bricks_registered(self) -> None:
+        """_FACTORY_BRICKS should only contain stateful bricks."""
         from nexus.factory._helpers import _FACTORY_BRICKS
 
-        edges = {name: deps for name, _, deps in _FACTORY_BRICKS}
-        assert "reputation_service" in edges.get("delegation_service", ())
+        # Currently empty — all stateful bricks are registered separately
+        # (workflow_engine via adapter, parsers/cache via _LATE_BRICKS, search in lifespan)
+        assert len(_FACTORY_BRICKS) == 0
 
-    def test_ipc_provisioner_depends_on_storage_driver(self) -> None:
-        """IPC provisioner depends on IPC storage driver."""
-        from nexus.factory._helpers import _FACTORY_BRICKS
+    def test_cache_brick_is_stateful(self) -> None:
+        """CacheBrick has start/stop/health_check."""
+        from nexus.cache.brick import CacheBrick
 
-        edges = {name: deps for name, _, deps in _FACTORY_BRICKS}
-        assert "ipc_storage_driver" in edges.get("ipc_provisioner", ())
+        assert hasattr(CacheBrick, "start"), "CacheBrick missing start()"
+        assert hasattr(CacheBrick, "stop"), "CacheBrick missing stop()"
+        assert hasattr(CacheBrick, "health_check"), "CacheBrick missing health_check()"
 
-    def test_governance_response_depends_on_other_governance(self) -> None:
-        """Governance response service depends on anomaly, collusion, graph services."""
-        from nexus.factory._helpers import _FACTORY_BRICKS
+    def test_parsers_brick_is_stateless(self) -> None:
+        """ParsersBrick is stateless — registered for visibility but unmount is cosmetic."""
+        from nexus.bricks.parsers.brick import ParsersBrick
 
-        edges = {name: deps for name, _, deps in _FACTORY_BRICKS}
-        deps = edges.get("governance_response_service", ())
-        assert "governance_anomaly_service" in deps
-        assert "governance_collusion_service" in deps
-        assert "governance_graph_service" in deps
-
-    def test_no_cycles_in_factory_bricks(self) -> None:
-        """The declared dependency graph must be acyclic."""
-        from nexus.factory._helpers import _FACTORY_BRICKS
-
-        manager = BrickLifecycleManager()
-        for name, protocol, depends_on in _FACTORY_BRICKS:
-            manager.register(
-                name, _make_stateless_brick(name), protocol_name=protocol, depends_on=depends_on
-            )
-        # Also register workflow_engine (nexus/bricks/workflows/)
-        manager.register(
-            "workflow_engine",
-            _make_stateless_brick("workflow"),
-            protocol_name="WorkflowProtocol",
-        )
-        # Should not raise CyclicDependencyError
-        levels = manager.compute_startup_order()
-        assert len(levels) > 0
-
-    def test_all_dependencies_exist_in_factory_bricks(self) -> None:
-        """Every depends_on target must itself be in _FACTORY_BRICKS or workflow_engine."""
-        from nexus.factory._helpers import _FACTORY_BRICKS
-
-        all_names = {name for name, _, _ in _FACTORY_BRICKS}
-        all_names.add("workflow_engine")
-        for name, _, depends_on in _FACTORY_BRICKS:
-            for dep in depends_on:
-                assert dep in all_names, (
-                    f"Brick {name!r} depends on {dep!r} which is not in _FACTORY_BRICKS"
-                )
+        assert not hasattr(ParsersBrick, "start")
+        assert not hasattr(ParsersBrick, "stop")
 
 
 # ---------------------------------------------------------------------------
@@ -362,40 +330,11 @@ class TestGlobalRegistrationGuard:
 
         all_known = factory_names | late_names | lifespan_names
 
-        # All brick names (from nexus/bricks/) registered with lifecycle manager
+        # Only stateful bricks (with start/stop) should be lifecycle-managed
         expected_minimum = {
-            # nexus/bricks/context_manifest/
-            "manifest_resolver",
-            "manifest_metrics",
-            # nexus/bricks/snapshot/
-            "snapshot_service",
-            # nexus/bricks/ipc/
-            "ipc_storage_driver",
-            "ipc_provisioner",
-            # nexus/bricks/delegation/ + nexus/bricks/reputation/
-            "delegation_service",
-            "reputation_service",
-            # nexus/bricks/workflows/
-            "workflow_engine",
-            # nexus/bricks/auth/
-            "api_key_creator",
-            # nexus/bricks/mcp/
-            "tool_namespace_middleware",
-            # nexus/bricks/sandbox/
-            "agent_event_log",
-            # nexus/bricks/rebac/
-            "rebac_circuit_breaker",
-            "memory_permission",
-            # nexus/bricks/governance/
-            "governance_anomaly_service",
-            "governance_collusion_service",
-            "governance_graph_service",
-            "governance_response_service",
-            # Late bricks (create_nexus_fs)
-            "parsers",  # nexus/bricks/parsers/
-            "cache",  # nexus/cache/brick.py
-            # Lifespan
-            "search",  # nexus/bricks/search/
+            "workflow_engine",  # nexus/bricks/workflows/ (has startup via adapter)
+            "cache",  # nexus/cache/brick.py (has start/stop/health_check)
+            "search",  # nexus/bricks/search/ (has start/stop/health_check via adapter)
         }
 
         assert expected_minimum.issubset(all_known), (

@@ -54,6 +54,7 @@ class WorkflowEngine:
         self.trigger_registry: dict[TriggerType, TriggerFactory] = BUILTIN_TRIGGERS.copy()
         # Track triggers per workflow for proper cleanup on unload/disable
         self._workflow_triggers: dict[str, list["BaseTrigger"]] = {}
+        self._started = False
 
         if plugin_registry:
             self._discover_plugin_extensions()
@@ -79,9 +80,16 @@ class WorkflowEngine:
                 )
 
     async def startup(self) -> None:
-        """Load workflows from storage (must be called post-construction in async context)."""
+        """Load workflows from storage (must be called post-construction in async context).
+
+        Idempotent — safe to call multiple times (e.g., from both
+        startup_services and mount_all via lifecycle manager).
+        """
+        if self._started:
+            return
         if not self.workflow_store:
             return
+        self._started = True
 
         try:
             workflows_list = await self.workflow_store.list_workflows()

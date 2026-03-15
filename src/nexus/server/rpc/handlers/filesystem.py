@@ -196,7 +196,7 @@ def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
 
     Issue #1323: OCC + lock extracted from kernel.
     """
-    content = params.content
+    content = getattr(params, "content", None) or getattr(params, "buf", None) or b""
     if isinstance(content, str):
         content = content.encode("utf-8")
 

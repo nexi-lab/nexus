@@ -27,7 +27,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_column("agent_records", "context_manifest")
+    # Column may not exist in databases that were created purely from alembic
+    # migrations (no create_all). The column was added to the ORM model without
+    # a corresponding ADD COLUMN migration.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {col["name"] for col in inspector.get_columns("agent_records")}
+    if "context_manifest" in columns:
+        op.drop_column("agent_records", "context_manifest")
 
 
 def downgrade() -> None:

@@ -1,19 +1,48 @@
 """Unit tests for MountManager duplicate detection (Issue #2754).
 
-Verifies that save_mount relies on the DB UNIQUE constraint instead of
+Verifies that save_mount relies on metastore uniqueness check instead of
 check-then-insert, eliminating the TOCTOU race condition.
+
+Issue #192: Updated for metastore-backed MountManager.
 """
 
-import tempfile
-from collections.abc import Generator
-from pathlib import Path
+from __future__ import annotations
+
+from typing import Any
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
 
+from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
 from nexus.bricks.mount.mount_manager import MountManager
-from nexus.storage.models._base import Base
+from nexus.contracts.metadata import FileMetadata
+
+# ---------------------------------------------------------------------------
+# In-memory metastore stub for testing
+# ---------------------------------------------------------------------------
+
+
+class _InMemoryMetastore:
+    """Minimal in-memory metastore for testing MetastoreMountStore."""
+
+    def __init__(self) -> None:
+        self._data: dict[str, FileMetadata] = {}
+
+    def get(self, path: str) -> FileMetadata | None:
+        return self._data.get(path)
+
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+        self._data[metadata.path] = metadata
+        return None
+
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+        if path in self._data:
+            del self._data[path]
+            return {"path": path}
+        return None
+
+    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
+        return [fm for k, fm in sorted(self._data.items()) if k.startswith(prefix)]
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -21,23 +50,13 @@ from nexus.storage.models._base import Base
 
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+def store() -> MetastoreMountStore:
+    return MetastoreMountStore(_InMemoryMetastore())
 
 
 @pytest.fixture
-def session_factory(temp_dir: Path) -> sessionmaker[Session]:
-    db_path = temp_dir / "test_mount.db"
-    engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine)
-
-
-@pytest.fixture
-def manager(session_factory: sessionmaker[Session]) -> MountManager:
-    record_store = type("FakeRS", (), {"session_factory": session_factory})()
-    return MountManager(record_store)
+def manager(store: MetastoreMountStore) -> MountManager:
+    return MountManager(store)
 
 
 # ---------------------------------------------------------------------------
@@ -87,9 +106,7 @@ class TestSaveMountDuplicateDetection:
         )
         assert id1 != id2
 
-    def test_duplicate_does_not_corrupt_existing(
-        self, manager: MountManager, session_factory: sessionmaker[Session]
-    ) -> None:
+    def test_duplicate_does_not_corrupt_existing(self, manager: MountManager) -> None:
         """Failed duplicate insert does not corrupt the existing row."""
         manager.save_mount(
             mount_point="/mnt/test",
@@ -104,7 +121,7 @@ class TestSaveMountDuplicateDetection:
                 backend_config={"bucket": "overwrite-attempt"},
             )
 
-        # Original row is intact
+        # Original entry is intact
         config = manager.get_mount("/mnt/test")
         assert config is not None
         assert config["backend_type"] == "cas_local"

@@ -295,6 +295,7 @@ async def _startup_reputation_delegation_from_bricks(
 
     # Get from BrickServices (created by factory)
     brk = svc.brick_services
+    app.state.reputation_service = getattr(brk, "reputation_service", None) if brk else None
     app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
 
     if app.state.delegation_service is not None:

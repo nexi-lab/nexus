@@ -130,7 +130,7 @@ class SearchProtocol(Protocol):
         limit: int = 10,
         filters: dict[str, Any] | None = None,
         search_mode: str = "semantic",
-        adaptive_k: bool = False,
+        context: Any = None,
     ) -> builtins.list[dict[str, Any]]: ...
 
     async def semantic_search_index(

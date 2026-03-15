@@ -277,7 +277,6 @@ class TestBootBrickServices:
             "reputation_service",
             "version_service",
             "rebac_circuit_breaker",
-            "memory_permission",
             "governance_anomaly_service",
             "governance_collusion_service",
             "governance_graph_service",

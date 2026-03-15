@@ -582,9 +582,6 @@ disable_error_code = ["import-untyped", "no-any-return", "redundant-cast"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.bricks.memory.service",
-    "nexus.bricks.memory.router",
-    "nexus.bricks.memory.memory_provider",
     "nexus.migrations.migrate_identity_memory_v04",
 ]
 # EntityRegistry accepts SimpleNamespace duck-type for session_factory
@@ -645,11 +642,6 @@ module = [
 ]
 # pydantic v2 API
 disable_error_code = ["attr-defined"]
-
-[[tool.mypy.overrides]]
-module = "nexus.bricks.llm.message"
-# pydantic BaseModel.model_dump
-disable_error_code = ["no-any-return", "misc"]
 
 [[tool.mypy.overrides]]
 module = ["nexus.core._metadata_generated", "nexus.core._compact_generated"]
@@ -742,10 +734,6 @@ warn_unused_ignores = false
 module = "nexus.core.metadata"
 disable_error_code = ["arg-type", "return-value"]
 
-
-[[tool.mypy.overrides]]
-module = "nexus.bricks.rlm.tools"
-disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
 module = "nexus.system_services.agents.agent_rpc_service"
@@ -846,16 +834,13 @@ modules = [
     "nexus.bricks.governance",
     "nexus.bricks.identity",
     "nexus.bricks.ipc",
-    "nexus.bricks.llm",
     "nexus.bricks.mcp",
-    "nexus.bricks.memory",
     "nexus.bricks.mount",
     "nexus.bricks.parsers",
     "nexus.bricks.pay",
     "nexus.bricks.portability",
     "nexus.bricks.rebac",
     "nexus.bricks.reputation",
-    "nexus.bricks.rlm",
     "nexus.bricks.sandbox",
     "nexus.bricks.search",
     "nexus.bricks.snapshot",

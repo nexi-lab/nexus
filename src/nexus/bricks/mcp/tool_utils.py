@@ -1,4 +1,4 @@
-"""MCP tool utilities — error envelope + decorator (Issue #1272).
+"""MCP tool utilities — error envelope + decorator (Issue #1272, #1590).
 
 Provides standardized error handling for MCP tools:
     - ``tool_error()``: Consistent error response formatting.

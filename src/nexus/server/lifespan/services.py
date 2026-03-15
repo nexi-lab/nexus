@@ -217,7 +217,7 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
             _identity_record_store = svc.record_store
             _identity_oauth_crypto = OAuthCrypto(
-                encryption_key=_enc_key, record_store=_identity_record_store
+                encryption_key=_enc_key, settings_store=_identity_record_store
             )
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 

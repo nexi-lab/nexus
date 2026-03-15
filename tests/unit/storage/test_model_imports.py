@@ -26,7 +26,6 @@ EXPECTED_MODELS = [
     "ReBACGroupClosureModel",
     "ReBACChangelogModel",
     "ReBACVersionSequenceModel",
-    "ReBACCheckCacheModel",
     "TigerResourceMapModel",
     "TigerCacheModel",
     "TigerCacheQueueModel",

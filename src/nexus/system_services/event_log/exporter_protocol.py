@@ -8,7 +8,7 @@ Issue #1138: Event Stream Export.
 
 from typing import Protocol, runtime_checkable
 
-from nexus.system_services.event_subsystem.types import FileEvent
+from nexus.system_services.event_bus.types import FileEvent
 
 
 @runtime_checkable

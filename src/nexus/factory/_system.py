@@ -357,7 +357,7 @@ def _boot_system_services(
         logger.debug("[BOOT:SYSTEM] EventDeliveryWorker disabled by profile")
     elif ctx.db_url.startswith(("postgres", "postgresql")):
         try:
-            from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
+            from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
             delivery_worker = EventDeliveryWorker(
                 record_store=ctx.record_store,

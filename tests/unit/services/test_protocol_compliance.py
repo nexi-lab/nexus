@@ -337,7 +337,7 @@ def test_rebac_manager_satisfies_manager_methods() -> None:
 _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("agent_registry", "nexus/contracts/protocols/agent_registry.py"),
     ("auth", "nexus/contracts/protocols/auth.py"),
-    ("event_log", "nexus/services/event_subsystem/log/protocol.py"),
+    ("event_log", "nexus/system_services/event_log/protocol.py"),
     ("governance", "nexus/bricks/governance/protocols.py"),
     ("lock", "nexus/contracts/protocols/lock.py"),
     ("mcp", "nexus/contracts/protocols/mcp.py"),

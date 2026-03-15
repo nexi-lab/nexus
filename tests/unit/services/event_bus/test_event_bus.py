@@ -15,11 +15,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.system_services.event_subsystem.bus.base import EventBusBase
-from nexus.system_services.event_subsystem.bus.factory import create_event_bus
-from nexus.system_services.event_subsystem.bus.protocol import AckableEvent, EventBusProtocol
-from nexus.system_services.event_subsystem.bus.redis import RedisEventBus
-from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_bus.base import EventBusBase
+from nexus.system_services.event_bus.factory import create_event_bus
+from nexus.system_services.event_bus.protocol import AckableEvent, EventBusProtocol
+from nexus.system_services.event_bus.redis import RedisEventBus
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 # =============================================================================
 # FileEventType Tests
@@ -957,7 +957,7 @@ class TestEventBusFactoryExtended:
         """Test creating NATS event bus via factory."""
         from unittest.mock import patch
 
-        with patch("nexus.system_services.event_subsystem.bus.nats.NatsEventBus") as MockNats:
+        with patch("nexus.system_services.event_bus.nats.NatsEventBus") as MockNats:
             MockNats.return_value = MagicMock()
             create_event_bus(backend="nats", nats_url="nats://test:4222")
             MockNats.assert_called_once_with(nats_url="nats://test:4222")

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from nexus.system_services.event_subsystem.bus import RedisEventBus
-from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_bus import RedisEventBus
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 
 @pytest.fixture

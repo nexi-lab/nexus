@@ -37,10 +37,10 @@ from nats.js.api import (
 from nats.js.errors import NotFoundError
 
 from nexus.contracts.constants import DEFAULT_NATS_URL, ROOT_ZONE_ID
-from nexus.system_services.event_subsystem.bus.base import EventBusBase
-from nexus.system_services.event_subsystem.bus.decorators import requires_started
-from nexus.system_services.event_subsystem.bus.protocol import AckableEvent
-from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_bus.base import EventBusBase
+from nexus.system_services.event_bus.decorators import requires_started
+from nexus.system_services.event_bus.protocol import AckableEvent
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 if TYPE_CHECKING:
     from nats.aio.msg import Msg

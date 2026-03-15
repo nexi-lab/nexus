@@ -10,10 +10,10 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.system_services.event_subsystem.log.exporter_protocol import (
+    from nexus.system_services.event_log.exporter_protocol import (
         EventStreamExporterProtocol,
     )
-    from nexus.system_services.event_subsystem.log.exporters.config import EventStreamConfig
+    from nexus.system_services.event_log.exporters.config import EventStreamConfig
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +29,13 @@ def create_exporter(config: EventStreamConfig) -> EventStreamExporterProtocol | 
     if config.exporter == "kafka":
         kafka_config = config.kafka
         if kafka_config is None:
-            from nexus.system_services.event_subsystem.log.exporters.config import (
+            from nexus.system_services.event_log.exporters.config import (
                 KafkaExporterConfig,
             )
 
             kafka_config = KafkaExporterConfig()
         try:
-            from nexus.system_services.event_subsystem.log.exporters.kafka_exporter import (
+            from nexus.system_services.event_log.exporters.kafka_exporter import (
                 KafkaExporter,
             )
 
@@ -47,13 +47,13 @@ def create_exporter(config: EventStreamConfig) -> EventStreamExporterProtocol | 
     if config.exporter == "nats":
         nats_config = config.nats
         if nats_config is None:
-            from nexus.system_services.event_subsystem.log.exporters.config import (
+            from nexus.system_services.event_log.exporters.config import (
                 NatsExporterConfig,
             )
 
             nats_config = NatsExporterConfig()
         try:
-            from nexus.system_services.event_subsystem.log.exporters.nats_exporter import (
+            from nexus.system_services.event_log.exporters.nats_exporter import (
                 NatsExporter,
             )
 
@@ -65,13 +65,13 @@ def create_exporter(config: EventStreamConfig) -> EventStreamExporterProtocol | 
     if config.exporter == "pubsub":
         pubsub_config = config.pubsub
         if pubsub_config is None:
-            from nexus.system_services.event_subsystem.log.exporters.config import (
+            from nexus.system_services.event_log.exporters.config import (
                 PubSubExporterConfig,
             )
 
             pubsub_config = PubSubExporterConfig()
         try:
-            from nexus.system_services.event_subsystem.log.exporters.pubsub_exporter import (
+            from nexus.system_services.event_log.exporters.pubsub_exporter import (
                 PubSubExporter,
             )
 

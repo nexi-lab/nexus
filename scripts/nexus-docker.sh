@@ -1,19 +1,19 @@
 #!/bin/bash
-# docker-demo.sh - Start Nexus services using Docker Compose
+# nexus-docker.sh - Start Nexus services using Docker Compose
 #
 # Usage:
-#   ./scripts/docker-demo.sh                    # Start all services (detached)
-#   ./scripts/docker-demo.sh --build            # Rebuild images and start
-#   ./scripts/docker-demo.sh --stop             # Stop all services
-#   ./scripts/docker-demo.sh --restart          # Restart all services
-#   ./scripts/docker-demo.sh --logs             # View logs (follow mode)
-#   ./scripts/docker-demo.sh --status           # Check service status
-#   ./scripts/docker-demo.sh --clean            # Stop and remove all data (volumes)
-#   ./scripts/docker-demo.sh --init             # Initialize (clean + start; optional rebuild via --rebuild)
-#   ./scripts/docker-demo.sh --init --skip_permission  # Initialize with permissions disabled
-#   ./scripts/docker-demo.sh --init --rebuild   # Initialize + rebuild images (runtime + services)
-#   ./scripts/docker-demo.sh --init --yes       # Initialize without confirmation (CI)
-#   ./scripts/docker-demo.sh --env=production   # Use production environment files
+#   ./scripts/nexus-docker.sh                    # Start all services (detached)
+#   ./scripts/nexus-docker.sh --build            # Rebuild images and start
+#   ./scripts/nexus-docker.sh --stop             # Stop all services
+#   ./scripts/nexus-docker.sh --restart          # Restart all services
+#   ./scripts/nexus-docker.sh --logs             # View logs (follow mode)
+#   ./scripts/nexus-docker.sh --status           # Check service status
+#   ./scripts/nexus-docker.sh --clean            # Stop and remove all data (volumes)
+#   ./scripts/nexus-docker.sh --init             # Initialize (clean + start; optional rebuild via --rebuild)
+#   ./scripts/nexus-docker.sh --init --skip_permission  # Initialize with permissions disabled
+#   ./scripts/nexus-docker.sh --init --rebuild   # Initialize + rebuild images (runtime + services)
+#   ./scripts/nexus-docker.sh --init --yes       # Initialize without confirmation (CI)
+#   ./scripts/nexus-docker.sh --env=production   # Use production environment files
 #
 # Services:
 #   - postgres:    PostgreSQL database (port 5432)
@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "$PROJECT_ROOT"
 
-COMPOSE_FILE="dockerfiles/docker-compose.demo.yml"
+COMPOSE_FILE="dockerfiles/compose.yaml"
 ENV_MODE="local"  # Default: local development
 SKIP_PERMISSIONS=false  # Default: set up permissions
 SKIP_CONFIRM=false  # Default: ask for confirmation on destructive operations
@@ -731,13 +731,13 @@ cmd_urls() {
 ║                      📚 Useful Commands                          ║
 ╚═══════════════════════════════════════════════════════════════════╝
 
-  View logs:         ./docker-start.sh --logs
-  Check status:      ./docker-start.sh --status
-  Restart:           ./docker-start.sh --restart
-  Stop:              ./docker-start.sh --stop
+  View logs:         ./scripts/nexus-docker.sh --logs
+  Check status:      ./scripts/nexus-docker.sh --status
+  Restart:           ./scripts/nexus-docker.sh --restart
+  Stop:              ./scripts/nexus-docker.sh --stop
 
   Docker commands:
-    All logs:        docker compose -f docker-compose.demo.yml logs -f
+    All logs:        docker compose -f dockerfiles/compose.yaml logs -f
     Nexus logs:      docker logs -f nexus-server
     Frontend logs:   docker logs -f nexus-frontend
     LangGraph logs:  docker logs -f nexus-langgraph
@@ -844,12 +844,12 @@ case "$COMMAND" in
         echo "  production      Use .env.production and .env.production.secrets"
         echo ""
         echo "Examples:"
-        echo "  ./docker-start.sh                    # Start with local env"
-        echo "  ./docker-start.sh --env=production   # Start with production env"
-        echo "  ./docker-start.sh --build --env=production  # Rebuild with production env"
-        echo "  ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled"
-        echo "  ./docker-start.sh --init --rebuild   # Initialize and rebuild images"
-        echo "  ./docker-start.sh --init --yes       # Initialize without confirmation (CI)"
+        echo "  ./scripts/nexus-docker.sh                    # Start with local env"
+        echo "  ./scripts/nexus-docker.sh --env=production   # Start with production env"
+        echo "  ./scripts/nexus-docker.sh --build --env=production  # Rebuild with production env"
+        echo "  ./scripts/nexus-docker.sh --init --skip_permission  # Initialize with permissions disabled"
+        echo "  ./scripts/nexus-docker.sh --init --rebuild   # Initialize and rebuild images"
+        echo "  ./scripts/nexus-docker.sh --init --yes       # Initialize without confirmation (CI)"
         echo ""
         show_services
         ;;

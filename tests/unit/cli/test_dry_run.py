@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -96,7 +96,14 @@ def _make_mock_nx() -> MagicMock:
     """Create a mock NexusFilesystem that tracks calls."""
     nx = MagicMock()
     nx.close = MagicMock()
-    nx.sys_access = MagicMock(return_value=True)
+    nx.sys_access = AsyncMock(return_value=True)
+    nx.sys_write = AsyncMock()
+    nx.sys_read = AsyncMock()
+    nx.sys_unlink = AsyncMock()
+    nx.sys_rename = AsyncMock()
+    nx.sys_mkdir = AsyncMock()
+    nx.sys_rmdir = AsyncMock()
+    nx.sys_readdir = AsyncMock()
     return nx
 
 
@@ -104,8 +111,8 @@ def _make_mock_nx() -> MagicMock:
 def _patch_open_filesystem(nx: MagicMock) -> Any:
     """Patch open_filesystem to yield our mock."""
 
-    @contextmanager
-    def _mock_open(*_args: Any, **_kwargs: Any) -> Any:
+    @asynccontextmanager
+    async def _mock_open(*_args: Any, **_kwargs: Any) -> Any:
         yield nx
 
     # Patch in all command modules that use open_filesystem

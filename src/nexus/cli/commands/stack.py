@@ -456,9 +456,12 @@ def up(
     console.print()
     console.print(f"[bold]Starting Nexus preset: {preset}[/bold]")
     console.print(f"  Using stack: {cf}")
-    image_ref = _resolve_image_ref_from_config(config)
-    if image_ref:
-        console.print(f"  Image: {image_ref}")
+    if build:
+        console.print("  Image: [green]local build[/green] (from Dockerfile)")
+    else:
+        image_ref = _resolve_image_ref_from_config(config)
+        if image_ref:
+            console.print(f"  Image: {image_ref}")
     if addons:
         console.print(f"  Add-ons: {', '.join(addons)}")
     console.print()
@@ -474,6 +477,12 @@ def up(
 
     # Build environment from config (project name, ports, data dir, auth, image, TLS)
     compose_env = _derive_project_env(config, resolved_ports=resolved_ports)
+
+    # When --build is requested, drop NEXUS_IMAGE_REF so docker compose
+    # uses the ``build:`` directive from the compose file (local source)
+    # instead of pulling the pinned remote image.
+    if build:
+        compose_env.pop("NEXUS_IMAGE_REF", None)
 
     data_dir = compose_env["NEXUS_HOST_DATA_DIR"]
 

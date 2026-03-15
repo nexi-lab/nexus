@@ -143,9 +143,13 @@ def _do_initialize(nx: Any) -> None:
     _initialize_wired_ipc(nx, nx._brick_services)
 
     # --- Register VFS hooks (INTERCEPT + OBSERVE — Issue #900) ---
+    # Issue #1610/#1612/#1613/#1616: All hooks now implement HotSwappable.
+    # When coordinator exists, hooks are registered as services here and
+    # dispatch-registered at bootstrap via activate_hot_swappable_services().
+    # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    _hook_refs = _register_vfs_hooks(
+    _register_vfs_hooks(
         nx,
         permission_checker=nx._permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
@@ -159,15 +163,6 @@ def _do_initialize(nx: Any) -> None:
 
         _cache_brick = getattr(nx._brick_services, "cache_brick", None)
         _register_late_bricks(_blm, {"cache": _cache_brick})
-
-    # --- Retroactive HookSpec capture (Issue #1452 Phase 3, #1615) ---
-    # Coordinator was created in _do_link() (Phase 1).  Reuse it here to
-    # bind retroactive hook specs for VFS hooks registered above.
-    coordinator = getattr(nx, "_service_coordinator", None)
-    if coordinator is not None:
-        from nexus.factory.orchestrator import _build_retroactive_hook_specs
-
-        _build_retroactive_hook_specs(coordinator, _hook_refs)
 
     # --- Register background services as bootstrap callbacks ---
     # TL directive: initialize() prepares resources but stays static.

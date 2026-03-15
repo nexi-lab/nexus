@@ -13,11 +13,14 @@ the original file from the underlying filesystem and returns a parsed
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import Permission
 from nexus.contracts.vfs_hooks import VFSPathResolver
+
+if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,19 @@ class VirtualViewResolver(VFSPathResolver):
         "_parse_fn",
         "_read_tracker_fn",
     )
+
+    # ── HotSwappable protocol (Issue #1612) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(resolvers=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(
         self,

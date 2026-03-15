@@ -115,7 +115,9 @@ class WorkspaceRegistry:
 
         logger.debug(
             "Extracted context: user_id=%s, agent_id=%s, zone_id=%s",
-            user_id, agent_id, zone_id,
+            user_id,
+            agent_id,
+            zone_id,
         )
         return user_id, agent_id, zone_id
 
@@ -136,7 +138,9 @@ class WorkspaceRegistry:
         """Auto-grant direct_owner permission via ReBAC. Non-fatal."""
         logger.debug(
             "Auto-grant check: path=%s, user_id=%s, rebac_manager=%s",
-            path, user_id, self.rebac_manager is not None,
+            path,
+            user_id,
+            self.rebac_manager is not None,
         )
         if self.rebac_manager and user_id:
             try:

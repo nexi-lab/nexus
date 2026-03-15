@@ -2,7 +2,6 @@
 
 import threading
 import time
-from unittest.mock import patch
 
 from nexus.lib.revision_notifier import (
     NullRevisionNotifier,
@@ -90,37 +89,3 @@ class TestABC:
     def test_null_is_base_instance(self) -> None:
         """NullRevisionNotifier inherits from RevisionNotifierBase."""
         assert isinstance(NullRevisionNotifier(), RevisionNotifierBase)
-
-
-class TestLazyInit:
-    """Tests for the lazy init pattern in NexusFS."""
-
-    def test_lazy_init_with_classvar(self) -> None:
-        """_get_revision_notifier() creates a RevisionNotifier on first call."""
-        from nexus.core.nexus_fs import NexusFS
-
-        # Reset the class-level notifier
-        NexusFS._revision_notifier = None
-        # Use __new__ to avoid full __init__ (needs metastore, etc.)
-        instance = NexusFS.__new__(NexusFS)
-        notifier = instance._get_revision_notifier()
-        assert isinstance(notifier, RevisionNotifier)
-        # Cleanup
-        NexusFS._revision_notifier = None
-
-    def test_fallback_on_construction_error(self) -> None:
-        """If RevisionNotifier fails to construct, NullRevisionNotifier is used."""
-        from nexus.core.nexus_fs import NexusFS
-
-        NexusFS._revision_notifier = None
-
-        with patch(
-            "nexus.lib.revision_notifier.RevisionNotifier.__init__",
-            side_effect=RuntimeError("boom"),
-        ):
-            instance = NexusFS.__new__(NexusFS)
-            notifier = instance._get_revision_notifier()
-            assert isinstance(notifier, NullRevisionNotifier)
-
-        # Cleanup
-        NexusFS._revision_notifier = None

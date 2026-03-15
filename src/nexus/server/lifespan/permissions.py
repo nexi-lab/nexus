@@ -32,10 +32,10 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
 
     await _startup_async_rebac(app, svc)
     await _startup_cache_brick(app, svc)
-    bg_tasks.extend(_startup_tiger_cache(app, svc))
+    bg_tasks.extend(await _startup_tiger_cache(app, svc))
     bg_tasks.extend(_startup_backfill(app, svc))
     _startup_cache_warmup(app, svc)
-    _startup_circuit_breaker(app, svc)
+    await _startup_circuit_breaker(app, svc)
 
     return bg_tasks
 
@@ -51,7 +51,7 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
         return
 
     try:
-        from nexus.bricks.rebac.async_manager import AsyncReBACManager
+        from nexus.bricks.rebac.manager import AsyncReBACManager
 
         # Reuse the sync ReBACManager from NexusFS (avoids creating standalone engine)
         sync_rebac = svc.rebac_manager
@@ -67,6 +67,12 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
             _sync_mgr = ReBACManager(engine=_store.engine)
             app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
             logger.info("Async ReBAC manager initialized (fresh sync manager via RecordStore)")
+
+        # Enlist with coordinator (Q1 — wrapper is the consumer-facing service)
+        if app.state.async_rebac_manager is not None:
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("async_rebac_manager", app.state.async_rebac_manager)
 
     except Exception as e:
         logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
@@ -99,7 +105,11 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
                 record_store=record_store,
             )
 
-        await cache_brick.start()
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("cache_brick", cache_brick)
+        else:
+            await cache_brick.start()
         app.state.cache_brick = cache_brick
         logger.info("CacheBrick initialized with %s backend", cache_brick.backend_name)
 
@@ -118,7 +128,7 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.warning("Failed to initialize cache: %s", e, exc_info=True)
 
 
-def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
+async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start Tiger Cache worker, warm-up, and DirectoryGrantExpander."""
     bg_tasks: list[asyncio.Task] = []
 
@@ -167,7 +177,7 @@ def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asynci
 
                     from sqlalchemy.engine import Engine
 
-                    from nexus.services.permissions.cache.tiger.expander import (
+                    from nexus.bricks.rebac.cache.tiger.expander import (
                         DirectoryGrantExpander,
                     )
 
@@ -179,10 +189,12 @@ def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     )
                     app.state.directory_grant_expander = expander
 
-                    async def _run_grant_expander() -> None:
-                        await expander.run_worker()
-
-                    bg_tasks.append(asyncio.create_task(_run_grant_expander()))
+                    # Q3 PersistentService — coordinator auto-calls start()
+                    coord = svc.service_coordinator
+                    if coord is not None:
+                        await coord.enlist("directory_grant_expander", expander)
+                    else:
+                        await expander.start()
                     logger.info("DirectoryGrantExpander worker started for large folder grants")
                 except Exception as e:
                     logger.debug("DirectoryGrantExpander startup skipped: %s", e)
@@ -202,7 +214,7 @@ def _startup_backfill(_app: "FastAPI", svc: "LifespanServices") -> list[asyncio.
             _nexus_fs = svc.nexus_fs  # Capture for closure
 
             async def _backfill_system_paths() -> None:
-                for prefix in ["/skills", "/sessions"]:
+                for prefix in ["/sessions"]:
                     try:
                         created = await asyncio.to_thread(
                             _nexus_fs.metadata.backfill_directory_index,
@@ -263,9 +275,16 @@ def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> None:
         logger.debug("[WARMUP] Server startup warmup skipped: %s", e)
 
 
-def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:
     """Wire circuit breaker and manifest resolver from factory (Issue #726, #2130)."""
     if svc.nexus_fs:
         brk = svc.brick_services
         app.state.rebac_circuit_breaker = getattr(brk, "rebac_circuit_breaker", None)
         app.state.manifest_resolver = getattr(brk, "manifest_resolver", None) if brk else None
+        # Enlist Q1 — static, no lifecycle
+        coord = svc.service_coordinator
+        if coord is not None:
+            if app.state.rebac_circuit_breaker is not None:
+                await coord.enlist("rebac_circuit_breaker", app.state.rebac_circuit_breaker)
+            if app.state.manifest_resolver is not None:
+                await coord.enlist("manifest_resolver", app.state.manifest_resolver)

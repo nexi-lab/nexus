@@ -18,9 +18,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.backends.local_connector import LocalConnectorBackend
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.backends.storage.local_connector import LocalConnectorBackend
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 from nexus.system_services.sync.change_log_store import ChangeLogStore
 from nexus.system_services.sync.conflict_log_store import ConflictLogStore
 from nexus.system_services.sync.conflict_resolution import ConflictStrategy

@@ -233,7 +233,7 @@ Documented in `document-ai/notes/` discussions; brief summary for reference:
 - **Memory/Cache tiering**: L0 kernel (redb ~50ns), L1 Dragonfly (~1ms), L2 PostgreSQL (~5ms). L0 stays in kernel; L1/L2 hot-pluggable.
 - **Identity: PCB-based binding**: Immutable identity at process spawn. Progressive isolation: Host Process → Docker → Wasm.
 - **Auth: Verify/Sign split**: Kernel = `verify_token()` ~50ns. Driver = `login()` ~50-500ms (DB + OAuth).
-- **Nexus native IPC**: `DT_PIPE` inode, ring buffer at `/nexus/pipes/{name}`. Observable, persistent, Raft-replicated.
+- **Nexus native IPC**: `DT_PIPE` (destructive FIFO) and `DT_STREAM` (non-destructive append-only log with offset-based reads). VFS inodes, heap buffers. Observable, Raft-replicated metadata, local or distributed data (see §7j).
 - **Container I/O monopoly**: `--network none`, single mount `/mnt/nexus`, `--read-only`.
 - **Runtime hot-swapping**: Linux `modprobe`/`rmmod` semantics for drivers. Phases: Constructor DI → DriverRegistry → state migration.
 
@@ -269,14 +269,14 @@ Federation has two I/O planes with different routing strategies:
 
 | Operation | Mechanism | Routing |
 |-----------|-----------|---------|
-| **Read** | `FederationContentResolver.try_read()` | Remote: gRPC Read RPC + progressive replication to local CAS |
+| **Read** | `FederationContentResolver.try_read()` | Remote: gRPC Read/StreamRead RPC (streaming for large files, no local persistence) |
 | **Write** | Always local (by design) | `FederatedMetadataProxy` enriches `backend_name` with node address (`local@host:port`) |
 | **Delete** | `FederationContentResolver.try_delete()` | Remote: gRPC Delete RPC delegates full `sys_unlink` to origin peer |
 | **Rename** | Metadata-only (CAS content stays at same hash) | Cross-zone rename blocked by `FederatedMetadataProxy` |
 
 #### CAS Semantics in Federation
 
-CAS stores each file as **one immutable blob keyed by SHA-256 hash**. "Modifying" a file (including `append()`) creates a **new blob with a new hash**. Properties: no partial reads, safe progressive replication (hash-verified), conflicts only at metadata level.
+CAS stores each file as **one immutable blob keyed by SHA-256 hash**. "Modifying" a file (including `append()`) creates a **new blob with a new hash**. Properties: no partial reads, safe remote read (hash-verified), conflicts only at metadata level.
 
 #### Caveat 1: Concurrent Multi-Node Write (Last-Writer-Wins)
 
@@ -286,13 +286,13 @@ Two nodes writing to the same path: Raft totally orders the two metadata proposa
 
 #### Caveat 2: Cross-Node Append = Full Read-Modify-Write
 
-`append()` = `sys_read()` + concatenate + `sys_write()`. In federation, appending 1 byte to a 100MB file on another node transfers the entire file over the network, creates a new complete blob, and orphans the old blob + progressive replication copy.
+`append()` = `sys_read()` + concatenate + `sys_write()`. In federation, appending 1 byte to a 100MB file on another node transfers the entire file over the network, creates a new complete blob, and orphans the old blob.
 
 Acceptable for v1: most federation is read-heavy; frequent cross-node appends are rare.
 
 #### Caveat 3: Content Availability on Writer Node Failure
 
-Content exists only on writer's CAS until another node reads it (progressive replication). Writer failure before any read → `NexusFileNotFoundError`. Future: eager replication, CacheStore L2, WAL read-repair.
+Content exists only on writer's CAS until another node reads it. Writer failure before any read → `NexusFileNotFoundError`. Future: eager replication, CacheStore L2, WAL read-repair.
 
 #### Caveat 4: CAS Orphan Accumulation (Standard Pattern — Needs GC)
 
@@ -331,6 +331,155 @@ Single-node GC is straightforward (scan local ObjectStore vs local Metastore).
 Federation GC requires node-level reconciliation: each node scans its local ObjectStore
 against the Raft-replicated Metastore to find locally-held orphans.
 
+### 7j. DT_PIPE / DT_STREAM Federation Design
+
+Both IPC primitives have Raft-replicated metadata but in-process heap data
+(RingBuffer for DT_PIPE, StreamBuffer for DT_STREAM). Federation extends
+IPC I/O transparently via origin-aware routing. DT_STREAM uses the same
+`stream@host:port` pattern as DT_PIPE's `pipe@host:port`.
+
+#### Metadata: `backend_name` Encoding
+
+PipeManager embeds the creator node's advertise address in `backend_name`:
+
+| Mode | `backend_name` | Meaning |
+|------|---------------|---------|
+| Single-node | `pipe` / `stream` | No origin, always local |
+| Federated | `pipe@host:port` / `stream@host:port` | Origin node address for remote proxy |
+
+#### Read/Write Routing
+
+`BackendAddress.parse(backend_name)` extracts the origin. NexusFS dispatches:
+
+- **Local** (`origin == self` or no origin): Direct RingBuffer via PipeManager (~0.5us)
+- **Remote** (`origin != self`): gRPC `Call` RPC to origin node, which executes
+  `sys_read`/`sys_write` locally and returns the result
+
+The remote path reuses existing gRPC auth/zone/error infrastructure — no new proto RPCs.
+
+#### sys_write: Always Local (Design Decision)
+
+`sys_write` is always local by design. The writer node becomes the content origin:
+- Regular files: `FederatedMetadataProxy` enriches `backend_name` with writer's address
+- Pipes: PipeManager embeds `self_address` in `backend_name` at creation time
+
+Remote nodes read from the origin. There is no write-forwarding or write-proxying.
+This is consistent with HDFS/GFS where writes go to a local DataNode/ChunkServer.
+
+#### Streaming Reads for Large Files
+
+`FederationContentResolver.try_read()` uses a size-based threshold:
+- **Small files** (< 1MB): Unary gRPC `Read` RPC (single response)
+- **Large files** (>= 1MB): `StreamRead` RPC (chunked streaming)
+
+StreamRead is CAS-aware: for CDC-chunked files, origin streams chunk blobs directly
+without reassembling the full file in memory. Reader collects and returns assembled bytes.
+No local persistence on read — content stays on the origin node only.
+
+### 7m. Federation Content CRUD: Implementation & Caveats
+
+Federation has two I/O planes with different routing strategies:
+
+| Plane | Pattern | Mechanism |
+|-------|---------|-----------|
+| **Metadata** | Transparent DI proxy | `FederatedMetadataProxy` wraps MetastoreABC, zone-routes all ops |
+| **Content** | PRE-DISPATCH resolver | `FederationContentResolver` intercepts read/delete before kernel |
+
+#### Content CRUD Status
+
+| Operation | Mechanism | Routing |
+|-----------|-----------|---------|
+| **Read** | `FederationContentResolver.try_read()` | Remote: gRPC Read/StreamRead RPC (streaming for large files, no local persistence) |
+| **Write** | Always local (by design) | `FederatedMetadataProxy` enriches `backend_name` with node address (`local@host:port`) |
+| **Delete** | `FederationContentResolver.try_delete()` | Remote: gRPC Delete RPC delegates full `sys_unlink` to origin peer |
+| **Rename** | Metadata-only (CAS content stays at same hash) | Cross-zone rename blocked by `FederatedMetadataProxy` |
+
+#### CAS Semantics in Federation
+
+CAS (Content-Addressable Storage) stores each file as **one immutable blob keyed by SHA-256 hash**.
+"Modifying" a file (including `append()`) creates a **new blob with a new hash** — the old blob
+is never mutated. This gives federation several properties:
+
+- **No partial reads**: An etag always points to a complete, immutable blob.
+- **Safe remote read**: Content fetched from a peer can be verified by hash.
+- **Conflicts only at metadata level**: Raft serializes metadata writes; content blobs are immutable.
+
+#### Caveat 1: Concurrent Multi-Node Write (Last-Writer-Wins)
+
+When two nodes write to the **same path** without coordination:
+
+```
+Node A: sys_write("/shared/f.txt", "Hello")
+  → CAS: hash_A stored locally
+  → metadata.put(etag=hash_A, backend_name="local@A:50051") → Raft propose
+
+Node B: sys_write("/shared/f.txt", "World")
+  → CAS: hash_B stored locally
+  → metadata.put(etag=hash_B, backend_name="local@B:50051") → Raft propose
+```
+
+Raft totally orders the two proposals. The last committed write wins — metadata points to
+that node's CAS blob. The losing node's CAS content becomes an **orphan** (no metadata reference,
+no GC yet).
+
+**Mitigation**: `sys_write(if_match=etag)` provides optimistic concurrency control (OCC).
+Because metadata is Raft-replicated (all nodes see the same etag), `if_match` correctly
+detects conflicts in federation mode. Callers that need consistency should always use it.
+
+#### Caveat 2: Cross-Node Append = Full Read-Modify-Write
+
+`append()` is implemented as `sys_read() + concatenate + sys_write()` — it reads the
+**entire file**, appends in memory, then writes a **new complete blob**. In federation:
+
+```
+Node A creates "/shared/log.txt" with 100MB of content
+  → hash_A in Node A's CAS
+
+Node B appends 1 byte:
+  1. sys_read() → gRPC Read/StreamRead from Node A → transfer 100MB over network
+  2. concatenate: 100MB + 1 byte = ~100MB
+  3. sys_write() → new hash_B (~100MB) in Node B's CAS
+  4. metadata: etag=hash_B, backend_name="local@B:50051"
+```
+
+**Cost**: One append = full file transfer + full rewrite. For large files with frequent
+cross-node appends, this is expensive. The old blob (hash_A) becomes a CAS orphan.
+
+**This is acceptable for v1**: Most federation use cases are read-heavy. Frequent cross-node
+appends to large files are rare. If needed, the caller can use `lock=True` or
+`if_match=etag` to coordinate writes.
+
+#### Caveat 3: Content Availability on Writer Node Failure
+
+Content only exists on the writer node's CAS. Remote reads stream content on demand
+without local persistence. If the writer node fails:
+
+- Metadata (Raft-replicated) still points to `backend_name="local@deadNode:50051"`
+- `FederationContentResolver.try_read()` attempts gRPC Read → connection refused
+- Raises `NexusFileNotFoundError` — content is lost
+
+**Mitigation options** (future work):
+- **Eager replication**: Replicate content to N peers on write (like HDFS). Trades write
+  latency for durability.
+- **CacheStoreABC L2**: Dragonfly as shared cache layer — content available even if
+  writer is down.
+- **Read-repair from WAL**: If EC mode WAL entries survive, replay to recover content.
+
+#### Caveat 4: CAS Orphan Accumulation
+
+Several operations leave unreferenced CAS blobs:
+
+| Cause | Orphan Location |
+|-------|-----------------|
+| Overwrite (last-writer-wins loser) | Losing node's CAS |
+| Append (old blob replaced by new) | Writer node's CAS |
+
+No distributed reference counting or GC exists in v1. Orphans accumulate indefinitely.
+
+**Acceptable for v1**: Disk is cheap, orphans are bounded by write volume. Future GC sweep
+can reconcile CAS inventory against metadata references (single-node `gc.collect()` is
+straightforward; cross-node requires coordination).
+
 ---
 
 ## 8. Key Files Reference
@@ -349,6 +498,8 @@ against the Raft-replicated Metastore to find locally-held orphans.
 | FederationContentResolver | `src/nexus/raft/federation_content_resolver.py` |
 | ZonePathResolver | `src/nexus/raft/zone_path_resolver.py` |
 | BackendAddress | `src/nexus/contracts/backend_address.py` |
+| ChannelFactory | `src/nexus/grpc/channel_factory.py` |
+| PipeManager | `src/nexus/core/pipe_manager.py` |
 | VFS gRPC proto | `proto/nexus/grpc/vfs/vfs.proto` |
 | VFS gRPC servicer | `src/nexus/grpc/servicer.py` |
 | Data architecture | `docs/architecture/data-storage-matrix.md` |

@@ -35,6 +35,17 @@ router = APIRouter()
 
 # Path attributes on RPC param dataclasses that must be zone-scoped.
 _ZONE_PATH_ATTRS = ("path", "old_path", "new_path")
+# Bulk/list path attributes that also need zone-scoping.
+_ZONE_PATH_LIST_ATTRS = ("paths", "patterns")
+
+
+def _scope_single_path(path: str, prefix: str) -> str:
+    """Scope a single path string with zone prefix."""
+    if path.startswith(("/zone/", "/tenant:")):
+        return path
+    if path.startswith("/"):
+        return f"{prefix}{path}"
+    return f"{prefix}/{path}"
 
 
 def _scope_params_for_zone(params: Any, zone_id: str) -> None:
@@ -55,13 +66,14 @@ def _scope_params_for_zone(params: Any, zone_id: str) -> None:
         value = getattr(params, attr, None)
         if not isinstance(value, str):
             continue
-        # Don't double-scope paths that already carry a zone/tenant prefix
-        if value.startswith(("/zone/", "/tenant:")):
+        setattr(params, attr, _scope_single_path(value, prefix))
+
+    # Also scope list[str] path attributes (e.g. bulk operations)
+    for attr in _ZONE_PATH_LIST_ATTRS:
+        value = getattr(params, attr, None)
+        if not isinstance(value, list):
             continue
-        if value.startswith("/"):
-            setattr(params, attr, f"{prefix}{value}")
-        else:
-            setattr(params, attr, f"{prefix}/{value}")
+        setattr(params, attr, [_scope_single_path(p, prefix) for p in value if isinstance(p, str)])
 
 
 @router.post("/api/nfs/{method}")
@@ -217,16 +229,16 @@ async def rpc_endpoint(
         )
     except DatabaseError as e:
         logger.warning("Database error in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Database error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
     except ConnectorError as e:
         logger.warning("Connector error in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Backend error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
     except NexusError as e:
         logger.warning("NexusError in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Nexus error: {e}")
-    except Exception as e:
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
+    except Exception:
         logger.exception(f"Error executing method {method}")
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
 
 
 def get_cache_headers(method: str, result: Any) -> dict[str, str]:

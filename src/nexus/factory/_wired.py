@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _boot_wired_services(
+async def _boot_wired_services(
     nx: Any,
     kernel_services: "KernelServices",
     system_services: Any,
@@ -59,33 +59,14 @@ def _boot_wired_services(
     # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
     gateway: Any = None
     try:
-        from nexus.services.gateway import NexusFSGateway
+        from nexus.system_services.gateway import NexusFSGateway
 
         gateway = NexusFSGateway(nx)
         logger.debug("[BOOT:WIRED] NexusFSGateway created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] NexusFSGateway unavailable: %s", exc)
 
-    # --- IPC KernelVFSAdapter: bind to NexusFS + mount LocalConnector ---
-    _ipc_adapter = getattr(brick_services, "ipc_storage_driver", None)
-    if _ipc_adapter is not None and hasattr(_ipc_adapter, "bind"):
-        try:
-            _ipc_adapter.bind(nx)
-
-            # Mount a LocalConnector at /agents for IPC file storage
-            from pathlib import Path
-
-            from nexus.backends.local_connector import LocalConnectorBackend
-
-            _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
-            _ipc_data_dir.mkdir(parents=True, exist_ok=True)
-            _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
-            nx.router.add_mount("/agents", _ipc_connector)
-            logger.debug(
-                "[BOOT:WIRED] IPC KernelVFSAdapter bound + LocalConnector mounted at /agents"
-            )
-        except Exception as exc:
-            logger.warning("[BOOT:WIRED] IPC adapter bind failed: %s", exc)
+    # --- IPC KernelVFSAdapter: deferred to initialize() via _initialize_wired_ipc() ---
 
     # --- ReBACService: Permission and access control operations ---
     rebac_service: Any = None
@@ -97,12 +78,33 @@ def _boot_wired_services(
             enforce_permissions=nx._enforce_permissions,
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
-            file_reader=lambda path: nx.sys_read(path),
+            file_reader=nx.sys_read,
             permission_enforcer=nx._permission_enforcer,
         )
         logger.debug("[BOOT:WIRED] ReBACService created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] ReBACService unavailable: %s", exc)
+
+    # --- OAuthCredentialService: OAuth credential lifecycle (brick) ---
+    # Created before MCPService because mcp_connect() needs credential_service.
+    oauth_service: Any = None
+    if _on("sandbox"):
+        try:
+            import os
+
+            from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
+
+            oauth_service = OAuthCredentialService(
+                oauth_factory=None,
+                token_manager=None,
+                database_url=os.getenv("TOKEN_MANAGER_DB"),
+                oauth_config=getattr(nx._config, "oauth", None) if nx._config else None,
+            )
+            logger.debug("[BOOT:WIRED] OAuthCredentialService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] OAuthCredentialService unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:WIRED] OAuthCredentialService disabled by profile")
 
     # --- MCPService: Model Context Protocol operations ---
     mcp_service: Any = None
@@ -110,60 +112,24 @@ def _boot_wired_services(
         try:
             from nexus.bricks.mcp.mcp_service import MCPService
 
-            mcp_service = MCPService(filesystem=nx)
+            mcp_service = MCPService(
+                filesystem=nx,
+                credential_service=oauth_service,
+                mount_lister=lambda: [
+                    (m.mount_point, "mounted") for m in kernel_services.router.list_mounts()
+                ],
+            )
             logger.debug("[BOOT:WIRED] MCPService created")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] MCPService unavailable: %s", exc)
     else:
         logger.debug("[BOOT:WIRED] MCPService disabled by profile")
 
-    # --- LLMService + LLMSubsystem: LLM integration ---
-    llm_service: Any = None
-    llm_subsystem: Any = None
-    if _on("llm"):
-        try:
-            from nexus.bricks.llm.llm_service import LLMService
-
-            llm_service = LLMService(nexus_fs=nx)
-
-            from nexus.services.subsystems.llm_subsystem import LLMSubsystem
-
-            llm_subsystem = LLMSubsystem(llm_service=llm_service)
-            logger.debug("[BOOT:WIRED] LLMService + LLMSubsystem created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] LLMService unavailable: %s", exc)
-    else:
-        logger.debug("[BOOT:WIRED] LLMService disabled by profile")
-
-    # --- OAuthService: OAuth authentication operations ---
-    oauth_service: Any = None
-    if _on("sandbox"):
-        try:
-            import os
-
-            from nexus.services.oauth.oauth_service import OAuthService
-
-            oauth_service = OAuthService(
-                oauth_factory=None,
-                token_manager=None,
-                filesystem=nx,
-                database_url=os.getenv("TOKEN_MANAGER_DB"),
-                oauth_config=getattr(nx._config, "oauth", None) if nx._config else None,
-                mount_lister=lambda: [
-                    (m.mount_point, "mounted") for m in kernel_services.router.list_mounts()
-                ],
-            )
-            logger.debug("[BOOT:WIRED] OAuthService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] OAuthService unavailable: %s", exc)
-    else:
-        logger.debug("[BOOT:WIRED] OAuthService disabled by profile")
-
     # --- MountCoreService: Internal mount operations (gateway-dependent) ---
     mount_core_service: Any = None
     if gateway is not None:
         try:
-            from nexus.services.mount.mount_core_service import MountCoreService
+            from nexus.bricks.mount.mount_core_service import MountCoreService
 
             mount_core_service = MountCoreService(gateway)
             logger.debug("[BOOT:WIRED] MountCoreService created")
@@ -196,7 +162,7 @@ def _boot_wired_services(
     mount_persist_service: Any = None
     if mount_core_service is not None:
         try:
-            from nexus.services.mount.mount_persist_service import MountPersistService
+            from nexus.bricks.mount.mount_persist_service import MountPersistService
 
             mount_persist_service = MountPersistService(
                 mount_manager=system_services.mount_manager,
@@ -211,7 +177,7 @@ def _boot_wired_services(
     # Moved after sub-services so DI deps are available (Issue #636).
     mount_service: Any = None
     try:
-        from nexus.services.mount.mount_service import MountService
+        from nexus.bricks.mount.mount_service import MountService
 
         mount_service = MountService(
             router=kernel_services.router,
@@ -227,34 +193,6 @@ def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
 
-    # --- SkillService: Skill management (Issue #2035) ---
-    skill_service: Any = brick_services.skill_service
-    if skill_service is None and _on("skills") and gateway is not None:
-        try:
-            from nexus.bricks.skills.skill_service_adapter import SkillService as _SkillService
-
-            skill_service = _SkillService(gateway=gateway)
-            logger.debug("[BOOT:WIRED] SkillService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] SkillService unavailable: %s", exc)
-    elif not _on("skills"):
-        logger.debug("[BOOT:WIRED] SkillService disabled by profile")
-
-    # --- SkillPackageService: Skill export/import/validate (Issue #2035) ---
-    skill_package_service: Any = getattr(brick_services, "skill_package_service", None)
-    if skill_package_service is None and _on("skills") and skill_service is not None:
-        try:
-            from nexus.bricks.skills.package_service import SkillPackageService as _SkillPkgSvc
-
-            skill_package_service = _SkillPkgSvc(
-                fs=skill_service._fs,
-                perms=skill_service._perms,
-                skill_service=skill_service,
-            )
-            logger.debug("[BOOT:WIRED] SkillPackageService created")
-        except Exception:
-            logger.warning("[BOOT:WIRED] SkillPackageService unavailable (optional)")
-
     # --- SearchService: list/glob/grep are kernel-level VFS operations (Issue #2194) ---
     # Always create SearchService regardless of "search" brick — basic directory
     # listing, glob matching, and grep must work even in KERNEL-only mode.
@@ -262,7 +200,7 @@ def _boot_wired_services(
     # not core filesystem enumeration.
     search_service: Any = None
     try:
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         search_service = SearchService(
             metadata_store=nx.metadata,
@@ -276,13 +214,17 @@ def _boot_wired_services(
         )
         logger.debug("[BOOT:WIRED] SearchService created (kernel-level)")
     except Exception as exc:
-        logger.debug("[BOOT:WIRED] SearchService unavailable: %s", exc)
+        logger.warning(
+            "[BOOT:WIRED] SearchService unavailable (glob/grep will not work): %s",
+            exc,
+            exc_info=True,
+        )
 
     # --- ShareLinkService: Share link operations ---
     share_link_service: Any = None
     if _on("discovery"):
         try:
-            from nexus.services.share_link.share_link_service import ShareLinkService
+            from nexus.bricks.share_link.share_link_service import ShareLinkService
 
             share_link_service = ShareLinkService(
                 gateway=gateway,
@@ -295,16 +237,16 @@ def _boot_wired_services(
         logger.debug("[BOOT:WIRED] ShareLinkService disabled by profile")
 
     # --- EventsService: File watching + advisory locking ---
+    # EventsService is a VFSObserver — receives FileEvents via kernel OBSERVE.
+    # Factory registers it on dispatch in orchestrator.py after construction.
     events_service: Any = None
     if _on("ipc"):
         try:
             from nexus.system_services.lifecycle.events_service import EventsService
 
             events_service = EventsService(
-                backend=_root_backend,
                 event_bus=brick_services.event_bus,
                 lock_manager=brick_services.lock_manager,
-                zone_id=None,
             )
             logger.debug("[BOOT:WIRED] EventsService created")
         except Exception as exc:
@@ -316,19 +258,9 @@ def _boot_wired_services(
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_default_context: Any = getattr(nx, "_default_context", None)
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
-    # Build memory_config dict from _default_context (NexusFS stores the
-    # MemoryConfig dataclass as _memory_config_obj, not _memory_config).
-    _nx_memory_config: Any = None
-    if _nx_default_context is not None:
-        _nx_memory_config = {
-            "zone_id": getattr(_nx_default_context, "zone_id", None),
-            "user_id": getattr(_nx_default_context, "user_id", None),
-            "agent_id": getattr(_nx_default_context, "agent_id", None),
-        }
-
     workspace_rpc_service: Any = None
     try:
-        from nexus.services.workspace_rpc_service import WorkspaceRPCService
+        from nexus.system_services.workspace.workspace_rpc_service import WorkspaceRPCService
 
         workspace_rpc_service = WorkspaceRPCService(
             workspace_manager=system_services.workspace_manager,
@@ -343,7 +275,7 @@ def _boot_wired_services(
 
     agent_rpc_service: Any = None
     try:
-        from nexus.services.agents.agent_rpc_service import AgentRPCService
+        from nexus.system_services.agents.agent_rpc_service import AgentRPCService
 
         agent_rpc_service = AgentRPCService(
             vfs=nx,
@@ -367,7 +299,7 @@ def _boot_wired_services(
 
     user_provisioning_service: Any = None
     try:
-        from nexus.services.user_provisioning import UserProvisioningService
+        from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
         user_provisioning_service = UserProvisioningService(
             vfs=nx,
@@ -383,7 +315,6 @@ def _boot_wired_services(
                 workspace_rpc_service.register_workspace if workspace_rpc_service else None
             ),
             register_agent_fn=(agent_rpc_service.register_agent if agent_rpc_service else None),
-            skills_import_fn=getattr(nx, "skills_import", None),
             list_cache=getattr(nx, "_list_cache", None),
             exists_cache=getattr(nx, "_exists_cache", None),
         )
@@ -416,26 +347,9 @@ def _boot_wired_services(
     except Exception as exc:
         logger.debug("[BOOT:WIRED] MetadataExportService unavailable: %s", exc)
 
-    ace_rpc_service: Any = None
-    try:
-        from nexus.services.ace_rpc_service import ACERPCService
-
-        ace_rpc_service = ACERPCService(
-            session_factory=_nx_session_factory,
-            backend=_root_backend,
-            default_context=_nx_default_context,
-            entity_registry=system_services.entity_registry,
-            ensure_entity_registry_fn=getattr(
-                getattr(nx, "_memory_provider", None), "ensure_entity_registry", None
-            ),
-        )
-        logger.debug("[BOOT:WIRED] ACERPCService created")
-    except Exception as exc:
-        logger.debug("[BOOT:WIRED] ACERPCService unavailable: %s", exc)
-
     descendant_checker: Any = None
     try:
-        from nexus.services.descendant_access import DescendantAccessChecker
+        from nexus.system_services.namespace.descendant_access import DescendantAccessChecker
 
         descendant_checker = DescendantAccessChecker(
             rebac_manager=system_services.rebac_manager,
@@ -448,28 +362,11 @@ def _boot_wired_services(
     except Exception as exc:
         logger.debug("[BOOT:WIRED] DescendantAccessChecker unavailable: %s", exc)
 
-    memory_provider: Any = None
-    try:
-        from nexus.bricks.memory.memory_provider import MemoryProvider
-
-        memory_provider = MemoryProvider(
-            session_factory=_nx_session_factory,
-            backend=_root_backend,
-            entity_registry=system_services.entity_registry,
-            enable_paging=getattr(nx, "_enable_memory_paging", True),
-            main_capacity=getattr(nx, "_memory_main_capacity", 100),
-            recall_max_age_hours=getattr(nx, "_memory_recall_max_age_hours", 24.0),
-            memory_config=_nx_memory_config,
-        )
-        logger.debug("[BOOT:WIRED] MemoryProvider created")
-    except Exception as exc:
-        logger.debug("[BOOT:WIRED] MemoryProvider unavailable: %s", exc)
-
     # --- TimeTravelService: historical operation-point queries (Issue #882) ---
     time_travel_service: Any = None
     if _nx_session_factory is not None:
         try:
-            from nexus.services.versioning.time_travel_service import TimeTravelService
+            from nexus.bricks.versioning.time_travel_service import TimeTravelService
 
             time_travel_service = TimeTravelService(
                 session_factory=_nx_session_factory,
@@ -484,8 +381,8 @@ def _boot_wired_services(
     operations_service: Any = None
     if _nx_session_factory is not None:
         try:
-            from nexus.services.versioning.operation_undo_service import OperationUndoService
-            from nexus.services.versioning.operations_service import OperationsService
+            from nexus.bricks.versioning.operation_undo_service import OperationUndoService
+            from nexus.bricks.versioning.operations_service import OperationsService
 
             _undo_service = OperationUndoService(
                 router=kernel_services.router,
@@ -512,15 +409,10 @@ def _boot_wired_services(
         sync_job_service=sync_job_service,
         mount_persist_service=mount_persist_service,
         mcp_service=mcp_service,
-        llm_service=llm_service,
-        llm_subsystem=llm_subsystem,
         oauth_service=oauth_service,
-        skill_service=skill_service,
-        skill_package_service=skill_package_service,
         search_service=search_service,
         share_link_service=share_link_service,
         events_service=events_service,
-        task_queue_service=brick_services.task_queue_service,
         time_travel_service=time_travel_service,
         operations_service=operations_service,
         workspace_rpc_service=workspace_rpc_service,
@@ -528,9 +420,7 @@ def _boot_wired_services(
         user_provisioning_service=user_provisioning_service,
         sandbox_rpc_service=sandbox_rpc_service,
         metadata_export_service=metadata_export_service,
-        ace_rpc_service=ace_rpc_service,
         descendant_checker=descendant_checker,
-        memory_provider=memory_provider,
     )
 
     elapsed = time.perf_counter() - t0
@@ -542,3 +432,29 @@ def _boot_wired_services(
         elapsed,
     )
     return result
+
+
+def _initialize_wired_ipc(nx: Any, brick_services: "BrickServices") -> None:
+    """IPC adapter bind + mount — deferred from link() to initialize().
+
+    Performs I/O (mkdir) so it cannot run in the pure-memory link() phase.
+    """
+    _ipc_adapter = getattr(brick_services, "ipc_storage_driver", None)
+    if _ipc_adapter is not None and hasattr(_ipc_adapter, "bind"):
+        try:
+            _ipc_adapter.bind(nx)
+
+            # Mount a LocalConnector at /agents for IPC file storage
+            from pathlib import Path
+
+            from nexus.backends.storage.local_connector import LocalConnectorBackend
+
+            _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
+            _ipc_data_dir.mkdir(parents=True, exist_ok=True)
+            _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
+            nx.router.add_mount("/agents", _ipc_connector)
+            logger.debug(
+                "[BOOT:WIRED] IPC KernelVFSAdapter bound + LocalConnector mounted at /agents"
+            )
+        except Exception as exc:
+            logger.warning("[BOOT:WIRED] IPC adapter bind failed: %s", exc)

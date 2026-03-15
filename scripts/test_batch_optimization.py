@@ -19,7 +19,7 @@ NEXUS_API_KEY = os.getenv(
 NUM_FILES = 50  # Number of files to test
 
 
-def test_individual_writes(client, test_dir):
+async def test_individual_writes(client, test_dir):
     """Test writing files individually."""
     print(f"\n[Individual Writes] Writing {NUM_FILES} files one by one...")
 
@@ -27,7 +27,7 @@ def test_individual_writes(client, test_dir):
     for i in range(NUM_FILES):
         path = f"{test_dir}/individual/file_{i:04d}.txt"
         content = f"Content for file {i}\n".encode() * 10  # ~200 bytes each
-        client.sys_write(path, content)
+        await client.sys_write(path, content)
         if (i + 1) % 10 == 0:
             elapsed = time.time() - start
             rate = (i + 1) / elapsed
@@ -67,7 +67,7 @@ def test_batch_writes(client, test_dir):
     return total_time, per_file
 
 
-def main():
+async def main():
     print("=" * 70)
     print("WRITE_BATCH OPTIMIZATION TEST")
     print("=" * 70)
@@ -78,9 +78,9 @@ def main():
 
     # Create unique test directory
     test_dir = f"/batch_test_{uuid.uuid4().hex[:8]}"
-    client.sys_mkdir(test_dir)
-    client.sys_mkdir(f"{test_dir}/individual")
-    client.sys_mkdir(f"{test_dir}/batch")
+    await client.sys_mkdir(test_dir)
+    await client.sys_mkdir(f"{test_dir}/individual")
+    await client.sys_mkdir(f"{test_dir}/batch")
 
     try:
         # Test 1: Individual writes
@@ -110,7 +110,7 @@ def main():
         # Cleanup
         print("\n[Cleanup] Deleting test directory...")
         try:
-            client.sys_unlink(test_dir)
+            await client.sys_unlink(test_dir)
         except Exception as e:
             print(f"  Warning: {e}")
 

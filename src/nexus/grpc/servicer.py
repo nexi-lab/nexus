@@ -22,6 +22,8 @@ Issue #1249: Port consolidation — single gRPC server.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import hmac
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -40,9 +42,10 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
-from nexus.server.protocol import RPCErrorCode, parse_method_params
+from nexus.server.protocol import parse_method_params
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +113,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             return {}  # Will fail later
 
         # Static API key check
-        if self._api_key and token == self._api_key:
+        if self._api_key and hmac.compare_digest(token, self._api_key):
             return {
                 "authenticated": True,
                 "subject_type": "user",
@@ -123,7 +126,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         if self._auth_provider:
             result = await self._auth_provider.authenticate(token)
             if result:
-                return dict(result)
+                return (
+                    dataclasses.asdict(result)
+                    if hasattr(result, "__dataclass_fields__")
+                    else dict(result)
+                )
 
         return {}
 
@@ -267,6 +274,26 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
     # Typed RPCs — content operations (Phase 2)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _scope_path_for_zone(request: Any, zone_id: str) -> None:
+        """Apply zone-scoping to typed gRPC request paths (mirrors rpc.py)."""
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        if zone_id == ROOT_ZONE_ID:
+            return
+
+        prefix = f"/zone/{zone_id}"
+        for attr in ("path", "old_path", "new_path"):
+            value = getattr(request, attr, None)
+            if not isinstance(value, str):
+                continue
+            if value.startswith(("/zone/", "/tenant:")):
+                continue
+            if value.startswith("/"):
+                setattr(request, attr, f"{prefix}{value}")
+            else:
+                setattr(request, attr, f"{prefix}/{value}")
+
     async def Read(
         self,
         request: "vfs_pb2.ReadRequest",
@@ -275,12 +302,12 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         """Typed read — returns raw bytes, no JSON/base64 overhead."""
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
+            self._scope_path_for_zone(request, op_context.zone_id)
             result = await asyncio.to_thread(
-                self._nexus_fs.sys_read,
+                self._nexus_fs.read,
                 request.path,
-                op_context,
-                True,  # return_metadata — we need etag/size
-                False,  # parsed
+                context=op_context,
+                return_metadata=True,
             )
             if isinstance(result, dict):
                 content = result.get("content", b"")
@@ -326,21 +353,37 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         request: "vfs_pb2.WriteRequest",
         _context: grpc.aio.ServicerContext,
     ) -> "vfs_pb2.WriteResponse":
-        """Typed write — accepts raw bytes, no JSON/base64 overhead."""
+        """Typed write — accepts raw bytes, no JSON/base64 overhead.
+
+        Uses write() (Tier 2) instead of sys_write() to get metadata back
+        (etag, version, size).  OCC is handled via occ_write() when the
+        client sends an etag — matching the JSON RPC handler pattern.
+
+        Issue #2787: sys_write() returns int (POSIX), not dict.
+        """
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
-            kwargs: dict[str, Any] = {"context": op_context}
+            self._scope_path_for_zone(request, op_context.zone_id)
+            content = bytes(request.content)
             if request.etag:
-                kwargs["if_match"] = request.etag
-            result = await asyncio.to_thread(
-                self._nexus_fs.sys_write, request.path, request.content, **kwargs
-            )
+                # OCC: compare-and-swap via lib helper (Issue #1323)
+                from nexus.lib.occ import occ_write
+
+                result = await asyncio.to_thread(
+                    occ_write,
+                    self._nexus_fs,
+                    request.path,
+                    content,
+                    context=op_context,
+                    if_match=request.etag,
+                )
+            else:
+                result = await asyncio.to_thread(
+                    self._nexus_fs.write, request.path, content, context=op_context
+                )
+
             etag = result.get("etag", "") if isinstance(result, dict) else ""
-            size = (
-                result.get("size", len(request.content))
-                if isinstance(result, dict)
-                else len(request.content)
-            )
+            size = result.get("size", len(content)) if isinstance(result, dict) else len(content)
             return vfs_pb2.WriteResponse(etag=etag, size=size)
         except NexusPermissionError as e:
             return vfs_pb2.WriteResponse(
@@ -396,9 +439,19 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         """Typed delete — sys_unlink or sys_rmdir."""
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
-            if request.recursive:
+            self._scope_path_for_zone(request, op_context.zone_id)
+
+            # Determine entry type so directories always go through sys_rmdir
+            # (sys_unlink skips backend directory cleanup).
+            meta = await asyncio.to_thread(self._nexus_fs.metadata.get, request.path)
+            is_dir = meta is not None and getattr(meta, "mime_type", "") == "inode/directory"
+
+            if is_dir:
                 await asyncio.to_thread(
-                    self._nexus_fs.sys_rmdir, request.path, recursive=True, context=op_context
+                    self._nexus_fs.sys_rmdir,
+                    request.path,
+                    recursive=request.recursive,
+                    context=op_context,
                 )
             else:
                 await asyncio.to_thread(self._nexus_fs.sys_unlink, request.path, context=op_context)
@@ -441,6 +494,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
 
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
+            self._scope_path_for_zone(request, op_context.zone_id)
             result = await asyncio.to_thread(
                 self._nexus_fs.sys_read,
                 request.path,

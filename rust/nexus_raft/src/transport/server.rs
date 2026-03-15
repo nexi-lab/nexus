@@ -4,22 +4,15 @@
 //! `ZoneRaftRegistry`. There is no separate "single-zone" code path —
 //! a single-zone deployment is simply a registry with one zone.
 
-// TransportError contains tonic types that are large; will Box in future refactor.
-#![expect(
-    clippy::result_large_err,
-    reason = "TransportError contains tonic types; will Box large variants in transport refactor"
-)]
-
 use super::proto::nexus::raft::{
     raft_command::Command as ProtoCommandVariant,
     raft_query::Query as ProtoQueryVariant,
     raft_query_response::Result as ProtoQueryResultVariant,
     raft_response::Result as ProtoResponseResultVariant,
-    zone_api_service_client::ZoneApiServiceClient,
     zone_api_service_server::{ZoneApiService, ZoneApiServiceServer},
     zone_transport_service_server::{ZoneTransportService, ZoneTransportServiceServer},
     ClusterConfig as ProtoClusterConfig, GetClusterInfoRequest, GetClusterInfoResponse,
-    GetMetadataResult, InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse,
+    GetMetadataResult, JoinClusterRequest, JoinClusterResponse, JoinZoneRequest, JoinZoneResponse,
     ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest,
     ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
     ReplicateEntriesRequest, ReplicateEntriesResponse, StepMessageRequest, StepMessageResponse,
@@ -76,8 +69,12 @@ impl Default for ServerConfig {
 pub struct RaftGrpcServer {
     config: ServerConfig,
     registry: Arc<ZoneRaftRegistry>,
-    /// This node's own gRPC address (for InviteZone → JoinZone callback).
-    self_address: String,
+    /// Path to CA private key — read by JoinCluster handler to send to joiners.
+    ca_key_path: Option<PathBuf>,
+    /// SHA-256 hash of the join token password — for JoinCluster verification.
+    join_token_hash: Option<String>,
+    /// Base path for data directory — used for peers_joined marker file.
+    base_path: Option<PathBuf>,
 }
 
 impl RaftGrpcServer {
@@ -86,17 +83,27 @@ impl RaftGrpcServer {
     /// # Arguments
     /// * `registry` — Zone registry for routing requests.
     /// * `config` — Server configuration.
-    /// * `self_address` — This node's gRPC address (e.g., "http://10.0.0.2:2026").
-    pub fn new(
-        registry: Arc<ZoneRaftRegistry>,
-        config: ServerConfig,
-        self_address: String,
-    ) -> Self {
+    pub fn new(registry: Arc<ZoneRaftRegistry>, config: ServerConfig) -> Self {
         Self {
             config,
             registry,
-            self_address,
+            ca_key_path: None,
+            join_token_hash: None,
+            base_path: None,
         }
+    }
+
+    /// Set cluster join parameters for JoinCluster RPC support.
+    pub fn with_join_config(
+        mut self,
+        ca_key_path: PathBuf,
+        join_token_hash: String,
+        base_path: PathBuf,
+    ) -> Self {
+        self.ca_key_path = Some(ca_key_path);
+        self.join_token_hash = Some(join_token_hash);
+        self.base_path = Some(base_path);
+        self
     }
 
     /// Get the bind address.
@@ -120,17 +127,30 @@ impl RaftGrpcServer {
         };
         let client_service = ZoneApiServiceImpl {
             registry: self.registry.clone(),
-            self_address: self.self_address.clone(),
             tls: self.config.tls.clone(),
+            ca_key_path: self.ca_key_path.clone(),
+            join_token_hash: self.join_token_hash.clone(),
+            base_path: self.base_path.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-            let tls_config = tonic::transport::ServerTlsConfig::new()
-                .identity(identity)
-                .client_ca_root(client_ca);
+            let use_mtls = self
+                .base_path
+                .as_ref()
+                .map(|p| p.join("tls/peers_joined").exists())
+                .unwrap_or(true); // default to mTLS if no base_path
+            let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
+            if use_mtls {
+                let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+                tls_config = tls_config.client_ca_root(client_ca);
+                tracing::info!("TLS mode: full mTLS (client auth required)");
+            } else {
+                tracing::info!(
+                    "TLS mode: server-TLS only (no client auth — awaiting first joiner)"
+                );
+            }
             builder = builder
                 .tls_config(tls_config)
                 .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
@@ -165,17 +185,30 @@ impl RaftGrpcServer {
         };
         let client_service = ZoneApiServiceImpl {
             registry: self.registry.clone(),
-            self_address: self.self_address.clone(),
             tls: self.config.tls.clone(),
+            ca_key_path: self.ca_key_path.clone(),
+            join_token_hash: self.join_token_hash.clone(),
+            base_path: self.base_path.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-            let tls_config = tonic::transport::ServerTlsConfig::new()
-                .identity(identity)
-                .client_ca_root(client_ca);
+            let use_mtls = self
+                .base_path
+                .as_ref()
+                .map(|p| p.join("tls/peers_joined").exists())
+                .unwrap_or(true);
+            let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
+            if use_mtls {
+                let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+                tls_config = tls_config.client_ca_root(client_ca);
+                tracing::info!("TLS mode: full mTLS (client auth required)");
+            } else {
+                tracing::info!(
+                    "TLS mode: server-TLS only (no client auth — awaiting first joiner)"
+                );
+            }
             builder = builder
                 .tls_config(tls_config)
                 .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
@@ -288,6 +321,28 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
     }
 }
 
+/// Check that a sender node is a known member of a zone.
+///
+/// Soft check: if the peer list is unavailable (e.g. during bootstrap), the
+/// request is allowed.  This prevents rogue nodes from injecting Raft messages
+/// for zones they don't belong to (CockroachDB/etcd pattern: zone auth at app
+/// layer, node identity at TLS layer).
+fn check_zone_membership(
+    registry: &ZoneRaftRegistry,
+    zone_id: &str,
+    sender_node_id: u64,
+) -> std::result::Result<(), Status> {
+    if let Some(peers) = registry.get_peers(zone_id) {
+        if !peers.is_empty() && !peers.contains_key(&sender_node_id) {
+            return Err(Status::permission_denied(format!(
+                "node {} is not a member of zone '{}'",
+                sender_node_id, zone_id,
+            )));
+        }
+    }
+    Ok(())
+}
+
 // =============================================================================
 // ZoneTransportService (internal node-to-node transport)
 // =============================================================================
@@ -323,6 +378,9 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
             }
         };
 
+        // Zone authorization: verify sender is a known zone member
+        check_zone_membership(&self.registry, &req.zone_id, msg.from)?;
+
         tracing::trace!(
             "StepMessage [zone={}]: type={:?}, from={}, to={}, term={}",
             req.zone_id,
@@ -355,6 +413,9 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
     ) -> std::result::Result<Response<ReplicateEntriesResponse>, Status> {
         let req = request.into_inner();
         let node = get_zone_node(&self.registry, &req.zone_id)?;
+
+        // Zone authorization: verify sender is a known zone member
+        check_zone_membership(&self.registry, &req.zone_id, req.sender_node_id)?;
 
         let mut max_applied: u64 = 0;
 
@@ -404,35 +465,14 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
 /// Zone-routed implementation of the ZoneApiService gRPC trait.
 struct ZoneApiServiceImpl {
     registry: Arc<ZoneRaftRegistry>,
-    /// This node's own gRPC address (e.g., "http://10.0.0.2:2026").
-    /// Needed by InviteZone to tell the leader our address when calling JoinZone.
-    self_address: String,
-    /// TLS config for outbound connections (InviteZone → JoinZone callback).
+    /// TLS config for outbound connections.
     tls: Option<super::TlsConfig>,
-}
-
-/// Build a tonic Endpoint, optionally with TLS client config.
-fn build_endpoint_with_tls(
-    address: &str,
-    tls: Option<&super::TlsConfig>,
-) -> Result<tonic::transport::Endpoint> {
-    let mut endpoint = tonic::transport::Endpoint::from_shared(address.to_string())
-        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(30));
-
-    if let Some(tls) = tls {
-        let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-        let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-        let tls_config = tonic::transport::ClientTlsConfig::new()
-            .identity(identity)
-            .ca_certificate(ca);
-        endpoint = endpoint
-            .tls_config(tls_config)
-            .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
-    }
-
-    Ok(endpoint)
+    /// Path to CA private key file — read by JoinCluster handler to send to joiners.
+    ca_key_path: Option<PathBuf>,
+    /// SHA-256 hash of the join token password — for JoinCluster verification.
+    join_token_hash: Option<String>,
+    /// Base path for data directory — used to write peers_joined marker.
+    base_path: Option<PathBuf>,
 }
 
 #[tonic::async_trait]
@@ -752,6 +792,20 @@ impl ZoneApiService for ZoneApiServiceImpl {
             .await
         {
             Ok(conf_state) => {
+                // Increment zone's i_links_count (Raft-replicated, atomic).
+                // AdjustCounter does read-modify-write in apply() — no lost updates.
+                // This runs on the leader, so the follower's join() can skip
+                // _increment_links() and avoid a Raft leader-only-write violation.
+                if let Err(e) = node
+                    .propose(Command::AdjustCounter {
+                        key: "__i_links_count__".to_string(),
+                        delta: 1,
+                    })
+                    .await
+                {
+                    tracing::warn!(zone = req.zone_id, "Failed to increment i_links_count: {e}");
+                }
+
                 // Build ClusterConfig from the resulting ConfState + peer map
                 let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
                 let voters: Vec<ProtoNodeInfo> = conf_state
@@ -799,156 +853,119 @@ impl ZoneApiService for ZoneApiServiceImpl {
         }
     }
 
-    /// Handle an InviteZone request — inverse of JoinZone.
+    /// Handle a JoinCluster request — K3s-style TLS certificate provisioning.
     ///
-    /// This node is being asked to join a zone and create a DT_MOUNT locally.
-    /// Steps: (1) create local zone replica, (2) call JoinZone on leader,
-    /// (3) create DT_MOUNT in root zone.
-    async fn invite_zone(
+    /// Verifies the join token password, then returns the cluster CA cert + key
+    /// so the joiner can generate its own node cert locally.
+    /// After success, writes a `peers_joined` marker to signal mTLS upgrade.
+    async fn join_cluster(
         &self,
-        request: Request<InviteZoneRequest>,
-    ) -> std::result::Result<Response<InviteZoneResponse>, Status> {
+        request: Request<JoinClusterRequest>,
+    ) -> std::result::Result<Response<JoinClusterResponse>, Status> {
         let req = request.into_inner();
-        let node_id = self.registry.node_id();
 
         tracing::info!(
-            zone = req.zone_id,
-            mount_path = req.mount_path,
-            inviter_node_id = req.inviter_node_id,
-            inviter_address = req.inviter_address,
-            "InviteZone request received",
+            node_id = req.node_id,
+            node_address = req.node_address,
+            "JoinCluster request received",
         );
 
-        // Step 1: Create local zone replica (reuses registry.join_zone — DRY).
-        let inviter_peer = NodeAddress {
-            id: req.inviter_node_id,
-            endpoint: req.inviter_address.clone(),
+        // Verify join token password
+        let stored_hash = match &self.join_token_hash {
+            Some(h) => h,
+            None => {
+                return Ok(Response::new(JoinClusterResponse {
+                    success: false,
+                    error: Some(
+                        "This node does not accept join requests (no join token configured)"
+                            .to_string(),
+                    ),
+                    ca_pem: Vec::new(),
+                    ca_key_pem: Vec::new(),
+                }));
+            }
         };
-        let runtime_handle = tokio::runtime::Handle::current();
-        if let Err(e) = self
-            .registry
-            .join_zone(&req.zone_id, vec![inviter_peer], &runtime_handle)
-        {
-            return Ok(Response::new(InviteZoneResponse {
+
+        // Constant-time password verification
+        let candidate_hash = {
+            use sha2::{Digest, Sha256};
+            use std::fmt::Write;
+            let digest = Sha256::digest(req.password.as_bytes());
+            let mut hex = String::with_capacity(64);
+            for byte in &digest[..] {
+                let _ = write!(hex, "{:02x}", byte);
+            }
+            hex
+        };
+        if candidate_hash != *stored_hash {
+            tracing::warn!(node_id = req.node_id, "JoinCluster: invalid password",);
+            return Ok(Response::new(JoinClusterResponse {
                 success: false,
-                error: Some(format!("Failed to create local zone replica: {}", e)),
-                node_id: 0,
-                node_address: String::new(),
+                error: Some("Invalid join token password".to_string()),
+                ca_pem: Vec::new(),
+                ca_key_pem: Vec::new(),
             }));
         }
 
-        // Step 2: Call JoinZone on the inviter (leader) to be added as Voter.
-        // Uses tonic-generated client — same RPC definition, no duplication.
-        let channel = match build_endpoint_with_tls(&req.inviter_address, self.tls.as_ref()) {
-            Ok(ep) => match ep.connect().await {
-                Ok(ch) => ch,
-                Err(e) => {
-                    let _ = self.registry.remove_zone(&req.zone_id);
-                    return Ok(Response::new(InviteZoneResponse {
-                        success: false,
-                        error: Some(format!("Failed to connect to inviter: {}", e)),
-                        node_id: 0,
-                        node_address: String::new(),
-                    }));
-                }
-            },
-            Err(e) => {
-                let _ = self.registry.remove_zone(&req.zone_id);
-                return Ok(Response::new(InviteZoneResponse {
-                    success: false,
-                    error: Some(format!("Invalid inviter address: {}", e)),
-                    node_id: 0,
-                    node_address: String::new(),
-                }));
-            }
-        };
-
-        let mut client = ZoneApiServiceClient::new(channel);
-        let join_request = tonic::Request::new(JoinZoneRequest {
-            zone_id: req.zone_id.clone(),
-            node_id,
-            node_address: self.self_address.clone(),
-        });
-
-        match client.join_zone(join_request).await {
-            Ok(resp) => {
-                let join_resp = resp.into_inner();
-                if !join_resp.success {
-                    let _ = self.registry.remove_zone(&req.zone_id);
-                    return Ok(Response::new(InviteZoneResponse {
-                        success: false,
-                        error: Some(format!(
-                            "JoinZone rejected by leader: {}",
-                            join_resp.error.unwrap_or_default()
-                        )),
-                        node_id: 0,
-                        node_address: String::new(),
-                    }));
-                }
-            }
-            Err(e) => {
-                let _ = self.registry.remove_zone(&req.zone_id);
-                return Ok(Response::new(InviteZoneResponse {
-                    success: false,
-                    error: Some(format!("JoinZone RPC failed: {}", e)),
-                    node_id: 0,
-                    node_address: String::new(),
-                }));
-            }
-        }
-
-        // Step 3: Create DT_MOUNT in local root zone.
-        // Reuses existing propose infrastructure (same as any SetMetadata).
-        let root_zone_id = "root";
-        let root_node = match self.registry.get_node(root_zone_id) {
-            Some(node) => node,
+        // Read CA cert and key from disk
+        let ca_key_path = match &self.ca_key_path {
+            Some(p) => p,
             None => {
-                // Zone joined but can't create mount — partial success.
-                return Ok(Response::new(InviteZoneResponse {
+                return Ok(Response::new(JoinClusterResponse {
                     success: false,
-                    error: Some("Root zone not found on this node".to_string()),
-                    node_id,
-                    node_address: self.self_address.clone(),
+                    error: Some("CA key path not configured".to_string()),
+                    ca_pem: Vec::new(),
+                    ca_key_pem: Vec::new(),
                 }));
             }
         };
 
-        // Build DT_MOUNT FileMetadata proto
-        let mount_metadata = super::proto::nexus::core::FileMetadata {
-            path: req.mount_path.clone(),
-            backend_name: "virtual".to_string(),
-            entry_type: 2, // DT_MOUNT
-            target_zone_id: req.zone_id.clone(),
-            zone_id: root_zone_id.to_string(),
-            ..Default::default()
-        };
-        let key = mount_metadata.path.clone();
-        let value = prost::Message::encode_to_vec(&mount_metadata);
-
-        match root_node.propose(Command::SetMetadata { key, value }).await {
-            Ok(_) => {
-                tracing::info!(
-                    zone = req.zone_id,
-                    mount_path = req.mount_path,
-                    "InviteZone complete: zone joined + DT_MOUNT created",
-                );
-                Ok(Response::new(InviteZoneResponse {
-                    success: true,
-                    error: None,
-                    node_id,
-                    node_address: self.self_address.clone(),
-                }))
-            }
-            Err(e) => {
-                // Zone joined but DT_MOUNT failed — partial success.
-                Ok(Response::new(InviteZoneResponse {
+        let ca_pem = match &self.tls {
+            Some(tls) => tls.ca_pem.clone(),
+            None => {
+                return Ok(Response::new(JoinClusterResponse {
                     success: false,
-                    error: Some(format!("Zone joined but DT_MOUNT creation failed: {}", e)),
-                    node_id,
-                    node_address: self.self_address.clone(),
-                }))
+                    error: Some("TLS not configured on this node".to_string()),
+                    ca_pem: Vec::new(),
+                    ca_key_pem: Vec::new(),
+                }));
+            }
+        };
+
+        let ca_key_pem = match std::fs::read(ca_key_path) {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!("Failed to read CA key: {}", e);
+                return Ok(Response::new(JoinClusterResponse {
+                    success: false,
+                    error: Some(format!("Failed to read CA key: {}", e)),
+                    ca_pem: Vec::new(),
+                    ca_key_pem: Vec::new(),
+                }));
+            }
+        };
+
+        // Write peers_joined marker to signal mTLS upgrade on next restart
+        if let Some(ref base) = self.base_path {
+            let marker = base.join("tls/peers_joined");
+            if let Err(e) = std::fs::write(&marker, b"1") {
+                tracing::warn!("Failed to write peers_joined marker: {}", e);
+                // Non-fatal — continue anyway
             }
         }
+
+        tracing::info!(
+            node_id = req.node_id,
+            node_address = req.node_address,
+            "JoinCluster: certificates provisioned successfully",
+        );
+
+        Ok(Response::new(JoinClusterResponse {
+            success: true,
+            error: None,
+            ca_pem,
+            ca_key_pem,
+        }))
     }
 }
 

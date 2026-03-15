@@ -20,7 +20,7 @@ Usage::
     from nexus.factory import create_nexus_fs
 
     nx = create_nexus_fs(
-        backend=LocalBackend(root_path="./data"),
+        backend=CASLocalBackend(root_path="./data"),
         metadata_store=RaftMetadataStore.embedded("./raft"),
         record_store=SQLAlchemyRecordStore(db_path="./db.sqlite"),
         permissions=PermissionConfig(enforce=False),
@@ -29,13 +29,20 @@ Usage::
     # Advanced: create services separately, inject into kernel
     from nexus.factory import create_nexus_services
 
-    services = create_nexus_services(
+    kernel_svc, system_svc, brick_svc = create_nexus_services(
         record_store=record_store,
         metadata_store=metadata_store,
         backend=backend,
         router=my_router,
     )
-    nx = NexusFS(backend=backend, metadata_store=metadata_store, services=services)
+    nx = create_nexus_fs(
+        backend=backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        kernel_services=kernel_svc,
+        system_services=system_svc,
+        brick_services=brick_svc,
+    )
 """
 
 # Public API
@@ -48,12 +55,13 @@ from nexus.factory._bricks import _boot_independent_bricks as _boot_brick_servic
 from nexus.factory._helpers import (
     _FACTORY_BRICKS,
     _FACTORY_SKIP,
+    _LATE_BRICKS,
     _make_gate,
     _register_factory_bricks,
+    _register_late_bricks,
     _safe_create,
 )
 from nexus.factory._kernel import _boot_kernel_services
-from nexus.factory._memory import create_memory_service
 from nexus.factory._metadata_export import create_metadata_export_service
 from nexus.factory._record_store import create_record_store
 from nexus.factory._system import _boot_system_services
@@ -66,6 +74,5 @@ __all__ = [
     "create_nexus_fs",
     "create_nexus_services",
     "create_record_store",
-    "create_memory_service",
     "create_metadata_export_service",
 ]

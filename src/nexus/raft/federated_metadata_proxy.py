@@ -11,8 +11,8 @@ Usage:
     fs = NexusFS(backend=backend, metadata_store=proxy)
 
     # All operations transparently cross zone boundaries:
-    fs.sys_write("/shared/file.txt", data)  # → resolves to zone-beta
-    fs.sys_read("/local/file.txt")          # → stays in root zone
+    await fs.sys_write("/shared/file.txt", data)  # → resolves to zone-beta
+    await fs.sys_read("/local/file.txt")          # → stays in root zone
 """
 
 import logging
@@ -21,8 +21,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import CasResult, MetastoreABC
+from nexus.contracts.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 
 if TYPE_CHECKING:
     from nexus.raft.zone_path_resolver import ResolvedPath, ZonePathResolver
@@ -45,16 +45,22 @@ class FederatedMetadataProxy(MetastoreABC):
         root_store: "RaftMetadataStore",
         *,
         zone_manager: Any | None = None,
+        self_address: str | None = None,
     ):
         """
         Args:
             resolver: ZonePathResolver for cross-zone path resolution.
             root_store: The root zone's store (used for close() and fallback).
             zone_manager: Optional ZoneManager ref for clean shutdown.
+            self_address: This node's advertise address for backend_name enrichment.
         """
         self._resolver = resolver
         self._root_store = root_store
         self._zone_manager = zone_manager
+        self._self_address = self_address
+        # Map EC tokens to the store that issued them, so is_committed()
+        # polls the correct zone's Raft log instead of always the root.
+        self._token_stores: dict[int, "RaftMetadataStore"] = {}
 
     @classmethod
     def from_zone_manager(
@@ -77,7 +83,8 @@ class FederatedMetadataProxy(MetastoreABC):
         root_store = zone_manager.get_store(root_zone_id)
         if root_store is None:
             raise RuntimeError(f"Root zone '{root_zone_id}' not found in ZoneManager")
-        return cls(resolver, root_store, zone_manager=zone_manager)
+        self_addr = getattr(zone_manager, "advertise_addr", None)
+        return cls(resolver, root_store, zone_manager=zone_manager, self_address=self_addr)
 
     # =========================================================================
     # Path remapping helpers
@@ -119,6 +126,22 @@ class FederatedMetadataProxy(MetastoreABC):
             return metadata
         return replace(metadata, path=resolved.path)
 
+    def _enrich_backend_name(self, metadata: FileMetadata) -> FileMetadata:
+        """Enrich backend_name with node address for federation content targeting.
+
+        Kernel writes ``backend_name="local"``; the proxy transparently
+        enriches to ``"local@10.0.0.5:50051"`` so FederationContentResolver
+        can locate which peer owns the content.
+        """
+        if not self._self_address or not metadata.backend_name:
+            return metadata
+        if "@" in metadata.backend_name:
+            return metadata  # already enriched
+        return replace(
+            metadata,
+            backend_name=f"{metadata.backend_name}@{self._self_address}",
+        )
+
     # =========================================================================
     # MetastoreABC — abstract methods
     # =========================================================================
@@ -133,21 +156,15 @@ class FederatedMetadataProxy(MetastoreABC):
     def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         resolved = self._resolve(metadata.path)
         zone_meta = self._to_zone_metadata(metadata, resolved)
-        return resolved.store.put(zone_meta, consistency=consistency)
-
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        resolved = self._resolve(metadata.path)
-        zone_meta = self._to_zone_metadata(metadata, resolved)
-        return resolved.store.put_if_version(zone_meta, expected_version, consistency=consistency)
+        zone_meta = self._enrich_backend_name(zone_meta)
+        token = resolved.store.put(zone_meta, consistency=consistency)
+        if token is not None:
+            self._token_stores[token] = resolved.store
+        return token
 
     def is_committed(self, token: int) -> str | None:
-        return self._root_store.is_committed(token)
+        store = self._token_stores.get(token, self._root_store)
+        return store.is_committed(token)
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         resolved = self._resolve(path)
@@ -176,15 +193,18 @@ class FederatedMetadataProxy(MetastoreABC):
             return remapped
 
         # BFS queue: (mount_chain, zone_id)
-        visited: set[str] = {resolved.zone_id}
+        # Deduplicate by (zone_id, mount_path) to allow the same zone
+        # mounted at different paths while still preventing cycles.
+        visited: set[tuple[str, str]] = {(resolved.zone_id, resolved.path)}
         queue: list[tuple[list[tuple[str, str]], str]] = []
 
         for meta in results:
-            if meta.is_mount and meta.target_zone_id and meta.target_zone_id not in visited:
+            visit_key = (meta.target_zone_id or "", meta.path)
+            if meta.is_mount and meta.target_zone_id and visit_key not in visited:
                 queue.append(
                     (resolved.mount_chain + [(resolved.zone_id, meta.path)], meta.target_zone_id)
                 )
-                visited.add(meta.target_zone_id)
+                visited.add(visit_key)
 
         while queue:
             mount_chain, zone_id = queue.pop(0)
@@ -195,9 +215,10 @@ class FederatedMetadataProxy(MetastoreABC):
             child_results = store.list("/", recursive, **kwargs)
             for meta in child_results:
                 remapped.append(self._remap_metadata(meta, mount_chain))
-                if meta.is_mount and meta.target_zone_id and meta.target_zone_id not in visited:
+                visit_key = (meta.target_zone_id or "", meta.path)
+                if meta.is_mount and meta.target_zone_id and visit_key not in visited:
                     queue.append((mount_chain + [(zone_id, meta.path)], meta.target_zone_id))
-                    visited.add(meta.target_zone_id)
+                    visited.add(visit_key)
 
         return remapped
 
@@ -220,20 +241,6 @@ class FederatedMetadataProxy(MetastoreABC):
         resolve_path = prefix if prefix else "/"
         resolved = self._resolve(resolve_path)
         yield from self._walk_mount_tree(resolved, recursive, **kwargs)
-
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        zone_id: str | None = None,
-    ) -> PaginatedResult:
-        resolve_path = prefix if prefix else "/"
-        resolved = self._resolve(resolve_path)
-        result = resolved.store.list_paginated(resolved.path, recursive, limit, cursor, zone_id)
-        result.items = [self._remap_metadata(m, resolved.mount_chain) for m in result.items]
-        return result
 
     def close(self) -> None:
         self._root_store.close()
@@ -270,6 +277,7 @@ class FederatedMetadataProxy(MetastoreABC):
         for metadata in metadata_list:
             resolved = self._resolve(metadata.path)
             zone_meta = self._to_zone_metadata(metadata, resolved)
+            zone_meta = self._enrich_backend_name(zone_meta)
             key = resolved.zone_id
             if key not in zone_groups:
                 zone_groups[key] = []

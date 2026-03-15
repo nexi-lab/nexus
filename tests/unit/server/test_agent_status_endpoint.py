@@ -86,7 +86,13 @@ class TestGetAgentStatus:
         app = _create_test_app(mock_registry)
         from nexus.server.api.v2.dependencies import _get_require_auth
 
-        app.dependency_overrides[_get_require_auth()] = lambda: {"user_id": "test"}
+        app.dependency_overrides[_get_require_auth()] = lambda: {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "test",
+            "zone_id": "root",
+            "is_admin": True,
+        }
 
         client = TestClient(app)
         resp = client.get("/api/v2/agents/agent-1/status")
@@ -106,7 +112,13 @@ class TestGetAgentStatus:
         app = _create_test_app(mock_registry)
         from nexus.server.api.v2.dependencies import _get_require_auth
 
-        app.dependency_overrides[_get_require_auth()] = lambda: {"user_id": "test"}
+        app.dependency_overrides[_get_require_auth()] = lambda: {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "test",
+            "zone_id": "root",
+            "is_admin": True,
+        }
 
         client = TestClient(app)
         resp = client.get("/api/v2/agents/missing/status")
@@ -127,7 +139,13 @@ class TestSetAgentSpec:
         app = _create_test_app(mock_registry)
         from nexus.server.api.v2.dependencies import _get_require_auth
 
-        app.dependency_overrides[_get_require_auth()] = lambda: {"user_id": "test"}
+        app.dependency_overrides[_get_require_auth()] = lambda: {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "test",
+            "zone_id": "root",
+            "is_admin": True,
+        }
 
         client = TestClient(app)
         resp = client.put(
@@ -152,7 +170,13 @@ class TestSetAgentSpec:
         app = _create_test_app(mock_registry)
         from nexus.server.api.v2.dependencies import _get_require_auth
 
-        app.dependency_overrides[_get_require_auth()] = lambda: {"user_id": "test"}
+        app.dependency_overrides[_get_require_auth()] = lambda: {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "test",
+            "zone_id": "root",
+            "is_admin": True,
+        }
 
         client = TestClient(app)
         resp = client.put(
@@ -167,7 +191,13 @@ class TestSetAgentSpec:
         app = _create_test_app(mock_registry)
         from nexus.server.api.v2.dependencies import _get_require_auth
 
-        app.dependency_overrides[_get_require_auth()] = lambda: {"user_id": "test"}
+        app.dependency_overrides[_get_require_auth()] = lambda: {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "test",
+            "zone_id": "root",
+            "is_admin": True,
+        }
 
         client = TestClient(app)
         resp = client.put(
@@ -191,7 +221,13 @@ class TestGetAgentSpec:
         app = _create_test_app(mock_registry)
         from nexus.server.api.v2.dependencies import _get_require_auth
 
-        app.dependency_overrides[_get_require_auth()] = lambda: {"user_id": "test"}
+        app.dependency_overrides[_get_require_auth()] = lambda: {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "test",
+            "zone_id": "root",
+            "is_admin": True,
+        }
 
         client = TestClient(app)
         resp = client.get("/api/v2/agents/agent-1/spec")
@@ -208,7 +244,13 @@ class TestGetAgentSpec:
         app = _create_test_app(mock_registry)
         from nexus.server.api.v2.dependencies import _get_require_auth
 
-        app.dependency_overrides[_get_require_auth()] = lambda: {"user_id": "test"}
+        app.dependency_overrides[_get_require_auth()] = lambda: {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "test",
+            "zone_id": "root",
+            "is_admin": True,
+        }
 
         client = TestClient(app)
         resp = client.get("/api/v2/agents/agent-1/spec")
@@ -230,7 +272,13 @@ class TestDriftDetection:
         app = _create_test_app(mock_registry)
         from nexus.server.api.v2.dependencies import _get_require_auth
 
-        app.dependency_overrides[_get_require_auth()] = lambda: {"user_id": "test"}
+        app.dependency_overrides[_get_require_auth()] = lambda: {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "test",
+            "zone_id": "root",
+            "is_admin": True,
+        }
 
         client = TestClient(app)
         status_resp = client.get("/api/v2/agents/agent-1/status")

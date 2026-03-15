@@ -8,7 +8,7 @@ interface changes only need updating in one place.
 import hashlib
 from unittest.mock import MagicMock, PropertyMock
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -33,7 +33,6 @@ def make_leaf(name: str = "local") -> MagicMock:
     type(mock).has_root_path = PropertyMock(return_value=True)
     type(mock).has_token_manager = PropertyMock(return_value=False)
     type(mock).has_data_dir = PropertyMock(return_value=False)
-    type(mock).is_passthrough = PropertyMock(return_value=False)
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
     return mock
 

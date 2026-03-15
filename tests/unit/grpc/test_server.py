@@ -60,6 +60,7 @@ class TestStartupGrpc:
             subscription_manager=None,
         )
         svc = MagicMock()
+        svc.service_coordinator = None  # no coordinator in test
 
         mock_server = AsyncMock()
         with (
@@ -72,7 +73,7 @@ class TestStartupGrpc:
 
         assert result == []
         assert app.state.grpc_server is mock_server
-        mock_server.add_insecure_port.assert_called_once_with("[::]:50051")
+        mock_server.add_insecure_port.assert_called_once_with("127.0.0.1:50051")
         mock_server.start.assert_awaited_once()
 
 

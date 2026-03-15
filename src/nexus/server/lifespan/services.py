@@ -32,21 +32,17 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_agent_registry(app, svc)
     _startup_key_service(app, svc)
     _startup_credential_service(app, svc)
-    _startup_reputation_delegation_from_bricks(app, svc)
+    _startup_delegation_from_bricks(app, svc)
     _startup_governance(app, svc)
     _startup_sandbox_auth(app, svc)
     _startup_transactional_snapshot(app, svc)
-    _startup_rlm_service(app, svc)
+    _startup_access_manifest(app, svc)
 
     # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
 
     await _startup_scheduler(app, svc)
-    task_runner_task = _startup_task_queue(app, svc)
-    if task_runner_task:
-        bg_tasks.append(task_runner_task)
-
     await _startup_workflow_engine(app, svc)
     await _startup_pipe_consumers(app, svc)
 
@@ -108,15 +104,6 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
-    # Shutdown RLM thread pool (Issue #1306)
-    rlm_service = app.state.rlm_service
-    if rlm_service is not None:
-        try:
-            rlm_service.shutdown()
-            logger.info("[RLM] Thread pool shut down")
-        except Exception as e:
-            logger.warning("[RLM] Error shutting down thread pool: %s", e, exc_info=True)
-
     # SandboxManager cleanup
     if app.state.sandbox_auth_service:
         logger.info(
@@ -159,7 +146,7 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if svc.nexus_fs and svc.session_factory:
         try:
-            from nexus.services.agents.agent_registry import AgentRegistry
+            from nexus.system_services.agents.agent_registry import AgentRegistry
 
             _bg = getattr(svc.profile_tuning, "background_task", None)
             app.state.agent_registry = AgentRegistry(
@@ -176,14 +163,14 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
                 perm_enforcer.agent_registry = app.state.agent_registry
 
             # Issue #1440: Create async wrapper for protocol conformance
-            from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+            from nexus.system_services.agents.agent_registry import AsyncAgentRegistry
 
             app.state.async_agent_registry = AsyncAgentRegistry(app.state.agent_registry)
 
             # Issue #2172: Create AgentWarmupService with step registry
             try:
-                from nexus.services.agents.agent_warmup import AgentWarmupService
-                from nexus.services.agents.warmup_steps import register_standard_steps
+                from nexus.system_services.agents.agent_warmup import AgentWarmupService
+                from nexus.system_services.agents.warmup_steps import register_standard_steps
 
                 app.state.agent_warmup_service = AgentWarmupService(
                     agent_registry=app.state.agent_registry,
@@ -230,7 +217,7 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
             _identity_record_store = svc.record_store
             _identity_oauth_crypto = OAuthCrypto(
-                encryption_key=_enc_key, record_store=_identity_record_store
+                encryption_key=_enc_key, settings_store=_identity_record_store
             )
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
@@ -312,25 +299,21 @@ def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None
         app.state.credential_service = None
 
 
-def _startup_reputation_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Expose ReputationService and DelegationService from factory brick_dict (Issue #2131).
+def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Expose DelegationService from factory brick_dict (Issue #2131).
 
-    These services are now created in ``factory._boot_brick_services()`` and
-    stored in ``BrickServices``. This function wires them onto ``app.state``
+    The DelegationService is created in ``factory._boot_brick_services()`` and
+    stored in ``BrickServices``. This function wires it onto ``app.state``
     for backward-compatible access by routers and dependencies.
     """
     if svc.nexus_fs is None:
-        app.state.reputation_service = None
         app.state.delegation_service = None
         return
 
     # Get from BrickServices (created by factory)
     brk = svc.brick_services
-    app.state.reputation_service = getattr(brk, "reputation_service", None) if brk else None
     app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
 
-    if app.state.reputation_service is not None:
-        logger.info("[REPUTATION] ReputationService wired from brick_dict")
     if app.state.delegation_service is not None:
         # Wire system-tier dependencies that weren't available during factory boot
         deleg = app.state.delegation_service
@@ -461,40 +444,25 @@ def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> 
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
 
 
-def _startup_rlm_service(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize RLM inference service (Issue #1306).
-
-    Requires SandboxAuthService (for SandboxManager) and an LLM provider.
-    Falls back gracefully if either is unavailable — the /api/v2/rlm/infer
-    endpoint will return 503.
-    """
-    sandbox_auth = app.state.sandbox_auth_service
-    if sandbox_auth is None:
-        logger.debug("[RLM] SandboxAuthService not available, RLM service skipped")
+def _startup_access_manifest(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Wire AccessManifestService to app.state for REST API."""
+    if not svc.nexus_fs:
         return
-
-    sandbox_mgr = getattr(sandbox_auth, "_sandbox_manager", None)
-    if sandbox_mgr is None:
-        logger.debug("[RLM] SandboxManager not available, RLM service skipped")
+    record_store = getattr(svc.nexus_fs, "_record_store", None) or getattr(
+        svc, "record_store", None
+    )
+    rebac_mgr = app.state.rebac_manager if hasattr(app.state, "rebac_manager") else None
+    if record_store is None or rebac_mgr is None:
+        logger.debug("[ACCESS-MANIFEST] Skipped — record_store or rebac_manager not available")
         return
-
-    llm_provider = svc.llm_provider
-
     try:
-        from nexus.bricks.rlm.service import RLMInferenceService
+        from nexus.bricks.access_manifest.service import AccessManifestService
 
-        nexus_api_url = os.environ.get("NEXUS_API_URL", "http://localhost:2026")
-        max_concurrent = int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8"))
-
-        app.state.rlm_service = RLMInferenceService(
-            sandbox_manager=sandbox_mgr,
-            llm_provider=llm_provider,
-            nexus_api_url=nexus_api_url,
-            max_concurrent=max_concurrent,
-        )
-        logger.info("[RLM] RLMInferenceService initialized (max_concurrent=%d)", max_concurrent)
+        svc_instance = AccessManifestService(record_store=record_store, rebac_manager=rebac_mgr)
+        app.state.access_manifest_service = svc_instance
+        logger.info("[ACCESS-MANIFEST] AccessManifestService wired to app.state")
     except Exception as e:
-        logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
+        logger.warning("[ACCESS-MANIFEST] Failed to initialize: %s", e)
 
 
 def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
@@ -562,9 +530,9 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Fallback: construct EvictionManager here if factory didn't create one
         try:
             from nexus.server.background_tasks import agent_eviction_task
-            from nexus.services.agents.eviction_manager import EvictionManager
-            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
-            from nexus.services.agents.resource_monitor import ResourceMonitor
+            from nexus.system_services.agents.eviction_manager import EvictionManager
+            from nexus.system_services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.system_services.agents.resource_monitor import ResourceMonitor
 
             resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
             eviction_policy = LRUEvictionPolicy()
@@ -607,7 +575,7 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     app.state.scheduler_service = scheduler
 
     # InMemoryScheduler doesn't need PostgreSQL init
-    from nexus.services.protocols.scheduler import InMemoryScheduler
+    from nexus.system_services.scheduler.in_memory import InMemoryScheduler
 
     if isinstance(scheduler, InMemoryScheduler):
         logger.info("Scheduler service started (InMemoryScheduler fallback)")
@@ -649,33 +617,6 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.debug("Scheduler async init not available: %s", e)
     except Exception as e:
         logger.warning("Failed to initialize Scheduler: %s", e, exc_info=True)
-
-
-def _startup_task_queue(app: "FastAPI", svc: "LifespanServices") -> asyncio.Task | None:
-    """Start Task Queue Engine background worker (Issue #574)."""
-    if not svc.nexus_fs:
-        return None
-
-    try:
-        from nexus.tasks import is_available
-
-        if is_available():
-            service = svc.nexus_fs.task_queue_service
-            engine = service.get_engine()
-
-            from nexus.tasks.runner import AsyncTaskRunner
-
-            _task_workers = svc.profile_tuning.concurrency.task_runner_workers
-            runner = AsyncTaskRunner(engine=engine, max_workers=_task_workers)
-            service.set_runner(runner)
-            app.state.task_runner = runner
-            task = asyncio.create_task(runner.run())
-            logger.info("Task Queue runner started (%d workers)", _task_workers)
-            return task
-        else:
-            logger.debug("Task Queue: nexus_tasks Rust extension not available")
-    except Exception as e:
-        logger.warning("Task Queue runner not started: %s", e, exc_info=True)
 
     return None
 

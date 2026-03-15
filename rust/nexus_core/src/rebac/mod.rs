@@ -212,7 +212,7 @@ pub fn compute_permission(
                 graph,
                 namespaces,
                 memo_cache,
-                &mut visited.clone(),
+                visited,
                 depth + 1,
             ) {
                 allowed = true;
@@ -237,7 +237,7 @@ pub fn compute_permission(
                         graph,
                         namespaces,
                         memo_cache,
-                        &mut visited.clone(),
+                        visited,
                         depth + 1,
                     ) {
                         allowed = true;
@@ -269,7 +269,7 @@ pub fn compute_permission(
                         graph,
                         namespaces,
                         memo_cache,
-                        &mut visited.clone(),
+                        visited,
                         depth + 1,
                     ) {
                         allowed = true;
@@ -289,7 +289,7 @@ pub fn compute_permission(
                             graph,
                             namespaces,
                             memo_cache,
-                            &mut visited.clone(),
+                            visited,
                             depth + 1,
                         ) {
                             allowed = true;
@@ -346,7 +346,7 @@ pub fn check_relation_with_usersets(
             graph,
             namespaces,
             memo_cache,
-            &mut visited.clone(),
+            visited,
             depth + 1,
         ) {
             return true;
@@ -396,7 +396,7 @@ pub fn expand_permission(
                 graph,
                 namespaces,
                 subjects,
-                &mut visited.clone(),
+                visited,
                 depth + 1,
             );
         }
@@ -451,6 +451,9 @@ pub fn expand_permission(
                         depth + 1,
                     );
                 }
+
+                // Direct tuples always apply (Zanzibar: direct fallback)
+                add_direct_subjects(permission, object, graph, subjects);
             }
         }
         return;

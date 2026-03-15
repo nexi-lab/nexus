@@ -19,9 +19,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.event_subsystem.types import FileEventType
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.event_bus.types import FileEventType
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ class TestBuildFileEvent:
     """Test _build_file_event() mapping from operation_log to FileEvent."""
 
     def test_write_maps_to_file_write(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="write")
@@ -89,7 +89,7 @@ class TestBuildFileEvent:
         assert event.zone_id == "root"
 
     def test_delete_maps_to_file_delete(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="delete")
@@ -103,7 +103,7 @@ class TestBuildFileEvent:
     def test_rename_maps_to_file_rename_with_old_path(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(
@@ -122,7 +122,7 @@ class TestBuildFileEvent:
         assert event.old_path == "/new.txt"  # new_path column stores old_path for renames
 
     def test_mkdir_maps_to_dir_create(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="mkdir")
@@ -134,7 +134,7 @@ class TestBuildFileEvent:
         assert event.type == FileEventType.DIR_CREATE
 
     def test_chmod_maps_to_metadata_change(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="chmod")
@@ -155,7 +155,7 @@ class TestPollAndDispatch:
     """Test the core poll-dispatch-mark cycle."""
 
     def test_poll_dispatches_and_marks_delivered(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_id = _insert_undelivered(record_store.session_factory)
 
@@ -174,7 +174,7 @@ class TestPollAndDispatch:
             assert record.delivered is True
 
     def test_empty_outbox_returns_zero(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store)
         count = worker._poll_and_dispatch()
@@ -183,7 +183,7 @@ class TestPollAndDispatch:
         assert worker.metrics["total_dispatched"] == 0
 
     def test_batch_dispatches_multiple(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         # Insert 5 undelivered records
         op_ids = []
@@ -210,7 +210,7 @@ class TestPollAndDispatch:
                 assert record.delivered is True
 
     def test_batch_size_limits_poll(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         # Insert 10 records but batch_size=3
         for i in range(10):
@@ -238,7 +238,7 @@ class TestDispatchFailure:
     """Test behavior when event dispatch fails."""
 
     def test_failed_dispatch_leaves_undelivered(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_id = _insert_undelivered(record_store.session_factory)
 
@@ -259,7 +259,7 @@ class TestDispatchFailure:
     def test_partial_batch_failure_marks_only_successful(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_ids = []
         for i in range(3):
@@ -287,7 +287,7 @@ class TestDispatchFailure:
 
     def test_retry_on_next_poll(self, record_store: SQLAlchemyRecordStore) -> None:
         """Previously failed event should be picked up on next poll."""
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_id = _insert_undelivered(record_store.session_factory)
 
@@ -322,7 +322,7 @@ class TestBackoff:
     def test_consecutive_empty_increments_in_run_loop(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store)
 
@@ -338,7 +338,7 @@ class TestBackoff:
         assert worker._consecutive_empty == 2
 
     def test_successful_dispatch_resets_backoff(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
@@ -368,7 +368,7 @@ class TestLifecycle:
     """Test start() and stop() lifecycle."""
 
     def test_start_creates_daemon_thread(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
         worker.start()
@@ -381,7 +381,7 @@ class TestLifecycle:
             worker.stop(timeout=2.0)
 
     def test_stop_joins_thread(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
         worker.start()
@@ -390,7 +390,7 @@ class TestLifecycle:
         assert worker._thread is None
 
     def test_double_start_is_noop(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
         worker.start()
@@ -403,7 +403,7 @@ class TestLifecycle:
 
     def test_worker_processes_during_run(self, record_store: SQLAlchemyRecordStore) -> None:
         """Worker should process events while running."""
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_id = _insert_undelivered(record_store.session_factory)
 
@@ -444,7 +444,7 @@ class TestNoBus:
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         """If no event bus is available, dispatch still succeeds (no-op publish)."""
-        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_id = _insert_undelivered(record_store.session_factory)
 

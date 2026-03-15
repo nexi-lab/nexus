@@ -27,7 +27,6 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
     defaults = {
         "_system_services": None,
         "_brick_services": None,
-        "_service_extras": {},
         "SessionLocal": None,
         "_sql_engine": None,
         "_entity_registry": None,
@@ -35,7 +34,6 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
         "_rebac_manager": None,
         "_event_bus": None,
         "_coordination_client": None,
-        "_llm_provider": None,
         "workflow_engine": None,
         "_snapshot_service": None,
         "_namespace_manager": None,
@@ -98,7 +96,6 @@ class TestFromAppExtraction:
             _rebac_manager="rebac_mgr",
             _event_bus="event_bus",
             _coordination_client="coord_client",
-            _llm_provider="llm_prov",
             workflow_engine="wf_engine",
             _snapshot_service="snap_svc",
             _namespace_manager="ns_mgr",
@@ -115,7 +112,6 @@ class TestFromAppExtraction:
         assert svc.rebac_manager == "rebac_mgr"
         assert svc.event_bus == "event_bus"
         assert svc.coordination_client == "coord_client"
-        assert svc.llm_provider == "llm_prov"
         assert svc.workflow_engine == "wf_engine"
         assert svc.snapshot_service == "snap_svc"
         assert svc.namespace_manager == "ns_mgr"
@@ -133,9 +129,8 @@ class TestFromAppSystemServices:
             eviction_manager="em",
             write_observer="write_obs",
             zone_lifecycle="zl",
-            pipe_manager="pipe_mgr",
         )
-        nx = _make_nexus_fs(_system_services=sys_svc)
+        nx = _make_nexus_fs(_system_services=sys_svc, _pipe_manager="pipe_mgr")
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
@@ -179,19 +174,20 @@ class TestFromAppBrickServices:
 
 
 class TestFromAppObservability:
-    """Test extraction from _service_extras."""
+    """Test extraction of observability_subsystem from _system_services."""
 
     def test_extracts_observability_subsystem(self) -> None:
-        """observability_subsystem extracted from _service_extras dict."""
-        nx = _make_nexus_fs(_service_extras={"observability_subsystem": "obs_sub"})
+        """observability_subsystem extracted from _system_services."""
+        sys_svc = SimpleNamespace(observability_subsystem="obs_sub")
+        nx = _make_nexus_fs(_system_services=sys_svc)
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
         assert svc.observability_subsystem == "obs_sub"
 
-    def test_non_dict_service_extras_yields_none(self) -> None:
-        """Non-dict _service_extras produces None observability_subsystem."""
-        nx = _make_nexus_fs(_service_extras=None)
+    def test_missing_system_services_yields_none(self) -> None:
+        """When _system_services is None, observability_subsystem is None."""
+        nx = _make_nexus_fs(_system_services=None)
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
@@ -228,7 +224,7 @@ class TestFromAppEdgeCases:
     def test_nexus_fs_without_optional_attributes(self) -> None:
         """NexusFS missing some private attrs doesn't crash."""
         # Use a SimpleNamespace with only _system_services
-        nx = SimpleNamespace(_system_services=None, _brick_services=None, _service_extras={})
+        nx = SimpleNamespace(_system_services=None, _brick_services=None)
         app = _make_app(nexus_fs=nx)
 
         # Should not raise even though nx has no SessionLocal, etc.
@@ -236,12 +232,6 @@ class TestFromAppEdgeCases:
         assert svc.nexus_fs is nx
         assert svc.write_observer is None  # extracted from _system_services (None here)
         assert svc.rebac_manager is None
-
-    def test_a2a_task_manager_extracted(self) -> None:
-        """a2a_task_manager from app.state is extracted."""
-        app = _make_app(a2a_task_manager="atm")
-        svc = LifespanServices.from_app(app)
-        assert svc.a2a_task_manager == "atm"
 
     def test_observability_registry_extracted(self) -> None:
         """observability_registry from app.state is extracted."""

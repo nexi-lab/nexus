@@ -20,15 +20,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.types import TransactionProtocol
-from nexus.services.protocols.payment import (
+from nexus.contracts.protocols.payment import (
     ProtocolTransferRequest,
     ProtocolTransferResult,
 )
+from nexus.contracts.types import TransactionProtocol
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.x402 import X402Client
-    from nexus.services.protocols.payment import PaymentProtocol
+    from nexus.contracts.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
 

@@ -52,7 +52,7 @@ def _compute_features_info(app: "FastAPI", svc: LifespanServices) -> None:
 
         version = _get_version("nexus-ai-fs")
     except Exception:
-        pass
+        version = "unknown"
 
     disabled = sorted(ALL_BRICK_NAMES - enabled)
 
@@ -159,7 +159,12 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         if tracker is not None:
             tracker.complete(phase)
 
-    # --- Startup (order matters: observability first, then core, then services) ---
+    # --- Startup (order matters: bootstrap first, then observability, then services) ---
+
+    # NexusFS lifecycle Phase 3: start async tasks owned by NexusFS
+    nx = getattr(app.state, "nexus_fs", None)
+    if nx is not None and hasattr(nx, "bootstrap"):
+        await nx.bootstrap()
 
     await startup_observability(app, svc)
     # Re-extract observability_registry after startup_observability writes it
@@ -224,16 +229,13 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
     await shutdown_services(app, svc)
     await shutdown_realtime(app, svc)
 
-    # Close NexusFS kernel
-    if app.state.nexus_fs and hasattr(app.state.nexus_fs, "close"):
-        app.state.nexus_fs.close()
+    # Close NexusFS kernel (async shutdown for PersistentService + HotSwappable)
+    if app.state.nexus_fs:
+        if hasattr(app.state.nexus_fs, "aclose"):
+            await app.state.nexus_fs.aclose()
+        elif hasattr(app.state.nexus_fs, "close"):
+            app.state.nexus_fs.close()
 
-    # Shutdown CacheBrick (Issue #1524)
-    if app.state.cache_brick:
-        try:
-            await app.state.cache_brick.stop()
-            logger.info("CacheBrick stopped")
-        except Exception as e:
-            logger.warning("Error shutting down CacheBrick: %s", e, exc_info=True)
+    # CacheBrick stop is now handled by coordinator via aclose() (enlisted as PersistentService)
 
     await shutdown_observability(app, svc)

@@ -1,4 +1,4 @@
-"""Tests for WiredServices dataclass and _boot_wired_services typing (Issue #2133)."""
+"""Tests for WiredServices dataclass and populate_service_registry (Issue #2133, #1381, #1452)."""
 
 import dataclasses
 from typing import Any
@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core.config import WiredServices
+from nexus.factory.service_routing import populate_service_registry
 
 
 class TestWiredServicesDataclass:
@@ -36,12 +37,12 @@ class TestWiredServicesDataclass:
         assert ws2.rebac_service == "b"
 
     def test_field_count(self) -> None:
-        """WiredServices should have 25 service fields."""
-        assert len(dataclasses.fields(WiredServices)) == 27
+        """WiredServices should have 20 service fields."""
+        assert len(dataclasses.fields(WiredServices)) == 20
 
 
-class TestNexusFSBindWiredServices:
-    """Test NexusFS._bind_wired_services accepts both WiredServices and dict."""
+class TestPopulateServiceRegistryFromWired:
+    """Test populate_service_registry accepts both WiredServices and dict."""
 
     @pytest.fixture()
     def nx(self) -> Any:
@@ -59,17 +60,19 @@ class TestNexusFSBindWiredServices:
         )
         return nx
 
-    def test_bind_wired_services_dataclass(self, nx: Any) -> None:
+    def test_populate_from_dataclass(self, nx: Any) -> None:
         mock_svc = MagicMock()
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
-        nx._bind_wired_services(ws)
-        assert nx.rebac_service is mock_svc
-        assert nx.mount_service is mock_svc
-        assert nx.mcp_service is None
+        populate_service_registry(nx._service_registry, ws)
+        assert nx.service("rebac")._service_instance is mock_svc
+        assert nx.service("mount")._service_instance is mock_svc
+        assert nx.service("mcp") is None
 
-    def test_bind_wired_services_dict(self, nx: Any) -> None:
+    def test_populate_from_dict(self, nx: Any) -> None:
         mock_svc = MagicMock()
-        nx._bind_wired_services({"rebac_service": mock_svc, "mount_service": mock_svc})
-        assert nx.rebac_service is mock_svc
-        assert nx.mount_service is mock_svc
-        assert nx.mcp_service is None
+        populate_service_registry(
+            nx._service_registry, {"rebac_service": mock_svc, "mount_service": mock_svc}
+        )
+        assert nx.service("rebac")._service_instance is mock_svc
+        assert nx.service("mount")._service_instance is mock_svc
+        assert nx.service("mcp") is None

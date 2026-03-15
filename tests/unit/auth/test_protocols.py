@@ -8,7 +8,7 @@ Covers:
 """
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -66,7 +66,7 @@ class InMemoryUserProvisioner:
     def __init__(self) -> None:
         self.provisioned: list[dict[str, Any]] = []
 
-    def provision_user(
+    async def provision_user(
         self,
         *,
         user_id: str,
@@ -206,8 +206,9 @@ class TestUserProvisionerContract:
     def provisioner(self) -> InMemoryUserProvisioner:
         return InMemoryUserProvisioner()
 
-    def test_provision_returns_zone_id(self, provisioner: InMemoryUserProvisioner):
-        result = provisioner.provision_user(
+    @pytest.mark.asyncio
+    async def test_provision_returns_zone_id(self, provisioner: InMemoryUserProvisioner):
+        result = await provisioner.provision_user(
             user_id="u1",
             email="alice@example.com",
             display_name="Alice",
@@ -215,17 +216,19 @@ class TestUserProvisionerContract:
         assert "zone_id" in result
         assert result["zone_id"] == "alice"
 
-    def test_provision_with_explicit_zone(self, provisioner: InMemoryUserProvisioner):
-        result = provisioner.provision_user(
+    @pytest.mark.asyncio
+    async def test_provision_with_explicit_zone(self, provisioner: InMemoryUserProvisioner):
+        result = await provisioner.provision_user(
             user_id="u1",
             email="alice@example.com",
             zone_id="custom-zone",
         )
         assert result["zone_id"] == "custom-zone"
 
-    def test_provision_records_call(self, provisioner: InMemoryUserProvisioner):
-        provisioner.provision_user(user_id="u1", email="a@b.com")
-        provisioner.provision_user(user_id="u2", email="c@d.com")
+    @pytest.mark.asyncio
+    async def test_provision_records_call(self, provisioner: InMemoryUserProvisioner):
+        await provisioner.provision_user(user_id="u1", email="a@b.com")
+        await provisioner.provision_user(user_id="u2", email="c@d.com")
         assert len(provisioner.provisioned) == 2
 
 
@@ -237,59 +240,74 @@ class TestUserProvisionerContract:
 class TestNexusFSUserProvisioner:
     """Tests for the NexusFSUserProvisioner adapter."""
 
-    def test_delegates_to_nexusfs(self):
+    @pytest.mark.asyncio
+    async def test_delegates_to_nexusfs(self):
         mock_nx = MagicMock()
-        mock_nx.provision_user.return_value = {"zone_id": "alice", "api_key": "sk-123"}
+        mock_nx.service("user_provisioning").provision_user = AsyncMock(
+            return_value={
+                "zone_id": "alice",
+                "api_key": "sk-123",
+            }
+        )
         provisioner = NexusFSUserProvisioner(mock_nx)
 
-        result = provisioner.provision_user(
+        result = await provisioner.provision_user(
             user_id="u1",
             email="alice@example.com",
             display_name="Alice",
         )
 
         assert result["zone_id"] == "alice"
-        mock_nx.provision_user.assert_called_once()
-        call_kwargs = mock_nx.provision_user.call_args[1]
+        mock_nx.service("user_provisioning").provision_user.assert_called_once()
+        call_kwargs = mock_nx.service("user_provisioning").provision_user.call_args[1]
         assert call_kwargs["user_id"] == "u1"
         assert call_kwargs["email"] == "alice@example.com"
         assert call_kwargs["create_api_key"] is True
 
-    def test_creates_operation_context(self):
+    @pytest.mark.asyncio
+    async def test_creates_operation_context(self):
         mock_nx = MagicMock()
-        mock_nx.provision_user.return_value = {"zone_id": "alice"}
+        mock_nx.service("user_provisioning").provision_user = AsyncMock(
+            return_value={"zone_id": "alice"}
+        )
         provisioner = NexusFSUserProvisioner(mock_nx)
 
-        provisioner.provision_user(user_id="u1", email="alice@example.com")
+        await provisioner.provision_user(user_id="u1", email="alice@example.com")
 
-        call_kwargs = mock_nx.provision_user.call_args[1]
+        call_kwargs = mock_nx.service("user_provisioning").provision_user.call_args[1]
         context = call_kwargs["context"]
         assert context.user_id == "system"
         assert context.is_admin is True
         assert context.zone_id == "alice"
 
-    def test_zone_id_derived_from_email(self):
+    @pytest.mark.asyncio
+    async def test_zone_id_derived_from_email(self):
         mock_nx = MagicMock()
-        mock_nx.provision_user.return_value = {"zone_id": "bob"}
+        mock_nx.service("user_provisioning").provision_user = AsyncMock(
+            return_value={"zone_id": "bob"}
+        )
         provisioner = NexusFSUserProvisioner(mock_nx)
 
-        provisioner.provision_user(user_id="u2", email="bob@corp.com")
+        await provisioner.provision_user(user_id="u2", email="bob@corp.com")
 
-        call_kwargs = mock_nx.provision_user.call_args[1]
+        call_kwargs = mock_nx.service("user_provisioning").provision_user.call_args[1]
         assert call_kwargs["zone_id"] == "bob"
 
-    def test_zone_id_override(self):
+    @pytest.mark.asyncio
+    async def test_zone_id_override(self):
         mock_nx = MagicMock()
-        mock_nx.provision_user.return_value = {"zone_id": "custom"}
+        mock_nx.service("user_provisioning").provision_user = AsyncMock(
+            return_value={"zone_id": "custom"}
+        )
         provisioner = NexusFSUserProvisioner(mock_nx)
 
-        provisioner.provision_user(
+        await provisioner.provision_user(
             user_id="u1",
             email="alice@example.com",
             zone_id="custom",
         )
 
-        call_kwargs = mock_nx.provision_user.call_args[1]
+        call_kwargs = mock_nx.service("user_provisioning").provision_user.call_args[1]
         assert call_kwargs["zone_id"] == "custom"
 
 

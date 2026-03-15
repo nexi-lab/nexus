@@ -22,7 +22,7 @@ from nexus.contracts.types import TransactionProtocol
 
 if TYPE_CHECKING:
     from nexus.bricks.pay.spending_policy_service import SpendingPolicyService
-    from nexus.services.protocols.payment import PaymentProtocol
+    from nexus.contracts.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
 

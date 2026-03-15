@@ -16,7 +16,7 @@ class PriorityTier(IntEnum):
     Strict ordering: CRITICAL tasks always run before HIGH,
     HIGH before NORMAL, etc.
 
-    Originally in ``nexus.services.scheduler.constants``; moved to contracts
+    Originally in ``nexus.system_services.scheduler.constants``; moved to contracts
     because both the scheduler and pay bricks depend on it.
     """
 
@@ -99,4 +99,33 @@ ROOT_ZONE_ID = "root"
 Every NexusFS instance has a zone_id. In standalone mode it defaults to
 ``"root"``. In federated mode each zone has a unique ID assigned by
 the Raft consensus layer.
+"""
+
+# =============================================================================
+# Inline Data (Issue #1508)
+# =============================================================================
+
+INLINE_THRESHOLD = 65536  # 64 KB
+"""Max file size for inline storage in metastore (Raft-replicated).
+
+Files ≤ this threshold are stored directly in the metastore as custom
+metadata, bypassing the CAS/ObjectStore backend entirely.  This gives
+sub-millisecond reads and automatic Raft replication at the cost of
+slightly larger Raft log entries (max_size_per_msg = 1 MB, so 64 KB
+is well within limits).
+"""
+
+INLINE_CONTENT_KEY = "__inline_content__"
+"""Custom metadata key used to store inline file content in metastore.
+
+Stored via ``metastore.set_file_metadata(path, key, value)`` under the
+redb key ``meta:{path}:__inline_content__``.
+"""
+
+INLINE_PREFIX = "inline://"
+"""Physical path prefix that marks a file as inline-stored.
+
+When ``FileMetadata.physical_path`` starts with this prefix, the kernel
+reads content from metastore custom metadata instead of the CAS backend.
+Full format: ``inline://{content_hash}``.
 """

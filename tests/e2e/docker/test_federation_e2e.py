@@ -25,10 +25,6 @@ import uuid
 import httpx
 import pytest
 
-from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata
-from nexus.raft.client import RaftClient
-
 # All tests share one Docker cluster — run sequentially in a single xdist worker.
 pytestmark = [pytest.mark.xdist_group("federation-e2e")]
 
@@ -37,7 +33,6 @@ pytestmark = [pytest.mark.xdist_group("federation-e2e")]
 # ---------------------------------------------------------------------------
 NODE1_URL = "http://nexus-1:2026"
 NODE2_URL = "http://nexus-2:2026"
-GRPC_ADDR = "nexus-1:2126"  # gRPC Raft transport
 HEALTH_TIMEOUT = 120  # longer for multi-zone startup
 
 # Map Raft node IDs to HTTP URLs (for leader-hint following)
@@ -594,74 +589,6 @@ class TestLockAPICrossZone:
 
         except httpx.ConnectError:
             pytest.skip("Lock API not reachable")
-
-
-# ---------------------------------------------------------------------------
-# Class 8: gRPC Direct Operations
-# ---------------------------------------------------------------------------
-class TestgRPCDirectOperations:
-    """Connect directly to Raft gRPC port and exercise RaftClient API."""
-
-    @pytest.mark.asyncio
-    async def test_grpc_cluster_info(self, cluster):
-        """Get cluster info via gRPC — verify leader_id, term, is_leader."""
-        try:
-            async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
-                info = await client.get_cluster_info()
-                assert info is not None
-                # get_cluster_info returns a dict
-                leader_id = (
-                    info.get("leader_id")
-                    if isinstance(info, dict)
-                    else getattr(info, "leader_id", None)
-                )
-                term = info.get("term") if isinstance(info, dict) else getattr(info, "term", None)
-                # Verify leader_id is a valid node (1 or 2, NOT 3/witness)
-                if leader_id:
-                    assert leader_id in (1, 2), f"Witness became leader: {leader_id}"
-                if term is not None:
-                    assert term >= 1
-        except Exception as e:
-            if "connect" in str(e).lower() or "refused" in str(e).lower():
-                pytest.skip(f"gRPC not reachable: {e}")
-            raise
-
-    @pytest.mark.asyncio
-    async def test_grpc_metadata_roundtrip(self, cluster):
-        """Write FileMetadata via gRPC, read it back."""
-        uid = _uid()
-        try:
-            async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
-                meta = FileMetadata(
-                    path=f"/grpc-test-{uid}.txt",
-                    backend_name="local",
-                    physical_path=f"/data/grpc-test-{uid}.txt",
-                    size=42,
-                )
-                await client.put_metadata(meta)
-
-                result = await client.sys_stat(f"/grpc-test-{uid}.txt")
-                assert result is not None
-                assert result.size == 42
-        except Exception as e:
-            err = str(e).lower()
-            if "connect" in err or "not implemented" in err or "refused" in err:
-                pytest.skip(f"gRPC operation not available: {e}")
-            raise
-
-    @pytest.mark.asyncio
-    async def test_grpc_list_metadata(self, cluster):
-        """List metadata entries via gRPC."""
-        try:
-            async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
-                entries = await client.list_metadata(prefix="/")
-                assert entries is not None
-                assert len(entries) >= 0  # Root zone should have at least "/"
-        except Exception as e:
-            err = str(e).lower()
-            if "connect" in err or "not implemented" in err or "refused" in err:
-                pytest.skip(f"gRPC list not available: {e}")
-            raise
 
 
 # ---------------------------------------------------------------------------

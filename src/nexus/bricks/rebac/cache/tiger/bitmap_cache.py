@@ -25,8 +25,8 @@ from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.storage.models.permissions import ReBACVersionSequenceModel as RVS
 from nexus.storage.models.permissions import TigerCacheModel as TC
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
 from nexus.storage.models.permissions import TigerResourceMapModel as TRM
@@ -91,6 +91,7 @@ class TigerCache:
         l2_max_workers: int = 4,
         *,
         is_postgresql: bool = False,
+        version_store: MetastoreVersionStore | None = None,
     ):
         """Initialize Tiger Cache.
 
@@ -109,6 +110,7 @@ class TigerCache:
         self._resource_map = resource_map or _TRM(engine, is_postgresql=is_postgresql)
         self._rebac_manager = rebac_manager
         self._is_postgresql = is_postgresql
+        self._version_store = version_store
 
         # L2: Dragonfly distributed cache (optional)
         self._dragonfly: TigerCacheProtocol | None = dragonfly_cache
@@ -273,7 +275,7 @@ class TigerCache:
             logger.warning("[TIGER] L2 Dragonfly operation timed out")
             return None
         except Exception as e:
-            logger.warning(f"[TIGER] L2 Dragonfly error: {e}")
+            logger.warning("[TIGER] L2 Dragonfly error: %s", e)
             return None
 
     def set_rebac_manager(self, manager: "ReBACManager") -> None:
@@ -310,7 +312,7 @@ class TigerCache:
                 bitmap, revision, cached_at = self._cache[key]
                 if time.time() - cached_at < self._cache_ttl:
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"[TIGER] Memory cache hit for {key}")
+                        logger.debug("[TIGER] Memory cache hit for %s", key)
                     return set(bitmap)
 
         # Load from database
@@ -320,7 +322,7 @@ class TigerCache:
 
         # Cache miss - return empty set (cache will be populated by background worker)
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"[TIGER] Cache miss for {key}")
+            logger.debug("[TIGER] Cache miss for %s", key)
         return set()
 
     def check_access(
@@ -364,12 +366,18 @@ class TigerCache:
                     result = int_id in bitmap
                     self._stats_hits += 1
                     logger.debug(
-                        f"Tiger Cache MEMORY HIT: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id} = {result}"
+                        "Tiger Cache MEMORY HIT: %s:%s -> %s -> %s:%s = %s",
+                        subject_type,
+                        subject_id,
+                        permission,
+                        resource_type,
+                        resource_id,
+                        result,
                     )
                     return result
                 else:
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"Tiger Cache MEMORY EXPIRED: {key}")
+                        logger.debug("Tiger Cache MEMORY EXPIRED: %s", key)
 
         # Load from database
         bitmap = self._load_from_db(key, conn)
@@ -377,14 +385,25 @@ class TigerCache:
             result = int_id in bitmap
             self._stats_hits += 1
             logger.debug(
-                f"Tiger Cache DB HIT: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id} = {result}"
+                "Tiger Cache DB HIT: %s:%s -> %s -> %s:%s = %s",
+                subject_type,
+                subject_id,
+                permission,
+                resource_type,
+                resource_id,
+                result,
             )
             return result
 
         # Not in cache
         self._stats_misses += 1
         logger.debug(
-            f"Tiger Cache MISS: {subject_type}:{subject_id} -> {permission} -> {resource_type}:{resource_id}"
+            "Tiger Cache MISS: %s:%s -> %s -> %s:%s",
+            subject_type,
+            subject_id,
+            permission,
+            resource_type,
+            resource_id,
         )
         return None
 
@@ -421,7 +440,7 @@ class TigerCache:
                 bitmap, revision, cached_at = self._cache[key]
                 if time.time() - cached_at < self._cache_ttl:
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"[TIGER] get_bitmap_bytes memory hit for {key}")
+                        logger.debug("[TIGER] get_bitmap_bytes memory hit for %s", key)
                     return bytes(bitmap.serialize())
 
         # Load from database and return raw bytes
@@ -442,7 +461,7 @@ class TigerCache:
                     self._evict_if_needed()
                     self._cache[key] = (bitmap, int(row.revision), time.time())
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[TIGER] get_bitmap_bytes DB hit for {key}")
+                    logger.debug("[TIGER] get_bitmap_bytes DB hit for %s", key)
                 # Return raw bytes (already serialized from DB)
                 return bytes(row.bitmap_data)
             return None
@@ -519,7 +538,9 @@ class TigerCache:
                 if time.time() - cached_at < self._cache_ttl:
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(
-                            f"[TIGER-PUSHDOWN] Memory hit for {key}, {len(bitmap)} entries"
+                            "[TIGER-PUSHDOWN] Memory hit for %s, %d entries",
+                            key,
+                            len(bitmap),
                         )
                     return set(bitmap)  # RoaringBitmap is iterable
 
@@ -527,11 +548,11 @@ class TigerCache:
         bitmap = self._load_from_db(key)
         if bitmap is not None:
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"[TIGER-PUSHDOWN] DB hit for {key}, {len(bitmap)} entries")
+                logger.debug("[TIGER-PUSHDOWN] DB hit for %s, %d entries", key, len(bitmap))
             return set(bitmap)
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"[TIGER-PUSHDOWN] No bitmap found for {key}")
+            logger.debug("[TIGER-PUSHDOWN] No bitmap found for %s", key)
         return None
 
     def get_accessible_paths(
@@ -568,7 +589,9 @@ class TigerCache:
                     paths.add(key[1])  # key is (type, path)
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"[TIGER-PUSHDOWN] Converted {len(int_ids)} int IDs to {len(paths)} paths")
+            logger.debug(
+                "[TIGER-PUSHDOWN] Converted %d int IDs to %d paths", len(int_ids), len(paths)
+            )
         return paths
 
     def _load_from_db(
@@ -607,11 +630,11 @@ class TigerCache:
                     self._cache[key] = (bitmap, revision, time.time())
 
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[TIGER] L2 Dragonfly hit for {key}, {len(bitmap)} resources")
+                    logger.debug("[TIGER] L2 Dragonfly hit for %s, %d resources", key, len(bitmap))
                 return bitmap
             else:
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[TIGER] L2 Dragonfly miss for {key}")
+                    logger.debug("[TIGER] L2 Dragonfly miss for %s", key)
             # Dragonfly miss or unavailable, fall through to L3
 
         # L3: Fall back to PostgreSQL
@@ -646,10 +669,10 @@ class TigerCache:
                         revision=revision,
                     )
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"[TIGER] Populated L2 Dragonfly from L3 for {key}")
+                        logger.debug("[TIGER] Populated L2 Dragonfly from L3 for %s", key)
 
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[TIGER] L3 PostgreSQL hit for {key}, {len(bitmap)} resources")
+                    logger.debug("[TIGER] L3 PostgreSQL hit for %s, %d resources", key, len(bitmap))
                 return bitmap
             return None
 
@@ -818,9 +841,18 @@ class TigerCache:
             conn: Optional database connection
         """
         logger.info(
-            f"Tiger Cache UPDATE: {subject_type}:{subject_id} -> {permission} -> {resource_type} "
-            f"(zone={zone_id}, {len(resource_int_ids)} resources, rev={revision}, "
-            f"db={self._engine.url.database}, dialect={self._engine.dialect.name})"
+            "Tiger Cache UPDATE: %s:%s -> %s -> %s "
+            "(zone=%s, %d resources, rev=%s, "
+            "db=%s, dialect=%s)",
+            subject_type,
+            subject_id,
+            permission,
+            resource_type,
+            zone_id,
+            len(resource_int_ids),
+            revision,
+            self._engine.url.database,
+            self._engine.dialect.name,
         )
 
         # Create bitmap
@@ -872,14 +904,14 @@ class TigerCache:
         try:
             if conn:
                 execute(conn)
-                logger.info(f"[TIGER] L3 PostgreSQL write (via conn) for {key}")
+                logger.info("[TIGER] L3 PostgreSQL write (via conn) for %s", key)
             else:
                 with self._engine.begin() as new_conn:
                     execute(new_conn)
                 # Transaction committed after exiting 'with' block
-                logger.info(f"[TIGER] L3 PostgreSQL write COMMITTED for {key}")
+                logger.info("[TIGER] L3 PostgreSQL write COMMITTED for %s", key)
         except Exception as e:
-            logger.error(f"[TIGER] L3 PostgreSQL write FAILED for {key}: {e}")
+            logger.error("[TIGER] L3 PostgreSQL write FAILED for %s: %s", key, e)
             raise
 
         # L2: Populate Dragonfly cache (write-through pattern)
@@ -894,7 +926,7 @@ class TigerCache:
                 revision=revision,
             )
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"[TIGER] L2 Dragonfly write for {key}")
+                logger.debug("[TIGER] L2 Dragonfly write for %s", key)
 
         # L1: Update in-memory cache
         with self._lock:
@@ -903,7 +935,7 @@ class TigerCache:
             self._stats_sets += 1
 
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"[TIGER] Updated cache for {key}, {len(resource_int_ids)} resources")
+            logger.debug("[TIGER] Updated cache for %s, %d resources", key, len(resource_int_ids))
 
     def invalidate(
         self,
@@ -928,8 +960,12 @@ class TigerCache:
             Number of entries invalidated
         """
         logger.info(
-            f"Tiger Cache INVALIDATE: subject={subject_type}:{subject_id}, "
-            f"permission={permission}, resource_type={resource_type}, zone={zone_id}"
+            "Tiger Cache INVALIDATE: subject=%s:%s, permission=%s, resource_type=%s, zone=%s",
+            subject_type,
+            subject_id,
+            permission,
+            resource_type,
+            zone_id,
         )
 
         # Build WHERE conditions dynamically using ORM
@@ -974,7 +1010,7 @@ class TigerCache:
                 or 0
             )
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"[TIGER] L2 Dragonfly invalidated {dragonfly_count} entries")
+                logger.debug("[TIGER] L2 Dragonfly invalidated %d entries", dragonfly_count)
 
         # L1: Clear in-memory cache entries
         with self._lock:
@@ -999,7 +1035,10 @@ class TigerCache:
 
         self._stats_invalidations += count + dragonfly_count + len(keys_to_remove)
         logger.debug(
-            f"[TIGER] Invalidated {count} L3 + {dragonfly_count} L2 + {len(keys_to_remove)} L1 entries"
+            "[TIGER] Invalidated %d L3 + %d L2 + %d L1 entries",
+            count,
+            dragonfly_count,
+            len(keys_to_remove),
         )
         return count
 
@@ -1010,8 +1049,10 @@ class TigerCache:
             entries = sorted(self._cache.items(), key=lambda x: x[1][2])
             num_to_evict = max(1, len(entries) // 10)
             logger.info(
-                f"Tiger Cache EVICT: cache full ({len(self._cache)}/{self._cache_max_size}), "
-                f"evicting {num_to_evict} oldest entries"
+                "Tiger Cache EVICT: cache full (%d/%d), evicting %d oldest entries",
+                len(self._cache),
+                self._cache_max_size,
+                num_to_evict,
             )
             for key, _ in entries[:num_to_evict]:
                 del self._cache[key]
@@ -1077,8 +1118,10 @@ class TigerCache:
                 bitmap.add(resource_int_id)
                 self._cache[key] = (bitmap, revision, time.time())
                 logger.debug(
-                    f"[TIGER] Added resource {resource_int_id} to bitmap for {key} "
-                    f"(now {len(bitmap)} resources)"
+                    "[TIGER] Added resource %d to bitmap for %s (now %d resources)",
+                    resource_int_id,
+                    key,
+                    len(bitmap),
                 )
                 return True
             else:
@@ -1087,7 +1130,9 @@ class TigerCache:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, 0, time.time())
                 logger.debug(
-                    f"[TIGER] Created new bitmap for {key} with resource {resource_int_id}"
+                    "[TIGER] Created new bitmap for %s with resource %d",
+                    key,
+                    resource_int_id,
                 )
                 return True
 
@@ -1139,7 +1184,9 @@ class TigerCache:
                     # Check if already in bitmap
                     if resource_int_id in existing_bitmap:
                         logger.debug(
-                            f"[TIGER] Resource {resource_id} already in bitmap for {subject_id}"
+                            "[TIGER] Resource %s already in bitmap for %s",
+                            resource_id,
+                            subject_id,
                         )
                         return True
                     # Add to existing bitmap
@@ -1222,14 +1269,21 @@ class TigerCache:
                         self._cache[compat_key] = (bitmap, revision, time.time())
 
             logger.info(
-                f"[TIGER] Write-through: {subject_type}:{subject_id} granted {permission} "
-                f"on {resource_type}:{resource_id} (int_id={resource_int_id}, "
-                f"bitmap now has {len(bitmap)} resources)"
+                "[TIGER] Write-through: %s:%s granted %s "
+                "on %s:%s (int_id=%d, "
+                "bitmap now has %d resources)",
+                subject_type,
+                subject_id,
+                permission,
+                resource_type,
+                resource_id,
+                resource_int_id,
+                len(bitmap),
             )
             return True
 
         except Exception as e:
-            logger.error(f"[TIGER] Write-through failed for {key}: {e}")
+            logger.error("[TIGER] Write-through failed for %s: %s", key, e)
             return False
 
     def persist_single_revoke(
@@ -1278,7 +1332,8 @@ class TigerCache:
                     else:
                         # Resource not in map - nothing to revoke
                         logger.debug(
-                            f"[TIGER] Revoke: Resource {resource_id} not in map, nothing to do"
+                            "[TIGER] Revoke: Resource %s not in map, nothing to do",
+                            resource_id,
                         )
                         return True
 
@@ -1289,13 +1344,15 @@ class TigerCache:
                 if existing_bitmap is None:
                     # No bitmap exists - nothing to revoke
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(f"[TIGER] Revoke: No bitmap for {subject_id}, nothing to do")
+                        logger.debug("[TIGER] Revoke: No bitmap for %s, nothing to do", subject_id)
                     return True
 
                 if resource_int_id not in existing_bitmap:
                     # Resource not in bitmap - nothing to revoke
                     logger.debug(
-                        f"[TIGER] Revoke: Resource {resource_id} not in bitmap for {subject_id}"
+                        "[TIGER] Revoke: Resource %s not in bitmap for %s",
+                        resource_id,
+                        subject_id,
                     )
                     return True
 
@@ -1375,13 +1432,19 @@ class TigerCache:
                         self._cache[compat_key] = (bitmap, revision, time.time())
 
             logger.info(
-                f"[TIGER] Write-through revoke: {subject_type}:{subject_id} revoked {permission} "
-                f"on {resource_type}:{resource_id} (bitmap now has {len(bitmap)} resources)"
+                "[TIGER] Write-through revoke: %s:%s revoked %s "
+                "on %s:%s (bitmap now has %d resources)",
+                subject_type,
+                subject_id,
+                permission,
+                resource_type,
+                resource_id,
+                len(bitmap),
             )
             return True
 
         except Exception as e:
-            logger.error(f"[TIGER] Write-through revoke failed for {key}: {e}")
+            logger.error("[TIGER] Write-through revoke failed for %s: %s", key, e)
             return False
 
     def remove_from_bitmap(
@@ -1425,8 +1488,10 @@ class TigerCache:
                 bitmap.discard(resource_int_id)
                 self._cache[key] = (bitmap, revision, time.time())
                 logger.debug(
-                    f"[TIGER] Removed resource {resource_int_id} from bitmap for {key} "
-                    f"(now {len(bitmap)} resources)"
+                    "[TIGER] Removed resource %d from bitmap for %s (now %d resources)",
+                    resource_int_id,
+                    key,
+                    len(bitmap),
                 )
                 return True
             else:
@@ -1478,8 +1543,10 @@ class TigerCache:
 
             if added > 0:
                 logger.debug(
-                    f"[TIGER] Bulk added {added} resources to bitmap for {key} "
-                    f"(now {len(bitmap)} resources)"
+                    "[TIGER] Bulk added %d resources to bitmap for %s (now %d resources)",
+                    added,
+                    key,
+                    len(bitmap),
                 )
             return added
 
@@ -1589,14 +1656,16 @@ class TigerCache:
                     revision=revision,
                 )
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"[TIGER] L2 Dragonfly write (persist_bulk) for {key}")
+                    logger.debug("[TIGER] L2 Dragonfly write (persist_bulk) for %s", key)
 
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"[TIGER] Persisted bulk bitmap for {key} ({len(bitmap)} resources)")
+                logger.debug(
+                    "[TIGER] Persisted bulk bitmap for %s (%d resources)", key, len(bitmap)
+                )
             return True
 
         except Exception as e:
-            logger.error(f"[TIGER] persist_bitmap_bulk failed for {key}: {e}")
+            logger.error("[TIGER] persist_bitmap_bulk failed for %s: %s", key, e)
             return False
 
     # =========================================================================
@@ -1690,7 +1759,7 @@ class TigerCache:
                 return None
 
         except Exception as e:
-            logger.error(f"[TIGER] record_directory_grant failed: {e}")
+            logger.error("[TIGER] record_directory_grant failed: %s", e)
             return None
 
     def get_directory_grants_for_path(
@@ -1750,7 +1819,7 @@ class TigerCache:
             return grants
 
         except Exception as e:
-            logger.error(f"[TIGER] get_directory_grants_for_path failed: {e}")
+            logger.error("[TIGER] get_directory_grants_for_path failed: %s", e)
             return []
 
     def _get_ancestor_paths(self, path: str) -> list[str]:
@@ -1874,8 +1943,11 @@ class TigerCache:
                 )
 
                 logger.debug(
-                    f"[TIGER] Expanded batch {i // batch_size + 1}: "
-                    f"{len(valid_int_ids)} files, total {total_expanded}/{len(descendants)}"
+                    "[TIGER] Expanded batch %d: %d files, total %d/%d",
+                    i // batch_size + 1,
+                    len(valid_int_ids),
+                    total_expanded,
+                    len(descendants),
                 )
 
             # Persist the complete bitmap to database
@@ -1900,14 +1972,17 @@ class TigerCache:
             )
 
             logger.info(
-                f"[TIGER] Directory grant expansion completed: "
-                f"{directory_path} -> {total_expanded} files for {subject_type}:{subject_id}"
+                "[TIGER] Directory grant expansion completed: %s -> %d files for %s:%s",
+                directory_path,
+                total_expanded,
+                subject_type,
+                subject_id,
             )
 
             return (total_expanded, True)
 
         except Exception as e:
-            logger.error(f"[TIGER] expand_directory_grant failed: {e}")
+            logger.error("[TIGER] expand_directory_grant failed: %s", e)
             self._update_grant_status(
                 subject_type,
                 subject_id,
@@ -1965,7 +2040,7 @@ class TigerCache:
             with self._engine.begin() as conn:
                 conn.execute(stmt)
         except Exception as e:
-            logger.error(f"[TIGER] _update_grant_status failed: {e}")
+            logger.error("[TIGER] _update_grant_status failed: %s", e)
 
     def remove_directory_grant(
         self,
@@ -2004,13 +2079,16 @@ class TigerCache:
                 conn.execute(stmt)
 
             logger.info(
-                f"[TIGER] Removed directory grant: {directory_path} "
-                f"for {subject_type}:{subject_id} ({permission})"
+                "[TIGER] Removed directory grant: %s for %s:%s (%s)",
+                directory_path,
+                subject_type,
+                subject_id,
+                permission,
             )
             return True
 
         except Exception as e:
-            logger.error(f"[TIGER] remove_directory_grant failed: {e}")
+            logger.error("[TIGER] remove_directory_grant failed: %s", e)
             return False
 
     def add_file_to_ancestor_grants(
@@ -2037,7 +2115,7 @@ class TigerCache:
         # This must happen BEFORE the early return check for ancestor grants
         int_id = self._resource_map.get_or_create_int_id("file", file_path)
         if int_id <= 0:
-            logger.error(f"[TIGER] Failed to get int_id for new file: {file_path}")
+            logger.error("[TIGER] Failed to get int_id for new file: %s", file_path)
             return 0
 
         grants = self.get_directory_grants_for_path(file_path, zone_id)
@@ -2073,58 +2151,31 @@ class TigerCache:
 
                 added_count += 1
                 logger.debug(
-                    f"[TIGER] Added new file {file_path} to grant "
-                    f"{grant['subject_type']}:{grant['subject_id']} ({grant['permission']})"
+                    "[TIGER] Added new file %s to grant %s:%s (%s)",
+                    file_path,
+                    grant["subject_type"],
+                    grant["subject_id"],
+                    grant["permission"],
                 )
 
             except Exception as e:
-                logger.error(f"[TIGER] Failed to add file to grant: {e}")
+                logger.error("[TIGER] Failed to add file to grant: %s", e)
 
         if added_count > 0:
-            logger.info(f"[TIGER] New file {file_path} added to {added_count} ancestor grants")
+            logger.info("[TIGER] New file %s added to %d ancestor grants", file_path, added_count)
 
             # Issue #1147: Increment zone revision when bitmap changes
             # This enables revision-based consistency checks in list() to detect
             # concurrent writes and avoid returning stale results
             try:
-                now = datetime.now(UTC)
-                if self._is_postgresql:
-                    pg_stmt = pg_insert(RVS).values(
-                        zone_id=zone_id, current_version=1, updated_at=now
+                if self._version_store is not None:
+                    self._version_store.increment_version(zone_id)
+                    logger.debug(
+                        "[TIGER] Incremented zone revision for %s after adding file to grants",
+                        zone_id,
                     )
-                    pg_stmt = pg_stmt.on_conflict_do_update(
-                        index_elements=["zone_id"],
-                        set_={
-                            "current_version": RVS.current_version + 1,
-                            "updated_at": now,
-                        },
-                    )
-                    with self._engine.begin() as conn:
-                        conn.execute(pg_stmt)
-                else:
-                    # SQLite: UPDATE first, INSERT if no row exists
-                    with self._engine.begin() as conn:
-                        result = conn.execute(
-                            update(RVS)
-                            .where(RVS.zone_id == zone_id)
-                            .values(
-                                current_version=RVS.current_version + 1,
-                                updated_at=now,
-                            )
-                        )
-                        if result.rowcount == 0:
-                            conn.execute(
-                                insert(RVS).values(
-                                    zone_id=zone_id,
-                                    current_version=1,
-                                    updated_at=now,
-                                )
-                            )
-                logger.debug(
-                    f"[TIGER] Incremented zone revision for {zone_id} after adding file to grants"
-                )
             except Exception as e:
-                logger.warning(f"[TIGER] Failed to increment zone revision: {e}")
+                logger.warning("[TIGER] Failed to increment zone revision: %s", e)
 
         return added_count
 
@@ -2177,9 +2228,9 @@ class TigerCache:
                         self._cache[key] = (bitmap, int(row.revision), time.time())
                         loaded += 1
 
-            logger.info(f"[TIGER] Warmed cache with {loaded} entries from database")
+            logger.info("[TIGER] Warmed cache with %d entries from database", loaded)
             return loaded
 
         except Exception as e:
-            logger.error(f"[TIGER] warm_from_db failed: {e}")
+            logger.error("[TIGER] warm_from_db failed: %s", e)
             return loaded

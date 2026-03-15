@@ -32,9 +32,9 @@ from nexus.proxy.transport import HttpTransport
 logger = logging.getLogger(__name__)
 
 
-def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
+async def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app with real NexusFS for testing."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
@@ -45,12 +45,12 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(parents=True, exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_dir))
+    backend = CASLocalBackend(root_path=str(storage_dir))
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -87,7 +87,7 @@ class TestProxyWithRealFastAPIPermissions:
 
     async def test_health_through_real_server(self, tmp_path) -> None:  # noqa: ANN001
         """Verify transport can reach the real FastAPI health endpoint."""
-        app, api_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, api_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(
             transport=asgi,
@@ -109,7 +109,7 @@ class TestProxyWithRealFastAPIPermissions:
         encoding) is accepted by the real FastAPI server's /api/nfs/{method}
         endpoint with auth enabled.
         """
-        app, api_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, api_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(
             transport=asgi,
@@ -139,7 +139,7 @@ class TestProxyWithRealFastAPIPermissions:
 
     async def test_proxy_exists_through_real_server(self, tmp_path) -> None:  # noqa: ANN001
         """exists() through proxy → real server returns correct result."""
-        app, api_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, api_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(
             transport=asgi,
@@ -192,7 +192,7 @@ class TestProxyPermissionDeniedRealServer:
 
     async def test_no_api_key_real_server_401(self, tmp_path) -> None:  # noqa: ANN001
         """Proxy with no api_key → real server returns 401 → RemoteCallError."""
-        app, _correct_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, _correct_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         # No Authorization header
         client = httpx.AsyncClient(transport=asgi, base_url="http://test")
@@ -223,7 +223,7 @@ class TestProxyPermissionDeniedRealServer:
 
     async def test_wrong_api_key_real_server_401(self, tmp_path) -> None:  # noqa: ANN001
         """Wrong API key → real server returns 401 → RemoteCallError (not queued)."""
-        app, _correct_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, _correct_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         # Wrong key
         client = httpx.AsyncClient(
@@ -254,7 +254,7 @@ class TestProxyPermissionDeniedRealServer:
 
     async def test_repeated_auth_failures_dont_trip_circuit(self, tmp_path) -> None:  # noqa: ANN001
         """Multiple 401s from real server do NOT trip the circuit breaker."""
-        app, _correct_key = _create_test_app(tmp_path / "srv", enforce_permissions=True)
+        app, _correct_key = await _create_test_app(tmp_path / "srv", enforce_permissions=True)
         asgi = httpx.ASGITransport(app=app)
         client = httpx.AsyncClient(transport=asgi, base_url="http://test")
 

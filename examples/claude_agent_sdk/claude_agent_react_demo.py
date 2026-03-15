@@ -179,7 +179,7 @@ def create_nexus_tools(nx):
         preview_only = args.get("preview_only", False)
 
         try:
-            content = nx.sys_read(path)
+            content = await nx.sys_read(path)
 
             # Handle bytes
             if isinstance(content, bytes):
@@ -218,9 +218,9 @@ def create_nexus_tools(nx):
 
         try:
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-            nx.sys_write(path, content_bytes)
+            await nx.sys_write(path, content_bytes)
 
-            if nx.sys_access(path):
+            if await nx.sys_access(path):
                 text = f"Successfully wrote {len(content_bytes)} bytes to {path}"
             else:
                 text = f"Error: Failed to write file {path}"
@@ -408,11 +408,11 @@ async def run_demo():
         # Check if any files were created
         try:
             # Look for the expected output file
-            if nx.sys_access("/reports/async-patterns.md"):
+            if await nx.sys_access("/reports/async-patterns.md"):
                 print("\n📄 Report generated: /reports/async-patterns.md")
 
                 # Show a preview
-                content = nx.sys_read("/reports/async-patterns.md")
+                content = await nx.sys_read("/reports/async-patterns.md")
                 if isinstance(content, bytes):
                     content = content.decode("utf-8")
 

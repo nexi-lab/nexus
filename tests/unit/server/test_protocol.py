@@ -169,9 +169,9 @@ class TestParseMethodParams:
 
     def test_parse_write_params(self):
         """Test parsing write method parameters."""
-        params = parse_method_params("sys_write", {"path": "/file.txt", "content": b"data"})
+        params = parse_method_params("sys_write", {"path": "/file.txt", "buf": b"data"})
         assert params.path == "/file.txt"
-        assert params.content == b"data"
+        assert params.buf == b"data"
 
     def test_parse_list_params(self):
         """Test parsing list method parameters."""
@@ -318,8 +318,8 @@ class TestCodegenConsistency:
 
     def test_method_params_count(self):
         """METHOD_PARAMS should have a reasonable number of entries."""
-        assert len(METHOD_PARAMS) >= 150, (
-            f"Expected at least 150 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
+        assert len(METHOD_PARAMS) >= 120, (
+            f"Expected at least 120 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
         )
 
     def test_method_params_names_are_strings(self):
@@ -345,8 +345,6 @@ class TestCodegenConsistency:
         # Override entries
         assert "sys_read" in METHOD_PARAMS
         assert "admin_create_key" in METHOD_PARAMS
-        assert "store_memory" in METHOD_PARAMS
-        assert "skills_create" in METHOD_PARAMS
 
     def test_parse_method_params_works_for_all(self):
         """parse_method_params should work for every METHOD_PARAMS entry (with defaults)."""

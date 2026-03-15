@@ -84,12 +84,33 @@ if _STATIC_ADMINS:
     )
 
 
+def _is_loopback(host: str | None) -> bool:
+    """Check whether a client IP is a loopback address.
+
+    Handles IPv4 (127.0.0.0/8), IPv6 (::1), IPv4-mapped IPv6
+    (::ffff:127.x.x.x), and "localhost".
+    """
+    if not host:
+        # None means no network connection info (e.g. ASGI TestClient) — treat as local
+        return True
+    if host in ("localhost", "testclient"):
+        return True
+    import ipaddress
+
+    try:
+        addr = ipaddress.ip_address(host)
+        return addr.is_loopback
+    except ValueError:
+        return False
+
+
 async def resolve_auth(
     app_state: Any,
     authorization: str | None = None,
     x_agent_id: str | None = None,
     x_nexus_subject: str | None = None,
     x_nexus_zone_id: str | None = None,
+    client_host: str | None = None,
 ) -> dict[str, Any] | None:
     """Core authentication logic — usable from both HTTP and WebSocket contexts.
 
@@ -116,6 +137,15 @@ async def resolve_auth(
 
     # No auth configured = open access
     if not getattr(_state, "api_key", None) and not getattr(_state, "auth_provider", None):
+        # Restrict open-access mode to loopback to prevent remote privilege escalation.
+        if not _is_loopback(client_host):
+            logger.warning(
+                "[AUTH] Open access request rejected from non-loopback address %s. "
+                "Configure an API key or auth provider for remote access.",
+                client_host,
+            )
+            return None
+
         # In open access mode, we still want a stable identity for permission checks.
         # Prefer explicit identity headers; otherwise, best-effort infer from sk- style keys.
         subject_type: str | None = None
@@ -262,12 +292,14 @@ async def get_auth_result(
     For WebSocket endpoints (where ``Depends()`` is unsupported), call
     :func:`resolve_auth` directly with ``websocket.app.state``.
     """
+    client_host = request.client.host if request.client else None
     return await resolve_auth(
         app_state=request.app.state,
         authorization=authorization,
         x_agent_id=x_agent_id,
         x_nexus_subject=x_nexus_subject,
         x_nexus_zone_id=x_nexus_zone_id,
+        client_host=client_host,
     )
 
 
@@ -322,10 +354,18 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     if subject_type == "agent":
         agent_id = subject_id
 
-    # Handle X-Agent-ID header
+    # Handle X-Agent-ID header — only admins may impersonate arbitrary agents.
+    # Non-admin users must authenticate as the agent directly (subject_type="agent").
     if agent_id and subject_type == "user":
-        subject_type = "agent"
-        subject_id = agent_id
+        if is_admin:
+            subject_type = "agent"
+            subject_id = agent_id
+        else:
+            logger.warning(
+                "Non-admin user %s attempted agent impersonation via X-Agent-ID: %s",
+                subject_id,
+                agent_id,
+            )
 
     # Admin capabilities
     admin_capabilities = set()

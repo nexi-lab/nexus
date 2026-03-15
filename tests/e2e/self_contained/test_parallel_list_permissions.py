@@ -9,8 +9,8 @@ Uses mock backends and rebac_manager to isolate the parallel listing + permissio
 from unittest.mock import MagicMock
 
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
+from nexus.bricks.search.search_service import SearchService
 from nexus.contracts.types import OperationContext
-from nexus.services.search.search_service import SearchService
 
 # ---------------------------------------------------------------------------
 # Helpers

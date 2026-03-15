@@ -126,63 +126,49 @@ class TestRemoteServiceProxy:
 class TestBootRemoteServices:
     """Tests for the factory wiring helper."""
 
-    def test_wires_all_service_slots(self):
-        """_boot_remote_services fills all wired service slots with proxy."""
-        from unittest.mock import MagicMock
+    def test_registers_all_canonical_services(self):
+        """_boot_remote_services registers all canonical services via ServiceRegistry."""
+        from unittest.mock import MagicMock, patch
 
-        from nexus.factory._remote import _WIRED_FIELDS, _boot_remote_services
+        from nexus.factory._remote import _boot_remote_services
+        from nexus.factory.service_routing import _CANONICAL_NAMES
         from nexus.remote.service_proxy import RemoteServiceProxy
 
-        # Create a mock NexusFS with _bind_wired_services
         nfs = MagicMock()
-        nfs._bind_wired_services = MagicMock()
 
         _, call_rpc = _make_recorder()
-        _boot_remote_services(nfs, call_rpc)
+        with patch("nexus.factory.service_routing.populate_service_registry") as mock_pop:
+            mock_pop.return_value = len(_CANONICAL_NAMES)
+            _boot_remote_services(nfs, call_rpc)
 
-        # _bind_wired_services was called with a dict covering all fields
-        nfs._bind_wired_services.assert_called_once()
-        wired_dict = nfs._bind_wired_services.call_args[0][0]
-
-        assert isinstance(wired_dict, dict)
-        for field in _WIRED_FIELDS:
-            assert field in wired_dict
-            assert isinstance(wired_dict[field], RemoteServiceProxy)
+            # populate_service_registry was called with registry and a dict covering all canonical keys
+            mock_pop.assert_called_once()
+            registry, wired_dict = mock_pop.call_args[0]
+            assert registry is nfs._service_registry
+            assert isinstance(wired_dict, dict)
+            for field in _CANONICAL_NAMES:
+                assert field in wired_dict
+                assert isinstance(wired_dict[field], RemoteServiceProxy)
 
         # version_service also set
         assert isinstance(nfs.version_service, RemoteServiceProxy)
 
     def test_all_slots_are_same_proxy_instance(self):
         """All slots share one proxy instance (universal pass-through)."""
-        from unittest.mock import MagicMock
+        from unittest.mock import MagicMock, patch
 
         from nexus.factory._remote import _boot_remote_services
+        from nexus.factory.service_routing import _CANONICAL_NAMES
 
         nfs = MagicMock()
-        nfs._bind_wired_services = MagicMock()
 
         _, call_rpc = _make_recorder()
-        _boot_remote_services(nfs, call_rpc)
+        with patch("nexus.factory.service_routing.populate_service_registry") as mock_pop:
+            mock_pop.return_value = len(_CANONICAL_NAMES)
+            _boot_remote_services(nfs, call_rpc)
 
-        wired_dict = nfs._bind_wired_services.call_args[0][0]
-        proxies = list(wired_dict.values())
+            wired_dict = mock_pop.call_args[0][1]
+            proxies = list(wired_dict.values())
 
-        # All values should be the same object
-        assert all(p is proxies[0] for p in proxies)
-
-
-# ---------------------------------------------------------------------------
-# _SERVICE_METHODS event entries
-# ---------------------------------------------------------------------------
-
-
-class TestServiceMethodsEventEntries:
-    """Verify event/locking methods are in the dispatch table."""
-
-    def test_event_methods_registered(self):
-        """lock, unlock, extend_lock, wait_for_changes are in _SERVICE_METHODS."""
-        from nexus.core.nexus_fs import NexusFS
-
-        for method in ("lock", "unlock", "extend_lock", "wait_for_changes"):
-            assert method in NexusFS._SERVICE_METHODS, f"{method} missing from _SERVICE_METHODS"
-            assert NexusFS._SERVICE_METHODS[method] == "events_service"
+            # All values should be the same object
+            assert all(p is proxies[0] for p in proxies)

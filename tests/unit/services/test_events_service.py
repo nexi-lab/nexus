@@ -1,46 +1,21 @@
 """Unit tests for EventsService.
 
-Tests dual-track infrastructure detection, advisory locking,
-and cache invalidation.
-
-All async service methods are tested via asyncio.run().
+Tests OBSERVE-based internal watch, EventBus distributed watch,
+race mechanism, advisory locking, and infrastructure detection.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, create_autospec
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.core.protocols.connector import PassthroughProtocol
+from nexus.core.file_events import FileEvent
 from nexus.system_services.lifecycle.events_service import EventsService
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def mock_backend_passthrough():
-    """Create a mock passthrough backend (same-box mode).
-
-    Uses create_autospec so isinstance(mock, PassthroughProtocol)
-    works on Python 3.12+ where @runtime_checkable checks are stricter.
-    """
-    backend = create_autospec(PassthroughProtocol, instance=True)
-    backend.is_passthrough = True
-    backend.base_path = "/tmp/test_data"
-    backend.lock = MagicMock(return_value="lock-123")
-    backend.unlock = MagicMock(return_value=True)
-    return backend
-
-
-@pytest.fixture
-def mock_backend_remote():
-    """Create a mock non-passthrough backend (distributed mode)."""
-    backend = MagicMock()
-    backend.is_passthrough = False
-    return backend
 
 
 @pytest.fixture
@@ -67,17 +42,6 @@ def mock_lock_manager():
 
 
 @pytest.fixture
-def mock_file_watcher():
-    """Create a mock file watcher."""
-    watcher = MagicMock()
-    watcher._started = True
-    watcher.wait_for_change = AsyncMock(return_value=None)
-    watcher.add_watch = MagicMock()
-    watcher.stop = MagicMock()
-    return watcher
-
-
-@pytest.fixture
 def context():
     """Standard operation context."""
     return OperationContext(
@@ -89,6 +53,11 @@ def context():
     )
 
 
+def _make_event(path: str = "/inbox/test.txt", event_type: str = "file_write") -> FileEvent:
+    """Helper to create a FileEvent for testing."""
+    return FileEvent(type=event_type, path=path, zone_id="root")
+
+
 # =============================================================================
 # Initialization
 # =============================================================================
@@ -97,32 +66,63 @@ def context():
 class TestEventsServiceInit:
     """Tests for EventsService construction."""
 
-    def test_init_stores_all_dependencies(
-        self,
-        mock_backend_passthrough,
-        mock_event_bus,
-        mock_lock_manager,
-    ):
+    def test_init_stores_all_dependencies(self, mock_event_bus, mock_lock_manager):
         """Service stores all injected dependencies."""
         svc = EventsService(
-            backend=mock_backend_passthrough,
             event_bus=mock_event_bus,
             lock_manager=mock_lock_manager,
             zone_id="z1",
         )
-        assert svc._backend is mock_backend_passthrough
         assert svc._event_bus is mock_event_bus
         assert svc._lock_manager is mock_lock_manager
-        assert svc._file_watcher is None  # lazy-initialized, not injected
         assert svc._zone_id == "z1"
+        assert svc._observe_registered is False
 
-    def test_init_minimal(self, mock_backend_remote):
-        """Service can be created with just a backend."""
-        svc = EventsService(backend=mock_backend_remote)
+    def test_init_minimal(self):
+        """Service can be created with no dependencies."""
+        svc = EventsService()
         assert svc._event_bus is None
         assert svc._lock_manager is None
-        assert svc._file_watcher is None
         assert svc._zone_id is None
+        assert svc._observe_registered is False
+
+
+# =============================================================================
+# HotSwappable protocol (Q2 — Issue #1611)
+# =============================================================================
+
+
+class TestHotSwappableProtocol:
+    """EventsService satisfies HotSwappable protocol."""
+
+    def test_isinstance_hot_swappable(self):
+        """isinstance check passes — coordinator auto-detects Q2."""
+        from nexus.contracts.protocols.service_lifecycle import HotSwappable
+
+        svc = EventsService()
+        assert isinstance(svc, HotSwappable)
+
+    def test_hook_spec_returns_observer(self):
+        """hook_spec() declares self as the sole observer."""
+        svc = EventsService()
+        spec = svc.hook_spec()
+        assert spec.observers == (svc,)
+        assert spec.total_hooks == 1
+
+    @pytest.mark.asyncio
+    async def test_drain_disables_observe(self):
+        """drain() sets _observe_registered = False."""
+        svc = EventsService()
+        svc._observe_registered = True
+        await svc.drain()
+        assert svc._observe_registered is False
+
+    @pytest.mark.asyncio
+    async def test_activate_enables_observe(self):
+        """activate() sets _observe_registered = True."""
+        svc = EventsService()
+        await svc.activate()
+        assert svc._observe_registered is True
 
 
 # =============================================================================
@@ -133,34 +133,35 @@ class TestEventsServiceInit:
 class TestInfrastructureDetection:
     """Tests for layer detection methods."""
 
-    def test_is_same_box_true(self, mock_backend_passthrough):
-        """Passthrough backend means same-box."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        assert svc._is_same_box() is True
+    def test_has_internal_observe_false_by_default(self):
+        """Not registered as observer by default."""
+        svc = EventsService()
+        assert svc._has_internal_observe() is False
 
-    def test_is_same_box_false(self, mock_backend_remote):
-        """Non-passthrough backend is not same-box."""
-        svc = EventsService(backend=mock_backend_remote)
-        assert svc._is_same_box() is False
+    def test_has_internal_observe_true_after_registration(self):
+        """True after factory sets _observe_registered."""
+        svc = EventsService()
+        svc._observe_registered = True
+        assert svc._has_internal_observe() is True
 
-    def test_has_distributed_events_true(self, mock_backend_remote, mock_event_bus):
+    def test_has_distributed_events_true(self, mock_event_bus):
         """Event bus present means distributed events available."""
-        svc = EventsService(backend=mock_backend_remote, event_bus=mock_event_bus)
+        svc = EventsService(event_bus=mock_event_bus)
         assert svc._has_distributed_events() is True
 
-    def test_has_distributed_events_false(self, mock_backend_remote):
+    def test_has_distributed_events_false(self):
         """No event bus means no distributed events."""
-        svc = EventsService(backend=mock_backend_remote)
+        svc = EventsService()
         assert svc._has_distributed_events() is False
 
-    def test_has_distributed_locks_true(self, mock_backend_remote, mock_lock_manager):
+    def test_has_distributed_locks_true(self, mock_lock_manager):
         """Lock manager present means distributed locks available."""
-        svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)
+        svc = EventsService(lock_manager=mock_lock_manager)
         assert svc._has_distributed_locks() is True
 
-    def test_has_distributed_locks_false(self, mock_backend_remote):
+    def test_has_distributed_locks_false(self):
         """No lock manager means no distributed locks."""
-        svc = EventsService(backend=mock_backend_remote)
+        svc = EventsService()
         assert svc._has_distributed_locks() is False
 
 
@@ -172,141 +173,198 @@ class TestInfrastructureDetection:
 class TestZoneIdResolution:
     """Tests for _get_zone_id helper."""
 
-    def test_uses_context_zone_id(self, mock_backend_remote, context):
+    def test_uses_context_zone_id(self, context):
         """Zone ID comes from context when available."""
-        svc = EventsService(backend=mock_backend_remote, zone_id="default_zone")
+        svc = EventsService(zone_id="default_zone")
         assert svc._get_zone_id(context) == "test_zone"
 
-    def test_falls_back_to_service_zone_id(self, mock_backend_remote):
+    def test_falls_back_to_service_zone_id(self):
         """Falls back to service-level zone_id."""
-        svc = EventsService(backend=mock_backend_remote, zone_id="service_zone")
+        svc = EventsService(zone_id="service_zone")
         assert svc._get_zone_id(None) == "service_zone"
 
-    def test_defaults_to_default(self, mock_backend_remote):
+    def test_defaults_to_root(self):
         """Defaults to 'root' when no zone available."""
-        svc = EventsService(backend=mock_backend_remote)
+        svc = EventsService()
         assert svc._get_zone_id(None) == "root"
 
 
 # =============================================================================
-# File watcher lazy init
+# on_mutation — VFSObserver callback
 # =============================================================================
 
 
-class TestFileWatcherLazyInit:
-    """Tests for _get_file_watcher lazy initialization."""
+class TestOnMutation:
+    """Tests for on_mutation() — OBSERVE callback."""
 
-    def test_lazy_creates_watcher(self, mock_backend_passthrough):
-        """Lazy-creates FileWatcher for passthrough backend."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        watcher = svc._get_file_watcher()
-        assert watcher is not None
-        assert svc._file_watcher is watcher
+    def test_on_mutation_resolves_matching_waiter(self):
+        """on_mutation fires → pending wait_for_changes receives event."""
+        svc = EventsService()
+        svc._observe_registered = True
 
-    def test_raises_for_non_passthrough(self, mock_backend_remote):
-        """Raises NotImplementedError for non-passthrough backend."""
-        svc = EventsService(backend=mock_backend_remote)
-        with pytest.raises(NotImplementedError, match="PassthroughBackend"):
-            svc._get_file_watcher()
+        event = _make_event("/inbox/test.txt")
 
+        async def _test():
+            # Start waiting in background
+            wait_task = asyncio.create_task(svc._wait_internal("/inbox/test.txt", timeout=5.0))
+            # Give the waiter time to register
+            await asyncio.sleep(0.01)
+            # Fire the event (simulating dispatch.notify)
+            svc.on_mutation(event)
+            result = await wait_task
+            assert result is event
 
-# =============================================================================
-# Advisory Locking — Distributed
-# =============================================================================
+        asyncio.run(_test())
 
+    def test_on_mutation_skips_non_matching_waiter(self):
+        """on_mutation with non-matching path does not resolve waiter."""
+        svc = EventsService()
+        svc._observe_registered = True
 
-class TestDistributedLocking:
-    """Tests for locking via distributed lock manager."""
+        event = _make_event("/other/file.txt")
 
-    def test_lock_acquires_distributed(self, mock_backend_remote, mock_lock_manager):
-        """Lock uses distributed lock manager when available."""
-        svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)
-        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=5.0, ttl=10.0))
-        assert lock_id == "dist-lock-456"
-        mock_lock_manager.acquire.assert_called_once()
+        async def _test():
+            wait_task = asyncio.create_task(svc._wait_internal("/inbox/*.txt", timeout=0.1))
+            await asyncio.sleep(0.01)
+            svc.on_mutation(event)
+            result = await wait_task
+            assert result is None  # timeout, not matched
 
-    def test_lock_returns_none_on_timeout(self, mock_backend_remote, mock_lock_manager):
-        """Lock returns None when distributed lock times out."""
-        mock_lock_manager.acquire = AsyncMock(return_value=None)
-        svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)
-        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=1.0))
-        assert lock_id is None
+        asyncio.run(_test())
 
-    def test_unlock_releases_distributed(self, mock_backend_remote, mock_lock_manager):
-        """Unlock releases distributed lock."""
-        svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)
-        result = asyncio.run(svc.unlock("dist-lock-456", path="/data/file.txt"))
-        assert result is True
-        mock_lock_manager.release.assert_called_once()
+    def test_on_mutation_pattern_matching(self):
+        """on_mutation matches glob patterns."""
+        svc = EventsService()
+        svc._observe_registered = True
 
-    def test_unlock_requires_path_for_distributed(self, mock_backend_remote, mock_lock_manager):
-        """Distributed unlock requires path parameter."""
-        svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)
-        with pytest.raises(ValueError, match="path is required"):
-            asyncio.run(svc.unlock("dist-lock-456", path=None))
+        event = _make_event("/docs/report.md")
 
-    def test_extend_lock_distributed(self, mock_backend_remote, mock_lock_manager):
-        """Extend lock uses distributed lock manager."""
-        svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)
-        result = asyncio.run(svc.extend_lock("dist-lock-456", path="/data/file.txt", ttl=60.0))
-        assert result is True
-        mock_lock_manager.extend.assert_called_once()
+        async def _test():
+            wait_task = asyncio.create_task(svc._wait_internal("/docs/*.md", timeout=5.0))
+            await asyncio.sleep(0.01)
+            svc.on_mutation(event)
+            result = await wait_task
+            assert result is event
 
+        asyncio.run(_test())
 
-# =============================================================================
-# Advisory Locking — Same-Box
-# =============================================================================
+    def test_on_mutation_directory_pattern(self):
+        """on_mutation matches directory patterns."""
+        svc = EventsService()
+        svc._observe_registered = True
 
+        event = _make_event("/inbox/subdir/file.txt")
 
-class TestSameBoxLocking:
-    """Tests for locking via PassthroughBackend."""
+        async def _test():
+            wait_task = asyncio.create_task(svc._wait_internal("/inbox/", timeout=5.0))
+            await asyncio.sleep(0.01)
+            svc.on_mutation(event)
+            result = await wait_task
+            assert result is event
 
-    def test_lock_uses_backend(self, mock_backend_passthrough):
-        """Lock delegates to backend.lock() for same-box."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=5.0))
-        assert lock_id == "lock-123"
-        mock_backend_passthrough.lock.assert_called_once()
-
-    def test_unlock_uses_backend(self, mock_backend_passthrough):
-        """Unlock delegates to backend.unlock() for same-box."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        result = asyncio.run(svc.unlock("lock-123"))
-        assert result is True
-        mock_backend_passthrough.unlock.assert_called_once_with("lock-123")
-
-    def test_extend_lock_noop_same_box(self, mock_backend_passthrough):
-        """Extend lock is a no-op for same-box (no TTL)."""
-        svc = EventsService(backend=mock_backend_passthrough)
-        result = asyncio.run(svc.extend_lock("lock-123", path="/data/file.txt"))
-        assert result is True
+        asyncio.run(_test())
 
 
 # =============================================================================
-# Locking — No Infrastructure
+# wait_for_changes — Internal path only
 # =============================================================================
 
 
-class TestLockingNoInfrastructure:
-    """Tests for locking when no lock infrastructure is available."""
+class TestWaitForChangesInternal:
+    """Tests for wait_for_changes with only internal OBSERVE."""
 
-    def test_lock_raises_not_implemented(self, mock_backend_remote):
-        """Lock raises NotImplementedError without any lock manager."""
-        svc = EventsService(backend=mock_backend_remote)
-        with pytest.raises(NotImplementedError, match="No lock manager"):
-            asyncio.run(svc.lock("/data/file.txt"))
+    def test_timeout_returns_none(self):
+        """Returns None when internal path times out."""
+        svc = EventsService()
+        svc._observe_registered = True
+        result = asyncio.run(svc.wait_for_changes("/data", timeout=0.05))
+        assert result is None
 
-    def test_unlock_raises_not_implemented(self, mock_backend_remote):
-        """Unlock raises NotImplementedError without any lock manager."""
-        svc = EventsService(backend=mock_backend_remote)
-        with pytest.raises(NotImplementedError, match="No lock manager"):
-            asyncio.run(svc.unlock("lock-123", path="/data/file.txt"))
+    def test_returns_event_dict(self):
+        """Returns event dict from internal observer."""
+        svc = EventsService()
+        svc._observe_registered = True
 
-    def test_extend_raises_not_implemented(self, mock_backend_remote):
-        """Extend raises NotImplementedError without any lock manager."""
-        svc = EventsService(backend=mock_backend_remote)
-        with pytest.raises(NotImplementedError, match="No lock manager"):
-            asyncio.run(svc.extend_lock("lock-123", path="/data/file.txt"))
+        event = _make_event("/data/file.txt")
+
+        async def _test():
+            wait_task = asyncio.create_task(svc.wait_for_changes("/data/file.txt", timeout=5.0))
+            await asyncio.sleep(0.01)
+            svc.on_mutation(event)
+            return await wait_task
+
+        result = asyncio.run(_test())
+        assert result is not None
+        assert result["path"] == "/data/file.txt"
+
+
+# =============================================================================
+# wait_for_changes — EventBus only
+# =============================================================================
+
+
+class TestWaitForChangesEventBus:
+    """Tests for wait_for_changes with only distributed event bus."""
+
+    def test_returns_none_on_timeout(self, mock_event_bus):
+        """Returns None when event bus times out."""
+        mock_event_bus.wait_for_event = AsyncMock(return_value=None)
+        svc = EventsService(event_bus=mock_event_bus)
+        result = asyncio.run(svc.wait_for_changes("/data", timeout=1.0))
+        assert result is None
+
+    def test_returns_event_dict(self, mock_event_bus):
+        """Returns event dict from bus."""
+        mock_event = MagicMock()
+        mock_event.to_dict.return_value = {"type": "file_write", "path": "/data/file.txt"}
+        mock_event_bus.wait_for_event = AsyncMock(return_value=mock_event)
+        svc = EventsService(event_bus=mock_event_bus)
+        result = asyncio.run(svc.wait_for_changes("/data"))
+        assert result == {"type": "file_write", "path": "/data/file.txt"}
+
+
+# =============================================================================
+# wait_for_changes — Race (internal + EventBus)
+# =============================================================================
+
+
+class TestWaitForChangesRace:
+    """Tests for wait_for_changes when both paths are available."""
+
+    def test_internal_wins_race(self, mock_event_bus):
+        """Internal observer fires first → EventBus task cancelled."""
+
+        # EventBus hangs forever (simulating slow remote path)
+        async def _hang(**kwargs):
+            await asyncio.sleep(999)
+
+        mock_event_bus.wait_for_event = AsyncMock(side_effect=_hang)
+        svc = EventsService(event_bus=mock_event_bus)
+        svc._observe_registered = True
+
+        event = _make_event("/data/file.txt")
+
+        async def _test():
+            wait_task = asyncio.create_task(svc.wait_for_changes("/data/file.txt", timeout=5.0))
+            await asyncio.sleep(0.01)
+            svc.on_mutation(event)
+            return await wait_task
+
+        result = asyncio.run(_test())
+        assert result is not None
+        assert result["path"] == "/data/file.txt"
+
+    def test_eventbus_wins_race(self, mock_event_bus):
+        """EventBus fires first → internal task cancelled."""
+        mock_event = MagicMock()
+        mock_event.to_dict.return_value = {"type": "file_write", "path": "/data/file.txt"}
+        mock_event_bus.wait_for_event = AsyncMock(return_value=mock_event)
+        svc = EventsService(event_bus=mock_event_bus)
+        svc._observe_registered = True
+
+        result = asyncio.run(svc.wait_for_changes("/data/file.txt", timeout=5.0))
+        assert result is not None
+        assert result["path"] == "/data/file.txt"
 
 
 # =============================================================================
@@ -317,41 +375,81 @@ class TestLockingNoInfrastructure:
 class TestWaitForChangesNoInfra:
     """Tests for wait_for_changes when no event source is available."""
 
-    def test_raises_not_implemented(self, mock_backend_remote):
-        """Raises NotImplementedError without event source."""
-        svc = EventsService(backend=mock_backend_remote)
+    def test_raises_not_implemented(self):
+        """Raises NotImplementedError without any event source."""
+        svc = EventsService()
         with pytest.raises(NotImplementedError, match="No event source"):
             asyncio.run(svc.wait_for_changes("/data"))
 
 
 # =============================================================================
-# wait_for_changes — Distributed
+# Advisory Locking — Distributed
 # =============================================================================
 
 
-class TestWaitForChangesDistributed:
-    """Tests for wait_for_changes with distributed event bus."""
+class TestDistributedLocking:
+    """Tests for locking via distributed lock manager."""
 
-    def test_returns_none_on_timeout(self, mock_backend_remote, mock_event_bus):
-        """Returns None when event bus times out."""
-        mock_event_bus.wait_for_event = AsyncMock(return_value=None)
-        svc = EventsService(backend=mock_backend_remote, event_bus=mock_event_bus)
-        result = asyncio.run(svc.wait_for_changes("/data", timeout=1.0))
-        assert result is None
+    def test_lock_acquires_distributed(self, mock_lock_manager):
+        """Lock uses distributed lock manager when available."""
+        svc = EventsService(lock_manager=mock_lock_manager)
+        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=5.0, ttl=10.0))
+        assert lock_id == "dist-lock-456"
+        mock_lock_manager.acquire.assert_called_once()
 
-    def test_returns_event_dict(self, mock_backend_remote, mock_event_bus):
-        """Returns event dict from bus."""
-        mock_event = MagicMock()
-        mock_event.to_dict.return_value = {"type": "write", "path": "/data/file.txt"}
-        mock_event_bus.wait_for_event = AsyncMock(return_value=mock_event)
-        svc = EventsService(backend=mock_backend_remote, event_bus=mock_event_bus)
-        result = asyncio.run(svc.wait_for_changes("/data"))
-        assert result == {"type": "write", "path": "/data/file.txt"}
+    def test_lock_returns_none_on_timeout(self, mock_lock_manager):
+        """Lock returns None when distributed lock times out."""
+        mock_lock_manager.acquire = AsyncMock(return_value=None)
+        svc = EventsService(lock_manager=mock_lock_manager)
+        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=1.0))
+        assert lock_id is None
+
+    def test_unlock_releases_distributed(self, mock_lock_manager):
+        """Unlock releases distributed lock."""
+        svc = EventsService(lock_manager=mock_lock_manager)
+        result = asyncio.run(svc.unlock("dist-lock-456", path="/data/file.txt"))
+        assert result is True
+        mock_lock_manager.release.assert_called_once()
+
+    def test_unlock_requires_path_for_distributed(self, mock_lock_manager):
+        """Distributed unlock requires path parameter."""
+        svc = EventsService(lock_manager=mock_lock_manager)
+        with pytest.raises(ValueError, match="path is required"):
+            asyncio.run(svc.unlock("dist-lock-456", path=None))
+
+    def test_extend_lock_distributed(self, mock_lock_manager):
+        """Extend lock uses distributed lock manager."""
+        svc = EventsService(lock_manager=mock_lock_manager)
+        result = asyncio.run(svc.extend_lock("dist-lock-456", path="/data/file.txt", ttl=60.0))
+        assert result is True
+        mock_lock_manager.extend.assert_called_once()
 
 
 # =============================================================================
-# Cache invalidation
+# Locking — No Infrastructure
 # =============================================================================
+
+
+class TestLockingNoInfrastructure:
+    """Tests for locking when no lock infrastructure is available."""
+
+    def test_lock_raises_not_implemented(self):
+        """Lock raises NotImplementedError without any lock manager."""
+        svc = EventsService()
+        with pytest.raises(NotImplementedError, match="No lock manager"):
+            asyncio.run(svc.lock("/data/file.txt"))
+
+    def test_unlock_raises_not_implemented(self):
+        """Unlock raises NotImplementedError without any lock manager."""
+        svc = EventsService()
+        with pytest.raises(NotImplementedError, match="No lock manager"):
+            asyncio.run(svc.unlock("lock-123", path="/data/file.txt"))
+
+    def test_extend_raises_not_implemented(self):
+        """Extend raises NotImplementedError without any lock manager."""
+        svc = EventsService()
+        with pytest.raises(NotImplementedError, match="No lock manager"):
+            asyncio.run(svc.extend_lock("lock-123", path="/data/file.txt"))
 
 
 # =============================================================================
@@ -362,12 +460,12 @@ class TestWaitForChangesDistributed:
 class TestLockedContextManager:
     """Tests for the locked() async context manager."""
 
-    def test_locked_raises_on_timeout(self, mock_backend_remote, mock_lock_manager):
+    def test_locked_raises_on_timeout(self, mock_lock_manager):
         """locked() raises LockTimeout when lock acquisition fails."""
         from nexus.contracts.exceptions import LockTimeout
 
         mock_lock_manager.acquire = AsyncMock(return_value=None)
-        svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)
+        svc = EventsService(lock_manager=mock_lock_manager)
 
         async def _test():
             async with svc.locked("/data/file.txt", timeout=1.0):
@@ -376,9 +474,9 @@ class TestLockedContextManager:
         with pytest.raises(LockTimeout):
             asyncio.run(_test())
 
-    def test_locked_releases_on_exit(self, mock_backend_remote, mock_lock_manager):
+    def test_locked_releases_on_exit(self, mock_lock_manager):
         """locked() releases lock on context exit."""
-        svc = EventsService(backend=mock_backend_remote, lock_manager=mock_lock_manager)
+        svc = EventsService(lock_manager=mock_lock_manager)
 
         async def _test():
             async with svc.locked("/data/file.txt") as lock_id:

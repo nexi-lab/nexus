@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.services.protocols.brick_lifecycle import (
+from nexus.contracts.protocols.brick_lifecycle import (
     BrickReconcileOutcome,
     BrickState,
     DriftAction,
@@ -743,7 +743,7 @@ def _make_reconcilable_brick(
     side_effect: Exception | None = None,
 ) -> AsyncMock:
     """Create a mock brick that satisfies both BrickLifecycleProtocol + ReconcilerProtocol."""
-    from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
+    from nexus.contracts.protocols.brick_lifecycle import BrickLifecycleProtocol
 
     brick = AsyncMock(spec=BrickLifecycleProtocol)
     brick.start = AsyncMock(return_value=None)

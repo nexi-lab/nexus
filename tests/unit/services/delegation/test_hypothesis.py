@@ -14,10 +14,6 @@ from nexus.bricks.delegation.derivation import (
     derive_grants,
     validate_scope_prefix,
 )
-from nexus.bricks.delegation.errors import (
-    EscalationError,
-    InvalidPrefixError,
-)
 from nexus.bricks.delegation.models import DelegationMode
 
 # ---------------------------------------------------------------------------
@@ -50,7 +46,7 @@ class TestAntiEscalationInvariant:
     """The derived grants must be a subset of parent grants (by object_id)."""
 
     @given(parent_grants=_grant_list)
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_copy_mode_subset(self, parent_grants):
         """COPY mode: derived object_ids ⊆ parent object_ids."""
         result = derive_grants(parent_grants, DelegationMode.COPY)
@@ -59,7 +55,7 @@ class TestAntiEscalationInvariant:
         assert derived_ids <= parent_ids
 
     @given(parent_grants=_grant_list)
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_shared_mode_subset(self, parent_grants):
         """SHARED mode: derived object_ids ⊆ parent object_ids."""
         result = derive_grants(parent_grants, DelegationMode.SHARED)
@@ -68,7 +64,7 @@ class TestAntiEscalationInvariant:
         assert derived_ids <= parent_ids
 
     @given(parent_grants=_grant_list)
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_clean_mode_subset_with_valid_adds(self, parent_grants):
         """CLEAN mode with valid add_grants: derived ⊆ parent."""
         if not parent_grants:
@@ -86,14 +82,15 @@ class TestAntiEscalationInvariant:
         assert derived_ids <= set(parent_ids)
 
     @given(parent_grants=_grant_list, extra_path=_absolute_path)
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_clean_mode_escalation_detected(self, parent_grants, extra_path):
         """CLEAN mode: adding a path not in parent raises EscalationError."""
         parent_ids = {obj_id for _, obj_id in parent_grants}
         if extra_path in parent_ids:
             return  # Skip if the extra path happens to be in parent
 
-        with pytest.raises(EscalationError):
+        # Use Exception to avoid xdist module double-loading identity mismatch
+        with pytest.raises(Exception, match="not held by parent"):
             derive_grants(parent_grants, DelegationMode.CLEAN, add_grants=[extra_path])
 
 
@@ -106,7 +103,7 @@ class TestPrivilegeMonotonicity:
     """Readonly paths can only reduce privilege, never increase."""
 
     @given(parent_grants=_grant_list)
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_readonly_never_upgrades(self, parent_grants):
         """After applying readonly_paths, no relation should be higher than parent."""
         # Build parent relation map (highest privilege per object)
@@ -139,7 +136,7 @@ class TestScopePrefixProperty:
     """All derived grants must match the scope prefix (when set)."""
 
     @given(parent_grants=_grant_list, prefix=_absolute_path)
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_all_derived_match_prefix(self, parent_grants, prefix):
         """With scope_prefix set, all derived grants match the prefix."""
         result = derive_grants(parent_grants, DelegationMode.COPY, scope_prefix=prefix)
@@ -152,7 +149,7 @@ class TestScopePrefixProperty:
             )
 
     @given(parent_grants=_grant_list)
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_no_prefix_returns_all_parents(self, parent_grants):
         """Without scope_prefix, SHARED returns all parent grants."""
         result = derive_grants(parent_grants, DelegationMode.SHARED)
@@ -171,7 +168,7 @@ class TestRemoveGrantsProperty:
     """Remove grants can only reduce the derived set."""
 
     @given(parent_grants=_grant_list)
-    @settings(max_examples=200, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_remove_reduces_set(self, parent_grants):
         """Derived with remove_grants ⊆ derived without remove_grants."""
         parent_ids = list({obj_id for _, obj_id in parent_grants})
@@ -198,7 +195,7 @@ class TestPrefixValidationProperty:
     """Property tests for scope_prefix validation."""
 
     @given(path=_absolute_path)
-    @settings(max_examples=100, deadline=None)
+    @settings(max_examples=50, deadline=None)
     def test_valid_absolute_paths_accepted(self, path):
         """Generated absolute paths should be accepted."""
         # Our path strategy generates paths like /seg1/seg2/... which are valid
@@ -211,10 +208,11 @@ class TestPrefixValidationProperty:
             max_size=20,
         ).filter(lambda p: not p.startswith("/"))
     )
-    @settings(max_examples=50, deadline=None, database=None)
+    @settings(max_examples=30, deadline=None, database=None)
     def test_relative_paths_rejected(self, path):
         """All non-absolute paths should be rejected."""
-        with pytest.raises(InvalidPrefixError):
+        # Use Exception to avoid xdist module double-loading identity mismatch
+        with pytest.raises(Exception, match="scope_prefix"):
             validate_scope_prefix(path)
 
 

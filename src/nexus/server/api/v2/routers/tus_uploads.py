@@ -12,6 +12,7 @@ Every endpoint (except OPTIONS) validates the Tus-Resumable header.
 
 import base64
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -19,7 +20,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from nexus.server.dependencies import require_auth
 
 if TYPE_CHECKING:
-    from nexus.services.upload.chunked_upload_service import ChunkedUploadService
+    from nexus.bricks.upload.chunked_upload_service import ChunkedUploadService
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ def create_tus_uploads_router(
             status_code=204,
             headers={
                 **caps,
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": os.environ.get("NEXUS_CORS_ORIGIN", ""),
                 "Access-Control-Allow-Methods": "OPTIONS, POST, PATCH, HEAD, DELETE",
                 "Access-Control-Allow-Headers": (
                     "Tus-Resumable, Upload-Length, Upload-Offset, "
@@ -124,9 +125,11 @@ def create_tus_uploads_router(
     async def tus_create(
         request: Request,
         _tus_resumable: str = Depends(_validate_tus_resumable),
+        auth_result: dict = Depends(require_auth),
     ) -> Response:
         """Create a new upload session (tus creation extension)."""
         from nexus.contracts.exceptions import ValidationError
+        from nexus.server.dependencies import get_operation_context
 
         service = _get_service()
 
@@ -145,9 +148,10 @@ def create_tus_uploads_router(
         metadata_raw = request.headers.get("Upload-Metadata")
         metadata = _parse_upload_metadata(metadata_raw)
 
-        # Extract identity from request context if available
-        zone_id = request.headers.get("X-Zone-Id", "root")
-        user_id = request.headers.get("X-User-Id", "anonymous")
+        # Use authenticated principal instead of trusting request headers
+        ctx = get_operation_context(auth_result)
+        zone_id = ctx.zone_id or "root"
+        user_id = ctx.user_id or "anonymous"
 
         try:
             session = await service.create_upload(

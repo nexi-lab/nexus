@@ -112,9 +112,9 @@ def server():
     meta_dir = os.path.join(data_dir, "metadata")
     db_path = os.path.join(data_dir, "nexus.db")
     server_script = f"""
-import sys, os
+import sys, os, asyncio
 sys.path.insert(0, os.environ.get('PYTHONPATH', ''))
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.core.config import PermissionConfig
@@ -122,16 +122,16 @@ from nexus.factory import create_nexus_fs
 from nexus.server.fastapi_server import create_app
 import uvicorn
 
-backend = LocalBackend(root_path='{backend_root}')
+backend = CASLocalBackend(root_path='{backend_root}')
 metadata_store = RaftMetadataStore.embedded('{meta_dir}')
 record_store = SQLAlchemyRecordStore(db_path='{db_path}')
 
-nx = create_nexus_fs(
+nx = asyncio.run(create_nexus_fs(
     backend=backend,
     metadata_store=metadata_store,
     record_store=record_store,
     permissions=PermissionConfig(enforce=True, enforce_zone_isolation=True),
-)
+))
 # Open-access mode (no api_key) so X-Nexus-Subject/Zone-ID headers
 # are respected for identity. Static API key auth always returns
 # subject_id="admin" which defeats multi-user isolation testing.

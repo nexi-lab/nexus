@@ -1,4 +1,4 @@
-"""Realtime startup/shutdown: event bus, event log, WebSocket, WriteBack, locks.
+"""Realtime startup/shutdown: event bus, WebSocket, WriteBack, locks.
 
 Extracted from fastapi_server.py (#1602).
 """
@@ -20,7 +20,6 @@ async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """Initialize realtime infrastructure and return background tasks.
 
     Covers:
-    - Event Log WAL (Issue #1397)
     - Event bus start + wiring
     - Event Stream Exporters (Issue #1138)
     - WebSocket Manager (Issue #1116)
@@ -29,7 +28,6 @@ async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """
     bg_tasks: list[asyncio.Task] = []
 
-    _startup_event_log(app, svc)
     await _startup_event_bus(app, svc)
     _startup_exporter_registry(app, svc)
     await _startup_websocket(app, svc)
@@ -84,14 +82,6 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error closing exporter registry: %s", e, exc_info=True)
 
-    # Close Event Log WAL (Issue #1397)
-    if app.state.event_log:
-        try:
-            await app.state.event_log.close()
-            logger.info("Event log closed")
-        except Exception as e:
-            logger.warning("Error closing event log: %s", e, exc_info=True)
-
     # Close subscription manager
     if app.state.subscription_manager:
         await app.state.subscription_manager.close()
@@ -105,20 +95,8 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_event_log(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Wire factory-created EventLog into app.state (Issue #2195).
-
-    Construction moved to ``factory._boot_system_services``.
-    Lifespan reads the pre-built instance from LifespanServices (extracted
-    once in ``from_app()``).
-    """
-    app.state.event_log = svc.event_log
-    if app.state.event_log:
-        logger.info("Event log wired from factory (WAL)")
-
-
-async def _startup_event_bus(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Start event bus and wire event log for WAL-first persistence (Issue #1397)."""
+async def _startup_event_bus(_app: "FastAPI", svc: "LifespanServices") -> None:
+    """Start event bus."""
     if not svc.nexus_fs:
         return
 
@@ -144,11 +122,6 @@ async def _startup_event_bus(app: "FastAPI", svc: "LifespanServices") -> None:
 
     # Issue #1331: Store main event loop ref for cross-thread event publishing
     svc.nexus_fs._main_event_loop = asyncio.get_running_loop()
-
-    # Wire event_log into EventBus for WAL-first durability (Issue #1397)
-    if app.state.event_log is not None and hasattr(event_bus_ref, "set_event_log"):
-        event_bus_ref.set_event_log(app.state.event_log)
-        logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
 
 async def _startup_websocket(app: "FastAPI", svc: "LifespanServices") -> None:
@@ -184,22 +157,20 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
     write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
 
     try:
+        # Always initialize ConflictLogStore for the REST API, even when write-back is disabled
+        from nexus.system_services.gateway import NexusFSGateway
+        from nexus.system_services.sync.conflict_log_store import ConflictLogStore
+
+        gw = NexusFSGateway(svc.nexus_fs)
+        _is_pg = gw.is_postgresql
+        conflict_log_store = ConflictLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
+        app.state.conflict_log_store = conflict_log_store
+
         if write_back_enabled:
-            from nexus.services.gateway import NexusFSGateway
             from nexus.system_services.sync.change_log_store import ChangeLogStore
-            from nexus.system_services.sync.conflict_log_store import ConflictLogStore
             from nexus.system_services.sync.conflict_resolution import ConflictStrategy
             from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
             from nexus.system_services.sync.write_back_service import WriteBackService
-
-            gw = NexusFSGateway(svc.nexus_fs)
-
-            # ConflictLogStore is always available for the REST API
-            _is_pg = gw.is_postgresql
-            conflict_log_store = ConflictLogStore(
-                record_store=gw.record_store, is_postgresql=_is_pg
-            )
-            app.state.conflict_log_store = conflict_log_store
 
             wb_event_bus = svc.event_bus
             if wb_event_bus:
@@ -233,7 +204,7 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
 
         # Fallback: provide InMemoryWriteBack so sync endpoints return
         # zero-change responses instead of 503 in standalone mode.
-        from nexus.services.protocols.write_back import InMemoryWriteBack
+        from nexus.contracts.protocols.write_back import InMemoryWriteBack
 
         app.state.write_back_service = InMemoryWriteBack()
         await app.state.write_back_service.start()
@@ -261,9 +232,9 @@ def _startup_exporter_registry(app: "FastAPI", _svc: "LifespanServices") -> None
     app.state.exporter_registry = None
 
     try:
-        from nexus.services.event_log.exporter_registry import ExporterRegistry
-        from nexus.services.event_log.exporters.config import EventStreamConfig
-        from nexus.services.event_log.exporters.factory import create_exporter
+        from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
+        from nexus.system_services.event_subsystem.log.exporters.config import EventStreamConfig
+        from nexus.system_services.event_subsystem.log.exporters.factory import create_exporter
 
         # Read config from env vars
         enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")

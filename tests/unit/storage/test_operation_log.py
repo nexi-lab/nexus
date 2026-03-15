@@ -1,17 +1,26 @@
 """Unit tests for operation logging and undo capability."""
 
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
+from nexus.contracts.constants import INLINE_THRESHOLD
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+# Undo tests read content directly from CAS backend; content must exceed
+# INLINE_THRESHOLD to avoid the inline data path (Issue #1508).
+_CAS_PAD = b"\x00" * (INLINE_THRESHOLD + 1)
+
+
+def _cas(payload: bytes) -> bytes:
+    return payload + _CAS_PAD
 
 
 @pytest.fixture
@@ -30,17 +39,17 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-def local_backend(temp_dir: Path) -> LocalBackend:
-    """Create a LocalBackend for direct CAS operations in tests."""
-    return LocalBackend(temp_dir)
+def local_backend(temp_dir: Path) -> CASLocalBackend:
+    """Create a CASLocalBackend for direct CAS operations in tests."""
+    return CASLocalBackend(temp_dir)
 
 
 @pytest.fixture
-def nx(
-    temp_dir: Path, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
-) -> Generator[NexusFS, None, None]:
+async def nx(
+    temp_dir: Path, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
+) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance for testing."""
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=local_backend,
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,
@@ -51,13 +60,14 @@ def nx(
     nx.close()
 
 
-def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+@pytest.mark.asyncio
+async def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that write operations are logged."""
     path = "/test.txt"
     content = b"Test content"
 
     # Write file
-    nx.sys_write(path, content)
+    await nx.sys_write(path, content)
 
     # Check operation log
     with record_store.session_factory() as session:
@@ -72,18 +82,21 @@ def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore
         assert latest.snapshot_hash is None  # New file, no previous version
 
 
-def test_write_update_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+@pytest.mark.asyncio
+async def test_write_update_operation_logged(
+    nx: NexusFS, record_store: SQLAlchemyRecordStore
+) -> None:
     """Test that updating a file logs the previous version."""
     path = "/test.txt"
     content1 = b"Version 1"
     content2 = b"Version 2"
 
-    # Write initial version
-    result1 = nx.sys_write(path, content1)
+    # Write initial version (use write() to get metadata dict with etag)
+    result1 = await nx.write(path, content1)
     old_hash = result1["etag"]
 
     # Update file
-    nx.sys_write(path, content2)
+    await nx.sys_write(path, content2)
 
     # Check operation log
     with record_store.session_factory() as session:
@@ -93,28 +106,29 @@ def test_write_update_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
         # Should have 2 operations: initial write and update
         assert len(operations) == 2
 
-        # Most recent operation should have snapshot of previous version
+        # Most recent operation should have snapshot of previous version hash
         latest = operations[0]
         assert latest.operation_type == "write"
         assert latest.path == path
         assert latest.snapshot_hash == old_hash  # Should store previous content hash
 
-        # Check metadata snapshot
+        # metadata_snapshot stores the NEW metadata (for MCL replay, Issue #2929)
         metadata = logger.get_metadata_snapshot(latest)
         assert metadata is not None
-        assert metadata["size"] == len(content1)
-        assert metadata["version"] == 1
+        assert metadata["size"] == len(content2)
+        assert metadata["version"] == 2
 
 
-def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+@pytest.mark.asyncio
+async def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that delete operations are logged with snapshot."""
     path = "/test.txt"
     content = b"Test content"
 
-    # Write and then delete
-    result = nx.sys_write(path, content)
+    # Write and then delete (use write() to get metadata dict with etag)
+    result = await nx.write(path, content)
     content_hash = result["etag"]
-    nx.sys_unlink(path)
+    await nx.sys_unlink(path)
 
     # Check operation log
     with record_store.session_factory() as session:
@@ -134,39 +148,55 @@ def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStor
         assert metadata["size"] == len(content)
 
 
-def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
-    """Test that rename operations are logged."""
+@pytest.mark.asyncio
+async def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+    """Test that rename operations are logged.
+
+    The PR #2929 two-row rename pattern creates 2 operation_log rows:
+    Row 1 (DELETE old URN): path=old_path, new_path=new_path
+    Row 2 (UPSERT new URN): path=new_path
+    """
     old_path = "/old.txt"
     new_path = "/new.txt"
     content = b"Test content"
 
     # Write and then rename
-    nx.sys_write(old_path, content)
-    nx.sys_rename(old_path, new_path)
+    await nx.sys_write(old_path, content)
+    await nx.sys_rename(old_path, new_path)
 
-    # Check operation log
+    # Check operation log — two-row rename pattern (Issue #2929)
     with record_store.session_factory() as session:
         logger = OperationLogger(session)
         operations = logger.list_operations(operation_type="rename", limit=10)
 
-        assert len(operations) >= 1
-        latest = operations[0]
-        assert latest.operation_type == "rename"
-        assert latest.path == old_path
-        assert latest.new_path == new_path
-        assert latest.status == "success"
+        # Two rows: DELETE old URN + UPSERT new URN
+        assert len(operations) >= 2
+        # Most recent row (UPSERT new URN)
+        upsert_row = operations[0]
+        assert upsert_row.operation_type == "rename"
+        assert upsert_row.path == new_path
+        assert upsert_row.status == "success"
+        # Older row (DELETE old URN)
+        delete_row = operations[1]
+        assert delete_row.operation_type == "rename"
+        assert delete_row.path == old_path
+        assert delete_row.new_path == new_path
+        assert delete_row.status == "success"
 
 
-def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+@pytest.mark.asyncio
+async def test_operation_log_filtering_by_agent(
+    nx: NexusFS, record_store: SQLAlchemyRecordStore
+) -> None:
     """Test filtering operations by agent ID using context parameter."""
     from nexus.contracts.types import OperationContext
 
     # Use context parameter with different agent IDs
     context1 = OperationContext(user_id="test", groups=[], agent_id="agent-1")
-    nx.sys_write("/file1.txt", b"Content 1", context=context1)
+    await nx.sys_write("/file1.txt", b"Content 1", context=context1)
 
     context2 = OperationContext(user_id="test", groups=[], agent_id="agent-2")
-    nx.sys_write("/file2.txt", b"Content 2", context=context2)
+    await nx.sys_write("/file2.txt", b"Content 2", context=context2)
 
     # Check operation log filtering
     with record_store.session_factory() as session:
@@ -183,15 +213,18 @@ def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyR
         assert all(op.agent_id == "agent-2" for op in ops_agent2)
 
 
-def test_operation_log_filtering_by_type(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+@pytest.mark.asyncio
+async def test_operation_log_filtering_by_type(
+    nx: NexusFS, record_store: SQLAlchemyRecordStore
+) -> None:
     """Test filtering operations by type."""
     path = "/test.txt"
 
     # Perform various operations
-    nx.sys_write(path, b"Content")
-    nx.sys_write(path, b"Updated")
-    nx.sys_rename(path, "/renamed.txt")
-    nx.sys_unlink("/renamed.txt")
+    await nx.sys_write(path, b"Content")
+    await nx.sys_write(path, b"Updated")
+    await nx.sys_rename(path, "/renamed.txt")
+    await nx.sys_unlink("/renamed.txt")
 
     # Check operation log filtering
     with record_store.session_factory() as session:
@@ -213,14 +246,15 @@ def test_operation_log_filtering_by_type(nx: NexusFS, record_store: SQLAlchemyRe
         assert all(op.operation_type == "rename" for op in rename_ops)
 
 
-def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+@pytest.mark.asyncio
+async def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting operation history for a specific path."""
     path = "/test.txt"
 
     # Perform multiple operations on same path
-    nx.sys_write(path, b"Version 1")
-    nx.sys_write(path, b"Version 2")
-    nx.sys_write(path, b"Version 3")
+    await nx.sys_write(path, b"Version 1")
+    await nx.sys_write(path, b"Version 2")
+    await nx.sys_write(path, b"Version 3")
 
     # Check path history
     with record_store.session_factory() as session:
@@ -232,11 +266,12 @@ def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> N
         assert all(op.operation_type == "write" for op in history)
 
 
-def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+@pytest.mark.asyncio
+async def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting the last operation."""
     # Perform operations
-    nx.sys_write("/file1.txt", b"Content 1")
-    nx.sys_write("/file2.txt", b"Content 2")
+    await nx.sys_write("/file1.txt", b"Content 1")
+    await nx.sys_write("/file2.txt", b"Content 2")
 
     # Get last operation
     with record_store.session_factory() as session:
@@ -248,34 +283,36 @@ def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) ->
         assert last_op.operation_type == "write"
 
 
-def test_undo_write_new_file(nx: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_undo_write_new_file(nx: NexusFS) -> None:
     """Test undoing a write operation for a new file (should delete it)."""
     path = "/test.txt"
     content = b"Test content"
 
     # Write file
-    nx.sys_write(path, content)
-    assert nx.sys_access(path)
+    await nx.sys_write(path, content)
+    assert await nx.sys_access(path)
 
     # Undo by deleting the file
-    nx.sys_unlink(path)
-    assert not nx.sys_access(path)
+    await nx.sys_unlink(path)
+    assert not await nx.sys_access(path)
 
 
-def test_undo_write_update(
-    nx: NexusFS, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
+@pytest.mark.asyncio
+async def test_undo_write_update(
+    nx: NexusFS, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> None:
     """Test undoing a write operation that updated an existing file."""
     path = "/test.txt"
-    content1 = b"Version 1"
-    content2 = b"Version 2"
+    content1 = _cas(b"Version 1")
+    content2 = _cas(b"Version 2")
 
-    # Write initial version
-    result1 = nx.sys_write(path, content1)
+    # Write initial version (use write() to get metadata dict with etag)
+    result1 = await nx.write(path, content1)
     old_hash = result1["etag"]
 
     # Update file
-    nx.sys_write(path, content2)
+    await nx.sys_write(path, content2)
 
     # Get the update operation
     with record_store.session_factory() as session:
@@ -288,26 +325,27 @@ def test_undo_write_update(
 
         # Undo by restoring old content
         old_content = local_backend.read_content(last_op.snapshot_hash)
-        nx.sys_write(path, old_content)
+        await nx.sys_write(path, old_content)
 
         # Verify restoration
-        restored_content = nx.sys_read(path)
+        restored_content = await nx.sys_read(path)
         assert restored_content == content1
 
 
-def test_undo_delete(
-    nx: NexusFS, local_backend: LocalBackend, record_store: SQLAlchemyRecordStore
+@pytest.mark.asyncio
+async def test_undo_delete(
+    nx: NexusFS, local_backend: CASLocalBackend, record_store: SQLAlchemyRecordStore
 ) -> None:
     """Test undoing a delete operation."""
     path = "/test.txt"
     content = b"Test content"
 
-    # Write and delete
-    result = nx.sys_write(path, content)
+    # Write and delete (use write() to get metadata dict with etag)
+    result = await nx.write(path, content)
     content_hash = result["etag"]
     local_backend.write_content(content)  # Hold extra CAS reference so blob survives unlink
-    nx.sys_unlink(path)
-    assert not nx.sys_access(path)
+    await nx.sys_unlink(path)
+    assert not await nx.sys_access(path)
 
     # Get delete operation
     with record_store.session_factory() as session:
@@ -319,37 +357,46 @@ def test_undo_delete(
 
         # Undo by restoring from snapshot
         restored_content = local_backend.read_content(last_op.snapshot_hash)
-        nx.sys_write(path, restored_content)
+        await nx.sys_write(path, restored_content)
 
         # Verify restoration
-        assert nx.sys_access(path)
-        assert nx.sys_read(path) == content
+        assert await nx.sys_access(path)
+        assert await nx.sys_read(path) == content
 
 
-def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
-    """Test undoing a rename operation."""
+@pytest.mark.asyncio
+async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
+    """Test undoing a rename operation.
+
+    With two-row rename (Issue #2929), get_last_operation returns the
+    most recent row (UPSERT new URN, path=new_path). The older row
+    (DELETE old URN) has path=old_path and new_path=new_path.
+    """
     old_path = "/old.txt"
     new_path = "/new.txt"
     content = b"Test content"
 
     # Write and rename
-    nx.sys_write(old_path, content)
-    nx.sys_rename(old_path, new_path)
-    assert not nx.sys_access(old_path)
-    assert nx.sys_access(new_path)
+    await nx.sys_write(old_path, content)
+    await nx.sys_rename(old_path, new_path)
+    assert not await nx.sys_access(old_path)
+    assert await nx.sys_access(new_path)
 
-    # Get rename operation
+    # Get rename operations — two-row pattern
     with record_store.session_factory() as session:
         logger = OperationLogger(session)
-        last_op = logger.get_last_operation(operation_type="rename")
+        rename_ops = logger.list_operations(operation_type="rename", limit=10)
 
-        assert last_op is not None
-        assert last_op.path == old_path
-        assert last_op.new_path == new_path
+        # Two rows from the two-row rename pattern
+        assert len(rename_ops) >= 2
+        # Older row (DELETE old URN) has both paths
+        delete_row = rename_ops[1]
+        assert delete_row.path == old_path
+        assert delete_row.new_path == new_path
 
         # Undo by renaming back
-        nx.sys_rename(new_path, old_path)
+        await nx.sys_rename(new_path, old_path)
 
         # Verify undo
-        assert nx.sys_access(old_path)
-        assert not nx.sys_access(new_path)
+        assert await nx.sys_access(old_path)
+        assert not await nx.sys_access(new_path)

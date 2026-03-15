@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.delegating import DelegatingBackend
 from nexus.core.object_store import WriteResult
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,6 @@ def mock_inner() -> MagicMock:
     type(mock).has_root_path = PropertyMock(return_value=True)
     type(mock).has_token_manager = PropertyMock(return_value=True)
     type(mock).has_data_dir = PropertyMock(return_value=True)
-    type(mock).is_passthrough = PropertyMock(return_value=True)
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=True)
     return mock
 
@@ -63,7 +62,6 @@ class TestPropertyDelegation:
             "has_root_path",
             "has_token_manager",
             "has_data_dir",
-            "is_passthrough",
             "supports_parallel_mmap_read",
         ],
     )

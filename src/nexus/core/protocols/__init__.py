@@ -8,7 +8,7 @@ for storage backend abstraction.
 
 Non-kernel protocols have been moved to their correct tier locations:
 - Service protocols (EntityRegistry, PermissionEnforcer, ReBACManager,
-  WorkspaceManager) → nexus.services.protocols/
+  WorkspaceManager) → nexus.contracts.protocols/
 - Cross-tier contracts (Describable, WirableFS) → nexus.contracts/
 - ContentServiceProtocol → deleted (zero consumers)
 - ReBACManagerProtocol → merged into ReBACBrickProtocol (DRY)
@@ -22,7 +22,7 @@ References:
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.protocols.caching import CacheConfigContract, CachingConnectorContract
-from nexus.core.protocols.capabilities import ConnectorCapability
+from nexus.contracts.capabilities import ConnectorCapability
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
     CapabilityAwareProtocol,
@@ -31,7 +31,6 @@ from nexus.core.protocols.connector import (
     DirectoryListingProtocol,
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
-    PassthroughProtocol,
     PathDeleteProtocol,
     SearchableConnector,
     SignedUrlProtocol,
@@ -54,7 +53,6 @@ __all__ = [
     "MountInfo",
     "NullCacheStore",
     "OAuthCapableProtocol",
-    "PassthroughProtocol",
     "PathDeleteProtocol",
     "ResolvedPath",
     "SearchableConnector",

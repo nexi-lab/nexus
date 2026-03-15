@@ -5,9 +5,12 @@ when the circuit breaker allows requests.
 """
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from nexus.proxy.errors import RemoteCallError, is_connection_error
@@ -44,12 +47,14 @@ class ReplayEngine:
         circuit: "AsyncCircuitBreaker",
         batch_size: int,
         poll_interval: float,
+        on_replay_success: Callable[[], None] | None = None,
     ) -> None:
         self._queue = queue
         self._transport = transport
         self._circuit = circuit
         self._batch_size = batch_size
         self._poll_interval = poll_interval
+        self._on_replay_success = on_replay_success
         self._stopped = False
         self._wake = asyncio.Event()
         self._replayed_keys: dict[str, None] = {}
@@ -80,28 +85,52 @@ class ReplayEngine:
 
                 logger.info("Replaying %d queued operations", len(batch))
                 for op in batch:
-                    # Re-check before each replay to avoid racing with circuit state changes
-                    if self._circuit.is_open:
-                        logger.warning("Circuit opened during replay — stopping batch")
+                    # Gate each op through allow_request() to respect half-open limits
+                    if not await self._circuit.allow_request():
+                        logger.warning("Circuit does not allow requests — stopping batch")
                         break
 
                     try:
-                        # Idempotency check: skip if already replayed
-                        if op.idempotency_key and op.idempotency_key in self._replayed_keys:
-                            logger.info(
-                                "Skipping duplicate op %d (key=%s)", op.id, op.idempotency_key[:8]
-                            )
-                            await self._queue.mark_done(op.id)
-                            continue
+                        # Idempotency: check persistent store first (survives restarts)
+                        if op.idempotency_key:
+                            if hasattr(
+                                self._queue, "has_idempotency_key"
+                            ) and await self._queue.has_idempotency_key(op.idempotency_key):
+                                logger.info(
+                                    "Skipping duplicate op %d (persistent key=%s)",
+                                    op.id,
+                                    op.idempotency_key[:8],
+                                )
+                                await self._queue.mark_done(op.id)
+                                continue
+                            if op.idempotency_key in self._replayed_keys:
+                                logger.info(
+                                    "Skipping duplicate op %d (key=%s)",
+                                    op.id,
+                                    op.idempotency_key[:8],
+                                )
+                                await self._queue.mark_done(op.id)
+                                continue
 
                         kwargs = json.loads(op.kwargs_json)
                         if not isinstance(kwargs, dict):
                             logger.error("Invalid kwargs_json for op %d: not a dict", op.id)
                             await self._queue.mark_dead_letter(op.id)
                             continue
-                        await self._transport.call(op.method, params=kwargs)
+
+                        # Dispatch: use stream_upload for ops with a stored payload
+                        if op.payload_ref:
+                            payload_data = base64.b64decode(op.payload_ref)
+                            await self._transport.stream_upload(
+                                op.method, payload_data, params=kwargs
+                            )
+                        else:
+                            await self._transport.call(op.method, params=kwargs)
+
                         await self._queue.mark_done(op.id)
                         await self._circuit.record_success()
+                        if self._on_replay_success is not None:
+                            self._on_replay_success()
                         if op.idempotency_key:
                             self._replayed_keys[op.idempotency_key] = None
                             if len(self._replayed_keys) > self._max_replayed_keys:
@@ -109,8 +138,8 @@ class ReplayEngine:
                                 excess = len(self._replayed_keys) - self._max_replayed_keys
                                 for evict_key in list(self._replayed_keys)[:excess]:
                                     del self._replayed_keys[evict_key]
-                    except json.JSONDecodeError as jexc:
-                        logger.error("Failed to decode op %d: %s", op.id, jexc)
+                    except (json.JSONDecodeError, binascii.Error) as decode_exc:
+                        logger.error("Failed to decode op %d: %s", op.id, decode_exc)
                         await self._queue.mark_dead_letter(op.id)
                     except RemoteCallError as exc:
                         if is_connection_error(exc):

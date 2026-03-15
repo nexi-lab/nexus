@@ -17,19 +17,23 @@ class AutoParseWriteHook:
     """Post-write hook that auto-parses files in background threads.
 
     Uses non-daemon threads to prevent DB corruption on shutdown.
+    Also invalidates cached parsed_text on every write (Issue #1383).
 
     Dependencies injected at construction:
       - get_parser:  (path) -> parser | raises if unsupported
-      - parse_fn:    async (path, store_result=True) -> result
+      - parse_fn:    (content: bytes, path: str) -> bytes | None
+      - metadata:    MetastoreABC (optional, for cache invalidation)
     """
 
     def __init__(
         self,
         get_parser: Callable[[str], Any],
         parse_fn: Callable[..., Any],
+        metadata: Any = None,
     ) -> None:
         self._get_parser = get_parser
         self._parse_fn = parse_fn
+        self._metadata = metadata
         self._threads: list[threading.Thread] = []
         self._lock = threading.Lock()
 
@@ -38,14 +42,23 @@ class AutoParseWriteHook:
         return "auto_parse"
 
     def on_post_write(self, ctx: WriteHookContext) -> None:
+        # Invalidate cached parsed_text so ContentParserEngine re-parses
+        if self._metadata is not None:
+            try:
+                self._metadata.set_file_metadata(ctx.path, "parsed_text", None)
+                self._metadata.set_file_metadata(ctx.path, "parsed_at", None)
+                self._metadata.set_file_metadata(ctx.path, "parser_name", None)
+            except Exception:
+                pass  # Best-effort cache invalidation
+
         try:
             self._get_parser(ctx.path)
         except Exception:
-            return
+            return  # No parser available for this file type — skip background parse
 
         thread = threading.Thread(
             target=self._run_parse,
-            args=(ctx.path,),
+            args=(ctx.content, ctx.path),
             daemon=False,
             name=f"parser-{ctx.path}",
         )
@@ -54,11 +67,9 @@ class AutoParseWriteHook:
             self._threads.append(thread)
         thread.start()
 
-    def _run_parse(self, path: str) -> None:
+    def _run_parse(self, content: bytes, path: str) -> None:
         try:
-            from nexus.lib.sync_bridge import run_sync
-
-            run_sync(self._parse_fn(path, store_result=True))
+            self._parse_fn(content, path)
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e)

@@ -45,7 +45,11 @@ async def startup_bricks(_app: "FastAPI", svc: "LifespanServices") -> list[async
     reconciler = svc.brick_reconciler
     if reconciler is not None:
         try:
-            await reconciler.start()
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("brick_reconciler", reconciler)
+            else:
+                await reconciler.start()
         except Exception as exc:
             logger.warning("[RECONCILER] Failed to start: %s", exc)
 
@@ -61,14 +65,7 @@ async def shutdown_bricks(_app: "FastAPI", svc: "LifespanServices") -> None:
     if manager is None:
         return
 
-    # Stop brick reconciler before unmounting (Issue #2060)
-    reconciler = svc.brick_reconciler
-    if reconciler is not None:
-        try:
-            await reconciler.stop()
-            logger.info("[RECONCILER] Stopped")
-        except Exception as exc:
-            logger.warning("[RECONCILER] Failed to stop: %s", exc)
+    # brick_reconciler (Q3) — stopped by coordinator via aclose()
 
     try:
         report = await manager.unmount_all()

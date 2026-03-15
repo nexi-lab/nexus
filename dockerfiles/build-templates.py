@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build all Docker template images from config.demo.yaml.
 
-This script is called by docker-start.sh during initialization to pre-build
+This script is called by nexus-docker.sh during initialization to pre-build
 all template images with inline Dockerfile overrides.
 """
 

@@ -5,13 +5,14 @@ Tests cover performance optimizations:
 - Only creating parent tuples for new files
 """
 
+import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.contracts.types import SyncContext
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -30,12 +31,14 @@ def temp_dir():
 def nx_with_hierarchy(temp_dir: Path):
     """Create a NexusFS instance with hierarchy manager enabled."""
 
-    nx = create_nexus_fs(
-        backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        parsing=ParseConfig(auto_parse=False),
-        permissions=PermissionConfig(enforce=False),  # Disable to allow test operations
+    nx = asyncio.run(
+        create_nexus_fs(
+            backend=CASLocalBackend(temp_dir),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),  # Disable to allow test operations
+        )
     )
     yield nx
     nx.close()
@@ -44,7 +47,8 @@ def nx_with_hierarchy(temp_dir: Path):
 class TestMountSyncOptimization:
     """Test mount sync optimizations for performance."""
 
-    def test_no_parent_tuple_recreation_for_existing_files(
+    @pytest.mark.asyncio
+    async def test_no_parent_tuple_recreation_for_existing_files(
         self, nx_with_hierarchy: NexusFS, temp_dir: Path
     ):
         """Test that sync doesn't recreate parent tuples for existing files."""
@@ -53,7 +57,7 @@ class TestMountSyncOptimization:
         test_file.write_text("content")
 
         # Write file to NexusFS (creates parent tuples)
-        nx_with_hierarchy.sys_write("/test.txt", b"content")
+        await nx_with_hierarchy.sys_write("/test.txt", b"content")
 
         # Create a mock backend with the file
         mock_backend = Mock()
@@ -64,8 +68,8 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend"
         backend_dir.mkdir()
-        nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}
+        nx_with_hierarchy.service("mount_core").add_mount(
+            "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
         # Mock hierarchy manager to track tuple creation calls
@@ -79,7 +83,9 @@ class TestMountSyncOptimization:
                 import contextlib
 
                 with contextlib.suppress(Exception):
-                    nx_with_hierarchy._sync_service.sync_mount(SyncContext(mount_point="/mnt/test"))
+                    nx_with_hierarchy.service("sync").sync_mount(
+                        SyncContext(mount_point="/mnt/test")
+                    )
 
                 # CRITICAL: For existing files, ensure_parent_tuples should NOT be called
                 # This is the optimization - don't recreate tuples that already exist
@@ -96,8 +102,8 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend2"
         backend_dir.mkdir()
-        nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}
+        nx_with_hierarchy.service("mount_core").add_mount(
+            "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
         # Mock hierarchy manager to track tuple creation
@@ -111,12 +117,15 @@ class TestMountSyncOptimization:
                 import contextlib
 
                 with contextlib.suppress(Exception):
-                    nx_with_hierarchy._sync_service.sync_mount(SyncContext(mount_point="/mnt/test"))
+                    nx_with_hierarchy.service("sync").sync_mount(
+                        SyncContext(mount_point="/mnt/test")
+                    )
 
                 # For NEW files, ensure_parent_tuples SHOULD be called
                 # This is correct behavior - new files need their parent tuples
 
-    def test_sync_performance_with_many_existing_files(
+    @pytest.mark.asyncio
+    async def test_sync_performance_with_many_existing_files(
         self, nx_with_hierarchy: NexusFS, temp_dir: Path
     ):
         """Test that sync is fast with many existing files (no redundant tuple checks)."""
@@ -129,7 +138,7 @@ class TestMountSyncOptimization:
             file.write_text(f"content{i}")
             files.append(f"file{i}.txt")
             # Pre-create in NexusFS metadata
-            nx_with_hierarchy.sys_write(f"/file{i}.txt", f"content{i}".encode())
+            await nx_with_hierarchy.sys_write(f"/file{i}.txt", f"content{i}".encode())
 
         # Create mock backend
         mock_backend = Mock()
@@ -140,8 +149,8 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend3"
         backend_dir.mkdir()
-        nx_with_hierarchy._mount_core_service.add_mount(
-            "/mnt/test", "local", {"data_dir": str(backend_dir)}
+        nx_with_hierarchy.service("mount_core").add_mount(
+            "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
         # Track tuple creation calls
@@ -161,7 +170,9 @@ class TestMountSyncOptimization:
                 import contextlib
 
                 with contextlib.suppress(Exception):
-                    nx_with_hierarchy._sync_service.sync_mount(SyncContext(mount_point="/mnt/test"))
+                    nx_with_hierarchy.service("sync").sync_mount(
+                        SyncContext(mount_point="/mnt/test")
+                    )
 
                 elapsed = time.time() - start
 
@@ -180,10 +191,11 @@ class TestMountSyncOptimization:
 class TestMountDatabaseVsConfig:
     """Test database vs config mount precedence."""
 
-    def test_database_mount_overrides_config(self, temp_dir: Path):
+    @pytest.mark.asyncio
+    async def test_database_mount_overrides_config(self, temp_dir: Path):
         """Test that database-saved mounts take precedence over config."""
-        nx = create_nexus_fs(
-            backend=LocalBackend(temp_dir),
+        nx = await create_nexus_fs(
+            backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
             parsing=ParseConfig(auto_parse=False),
@@ -197,13 +209,15 @@ class TestMountDatabaseVsConfig:
         # Create a mount
         backend1_dir = temp_dir / "backend1"
         backend1_dir.mkdir()
-        nx._mount_core_service.add_mount("/mnt/test", "local", {"data_dir": str(backend1_dir)})
+        nx.service("mount_core").add_mount(
+            "/mnt/test", "cas_local", {"data_dir": str(backend1_dir)}
+        )
 
         # Save to database
         if hasattr(nx, "mount_manager") and nx.mount_manager:
             nx.mount_manager.save_mount(
                 mount_point="/mnt/test",
-                backend_type="local",
+                backend_type="cas_local",
                 backend_config={"data_dir": str(temp_dir / "backend1")},
                 readonly=False,
             )

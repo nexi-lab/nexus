@@ -150,6 +150,9 @@ class KeyRecord(Protocol):
     def revoked_at(self) -> Any | None: ...
 
     @property
+    def expires_at(self) -> Any | None: ...
+
+    @property
     def public_key_bytes(self) -> bytes: ...
 
 

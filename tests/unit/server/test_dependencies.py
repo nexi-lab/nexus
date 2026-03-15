@@ -56,6 +56,7 @@ def _make_mock_request(
     )
     request = MagicMock()
     request.app.state = state
+    request.client.host = "127.0.0.1"  # Loopback for open-access tests
     return request
 
 
@@ -63,6 +64,7 @@ def _make_mock_request_from_state(state: MagicMock) -> MagicMock:
     """Create a mock Request wrapping an existing state mock."""
     request = MagicMock()
     request.app.state = state
+    request.client.host = "127.0.0.1"
     return request
 
 
@@ -465,14 +467,29 @@ class TestGetOperationContext:
         assert ctx.agent_id == "agent-001"
         assert ctx.user_id == "agent-001"
 
-    def test_x_agent_id_upgrades_user_to_agent(self):
-        """X-Agent-ID header should upgrade user subject to agent."""
+    def test_x_agent_id_ignored_for_non_admin(self):
+        """X-Agent-ID header should NOT upgrade non-admin user to agent (security fix)."""
         ctx = get_operation_context(
             {
                 "subject_type": "user",
                 "subject_id": "alice",
                 "zone_id": "root",
                 "is_admin": False,
+                "x_agent_id": "my-agent",
+            }
+        )
+        # Non-admin: X-Agent-ID is ignored to prevent impersonation
+        assert ctx.subject_type == "user"
+        assert ctx.subject_id == "alice"
+
+    def test_x_agent_id_upgrades_admin_to_agent(self):
+        """X-Agent-ID header should upgrade admin user to agent."""
+        ctx = get_operation_context(
+            {
+                "subject_type": "user",
+                "subject_id": "alice",
+                "zone_id": "root",
+                "is_admin": True,
                 "x_agent_id": "my-agent",
             }
         )
@@ -536,102 +553,3 @@ class TestGetOperationContext:
 # ===========================================================================
 
 # TestGetAsyncReadSessionFactory removed - v1 dependencies sunset (#2056)
-
-# ===========================================================================
-# _get_ace_context DRY helper (#2138)
-# ===========================================================================
-
-
-class TestGetAceContext:
-    """Tests for the _get_ace_context DRY helper in v2 dependencies."""
-
-    def _make_nexus_fs_mock(self) -> MagicMock:
-        """Build a mock NexusFS with memory.session and memory.backend."""
-        nexus_fs = MagicMock()
-        nexus_fs.memory.session = MagicMock(name="mock_session")
-        nexus_fs.memory.backend = MagicMock(name="mock_backend")
-        return nexus_fs
-
-    def _make_auth_result(self, **overrides: Any) -> dict[str, Any]:
-        """Build a minimal auth result dict."""
-        base: dict[str, Any] = {
-            "subject_type": "user",
-            "subject_id": "alice",
-            "zone_id": "z1",
-            "is_admin": False,
-        }
-        base.update(overrides)
-        return base
-
-    def test_extracts_session_and_backend(self) -> None:
-        """ACEContext should contain session/backend from nexus_fs.memory."""
-        from nexus.server.api.v2.dependencies import _get_ace_context
-
-        nexus_fs = self._make_nexus_fs_mock()
-        ctx = _get_ace_context(nexus_fs, self._make_auth_result())
-        assert ctx.session is nexus_fs.memory.session
-        assert ctx.backend is nexus_fs.memory.backend
-
-    def test_derives_user_id_from_context(self) -> None:
-        """user_id should come from OperationContext.user_id."""
-        from nexus.server.api.v2.dependencies import _get_ace_context
-
-        ctx = _get_ace_context(
-            self._make_nexus_fs_mock(),
-            self._make_auth_result(subject_id="bob"),
-        )
-        assert ctx.user_id == "bob"
-
-    def test_anonymous_fallback(self) -> None:
-        """Missing subject_id should default to 'anonymous'."""
-        from nexus.server.api.v2.dependencies import _get_ace_context
-
-        ctx = _get_ace_context(
-            self._make_nexus_fs_mock(),
-            self._make_auth_result(subject_id=None),
-        )
-        assert ctx.user_id == "anonymous"
-
-    def test_zone_id_fallback(self) -> None:
-        """Missing zone_id should default to 'root'."""
-        from nexus.server.api.v2.dependencies import _get_ace_context
-
-        ctx = _get_ace_context(
-            self._make_nexus_fs_mock(),
-            self._make_auth_result(zone_id=None),
-        )
-        assert ctx.zone_id == "root"
-
-    def test_agent_id_from_x_agent_id(self) -> None:
-        """agent_id should be set when X-Agent-ID is present."""
-        from nexus.server.api.v2.dependencies import _get_ace_context
-
-        ctx = _get_ace_context(
-            self._make_nexus_fs_mock(),
-            self._make_auth_result(x_agent_id="agent-42"),
-        )
-        assert ctx.agent_id == "agent-42"
-
-    def test_operation_context_attached(self) -> None:
-        """ACEContext.context should be a valid OperationContext."""
-        from nexus.contracts.types import OperationContext
-        from nexus.server.api.v2.dependencies import _get_ace_context
-
-        ctx = _get_ace_context(
-            self._make_nexus_fs_mock(),
-            self._make_auth_result(),
-        )
-        assert isinstance(ctx.context, OperationContext)
-        assert ctx.context.user_id == "alice"
-
-    def test_named_tuple_unpacking(self) -> None:
-        """ACEContext should support tuple unpacking for all 6 fields."""
-        from nexus.server.api.v2.dependencies import _get_ace_context
-
-        ctx = _get_ace_context(
-            self._make_nexus_fs_mock(),
-            self._make_auth_result(),
-        )
-        session, backend, user_id, agent_id, zone_id, context = ctx
-        assert user_id == "alice"
-        assert zone_id == "z1"

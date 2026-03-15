@@ -35,6 +35,9 @@ Executor = Callable[[bytes, ProgressReporter], Coroutine[Any, Any, bytes | None]
 class AsyncTaskRunner:
     """Async worker pool that claims and executes tasks from TaskEngine.
 
+    Implements PersistentService protocol (start/stop) for coordinator
+    auto-lifecycle management.
+
     Usage:
         engine = TaskEngine("/tmp/tasks-db")
         runner = AsyncTaskRunner(engine, max_workers=4)
@@ -45,7 +48,7 @@ class AsyncTaskRunner:
             await progress.update(50, "halfway")
             return b"result"
 
-        await runner.run()  # blocks until shutdown
+        await runner.start()  # spawns background task
     """
 
     engine: Any  # TaskEngine (Rust)
@@ -54,6 +57,7 @@ class AsyncTaskRunner:
     requeue_interval: float = 60.0
     _executors: dict[str, Executor] = field(default_factory=dict, init=False)
     _shutdown: bool = field(default=False, init=False)
+    _run_task: asyncio.Task | None = field(default=None, init=False)
 
     def register(self, task_type: str) -> Callable[[Executor], Executor]:
         """Decorator to register a task executor for a given task type."""
@@ -97,7 +101,7 @@ class AsyncTaskRunner:
 
         while not self._shutdown:
             try:
-                task = self.engine.claim_next(wid, self.lease_secs)
+                task = await asyncio.to_thread(self.engine.claim_next, wid, self.lease_secs)
             except Exception:
                 logger.exception("Error claiming task (worker %s)", wid)
                 await asyncio.sleep(backoff)
@@ -120,7 +124,8 @@ class AsyncTaskRunner:
                     task.task_id,
                 )
                 try:
-                    self.engine.fail(
+                    await asyncio.to_thread(
+                        self.engine.fail,
                         task.task_id,
                         f"No executor registered for task type: {task.task_type}",
                     )
@@ -132,7 +137,7 @@ class AsyncTaskRunner:
 
             try:
                 result = await executor(task.params, progress)
-                self.engine.complete(task.task_id, result or b"")
+                await asyncio.to_thread(self.engine.complete, task.task_id, result or b"")
                 logger.debug("Task %d (%s) completed", task.task_id, task.task_type)
             except asyncio.CancelledError:
                 # Graceful shutdown — don't fail the task, let it be requeued via lease expiry
@@ -145,7 +150,7 @@ class AsyncTaskRunner:
             except Exception as exc:
                 logger.exception("Task %d (%s) failed", task.task_id, task.task_type)
                 try:
-                    self.engine.fail(task.task_id, str(exc))
+                    await asyncio.to_thread(self.engine.fail, task.task_id, str(exc))
                 except Exception:
                     logger.exception("Error reporting failure for task %d", task.task_id)
 
@@ -153,14 +158,28 @@ class AsyncTaskRunner:
         """Periodically reclaim tasks with expired leases."""
         while not self._shutdown:
             try:
-                count = self.engine.requeue_abandoned()
+                count = await asyncio.to_thread(self.engine.requeue_abandoned)
                 if count > 0:
                     logger.info("Requeued %d abandoned tasks", count)
             except Exception:
                 logger.exception("Error in requeue loop")
             await asyncio.sleep(self.requeue_interval)
 
-    async def shutdown(self) -> None:
-        """Signal graceful shutdown. Workers will finish current tasks."""
-        logger.info("Shutdown requested")
+    async def start(self) -> None:
+        """PersistentService: spawn the worker pool as a background task."""
+        if self._run_task is not None and not self._run_task.done():
+            return  # idempotent
+        self._shutdown = False
+        self._run_task = asyncio.create_task(self.run(), name="async-task-runner")
+        logger.info("AsyncTaskRunner started via PersistentService.start()")
+
+    async def stop(self) -> None:
+        """PersistentService: signal graceful shutdown and await completion."""
+        logger.info("AsyncTaskRunner stop requested")
         self._shutdown = True
+        if self._run_task is not None and not self._run_task.done():
+            await self._run_task
+            self._run_task = None
+
+    # Legacy alias
+    shutdown = stop

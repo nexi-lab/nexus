@@ -9,7 +9,7 @@ import warnings
 import click
 
 import nexus
-from nexus.cli.commands import register_all_commands
+from nexus.cli.commands import LazyCommandGroup, register_all_commands
 from nexus.core import setup_uvloop
 
 # Suppress pydub warning about missing ffmpeg/avconv
@@ -21,10 +21,17 @@ warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", cate
 setup_uvloop()
 
 
-@click.group()
+@click.group(cls=LazyCommandGroup)
 @click.version_option(version=nexus.__version__, prog_name="nexus")
-def main() -> None:
-    """Nexus - AI-Native Distributed Filesystem.
+@click.option(
+    "--profile",
+    type=str,
+    default=None,
+    help="Use named connection profile from ~/.nexus/config.yaml.",
+)
+@click.pass_context
+def main(ctx: click.Context, profile: str | None) -> None:
+    """Nexus - filesystem/context plane.
 
     Beautiful command-line interface for file operations, discovery, and management.
 
@@ -52,13 +59,18 @@ def main() -> None:
         nexus versions rollback /file.txt 1
 
         # Server and mounting
-        nexus serve --host 0.0.0.0 --port 2026
+        nexusd --host 0.0.0.0 --port 2026
         nexus mount /mnt/nexus
+
+        # Profile management
+        nexus profile list
+        nexus --profile staging ls /
 
     For more information on specific commands, use:
         nexus <command> --help
     """
-    pass
+    ctx.ensure_object(dict)
+    ctx.obj["profile"] = profile
 
 
 # Register all commands from the modular structure

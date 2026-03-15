@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.consistency.revision import get_zone_revision_for_grant
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -119,10 +120,12 @@ class DirectoryExpander:
         metadata_store: Any | None = None,
         *,
         is_postgresql: bool = False,  # noqa: ARG002
+        version_store: MetastoreVersionStore | None = None,
     ) -> None:
         self._engine = engine
         self._tiger_cache = tiger_cache
         self._metadata_store = metadata_store
+        self._version_store = version_store
 
     def set_metadata_store(self, metadata_store: Any) -> None:
         """Set the metadata store reference for directory queries."""
@@ -187,7 +190,11 @@ class DirectoryExpander:
             directory_path = directory_path + "/"
 
         # Get current revision for consistency (prevents "new enemy" problem)
-        grant_revision = get_zone_revision_for_grant(self._engine, zone_id)
+        grant_revision = (
+            get_zone_revision_for_grant(self._version_store, zone_id)
+            if self._version_store is not None
+            else 0
+        )
 
         # Get all descendants of the directory
         descendants = self.get_directory_descendants(directory_path, zone_id)

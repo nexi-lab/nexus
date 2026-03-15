@@ -4,9 +4,9 @@ build-backend = "maturin"
 
 [project]
 name = "nexus-fast"
-version = "0.1.0"
+version = "0.9.4"
 description = "Fast Rust-based ReBAC permission computation for Nexus"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",

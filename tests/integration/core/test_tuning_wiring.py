@@ -74,12 +74,12 @@ class TestDIFlowsToConstructors:
         assert sig.parameters["max_overflow"].default is None
 
     def test_gcs_backend_timeout_from_profile(self) -> None:
-        """GCSBackend accepts operation_timeout/upload_timeout from profile."""
+        """CASGCSBackend accepts operation_timeout/upload_timeout from profile."""
         import inspect
 
-        from nexus.backends.gcs import GCSBackend
+        from nexus.backends.storage.cas_gcs import CASGCSBackend
 
-        sig = inspect.signature(GCSBackend.__init__)
+        sig = inspect.signature(CASGCSBackend.__init__)
         assert "operation_timeout" in sig.parameters
         assert "upload_timeout" in sig.parameters
         # Should have reasonable defaults matching FULL profile
@@ -104,7 +104,7 @@ class TestDIFlowsToConstructors:
 
     def test_search_service_workers_from_profile(self) -> None:
         """SearchService parallel workers match profile tuning."""
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         full_tuning = DeploymentProfile.FULL.tuning()
         svc = SearchService(
@@ -117,7 +117,7 @@ class TestDIFlowsToConstructors:
 
     def test_tiger_cache_workers_from_profile(self) -> None:
         """TigerCache l2_max_workers matches profile cache tuning."""
-        from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
+        from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
         full_tuning = DeploymentProfile.FULL.tuning()
         cache = TigerCache(

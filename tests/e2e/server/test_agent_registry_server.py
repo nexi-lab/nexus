@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from nexus.bricks.delegation.models import DelegationMode
 from nexus.bricks.delegation.service import DelegationService
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.server.api.v2.routers.delegation import (
@@ -21,7 +22,8 @@ from nexus.server.api.v2.routers.delegation import (
     DelegateResponse,
     _handle_delegation_error,
 )
-from nexus.services.agents.agent_registry import AgentRegistry
+from nexus.system_services.agents.agent_registry import AgentRegistry
+from tests.helpers.dict_metastore import DictMetastore
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
@@ -62,7 +64,12 @@ def agent_registry(record_store, entity_registry):
 
 @pytest.fixture()
 def rebac_manager(engine):
-    manager = EnhancedReBACManager(engine=engine, cache_ttl_seconds=0, max_depth=10)
+    manager = EnhancedReBACManager(
+        engine=engine,
+        cache_ttl_seconds=0,
+        max_depth=10,
+        version_store=MetastoreVersionStore(DictMetastore()),
+    )
     yield manager
     manager.close()
 

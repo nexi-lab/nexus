@@ -8,7 +8,7 @@ Design:
     - 6 abstract methods: write_content, read_content, delete_content,
       get_content_size, mkdir, rmdir
     - WriteResult returned from write operations (content_hash + size)
-    - No HandlerResponse -- callers get raw types, errors are exceptions
+    - Callers get raw types, errors are exceptions
 """
 
 from __future__ import annotations
@@ -16,13 +16,17 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from nexus.contracts.types import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+# Re-export WriteResult for backward compatibility — canonical home is contracts.types
+__all__ = ["ObjectStoreABC", "WriteResult", "_validate_hash"]
 
 
 def _validate_hash(content_hash: str) -> None:
@@ -41,24 +45,11 @@ def _validate_hash(content_hash: str) -> None:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class WriteResult:
-    """Result of a content write operation.
-
-    Attributes:
-        content_hash: SHA-256 hex digest of the written content.
-        size: Content size in bytes (0 = unknown / not tracked).
-    """
-
-    content_hash: str
-    size: int = 0
-
-
 class ObjectStoreABC(ABC):
     """ObjectStore pillar -- kernel ``file_operations`` contract.
 
     Linux analogue: ``struct file_operations``.
-    Exception-based errors (no HandlerResponse).
+    Exception-based errors.
 
     Subclasses must implement the 6 abstract methods.  Streaming, batch,
     capability flags, and lifecycle have concrete defaults that work out of
@@ -318,11 +309,6 @@ class ObjectStoreABC(ABC):
     @property
     def supports_parallel_mmap_read(self) -> bool:
         """Whether this backend supports Rust-accelerated parallel mmap reads."""
-        return False
-
-    @property
-    def is_passthrough(self) -> bool:
-        """Whether this backend is a PassthroughBackend for same-box mode."""
         return False
 
     # === Lifecycle ===

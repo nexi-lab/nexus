@@ -12,7 +12,7 @@ import threading
 from collections.abc import Iterator
 from typing import Any, cast
 
-from nexus.backends.backend import Backend, HandlerStatusResponse
+from nexus.backends.base.backend import Backend, HandlerStatusResponse
 from nexus.bricks.sandbox.isolation._pool import IsolatedPool
 from nexus.bricks.sandbox.isolation.config import IsolationConfig
 from nexus.bricks.sandbox.isolation.errors import (
@@ -21,7 +21,7 @@ from nexus.bricks.sandbox.isolation.errors import (
     IsolationTimeoutError,
 )
 from nexus.contracts.exceptions import BackendError
-from nexus.core.object_store import WriteResult
+from nexus.contracts.types import WriteResult
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +83,6 @@ class IsolatedBackend(Backend):
     @property
     def has_data_dir(self) -> bool:
         return bool(self._cached_prop("has_data_dir"))
-
-    @property
-    def is_passthrough(self) -> bool:
-        return bool(self._cached_prop("is_passthrough"))
 
     @property
     def supports_parallel_mmap_read(self) -> bool:

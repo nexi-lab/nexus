@@ -51,8 +51,8 @@ from nexus.cache.settings import CacheSettings
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
-    from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.base.backend import Backend
+    from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.cache.protocols import RecordStoreProtocol
 
@@ -124,6 +124,8 @@ class CacheFactory:
             return
 
         # Auto-create from settings
+        dragonfly_ok = False
+
         if self._settings.should_use_dragonfly():
             try:
                 from nexus.cache.dragonfly import DragonflyCacheStore, DragonflyClient
@@ -141,23 +143,32 @@ class CacheFactory:
                 await self._cache_client.connect()
                 self._cache_store = DragonflyCacheStore(self._cache_client)
                 self._has_cache_store = True
+                dragonfly_ok = True
                 logger.info("Cache factory initialized with Dragonfly backend (hot cache only)")
 
             except ImportError:
-                logger.warning("redis package not installed, falling back to NullCacheStore")
+                if self._settings.cache_backend == "dragonfly":
+                    raise ImportError(
+                        "cache_backend='dragonfly' but redis package is not installed"
+                    ) from None
+                logger.warning("redis package not installed, falling back")
                 self._has_cache_store = False
             except Exception as e:
                 if self._settings.cache_backend == "dragonfly":
                     raise
-                logger.warning(
-                    f"Failed to connect to Dragonfly ({e}), falling back to NullCacheStore"
-                )
+                logger.warning(f"Failed to connect to Dragonfly ({e}), falling back")
                 self._has_cache_store = False
-        elif self._record_store is not None:
-            self._using_postgres = True
-            logger.info("Cache factory initialized with PostgreSQL cache backend (fallback)")
-        else:
-            logger.info("Cache factory initialized with NullCacheStore (no Dragonfly configured)")
+
+        # PostgreSQL fallback: used when Dragonfly is not configured OR when
+        # Dragonfly failed in auto mode and a record_store is available.
+        if not dragonfly_ok and self._record_store is not None:
+            if self._settings.cache_backend == "postgres" or not dragonfly_ok:
+                self._using_postgres = True
+                logger.info("Cache factory initialized with PostgreSQL cache backend (fallback)")
+        elif not dragonfly_ok:
+            if self._settings.cache_backend == "postgres":
+                raise RuntimeError("cache_backend='postgres' but no record_store was provided")
+            logger.info("Cache factory initialized with NullCacheStore (no backend available)")
             self._has_cache_store = False
 
         self._initialized = True
@@ -333,14 +344,14 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
 
         effective_config = config or CacheWrapperConfig()
 
         # Optional logging layer (Recursive Wrapping — PART 16, Issue #1449)
         wrapped_inner: Backend = inner
         if enable_logging:
-            from nexus.backends.logging_wrapper import LoggingBackendWrapper
+            from nexus.backends.wrappers.logging import LoggingBackendWrapper
 
             wrapped_inner = LoggingBackendWrapper(inner=inner)
 

@@ -212,7 +212,7 @@ class TestBackwardCompatibility:
         assert GREP_PARALLEL_WORKERS == 4  # FULL profile default
 
     def test_list_parallel_workers_constant(self) -> None:
-        from nexus.services.search.search_service import LIST_PARALLEL_WORKERS
+        from nexus.bricks.search.search_service import LIST_PARALLEL_WORKERS
 
         assert LIST_PARALLEL_WORKERS == 10  # FULL profile default
 
@@ -243,7 +243,7 @@ class TestDIWiring:
         """SearchService constructor accepts custom parallel worker counts."""
         from unittest.mock import MagicMock
 
-        from nexus.services.search.search_service import SearchService
+        from nexus.bricks.search.search_service import SearchService
 
         svc = SearchService(
             metadata_store=MagicMock(),
@@ -257,7 +257,7 @@ class TestDIWiring:
         """TigerCache constructor accepts custom l2_max_workers."""
         from unittest.mock import MagicMock
 
-        from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
+        from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
         cache = TigerCache(engine=MagicMock(), l2_max_workers=8)
         assert cache._l2_max_workers == 8

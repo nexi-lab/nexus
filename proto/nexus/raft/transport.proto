@@ -59,12 +59,12 @@ service ZoneApiService {
   // a snapshot from the leader and becomes an equal Voter with a local sled replica.
   rpc JoinZone(JoinZoneRequest) returns (JoinZoneResponse);
 
-  // InviteZone is the inverse of JoinZone: the zone leader tells a remote node
-  // to join a zone and create a DT_MOUNT at a specified path.
-  // Used by `nexus mount /local-path peer:/remote-path` — the sharing initiator
-  // calls this on the remote peer so it joins the newly created zone.
-  // Handler: (1) join zone as peer, (2) call JoinZone on leader, (3) create DT_MOUNT.
-  rpc InviteZone(InviteZoneRequest) returns (InviteZoneResponse);
+  // JoinCluster provisions a new node with cluster TLS certificates.
+  // Called by `nexus join` before `nexus serve`. The caller authenticates
+  // with the join token password; the server returns the cluster CA + key
+  // so the joiner can generate its own node cert locally.
+  // K3s-style bootstrap: token = shared secret, TLS encrypts the channel.
+  rpc JoinCluster(JoinClusterRequest) returns (JoinClusterResponse);
 }
 
 // === Client Messages ===
@@ -139,33 +139,29 @@ message JoinZoneResponse {
   optional ClusterConfig config = 4;
 }
 
-// InviteZoneRequest is sent by a zone leader to a remote node, asking it to
-// join the zone and create a DT_MOUNT at the specified path.
-// This is the inverse of JoinZone: JoinZone = new_node → leader,
-// InviteZone = leader → new_node.
-// The remote handler: (1) creates local zone replica, (2) calls JoinZone on
-// the leader to be added as Voter, (3) creates DT_MOUNT at mount_path.
-// The mount_path must already exist as a directory on the remote node (NFS behavior).
-message InviteZoneRequest {
-  // Zone to join.
-  string zone_id = 1;
-  // Where to create DT_MOUNT on the remote node's root zone.
-  // Must already exist as a directory (like NFS mount points).
-  string mount_path = 2;
-  // The inviter (leader) node's Raft ID.
-  uint64 inviter_node_id = 3;
-  // The inviter (leader) node's gRPC address.
-  string inviter_address = 4;
+// JoinClusterRequest is sent by `nexus join` to provision TLS certificates.
+// The caller authenticates with the join token password. The server verifies
+// the password and returns the cluster CA certificate + private key so the
+// joiner can generate its own node cert locally (K3s-style bootstrap).
+message JoinClusterRequest {
+  // Join token password (64-char hex string).
+  string password = 1;
+  // The joining node's Raft ID.
+  uint64 node_id = 2;
+  // The joining node's advertise address (e.g., "http://10.0.0.3:2126").
+  string node_address = 3;
 }
 
-// InviteZoneResponse is returned after the remote node has joined and mounted.
-message InviteZoneResponse {
+// JoinClusterResponse returns cluster TLS material on success.
+message JoinClusterResponse {
   bool success = 1;
   optional string error = 2;
-  // The remote node's Raft ID (assigned during join).
-  uint64 node_id = 3;
-  // The remote node's gRPC address.
-  string node_address = 4;
+  // Cluster CA certificate (PEM-encoded). Used to verify peer certs.
+  bytes ca_pem = 3;
+  // Cluster CA private key (PEM-encoded). Safe — channel is TLS-encrypted,
+  // and the join token authenticates the caller. The joiner needs the CA key
+  // to: (1) generate its own node cert, (2) accept future joiners itself.
+  bytes ca_key_pem = 4;
 }
 
 // === Cluster Configuration ===

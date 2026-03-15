@@ -25,8 +25,7 @@ import random
 import time
 from typing import Any
 
-from nexus.services._tracing import lazy_tracer
-from nexus.services.protocols.brick_lifecycle import (
+from nexus.contracts.protocols.brick_lifecycle import (
     BrickLifecycleProtocol,
     BrickReconcileOutcome,
     BrickSpec,
@@ -39,13 +38,14 @@ from nexus.services.protocols.brick_lifecycle import (
     ReconcileResult,
     ReconcilerProtocol,
 )
+from nexus.lib.tracing import lazy_tracer
 from nexus.system_services.lifecycle.expectations import Expectations
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # OTel tracing — zero-overhead when telemetry is not enabled
-# Shared implementation in nexus.services._tracing
+# Shared implementation in nexus.lib.tracing
 # ---------------------------------------------------------------------------
 
 _get_tracer, _lifecycle_span = lazy_tracer("nexus.brick_reconciler")

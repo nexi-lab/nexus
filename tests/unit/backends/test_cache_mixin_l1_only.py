@@ -7,7 +7,7 @@ This mode is used by LocalConnector where the source is already local disk.
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 
 
 class MockL1OnlyBackend(CacheConnectorMixin):

@@ -166,19 +166,11 @@ impl NodeAddress {
     }
 
     /// Parse from "id@host:port" format.
-    #[expect(
-        clippy::result_large_err,
-        reason = "TransportError contains tonic types; will Box in transport refactor"
-    )]
     pub fn parse(s: &str) -> Result<Self> {
         Self::parse_with_tls(s, false)
     }
 
     /// Parse from "id@host:port" format, using `https://` scheme when TLS is active.
-    #[expect(
-        clippy::result_large_err,
-        reason = "TransportError contains tonic types; will Box in transport refactor"
-    )]
     pub fn parse_with_tls(s: &str, use_tls: bool) -> Result<Self> {
         let parts: Vec<&str> = s.splitn(2, '@').collect();
         if parts.len() != 2 {

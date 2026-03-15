@@ -1,6 +1,7 @@
 """Agent spec/status/warmup REST API endpoints (Issues #2169, #2172).
 
 Provides:
+- GET  /api/v2/agents                    - List agents in zone
 - GET  /api/v2/agents/{agent_id}/status  - Computed agent status
 - PUT  /api/v2/agents/{agent_id}/spec    - Set agent spec
 - GET  /api/v2/agents/{agent_id}/spec    - Get agent spec
@@ -15,12 +16,26 @@ because FastAPI uses ``eval_str=True`` on dependency signatures at import time.
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from nexus.server.api.v2.dependencies import _get_require_auth
+from nexus.server.dependencies import get_operation_context
 
 logger = logging.getLogger(__name__)
+
+
+def _authorize_agent_access(auth_result: dict, agent_id: str, action: str = "access") -> None:
+    """Verify caller is authorized to act on this agent."""
+    ctx = get_operation_context(auth_result)
+    if ctx.is_admin:
+        return
+    if ctx.subject_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorized to {action} agent '{agent_id}'",
+        )
+
 
 router = APIRouter(tags=["agents"])
 
@@ -119,6 +134,26 @@ class WarmupResponse(BaseModel):
     duration_ms: float = 0.0
 
 
+class AgentListItem(BaseModel):
+    """Summary of an agent for list responses."""
+
+    agent_id: str
+    owner_id: str
+    zone_id: str | None
+    name: str | None
+    state: str
+    generation: int
+
+
+class AgentListResponse(BaseModel):
+    """Paginated agent list response."""
+
+    agents: list[AgentListItem]
+    total: int
+    limit: int
+    offset: int
+
+
 # ---------------------------------------------------------------------------
 # Helpers (DRY fix — Issue #2172)
 # ---------------------------------------------------------------------------
@@ -169,6 +204,41 @@ async def _get_async_agent_registry(request: Request) -> Any:
 
 
 @router.get(
+    "/api/v2/agents",
+    response_model=AgentListResponse,
+    summary="List agents in zone",
+    description="Returns a paginated list of agents registered in the specified zone.",
+)
+async def list_agents(
+    zone_id: str = Query(default="root", description="Zone to list agents from"),
+    limit: int = Query(default=50, ge=1, le=200, description="Max agents to return"),
+    offset: int = Query(default=0, ge=0, description="Agents to skip"),
+    _auth: dict = Depends(_get_require_auth()),
+    registry: Any = Depends(_get_async_agent_registry),
+) -> AgentListResponse:
+    """List agents in a zone with pagination."""
+    all_agents = await registry.list_by_zone(zone_id)
+    total = len(all_agents)
+    page = all_agents[offset : offset + limit]
+    return AgentListResponse(
+        agents=[
+            AgentListItem(
+                agent_id=a.agent_id,
+                owner_id=a.owner_id,
+                zone_id=a.zone_id,
+                name=a.name,
+                state=a.state,
+                generation=a.generation,
+            )
+            for a in page
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
     "/api/v2/agents/{agent_id}/status",
     response_model=AgentStatusResponse,
     summary="Get computed agent status",
@@ -180,10 +250,11 @@ async def _get_async_agent_registry(request: Request) -> Any:
 )
 async def get_agent_status(
     agent_id: str,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     registry: Any = Depends(_get_async_agent_registry),
 ) -> AgentStatusResponse:
     """Get computed status for an agent."""
+    _authorize_agent_access(auth_result, agent_id, "read status of")
     status = await registry.get_status(agent_id)
     if status is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
@@ -226,10 +297,11 @@ async def get_agent_status(
 async def set_agent_spec(
     agent_id: str,
     body: AgentSpecRequest,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     registry: Any = Depends(_get_async_agent_registry),
 ) -> AgentSpecResponse:
     """Set the desired state spec for an agent."""
+    _authorize_agent_access(auth_result, agent_id, "set spec for")
     from nexus.contracts.agent_types import AgentResources, AgentSpec, QoSClass
 
     try:
@@ -276,10 +348,11 @@ async def set_agent_spec(
 )
 async def get_agent_spec(
     agent_id: str,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     registry: Any = Depends(_get_async_agent_registry),
 ) -> AgentSpecResponse:
     """Get the stored spec for an agent."""
+    _authorize_agent_access(auth_result, agent_id, "read spec of")
     stored = await registry.get_spec(agent_id)
     if stored is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec")
@@ -313,10 +386,11 @@ async def _get_warmup_service(request: Request) -> Any:
 async def warmup_agent(
     agent_id: str,
     body: WarmupRequest | None = None,
-    _auth: dict = Depends(_get_require_auth()),
+    auth_result: dict = Depends(_get_require_auth()),
     warmup_service: Any = Depends(_get_warmup_service),
 ) -> WarmupResponse:
     """Trigger agent warmup."""
+    _authorize_agent_access(auth_result, agent_id, "warm up")
     from datetime import timedelta
 
     from nexus.contracts.agent_warmup_types import WarmupStep

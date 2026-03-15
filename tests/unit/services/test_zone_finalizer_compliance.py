@@ -12,17 +12,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.protocols.zone_lifecycle import (
+from nexus.contracts.protocols.zone_lifecycle import (
     ZoneDeprovisionResult,
     ZoneFinalizerProtocol,
     ZoneLifecycleStatus,
     ZonePhase,
 )
-from nexus.services.zone_finalizers.brick_drain_finalizer import BrickDrainFinalizer
-from nexus.services.zone_finalizers.cache_finalizer import CacheZoneFinalizer
-from nexus.services.zone_finalizers.mount_finalizer import MountZoneFinalizer
-from nexus.services.zone_finalizers.rebac_finalizer import ReBACZoneFinalizer
-from nexus.services.zone_finalizers.search_finalizer import SearchZoneFinalizer
+from nexus.system_services.lifecycle.zone_finalizers.brick_drain_finalizer import (
+    BrickDrainFinalizer,
+)
+from nexus.system_services.lifecycle.zone_finalizers.cache_finalizer import CacheZoneFinalizer
+from nexus.system_services.lifecycle.zone_finalizers.mount_finalizer import MountZoneFinalizer
+from nexus.system_services.lifecycle.zone_finalizers.rebac_finalizer import ReBACZoneFinalizer
+from nexus.system_services.lifecycle.zone_finalizers.search_finalizer import SearchZoneFinalizer
 
 
 class TestZonePhaseEnum:

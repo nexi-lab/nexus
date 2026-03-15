@@ -26,7 +26,7 @@ fi
 # Configuration
 ADMIN_USER="${NEXUS_ADMIN_USER:-admin}"
 API_KEY_FILE="${NEXUS_API_KEY_FILE:-/app/data/.admin-api-key}"
-CONFIG_FILE="${NEXUS_CONFIG_FILE:-/app/configs/config.demo.yaml}"
+CONFIG_FILE="${NEXUS_CONFIG_FILE:-}"
 APP_DIR="${APP_DIR:-/app}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-/app/scripts}"
 NEXUS_PORT="${NEXUS_PORT:-2026}"
@@ -37,6 +37,26 @@ REDACT_API_KEY_IN_LOGS="${REDACT_API_KEY_IN_LOGS:-false}"
 # PIDs for cleanup
 SERVER_PID=""
 ZOEKT_PID=""
+
+# -----------------------------------------------------------------------------
+# Bind-mount directory init + privilege drop
+# -----------------------------------------------------------------------------
+# When a host directory is bind-mounted over /app/data, the image's
+# pre-created subdirectories (skills/, .zoekt-index/) disappear and the
+# mount may be owned by a different uid.  If we're root, fix that now
+# and re-exec as the nexus user.
+fix_data_dir_and_drop_privileges() {
+    if [ "$(id -u)" = "0" ]; then
+        # Create required subdirectories inside the (possibly bind-mounted) data dir
+        mkdir -p /app/data/skills /app/data/.zoekt-index
+        chown -R nexus:nexus /app/data
+
+        # Re-exec the entrypoint as the nexus user
+        exec gosu nexus "$0" "$@"
+    fi
+}
+
+fix_data_dir_and_drop_privileges "$@"
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -211,9 +231,9 @@ setup_admin_api_key() {
 }
 
 init_semantic_search_if_enabled() {
-    if [ ! -f "$CONFIG_FILE" ]; then
+    if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
         echo ""
-        echo "ℹ️  No config file found, skipping semantic search initialization"
+        echo "ℹ️  No config file — semantic search controlled by deployment profile (${NEXUS_PROFILE:-full})"
         return 0
     fi
 
@@ -277,14 +297,18 @@ start_zoekt_if_enabled() {
 }
 
 build_serve_cmd() {
-    if [ -f "$CONFIG_FILE" ]; then
-        echo "nexus serve --config $CONFIG_FILE --auth-type database --async"
+    local auth_type="${NEXUS_AUTH_TYPE:-database}"
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+        echo "nexusd --config $CONFIG_FILE --auth-type $auth_type"
     else
-        local cmd="nexus serve --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-2026} --auth-type database --async"
-        if [ "${NEXUS_BACKEND:-}" = "gcs" ]; then
-            cmd="$cmd --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET:-}"
-            [ -n "${NEXUS_GCS_PROJECT:-}" ] && cmd="$cmd --gcs-project ${NEXUS_GCS_PROJECT}"
+        # No config file — use env vars and deployment profile (Grafana/Gitea pattern).
+        # NEXUS_PROFILE env var controls which bricks are enabled (default: full).
+        local cmd="nexusd --host ${NEXUS_HOST:-0.0.0.0} --port ${NEXUS_PORT:-2026} --auth-type $auth_type"
+        if [ -n "${NEXUS_PROFILE:-}" ]; then
+            cmd="$cmd --profile ${NEXUS_PROFILE}"
         fi
+        # GCS/S3 backends are configured via env vars (NEXUS_GCS_BUCKET_NAME,
+        # NEXUS_GCS_PROJECT_ID) read by the config loader, not CLI flags.
         echo "$cmd"
     fi
 }
@@ -305,7 +329,7 @@ wait_for_health() {
 }
 
 load_saved_mounts_if_needed() {
-    if [ -f "$CONFIG_FILE" ]; then
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         echo ""
         echo -e "${GREEN}✓ Backends loaded from configuration file${NC}"
         return 0
@@ -322,6 +346,41 @@ load_saved_mounts_if_needed() {
     fi
 }
 
+join_cluster_if_needed() {
+    # If NEXUS_JOIN_TOKEN and NEXUS_PEER are set, provision TLS certs before serving
+    if [ -n "${NEXUS_JOIN_TOKEN:-}" ] && [ -n "${NEXUS_PEER:-}" ]; then
+        echo ""
+        echo "🔗 Joining cluster via ${NEXUS_PEER}..."
+
+        local join_cmd="nexus join --token ${NEXUS_JOIN_TOKEN}"
+        [ -n "${NEXUS_NODE_ID:-}" ] && join_cmd="${join_cmd} --node-id ${NEXUS_NODE_ID}"
+        [ -n "${NEXUS_DATA_DIR:-}" ] && join_cmd="${join_cmd} --data-dir ${NEXUS_DATA_DIR}"
+        join_cmd="${join_cmd} ${NEXUS_PEER}"
+
+        if eval "$join_cmd"; then
+            echo -e "${GREEN}✓ Cluster join complete — TLS certificates provisioned${NC}"
+        else
+            echo -e "${RED}✗ Cluster join failed${NC}"
+            exit 1
+        fi
+    fi
+}
+
+cleanup_stale_pid_files() {
+    # After an abnormal exit (e.g. SIGSEGV from a native extension), nexusd
+    # cannot run its Python-level finally block, so PID/ready files survive
+    # into the next container start.  Remove them unconditionally — the daemon
+    # hasn't started yet at this point, so there is nothing legitimate to
+    # protect.
+    local nexus_home="${HOME}/.nexus"
+    for f in "$nexus_home/nexusd.pid" "$nexus_home/nexusd.ready"; do
+        if [ -f "$f" ]; then
+            echo -e "${YELLOW}Removing stale $f from previous run${NC}"
+            rm -f "$f"
+        fi
+    done
+}
+
 start_nexus_server() {
     echo ""
     echo "🚀 Starting Nexus server..."
@@ -330,13 +389,14 @@ start_nexus_server() {
     echo "  Port: ${NEXUS_PORT:-2026}"
     echo "  Backend: ${NEXUS_BACKEND:-local}"
 
-    if [ -f "$CONFIG_FILE" ]; then
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         echo "  Config: $CONFIG_FILE"
         echo ""
         echo -e "${GREEN}✓ Using configuration file${NC}"
     else
-        echo "  Config: Not found (using CLI options)"
+        echo "  Config: env vars + profile (${NEXUS_PROFILE:-full})"
         echo ""
+        echo -e "${GREEN}✓ Using deployment profile — no config file needed${NC}"
     fi
 
     local cmd
@@ -364,6 +424,7 @@ start_nexus_server() {
 # -----------------------------------------------------------------------------
 main() {
     print_banner
+    cleanup_stale_pid_files
     check_permissions_flags
     wait_for_postgres
     ensure_skills_directory
@@ -371,6 +432,7 @@ main() {
     setup_admin_api_key
     init_semantic_search_if_enabled
     start_zoekt_if_enabled
+    join_cluster_if_needed
     start_nexus_server
 }
 

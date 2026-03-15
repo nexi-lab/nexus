@@ -6,12 +6,12 @@ pytest-asyncio dependency.
 """
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.bricks.mount.mount_service import MountService
 from nexus.contracts.types import OperationContext
-from nexus.services.mount.mount_service import MountService
 
 # =============================================================================
 # Fixtures
@@ -45,7 +45,7 @@ def mock_mount_manager():
 def mock_nexus_fs():
     """Create a mock NexusFilesystem."""
     fs = MagicMock()
-    fs.sys_mkdir = MagicMock()
+    fs.sys_mkdir = AsyncMock()
     fs.sys_write = MagicMock()
     fs.metadata = MagicMock()
     fs.metadata.delete = MagicMock()
@@ -157,7 +157,7 @@ class TestListMounts:
         def check_permission(subject, permission, object, zone_id=None):
             return object[1] == "/mnt/allowed"
 
-        mock_nexus_fs.rebac_service.rebac_check_sync.side_effect = check_permission
+        mock_nexus_fs.service("rebac").rebac_check_sync.side_effect = check_permission
 
         result = asyncio.run(mount_service.list_mounts(context=operation_context))
 
@@ -299,7 +299,7 @@ class TestSavedMounts:
         result = asyncio.run(
             mount_service.save_mount(
                 mount_point="/mnt/test",
-                backend_type="gcs_connector",
+                backend_type="path_gcs",
                 backend_config={"bucket": "test-bucket"},
             )
         )
@@ -315,7 +315,7 @@ class TestSavedMounts:
             asyncio.run(
                 service.save_mount(
                     mount_point="/mnt/test",
-                    backend_type="local",
+                    backend_type="cas_local",
                     backend_config={"data_dir": "/tmp"},
                 )
             )
@@ -392,61 +392,37 @@ class TestSyncMountDelegation:
 class TestGrantMountOwnerPermission:
     """Tests for the _grant_mount_owner_permission helper."""
 
-    def test_grants_permission_with_context(self, mount_service, mock_nexus_fs, operation_context):
+    @pytest.mark.asyncio
+    async def test_grants_permission_with_context(
+        self, mount_service, mock_nexus_fs, operation_context
+    ):
         """Owner permission is granted when context has a user."""
-        mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
+        await mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
 
         # Issue #2033: MountService now uses rebac_service.rebac_create_sync
-        mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
-        call_kwargs = mock_nexus_fs.rebac_service.rebac_create_sync.call_args
+        mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()
+        call_kwargs = mock_nexus_fs.service("rebac").rebac_create_sync.call_args
         assert call_kwargs.kwargs["relation"] == "direct_owner"
 
-    def test_skips_permission_without_context(self, mount_service, mock_nexus_fs):
+    @pytest.mark.asyncio
+    async def test_skips_permission_without_context(self, mount_service, mock_nexus_fs):
         """No permission grant when context is None."""
-        mount_service._grant_mount_owner_permission("/mnt/test", None)
+        await mount_service._grant_mount_owner_permission("/mnt/test", None)
         mock_nexus_fs.rebac_add_tuple.assert_not_called()
 
-    def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
+    @pytest.mark.asyncio
+    async def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
         """Mount point directory is created."""
-        mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
+        await mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
         mock_nexus_fs.sys_mkdir.assert_called_once_with("/mnt/test", parents=True, exist_ok=True)
 
-    def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
+    @pytest.mark.asyncio
+    async def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
         """Errors creating directory do not prevent permission grant."""
         mock_nexus_fs.sys_mkdir.side_effect = RuntimeError("mkdir failed")
 
         # Should not raise
-        mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
+        await mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
 
         # Permission grant should still be attempted (Issue #2033: via rebac_service)
-        mock_nexus_fs.rebac_service.rebac_create_sync.assert_called_once()
-
-
-# =============================================================================
-# _generate_connector_skill tests
-# =============================================================================
-
-
-class TestGenerateConnectorSkill:
-    """Tests for the _generate_connector_skill helper."""
-
-    def test_generates_skill_for_connector(self, mount_service, mock_nexus_fs):
-        """SKILL.md is generated for connector mounts."""
-        result = mount_service._generate_connector_skill("/mnt/gcs", "gcs_connector", None)
-        assert result is True
-        mock_nexus_fs.sys_write.assert_called_once()
-        # Verify skill content was written to the correct path
-        call_args = mock_nexus_fs.sys_write.call_args
-        assert call_args[0][0] == "/mnt/gcs/SKILL.md"
-
-    def test_returns_false_without_nexus_fs(self, mock_router):
-        """Returns False when nexus_fs is not available."""
-        service = MountService(router=mock_router, nexus_fs=None)
-        result = service._generate_connector_skill("/mnt/gcs", "gcs_connector", None)
-        assert result is False
-
-    def test_handles_write_error(self, mount_service, mock_nexus_fs):
-        """Write errors are handled gracefully."""
-        mock_nexus_fs.sys_write.side_effect = OSError("Write failed")
-        result = mount_service._generate_connector_skill("/mnt/gcs", "gcs_connector", None)
-        assert result is False
+        mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()

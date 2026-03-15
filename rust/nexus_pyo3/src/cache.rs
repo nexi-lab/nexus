@@ -61,15 +61,37 @@ impl L1MetadataCache {
         zone_id: &str,
     ) {
         if self.cache.len() >= self.max_entries {
-            let to_remove = self.max_entries / 10;
-            let keys_to_remove: Vec<String> = self
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            // Phase 1: evict expired entries first (TTL-aware)
+            let expired_keys: Vec<String> = self
                 .cache
                 .iter()
-                .take(to_remove)
+                .filter(|entry| {
+                    let m = entry.value();
+                    m.ttl_seconds > 0 && now > m.synced_at + m.ttl_seconds as u64
+                })
                 .map(|entry| entry.key().clone())
                 .collect();
-            for k in keys_to_remove {
-                self.cache.remove(&k);
+            for k in &expired_keys {
+                self.cache.remove(k);
+            }
+
+            // Phase 2: if still over capacity, evict oldest entries
+            if self.cache.len() >= self.max_entries {
+                let to_remove = self.max_entries / 10;
+                let mut entries: Vec<(String, u64)> = self
+                    .cache
+                    .iter()
+                    .map(|entry| (entry.key().clone(), entry.value().synced_at))
+                    .collect();
+                entries.sort_by_key(|&(_, ts)| ts);
+                for (k, _) in entries.into_iter().take(to_remove) {
+                    self.cache.remove(&k);
+                }
             }
         }
 

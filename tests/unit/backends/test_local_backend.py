@@ -2,22 +2,22 @@
 
 import pytest
 
-from nexus.backends.local import LocalBackend
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 
 @pytest.fixture
 def temp_backend(tmp_path):
     """Create a temporary local backend for testing."""
-    backend = LocalBackend(root_path=tmp_path / "backend")
+    backend = CASLocalBackend(root_path=tmp_path / "backend")
     yield backend
 
 
 def test_initialization(tmp_path):
     """Test backend initialization creates required directories."""
     root = tmp_path / "test_backend"
-    backend = LocalBackend(root)
+    backend = CASLocalBackend(root)
 
     assert backend.root_path == root.resolve()
     assert backend.cas_root == root / "cas"
@@ -107,31 +107,23 @@ def test_exists_content(temp_backend):
     assert temp_backend.content_exists(fake_hash) is False
 
 
-def test_hash_to_path(temp_backend):
-    """Test hash to path conversion."""
+def test_blob_key(temp_backend):
+    """Test CAS blob key generation."""
     content_hash = "abcdef1234567890" + "0" * 48  # 64 char hash
 
-    path = temp_backend._hash_to_path(content_hash)
+    key = temp_backend._blob_key(content_hash)
 
-    # Should create two-level directory structure
-    assert path.parent.name == "cd"
-    assert path.parent.parent.name == "ab"
-    assert path.name == content_hash
+    # Should create two-level directory structure: cas/ab/cd/<hash>
+    assert key == f"cas/ab/cd/{content_hash}"
 
 
-def test_hash_to_path_invalid_hash(temp_backend):
-    """Test hash to path with invalid hash length."""
-    with pytest.raises(ValueError, match="Invalid hash length"):
-        temp_backend._hash_to_path("abc")
-
-
-def test_compute_hash(temp_backend):
-    """Test content hash computation (using BLAKE3)."""
+def test_content_hash_roundtrip(temp_backend):
+    """Test content hash via write/read roundtrip."""
     content = b"Test content for hashing"
-    computed_hash = temp_backend._compute_hash(content)
     expected_hash = hash_content(content)
 
-    assert computed_hash == expected_hash
+    result = temp_backend.write_content(content)
+    assert result.content_hash == expected_hash
 
 
 def test_write_empty_content(temp_backend):
@@ -181,9 +173,9 @@ def test_content_deduplication(temp_backend):
     # All hashes should be identical
     assert hash1 == hash2 == hash3
 
-    # Should only be stored once
-    content_path = temp_backend._hash_to_path(hash1)
-    assert content_path.exists()
+    # Should only be stored once (blob exists in transport)
+    blob_key = temp_backend._blob_key(hash1)
+    assert temp_backend._transport.blob_exists(blob_key)
 
     # Read should still work
     retrieved = temp_backend.read_content(hash1)
@@ -223,10 +215,9 @@ def test_backend_error_on_invalid_root():
     # Create a file instead of directory
     import tempfile
 
-    with tempfile.NamedTemporaryFile() as f, pytest.raises(BackendError):
-        # Try to initialize backend with a file path
-        backend = LocalBackend(f.name)
-        backend._ensure_roots()
+    with tempfile.NamedTemporaryFile() as f, pytest.raises((NotADirectoryError, OSError)):
+        # Try to initialize backend with a file path (root is a file, not dir)
+        CASLocalBackend(f.name)
 
 
 def test_binary_content(temp_backend):
@@ -256,8 +247,8 @@ def test_multiple_backends_same_root(tmp_path):
     """Test that multiple backend instances can share same root."""
     root = tmp_path / "shared_backend"
 
-    backend1 = LocalBackend(root)
-    backend2 = LocalBackend(root)
+    backend1 = CASLocalBackend(root)
+    backend2 = CASLocalBackend(root)
 
     # Write with first backend
     content = b"Shared content"
@@ -345,7 +336,7 @@ def test_batch_read_content_with_cache(tmp_path):
     from nexus.storage.content_cache import ContentCache
 
     cache = ContentCache(max_size_mb=10)
-    backend = LocalBackend(root_path=tmp_path / "backend", content_cache=cache)
+    backend = CASLocalBackend(root_path=tmp_path / "backend", content_cache=cache)
 
     # Write content
     content1 = b"Cached content 1"
@@ -376,7 +367,7 @@ def test_batch_read_content_parallel(tmp_path):
     2. The parallel execution works correctly with ThreadPoolExecutor
     3. Results are correctly mapped to their hashes
     """
-    backend = LocalBackend(root_path=tmp_path / "backend")
+    backend = CASLocalBackend(root_path=tmp_path / "backend")
     # No cache - forces disk reads
     backend.content_cache = None
 
@@ -400,7 +391,7 @@ def test_batch_read_content_parallel_performance(tmp_path):
     """
     import time
 
-    backend = LocalBackend(root_path=tmp_path / "backend")
+    backend = CASLocalBackend(root_path=tmp_path / "backend")
     backend.content_cache = None  # Disable cache to force disk reads
 
     # Write 20 files
@@ -424,7 +415,7 @@ def test_batch_read_content_parallel_performance(tmp_path):
 
 def test_batch_read_content_single_file_no_threadpool(tmp_path):
     """Test that single file batch read doesn't use ThreadPoolExecutor overhead."""
-    backend = LocalBackend(root_path=tmp_path / "backend")
+    backend = CASLocalBackend(root_path=tmp_path / "backend")
     backend.content_cache = None
 
     content = b"Single file content"
@@ -440,22 +431,22 @@ def test_batch_read_content_single_file_no_threadpool(tmp_path):
 def test_batch_read_workers_configurable(tmp_path):
     """Test that batch_read_workers is configurable via constructor."""
     # Default is 8
-    backend_default = LocalBackend(root_path=tmp_path / "backend1")
+    backend_default = CASLocalBackend(root_path=tmp_path / "backend1")
     assert backend_default.batch_read_workers == 8
 
     # Custom value for HDD
-    backend_hdd = LocalBackend(root_path=tmp_path / "backend2", batch_read_workers=2)
+    backend_hdd = CASLocalBackend(root_path=tmp_path / "backend2", batch_read_workers=2)
     assert backend_hdd.batch_read_workers == 2
 
     # Custom value for fast NVMe
-    backend_nvme = LocalBackend(root_path=tmp_path / "backend3", batch_read_workers=16)
+    backend_nvme = CASLocalBackend(root_path=tmp_path / "backend3", batch_read_workers=16)
     assert backend_nvme.batch_read_workers == 16
 
 
 def test_batch_read_respects_worker_limit(tmp_path):
     """Test that batch read respects the configured worker limit."""
     # Create backend with low worker count (simulating HDD config)
-    backend = LocalBackend(root_path=tmp_path / "backend", batch_read_workers=2)
+    backend = CASLocalBackend(root_path=tmp_path / "backend", batch_read_workers=2)
     backend.content_cache = None
 
     # Write 10 files
@@ -549,7 +540,7 @@ NUM_THREADS = 50
 
 
 class TestConcurrentSync:
-    """Concurrent tests for LocalBackend with CASBlobStore integration."""
+    """Concurrent tests for CASLocalBackend with CASBlobStore integration."""
 
     def test_concurrent_writes_same_content(self, temp_backend):
         """50 threads writing identical content — ref_count must be exactly 50."""
@@ -572,8 +563,8 @@ class TestConcurrentSync:
         assert temp_backend.read_content(h) == content
 
         # ref_count must be exactly NUM_THREADS
-        meta = temp_backend._cas.read_meta(h)
-        assert meta.ref_count == NUM_THREADS
+        meta = temp_backend._read_meta(h)
+        assert meta["ref_count"] == NUM_THREADS
 
     def test_concurrent_writes_different_content(self, temp_backend):
         """50 threads writing unique content — all succeed independently."""
@@ -592,8 +583,8 @@ class TestConcurrentSync:
 
         # Each blob should exist with ref_count=1
         for h in hashes:
-            meta = temp_backend._cas.read_meta(h)
-            assert meta.ref_count == 1
+            meta = temp_backend._read_meta(h)
+            assert meta["ref_count"] == 1
 
     def test_concurrent_read_write(self, temp_backend):
         """Concurrent reads and writes don't corrupt data."""
@@ -625,31 +616,26 @@ class TestConcurrentSync:
 
 
 class TestChunkedCASIntegration:
-    """Integration tests for chunked storage with CASBlobStore."""
+    """Integration tests for chunked storage with CASLocalBackend + CDCEngine."""
 
     @pytest.fixture
     def chunked_backend(self, tmp_path):
-        """Backend with low CDC threshold for testing chunking."""
-        backend = LocalBackend(root_path=tmp_path / "chunked")
-        backend.cdc_threshold = 1024  # Lower for testing
+        """CASLocalBackend with low CDC threshold for testing chunking."""
+        from nexus.backends.storage.cas_local import CASLocalBackend
+
+        backend = CASLocalBackend(root_path=tmp_path / "chunked")
+        backend._cdc.threshold = 1024  # Lower for testing
         return backend
 
     def test_chunked_write_read_roundtrip(self, chunked_backend):
-        """Write >threshold file, verify manifest + chunks in CAS, read back."""
-        # Create content larger than threshold (1024 bytes)
+        """Write >threshold file, verify CDC routing, read back."""
         content = b"A" * 500 + b"B" * 500 + b"C" * 200
-        assert len(content) >= chunked_backend.cdc_threshold
+        assert len(content) >= chunked_backend._cdc.threshold
 
-        # Write
         manifest_hash = chunked_backend.write_content(content).content_hash
 
-        # Verify manifest is in CAS
-        meta = chunked_backend._cas.read_meta(manifest_hash)
-        assert meta.size == len(content)
-        assert any(k == "is_chunked_manifest" and v for k, v in meta.extra)
-
         # Verify it's recognized as chunked
-        assert chunked_backend._is_chunked_content(manifest_hash)
+        assert chunked_backend._cdc.is_chunked(manifest_hash)
 
         # Read back and verify content integrity
         read_back = chunked_backend.read_content(manifest_hash)
@@ -657,13 +643,14 @@ class TestChunkedCASIntegration:
 
     def test_chunked_manifest_structure(self, chunked_backend):
         """Verify manifest has correct chunk metadata."""
-        from nexus.backends.chunked_storage import ChunkedReference
+        from nexus.backends.engines.cdc import ChunkedReference
 
         content = b"X" * 2048  # 2KB, above threshold
         manifest_hash = chunked_backend.write_content(content).content_hash
 
-        # Read raw manifest
-        manifest_bytes = chunked_backend._cas.read_blob(manifest_hash)
+        # Read raw manifest via transport
+        key = chunked_backend._blob_key(manifest_hash)
+        manifest_bytes, _ = chunked_backend._transport.get_blob(key)
         manifest = ChunkedReference.from_json(manifest_bytes)
 
         assert manifest.type == "chunked_manifest_v1"
@@ -671,21 +658,16 @@ class TestChunkedCASIntegration:
         assert manifest.chunk_count > 0
         assert manifest.content_hash == hash_content(content)
 
-        # Each chunk should exist in CAS with ref_count >= 1
-        for chunk_info in manifest.chunks:
-            assert chunked_backend._cas.blob_exists(chunk_info.chunk_hash)
-            chunk_meta = chunked_backend._cas.read_meta(chunk_info.chunk_hash)
-            assert chunk_meta.ref_count >= 1
-
     def test_chunked_delete_releases_chunks(self, chunked_backend):
         """Deleting chunked content releases all chunk refs."""
-        from nexus.backends.chunked_storage import ChunkedReference
+        from nexus.backends.engines.cdc import ChunkedReference
 
         content = b"D" * 2048
         manifest_hash = chunked_backend.write_content(content).content_hash
 
         # Read manifest to get chunk hashes
-        manifest_bytes = chunked_backend._cas.read_blob(manifest_hash)
+        key = chunked_backend._blob_key(manifest_hash)
+        manifest_bytes, _ = chunked_backend._transport.get_blob(key)
         manifest = ChunkedReference.from_json(manifest_bytes)
         chunk_hashes = [ci.chunk_hash for ci in manifest.chunks]
 
@@ -693,11 +675,11 @@ class TestChunkedCASIntegration:
         chunked_backend.delete_content(manifest_hash)
 
         # Manifest should be gone
-        assert not chunked_backend._cas.blob_exists(manifest_hash)
+        assert not chunked_backend._transport.blob_exists(key)
 
         # All chunks should be gone (ref_count was 1)
         for ch in chunk_hashes:
-            assert not chunked_backend._cas.blob_exists(ch)
+            assert not chunked_backend._transport.blob_exists(chunked_backend._blob_key(ch))
 
     def test_chunked_deduplication(self, chunked_backend):
         """Writing same chunked content twice increments ref_count."""
@@ -706,8 +688,8 @@ class TestChunkedCASIntegration:
         h2 = chunked_backend.write_content(content).content_hash
 
         assert h1 == h2
-        meta = chunked_backend._cas.read_meta(h1)
-        assert meta.ref_count == 2
+        meta = chunked_backend._read_meta(h1)
+        assert meta.get("ref_count", 0) == 2
 
     def test_concurrent_chunked_writes(self, chunked_backend):
         """Multiple threads writing different chunked content."""
@@ -726,4 +708,4 @@ class TestChunkedCASIntegration:
 
         # Each should be readable
         for h in sorted(set(hashes)):
-            assert chunked_backend._is_chunked_content(h)
+            assert chunked_backend._cdc.is_chunked(h)

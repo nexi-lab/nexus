@@ -490,7 +490,7 @@ async def setup_zone(
             # Make user detached so we can access it after session closes
             session.expunge(user)
 
-        # Provision full user resources (workspace, agents, skills, permissions)
+        # Provision full user resources (workspace, agents, permissions)
         # This is done outside the session to avoid conflicts
         api_key_value = None
         key_id = None
@@ -512,7 +512,7 @@ async def setup_zone(
             )
 
             # Provision user resources with API key (90 days expiry)
-            provision_result = nx.provision_user(
+            provision_result = await nx.service("user_provisioning").provision_user(
                 user_id=user_id,
                 email=user.email,
                 display_name=user.display_name,
@@ -522,7 +522,7 @@ async def setup_zone(
                 api_key_name="Password Auth Auto-generated Key",
                 api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
                 create_agents=True,
-                import_skills=True,
+                import_skills=False,
                 context=admin_context,
             )
             logger.info(f"Provisioned password user resources: {provision_result}")
@@ -769,8 +769,6 @@ async def request_verification(
     Returns:
         Acceptance message (always 202)
     """
-    from nexus.server.auth.email_sender import LogEmailSender
-
     email = request.email
     if not email:
         return {"message": "If this email is registered, a verification link has been sent."}
@@ -783,7 +781,15 @@ async def request_verification(
             if user and not user.email_verified:
                 token = auth.create_email_verification_token(user.user_id, str(email))
                 verification_url = f"/auth/verify-email?token={token}"
-                sender = LogEmailSender()
+                # Use configured email sender if available; fall back to log-only
+                from nexus.server.auth.email_sender import LogEmailSender
+
+                sender = getattr(auth, "email_sender", None) or LogEmailSender()
+                if isinstance(sender, LogEmailSender):
+                    logger.warning(
+                        "[AUTH] Using LogEmailSender — verification tokens logged, not emailed. "
+                        "Configure a real email sender for production."
+                    )
                 sender.send_verification_email(str(email), verification_url)
     except Exception as e:
         # Log but don't reveal errors to prevent enumeration
@@ -1068,7 +1074,7 @@ async def oauth_check(
                 # Email verified on both sides - auto-link and login
                 # Note: Existing users will go through frontend zone creation flow
                 user, token = await oauth_provider.handle_google_callback(
-                    code=request.code, _state=request.state, redirect_uri=request.redirect_uri
+                    code=request.code, state=request.state, redirect_uri=request.redirect_uri
                 )
                 if not user.email:
                     raise ValueError("OAuth user must have an email")
@@ -1343,8 +1349,8 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 is_active=1,
                 email_verified=1 if registration.email_verified else 0,
                 user_metadata=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                updated_at=datetime.now(UTC).replace(tzinfo=None),
             )
             session.add(user)
             session.flush()
@@ -1364,7 +1370,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             # Make user detached so we can access it after session closes
             session.expunge(user)
 
-        # Provision full user resources (workspace, agents, skills, permissions)
+        # Provision full user resources (workspace, agents, permissions)
         # IMPORTANT: This only runs for NEW users - existing users return early above (line 763)
         # This is done outside the session to avoid conflicts
         api_key_value = None
@@ -1382,7 +1388,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 )
 
                 # Provision user resources with OAuth-specific API key (90 days expiry)
-                provision_result = nx.provision_user(
+                provision_result = await nx.service("user_provisioning").provision_user(
                     user_id=user_id,
                     email=user.email,
                     display_name=user.display_name,
@@ -1392,7 +1398,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     api_key_name="OAuth Auto-generated Key",
                     api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
                     create_agents=True,
-                    import_skills=True,
+                    import_skills=False,
                     context=admin_context,
                 )
                 logger.info(f"Provisioned OAuth user resources: {provision_result}")
@@ -1501,7 +1507,7 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
 
     try:
         user, token = await oauth_provider.handle_google_callback(
-            code=request.code, _state=request.state, redirect_uri=request.redirect_uri
+            code=request.code, state=request.state, redirect_uri=request.redirect_uri
         )
 
         # Ensure user has email (required for OAuth)

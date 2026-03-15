@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from nexus.server.path_utils import unscope_internal_path
+from nexus.lib.path_utils import unscope_internal_path
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.manager import ReBACManager
@@ -136,8 +136,7 @@ class HierarchyPreFilterStrategy:
         if len(unique_parents) > 200:
             unique_parents = self._top_level_prune(unique_parents, subject, ctx)
             if not unique_parents:
-                # All top-level dirs denied
-                ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
+                # All top-level dirs denied — deny remaining paths
                 return FilterResult(allowed=[], remaining=[], short_circuit=True)
 
         # Batch check unique parent directories
@@ -173,8 +172,10 @@ class HierarchyPreFilterStrategy:
                 f"{len(kept)} paths (skipped {skipped} under denied parents)"
             )
 
-            if not accessible_parents and len(remaining) > 100:
-                ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
+            # Do NOT mark bitmap complete on empty results — parent grants
+            # may exist but not resolve in bulk mode (e.g., viewer role).
+            # if not accessible_parents and len(remaining) > 100:
+            #     ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
 
             return FilterResult(allowed=[], remaining=kept)
 
@@ -267,6 +268,7 @@ class BulkReBACStrategy:
             return FilterResult()
 
         subject = ctx.subject
+
         checks = []
         for path in remaining:
             obj_type = "file"
@@ -303,8 +305,11 @@ class BulkReBACStrategy:
             if results.get(check, False)
         ]
 
-        # If bulk found 0 additional paths from a large set, mark bitmap complete
-        if not allowed and len(remaining) > 100:
+        # Only mark bitmap complete when bulk found SOME results from a large set.
+        # An empty result may indicate parent-level grants that aren't resolved
+        # in bulk mode — marking empty as "complete" would block fallback on
+        # subsequent requests and deny all access incorrectly.
+        if allowed and len(remaining) > 100:
             ctx.cache.mark_bitmap_complete(subject, ctx.zone_id)
 
         return FilterResult(allowed=allowed, remaining=[], short_circuit=True)

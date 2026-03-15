@@ -1,6 +1,6 @@
 [package]
 name = "nexus_pyo3"
-version = "0.1.0"
+version = "0.9.4"
 edition = "2021"
 
 [lib]
@@ -25,13 +25,20 @@ bloomfilter = "3.0"
 memmap2 = "0.9.9"
 dashmap = "6.1"
 parking_lot = "0.12"
+uuid = { version = "1", features = ["v4"] }
 lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
+mimalloc = { workspace = true, optional = true }
+
+[features]
+default = ["mimalloc"]
+mimalloc = ["dep:mimalloc"]
 
 [dev-dependencies]
 criterion = "0.5"
+tempfile = "3"
 
 [[bench]]
 name = "prefix_bench"

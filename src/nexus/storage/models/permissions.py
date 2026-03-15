@@ -220,34 +220,6 @@ class ReBACChangelogModel(Base):
     )
 
 
-class ReBACVersionSequenceModel(Base):
-    """Per-zone version sequence for ReBAC consistency tokens."""
-
-    __tablename__ = "rebac_version_sequences"
-
-    zone_id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    current_version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    __table_args__: tuple = ()
-
-
-class FileSystemVersionSequenceModel(Base):
-    """Per-zone version sequence for filesystem consistency tokens (Issue #1187)."""
-
-    __tablename__ = "filesystem_version_sequences"
-
-    zone_id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    current_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    __table_args__: tuple = ()
-
-
 class ReBACCheckCacheModel(Base):
     """Cache for ReBAC permission check results."""
 

@@ -19,14 +19,13 @@ All operations pass user context for permission enforcement.
 import asyncio
 import base64
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -161,13 +160,7 @@ def create_async_files_router(
     ) -> Any:
         """Get operation context from auth result."""
         if auth_result is None or not auth_result.get("authenticated"):
-            from nexus.contracts.types import OperationContext
-
-            return OperationContext(
-                user_id="anonymous",
-                groups=[],
-                zone_id=ROOT_ZONE_ID,
-            )
+            raise HTTPException(status_code=401, detail="Authentication required")
         return get_operation_context(auth_result)
 
     # =============================================================================
@@ -177,6 +170,10 @@ def create_async_files_router(
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
         request: WriteRequest,
+        write_mode: str | None = Query(
+            None,
+            description="Write consistency mode: 'sync' (default, strong) or 'async' (eventual)",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -197,26 +194,46 @@ def create_async_files_router(
             else:
                 content = request.content.encode("utf-8")
 
+            # Build write kwargs with optional write_mode (Issue #2929)
+            write_kwargs: dict[str, Any] = {
+                "path": request.path,
+                "buf": content,
+                "context": context,
+            }
+            if write_mode is not None:
+                from nexus.contracts.types import WriteMode
+
+                try:
+                    mode = WriteMode(write_mode)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid write_mode: {write_mode!r}. "
+                        f"Valid values: {[m.value for m in WriteMode]}",
+                    ) from None
+                write_kwargs["consistency"] = mode.to_metastore_consistency()
+
             result = await asyncio.to_thread(
                 fs.write,
-                path=request.path,
-                content=content,
-                if_match=request.if_match,
-                if_none_match=request.if_none_match,
-                context=context,
+                **write_kwargs,
             )
 
+            modified = result["modified_at"]
+            if hasattr(modified, "isoformat"):
+                modified = modified.isoformat()
             response_data = WriteResponse(
                 etag=result["etag"],
                 version=result["version"],
                 size=result["size"],
-                modified_at=result["modified_at"],
+                modified_at=str(modified),
             )
             return Response(
                 content=response_data.model_dump_json(),
                 media_type="application/json",
             )
 
+        except HTTPException:
+            raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
@@ -254,7 +271,7 @@ def create_async_files_router(
 
             # Get metadata first for ETag check
             if if_none_match:
-                meta = await asyncio.to_thread(fs.get_metadata, path)
+                meta = await asyncio.to_thread(fs.sys_stat, path)
                 if meta and meta.etag:
                     client_etag = if_none_match.strip('"')
                     if client_etag == meta.etag:
@@ -319,8 +336,8 @@ def create_async_files_router(
         """Delete a file."""
         try:
             fs = await _get_fs()
-            result = await asyncio.to_thread(fs.delete, path, context=context)
-            return DeleteResponse(deleted=result["deleted"], path=result["path"])
+            await asyncio.to_thread(fs.sys_unlink, path, context=context)
+            return DeleteResponse(deleted=True, path=path)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -344,7 +361,7 @@ def create_async_files_router(
         """Check if a file or directory exists."""
         try:
             fs = await _get_fs()
-            exists = await asyncio.to_thread(fs.exists, path, context=context)
+            exists = await asyncio.to_thread(fs.sys_access, path, context=context)
             return ExistsResponse(exists=exists)
 
         except NexusPermissionError as e:
@@ -369,7 +386,9 @@ def create_async_files_router(
             fs = await _get_fs()
 
             # NexusFS.list() returns full paths; strip prefix to get names
-            full_paths = await asyncio.to_thread(fs.list, path, recursive=False, context=context)
+            full_paths = await asyncio.to_thread(
+                fs.sys_readdir, path, recursive=False, context=context
+            )
             prefix = path.rstrip("/") + "/"
             items = [
                 fp[len(prefix) :] if fp.startswith(prefix) else fp.rsplit("/", 1)[-1]
@@ -400,7 +419,7 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
             await asyncio.to_thread(
-                fs.mkdir, request.path, parents=request.parents, context=context
+                fs.sys_mkdir, request.path, parents=request.parents, context=context
             )
             return {"created": True, "path": request.path}
 
@@ -428,7 +447,7 @@ def create_async_files_router(
         """Get file or directory metadata."""
         try:
             fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.get_metadata, path, context=context)
+            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -515,7 +534,7 @@ def create_async_files_router(
 
         try:
             fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.get_metadata, path, context=context)
+            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -526,9 +545,9 @@ def create_async_files_router(
                     for i in range(0, len(data), cs):
                         yield data[i : i + cs]
 
-            def _full_generator() -> Iterator[bytes]:
+            async def _full_generator() -> AsyncIterator[bytes]:
                 """Sync generator wrapping NexusFS.read()."""
-                data = fs.sys_read(path, context=context)
+                data = await fs.sys_read(path, context=context)
                 if isinstance(data, bytes):
                     for i in range(0, len(data), chunk_size):
                         yield data[i : i + chunk_size]

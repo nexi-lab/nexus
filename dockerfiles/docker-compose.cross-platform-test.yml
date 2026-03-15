@@ -171,8 +171,8 @@ services:
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
 
-      # --- Deployment mode (explicit federation for Raft cluster) ---
-      NEXUS_MODE: federation
+      # --- Deployment profile (cloud = all bricks + federation) ---
+      NEXUS_PROFILE: cloud
 
       # --- Raft consensus (static bootstrap — all nodes know all peers) ---
       NEXUS_NODE_ID: 1
@@ -272,8 +272,8 @@ services:
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
 
-      # --- Deployment mode (explicit federation for Raft cluster) ---
-      NEXUS_MODE: federation
+      # --- Deployment profile (cloud = all bricks + federation) ---
+      NEXUS_PROFILE: cloud
 
       NEXUS_NODE_ID: 2
       NEXUS_BIND_ADDR: 0.0.0.0:2126

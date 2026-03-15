@@ -75,7 +75,7 @@ class TestTransactionalOutboxIntegration:
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Write via syncer → start worker → verify delivery."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         # Step 1: Write file via syncer (transactional)
         metadata = _make_metadata("/integration.txt", etag="ihash")
@@ -103,7 +103,7 @@ class TestTransactionalOutboxIntegration:
         mock_bus.publish = AsyncMock(side_effect=capture_publish)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             poll_interval_ms=50,
         )
@@ -130,7 +130,7 @@ class TestTransactionalOutboxIntegration:
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Multiple writes + delete → all delivered in created_at order."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         # Create multiple operations
         m1 = _make_metadata("/a.txt", etag="h1")
@@ -163,7 +163,7 @@ class TestTransactionalOutboxIntegration:
         mock_bus.publish = AsyncMock(side_effect=capture)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             batch_size=50,
         )
@@ -191,7 +191,7 @@ class TestTransactionalOutboxIntegration:
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Simulate crash: dispatch fails → restart → events retried."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         # Write a file
         m = _make_metadata("/crash.txt", etag="crash")
@@ -201,7 +201,7 @@ class TestTransactionalOutboxIntegration:
         failing_bus = MagicMock()
         failing_bus.publish = AsyncMock(side_effect=RuntimeError("crash!"))
 
-        worker1 = EventDeliveryWorker(record_store.session_factory, event_bus=failing_bus)
+        worker1 = EventDeliveryWorker(record_store, event_bus=failing_bus)
         count1 = worker1._poll_and_dispatch()
         assert count1 == 0  # Nothing delivered
 
@@ -214,7 +214,7 @@ class TestTransactionalOutboxIntegration:
         success_bus = MagicMock()
         success_bus.publish = AsyncMock()
 
-        worker2 = EventDeliveryWorker(record_store.session_factory, event_bus=success_bus)
+        worker2 = EventDeliveryWorker(record_store, event_bus=success_bus)
         count2 = worker2._poll_and_dispatch()
         assert count2 == 1
 
@@ -229,13 +229,13 @@ class TestTransactionalOutboxIntegration:
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Worker running in background picks up events automatically."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             poll_interval_ms=50,
         )

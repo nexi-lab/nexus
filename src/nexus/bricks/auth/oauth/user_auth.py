@@ -8,7 +8,7 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -85,10 +85,29 @@ class OAuthUserAuth:
         self,
         provider_name: str,
         code: str,
-        _state: str | None = None,
+        state: str | None = None,
         redirect_uri: str | None = None,
+        expected_state: str | None = None,
     ) -> tuple[UserModel, str]:
-        """Handle OAuth callback for any provider."""
+        """Handle OAuth callback for any provider.
+
+        Args:
+            provider_name: OAuth provider name.
+            code: Authorization code from provider.
+            state: State parameter returned in the callback.
+            redirect_uri: Redirect URI used in the original request.
+            expected_state: The state value originally sent in the auth URL.
+                Must match ``state`` when provided (CSRF protection).
+
+        Raises:
+            ValueError: If state validation fails.
+        """
+        # Validate OAuth state for CSRF protection
+        if expected_state is not None and (
+            state is None or not secrets.compare_digest(state, expected_state)
+        ):
+            raise ValueError("OAuth state mismatch — possible CSRF attack")
+
         provider = self._get_provider(provider_name)
 
         try:
@@ -159,9 +178,19 @@ class OAuthUserAuth:
 
     # Keep backward-compat convenience method
     async def handle_google_callback(
-        self, code: str, _state: str | None = None, redirect_uri: str | None = None
+        self,
+        code: str,
+        state: str | None = None,
+        redirect_uri: str | None = None,
+        expected_state: str | None = None,
     ) -> tuple[UserModel, str]:
-        return await self.handle_callback("google", code, _state=_state, redirect_uri=redirect_uri)
+        return await self.handle_callback(
+            "google",
+            code,
+            state=state,
+            redirect_uri=redirect_uri,
+            expected_state=expected_state,
+        )
 
     async def _extract_user_info(self, provider_name: str, access_token: str) -> dict[str, Any]:
         """Fetch user info from provider's userinfo endpoint."""
@@ -212,7 +241,7 @@ class OAuthUserAuth:
                 if not user or user.is_active == 0:
                     raise ValueError("User account is inactive")
 
-                existing_oauth.last_used_at = datetime.utcnow()
+                existing_oauth.last_used_at = datetime.now(UTC).replace(tzinfo=None)
                 session.add(existing_oauth)
                 session.flush()
                 session.expunge(user)
@@ -268,8 +297,8 @@ class OAuthUserAuth:
                 is_active=1,
                 email_verified=1 if email_verified else 0,
                 user_metadata=None,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                updated_at=datetime.now(UTC).replace(tzinfo=None),
             )
 
             session.add(user)
@@ -344,8 +373,8 @@ class OAuthUserAuth:
                 else None
             ),
             provider_profile=provider_profile,
-            created_at=datetime.utcnow(),
-            last_used_at=datetime.utcnow(),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            last_used_at=datetime.now(UTC).replace(tzinfo=None),
         )
 
         session.add(oauth_account)
@@ -367,14 +396,14 @@ class OAuthUserAuth:
         zone_id = email.split("@")[0] if email else user_id
 
         try:
-            result = self._user_provisioner.provision_user(
+            result = await self._user_provisioner.provision_user(
                 user_id=user_id,
                 email=email,
                 display_name=display_name,
                 zone_id=zone_id,
                 create_api_key=True,
                 create_agents=True,
-                import_skills=True,
+                import_skills=False,
             )
 
             if logger.isEnabledFor(logging.INFO):

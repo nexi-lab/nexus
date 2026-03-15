@@ -23,7 +23,7 @@ from nexus.backends.connectors.gmail.schemas import (
     ReplyEmailSchema,
     SendEmailSchema,
 )
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -84,10 +84,12 @@ def mock_gmail_service():
 @pytest.fixture
 def gmail_backend(mock_gmail_service, tmp_path):
     """Create a Gmail backend with mocked Google service."""
-    from nexus.backends.gmail_connector import GmailConnectorBackend
+    from nexus.backends.connectors.gmail.connector import GmailConnectorBackend
 
     # Create a mock token manager
-    with patch("nexus.backends.gmail_connector.GmailConnectorBackend._register_oauth_provider"):
+    with patch(
+        "nexus.backends.connectors.gmail.connector.GmailConnectorBackend._register_oauth_provider"
+    ):
         backend = GmailConnectorBackend(
             token_manager_db=str(tmp_path / "tokens.db"),
             user_email="test@example.com",
@@ -318,11 +320,12 @@ class TestSkillDocGeneration:
         assert "/mnt/gmail/" not in doc
         assert "/custom/mount/path/" in doc
 
-    def test_write_skill_docs(self, gmail_backend, isolated_db, tmp_path):
+    @pytest.mark.asyncio
+    async def test_write_skill_docs(self, gmail_backend, isolated_db, tmp_path):
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
-        backend = LocalBackend(root_path=str(tmp_path / "storage"))
-        nx = create_nexus_fs(
+        backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
@@ -337,7 +340,7 @@ class TestSkillDocGeneration:
 
             if skill_path:
                 # Read back and verify
-                content = nx.sys_read(skill_path)
+                content = await nx.sys_read(skill_path)
                 assert b"Gmail Connector" in content
                 assert b"agent_intent" in content
                 assert b"Send Email" in content

@@ -50,23 +50,10 @@ def get_all_rpc_exposed_methods():
     """
     exposed = get_rpc_exposed_methods(NexusFS)
 
-    # Brick services that expose RPC methods directly
-    _brick_classes: list[type] = []
-    try:
-        from nexus.skills.service import SkillService
+    # Issue #1410: Version methods moved from NexusFS to VersionService
+    from nexus.bricks.versioning.version_service import VersionService
 
-        _brick_classes.append(SkillService)
-    except ImportError:
-        pass
-    try:
-        from nexus.skills.package_service import SkillPackageService
-
-        _brick_classes.append(SkillPackageService)
-    except ImportError:
-        pass
-
-    for cls in _brick_classes:
-        exposed.update(get_rpc_exposed_methods(cls))
+    exposed.update(get_rpc_exposed_methods(VersionService))
 
     return exposed
 
@@ -119,7 +106,14 @@ def test_all_public_methods_are_exposed_or_excluded():
     # ADD NEW METHODS HERE if they should remain local-only
     INTERNAL_ONLY_METHODS = {
         # Lifecycle/infrastructure methods
+        "aclose",  # Async shutdown — stop PersistentService + deactivate HotSwappable (Issue #1580)
         "close",  # Connection management - handled differently for remote
+        "link",  # Boot phase 1 - pure memory wiring, not an RPC operation
+        "initialize",  # Boot phase 2 - one-time side effects, not an RPC operation
+        "bootstrap",  # Boot phase 3 - async task startup, server-only
+        "service",  # ServiceRegistry lookup — local kernel API, not an RPC operation (Issue #1452)
+        "service_coordinator",  # ServiceLifecycleCoordinator access — server-only (Issue #1452 Phase 3)
+        "swap_service",  # Hot-swap via coordinator — server-only admin operation (Issue #1452 Phase 3)
         "load_all_saved_mounts",  # Internal initialization method - called automatically on startup
         # Server-side only methods (clients get this via HTTP headers)
         "get_etag",  # Returns ETag for early 304 check - clients receive ETags via HTTP headers on read
@@ -128,7 +122,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "parse",  # Async - requires async RPC support
         # Already exposed via different mechanism
         "write_batch",  # Exposed via different RPC endpoint
-        "list_memories",  # Handled manually by dispatcher, calls memory.list() instead
         # Tiger Cache internal methods - server-side optimization only
         "grant_traverse_on_implicit_dirs",  # Internal - grants TRAVERSE on implicit dirs during init
         "process_tiger_cache_queue",  # Internal - background worker processes cache updates
@@ -139,11 +132,8 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Phase 2 Service Composition - Async delegation methods (Issue #988)
         # These are internal async methods that delegate to services. The original
         # sync mixin methods (without "a" prefix) already have @rpc_expose decorators.
-        # VersionService delegation (4 methods)
-        "aget_version",  # Delegates to version_service.get_version()
-        "alist_versions",  # Delegates to version_service.list_versions()
-        "arollback",  # Delegates to version_service.rollback()
-        "adiff_versions",  # Delegates to version_service.diff_versions()
+        # VersionService delegation (removed: sync wrappers moved to VersionService,
+        # async __getattr__ magic deleted in PR #2782)
         # ReBACService delegation (8 methods)
         "arebac_create",  # Delegates to rebac_service.rebac_create()
         "arebac_delete",  # Delegates to rebac_service.rebac_delete()
@@ -153,11 +143,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "arebac_explain",  # Delegates to rebac_service.rebac_explain()
         "arebac_list_tuples",  # Delegates to rebac_service.rebac_list_tuples()
         "aget_namespace",  # Delegates to rebac_service.get_namespace()
-        # LLMService delegation (4 methods) — Issue #1287 Phase B: mixin removed
-        "create_llm_reader",  # Delegates to llm_service.create_llm_reader()
-        "llm_read",  # Delegates to llm_service.llm_read()
-        "llm_read_detailed",  # Delegates to llm_service.llm_read_detailed()
-        "llm_read_stream",  # Delegates to llm_service.llm_read_stream()
         # MountService delegation (15 methods)
         "aadd_mount",  # Delegates to mount_service.add_mount()
         "aremove_mount",  # Delegates to mount_service.remove_mount()
@@ -178,7 +163,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "asemantic_search",  # Delegates to search_service.semantic_search()
         "asemantic_search_index",  # Delegates to search_service.semantic_search_index()
         "asemantic_search_stats",  # Delegates to search_service.semantic_search_stats()
-        "ainitialize_semantic_search",  # Delegates to search_service.initialize_semantic_search()
+        # ainitialize_semantic_search — deleted from NexusFS, callers use search_service directly
         # Distributed Lock methods - async context managers require special handling
         # Tracked in Issue #1141
         "atomic_update",  # Async - read-modify-write with distributed lock
@@ -187,42 +172,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
         # KernelDispatch OBSERVE registration (Issue #900) - server-side observer registration
         "register_observe",  # Internal - registers VFS observers for workflow dispatch
-        # Brick service references (Issue #2035) — object instances, not methods
-        "skill_service",  # SkillService instance — RPC methods auto-discovered from brick
-        "skill_package_service",  # SkillPackageService instance — RPC methods auto-discovered from brick
-        # ABC compliance stubs (Issue #2033 LEGO decomposition)
-        # These delegate to extracted services which already have @rpc_expose.
-        # NexusFS defines them only to satisfy NexusFilesystem ABC requirements.
-        # Workspace snapshots — delegates to _workspace_rpc_service
-        "workspace_snapshot",  # ABC stub → _workspace_rpc_service.workspace_snapshot()
-        "workspace_restore",  # ABC stub → _workspace_rpc_service.workspace_restore()
-        "workspace_log",  # ABC stub → _workspace_rpc_service.workspace_log()
-        "workspace_diff",  # ABC stub → _workspace_rpc_service.workspace_diff()
-        # Workspace registry — delegates to _workspace_rpc_service
-        "register_workspace",  # ABC stub → _workspace_rpc_service.register_workspace()
-        "unregister_workspace",  # ABC stub → _workspace_rpc_service.unregister_workspace()
-        "list_workspaces",  # ABC stub → _workspace_rpc_service.list_workspaces()
-        "get_workspace_info",  # ABC stub → _workspace_rpc_service.get_workspace_info()
-        # Memory registry — delegates to _workspace_rpc_service
-        "register_memory",  # ABC stub → _workspace_rpc_service.register_memory()
-        "unregister_memory",  # ABC stub → _workspace_rpc_service.unregister_memory()
-        "get_memory_info",  # ABC stub → _workspace_rpc_service.get_memory_info()
-        # Sandbox — delegates to _sandbox_rpc_service
-        "sandbox_create",  # ABC stub → _sandbox_rpc_service.sandbox_create()
-        "sandbox_get_or_create",  # ABC stub → _sandbox_rpc_service.sandbox_get_or_create()
-        "sandbox_run",  # ABC stub → _sandbox_rpc_service.sandbox_run()
-        "sandbox_pause",  # ABC stub → _sandbox_rpc_service.sandbox_pause()
-        "sandbox_resume",  # ABC stub → _sandbox_rpc_service.sandbox_resume()
-        "sandbox_stop",  # ABC stub → _sandbox_rpc_service.sandbox_stop()
-        "sandbox_list",  # ABC stub → _sandbox_rpc_service.sandbox_list()
-        "sandbox_status",  # ABC stub → _sandbox_rpc_service.sandbox_status()
-        "sandbox_connect",  # ABC stub → _sandbox_rpc_service.sandbox_connect()
-        "sandbox_disconnect",  # ABC stub → _sandbox_rpc_service.sandbox_disconnect()
-        # Mount — delegates to _mount_core_service
-        "add_mount",  # ABC stub → _mount_core_service.add_mount()
-        "remove_mount",  # ABC stub → _mount_core_service.remove_mount()
-        "list_mounts",  # ABC stub → _mount_core_service.list_mounts()
-        "get_mount",  # ABC stub → _mount_core_service.get_mount()
         # Search/list — delegates to search_service
         "list",  # ABC stub → overrides NexusFS.list()
         "glob",  # ABC stub → search_service.glob()

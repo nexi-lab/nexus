@@ -7,7 +7,7 @@ lifecycle-aware bricks.
 The adapter maps:
     - ``start()``        → ``SearchDaemon.startup()``
     - ``stop()``         → ``SearchDaemon.shutdown()``
-    - ``health_check()`` → ``SearchDaemon.get_health()["initialized"]``
+    - ``health_check()`` → ``SearchDaemon.get_health()``
 
 Zoekt lifecycle is an internal detail of the daemon and is NOT exposed
 to the lifecycle manager (Decision #3).
@@ -36,4 +36,7 @@ class SearchBrickLifecycleAdapter:
     async def health_check(self) -> bool:
         """Return True if the search daemon is healthy."""
         health: dict[str, Any] = self._daemon.get_health()
-        return bool(health.get("initialized", False))
+        # ``get_health`` uses ``daemon_initialized`` while older tests/mocks
+        # may still provide ``initialized``. Accept both to avoid false
+        # unhealthy reports that trigger unnecessary search remounts.
+        return bool(health.get("daemon_initialized", health.get("initialized", False)))

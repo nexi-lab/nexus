@@ -342,7 +342,6 @@ class TestBuiltinActions:
         assert "tag" in BUILTIN_ACTIONS
         assert "move" in BUILTIN_ACTIONS
         assert "metadata" in BUILTIN_ACTIONS
-        assert "llm" in BUILTIN_ACTIONS
         assert "webhook" in BUILTIN_ACTIONS
         assert "python" in BUILTIN_ACTIONS
         assert "bash" in BUILTIN_ACTIONS

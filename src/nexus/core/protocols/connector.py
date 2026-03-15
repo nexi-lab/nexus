@@ -5,7 +5,6 @@ Defines the Storage Brick boundary as composable protocols:
 - ``ContentStoreProtocol`` — Minimal CAS interface (most consumers need only this)
 - ``DirectoryOpsProtocol`` — Directory operations (VFS Router, mount services)
 - ``ConnectorProtocol`` — Full connector interface (Storage Brick boundary)
-- ``PassthroughProtocol`` — Same-box operations (locking, physical paths)
 - ``OAuthCapableProtocol`` — OAuth token management capability
 - ``StreamingProtocol`` — Memory-efficient large file I/O (stream/range)
 - ``BatchContentProtocol`` — Bulk content read optimization
@@ -24,16 +23,15 @@ References:
     - Issue #1703: Make backends implement ConnectorProtocol
 """
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from nexus.backends.backend import FileInfo, HandlerStatusResponse
+    from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
     from nexus.contracts.types import OperationContext
     from nexus.core.object_store import WriteResult
-    from nexus.core.protocols.capabilities import ConnectorCapability
+    from nexus.contracts.capabilities import ConnectorCapability
 
 # ---------------------------------------------------------------------------
 # SearchableConnector (Issue #2367)
@@ -179,30 +177,10 @@ class ConnectorProtocol(
     def is_connected(self) -> bool: ...
 
     @property
-    def is_passthrough(self) -> bool: ...
-
-    @property
     def has_root_path(self) -> bool: ...
 
     @property
     def has_token_manager(self) -> bool: ...
-
-@runtime_checkable
-class PassthroughProtocol(Protocol):
-    """Same-box operations — locking, physical path access.
-
-    Only PassthroughBackend implements this. Used by events/locking code
-    to safely narrow the backend type instead of using ``cast()``.
-    """
-
-    @property
-    def base_path(self) -> Path: ...
-
-    def get_physical_path(self, virtual_path: str) -> Path: ...
-
-    def lock(self, path: str, timeout: float = 30.0, max_holders: int = 1) -> str | None: ...
-
-    def unlock(self, lock_id: str) -> bool: ...
 
 @runtime_checkable
 class OAuthCapableProtocol(Protocol):

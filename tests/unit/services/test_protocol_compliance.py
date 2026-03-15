@@ -10,13 +10,7 @@ checks a concrete class against a Protocol for:
 Usage::
 
     from tests.unit.services.test_protocol_compliance import assert_protocol_compliance
-    from nexus.services.protocols import SkillsProtocol
-    from nexus.bricks.skills.skill_service_adapter import SkillService
-
-    def test_skill_service_protocol():
-        assert_protocol_compliance(SkillService, SkillsProtocol)
-
-Parameterized tests for all 8 domain protocols are included below.
+Parameterized tests for all 7 domain protocols are included below.
 """
 
 import inspect
@@ -150,149 +144,113 @@ def assert_protocol_compliance(
 _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     # ── Fully extracted (expect pass) ──────────────────────────────────
     (
-        "LLMServiceProtocol",
-        "nexus.services.protocols.llm",
-        "nexus.bricks.llm.llm_service.LLMService",
-        True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
-    ),
-    # ── Phase 1.5: Protocol updated to unprefixed names matching service ──
-    (
-        "SkillsProtocol",
-        "nexus.services.protocols.skills",
-        "nexus.bricks.skills.skill_service_adapter.SkillService",
-        True,
-    ),
-    (
         "MountProtocol",
-        "nexus.services.protocols.mount",
-        "nexus.services.mount.mount_service.MountService",
+        "nexus.contracts.protocols.mount",
+        "nexus.bricks.mount.mount_service.MountService",
         True,  # Fixed: added delete_connector, context param naming, full_sync param
     ),
     (
         "OAuthProtocol",
-        "nexus.services.protocols.oauth",
-        "nexus.services.oauth.oauth_service.OAuthService",
+        "nexus.contracts.protocols.oauth",
+        "nexus.bricks.auth.oauth.credential_service.OAuthCredentialService",
         True,
     ),
     (
         "SearchProtocol",
-        "nexus.services.protocols.search",
-        "nexus.services.search.search_service.SearchService",
+        "nexus.contracts.protocols.search",
+        "nexus.bricks.search.search_service.SearchService",
         True,
     ),
     (
         "PermissionProtocol",
-        "nexus.services.protocols.permission",
+        "nexus.contracts.protocols.permission",
         "nexus.bricks.rebac.rebac_service.ReBACService",
         True,  # Fixed: protocol updated to match async ReBACService interface
     ),
     # ── ShareLinkService extracted (Issue #1387) ────────────────────────
     (
         "ShareLinkProtocol",
-        "nexus.services.protocols.share_link",
-        "nexus.services.share_link.share_link_service.ShareLinkService",
+        "nexus.contracts.protocols.share_link",
+        "nexus.bricks.share_link.share_link_service.ShareLinkService",
         True,  # Method names match (async/sync checked separately)
     ),
     (
         "WatchProtocol",
-        "nexus.services.protocols.watch",
+        "nexus.contracts.protocols.watch",
         "nexus.system_services.lifecycle.events_service.EventsService",
         True,  # wait_for_changes method match
     ),
-    (
-        "LockProtocol",
-        "nexus.services.protocols.lock",
-        "nexus.system_services.lifecycle.events_service.EventsService",
-        True,  # lock/extend_lock/unlock methods match
-    ),
+    # LockProtocol removed — consolidated into LockManagerBase (lib/distributed_lock.py).
+    # EventsService.lock/unlock/extend_lock methods call LockManagerBase directly.
     # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
     (
         "SnapshotServiceProtocol",
-        "nexus.services.protocols.snapshot",
+        "nexus.contracts.protocols.snapshot",
         "nexus.bricks.snapshot.service.TransactionalSnapshotService",
         True,
     ),
     # ── Async adapter protocols (Issue #1440) ─────────────────────────
     (
         "AgentRegistryProtocol",
-        "nexus.services.protocols.agent_registry",
-        "nexus.services.agents.async_agent_registry.AsyncAgentRegistry",
+        "nexus.contracts.protocols.agent_registry",
+        "nexus.system_services.agents.agent_registry.AsyncAgentRegistry",
         True,
     ),
     (
         "NamespaceManagerProtocol",
-        "nexus.services.protocols.namespace_manager",
-        "nexus.bricks.rebac.async_namespace_manager.AsyncNamespaceManager",
+        "nexus.contracts.protocols.namespace_manager",
+        "nexus.bricks.rebac.namespace_manager.AsyncNamespaceManager",
         True,
     ),
     # ── Service-layer protocols ───────────────────────────────────────
     (
         "MCPProtocol",
-        "nexus.services.protocols.mcp",
+        "nexus.contracts.protocols.mcp",
         "nexus.bricks.mcp.mcp_service.MCPService",
         True,
     ),
     (
         "OperationLogProtocol",
-        "nexus.services.protocols.operation_log",
+        "nexus.contracts.protocols.operation_log",
         "nexus.storage.operation_logger.OperationLogger",
         True,
     ),
     # ── Scheduler (using InMemoryScheduler test stub) ─────────────────
     (
         "SchedulerProtocol",
-        "nexus.services.protocols.scheduler",
-        "nexus.services.protocols.scheduler.InMemoryScheduler",
-        True,
-    ),
-    # ── Narrow dependency Protocols (Issue #2190) ────────────────────
-    (
-        "MemoryPermissionCheckerProtocol",
-        "nexus.services.protocols.memory",
-        "nexus.bricks.rebac.memory_permission_enforcer.MemoryPermissionEnforcer",
-        True,
-    ),
-    (
-        "EntityResolverProtocol",
-        "nexus.services.protocols.memory",
-        "nexus.bricks.rebac.entity_registry.EntityRegistry",
+        "nexus.contracts.protocols.scheduler",
+        "nexus.services.scheduler.in_memory.InMemoryScheduler",
         True,
     ),
     # ── Brick-level protocols ─────────────────────────────────────────
     (
-        "LLMProviderProtocol",
-        "nexus.services.protocols.llm_provider",
-        "nexus.bricks.llm.provider.LiteLLMProvider",
-        True,
-    ),
-    (
         "ParseProtocol",
-        "nexus.services.protocols.parse",
+        "nexus.contracts.protocols.parse",
         "nexus.bricks.parsers.registry.ParserRegistry",
         True,
     ),
     (
         "PaymentProtocol",
-        "nexus.services.protocols.payment",
+        "nexus.contracts.protocols.payment",
         "nexus.bricks.pay.protocol.X402PaymentProtocol",
         True,
     ),
     # ── Former kernel protocols (Issue #2359: moved to services/protocols/) ──
     (
         "PermissionEnforcerProtocol",
-        "nexus.services.protocols.permission_enforcer",
+        "nexus.contracts.protocols.permission_enforcer",
         "nexus.bricks.rebac.enforcer.PermissionEnforcer",
         True,
     ),
     (
         "EntityRegistryProtocol",
-        "nexus.services.protocols.entity_registry",
+        "nexus.contracts.protocols.entity_registry",
         "nexus.bricks.rebac.entity_registry.EntityRegistry",
         True,
     ),
     (
         "WorkspaceManagerProtocol",
-        "nexus.services.protocols.workspace_manager",
+        "nexus.contracts.protocols.workspace_manager",
         "nexus.system_services.workspace.workspace_manager.WorkspaceManager",
         True,
     ),
@@ -346,7 +304,7 @@ def test_rebac_manager_satisfies_manager_methods() -> None:
     verify_imports) that are only implemented by the brick wrapper, not by the
     underlying ReBACManager. This test verifies manager-level compliance.
     """
-    from nexus.services.protocols.rebac import ReBACBrickProtocol
+    from nexus.contracts.protocols.rebac import ReBACBrickProtocol
 
     impl_cls = _try_import("nexus.bricks.rebac.manager", "ReBACManager")
     if impl_cls is None:
@@ -377,42 +335,36 @@ def test_rebac_manager_satisfies_manager_methods() -> None:
 # =========================================================================
 
 _PROTOCOL_FILES: list[tuple[str, str]] = [
-    ("agent_registry", "nexus/services/protocols/agent_registry.py"),
-    ("auth", "nexus/services/protocols/auth.py"),
-    ("event_log", "nexus/services/event_subsystem/log/protocol.py"),
+    ("agent_registry", "nexus/contracts/protocols/agent_registry.py"),
+    ("auth", "nexus/contracts/protocols/auth.py"),
+    ("event_log", "nexus/system_services/event_log/protocol.py"),
     ("governance", "nexus/bricks/governance/protocols.py"),
-    ("llm", "nexus/services/protocols/llm.py"),
-    ("llm_provider", "nexus/services/protocols/llm_provider.py"),
-    ("lock", "nexus/services/protocols/lock.py"),
-    ("mcp", "nexus/services/protocols/mcp.py"),
-    ("memory", "nexus/services/protocols/memory.py"),
-    ("mount", "nexus/services/protocols/mount.py"),
-    ("namespace_manager", "nexus/services/protocols/namespace_manager.py"),
-    ("oauth", "nexus/services/protocols/oauth.py"),
-    ("operation_log", "nexus/services/protocols/operation_log.py"),
-    ("parse", "nexus/services/protocols/parse.py"),
-    ("payment", "nexus/services/protocols/payment.py"),
-    ("permission", "nexus/services/protocols/permission.py"),
-    ("rebac", "nexus/services/protocols/rebac.py"),
-    ("reputation", "nexus/services/protocols/reputation.py"),
-    ("scheduler", "nexus/services/protocols/scheduler.py"),
-    ("search", "nexus/services/protocols/search.py"),
-    ("share_link", "nexus/services/protocols/share_link.py"),
-    ("skills", "nexus/services/protocols/skills.py"),
-    ("snapshot", "nexus/services/protocols/snapshot.py"),
-    ("trajectory", "nexus/services/protocols/trajectory.py"),
-    ("version", "nexus/services/protocols/version.py"),
+    ("lock", "nexus/contracts/protocols/lock.py"),
+    ("mcp", "nexus/contracts/protocols/mcp.py"),
+    ("mount", "nexus/contracts/protocols/mount.py"),
+    ("namespace_manager", "nexus/contracts/protocols/namespace_manager.py"),
+    ("oauth", "nexus/contracts/protocols/oauth.py"),
+    ("operation_log", "nexus/contracts/protocols/operation_log.py"),
+    ("parse", "nexus/contracts/protocols/parse.py"),
+    ("payment", "nexus/contracts/protocols/payment.py"),
+    ("permission", "nexus/contracts/protocols/permission.py"),
+    ("rebac", "nexus/contracts/protocols/rebac.py"),
+    ("scheduler", "nexus/contracts/protocols/scheduler.py"),
+    ("search", "nexus/contracts/protocols/search.py"),
+    ("share_link", "nexus/contracts/protocols/share_link.py"),
+    ("snapshot", "nexus/contracts/protocols/snapshot.py"),
+    ("version", "nexus/contracts/protocols/version.py"),
     ("vfs_router", "nexus/core/protocols/vfs_router.py"),
-    ("watch", "nexus/services/protocols/watch.py"),
+    ("watch", "nexus/contracts/protocols/watch.py"),
     ("vfs_core", "nexus/core/protocols/vfs_core.py"),
     ("caching", "nexus/core/protocols/caching.py"),
     ("connector", "nexus/core/protocols/connector.py"),
     # Issue #2359: Moved protocols to their correct tier locations
     ("describable", "nexus/contracts/describable.py"),
     ("wirable_fs", "nexus/contracts/wirable_fs.py"),
-    ("permission_enforcer", "nexus/services/protocols/permission_enforcer.py"),
-    ("entity_registry", "nexus/services/protocols/entity_registry.py"),
-    ("workspace_manager", "nexus/services/protocols/workspace_manager.py"),
+    ("permission_enforcer", "nexus/contracts/protocols/permission_enforcer.py"),
+    ("entity_registry", "nexus/contracts/protocols/entity_registry.py"),
+    ("workspace_manager", "nexus/contracts/protocols/workspace_manager.py"),
 ]
 
 # Leaf modules that are safe to import at module level in protocol files

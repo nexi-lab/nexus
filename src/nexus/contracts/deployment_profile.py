@@ -39,6 +39,7 @@ BRICK_NAMESPACE = "namespace"
 BRICK_AGENT_REGISTRY = "agent_registry"
 BRICK_PERMISSIONS = "permissions"
 BRICK_SCHEDULER = "scheduler"
+BRICK_AGENT_RUNTIME = "agent_runtime"
 
 # Infrastructure bricks
 BRICK_CACHE = "cache"
@@ -51,13 +52,22 @@ BRICK_RESILIENCY = "resiliency"
 BRICK_SEARCH = "search"
 BRICK_PAY = "pay"
 BRICK_LLM = "llm"
-BRICK_SKILLS = "skills"
 BRICK_SANDBOX = "sandbox"
 BRICK_WORKFLOWS = "workflows"
-BRICK_A2A = "a2a"
 BRICK_DISCOVERY = "discovery"
 BRICK_MCP = "mcp"
 BRICK_MEMORY = "memory"
+BRICK_SKILLS = "skills"
+BRICK_ACCESS_MANIFEST = "access_manifest"
+BRICK_CATALOG = "catalog"
+BRICK_DELEGATION = "delegation"
+BRICK_IDENTITY = "identity"
+BRICK_SHARE_LINK = "share_link"
+BRICK_VERSIONING = "versioning"
+BRICK_WORKSPACE = "workspace"
+BRICK_PORTABILITY = "portability"
+BRICK_PARSERS = "parsers"
+BRICK_SNAPSHOT = "snapshot"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -79,14 +89,24 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_SEARCH,
         BRICK_PAY,
         BRICK_LLM,
-        BRICK_SKILLS,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
-        BRICK_A2A,
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_SKILLS,
+        BRICK_ACCESS_MANIFEST,
+        BRICK_CATALOG,
+        BRICK_DELEGATION,
+        BRICK_IDENTITY,
+        BRICK_SHARE_LINK,
+        BRICK_VERSIONING,
+        BRICK_WORKSPACE,
+        BRICK_PORTABILITY,
+        BRICK_PARSERS,
+        BRICK_SNAPSHOT,
         BRICK_FEDERATION,
+        BRICK_AGENT_RUNTIME,
     }
 )
 
@@ -156,6 +176,7 @@ _LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
         BRICK_CACHE,
         BRICK_IPC,
         BRICK_SCHEDULER,
+        BRICK_AGENT_RUNTIME,
     }
 )
 
@@ -167,13 +188,22 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_SKILLS,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
-        BRICK_A2A,
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
         BRICK_OBSERVABILITY,
         BRICK_UPLOADS,
         BRICK_RESILIENCY,
+        BRICK_ACCESS_MANIFEST,
+        BRICK_CATALOG,
+        BRICK_DELEGATION,
+        BRICK_IDENTITY,
+        BRICK_SHARE_LINK,
+        BRICK_VERSIONING,
+        BRICK_WORKSPACE,
+        BRICK_PORTABILITY,
+        BRICK_PARSERS,
+        BRICK_SNAPSHOT,
     }
 )
 

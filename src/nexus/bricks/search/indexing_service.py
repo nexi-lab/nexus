@@ -18,11 +18,21 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 
-from nexus.bricks.search.embeddings import EmbeddingProvider
+# Removed: txtai handles this (Issue #2663)
+# from nexus.bricks.search.embeddings import EmbeddingProvider
+# from nexus.bricks.search.vector_db import VectorDatabase
+try:
+    from nexus.bricks.search.embeddings import EmbeddingProvider
+except ImportError:
+    EmbeddingProvider = Any
+try:
+    from nexus.bricks.search.vector_db import VectorDatabase
+except ImportError:
+    VectorDatabase = Any
+
 from nexus.bricks.search.indexing import IndexingPipeline, IndexResult
 from nexus.bricks.search.models import DocumentChunkModel, FilePathModel
 from nexus.bricks.search.protocols import FileReaderProtocol
-from nexus.bricks.search.vector_db import VectorDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -108,18 +118,13 @@ class IndexingService:
                 return existing
 
         # --- Step 2: Read document content ---------------------------------
-        content = self._read_content(path)
+        content = await self._read_content(path)
 
-        # --- Step 3: Delete stale chunks -----------------------------------
-        with self._get_session() as session:
-            session.execute(
-                delete(DocumentChunkModel).where(
-                    DocumentChunkModel.path_id == path_id,
-                ),
-            )
-            session.commit()
-
-        # --- Step 4: Delegate to pipeline ----------------------------------
+        # --- Step 3: Delegate to pipeline (atomic delete+insert) -----------
+        # The pipeline's _bulk_insert handles DELETE old chunks + INSERT new
+        # chunks in a single transaction.  We do NOT delete chunks beforehand
+        # because a pipeline failure (e.g. embedding API timeout) would leave
+        # the document with zero chunks — an incomplete index (Issue #2753).
         try:
             result: IndexResult = await self._pipeline.index_document(
                 path,
@@ -163,7 +168,7 @@ class IndexingService:
         Returns:
             Mapping of virtual path to ``IndexResult``.
         """
-        files_result = self._file_reader.list_files(path, recursive=True)
+        files_result = await self._file_reader.list_files(path, recursive=True)
         files = files_result.items if hasattr(files_result, "items") else files_result
 
         # Build (path, content, path_id) tuples, skipping binary files.
@@ -178,7 +183,7 @@ class IndexingService:
                     continue
 
                 try:
-                    content = self._read_content(file_path)
+                    content = await self._read_content(file_path)
                     file_model = self._query_file_model(session, file_path)
                     if file_model is not None:
                         documents.append(
@@ -260,11 +265,11 @@ class IndexingService:
         """Return a context-manager that yields a DB session."""
         return self._file_reader.get_session()
 
-    def _read_content(self, path: str) -> str:
+    async def _read_content(self, path: str) -> str:
         """Read document content, preferring pre-processed searchable text."""
         content = self._file_reader.get_searchable_text(path)
         if content is None:
-            content = self._file_reader.read_text(path)
+            content = await self._file_reader.read_text(path)
         return content
 
     @staticmethod

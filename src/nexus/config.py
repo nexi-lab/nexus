@@ -73,16 +73,23 @@ class FeaturesConfig(BaseModel):
 
     # Feature bricks
     search: bool | None = Field(default=None, description="Enable search brick")
+    semantic_search: bool | None = Field(
+        default=None,
+        description="Enable semantic search initialization/config wiring",
+    )
     pay: bool | None = Field(default=None, description="Enable payment brick")
     llm: bool | None = Field(default=None, description="Enable LLM brick")
     skills: bool | None = Field(default=None, description="Enable skills brick")
     sandbox: bool | None = Field(default=None, description="Enable sandbox brick")
     workflows: bool | None = Field(default=None, description="Enable workflow brick")
-    a2a: bool | None = Field(default=None, description="Enable A2A protocol brick")
     discovery: bool | None = Field(default=None, description="Enable agent discovery")
     mcp: bool | None = Field(default=None, description="Enable MCP server brick")
     memory: bool | None = Field(default=None, description="Enable agent memory")
     federation: bool | None = Field(default=None, description="Enable federation brick")
+
+    # Deprecated — accepted but ignored to avoid startup failures on upgrade.
+    # The A2A brick was removed in #2979; MCP covers the use case.
+    a2a: bool | None = Field(default=None, description="Deprecated: A2A brick removed in #2979")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -92,8 +99,11 @@ class FeaturesConfig(BaseModel):
         Returns:
             Dict of brick_name -> enabled for fields that are explicitly set.
         """
+        _skip = {"semantic_search", "a2a"}
         overrides: dict[str, bool] = {}
         for field_name, value in self:
+            if field_name in _skip:
+                continue
             if value is not None:
                 overrides[field_name] = value
         return overrides
@@ -118,12 +128,6 @@ class NexusConfig(BaseModel):
             "kernel (bare VFS, storage only), embedded (storage+eventlog), "
             "lite (core services), full (all bricks), cloud (all + federation)"
         ),
-    )
-
-    # Deployment mode
-    mode: str = Field(
-        default="standalone",
-        description="Deployment mode: standalone (single-node redb), remote (thin HTTP client), or federation (ZoneManager + Raft)",
     )
 
     # Backend selection
@@ -272,7 +276,7 @@ class NexusConfig(BaseModel):
 
     # Remote mode settings
     url: str | None = Field(
-        default=None, description="Nexus server URL (required for mode='remote')"
+        default=None, description="Nexus server URL (required for profile='remote')"
     )
     api_key: str | None = Field(default=None, description="API key for authentication")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
@@ -352,23 +356,11 @@ class NexusConfig(BaseModel):
             raise ValueError(f"profile must be one of {allowed}, got '{v}'")
         return v
 
-    @field_validator("mode")
-    @classmethod
-    def validate_mode(cls, v: str) -> str:
-        """Validate deployment mode.
-
-        Valid modes: standalone, remote, federation
-        """
-        allowed = ["standalone", "remote", "federation"]
-        if v not in allowed:
-            raise ValueError(f"mode must be one of {allowed}, got '{v}'")
-        return v
-
     @field_validator("backend")
     @classmethod
     def validate_backend(cls, v: str) -> str:
         """Validate backend type."""
-        allowed = ["local", "gcs", "gcs_connector", "s3_connector", "gdrive_connector"]
+        allowed = ["local", "path_local", "cas_gcs", "path_gcs", "path_s3", "gdrive_connector"]
         if v not in allowed:
             raise ValueError(f"backend must be one of {allowed}, got {v}")
         return v
@@ -388,13 +380,13 @@ class NexusConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_url_for_remote(self) -> "NexusConfig":
-        """Validate URL is required for remote mode."""
-        if self.mode == "remote" and not self.url:
+        """Validate URL is required for remote profile."""
+        if self.profile == "remote" and not self.url:
             env_url = os.getenv("NEXUS_URL")
             if env_url:
                 self.url = env_url
             else:
-                raise ValueError("url is required for mode='remote'")
+                raise ValueError("url is required for profile='remote'")
         return self
 
     model_config = ConfigDict(
@@ -475,7 +467,6 @@ def _load_from_environment() -> NexusConfig:
     # Map environment variables to config fields
     env_mapping = {
         "NEXUS_PROFILE": "profile",
-        "NEXUS_MODE": "mode",
         "NEXUS_BACKEND": "backend",
         "NEXUS_DATA_DIR": "data_dir",
         "NEXUS_GCS_BUCKET_NAME": "gcs_bucket_name",

@@ -14,11 +14,23 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from nexus.bricks.search.mobile_config import (
-    DeviceTier,
-    detect_device_tier,
-    get_config_for_tier,
-)
+# Removed: txtai handles this (Issue #2663)
+# mobile_config and mobile_providers modules were deleted.
+# Guard imports so the router file doesn't break on import.
+try:
+    from nexus.bricks.search.mobile_config import (
+        DeviceTier,
+        detect_device_tier,
+        get_config_for_tier,
+    )
+
+    _MOBILE_AVAILABLE = True
+except ImportError:
+    _MOBILE_AVAILABLE = False
+    DeviceTier = None
+    detect_device_tier = None
+    get_config_for_tier = None
+
 from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
@@ -78,6 +90,12 @@ async def detect_device() -> dict[str, Any]:
             }
         }
     """
+    if not _MOBILE_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Mobile search not available (modules removed, Issue #2663)",
+        )
+
     try:
         import psutil
 
@@ -137,6 +155,12 @@ async def download_models(request: ModelDownloadRequest) -> ModelDownloadRespons
             "message": "All models downloaded successfully"
         }
     """
+    if not _MOBILE_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Mobile search not available (modules removed, Issue #2663)",
+        )
+
     try:
         tier = DeviceTier(request.tier)
     except ValueError as e:
@@ -161,7 +185,9 @@ async def download_models(request: ModelDownloadRequest) -> ModelDownloadRespons
         )
 
     try:
-        from nexus.bricks.search.mobile_providers import download_models_for_tier
+        from nexus.bricks.search.mobile_providers import (
+            download_models_for_tier,
+        )
 
         results = await download_models_for_tier(tier.value)
 

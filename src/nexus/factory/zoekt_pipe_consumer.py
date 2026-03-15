@@ -8,7 +8,7 @@ Issue #810: Decouple Zoekt on_write_callback sync from ObjectStore write path.
 Issue #808: Follows WorkflowDispatchService DT_PIPE pattern.
 
 Architecture:
-    LocalBackend.write_content() (sync)
+    CASLocalBackend.write_content() (sync)
       -> ZoektPipeConsumer.notify_write(path)
         -> pipe_write_nowait()  # ~5us, replaces lock acquisition + timer cancel
 
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.bricks.search.zoekt_client import ZoektIndexManager
-    from nexus.system_services.pipe_manager import PipeManager
+    from nexus.core.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class ZoektPipeConsumer:
     """DT_PIPE consumer for Zoekt index notifications.
 
     Provides ``notify_write(path)`` and ``notify_sync_complete(files_synced)``
-    as sync callbacks for LocalBackend. Events are written into a DT_PIPE
+    as sync callbacks for CASLocalBackend. Events are written into a DT_PIPE
     ring buffer (~5us). A background consumer accumulates paths and triggers
     ``trigger_reindex_async()`` after a debounce window.
 
@@ -81,33 +81,31 @@ class ZoektPipeConsumer:
     def notify_write(self, path: str) -> None:
         """Notify that a file was written. Used as on_write_callback."""
         if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeFullError
+            from nexus.core.pipe import PipeClosedError, PipeFullError
 
             try:
                 data = json.dumps({"type": "write", "path": path}).encode()
                 self._pipe_manager.pipe_write_nowait(_ZOEKT_PIPE_PATH, data)
                 return
-            except PipeFullError:
-                logger.warning("Zoekt pipe full, dropping write notification: %s", path)
-                return
+            except (PipeClosedError, PipeFullError):
+                logger.warning("Zoekt pipe full/closed, falling back to direct call: %s", path)
 
-        # Fallback: direct call (CLI mode or pre-startup)
+        # Fallback: direct call (CLI mode, pre-startup, or pipe error)
         self._zoekt.notify_write(path)
 
     def notify_sync_complete(self, files_synced: int = 0) -> None:
         """Notify that a sync completed. Used as on_sync_callback."""
         if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeFullError
+            from nexus.core.pipe import PipeClosedError, PipeFullError
 
             try:
                 data = json.dumps({"type": "sync", "files_synced": files_synced}).encode()
                 self._pipe_manager.pipe_write_nowait(_ZOEKT_PIPE_PATH, data)
                 return
-            except PipeFullError:
-                logger.warning("Zoekt pipe full, dropping sync notification")
-                return
+            except (PipeClosedError, PipeFullError):
+                logger.warning("Zoekt pipe full/closed, falling back to direct sync call")
 
-        # Fallback: direct call
+        # Fallback: direct call (CLI mode, pre-startup, or pipe error)
         self._zoekt.notify_sync_complete(files_synced)
 
     # ------------------------------------------------------------------
@@ -137,11 +135,21 @@ class ZoektPipeConsumer:
         self._consumer_task = asyncio.create_task(self._consume())
 
     async def stop(self) -> None:
-        """Cancel consumer task."""
+        """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
         if self._consumer_task is not None and not self._consumer_task.done():
-            self._consumer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._consumer_task
+            # Signal close — wakes blocked consumer, allows drain of remaining messages
+            if self._pipe_manager is not None and self._pipe_ready:
+                with contextlib.suppress(Exception):
+                    self._pipe_manager.signal_close(_ZOEKT_PIPE_PATH)
+
+            # Let consumer drain naturally, with timeout
+            try:
+                await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
+            except (TimeoutError, asyncio.CancelledError):
+                self._consumer_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._consumer_task
+
             self._consumer_task = None
         self._pipe_ready = False
 

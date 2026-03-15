@@ -80,13 +80,14 @@ class NexusAppState:
     credential_service: Any = None
     scheduler_service: Any = None
     task_runner: Any = None
+    task_manager_service: Any = None
+    task_write_hook: Any = None
+    task_dispatch_consumer: Any = None
     workflow_engine: Any = None
     workflow_dispatch: Any = None
-    rlm_service: Any = None
     sandbox_auth_service: Any = None
     agent_event_log: Any = None
     transactional_snapshot_service: Any = None
-    memory_service: Any = None
 
     # === Realtime ===
     subscription_manager: Any = None
@@ -97,12 +98,10 @@ class NexusAppState:
     websocket_manager: Any = None
     reactive_subscription_manager: Any = None
     write_back_service: Any = None
-    event_log: Any = None
     exporter_registry: Any = None
 
     # === Permissions ===
     rebac_circuit_breaker: Any = None
-    manifest_resolver: Any = None
 
     # === Governance (Issue #2129) ===
     governance_anomaly_service: Any = None
@@ -111,7 +110,6 @@ class NexusAppState:
     governance_response_service: Any = None
 
     # === Services (brick-sourced) ===
-    reputation_service: Any = None
     delegation_service: Any = None
     chunked_upload_service: Any = None
 
@@ -119,9 +117,6 @@ class NexusAppState:
     ipc_storage_driver: Any = None
     ipc_provisioner: Any = None
     ipc_sweeper: Any = None
-
-    # === A2A ===
-    a2a_task_manager: Any = None
 
     # === gRPC server (#1249) ===
     grpc_server: Any = None

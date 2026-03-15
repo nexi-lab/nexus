@@ -15,11 +15,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.event_subsystem.bus.base import EventBusBase
-from nexus.services.event_subsystem.bus.factory import create_event_bus
-from nexus.services.event_subsystem.bus.protocol import AckableEvent, EventBusProtocol
-from nexus.services.event_subsystem.bus.redis import RedisEventBus
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_bus.base import EventBusBase
+from nexus.system_services.event_bus.factory import create_event_bus
+from nexus.system_services.event_bus.protocol import AckableEvent, EventBusProtocol
+from nexus.system_services.event_bus.redis import RedisEventBus
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 # =============================================================================
 # FileEventType Tests
@@ -216,116 +216,6 @@ class TestFileEvent:
         assert event.path == "/inbox/test.txt"
 
 
-class TestFileEventFromFileChange:
-    """Tests for FileEvent.from_file_change() conversion from Layer 1."""
-
-    def test_from_file_change_created(self):
-        """Test converting CREATED FileChange to FILE_WRITE FileEvent."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            CREATED = "created"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(type=MockChangeType.CREATED, path="new_file.txt")
-        event = FileEvent.from_file_change(change)
-
-        assert event.type == FileEventType.FILE_WRITE
-        assert event.path == "new_file.txt"
-        assert event.zone_id is None
-        assert event.event_id is not None
-
-    def test_from_file_change_modified(self):
-        """Test converting MODIFIED FileChange to FILE_WRITE FileEvent."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            MODIFIED = "modified"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(type=MockChangeType.MODIFIED, path="changed_file.txt")
-        event = FileEvent.from_file_change(change)
-
-        assert event.type == FileEventType.FILE_WRITE
-        assert event.path == "changed_file.txt"
-
-    def test_from_file_change_deleted(self):
-        """Test converting DELETED FileChange to FILE_DELETE FileEvent."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            DELETED = "deleted"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(type=MockChangeType.DELETED, path="deleted_file.txt")
-        event = FileEvent.from_file_change(change)
-
-        assert event.type == FileEventType.FILE_DELETE
-        assert event.path == "deleted_file.txt"
-
-    def test_from_file_change_renamed(self):
-        """Test converting RENAMED FileChange to FILE_RENAME FileEvent."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            RENAMED = "renamed"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(
-            type=MockChangeType.RENAMED,
-            path="new_name.txt",
-            old_path="old_name.txt",
-        )
-        event = FileEvent.from_file_change(change)
-
-        assert event.type == FileEventType.FILE_RENAME
-        assert event.path == "new_name.txt"
-        assert event.old_path == "old_name.txt"
-
-    def test_from_file_change_with_zone_id(self):
-        """Test converting FileChange with zone_id."""
-        from dataclasses import dataclass
-        from enum import Enum
-
-        class MockChangeType(Enum):
-            CREATED = "created"
-
-        @dataclass
-        class MockFileChange:
-            type: MockChangeType
-            path: str
-            old_path: str | None = None
-
-        change = MockFileChange(type=MockChangeType.CREATED, path="file.txt")
-        event = FileEvent.from_file_change(change, zone_id="my-zone")
-
-        assert event.zone_id == "my-zone"
-
-
 class TestFileEventPathMatching:
     """Tests for FileEvent path pattern matching."""
 
@@ -373,8 +263,8 @@ class TestFileEventPathMatching:
 
         assert event.matches_path_pattern("/inbox/*.txt") is True
         assert event.matches_path_pattern("/inbox/*.pdf") is False
-        # Note: fnmatch's * matches any characters, so /*.txt matches /inbox/test.txt
-        assert event.matches_path_pattern("/*.txt") is True  # fnmatch * matches slashes too
+        # * does NOT cross / boundaries (proper glob semantics, not fnmatch)
+        assert event.matches_path_pattern("/*.txt") is False  # * stops at /
 
     def test_glob_question_pattern(self):
         """Test glob ? pattern matching."""
@@ -1067,7 +957,7 @@ class TestEventBusFactoryExtended:
         """Test creating NATS event bus via factory."""
         from unittest.mock import patch
 
-        with patch("nexus.services.event_subsystem.bus.nats.NatsEventBus") as MockNats:
+        with patch("nexus.system_services.event_bus.nats.NatsEventBus") as MockNats:
             MockNats.return_value = MagicMock()
             create_event_bus(backend="nats", nats_url="nats://test:4222")
             MockNats.assert_called_once_with(nats_url="nats://test:4222")

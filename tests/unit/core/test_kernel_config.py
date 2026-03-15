@@ -275,8 +275,7 @@ class TestSystemServices:
         assert ss.delivery_worker is None
         assert ss.observability_subsystem is None
         assert ss.resiliency_manager is None
-        # DT_PIPE manager (Issue #809)
-        assert ss.pipe_manager is None
+        # (PipeManager is kernel-internal §4.2, not in SystemServices)
 
     def test_frozen(self) -> None:
         ss = SystemServices()
@@ -329,8 +328,7 @@ class TestSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "zone_lifecycle",
-            "pipe_manager",
-            "event_log",
+            "process_table",
             "scheduler_service",
         }
         assert field_names == expected_fields, (
@@ -368,7 +366,6 @@ class TestBrickServices:
         assert bs.tool_namespace_middleware is None
         assert bs.api_key_creator is None
         assert bs.snapshot_service is None
-        assert bs.task_queue_service is None
         # DT_PIPE consumer (Issue #810)
         assert bs.zoekt_pipe_consumer is None
 
@@ -407,23 +404,19 @@ class TestBrickServices:
             "tool_namespace_middleware",
             "api_key_creator",
             "snapshot_service",
-            "task_queue_service",
             "cache_brick",
             "ipc_storage_driver",
             "ipc_provisioner",
             "agent_event_log",
-            "skill_service",
-            "skill_package_service",
             "delegation_service",
-            "reputation_service",
             "version_service",
-            "memory_permission",
             # Factory-created bricks (Issue #2134)
             "parse_fn",
             "content_cache",
             "parser_registry",
             "provider_registry",
-            "vfs_lock_manager",
+            # NOTE: vfs_lock_manager removed — now kernel-internal (NexusFS.__init__).
+            # See write-path-extraction-design.md.
             # Governance Brick (Issue #2129)
             "governance_anomaly_service",
             "governance_collusion_service",

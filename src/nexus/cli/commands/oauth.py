@@ -68,7 +68,9 @@ def get_token_manager(db_path: str | None = None) -> TokenManager:
         return TokenManager(db_path=db_path)
     else:
         # Use provided db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        parent_dir = os.path.dirname(db_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
         return TokenManager(db_path=db_path)
 
 
@@ -377,7 +379,7 @@ def setup_gdrive(
     # Exchange code for tokens
     console.print("\n[dim]Exchanging code for tokens...[/dim]")
 
-    async def _exchange_and_store() -> None:
+    async def _exchange_and_store() -> str:
         # Exchange code
         credential = await provider.exchange_code(auth_code)
 
@@ -393,6 +395,7 @@ def setup_gdrive(
         manager.close()
 
         console.print(f"[green]✓[/green] Stored credential with ID: {cred_id}")
+        return cred_id
 
     import asyncio
 
@@ -567,7 +570,4 @@ def setup_x(
         console.print("3. Try the example: [cyan]python examples/x_connector_example.py[/cyan]")
     except Exception as e:
         console.print(f"\n[red]✗[/red] Failed to setup X OAuth: {e}")
-        import traceback
-
-        console.print(f"[dim]{traceback.format_exc()}[/dim]")
         sys.exit(1)

@@ -25,8 +25,8 @@ from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.storage.models.permissions import ReBACVersionSequenceModel as RVS
 from nexus.storage.models.permissions import TigerCacheModel as TC
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
 from nexus.storage.models.permissions import TigerResourceMapModel as TRM
@@ -91,6 +91,7 @@ class TigerCache:
         l2_max_workers: int = 4,
         *,
         is_postgresql: bool = False,
+        version_store: MetastoreVersionStore | None = None,
     ):
         """Initialize Tiger Cache.
 
@@ -109,6 +110,7 @@ class TigerCache:
         self._resource_map = resource_map or _TRM(engine, is_postgresql=is_postgresql)
         self._rebac_manager = rebac_manager
         self._is_postgresql = is_postgresql
+        self._version_store = version_store
 
         # L2: Dragonfly distributed cache (optional)
         self._dragonfly: TigerCacheProtocol | None = dragonfly_cache
@@ -2166,43 +2168,12 @@ class TigerCache:
             # This enables revision-based consistency checks in list() to detect
             # concurrent writes and avoid returning stale results
             try:
-                now = datetime.now(UTC)
-                if self._is_postgresql:
-                    pg_stmt = pg_insert(RVS).values(
-                        zone_id=zone_id, current_version=1, updated_at=now
+                if self._version_store is not None:
+                    self._version_store.increment_version(zone_id)
+                    logger.debug(
+                        "[TIGER] Incremented zone revision for %s after adding file to grants",
+                        zone_id,
                     )
-                    pg_stmt = pg_stmt.on_conflict_do_update(
-                        index_elements=["zone_id"],
-                        set_={
-                            "current_version": RVS.current_version + 1,
-                            "updated_at": now,
-                        },
-                    )
-                    with self._engine.begin() as conn:
-                        conn.execute(pg_stmt)
-                else:
-                    # SQLite: UPDATE first, INSERT if no row exists
-                    with self._engine.begin() as conn:
-                        result = conn.execute(
-                            update(RVS)
-                            .where(RVS.zone_id == zone_id)
-                            .values(
-                                current_version=RVS.current_version + 1,
-                                updated_at=now,
-                            )
-                        )
-                        if result.rowcount == 0:
-                            conn.execute(
-                                insert(RVS).values(
-                                    zone_id=zone_id,
-                                    current_version=1,
-                                    updated_at=now,
-                                )
-                            )
-                logger.debug(
-                    "[TIGER] Incremented zone revision for %s after adding file to grants",
-                    zone_id,
-                )
             except Exception as e:
                 logger.warning("[TIGER] Failed to increment zone revision: %s", e)
 

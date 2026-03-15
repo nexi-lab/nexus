@@ -207,12 +207,16 @@ class SearchDaemon:
     async def startup(self) -> None:
         """Initialize and pre-warm all search indexes.
 
-        This method should be called once at application startup.
-        It loads indexes into memory and warms connection pools.
+        Idempotent — safe to call multiple times (e.g., from both
+        startup_search and mount_all via lifecycle manager). Also safe
+        to call after shutdown() for remount cycles.
         """
         if self._initialized:
             logger.warning("SearchDaemon already initialized")
             return
+
+        # Reset shutdown flag for remount cycles (unmount → remount)
+        self._shutting_down = False
 
         start_time = time.perf_counter()
         logger.info("Starting SearchDaemon - pre-warming indexes...")

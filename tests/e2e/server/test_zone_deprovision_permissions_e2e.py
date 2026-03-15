@@ -22,7 +22,7 @@ import pytest
 
 
 @pytest.fixture(scope="module")
-def app_with_auth():
+async def app_with_auth():
     """Create a full FastAPI app with DatabaseLocalAuth and ReBAC."""
     tmpdir = tempfile.mkdtemp()
     tmp_path = Path(tmpdir)
@@ -69,7 +69,7 @@ def app_with_auth():
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

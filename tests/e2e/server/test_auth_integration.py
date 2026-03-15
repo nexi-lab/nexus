@@ -29,7 +29,7 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture
-def test_app():
+async def test_app():
     """Create FastAPI test app with in-memory database."""
     # Create in-memory database
     database_url = "sqlite:///:memory:"
@@ -46,7 +46,7 @@ def test_app():
 
     auth_tmpdir = tempfile.mkdtemp(prefix="nexus-test-auth-")
     backend = CASLocalBackend(root_path=auth_tmpdir)
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(os.path.join(auth_tmpdir, "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=":memory:"),

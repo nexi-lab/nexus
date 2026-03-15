@@ -1,4 +1,5 @@
 """Edge case test data for parametrized filesystem tests.
+import pytest
 
 Provides curated collections of tricky filenames, path patterns, and content
 payloads that exercise boundary conditions in VFS operations.
@@ -7,9 +8,10 @@ Usage with pytest:
     from tests.helpers.edge_cases import UNICODE_PATHS, EDGE_CONTENT, SPECIAL_PATHS
 
     @pytest.mark.parametrize("path", UNICODE_PATHS)
-    def test_write_unicode(nexus_fs, path):
-        nexus_fs.sys_write(path, b"hello")
-        assert nexus_fs.sys_read(path) == b"hello"
+    @pytest.mark.asyncio
+    async def test_write_unicode(nexus_fs, path):
+        await nexus_fs.sys_write(path, b"hello")
+        assert await nexus_fs.sys_read(path) == b"hello"
 """
 
 # === Unicode filename edge cases ===

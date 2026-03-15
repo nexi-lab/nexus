@@ -4,7 +4,7 @@ Tests atomic add_mount rollback, _grant_owner_permission propagation,
 and remove_mount error collection.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -22,7 +22,7 @@ def _mock_gateway(*, permission_ok: bool = True) -> MagicMock:
     gw.router.add_mount.return_value = None
     gw.router.remove_mount.return_value = True
     gw.router.has_mount.return_value = False
-    gw.sys_mkdir.return_value = None
+    gw.sys_mkdir = AsyncMock(return_value=None)
     gw.rebac_create.return_value = "tuple-1"
     gw.rebac_check.return_value = permission_ok
     gw.rebac_delete_object_tuples.return_value = 0
@@ -67,10 +67,10 @@ def _op_context(
 class TestAddMountRollback:
     """Tests that add_mount rolls back router registration on setup failure."""
 
-    def test_add_mount_success_does_not_rollback(self) -> None:
+    async def test_add_mount_success_does_not_rollback(self) -> None:
         """On success, mount stays in router (no rollback)."""
         service, gw = _build_service()
-        result = service.add_mount(
+        result = await service.add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp"},
@@ -81,13 +81,13 @@ class TestAddMountRollback:
         # remove_mount should NOT be called on success
         gw.router.remove_mount.assert_not_called()
 
-    def test_add_mount_rolls_back_on_permission_failure(self) -> None:
+    async def test_add_mount_rolls_back_on_permission_failure(self) -> None:
         """If _grant_owner_permission fails, mount is removed from router."""
         service, gw = _build_service()
         gw.rebac_create.side_effect = RuntimeError("ReBAC service unavailable")
 
         with pytest.raises(RuntimeError, match="ReBAC service unavailable"):
-            service.add_mount(
+            await service.add_mount(
                 mount_point="/mnt/test",
                 backend_type="cas_local",
                 backend_config={"data_dir": "/tmp"},
@@ -98,13 +98,13 @@ class TestAddMountRollback:
         gw.router.add_mount.assert_called_once()
         gw.router.remove_mount.assert_called_once_with("/mnt/test")
 
-    def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:
+    async def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:
         """mkdir failure is non-critical — mount stays active (best effort)."""
         service, gw = _build_service()
         gw.sys_mkdir.side_effect = RuntimeError("Metastore down")
 
         # mkdir fails but is caught in _setup_mount_point — mount succeeds
-        result = service.add_mount(
+        result = await service.add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp"},
@@ -115,10 +115,10 @@ class TestAddMountRollback:
         gw.rebac_create.assert_called_once()
         gw.router.remove_mount.assert_not_called()
 
-    def test_add_mount_no_context_skips_permissions_no_rollback(self) -> None:
+    async def test_add_mount_no_context_skips_permissions_no_rollback(self) -> None:
         """Without context, permission grant is skipped — no failure, no rollback."""
         service, gw = _build_service()
-        result = service.add_mount(
+        result = await service.add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp"},
@@ -172,14 +172,14 @@ class TestGrantOwnerPermission:
         service._grant_owner_permission("/mnt/test", _op_context())
         gw.rebac_create.assert_called_once()
 
-    def test_rebac_not_available_no_rollback(self) -> None:
+    async def test_rebac_not_available_no_rollback(self) -> None:
         """ReBAC not available during add_mount does not trigger rollback."""
         service, gw = _build_service()
         gw.rebac_create.side_effect = RuntimeError(
             "ReBAC manager not available (record_store not configured)"
         )
 
-        result = service.add_mount(
+        result = await service.add_mount(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": "/tmp"},

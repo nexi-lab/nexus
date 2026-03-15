@@ -85,7 +85,7 @@ def _save_manifest(data_dir: str, manifest: dict[str, Any]) -> None:
         json.dump(manifest, f, indent=2)
 
 
-def _get_nexus_client(config: dict[str, Any]) -> Any:
+async def _get_nexus_client(config: dict[str, Any]) -> Any:
     """Connect to a running Nexus server via gRPC, or fall back to local.
 
     For remote presets (shared/demo), sets NEXUS_GRPC_PORT from nexus.yaml
@@ -122,7 +122,7 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
                 os.environ["NEXUS_TLS_CA"] = tls_ca
 
         try:
-            nx = nexus.connect(
+            nx = await nexus.connect(
                 config={
                     "profile": "remote",
                     "url": f"http://localhost:{http_port}",
@@ -132,7 +132,7 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
             # Verify connectivity with a lightweight read-only call.
             # Use sys_readdir (returns list) instead of sys_stat (goes through
             # MetadataMapper.from_json which can fail on schema mismatches).
-            nx.sys_readdir("/")
+            await nx.sys_readdir("/")
             return nx
         except Exception as e:
             console.print(f"[red]Error:[/red] Could not connect to Nexus server: {e}")
@@ -143,7 +143,7 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
 
     # Local preset — connect directly to data dir
     data_dir = config.get("data_dir", "./nexus-data")
-    return nexus.connect(config={"data_dir": data_dir})
+    return await nexus.connect(config={"data_dir": data_dir})
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ def _get_nexus_client(config: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _seed_files(
+async def _seed_files(
     nx: Any,
     manifest: dict[str, Any],
 ) -> int:
@@ -168,8 +168,8 @@ def _seed_files(
             # Ensure parent directory exists
             parent = "/".join(path.split("/")[:-1])
             if parent:
-                nx.sys_mkdir(parent, parents=True, exist_ok=True)
-            nx.sys_write(path, content.encode(), consistency="ec")
+                await nx.sys_mkdir(parent, parents=True, exist_ok=True)
+            await nx.sys_write(path, content.encode(), consistency="ec")
             seeded.append(path)
             created += 1
         except Exception as e:
@@ -179,7 +179,7 @@ def _seed_files(
     return created
 
 
-def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
+async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     """Create version history for plan.md. Returns count of versions created."""
     if manifest.get("versions_seeded"):
         return 0
@@ -188,7 +188,7 @@ def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     plan_path = "/workspace/demo/plan.md"
     for version_content in PLAN_VERSIONS:
         try:
-            nx.sys_write(plan_path, version_content.encode())
+            await nx.sys_write(plan_path, version_content.encode())
             created += 1
         except Exception:
             break
@@ -197,7 +197,7 @@ def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     final = next((c for p, c, _ in DEMO_FILES if p == plan_path), None)
     if final:
         try:
-            nx.sys_write(plan_path, final.encode())
+            await nx.sys_write(plan_path, final.encode())
             created += 1
         except Exception:
             pass
@@ -206,12 +206,12 @@ def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     return created
 
 
-def _seed_directories(nx: Any) -> int:
+async def _seed_directories(nx: Any) -> int:
     """Create base demo directories. Returns count created."""
     created = 0
     for d in DEMO_DIRS:
         try:
-            nx.sys_mkdir(d, parents=True, exist_ok=True)
+            await nx.sys_mkdir(d, parents=True, exist_ok=True)
             created += 1
         except Exception:
             pass
@@ -538,7 +538,7 @@ def _revoke_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     return revoked
 
 
-def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
+async def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     """Delete all demo files tracked in the manifest. Returns count deleted."""
     files = manifest.get("files", [])
     removed = 0
@@ -546,7 +546,7 @@ def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     # Delete files in reverse order (deepest first)
     for path in reversed(files):
         try:
-            nx.sys_unlink(path)
+            await nx.sys_unlink(path)
             removed += 1
         except Exception:
             pass
@@ -554,7 +554,7 @@ def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     # Delete directories in reverse order (deepest first)
     for d in reversed(DEMO_DIRS):
         with contextlib.suppress(Exception):
-            nx.sys_rmdir(d)
+            await nx.sys_rmdir(d)
 
     return removed
 
@@ -883,7 +883,7 @@ except Exception as e:
 """
 
 
-def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
+async def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
     """Seed document_chunks by executing a script inside the Docker container.
 
     Reads demo file content via RPC, then inserts file_paths + document_chunks
@@ -906,7 +906,7 @@ def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
     all_files = list(DEMO_FILES) + list(HERB_CORPUS)
     for path, _content, _desc in all_files:
         try:
-            raw = nx.sys_read(path)
+            raw = await nx.sys_read(path)
             text = raw.decode("utf-8", errors="ignore") if isinstance(raw, bytes) else str(raw)
             if text.strip():
                 docs.append({"path": path, "content": text})
@@ -947,7 +947,7 @@ def _seed_search_chunks_docker(nx: Any, config: dict[str, Any]) -> bool:
         return False
 
 
-def _init_semantic_search(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> bool:
+async def _init_semantic_search(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> bool:
     """Initialize semantic search by triggering the real indexing pipeline.
 
     Attempts to index demo files through the server's semantic_search_index
@@ -994,7 +994,7 @@ def _init_semantic_search(nx: Any, config: dict[str, Any], manifest: dict[str, A
     # Fallback: insert document_chunks directly for SQL-based text search
     logger.info("Falling back to direct document_chunks insertion (SQL text search)")
     manifest["semantic_engine"] = "sql_fallback"
-    return _seed_search_chunks_docker(nx, config)
+    return await _seed_search_chunks_docker(nx, config)
 
 
 # ---------------------------------------------------------------------------
@@ -1017,7 +1017,7 @@ def demo() -> None:
 @click.option(
     "--skip-semantic", is_flag=True, default=False, help="Skip semantic search corpus seeding."
 )
-def demo_init(reset: bool, skip_semantic: bool) -> None:
+async def demo_init(reset: bool, skip_semantic: bool) -> None:
     """Seed demo data into a running Nexus instance.
 
     Idempotent by default — safe to run multiple times.
@@ -1033,7 +1033,7 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
 
     # Connect to Nexus
     try:
-        nx = _get_nexus_client(config)
+        nx = await _get_nexus_client(config)
     except Exception as e:
         console.print(f"[red]Error:[/red] Could not connect to Nexus: {e}")
         console.print("[yellow]Hint:[/yellow] Is the server running? Try `nexus up` first.")
@@ -1050,7 +1050,7 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
             perms_del = _delete_permissions(nx, config)
             if perms_del:
                 console.print(f"  Deleted {perms_del} permission tuples.")
-            removed = _delete_demo_files(nx, old_manifest)
+            removed = await _delete_demo_files(nx, old_manifest)
             console.print(f"  Removed {removed} files.")
         manifest: dict[str, Any] = {}
     else:
@@ -1060,15 +1060,15 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     console.print()
 
     # 1. Create directories
-    _seed_directories(nx)
+    await _seed_directories(nx)
 
     # 2. Seed files
-    files_created = _seed_files(nx, manifest)
+    files_created = await _seed_files(nx, manifest)
     total_files = len(manifest.get("files", []))
     console.print(f"  Files:        {total_files} ({files_created} new)")
 
     # 3. Seed version history
-    _seed_versions(nx, manifest)
+    await _seed_versions(nx, manifest)
     console.print(f"  Versions:     {len(PLAN_VERSIONS) + 1} (plan.md history)")
 
     # 4. Seed demo identities via admin RPC (best-effort)
@@ -1080,7 +1080,7 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
     # 6. Initialize semantic search and index demo files (best-effort)
     semantic_ready = False
     if not skip_semantic:
-        semantic_ready = _init_semantic_search(nx, config, manifest)
+        semantic_ready = await _init_semantic_search(nx, config, manifest)
 
     # 7. Seed catalog schemas (best-effort)
     schemas_extracted = 0
@@ -1182,7 +1182,7 @@ def demo_init(reset: bool, skip_semantic: bool) -> None:
 
 
 @demo.command(name="reset")
-def demo_reset() -> None:
+async def demo_reset() -> None:
     """Remove all demo data and the manifest.
 
     This is a destructive operation — demo files, users, and agents
@@ -1206,7 +1206,7 @@ def demo_reset() -> None:
 
     # Delete permission tuples (best-effort, before file deletion)
     try:
-        nx = _get_nexus_client(config)
+        nx = await _get_nexus_client(config)
     except Exception as e:
         console.print(f"[yellow]Warning:[/yellow] Could not connect to Nexus: {e}")
         nx = None
@@ -1218,7 +1218,7 @@ def demo_reset() -> None:
     # Delete demo files
     if nx is not None:
         try:
-            removed = _delete_demo_files(nx, manifest)
+            removed = await _delete_demo_files(nx, manifest)
             console.print(f"[green]✓[/green] Removed {removed} demo files.")
         except Exception as e:
             console.print(f"[yellow]Warning:[/yellow] Could not remove files: {e}")

@@ -720,11 +720,12 @@ class TestLockApiAuth:
         resp = admin_client.delete(f"/api/v2/locks{path}?lock_id={lock_id}&force=true")
         assert resp.status_code == 200
 
-    def test_write_with_lock_via_rpc(self, admin_client: httpx.Client) -> None:
+    @pytest.mark.asyncio
+    async def test_write_with_lock_via_rpc(self, admin_client: httpx.Client) -> None:
         """Test write(lock=True) through the full RPC stack with auth (#1143).
 
         This exercises: HTTP → auth → RPC dispatch → WriteParams(lock=True)
-        → _handle_write → nexus_fs.sys_write(lock=True).
+        → _handle_write → await nexus_fs.sys_write(lock=True).
         If lock manager is unavailable, write should still succeed (lock=False fallback).
         """
         path = f"/workspace/lock_write_{uuid.uuid4().hex[:8]}.txt"

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_read method for rsync-style incremental updates.
 
     If client provides a content hash matching their cached version,
@@ -36,7 +36,7 @@ def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     from nexus.core.hash_fast import hash_content
 
     # Read current file content — sys_read (Tier 1) always returns bytes
-    content = nexus_fs.sys_read(params.path, context=context)
+    content = await nexus_fs.sys_read(params.path, context=context)
     if isinstance(content, str):
         content = content.encode("utf-8")
 
@@ -106,7 +106,7 @@ def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     }
 
 
-def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_write method for rsync-style incremental updates.
 
     Client sends a binary delta patch instead of full file content.
@@ -137,7 +137,7 @@ def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
 
     try:
         # sys_read (Tier 1) always returns bytes
-        current_content = nexus_fs.sys_read(params.path, context=context)
+        current_content = await nexus_fs.sys_read(params.path, context=context)
         if isinstance(current_content, str):
             current_content = current_content.encode("utf-8")
     except Exception as e:

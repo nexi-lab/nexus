@@ -172,7 +172,7 @@ def mcp() -> None:
     envvar="NEXUS_API_KEY",
 )
 @add_backend_options
-def serve(
+async def serve(
     transport: str,
     host: str,
     port: int,
@@ -255,7 +255,7 @@ def serve(
         log_msg(f"  Remote URL: {remote_url}")
         if api_key:
             log_msg(f"  API Key: {'*' * 8}")
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         log_msg(f"  Transport: {transport}")
 
@@ -319,7 +319,7 @@ def serve(
                     pass  # Graceful degradation — tool returns "unavailable"
 
         # Create and run MCP server
-        mcp_server = create_mcp_server(
+        mcp_server = await create_mcp_server(
             nx=nx,
             remote_url=remote_url,
             api_key=api_key,

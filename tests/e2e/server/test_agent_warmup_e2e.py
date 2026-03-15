@@ -16,7 +16,7 @@ import httpx
 import pytest
 
 
-def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
+async def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     """Create a FastAPI app with real NexusFS + AgentWarmupService."""
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import PermissionConfig
@@ -33,7 +33,7 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
 
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=None,
@@ -62,11 +62,11 @@ def _run_async(coro):
 
 
 @pytest.fixture
-def test_app_with_warmup(tmp_path):
+async def test_app_with_warmup(tmp_path):
     """Create test FastAPI app with warmup service and permissions."""
     from nexus.lib.sync_bridge import shutdown_sync_bridge
 
-    app, api_key = _create_test_app(tmp_path, enforce_permissions=True)
+    app, api_key = await _create_test_app(tmp_path, enforce_permissions=True)
 
     # Wire AgentWarmupService onto app.state for the warmup endpoint
     from nexus.system_services.agents.agent_registry import AgentRegistry

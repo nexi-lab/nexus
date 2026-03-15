@@ -475,14 +475,15 @@ class TestPathBackendStreamContent:
 class TestReadRangeRPC:
     """Test read_range RPC endpoint (Issue #480)."""
 
-    def test_read_range_basic(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_read_range_basic(self, tmp_path: Path) -> None:
         """Test basic read_range functionality."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -495,7 +496,7 @@ class TestReadRangeRPC:
             prefix = b"0123456789ABCDEF"
             padding = b"\x00" * (INLINE_THRESHOLD + 1)
             content = prefix + padding
-            nx.sys_write("/test.txt", content)
+            await nx.sys_write("/test.txt", content)
 
             # Read ranges from the prefix portion
             assert nx.read_range("/test.txt", 0, 5) == b"01234"
@@ -504,13 +505,14 @@ class TestReadRangeRPC:
         finally:
             nx.close()
 
-    def test_read_range_validates_parameters(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_read_range_validates_parameters(self, tmp_path: Path) -> None:
         """Test read_range validates start/end parameters."""
         from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -519,7 +521,7 @@ class TestReadRangeRPC:
         )
 
         try:
-            nx.sys_write("/test.txt", b"test content")
+            await nx.sys_write("/test.txt", b"test content")
 
             # Negative start should raise
             with pytest.raises(ValueError, match="non-negative"):
@@ -531,14 +533,15 @@ class TestReadRangeRPC:
         finally:
             nx.close()
 
-    def test_read_range_empty_range(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_read_range_empty_range(self, tmp_path: Path) -> None:
         """Test read_range with empty range (start == end)."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -548,21 +551,22 @@ class TestReadRangeRPC:
 
         try:
             content = b"test content" + b"\x00" * (INLINE_THRESHOLD + 1)
-            nx.sys_write("/test.txt", content)
+            await nx.sys_write("/test.txt", content)
 
             # Empty range should return empty bytes
             assert nx.read_range("/test.txt", 5, 5) == b""
         finally:
             nx.close()
 
-    def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
         """Test read_range when range extends beyond file size."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -572,7 +576,7 @@ class TestReadRangeRPC:
 
         try:
             content = b"short" + b"\x00" * (INLINE_THRESHOLD + 1)
-            nx.sys_write("/test.txt", content)
+            await nx.sys_write("/test.txt", content)
 
             # Range beyond file size should return available content
             result = nx.read_range("/test.txt", 0, len(content) + 100)
@@ -584,13 +588,14 @@ class TestReadRangeRPC:
 class TestStatRPC:
     """Test stat() RPC endpoint (Issue #480)."""
 
-    def test_stat_returns_metadata_without_content(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_stat_returns_metadata_without_content(self, tmp_path: Path) -> None:
         """Test stat() returns file metadata without reading file content."""
         from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -601,7 +606,7 @@ class TestStatRPC:
         try:
             # Write a test file
             content = b"Hello, World!"
-            nx.sys_write("/test.txt", content)
+            await nx.sys_write("/test.txt", content)
 
             # stat() should return metadata
             info = nx.stat("/test.txt")
@@ -613,14 +618,15 @@ class TestStatRPC:
         finally:
             nx.close()
 
-    def test_stat_file_not_found(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_stat_file_not_found(self, tmp_path: Path) -> None:
         """Test stat() raises error for non-existent file."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -634,13 +640,14 @@ class TestStatRPC:
         finally:
             nx.close()
 
-    def test_stat_directory(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_stat_directory(self, tmp_path: Path) -> None:
         """Test stat() on a directory."""
         from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -650,7 +657,7 @@ class TestStatRPC:
 
         try:
             # Create a file in a subdirectory to make an implicit directory
-            nx.sys_write("/subdir/file.txt", b"content")
+            await nx.sys_write("/subdir/file.txt", b"content")
 
             # stat() on the directory should work
             info = nx.stat("/subdir")

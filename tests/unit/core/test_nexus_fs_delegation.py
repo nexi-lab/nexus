@@ -59,31 +59,34 @@ def context():
 class TestSysReaddir:
     """Tests for NexusFS.sys_readdir using kernel metadata directly."""
 
-    def test_sys_readdir_uses_metadata(self, mock_fs, context):
+    @pytest.mark.asyncio
+    async def test_sys_readdir_uses_metadata(self, mock_fs, context):
         """sys_readdir calls self.metadata.list() — no SearchService delegation."""
         entry1 = SimpleNamespace(path="/data/a.txt", size=10, etag="e1")
         entry2 = SimpleNamespace(path="/data/b.txt", size=20, etag="e2")
         mock_fs.metadata.list = MagicMock(return_value=[entry1, entry2])
 
-        result = mock_fs.sys_readdir(path="/data", recursive=False, context=context)
+        result = await mock_fs.sys_readdir(path="/data", recursive=False, context=context)
 
         assert result == ["/data/a.txt", "/data/b.txt"]
         mock_fs.metadata.list.assert_called_once_with(prefix="/data/", recursive=False)
 
-    def test_sys_readdir_details(self, mock_fs, context):
+    @pytest.mark.asyncio
+    async def test_sys_readdir_details(self, mock_fs, context):
         """sys_readdir with details=True returns dicts from metadata."""
         entry = SimpleNamespace(path="/data/a.txt", size=42, etag="abc")
         mock_fs.metadata.list = MagicMock(return_value=[entry])
 
-        result = mock_fs.sys_readdir(path="/data", details=True, context=context)
+        result = await mock_fs.sys_readdir(path="/data", details=True, context=context)
 
         assert result == [{"path": "/data/a.txt", "size": 42, "etag": "abc"}]
 
-    def test_sys_readdir_root_prefix(self, mock_fs, context):
+    @pytest.mark.asyncio
+    async def test_sys_readdir_root_prefix(self, mock_fs, context):
         """sys_readdir with path='/' uses empty prefix."""
         mock_fs.metadata.list = MagicMock(return_value=[])
 
-        mock_fs.sys_readdir(path="/", context=context)
+        await mock_fs.sys_readdir(path="/", context=context)
 
         mock_fs.metadata.list.assert_called_once_with(prefix="", recursive=True)
 

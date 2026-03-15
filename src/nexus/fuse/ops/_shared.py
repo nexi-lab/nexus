@@ -251,7 +251,7 @@ def invalidate_dir_cache(ctx: FUSESharedContext, path: str) -> None:
             ctx.dir_cache.pop(key, None)
 
 
-def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:
+async def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:
     """Pre-flight namespace visibility check for mutating operations (Issue #1305).
 
     Raises:
@@ -269,7 +269,7 @@ def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:
 
     parent = path.rsplit("/", 1)[0] or "/"
     try:
-        ctx.nexus_fs.sys_is_directory(parent, context=ctx.context)
+        await ctx.nexus_fs.sys_is_directory(parent, context=ctx.context)
     except NexusFileNotFoundError:
         raise FuseOSError(errno.ENOENT) from None
 
@@ -279,10 +279,16 @@ def parse_virtual_path_for_fuse(ctx: FUSESharedContext, path: str) -> tuple[str,
     if path.startswith("/.raw/"):
         original_path = path[5:]
         return (original_path, None)
-    return parse_virtual_path(path, ctx.nexus_fs.sys_access)
+
+    from nexus.lib.sync_bridge import run_sync as _run_sync
+
+    def _sync_access(p: str) -> bool:
+        return _run_sync(ctx.nexus_fs.sys_access(p))
+
+    return parse_virtual_path(path, _sync_access)
 
 
-def get_file_content(
+async def get_file_content(
     ctx: FUSESharedContext,
     path: str,
     view_type: str | None,
@@ -316,7 +322,7 @@ def get_file_content(
             read_ctx = ctx.context
             logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
             fetch_start = time.time()
-            raw_content = ctx.nexus_fs.sys_read(path, context=read_ctx)
+            raw_content = await ctx.nexus_fs.sys_read(path, context=read_ctx)
             fetch_time = time.time() - fetch_start
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
@@ -356,8 +362,10 @@ def get_file_content(
 
 def get_content_hash(ctx: FUSESharedContext, path: str) -> str | None:
     """Get content hash for a file from metadata."""
+    from nexus.lib.sync_bridge import run_sync as _run_sync
+
     try:
-        metadata = get_metadata(ctx, path)
+        metadata = _run_sync(get_metadata(ctx, path))
         if metadata is None:
             return None
         if isinstance(metadata, dict):
@@ -380,8 +388,10 @@ def read_range_from_backend(ctx: FUSESharedContext, path: str, offset: int, size
 
     Used by ReadaheadManager for prefetching blocks.
     """
+    from nexus.lib.sync_bridge import run_sync as _run_sync
+
     try:
-        content = get_file_content(ctx, path, None)
+        content = _run_sync(get_file_content(ctx, path, None))
         end = min(offset + size, len(content))
         return content[offset:end]
     except Exception as e:
@@ -438,10 +448,10 @@ def put_to_local_disk_cache(
         logger.debug(f"[FUSE-L2] Error caching {path}: {e}")
 
 
-def get_metadata(ctx: FUSESharedContext, path: str) -> Any:
+async def get_metadata(ctx: FUSESharedContext, path: str) -> Any:
     """Get file/directory metadata from filesystem."""
     if hasattr(ctx.nexus_fs, "sys_stat"):
-        metadata_dict = ctx.nexus_fs.sys_stat(path)
+        metadata_dict = await ctx.nexus_fs.sys_stat(path)
         if metadata_dict:
             return MetadataObj.from_dict(metadata_dict)
     return None

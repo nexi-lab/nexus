@@ -11,8 +11,8 @@ Usage:
     fs = NexusFS(backend=backend, metadata_store=proxy)
 
     # All operations transparently cross zone boundaries:
-    fs.sys_write("/shared/file.txt", data)  # → resolves to zone-beta
-    fs.sys_read("/local/file.txt")          # → stays in root zone
+    await fs.sys_write("/shared/file.txt", data)  # → resolves to zone-beta
+    await fs.sys_read("/local/file.txt")          # → stays in root zone
 """
 
 import logging

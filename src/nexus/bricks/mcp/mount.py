@@ -136,21 +136,24 @@ class MCPMountManager:
         # Active MCP client connections
         self._clients: dict[str, Any] = {}
 
-        # Load existing mount configurations (system tier only at init)
-        self._load_mounts_config()
+        # Mount configs loaded lazily on first async access (syscalls are async)
+        self._mounts_loaded = False
 
-    def _load_mounts_config(self) -> None:
+    async def _load_mounts_config(self) -> None:
         """Load mount configurations from per-folder mount.json files.
 
         Each mount has its own folder with mount.json:
         /skills/system/mcp-tools/{mount_name}/mount.json
         """
+        if self._mounts_loaded:
+            return
+        self._mounts_loaded = True
         try:
-            self._load_mounts_from_folders()
+            await self._load_mounts_from_folders()
         except Exception as e:
             logger.warning("Failed to load mount configurations: %s", e)
 
-    def _load_mounts_from_folders(self) -> bool:
+    async def _load_mounts_from_folders(self) -> bool:
         """Load mounts from per-folder mount.json files.
 
         Returns:
@@ -161,19 +164,19 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if base path exists
-                if not self._filesystem.sys_access(self.MCP_TOOLS_PATH):
+                if not await self._filesystem.sys_access(self.MCP_TOOLS_PATH):
                     return False
 
                 # List directories in MCP_TOOLS_PATH
-                items = self._filesystem.sys_readdir(self.MCP_TOOLS_PATH)
+                items = await self._filesystem.sys_readdir(self.MCP_TOOLS_PATH)
                 for item in items:
                     # Skip files at root level
                     item_path = f"{self.MCP_TOOLS_PATH}{item}"
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if self._filesystem.sys_access(mount_json_path):
-                            raw_content = self._filesystem.sys_read(mount_json_path)
+                        if await self._filesystem.sys_access(mount_json_path):
+                            raw_content = await self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)
@@ -214,16 +217,16 @@ class MCPMountManager:
 
         return loaded_any
 
-    def _save_mounts_config(self) -> None:
+    async def _save_mounts_config(self) -> None:
         """Save mount configurations to per-folder mount.json files.
 
         Each mount is saved to its own folder:
         /skills/system/mcp-tools/{mount_name}/mount.json
         """
         for mount in self._mounts.values():
-            self._save_mount_config(mount)
+            await self._save_mount_config(mount)
 
-    def _save_mount_config(self, mount: MCPMount) -> None:
+    async def _save_mount_config(self, mount: MCPMount) -> None:
         """Save a single mount's configuration to its folder.
 
         Args:
@@ -237,13 +240,13 @@ class MCPMountManager:
                 # Ensure mount directory exists
                 mount_dir = f"{self.MCP_TOOLS_PATH}{mount.name}/"
                 try:
-                    self._filesystem.sys_mkdir(mount_dir, parents=True)
+                    await self._filesystem.sys_mkdir(mount_dir, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount_dir, e)
 
-                self._filesystem.sys_write(mount_json_path, content.encode("utf-8"))
+                await self._filesystem.sys_write(mount_json_path, content.encode("utf-8"))
             else:
                 mount_path = Path(mount_json_path.lstrip("/"))
                 mount_path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,7 +298,7 @@ class MCPMountManager:
 
             # Store configuration
             self._mounts[mount_config.name] = mount_config
-            self._save_mounts_config()
+            await self._save_mounts_config()
 
             # Sync tools from the server
             await self.sync_tools(mount_config.name)
@@ -422,7 +425,7 @@ class MCPMountManager:
         mount = self._mounts[name]
         mount.mounted = False
 
-        self._save_mounts_config()
+        await self._save_mounts_config()
 
         logger.info("Unmounted MCP server: %s", name)
         return True
@@ -476,7 +479,7 @@ class MCPMountManager:
         mount.last_sync = datetime.now(UTC)
         mount.tool_count = tool_count
         mount.tools = tool_names
-        self._save_mounts_config()
+        await self._save_mounts_config()
 
         logger.info("Synced %d tools from %s", tool_count, name)
         return tool_count
@@ -813,14 +816,14 @@ class MCPMountManager:
             # Ensure directory exists
             if mount.tools_path:
                 try:
-                    self._filesystem.sys_mkdir(mount.tools_path, parents=True)
+                    await self._filesystem.sys_mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
 
             # Write tool.json
-            self._filesystem.sys_write(tool_json_path, tool_json.encode("utf-8"))
+            await self._filesystem.sys_write(tool_json_path, tool_json.encode("utf-8"))
         else:
             # Local filesystem
             if mount.tools_path:
@@ -849,12 +852,12 @@ class MCPMountManager:
         if self._filesystem:
             if mount.tools_path:
                 try:
-                    self._filesystem.sys_mkdir(mount.tools_path, parents=True)
+                    await self._filesystem.sys_mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
-            self._filesystem.sys_write(skill_md_path, skill_md.encode("utf-8"))
+            await self._filesystem.sys_write(skill_md_path, skill_md.encode("utf-8"))
         else:
             if mount.tools_path:
                 tools_dir = Path(mount.tools_path.lstrip("/"))
@@ -976,7 +979,7 @@ class MCPMountManager:
         except Exception as e:
             raise MCPMountError(f"Tool execution failed: {e}") from e
 
-    def discover_mounts(self, context: "OperationContext | None" = None) -> int:
+    async def discover_mounts(self, context: "OperationContext | None" = None) -> int:
         """Discover mounts from context-aware tier paths.
 
         Scans all available tiers for the given context and loads mount configurations.
@@ -1003,13 +1006,13 @@ class MCPMountManager:
             tier_paths.keys(), key=lambda t: self.TIER_PRIORITY.get(t, 0), reverse=True
         ):
             tier_path = tier_paths[tier]
-            count = self._discover_mounts_from_tier(tier, tier_path, seen_names)
+            count = await self._discover_mounts_from_tier(tier, tier_path, seen_names)
             discovered_count += count
 
         logger.info("Discovered %d mounts from %d tiers", discovered_count, len(tier_paths))
         return discovered_count
 
-    def _discover_mounts_from_tier(
+    async def _discover_mounts_from_tier(
         self, tier: str, tier_path: str, seen_names: dict[str, int]
     ) -> int:
         """Discover mounts from a single tier path.
@@ -1031,19 +1034,19 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if path exists
-                if not self._filesystem.sys_access(tier_path):
+                if not await self._filesystem.sys_access(tier_path):
                     logger.debug("MCP tier path does not exist: %s", tier_path)
                     return 0
 
                 # List directories in tier_path
-                items = self._filesystem.sys_readdir(tier_path)
+                items = await self._filesystem.sys_readdir(tier_path)
                 for item in items:
                     item_path = f"{tier_path}{item}"
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if self._filesystem.sys_access(mount_json_path):
-                            raw_content = self._filesystem.sys_read(mount_json_path)
+                        if await self._filesystem.sys_access(mount_json_path):
+                            raw_content = await self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")
                                 if isinstance(raw_content, bytes)
@@ -1131,7 +1134,7 @@ class MCPMountManager:
 
         return count
 
-    def list_mounts(
+    async def list_mounts(
         self,
         include_unmounted: bool = True,
         tier: str | None = None,
@@ -1152,7 +1155,7 @@ class MCPMountManager:
         """
         # If context provided, re-discover mounts for that context
         if context:
-            self.discover_mounts(context)
+            await self.discover_mounts(context)
 
         # Filter by tier if specified
         if tier:
@@ -1167,7 +1170,7 @@ class MCPMountManager:
 
         return mounts
 
-    def get_mount(
+    async def get_mount(
         self,
         name: str,
         context: "OperationContext | None" = None,
@@ -1186,11 +1189,11 @@ class MCPMountManager:
         """
         # If context provided, re-discover mounts for that context
         if context:
-            self.discover_mounts(context)
+            await self.discover_mounts(context)
 
         return self._mounts.get(name)
 
-    def remove_mount(self, name: str) -> bool:
+    async def remove_mount(self, name: str) -> bool:
         """Remove a mount configuration.
 
         Args:
@@ -1206,12 +1209,12 @@ class MCPMountManager:
                 return False
 
             del self._mounts[name]
-            self._save_mounts_config()
+            await self._save_mounts_config()
             return True
 
         return False
 
-    def add_mount_config(self, mount_config: MCPMount) -> None:
+    async def add_mount_config(self, mount_config: MCPMount) -> None:
         """Add a mount configuration without connecting.
 
         Useful for pre-configuring mounts that will be connected later.
@@ -1224,6 +1227,6 @@ class MCPMountManager:
         mount_config.mounted = False
 
         self._mounts[mount_config.name] = mount_config
-        self._save_mounts_config()
+        await self._save_mounts_config()
 
         logger.info("Added mount configuration: %s", mount_config.name)

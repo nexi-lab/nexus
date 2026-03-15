@@ -25,7 +25,7 @@ from nexus.contracts.types import OperationContext
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
-def test_provision_user() -> bool:
+async def test_provision_user() -> bool:
     """Test provision_user implementation."""
     print("=" * 80)
     print("Testing provision_user RPC Method")
@@ -138,7 +138,7 @@ def test_provision_user() -> bool:
     # Check workspace exists
     if result1.get("workspace_path"):
         try:
-            workspace_exists = nx.sys_access(result1["workspace_path"], context=admin_context)
+            workspace_exists = await nx.sys_access(result1["workspace_path"], context=admin_context)
             print(f"   - Workspace exists: {workspace_exists} ✓")
         except Exception as e:
             print(f"   - Workspace check failed: {e} ✗")
@@ -155,7 +155,7 @@ def test_provision_user() -> bool:
 
     for dir_path in user_dirs:
         try:
-            exists = nx.sys_access(dir_path, context=admin_context)
+            exists = await nx.sys_access(dir_path, context=admin_context)
             status = "✓" if exists else "✗"
             print(f"   - {dir_path.split('/')[-1]}: {exists} {status}")
         except Exception as e:

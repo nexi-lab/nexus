@@ -74,7 +74,7 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
     _request_api_key.reset(token)
 
 
-def create_mcp_server(
+async def create_mcp_server(
     nx: NexusFilesystemABC | None = None,
     name: str = "nexus",
     remote_url: str | None = None,
@@ -138,12 +138,14 @@ def create_mcp_server(
         if remote_url:
             import nexus as _nexus
 
-            nx = _nexus.connect(config={"profile": "remote", "url": remote_url, "api_key": api_key})
+            nx = await _nexus.connect(
+                config={"profile": "remote", "url": remote_url, "api_key": api_key}
+            )
         else:
             import importlib as _il
 
             connect = _il.import_module("nexus").connect
-            nx = connect()
+            nx = await connect()
 
     # Auto-detect manifest resolver from NexusFS if not explicitly provided.
     # Uses importlib to avoid a static cross-brick import chain that
@@ -184,6 +186,8 @@ def create_mcp_server(
             Per-request API keys are only supported when remote_url is configured.
             For local connections, the default connection is always used.
         """
+        import asyncio
+
         # Get API key from context variable (set by Starlette middleware or
         # APIKeyExtractionMiddleware). Context.get_state() is async in fastmcp
         # 3.x and cannot be called from sync tool functions, so we rely solely
@@ -202,12 +206,23 @@ def create_mcp_server(
         if request_api_key in _connection_cache:
             return _connection_cache[request_api_key]
 
-        # Create new remote connection with API key from context
+        # Create new remote connection with API key from context.
+        # nexus.connect() is async, so run it via a background thread
+        # to avoid blocking the current event loop.
+        import concurrent.futures
+
         import nexus as _nexus
 
-        new_nx = _nexus.connect(
-            config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
-        )
+        def _connect_sync() -> NexusFilesystemABC:
+            return asyncio.run(
+                _nexus.connect(
+                    config={"profile": "remote", "url": _remote_url, "api_key": request_api_key}
+                )
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            new_nx = pool.submit(_connect_sync).result()
+
         _connection_cache[request_api_key] = new_nx
         return new_nx
 
@@ -305,7 +320,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("reading file")
-    def nexus_read_file(path: str, ctx: Context | None = None) -> str:
+    async def nexus_read_file(path: str, ctx: Context | None = None) -> str:
         """Read file content from Nexus filesystem.
 
         Args:
@@ -316,7 +331,7 @@ def create_mcp_server(
             File content as string
         """
         nx_instance = _get_nexus_instance(ctx)
-        content = nx_instance.sys_read(path)
+        content = await nx_instance.sys_read(path)
         if isinstance(content, bytes):
             return content.decode("utf-8", errors="replace")
         return str(content)
@@ -330,7 +345,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("writing file")
-    def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
+    async def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
         """Write content to a file in Nexus filesystem.
 
         Args:
@@ -343,7 +358,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-        nx_instance.sys_write(path, content_bytes)
+        await nx_instance.sys_write(path, content_bytes)
         return f"Successfully wrote {len(content_bytes)} bytes to {path}"
 
     @mcp.tool(
@@ -406,7 +421,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("deleting file")
-    def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
+    async def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
         """Delete a file from Nexus filesystem.
 
         Args:
@@ -416,7 +431,7 @@ def create_mcp_server(
             Success message or error
         """
         nx_instance = _get_nexus_instance(ctx)
-        nx_instance.sys_unlink(path)
+        await nx_instance.sys_unlink(path)
         return f"Successfully deleted {path}"
 
     @mcp.tool(
@@ -428,7 +443,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("listing files")
-    def nexus_list_files(
+    async def nexus_list_files(
         path: str = "/",
         recursive: bool = False,
         details: bool = True,
@@ -475,7 +490,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            all_files = nx_instance.sys_readdir(path, recursive=recursive, details=details)
+            all_files = await nx_instance.sys_readdir(path, recursive=recursive, details=details)
         except FileNotFoundError:
             return tool_error(
                 "not_found",
@@ -508,7 +523,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("getting file info")
-    def nexus_file_info(path: str, ctx: Context | None = None) -> str:
+    async def nexus_file_info(path: str, ctx: Context | None = None) -> str:
         """Get detailed information about a file.
 
         Args:
@@ -518,13 +533,13 @@ def create_mcp_server(
             JSON string with file metadata
         """
         nx_instance = _get_nexus_instance(ctx)
-        if not nx_instance.sys_access(path):
+        if not await nx_instance.sys_access(path):
             return tool_error(
                 "not_found",
                 f"File not found at '{path}'. Use nexus_list_files to check available files.",
             )
 
-        is_dir = nx_instance.sys_is_directory(path)
+        is_dir = await nx_instance.sys_is_directory(path)
         info_dict: dict[str, Any] = {
             "path": path,
             "exists": True,
@@ -534,7 +549,7 @@ def create_mcp_server(
         # Try to get size if it's a file
         if not is_dir:
             try:
-                content = nx_instance.sys_read(path)
+                content = await nx_instance.sys_read(path)
                 if isinstance(content, bytes):
                     info_dict["size"] = len(content)
             except Exception as e:
@@ -555,7 +570,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("creating directory")
-    def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
+    async def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
         """Create a directory in Nexus filesystem.
 
         Args:
@@ -566,7 +581,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.sys_mkdir(path)
+            await nx_instance.sys_mkdir(path)
         except FileExistsError:
             return f"Directory already exists at '{path}'."
         return f"Successfully created directory {path}"
@@ -580,7 +595,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("removing directory")
-    def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
+    async def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
         """Remove a directory from Nexus filesystem.
 
         Args:
@@ -592,7 +607,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.sys_rmdir(path, recursive=recursive)
+            await nx_instance.sys_rmdir(path, recursive=recursive)
         except OSError as e:
             if "not empty" in str(e).lower():
                 return tool_error(
@@ -613,7 +628,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("renaming file")
-    def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
+    async def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
         """Rename or move a file or directory in Nexus filesystem.
 
         Args:
@@ -625,7 +640,7 @@ def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance.sys_rename(old_path, new_path)
+            await nx_instance.sys_rename(old_path, new_path)
         except FileExistsError:
             return tool_error(
                 "invalid_input",
@@ -714,7 +729,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("searching file contents (grep)")
-    def nexus_grep(
+    async def nexus_grep(
         pattern: str,
         path: str = "/",
         ignore_case: bool = False,
@@ -750,7 +765,7 @@ def create_mcp_server(
         _search = nx_instance.service("search")
         if _search is None:
             raise ValueError("SearchService not available — grep requires the search brick")
-        all_results = _search.grep(pattern, path, ignore_case=ignore_case)
+        all_results = await _search.grep(pattern, path, ignore_case=ignore_case)
         total = len(all_results)
 
         # Apply pagination
@@ -1103,7 +1118,7 @@ def create_mcp_server(
     # =========================================================================
 
     @mcp.resource("nexus://files/{path}")
-    def get_file_resource(path: str, ctx: Context | None = None) -> str:
+    async def get_file_resource(path: str, ctx: Context | None = None) -> str:
         """Browse files as MCP resources.
 
         Args:
@@ -1114,7 +1129,7 @@ def create_mcp_server(
         """
         try:
             nx_instance = _get_nexus_instance(ctx)
-            content = nx_instance.sys_read(path)
+            content = await nx_instance.sys_read(path)
             if isinstance(content, bytes):
                 return content.decode("utf-8", errors="replace")
             return str(content)
@@ -1749,6 +1764,13 @@ Start by running the semantic search.
 
 def main() -> None:
     """Main entry point for running MCP server from command line."""
+    import asyncio
+
+    asyncio.run(_async_main())
+
+
+async def _async_main() -> None:
+    """Async implementation of main entry point."""
 
     # Get configuration from environment
     import importlib as _il
@@ -1767,9 +1789,9 @@ def main() -> None:
     # Create and run server
     nx = None
     if not remote_url:
-        nx = connect()
+        nx = await connect()
 
-    mcp = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
+    mcp = await create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
 
     # Add API key middleware for HTTP transports
     # Note: We add it to the underlying Starlette app, not FastMCP's middleware system

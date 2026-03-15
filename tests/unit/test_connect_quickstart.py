@@ -5,11 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import nexus
 from nexus.raft import zone_manager
 
 
-def test_local_connect_falls_back_when_full_federation_build_is_unavailable(
+@pytest.mark.asyncio
+async def test_local_connect_falls_back_when_full_federation_build_is_unavailable(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -23,20 +26,21 @@ def test_local_connect_falls_back_when_full_federation_build_is_unavailable(
 
     monkeypatch.setattr(zone_manager, "ZoneManager", _raise_missing_full_build)
 
-    nx = nexus.connect(
+    nx = await nexus.connect(
         config={
             "profile": "minimal",
             "data_dir": str(tmp_path / "nexus-data"),
         }
     )
     try:
-        nx.sys_write("/hello.txt", b"hello")
-        assert nx.sys_read("/hello.txt") == b"hello"
+        await nx.sys_write("/hello.txt", b"hello")
+        assert await nx.sys_read("/hello.txt") == b"hello"
     finally:
         nx.close()
 
 
-def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
+@pytest.mark.asyncio
+async def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
     monkeypatch,
 ) -> None:
     """Remote clients should avoid local parser bootstrap and mount writes.
@@ -52,7 +56,7 @@ def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
 
     monkeypatch.setattr(RemoteMetastore, "put", _unexpected)
 
-    nx = nexus.connect(
+    nx = await nexus.connect(
         config={
             "profile": "remote",
             "url": "http://127.0.0.1:2027",
@@ -66,7 +70,8 @@ def test_remote_connect_skips_mount_persistence_and_parser_autodiscovery(
         nx.close()
 
 
-def test_remote_connect_closes_shared_rpc_transport() -> None:
+@pytest.mark.asyncio
+async def test_remote_connect_closes_shared_rpc_transport() -> None:
     """Remote quickstart should close the shared gRPC transport on nx.close()."""
     mock_channel = MagicMock()
 
@@ -77,7 +82,7 @@ def test_remote_connect_closes_shared_rpc_transport() -> None:
         ),
         patch("nexus.security.tls.config.ZoneTlsConfig.from_env", return_value=None),
     ):
-        nx = nexus.connect(
+        nx = await nexus.connect(
             config={
                 "profile": "remote",
                 "url": "http://127.0.0.1:2027",

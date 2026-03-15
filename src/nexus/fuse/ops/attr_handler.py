@@ -29,7 +29,7 @@ class AttrHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def chmod(self, path: str, mode: int) -> None:
+    async def chmod(self, path: str, mode: int) -> None:
         """Change file mode (permissions)."""
         ctx = self._ctx
 
@@ -37,10 +37,10 @@ class AttrHandler:
         if view_type:
             raise FuseOSError(errno.EROFS)
 
-        check_namespace_visible(ctx, original_path)
+        await check_namespace_visible(ctx, original_path)
 
         permission_bits = mode & 0o777
-        ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, mode=permission_bits)
+        await ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, mode=permission_bits)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
@@ -49,7 +49,7 @@ class AttrHandler:
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.METADATA_CHANGE, original_path)
 
-    def chown(self, path: str, uid: int, gid: int) -> None:
+    async def chown(self, path: str, uid: int, gid: int) -> None:
         """Change file ownership."""
         ctx = self._ctx
 
@@ -57,9 +57,9 @@ class AttrHandler:
         if view_type:
             raise FuseOSError(errno.EROFS)
 
-        check_namespace_visible(ctx, original_path)
+        await check_namespace_visible(ctx, original_path)
 
-        if not ctx.nexus_fs.sys_access(original_path):
+        if not await ctx.nexus_fs.sys_access(original_path):
             raise FuseOSError(errno.ENOENT)
 
         attrs: dict[str, str] = {}
@@ -83,7 +83,7 @@ class AttrHandler:
             attrs["group"] = group
 
         if attrs:
-            ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, **attrs)
+            await ctx.nexus_fs.sys_setattr(original_path, context=ctx.context, **attrs)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
@@ -92,7 +92,7 @@ class AttrHandler:
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.METADATA_CHANGE, original_path)
 
-    def truncate(self, path: str, length: int, _fh: int | None = None) -> None:
+    async def truncate(self, path: str, length: int, _fh: int | None = None) -> None:
         """Truncate file to specified length."""
         ctx = self._ctx
 
@@ -100,8 +100,8 @@ class AttrHandler:
         if view_type:
             raise FuseOSError(errno.EROFS)
 
-        if ctx.nexus_fs.sys_access(original_path):
-            raw_content = ctx.nexus_fs.sys_read(original_path, context=ctx.context)
+        if await ctx.nexus_fs.sys_access(original_path):
+            raw_content = await ctx.nexus_fs.sys_read(original_path, context=ctx.context)
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
         else:
@@ -112,7 +112,7 @@ class AttrHandler:
         else:
             content += b"\x00" * (length - len(content))
 
-        ctx.nexus_fs.sys_write(original_path, content, context=ctx.context)
+        await ctx.nexus_fs.sys_write(original_path, content, context=ctx.context)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:

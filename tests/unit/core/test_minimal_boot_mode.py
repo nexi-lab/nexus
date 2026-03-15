@@ -88,7 +88,8 @@ class TestMinimalProfileBricks:
 class TestMinimalBootViaFactory:
     """Factory creates bare kernel when record_store is None (MINIMAL path)."""
 
-    def test_create_nexus_fs_no_record_store(self, tmp_path: "Path") -> None:
+    @pytest.mark.asyncio
+    async def test_create_nexus_fs_no_record_store(self, tmp_path: "Path") -> None:
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -96,7 +97,7 @@ class TestMinimalBootViaFactory:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -107,7 +108,8 @@ class TestMinimalBootViaFactory:
         assert nx._rebac_manager is None
         assert nx._permission_enforcer is None
 
-    def test_minimal_mode_nexus_has_router(self, tmp_path: "Path") -> None:
+    @pytest.mark.asyncio
+    async def test_minimal_mode_nexus_has_router(self, tmp_path: "Path") -> None:
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.factory.orchestrator import create_nexus_fs
         from tests.helpers.dict_metastore import DictMetastore
@@ -115,7 +117,7 @@ class TestMinimalBootViaFactory:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -138,27 +140,32 @@ class TestMinimalFileOperations:
 
         return make_test_nexus(tmp_path)
 
-    def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
-        minimal_nx.sys_write("/test.txt", b"hello kernel")
-        data = minimal_nx.sys_read("/test.txt")
+    @pytest.mark.asyncio
+    async def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
+        await minimal_nx.sys_write("/test.txt", b"hello kernel")
+        data = await minimal_nx.sys_read("/test.txt")
         assert data == b"hello kernel"
 
-    def test_exists_true(self, minimal_nx: "NexusFS") -> None:
-        minimal_nx.sys_write("/exists_check.txt", b"data")
-        assert minimal_nx.sys_access("/exists_check.txt") is True
+    @pytest.mark.asyncio
+    async def test_exists_true(self, minimal_nx: "NexusFS") -> None:
+        await minimal_nx.sys_write("/exists_check.txt", b"data")
+        assert await minimal_nx.sys_access("/exists_check.txt") is True
 
-    def test_exists_false(self, minimal_nx: "NexusFS") -> None:
-        assert minimal_nx.sys_access("/nonexistent.txt") is False
+    @pytest.mark.asyncio
+    async def test_exists_false(self, minimal_nx: "NexusFS") -> None:
+        assert await minimal_nx.sys_access("/nonexistent.txt") is False
 
-    def test_delete(self, minimal_nx: "NexusFS") -> None:
-        minimal_nx.sys_write("/to_delete.txt", b"bye")
-        minimal_nx.sys_unlink("/to_delete.txt")
-        assert minimal_nx.sys_access("/to_delete.txt") is False
+    @pytest.mark.asyncio
+    async def test_delete(self, minimal_nx: "NexusFS") -> None:
+        await minimal_nx.sys_write("/to_delete.txt", b"bye")
+        await minimal_nx.sys_unlink("/to_delete.txt")
+        assert await minimal_nx.sys_access("/to_delete.txt") is False
 
-    def test_list_directory(self, minimal_nx: "NexusFS") -> None:
-        minimal_nx.sys_write("/dir/a.txt", b"a")
-        minimal_nx.sys_write("/dir/b.txt", b"b")
-        listing = minimal_nx.sys_readdir("/dir")
+    @pytest.mark.asyncio
+    async def test_list_directory(self, minimal_nx: "NexusFS") -> None:
+        await minimal_nx.sys_write("/dir/a.txt", b"a")
+        await minimal_nx.sys_write("/dir/b.txt", b"b")
+        listing = await minimal_nx.sys_readdir("/dir")
         paths = [item["path"] if isinstance(item, dict) else item for item in listing]
         assert "/dir/a.txt" in paths
         assert "/dir/b.txt" in paths
@@ -316,7 +323,8 @@ class TestMinimalDeviceCapabilities:
 class TestMinimalIntegrationViaConnect:
     """Integration: nexus.connect() with profile=kernel boots bare kernel."""
 
-    def test_connect_kernel_profile_creates_nexusfs(
+    @pytest.mark.asyncio
+    async def test_connect_kernel_profile_creates_nexusfs(
         self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """connect() with profile=kernel gives a functional NexusFS."""
@@ -335,7 +343,7 @@ class TestMinimalIntegrationViaConnect:
         enabled_bricks = resolve_enabled_bricks(profile)
         assert enabled_bricks == frozenset({"storage"})
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -349,13 +357,14 @@ class TestMinimalIntegrationViaConnect:
         assert nx._audit_store is None
 
         # File operations should work
-        nx.sys_write("/hello.txt", b"minimal mode")
-        assert nx.sys_read("/hello.txt") == b"minimal mode"
-        assert nx.sys_access("/hello.txt") is True
-        nx.sys_unlink("/hello.txt")
-        assert nx.sys_access("/hello.txt") is False
+        await nx.sys_write("/hello.txt", b"minimal mode")
+        assert await nx.sys_read("/hello.txt") == b"minimal mode"
+        assert await nx.sys_access("/hello.txt") is True
+        await nx.sys_unlink("/hello.txt")
+        assert await nx.sys_access("/hello.txt") is False
 
-    def test_minimal_factory_enabled_bricks_logged(
+    @pytest.mark.asyncio
+    async def test_minimal_factory_enabled_bricks_logged(
         self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Factory logs exactly 1 enabled brick for MINIMAL profile."""
@@ -376,7 +385,7 @@ class TestMinimalIntegrationViaConnect:
         with caplog.at_level(logging.INFO, logger="nexus.factory.orchestrator"):
             # Using record_store triggers create_nexus_services which logs bricks
             # With record_store=None, factory path skips services entirely
-            nx = create_nexus_fs(
+            nx = await create_nexus_fs(
                 backend=PathLocalBackend(root_path=data_dir),
                 metadata_store=DictMetastore(),
                 record_store=None,
@@ -385,7 +394,8 @@ class TestMinimalIntegrationViaConnect:
 
         assert nx is not None
 
-    def test_minimal_profile_dispatch_has_no_observers(self, tmp_path: "Path") -> None:
+    @pytest.mark.asyncio
+    async def test_minimal_profile_dispatch_has_no_observers(self, tmp_path: "Path") -> None:
         """MINIMAL mode has only the late-binding EventBusObserver (no record store to sync)."""
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
@@ -395,7 +405,7 @@ class TestMinimalIntegrationViaConnect:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,
@@ -407,7 +417,8 @@ class TestMinimalIntegrationViaConnect:
         # no bus or version is configured.
         assert nx._dispatch.observer_count == 2
 
-    def test_minimal_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
+    @pytest.mark.asyncio
+    async def test_minimal_profile_no_workflow_engine(self, tmp_path: "Path") -> None:
         """MINIMAL mode has no workflow engine."""
         from nexus.backends.storage.path_local import PathLocalBackend
         from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
@@ -417,7 +428,7 @@ class TestMinimalIntegrationViaConnect:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),
             metadata_store=DictMetastore(),
             record_store=None,

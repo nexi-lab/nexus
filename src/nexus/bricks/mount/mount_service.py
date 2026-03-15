@@ -188,13 +188,15 @@ class MountService:
                 io_profile=io_profile,
             )
 
-            # Grant direct_owner permission to the user who created the mount
-            self._grant_mount_owner_permission(mount_point, context)
-
             return mount_point  # Return mount_point as the mount ID
 
         # Run in thread pool to avoid blocking event loop
-        return await asyncio.to_thread(_add_mount_sync)
+        result = await asyncio.to_thread(_add_mount_sync)
+
+        # Grant direct_owner permission to the user who created the mount
+        await self._grant_mount_owner_permission(mount_point, context)
+
+        return result
 
     @rpc_expose(description="Remove backend mount")
     async def remove_mount(
@@ -331,7 +333,7 @@ class MountService:
             RuntimeError: If mount_core_service or mount_persist_service not configured
         """
 
-        def _delete_connector_sync() -> dict[str, Any]:
+        async def _delete_connector_sync() -> dict[str, Any]:
             result: dict[str, Any] = {
                 "removed": False,
                 "directory_deleted": False,
@@ -376,7 +378,7 @@ class MountService:
             if self.nexus_fs and hasattr(self.nexus_fs, "rmdir"):
                 try:
                     _nx: Any = self.nexus_fs
-                    _nx.sys_rmdir(mount_point, recursive=True, context=context)
+                    await _nx.sys_rmdir(mount_point, recursive=True, context=context)
                     result["directory_deleted"] = True
                     logger.info(f"Deleted mount point directory: {mount_point}")
                 except Exception as e:
@@ -387,7 +389,7 @@ class MountService:
 
             return result
 
-        result = await asyncio.to_thread(_delete_connector_sync)
+        result = await _delete_connector_sync()
 
         # Step 3: Optionally revoke OAuth credentials (async)
         if revoke_oauth:
@@ -693,12 +695,14 @@ class MountService:
                 description=description,
             )
 
-            # Grant direct_owner permission to the user who saved the mount
-            self._grant_mount_owner_permission(mount_point, context)
-
             return mount_id
 
-        return await asyncio.to_thread(_save_mount_sync)
+        result = await asyncio.to_thread(_save_mount_sync)
+
+        # Grant direct_owner permission to the user who saved the mount
+        await self._grant_mount_owner_permission(mount_point, context)
+
+        return result
 
     @rpc_expose(description="List saved mount configurations")
     async def list_saved_mounts(
@@ -1076,7 +1080,7 @@ class MountService:
     # Helper Methods
     # =========================================================================
 
-    def _grant_mount_owner_permission(
+    async def _grant_mount_owner_permission(
         self, mount_point: str, context: "OperationContext | None"
     ) -> None:
         """Grant direct_owner permission to the user who created the mount.
@@ -1094,7 +1098,7 @@ class MountService:
         # Create directory entry for the mount point
         if self.nexus_fs and hasattr(self.nexus_fs, "sys_mkdir"):
             try:
-                self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
+                await self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
                 logger.info(f"✓ Created directory entry for mount point: {mount_point}")
             except Exception as e:
                 logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")

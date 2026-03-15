@@ -158,7 +158,8 @@ class TestResolveContent:
 
 
 class TestConnectLocalWorkspace:
-    def test_reapplies_local_env_for_operations(
+    @pytest.mark.asyncio
+    async def test_reapplies_local_env_for_operations(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: pytest.TempPathFactory,
@@ -186,17 +187,22 @@ class TestConnectLocalWorkspace:
                     "remote_url": os.environ.get("NEXUS_URL"),
                 }
 
+        async def _mock_connect(config):
+            return DummyFilesystem()
+
         monkeypatch.setenv("NEXUS_DATA_DIR", ambient_data_dir)
         monkeypatch.setenv("NEXUS_DATABASE_URL", ambient_database_url)
         monkeypatch.setenv("NEXUS_URL", "http://127.0.0.1:65535")
-        monkeypatch.setattr("nexus.connect", lambda config: DummyFilesystem())
+        monkeypatch.setattr("nexus.connect", _mock_connect)
 
-        filesystem = connect_local_workspace(local_data_dir)
+        filesystem = await connect_local_workspace(local_data_dir)
 
         assert os.environ["NEXUS_DATA_DIR"] == ambient_data_dir
         assert os.environ["NEXUS_DATABASE_URL"] == ambient_database_url
         assert os.environ["NEXUS_URL"] == "http://127.0.0.1:65535"
 
+        # The _LocalWorkspaceFilesystemProxy wraps sync methods synchronously,
+        # so sys_read returns the value directly (no await needed).
         assert filesystem.sys_read("/workspace/demo.txt") == b"ok"
         filesystem.close()
 

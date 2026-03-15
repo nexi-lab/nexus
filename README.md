@@ -1,209 +1,223 @@
 <div align="center">
-  <img src="assets/logo.png" alt="Nexus Logo" width="200"/>
 
-  # Nexus
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/logo.png">
+  <img alt="Nexus" src="assets/logo.png" width="180">
+</picture>
 
-  [![Test](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
-  [![Lint](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/lint.yml)
+### The filesystem & context plane for AI agents
 
-  [![PyPI version](https://badge.fury.io/py/nexus-ai-fs.svg)](https://badge.fury.io/py/nexus-ai-fs)
-  [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/nexi-lab/nexus/blob/main/LICENSE)
-  [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+Give every agent one place to read, write, search, remember, and collaborate — from a single-file script to a fleet of thousands.
 
-  [Docs](https://nexi-lab.github.io/nexus/) • [Quickstart](https://nexi-lab.github.io/nexus/getting-started/quickstart/) • [PyPI](https://pypi.org/project/nexus-ai-fs/) • [Examples](https://github.com/nexi-lab/nexus/tree/main/examples)
+[![CI](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/nexus-ai-fs?color=blue)](https://pypi.org/project/nexus-ai-fs/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-community-5865F2?logo=discord&logoColor=white)](https://discord.gg/nexus)
+
+[Documentation](https://nexi-lab.github.io/nexus/) · [Quickstart](https://nexi-lab.github.io/nexus/getting-started/quickstart/) · [Examples](examples/) · [PyPI](https://pypi.org/project/nexus-ai-fs/) · [Roadmap](https://github.com/nexi-lab/nexus/issues)
+
 </div>
 
-Nexus = filesystem/context plane.
+---
 
-⚠️ **Beta**: Nexus is under active development. APIs and deployment defaults may change.
+## Why Nexus
 
-## What Nexus Does
+Every agent framework gives you tool calling. None gives you a shared filesystem. Without one, agents duplicate files, lose context between runs, step on each other's writes, and can't discover what's already been built.
 
-Nexus gives agents one place to read, write, search, and carry context across files, services, and runs. The core abstraction is a VFS-style interface that can start local in-process and grow into a daemon-backed deployment when you need remote access, permissions, or multi-tenant control.
+Nexus fixes this. One VFS-style interface — start embedded in a single Python process, scale to a daemon-backed deployment with auth, permissions, federation, and multi-tenant isolation. No code changes.
 
-## Quick Start
+## How it works
 
-### Install
-
-```bash
-pip install nexus-ai-fs
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  BRICKS (runtime-loadable)                                              │
+│  ReBAC · Auth · Agents · Delegation · Search · Memory · Governance      │
+│  Workflows · Pay · MCP · Snapshots · Skills · Catalog · 30+ more        │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ↓ protocol interface
+┌─────────────────────────────────────────────────────────────────────────┐
+│  KERNEL                                                                 │
+│  VFS · Metastore · ObjectStore · Syscall dispatch · Pipes ·             │
+│  Lock manager · Three-phase write (LSM hooks) · CAS dedup              │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ↓ dependency injection
+┌─────────────────────────────────────────────────────────────────────────┐
+│  DRIVERS                                                                │
+│  redb · PostgreSQL (pgvector) · S3 · GCS · Dragonfly · Zoekt · gRPC    │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### One-command demo (Docker)
+**Kernel** never changes. **Drivers** swap at config time. **Bricks** mount and unmount at runtime — like `insmod`/`rmmod` for an AI filesystem.
+
+## Get started in 30 seconds
+
+### Option A: Docker (recommended)
 
 ```bash
-nexus init --preset demo
-nexus up
-nexus demo init          # seeds sample workspace + prints API key
+pip install nexus-ai-fs          # CLI + SDK
+nexus init --preset demo          # writes nexus.yaml + docker-compose
+nexus up                          # pulls image, starts Nexus + Postgres + Dragonfly + Zoekt
 ```
 
-This pulls the prebuilt Nexus image and starts it alongside PostgreSQL (pgvector), Dragonfly (cache), and Zoekt (code search). By default Nexus listens on `localhost:2026`; if that port is busy, `nexus up` auto-resolves to a free port and prints the actual URL. No Rust toolchain, no local build required.
+Open `http://localhost:2026`. That's it.
 
-### Shared deployment
-
-```bash
-nexus init --preset shared
-nexus up
-```
-
-Same services as demo (PostgreSQL, Dragonfly, Zoekt) with `static` auth and production-oriented defaults.
-Both presets default to the `stable` release channel. Use `nexus status` to see the active image.
-
-### Local SDK (no Docker)
-
-For in-process use without a daemon:
+### Option B: Python SDK (no Docker)
 
 ```bash
 pip install nexus-ai-fs
 ```
 
 ```python
-from nexus.sdk import connect
+import nexus
 
-nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
-nx.sys_write("/hello.txt", b"Hello, Nexus!")
-print(nx.sys_read("/hello.txt").decode())  # Hello, Nexus!
+nx = nexus.connect(config={"data_dir": "./my-data"})
+
+nx.write("/notes/meeting.md", b"# Q3 Planning\n- Ship Nexus 1.0")
+print(nx.read("/notes/meeting.md").decode())
+
+results = nx.search("planning", limit=5)      # semantic + keyword hybrid
+history = nx.versions("/notes/meeting.md")     # full version history
+
 nx.close()
 ```
 
-### CLI usage
+### Option C: CLI
 
 ```bash
-nexus write /workspace/hello.txt "hello from cli"
-nexus cat /workspace/hello.txt
-nexus ls /workspace
+nexus write /hello.txt "hello world"
+nexus cat /hello.txt
+nexus ls /
+nexus search "hello" --mode hybrid
+nexus versions /hello.txt
+```
+
+## What you get
+
+| Capability | What it does | How agents use it |
+|---|---|---|
+| **Filesystem** | POSIX-style read/write/mkdir/ls with CAS dedup | Shared workspace — no more temp files |
+| **Versioning** | Every write creates an immutable version | Rollback mistakes, diff changes, audit trails |
+| **Snapshots** | Atomic multi-file transactions | Commit or rollback a batch of changes together |
+| **Search** | Keyword + semantic + hybrid, powered by Zoekt + pgvector | Find anything by content or meaning |
+| **Memory** | Persistent agent memory with consolidation + versioning | Remember across runs and sessions |
+| **Delegation** | SSH-style agent-to-agent permission narrowing | Safely sub-delegate work with scoped access |
+| **ReBAC** | Relationship-based access control (Google Zanzibar model) | Fine-grained per-file, per-agent permissions |
+| **MCP** | Mount external MCP servers, expose Nexus as 30+ MCP tools | Bridge any tool ecosystem |
+| **Workflows** | Trigger → condition → action pipelines | Automate file processing, notifications, etc. |
+| **Governance** | Fraud detection, collusion rings, trust scores | Safety rails for autonomous agent fleets |
+| **Pay** | Credit ledger with reserves, policies, approvals | Metered compute for multi-tenant deployments |
+| **IPC** | Inbox-based inter-agent messaging via pipes | Agents talk to each other without polling |
+| **Federation** | Multi-zone Raft consensus with mTLS TOFU | Span data centers without a central coordinator |
+
+<details>
+<summary><strong>30+ more bricks →</strong></summary>
+
+Access Manifests · Agent Registry · Artifact Index · Auth (API key, OAuth, mTLS) · Catalog (schema extraction) · Context Manifests · Discovery · Event Log · Identity (DID + credentials) · LLM Provider · Parsers (50+ formats via MarkItDown) · Portability (import/export) · Reputation · RLM (retrieval-augmented reasoning) · Sandbox (Docker/Monty) · Scheduler (fair-share, priority tiers) · Share Links (capability URLs) · Skills · Snapshots · TUS Uploads (resumable) · Watch (filesystem events) · Workspace Registry
+
+</details>
+
+## Framework integrations
+
+Every major agent framework works out of the box:
+
+| Framework | What the example shows | Link |
+|---|---|---|
+| **Claude Agent SDK** | ReAct agent with Nexus as tool provider | [examples/claude_agent_sdk/](examples/claude_agent_sdk/) |
+| **OpenAI Agents** | Multi-tenant agents with shared memory | [examples/openai_agents/](examples/openai_agents/) |
+| **LangGraph** | Permission-scoped workflows | [examples/langgraph_integration/](examples/langgraph_integration/) |
+| **CrewAI** | Multi-agent collaboration on shared files | [examples/crewai/](examples/crewai/) |
+| **Google ADK** | Agent Development Kit integration | [examples/google_adk/](examples/google_adk/) |
+| **E2B** | Cloud sandbox execution | [examples/e2b/](examples/e2b/) |
+| **CLI** | 40+ shell demos covering every feature | [examples/cli/](examples/cli/) |
+
+## Deployment options
+
+| Mode | What | Who it's for |
+|---|---|---|
+| **Embedded** | `nexus.connect()` — in-process, zero infrastructure | Scripts, notebooks, single-agent apps |
+| **Shared daemon** | `nexus up` — Docker stack with Postgres, Dragonfly, Zoekt | Teams, multi-agent systems, staging |
+| **Federation** | Multi-zone Raft consensus across data centers | Production fleets, edge deployments |
+
+```bash
+# Embedded (no Docker)
+pip install nexus-ai-fs
+
+# Shared daemon
+nexus init --preset shared && nexus up
+
+# With GPU acceleration
+nexus init --preset shared --accelerator cuda
+
+# Pin to a specific version
+nexus init --preset shared --image-tag 0.9.3
 ```
 
 ### Docker image
 
-The prebuilt multi-arch image (amd64 + arm64) is published to GHCR:
+Published to GHCR (multi-arch: amd64 + arm64):
 
 ```
-ghcr.io/nexi-lab/nexus:stable        # Latest release (updated on every tag)
-ghcr.io/nexi-lab/nexus:edge          # Latest develop (updated on every push)
-ghcr.io/nexi-lab/nexus:<version>     # Pinned to a specific release (e.g. 0.9.2)
-ghcr.io/nexi-lab/nexus:<tag>-cuda    # GPU-accelerated variant (stable-cuda, edge-cuda, etc.)
+ghcr.io/nexi-lab/nexus:stable          # latest release
+ghcr.io/nexi-lab/nexus:edge            # latest develop
+ghcr.io/nexi-lab/nexus:<version>       # pinned (e.g. 0.9.3)
+ghcr.io/nexi-lab/nexus:stable-cuda     # GPU variant
 ```
 
-`nexus init` writes an `image_ref` into `nexus.yaml` based on the selected channel.
-The default channel is `stable`. Override during init:
+## Storage architecture
 
-```bash
-nexus init --preset shared                           # stable channel (default)
-nexus init --preset shared --channel edge            # pre-release channel
-nexus init --preset shared --image-tag 0.9.2         # pin to exact version
-nexus init --preset shared --accelerator cuda        # GPU variant
-nexus init --preset shared --image-digest sha256:... # immutable digest
-```
+Four pillars, separated by access pattern — not by domain:
 
-`nexus up` auto-pulls the latest image for channel-following configs (`stable`/`edge`).
-To pull the latest release explicitly, run `nexus upgrade`.
-To build from local source (repo checkouts only), pass `--build` to `nexus up` or `nexus restart`.
-
-## Optional Capabilities
-
-- Semantic search: `pip install "nexus-ai-fs[semantic-search]"`
-- Rust acceleration: `pip install nexus-fast`
-- Full dev/test environment: `uv sync --extra dev --extra test`
-- Rust extensions from source: `uv pip install maturin && maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
-- Raft federation extensions: `maturin develop --release -m rust/nexus_raft/Cargo.toml --features full`
-
-## Troubleshooting
-
-- `ModuleNotFoundError: No module named 'nexus'`: install `nexus-ai-fs` from PyPI or use `uv pip install -e .` in a source checkout.
-- `maturin develop --release` fails at the repo root: point `maturin` at a crate manifest under `rust/`, not the workspace root `Cargo.toml`.
-- `Rust BLAKE3 extension not available`: optional performance path. The default uses the Python `blake3` package.
-- `faiss-cpu` resolution fails: opt into `semantic-search` only on platforms with compatible `txtai`/`faiss-cpu` wheels.
-
-For the full walkthrough, see the [quickstart page](https://nexi-lab.github.io/nexus/getting-started/quickstart/).
-
-## Three Landing Paths
-
-- **Local SDK**: In-process filesystem/context plane — no daemon, no Docker. Docs: [Local SDK path](https://nexi-lab.github.io/nexus/paths/embedded-sdk/)
-- **Shared daemon**: Long-lived `nexusd` service with remote clients, permissions, and operational controls. Docs: [Shared daemon path](https://nexi-lab.github.io/nexus/paths/daemon-and-remote/)
-- **Architecture**: Kernel, storage, and proposal docs for contributors. Docs: [Architecture path](https://nexi-lab.github.io/nexus/paths/architecture/)
-
-## Trust Boundaries
-
-- The demo preset runs a single-node stack (Nexus + PostgreSQL + Dragonfly + Zoekt) with default credentials — suitable for evaluation, not production.
-- Remote SDK access uses the `remote` profile and depends on a running `nexusd` plus a configured gRPC port.
-- Permissions, memory, and federation are deployment capabilities configured via the `shared` or custom presets.
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  SERVICES (user space)                                       │
-│  Loadable at runtime. ReBAC, Auth, Agents, Search, Skills…   │
-└──────────────────────────────────────────────────────────────┘
-                          ↓ protocol interface
-┌──────────────────────────────────────────────────────────────┐
-│  KERNEL                                                      │
-│  VFS, MetastoreABC, ObjectStoreABC, syscall dispatch,        │
-│  pipes, lock manager, three-phase dispatch (LSM hooks)       │
-└──────────────────────────────────────────────────────────────┘
-                          ↓ dependency injection
-┌──────────────────────────────────────────────────────────────┐
-│  DRIVERS                                                     │
-│  redb, S3, PostgreSQL, Dragonfly, LocalDisk, gRPC…           │
-└──────────────────────────────────────────────────────────────┘
-```
-
-| Tier | Linux Analogue | Nexus | Swap time |
-|------|---------------|-------|-----------|
-| **Kernel** | vmlinuz (scheduler, mm, VFS) | VFS, MetastoreABC, syscall dispatch | Never |
-| **Drivers** | Compiled-in drivers (`=y`) | redb, S3, PostgreSQL, SearchBrick | Config-time (DI) |
-| **Services** | Loadable kernel modules (`insmod`/`rmmod`) | 23 protocols — ReBAC, Mount, Auth, Agents, … | Runtime |
-
-**Invariant:** Services depend on kernel interfaces, never the reverse. The kernel operates with zero services loaded.
-
-### Four Storage Pillars
-
-Storage is abstracted by **capability** (access pattern + consistency guarantee), not by domain:
-
-| Pillar | ABC | Capability | Kernel role |
-|--------|-----|------------|-------------|
-| **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | Required — sole kernel init param |
-| **ObjectStore** | `ObjectStoreABC` | Streaming blob I/O, petabyte scale | Interface only — mounted dynamically |
+| Pillar | Interface | Capability | Required? |
+|---|---|---|---|
+| **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft | Yes — sole kernel init param |
+| **ObjectStore** | `ObjectStoreABC` | Streaming blob I/O, petabyte scale | Mounted dynamically |
 | **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, vector search | Services only — optional |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | Optional — defaults to `NullCacheStore` |
+| **CacheStore** | `CacheStoreABC` | Ephemeral KV, pub/sub, TTL | Optional (defaults to null) |
 
-### Presets
-
-| Preset | Use Case | Stack |
-|--------|----------|-------|
-| **local** | Embedded SDK, no Docker | In-process only |
-| **shared** | One shared node | Nexus + PostgreSQL + Dragonfly + Zoekt |
-| **demo** | Shared + seed data | Same as shared + demo corpus |
-
-Federation and GPU are explicit extensions layered on top of the shared preset, not separate presets.
-
-See [Kernel Architecture](https://nexi-lab.github.io/nexus/architecture/kernel-architecture/) for internal deployment profiles and the full design.
-
-## Examples
-
-| Framework | Description | Location |
-|-----------|-------------|----------|
-| CrewAI | Multi-agent collaboration | [examples/crewai/](https://github.com/nexi-lab/nexus/tree/main/examples/crewai) |
-| LangGraph | Permission-based workflows | [examples/langgraph_integration/](https://github.com/nexi-lab/nexus/tree/main/examples/langgraph_integration) |
-| Claude SDK | ReAct agent pattern | [examples/claude_agent_sdk/](https://github.com/nexi-lab/nexus/tree/main/examples/claude_agent_sdk) |
-| OpenAI Agents | Multi-tenant with memory | [examples/openai_agents/](https://github.com/nexi-lab/nexus/tree/main/examples/openai_agents) |
-| Google ADK | Agent Development Kit | [examples/google_adk/](https://github.com/nexi-lab/nexus/tree/main/examples/google_adk) |
-| CLI | 40+ shell demos | [examples/cli/](https://github.com/nexi-lab/nexus/tree/main/examples/cli) |
+The kernel starts with just a Metastore. Everything else is layered on without changing a line of kernel code.
 
 ## Contributing
 
 ```bash
-git clone https://github.com/nexi-lab/nexus.git
-cd nexus
+git clone https://github.com/nexi-lab/nexus.git && cd nexus
 uv python install 3.14
 uv sync --extra dev --extra test
 uv run pre-commit install
 uv run pytest tests/
 ```
 
-If you are working on the txtai search stack, add `--extra semantic-search`.
+For semantic search work: `uv sync --extra semantic-search`
+For Rust extensions: `maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
+
+## Troubleshooting
+
+<details>
+<summary><code>ModuleNotFoundError: No module named 'nexus'</code></summary>
+
+Install from PyPI: `pip install nexus-ai-fs`. The package name on PyPI is `nexus-ai-fs`, not `nexus`.
+
+</details>
+
+<details>
+<summary><code>maturin develop</code> fails at the repo root</summary>
+
+Point maturin at a crate manifest: `maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
+
+</details>
+
+<details>
+<summary><code>faiss-cpu</code> resolution fails</summary>
+
+Only install semantic search extras on platforms with compatible `txtai`/`faiss-cpu` wheels: `pip install "nexus-ai-fs[semantic-search]"`
+
+</details>
 
 ## License
 
-© 2026 Nexi Labs, Inc. Licensed under Apache License 2.0 — see [LICENSE](https://github.com/nexi-lab/nexus/blob/main/LICENSE) for details.
+Apache License 2.0 — see [LICENSE](LICENSE) for details.
+
+Built by [Nexi Labs](https://github.com/nexi-lab).

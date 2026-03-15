@@ -33,13 +33,25 @@ def _read_content(
 
     physical_path = metadata.get("physical_path", "")
     if physical_path.startswith(INLINE_PREFIX):
-        # Inline: content stored base64-encoded in metastore
+        # Inline: content stored base64-encoded in metastore.
+        # NexusFS stores: set_file_metadata(path, key, b64encode(content).decode("ascii"))
+        # NexusFS reads:  b64decode(get_file_metadata(path, key))
         import base64
 
         raw = metastore.get_file_metadata(path, INLINE_CONTENT_KEY)
         if raw is None:
             return None
-        return base64.b64decode(raw)
+        # NexusFS stores base64(content) in the metastore. The Raft
+        # metastore adds another base64 layer when storing arbitrary
+        # string values, so the value we read is base64(base64(content)).
+        # Decode both layers.
+        content = base64.b64decode(raw)
+        if isinstance(content, bytes):
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                content = base64.b64decode(content)
+        return content
 
     # CAS: content stored in backend by hash
     content_hash = metadata.get("etag")

@@ -402,13 +402,13 @@ class TestDetermineAgentKeyExpiration:
 class TestDeleteAgentCleanup:
     """Tests for AgentService.delete_agent cleanup logic."""
 
-    def test_delete_agent_revokes_api_keys(
+    async def test_delete_agent_revokes_api_keys(
         self, agent_service: AgentService, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test that delete_agent revokes all API keys for the agent."""
         # Register agent first
         context = {"user_id": "alice", "zone_id": "root"}
-        agent_service.register_agent(
+        await agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             generate_api_key=True,
@@ -445,7 +445,7 @@ class TestDeleteAgentCleanup:
             session.close()
 
         # Delete agent
-        result = agent_service.delete_agent("alice,test_agent", _context=context)
+        result = await agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
         # Verify all keys are revoked using new session
@@ -476,13 +476,12 @@ class TestDeleteAgentCleanup:
         finally:
             session.close()
 
-    @pytest.mark.asyncio
     async def test_delete_agent_removes_directory(
         self, agent_service: AgentService, nx: NexusFS
     ) -> None:
         """Test that delete_agent removes agent directory."""
         context = {"user_id": "alice", "zone_id": "root"}
-        agent_service.register_agent(
+        await agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             context=context,
@@ -496,14 +495,14 @@ class TestDeleteAgentCleanup:
         directory_existed = await nx.sys_access(agent_dir, context=ctx)
 
         # Delete agent
-        result = agent_service.delete_agent("alice,test_agent", _context=context)
+        result = await agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
         # Verify directory is removed (if it existed)
         if directory_existed:
             assert not await nx.sys_access(agent_dir, context=ctx)
 
-    def test_delete_agent_removes_rebac_tuples(self, agent_service: AgentService) -> None:
+    async def test_delete_agent_removes_rebac_tuples(self, agent_service: AgentService) -> None:
         """Test that delete_agent removes ReBAC tuples for the agent."""
         # Mock rebac_manager on the agent_service
         mock_tuples = [
@@ -523,14 +522,14 @@ class TestDeleteAgentCleanup:
         agent_service._rebac_manager = mock_rebac_manager
 
         context = {"user_id": "alice", "zone_id": "root"}
-        agent_service.register_agent(
+        await agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             context=context,
         )
 
         # Delete agent
-        result = agent_service.delete_agent("alice,test_agent", _context=context)
+        result = await agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
         # Verify rebac_list_tuples was called (at least once for agent tuples, possibly for user tuples too)
@@ -541,7 +540,6 @@ class TestDeleteAgentCleanup:
         # Restore original manager
         agent_service._rebac_manager = original_rebac_manager
 
-    @pytest.mark.asyncio
     async def test_delete_agent_handles_missing_directory(
         self, agent_service: AgentService, nx: NexusFS
     ) -> None:
@@ -549,7 +547,7 @@ class TestDeleteAgentCleanup:
         context = {"user_id": "alice", "zone_id": "root"}
 
         # Register agent
-        agent_service.register_agent(
+        await agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             context=context,
@@ -576,24 +574,26 @@ class TestDeleteAgentCleanup:
             nx._enforce_permissions = original_enforce
 
         # Delete agent should still succeed
-        result = agent_service.delete_agent("alice,test_agent", _context=context)
+        result = await agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
-    def test_delete_agent_handles_missing_rebac_manager(self, agent_service: AgentService) -> None:
+    async def test_delete_agent_handles_missing_rebac_manager(
+        self, agent_service: AgentService
+    ) -> None:
         """Test that delete_agent handles missing ReBAC manager gracefully."""
         # Store original manager to restore later
         original_rebac_manager = agent_service._rebac_manager
         agent_service._rebac_manager = None
 
         context = {"user_id": "alice", "zone_id": "root"}
-        agent_service.register_agent(
+        await agent_service.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
             context=context,
         )
 
         # Delete agent should still succeed
-        result = agent_service.delete_agent("alice,test_agent", _context=context)
+        result = await agent_service.delete_agent("alice,test_agent", _context=context)
         assert result is True
 
         # Restore original manager to prevent teardown errors

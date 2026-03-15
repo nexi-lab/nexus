@@ -184,8 +184,8 @@ async def test_sync_mount_ensures_directory_exists(nx_with_mount):
     # Create context with zone_id and admin access for the test user
     ctx = OperationContext(user_id="test-user", groups=[], zone_id="test", is_admin=True)
 
-    # Use mount_core_service.add_mount (sync) which properly grants permissions
-    mount_point = nx.service("mount_core").add_mount(
+    # Use mount_core_service.add_mount (async) which properly grants permissions
+    mount_point = await nx.service("mount_core").add_mount(
         mount_point="/zone/test/old/mount",
         backend_type="cas_local",
         backend_config={"data_dir": str(mount_dir)},
@@ -219,8 +219,8 @@ async def test_add_mount_via_api_creates_directory(nx_with_mount):
     mount_dir = Path(tmpdir) / "api_mount"
     mount_dir.mkdir()
 
-    # Use mount_core_service.add_mount (sync) instead of removed nx.add_mount
-    mount_id = nx.service("mount_core").add_mount(
+    # Use mount_core_service.add_mount (async) instead of removed nx.add_mount
+    mount_id = await nx.service("mount_core").add_mount(
         mount_point="/api/mount",
         backend_type="cas_local",
         backend_config={"data_dir": str(mount_dir)},

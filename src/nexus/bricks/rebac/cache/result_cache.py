@@ -5,7 +5,7 @@ reducing latency from ~5ms (database) to <1ms (memory).
 
 Architecture:
 - L1 Cache (in-memory): This module - <1ms lookup, 50k entries (Issue #1077)
-- L2 Cache (database): rebac_check_cache table - 5-10ms lookup
+- L2 Cache (database): removed (was rebac_check_cache table — now CacheStoreABC)
 - L3 Compute: Graph traversal - 50-500ms
 
 Revision Quantization (Issue #909):

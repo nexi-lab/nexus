@@ -512,30 +512,8 @@ class TupleWriter:
                             subj_type, subj_id, obj_type, obj_id, tid
                         )
 
-                # L2 cache: bulk delete affected entries
-                if invalidation_keys:
-                    delete_conditions = []
-                    delete_params: list[str] = []
-                    for inv_key in invalidation_keys:
-                        subj_type, subj_id, _rel, obj_type, obj_id, tid = inv_key
-                        delete_conditions.append(
-                            "(zone_id = ? AND subject_type = ? AND subject_id = ? "
-                            "AND object_type = ? AND object_id = ?)"
-                        )
-                        delete_params.extend(
-                            [tid or ROOT_ZONE_ID, subj_type, subj_id, obj_type, obj_id]
-                        )
-
-                    chunk_size = 50
-                    for i in range(0, len(delete_conditions), chunk_size):
-                        chunk_conds = delete_conditions[i : i + chunk_size]
-                        chunk_params = delete_params[i * 5 : (i + chunk_size) * 5]
-
-                        if chunk_conds:
-                            delete_sql = "DELETE FROM rebac_check_cache WHERE " + " OR ".join(
-                                chunk_conds
-                            )
-                            cursor.execute(self._fix_sql(delete_sql), chunk_params)
+                # L2 SQL cache (rebac_check_cache) removed — skip bulk delete.
+                # L1 in-memory cache invalidation is handled above.
 
                 # Increment revision for all affected zones
                 if created_count > 0:

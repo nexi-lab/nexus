@@ -406,28 +406,8 @@ class CacheCoordinator:
                     zone_id,
                 )
 
-            # Always invalidate L2 cache for this subject+object pair.
-            # Eager recompute only handles relation names (e.g. "owner"),
-            # not permission names (e.g. "write") that map to those relations,
-            # so stale L2 entries for permissions would survive without this.
-            if self._fix_sql and cursor:
-                cursor.execute(
-                    self._fix_sql(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE zone_id = ?
-                          AND subject_type = ? AND subject_id = ?
-                          AND object_type = ? AND object_id = ?
-                        """
-                    ),
-                    (
-                        effective_zone_id,
-                        subject.entity_type,
-                        subject.entity_id,
-                        obj.entity_type,
-                        obj.entity_id,
-                    ),
-                )
+            # L2 SQL cache (rebac_check_cache) removed — table no longer exists.
+            # Invalidation is now handled entirely by L1 in-memory cache above.
 
             if should_eager_recompute:
                 self._eager_recompute(subject, relation, obj, zone_id, conn)
@@ -456,74 +436,31 @@ class CacheCoordinator:
                 row = cursor.fetchone()
                 has_subject_relation = row and row["subject_relation"]
 
-                if has_subject_relation:
-                    if self._l1_cache:
-                        self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, zone_id)
-                    cursor.execute(
-                        self._fix_sql(
-                            """
-                            DELETE FROM rebac_check_cache
-                            WHERE zone_id = ?
-                              AND object_type = ? AND object_id = ?
-                            """
-                        ),
-                        (effective_zone_id, obj.entity_type, obj.entity_id),
-                    )
+                if has_subject_relation and self._l1_cache:
+                    self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, zone_id)
 
             # 3. TRANSITIVE (Hierarchy): membership changes invalidate subject's permissions
-            if relation in ("member-of", "member", "parent"):
-                if self._l1_cache:
-                    self._l1_cache.invalidate_subject(
-                        subject.entity_type, subject.entity_id, zone_id
-                    )
-                if self._fix_sql:
-                    cursor.execute(
-                        self._fix_sql(
-                            """
-                            DELETE FROM rebac_check_cache
-                            WHERE zone_id = ?
-                              AND subject_type = ? AND subject_id = ?
-                            """
-                        ),
-                        (effective_zone_id, subject.entity_type, subject.entity_id),
-                    )
+            if relation in ("member-of", "member", "parent") and self._l1_cache:
+                self._l1_cache.invalidate_subject(subject.entity_type, subject.entity_id, zone_id)
 
             # 4. PARENT PERMISSION CHANGE: invalidate child paths
-            if obj.entity_type == "file" and relation in (
-                "direct_owner",
-                "direct_editor",
-                "direct_viewer",
-                "owner",
-                "editor",
-                "viewer",
-                "shared-viewer",
-                "shared-editor",
-                "shared-owner",
+            if (
+                obj.entity_type == "file"
+                and relation
+                in (
+                    "direct_owner",
+                    "direct_editor",
+                    "direct_viewer",
+                    "owner",
+                    "editor",
+                    "viewer",
+                    "shared-viewer",
+                    "shared-editor",
+                    "shared-owner",
+                )
+                and self._l1_cache
             ):
-                if self._l1_cache:
-                    self._l1_cache.invalidate_object_prefix(obj.entity_type, obj.entity_id, zone_id)
-                if self._fix_sql:
-                    cursor.execute(
-                        self._fix_sql(
-                            """
-                            DELETE FROM rebac_check_cache
-                            WHERE zone_id = ?
-                              AND object_type = ?
-                              AND (object_id = ? OR object_id LIKE ?)
-                            """
-                        ),
-                        (
-                            effective_zone_id,
-                            obj.entity_type,
-                            obj.entity_id,
-                            obj.entity_id + "/%",
-                        ),
-                    )
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(
-                            "Invalidated cache for %s and all children (parent permission change)",
-                            obj,
-                        )
+                self._l1_cache.invalidate_object_prefix(obj.entity_type, obj.entity_id, zone_id)
 
             # 5. USERSET-AS-SUBJECT: clear ALL cache (aggressive but safe)
             if subject_relation is not None:
@@ -535,16 +472,6 @@ class CacheCoordinator:
                     )
                 if self._l1_cache:
                     self._l1_cache.clear()
-                if self._fix_sql:
-                    cursor.execute(
-                        self._fix_sql(
-                            """
-                            DELETE FROM rebac_check_cache
-                            WHERE zone_id = ?
-                            """
-                        ),
-                        (effective_zone_id,),
-                    )
 
             # 6. BOUNDARY CACHE: invalidate cached path-inheritance boundaries
             self._notify_boundary_invalidators(
@@ -631,27 +558,7 @@ class CacheCoordinator:
             self._l1_cache.clear()
             logger.info("Cleared L1 cache due to namespace '%s' config update", object_type)
 
-        # L2 cache invalidation
-        if self._connection_factory and self._fix_sql and self._create_cursor:
-            with self._connection_factory() as conn:
-                cursor = self._create_cursor(conn)
-                cursor.execute(
-                    self._fix_sql(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE object_type = ?
-                        """
-                    ),
-                    (object_type,),
-                )
-                conn.commit()
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "Invalidated all cached checks for namespace '%s' "
-                        "due to config update (deleted %s cache entries)",
-                        object_type,
-                        cursor.rowcount,
-                    )
+        # L2 SQL cache (rebac_check_cache) removed — no-op.
 
     # ------------------------------------------------------------------
     # Maintenance — Issue #2179 Step 2.5
@@ -662,18 +569,10 @@ class CacheCoordinator:
 
         Returns:
             Number of cache entries removed
-        """
-        if not (self._connection_factory and self._fix_sql and self._create_cursor):
-            return 0
 
-        with self._connection_factory() as conn:
-            cursor = self._create_cursor(conn)
-            cursor.execute(
-                self._fix_sql("DELETE FROM rebac_check_cache WHERE expires_at <= ?"),
-                (datetime.now(UTC).isoformat(),),
-            )
-            conn.commit()
-            return int(cursor.rowcount) if cursor.rowcount else 0
+        Note: L2 SQL cache (rebac_check_cache) removed — always returns 0.
+        """
+        return 0
 
     def cleanup_expired_tuples(self) -> int:
         """Remove expired relationship tuples and invalidate their caches.
@@ -776,12 +675,12 @@ class CacheCoordinator:
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics for monitoring and debugging.
 
-        Returns comprehensive statistics about both L1 (in-memory) and L2 (database)
-        cache performance, including hit rates, sizes, and latency metrics.
+        Returns statistics about L1 (in-memory) cache performance.
+        L2 SQL cache (rebac_check_cache) has been removed.
         """
         stats: dict[str, Any] = {
             "l1_enabled": self._l1_cache is not None,
-            "l2_enabled": True,
+            "l2_enabled": False,
             "l2_ttl_seconds": self._cache_ttl_seconds,
         }
 
@@ -791,24 +690,8 @@ class CacheCoordinator:
         else:
             stats["l1_stats"] = None
 
-        # L2 cache stats (query database)
-        if self._connection_factory and self._fix_sql and self._create_cursor:
-            with self._connection_factory(readonly=True) as conn:
-                cursor = self._create_cursor(conn)
-                cursor.execute(
-                    self._fix_sql(
-                        """
-                        SELECT COUNT(*) as count
-                        FROM rebac_check_cache
-                        WHERE expires_at > ?
-                        """
-                    ),
-                    (datetime.now(UTC).isoformat(),),
-                )
-                row = cursor.fetchone()
-                stats["l2_size"] = row["count"] if row else 0
-        else:
-            stats["l2_size"] = 0
+        # L2 SQL cache removed — always 0
+        stats["l2_size"] = 0
 
         return stats
 

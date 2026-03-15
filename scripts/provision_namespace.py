@@ -71,7 +71,7 @@ def user_path(zone_id: str, user_id: str, resource_type: str, resource_id: str) 
     return f"/zone/{zone_id}/user:{user_id}/{resource_type}/{resource_id}"
 
 
-def provision_system_resources(nx: Any) -> None:
+async def provision_system_resources(nx: Any) -> None:
     """Create system-wide resources."""
     # Create system context for provisioning
     # Note: Using admin user context as system context may not be fully supported
@@ -89,7 +89,9 @@ def provision_system_resources(nx: Any) -> None:
         # System default template
         template_id = generate_resource_id("resource", "default_template")
         template_path = system_path("resource", template_id)
-        nx.sys_write(template_path, b'{"type": "template", "version": "1.0"}', context=context)
+        await nx.sys_write(
+            template_path, b'{"type": "template", "version": "1.0"}', context=context
+        )
 
         # Grant system ownership
         nx.rebac_service.rebac_create_sync(
@@ -107,7 +109,7 @@ def provision_system_resources(nx: Any) -> None:
         # System skill
         skill_id = generate_resource_id("skill", "summarize")
         skill_path = system_path("skill", skill_id)
-        nx.sys_write(f"{skill_path}/skill.py", b"# Summarize skill", context=context)
+        await nx.sys_write(f"{skill_path}/skill.py", b"# Summarize skill", context=context)
 
         # Grant system ownership
         nx.rebac_service.rebac_create_sync(
@@ -122,7 +124,7 @@ def provision_system_resources(nx: Any) -> None:
         print(f"  ✗ Failed to create system skill: {e}")
 
 
-def provision_zone_resources(nx: Any, zone_id: str) -> None:
+async def provision_zone_resources(nx: Any, zone_id: str) -> None:
     """Create zone-wide resources."""
     # Create admin context for provisioning
     context = OperationContext(
@@ -139,7 +141,7 @@ def provision_zone_resources(nx: Any, zone_id: str) -> None:
         # Zone logo
         logo_id = generate_resource_id("resource", "company_logo")
         logo_path = zone_path(zone_id, "resource", logo_id)
-        nx.sys_write(logo_path, b"# Company logo placeholder", context=context)
+        await nx.sys_write(logo_path, b"# Company logo placeholder", context=context)
 
         # Grant zone ownership
         nx.rebac_service.rebac_create_sync(
@@ -163,7 +165,7 @@ def provision_zone_resources(nx: Any, zone_id: str) -> None:
         print(f"  ✗ Failed to create zone connector: {e}")
 
 
-def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
+async def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
     """Create folder structure for admin user with proper permissions."""
     print(f"Creating admin user folders for {zone_id}/admin...")
 
@@ -181,11 +183,11 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
     # First, create and grant permissions on the parent user directory
     try:
         user_dir_path = f"/zone/{zone_id}/user:{admin_user_id}"
-        nx.sys_mkdir(user_dir_path, parents=True, exist_ok=True, context=context)
+        await nx.sys_mkdir(user_dir_path, parents=True, exist_ok=True, context=context)
 
         # Create placeholder file to make directory discoverable
         placeholder_path = f"{user_dir_path}/.placeholder"
-        nx.sys_write(placeholder_path, b"", context=context)
+        await nx.sys_write(placeholder_path, b"", context=context)
 
         # Grant admin user ownership on the user directory
         nx.rebac_service.rebac_create_sync(
@@ -206,11 +208,11 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
             folder_path = f"/zone/{zone_id}/user:{admin_user_id}/{resource_type}"
 
             # Create the directory
-            nx.sys_mkdir(folder_path, parents=True, exist_ok=True, context=context)
+            await nx.sys_mkdir(folder_path, parents=True, exist_ok=True, context=context)
 
             # Create a placeholder file to make the directory visible in listings
             placeholder_path = f"{folder_path}/.placeholder"
-            nx.sys_write(placeholder_path, b"", context=context)
+            await nx.sys_write(placeholder_path, b"", context=context)
 
             # Grant admin user ownership on the directory (CRITICAL: admin user must own these folders)
             nx.rebac_service.rebac_create_sync(
@@ -239,7 +241,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
         workspace_path = user_path(zone_id, admin_user_id, "workspace", workspace_id)
 
         # Create the workspace directory first
-        nx.sys_mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
+        await nx.sys_mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
 
         # Register the workspace (this will auto-grant ownership via ReBAC if rebac_manager is available)
         workspace_info = nx._workspace_rpc_service.register_workspace(
@@ -287,7 +289,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
         if readme_source.exists():
             readme_content = readme_source.read_bytes()
             readme_path = f"{workspace_path}/README.md"
-            nx.sys_write(readme_path, readme_content, context=admin_context)
+            await nx.sys_write(readme_path, readme_content, context=admin_context)
             print("  ✓ Copied README.md from data/ to workspace")
         else:
             print(f"  ⚠ README.md not found at {readme_source}, skipping")
@@ -367,7 +369,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
                 # Verify the permission was created by checking if agent can list the skill directory
                 try:
                     # Try to list the skill directory as the agent to verify access
-                    skill_list = nx.sys_readdir(skill_creator_path, context=admin_context)
+                    skill_list = await nx.sys_readdir(skill_creator_path, context=admin_context)
                     print(
                         f"    [DEBUG] Agent can list skill directory: {len(skill_list) if skill_list else 0} items"
                     )

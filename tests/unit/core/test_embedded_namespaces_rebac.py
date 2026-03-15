@@ -11,6 +11,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
+
 from nexus import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import ParseConfig, PermissionConfig
@@ -26,7 +28,8 @@ def cleanup_windows_db():
         time.sleep(0.05)
 
 
-def test_workspace_namespace_operations():
+@pytest.mark.asyncio
+async def test_workspace_namespace_operations():
     """Test basic operations in workspace namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -50,28 +53,29 @@ def test_workspace_namespace_operations():
         )
 
         # Write to workspace
-        nx.sys_write("/workspace/acme/agent1/code.py", b"print('hello')", context=ctx)
+        await nx.sys_write("/workspace/acme/agent1/code.py", b"print('hello')", context=ctx)
 
         # Read back
-        content = nx.sys_read("/workspace/acme/agent1/code.py", context=ctx)
+        content = await nx.sys_read("/workspace/acme/agent1/code.py", context=ctx)
         assert content == b"print('hello')"
 
         # Check existence
-        assert nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
+        assert await nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
 
         # List files
-        files = nx.sys_readdir("/workspace/acme/agent1", context=ctx)
+        files = await nx.sys_readdir("/workspace/acme/agent1", context=ctx)
         assert "/workspace/acme/agent1/code.py" in files
 
         # Delete
-        nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
-        assert not nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
+        await nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
+        assert not await nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
 
         nx.close()
         cleanup_windows_db()
 
 
-def test_shared_namespace_operations():
+@pytest.mark.asyncio
+async def test_shared_namespace_operations():
     """Test basic operations in shared namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -92,25 +96,26 @@ def test_shared_namespace_operations():
         )
 
         # Write to shared namespace
-        nx.sys_write("/shared/acme/models/model.pkl", b"model data", context=ctx)
+        await nx.sys_write("/shared/acme/models/model.pkl", b"model data", context=ctx)
 
         # Read back
-        content = nx.sys_read("/shared/acme/models/model.pkl", context=ctx)
+        content = await nx.sys_read("/shared/acme/models/model.pkl", context=ctx)
         assert content == b"model data"
 
         # List files
-        files = nx.sys_readdir("/shared/acme/models", context=ctx)
+        files = await nx.sys_readdir("/shared/acme/models", context=ctx)
         assert "/shared/acme/models/model.pkl" in files
 
         # Delete
-        nx.sys_unlink("/shared/acme/models/model.pkl", context=ctx)
-        assert not nx.sys_access("/shared/acme/models/model.pkl", context=ctx)
+        await nx.sys_unlink("/shared/acme/models/model.pkl", context=ctx)
+        assert not await nx.sys_access("/shared/acme/models/model.pkl", context=ctx)
 
         nx.close()
         cleanup_windows_db()
 
 
-def test_external_namespace_operations():
+@pytest.mark.asyncio
+async def test_external_namespace_operations():
     """Test basic operations in external namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -130,25 +135,26 @@ def test_external_namespace_operations():
         )  # External namespace doesn't require zone_id
 
         # Write to external namespace
-        nx.sys_write("/external/s3/bucket/file.txt", b"external data", context=ctx)
+        await nx.sys_write("/external/s3/bucket/file.txt", b"external data", context=ctx)
 
         # Read back
-        content = nx.sys_read("/external/s3/bucket/file.txt", context=ctx)
+        content = await nx.sys_read("/external/s3/bucket/file.txt", context=ctx)
         assert content == b"external data"
 
         # List files
-        files = nx.sys_readdir("/external/s3/bucket", context=ctx)
+        files = await nx.sys_readdir("/external/s3/bucket", context=ctx)
         assert "/external/s3/bucket/file.txt" in files
 
         # Delete
-        nx.sys_unlink("/external/s3/bucket/file.txt", context=ctx)
-        assert not nx.sys_access("/external/s3/bucket/file.txt", context=ctx)
+        await nx.sys_unlink("/external/s3/bucket/file.txt", context=ctx)
+        assert not await nx.sys_access("/external/s3/bucket/file.txt", context=ctx)
 
         nx.close()
         cleanup_windows_db()
 
 
-def test_multi_namespace_operations_single_zone():
+@pytest.mark.asyncio
+async def test_multi_namespace_operations_single_zone():
     """Test operations across multiple namespaces for single zone."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -169,20 +175,21 @@ def test_multi_namespace_operations_single_zone():
         )
 
         # Write to different namespaces
-        nx.sys_write("/workspace/acme/agent1/code.py", b"code", context=ctx)
-        nx.sys_write("/shared/acme/data.txt", b"data", context=ctx)
-        nx.sys_write("/external/gcs/bucket/file.txt", b"external", context=ctx)
+        await nx.sys_write("/workspace/acme/agent1/code.py", b"code", context=ctx)
+        await nx.sys_write("/shared/acme/data.txt", b"data", context=ctx)
+        await nx.sys_write("/external/gcs/bucket/file.txt", b"external", context=ctx)
 
         # Verify all namespaces work
-        assert nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
-        assert nx.sys_access("/shared/acme/data.txt", context=ctx)
-        assert nx.sys_access("/external/gcs/bucket/file.txt", context=ctx)
+        assert await nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
+        assert await nx.sys_access("/shared/acme/data.txt", context=ctx)
+        assert await nx.sys_access("/external/gcs/bucket/file.txt", context=ctx)
 
         nx.close()
         cleanup_windows_db()
 
 
-def test_namespace_isolation_between_zones():
+@pytest.mark.asyncio
+async def test_namespace_isolation_between_zones():
     """Test that different zones' workspaces are isolated."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = create_nexus_fs(
@@ -194,7 +201,7 @@ def test_namespace_isolation_between_zones():
         )
 
         # Zone 1 writes
-        nx.sys_write(
+        await nx.sys_write(
             "/workspace/acme/agent1/secret.txt",
             b"acme secret",
             context=OperationContext(
@@ -208,7 +215,7 @@ def test_namespace_isolation_between_zones():
         )
 
         # Zone 2 writes to same path structure (different zone)
-        nx.sys_write(
+        await nx.sys_write(
             "/workspace/globex/agent1/secret.txt",
             b"globex secret",
             context=OperationContext(
@@ -222,7 +229,7 @@ def test_namespace_isolation_between_zones():
         )
 
         # Verify isolation - each zone sees only their data
-        acme_content = nx.sys_read(
+        acme_content = await nx.sys_read(
             "/workspace/acme/agent1/secret.txt",
             context=OperationContext(
                 user_id="agent1",
@@ -233,7 +240,7 @@ def test_namespace_isolation_between_zones():
                 is_admin=False,
             ),
         )
-        globex_content = nx.sys_read(
+        globex_content = await nx.sys_read(
             "/workspace/globex/agent1/secret.txt",
             context=OperationContext(
                 user_id="agent1",

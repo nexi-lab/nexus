@@ -733,7 +733,8 @@ class TestMountPermissionEnforcement:
 class TestMountIntegration:
     """Integration tests for mount functionality."""
 
-    def test_write_to_mount(self, nx: NexusFS, temp_dir: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_write_to_mount(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test writing files to a mounted backend."""
         mount_data_dir = temp_dir / "write_mount"
         mount_data_dir.mkdir()
@@ -745,13 +746,14 @@ class TestMountIntegration:
         )
 
         # Write to the mount
-        nx.sys_write("/mnt/write/test.txt", b"Hello from mount!")
+        await nx.sys_write("/mnt/write/test.txt", b"Hello from mount!")
 
         # Read back
-        content = nx.sys_read("/mnt/write/test.txt")
+        content = await nx.sys_read("/mnt/write/test.txt")
         assert content == b"Hello from mount!"
 
-    def test_list_mount_contents(self, nx: NexusFS, temp_dir: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_list_mount_contents(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test listing files in a mounted backend."""
         mount_data_dir = temp_dir / "list_mount"
         mount_data_dir.mkdir()
@@ -763,16 +765,17 @@ class TestMountIntegration:
         )
 
         # Write some files
-        nx.sys_write("/mnt/list/file1.txt", b"Content 1")
-        nx.sys_write("/mnt/list/file2.txt", b"Content 2")
+        await nx.sys_write("/mnt/list/file1.txt", b"Content 1")
+        await nx.sys_write("/mnt/list/file2.txt", b"Content 2")
 
         # List files
-        files = nx.sys_readdir("/mnt/list", recursive=True)
+        files = await nx.sys_readdir("/mnt/list", recursive=True)
 
         assert "/mnt/list/file1.txt" in files
         assert "/mnt/list/file2.txt" in files
 
-    def test_multiple_mounts(self, nx: NexusFS, temp_dir: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_multiple_mounts(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test multiple mounts can coexist."""
         mount1_dir = temp_dir / "mount1"
         mount2_dir = temp_dir / "mount2"
@@ -796,12 +799,12 @@ class TestMountIntegration:
         assert nx.service("mount_core").has_mount("/mnt/two")
 
         # Write to each
-        nx.sys_write("/mnt/one/file.txt", b"Mount 1")
-        nx.sys_write("/mnt/two/file.txt", b"Mount 2")
+        await nx.sys_write("/mnt/one/file.txt", b"Mount 1")
+        await nx.sys_write("/mnt/two/file.txt", b"Mount 2")
 
         # Read from each
-        assert nx.sys_read("/mnt/one/file.txt") == b"Mount 1"
-        assert nx.sys_read("/mnt/two/file.txt") == b"Mount 2"
+        assert await nx.sys_read("/mnt/one/file.txt") == b"Mount 1"
+        assert await nx.sys_read("/mnt/two/file.txt") == b"Mount 2"
 
 
 class TestMountContextUtilsIntegration:

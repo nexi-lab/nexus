@@ -138,27 +138,32 @@ class TestMinimalFileOperations:
 
         return make_test_nexus(tmp_path)
 
-    def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
-        minimal_nx.sys_write("/test.txt", b"hello kernel")
-        data = minimal_nx.sys_read("/test.txt")
+    @pytest.mark.asyncio
+    async def test_write_and_read(self, minimal_nx: "NexusFS") -> None:
+        await minimal_nx.sys_write("/test.txt", b"hello kernel")
+        data = await minimal_nx.sys_read("/test.txt")
         assert data == b"hello kernel"
 
-    def test_exists_true(self, minimal_nx: "NexusFS") -> None:
-        minimal_nx.sys_write("/exists_check.txt", b"data")
-        assert minimal_nx.sys_access("/exists_check.txt") is True
+    @pytest.mark.asyncio
+    async def test_exists_true(self, minimal_nx: "NexusFS") -> None:
+        await minimal_nx.sys_write("/exists_check.txt", b"data")
+        assert await minimal_nx.sys_access("/exists_check.txt") is True
 
-    def test_exists_false(self, minimal_nx: "NexusFS") -> None:
-        assert minimal_nx.sys_access("/nonexistent.txt") is False
+    @pytest.mark.asyncio
+    async def test_exists_false(self, minimal_nx: "NexusFS") -> None:
+        assert await minimal_nx.sys_access("/nonexistent.txt") is False
 
-    def test_delete(self, minimal_nx: "NexusFS") -> None:
-        minimal_nx.sys_write("/to_delete.txt", b"bye")
-        minimal_nx.sys_unlink("/to_delete.txt")
-        assert minimal_nx.sys_access("/to_delete.txt") is False
+    @pytest.mark.asyncio
+    async def test_delete(self, minimal_nx: "NexusFS") -> None:
+        await minimal_nx.sys_write("/to_delete.txt", b"bye")
+        await minimal_nx.sys_unlink("/to_delete.txt")
+        assert await minimal_nx.sys_access("/to_delete.txt") is False
 
-    def test_list_directory(self, minimal_nx: "NexusFS") -> None:
-        minimal_nx.sys_write("/dir/a.txt", b"a")
-        minimal_nx.sys_write("/dir/b.txt", b"b")
-        listing = minimal_nx.sys_readdir("/dir")
+    @pytest.mark.asyncio
+    async def test_list_directory(self, minimal_nx: "NexusFS") -> None:
+        await minimal_nx.sys_write("/dir/a.txt", b"a")
+        await minimal_nx.sys_write("/dir/b.txt", b"b")
+        listing = await minimal_nx.sys_readdir("/dir")
         paths = [item["path"] if isinstance(item, dict) else item for item in listing]
         assert "/dir/a.txt" in paths
         assert "/dir/b.txt" in paths
@@ -316,7 +321,8 @@ class TestMinimalDeviceCapabilities:
 class TestMinimalIntegrationViaConnect:
     """Integration: nexus.connect() with profile=kernel boots bare kernel."""
 
-    def test_connect_kernel_profile_creates_nexusfs(
+    @pytest.mark.asyncio
+    async def test_connect_kernel_profile_creates_nexusfs(
         self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """connect() with profile=kernel gives a functional NexusFS."""
@@ -349,11 +355,11 @@ class TestMinimalIntegrationViaConnect:
         assert nx._audit_store is None
 
         # File operations should work
-        nx.sys_write("/hello.txt", b"minimal mode")
-        assert nx.sys_read("/hello.txt") == b"minimal mode"
-        assert nx.sys_access("/hello.txt") is True
-        nx.sys_unlink("/hello.txt")
-        assert nx.sys_access("/hello.txt") is False
+        await nx.sys_write("/hello.txt", b"minimal mode")
+        assert await nx.sys_read("/hello.txt") == b"minimal mode"
+        assert await nx.sys_access("/hello.txt") is True
+        await nx.sys_unlink("/hello.txt")
+        assert await nx.sys_access("/hello.txt") is False
 
     def test_minimal_factory_enabled_bricks_logged(
         self, tmp_path: "Path", monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

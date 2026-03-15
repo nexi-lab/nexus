@@ -71,19 +71,22 @@ def nx_with_db(tmp_path):
 class TestProvisionUserInputValidation:
     """Input validation that should fail fast."""
 
-    def test_empty_user_id_raises(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_empty_user_id_raises(self, nx_with_db):
         with pytest.raises(ValueError, match="user_id is required"):
-            nx_with_db.service("user_provisioning").provision_user(
+            await nx_with_db.service("user_provisioning").provision_user(
                 user_id="", email="test@example.com"
             )
 
-    def test_missing_email_raises(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_missing_email_raises(self, nx_with_db):
         with pytest.raises(ValueError, match="Valid email required"):
-            nx_with_db.service("user_provisioning").provision_user(user_id="alice", email="")
+            await nx_with_db.service("user_provisioning").provision_user(user_id="alice", email="")
 
-    def test_invalid_email_no_at_sign_raises(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_invalid_email_no_at_sign_raises(self, nx_with_db):
         with pytest.raises(ValueError, match="Valid email required"):
-            nx_with_db.service("user_provisioning").provision_user(
+            await nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice", email="not-an-email"
             )
 
@@ -91,16 +94,18 @@ class TestProvisionUserInputValidation:
 class TestProvisionUserZoneIdExtraction:
     """Zone ID extraction from email when not explicitly provided."""
 
-    def test_zone_id_extracted_from_email(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_zone_id_extracted_from_email(self, nx_with_db):
         """When zone_id is not provided, extract from email local part."""
-        result = nx_with_db.service("user_provisioning").provision_user(
+        result = await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
         )
         assert result["zone_id"] == "alice"
 
-    def test_explicit_zone_id_takes_precedence(self, nx_with_db):
-        result = nx_with_db.service("user_provisioning").provision_user(
+    @pytest.mark.asyncio
+    async def test_explicit_zone_id_takes_precedence(self, nx_with_db):
+        result = await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="custom-zone",
@@ -111,8 +116,9 @@ class TestProvisionUserZoneIdExtraction:
 class TestProvisionUserHappyPath:
     """Full provisioning should create user, zone, API key, etc."""
 
-    def test_returns_expected_keys(self, nx_with_db):
-        result = nx_with_db.service("user_provisioning").provision_user(
+    @pytest.mark.asyncio
+    async def test_returns_expected_keys(self, nx_with_db):
+        result = await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -124,12 +130,13 @@ class TestProvisionUserHappyPath:
         assert result["user_id"] == "alice"
         assert result["zone_id"] == "test-zone"
 
-    def test_creates_zone_in_database(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_creates_zone_in_database(self, nx_with_db):
         from sqlalchemy import select
 
         from nexus.storage.models import ZoneModel
 
-        nx_with_db.service("user_provisioning").provision_user(
+        await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -144,12 +151,13 @@ class TestProvisionUserHappyPath:
         finally:
             session.close()
 
-    def test_creates_user_in_database(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_creates_user_in_database(self, nx_with_db):
         from sqlalchemy import select
 
         from nexus.storage.models import UserModel
 
-        nx_with_db.service("user_provisioning").provision_user(
+        await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -163,8 +171,9 @@ class TestProvisionUserHappyPath:
         finally:
             session.close()
 
-    def test_creates_api_key(self, nx_with_db):
-        result = nx_with_db.service("user_provisioning").provision_user(
+    @pytest.mark.asyncio
+    async def test_creates_api_key(self, nx_with_db):
+        result = await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -177,8 +186,9 @@ class TestProvisionUserHappyPath:
         # With agents disabled, only the user's API key is created
         nx_with_db._api_key_creator.create_key.assert_called_once()
 
-    def test_skip_api_key_creation(self, nx_with_db):
-        result = nx_with_db.service("user_provisioning").provision_user(
+    @pytest.mark.asyncio
+    async def test_skip_api_key_creation(self, nx_with_db):
+        result = await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice",
             email="alice@example.com",
             zone_id="test-zone",
@@ -193,15 +203,16 @@ class TestProvisionUserHappyPath:
 class TestProvisionUserIdempotency:
     """Provisioning the same user twice should be idempotent."""
 
-    def test_second_provision_does_not_duplicate_zone(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_second_provision_does_not_duplicate_zone(self, nx_with_db):
         from sqlalchemy import select
 
         from nexus.storage.models import ZoneModel
 
-        nx_with_db.service("user_provisioning").provision_user(
+        await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice", email="alice@example.com", zone_id="z1"
         )
-        nx_with_db.service("user_provisioning").provision_user(
+        await nx_with_db.service("user_provisioning").provision_user(
             user_id="bob", email="bob@example.com", zone_id="z1"
         )
 
@@ -216,13 +227,14 @@ class TestProvisionUserIdempotency:
 class TestProvisionUserReactivation:
     """Re-provisioning a soft-deleted user should reactivate them."""
 
-    def test_reactivate_soft_deleted_user(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_reactivate_soft_deleted_user(self, nx_with_db):
         from sqlalchemy import select
 
         from nexus.storage.models import UserModel
 
         # First provision
-        nx_with_db.service("user_provisioning").provision_user(
+        await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice", email="alice@example.com", zone_id="z1"
         )
 
@@ -235,7 +247,7 @@ class TestProvisionUserReactivation:
         session.close()
 
         # Re-provision should reactivate
-        nx_with_db.service("user_provisioning").provision_user(
+        await nx_with_db.service("user_provisioning").provision_user(
             user_id="alice", email="alice@example.com", zone_id="z1"
         )
 
@@ -251,21 +263,23 @@ class TestProvisionUserReactivation:
 class TestProvisionUserPartialFailure:
     """Partial failures at various steps."""
 
-    def test_api_key_creator_not_injected(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_api_key_creator_not_injected(self, nx_with_db):
         nx_with_db._api_key_creator = None
         # Also update the service (Issue #2033: provision_user delegated to service)
         ups = nx_with_db.service("user_provisioning")
         if ups is not None:
             ups._api_key_creator = None
         with pytest.raises(RuntimeError, match="API key creator not injected"):
-            nx_with_db.service("user_provisioning").provision_user(
+            await nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",
                 email="alice@example.com",
                 zone_id="z1",
                 create_api_key=True,
             )
 
-    def test_no_session_local_raises(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_no_session_local_raises(self, tmp_path):
         """Missing SessionLocal should raise TypeError (None is not callable)."""
         from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
@@ -292,17 +306,18 @@ class TestProvisionUserPartialFailure:
         )
         # Don't set SessionLocal — it defaults to None
         with pytest.raises(TypeError):
-            nx.service("user_provisioning").provision_user(
+            await nx.service("user_provisioning").provision_user(
                 user_id="alice", email="alice@example.com"
             )
 
-    def test_directory_creation_failure_continues(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_directory_creation_failure_continues(self, nx_with_db):
         """If directory creation fails, provisioning should continue."""
         # Issue #2033: _create_user_directories is now on UserProvisioningService
         ref = nx_with_db.service("user_provisioning")
         target = ref._service_instance if ref is not None else nx_with_db
         with patch.object(target, "_create_user_directories", side_effect=OSError("disk full")):
-            result = nx_with_db.service("user_provisioning").provision_user(
+            result = await nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",
                 email="alice@example.com",
                 zone_id="z1",
@@ -312,7 +327,8 @@ class TestProvisionUserPartialFailure:
             # Should still return a result (provisioning continues past directory failure)
             assert result["user_id"] == "alice"
 
-    def test_workspace_creation_failure_continues(self, nx_with_db):
+    @pytest.mark.asyncio
+    async def test_workspace_creation_failure_continues(self, nx_with_db):
         """If workspace creation fails, provisioning should still return a result.
 
         Note: workspace_path is assigned before the exists() check, so even if
@@ -320,7 +336,7 @@ class TestProvisionUserPartialFailure:
         The key assertion is that provisioning doesn't abort.
         """
         with patch.object(nx_with_db, "sys_mkdir", side_effect=Exception("workspace error")):
-            result = nx_with_db.service("user_provisioning").provision_user(
+            result = await nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",
                 email="alice@example.com",
                 zone_id="z1",

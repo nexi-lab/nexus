@@ -42,7 +42,7 @@ def wait_for_server(port: int, timeout: int = 20) -> bool:
     return False
 
 
-def main() -> int:
+async def main() -> int:
     shutil.rmtree(BASE_DIR, ignore_errors=True)
     os.makedirs(f"{BASE_DIR}/server", exist_ok=True)
 
@@ -115,7 +115,7 @@ def main() -> int:
     }
     for path, content in files.items():
         try:
-            nx.sys_write(path, content)
+            await nx.sys_write(path, content)
             print(f"  OK   {path} ({len(content)} bytes)")
         except Exception as e:
             print(f"  FAIL {path}: {e}")
@@ -125,7 +125,7 @@ def main() -> int:
     print("READ")
     for path, expected in files.items():
         try:
-            got = nx.sys_read(path)
+            got = await nx.sys_read(path)
             if got == expected:
                 print(f"  OK   {path} — matches ({len(got)} bytes)")
             else:
@@ -138,7 +138,7 @@ def main() -> int:
     # --- LIST ---
     print("LIST")
     try:
-        entries = nx.sys_readdir("/")
+        entries = await nx.sys_readdir("/")
         names = sorted(entries) if isinstance(entries, list) else entries
         print(f"  raw  / => {names}")
         # Verify expected paths are present
@@ -162,7 +162,7 @@ def main() -> int:
     # --- STAT ---
     print("STAT")
     try:
-        info = nx.sys_stat("/hello.txt")
+        info = await nx.sys_stat("/hello.txt")
         print(f"  raw  /hello.txt => {info}")
         # Verify size matches what we wrote (25 bytes)
         size_v = info.get("size", None) if isinstance(info, dict) else getattr(info, "size", None)
@@ -228,8 +228,8 @@ def main() -> int:
     # --- DELETE ---
     print("DELETE")
     try:
-        nx.sys_unlink("/hello.txt")
-        exists = nx.sys_access("/hello.txt")
+        await nx.sys_unlink("/hello.txt")
+        exists = await nx.sys_access("/hello.txt")
         if not exists:
             print("  OK   /hello.txt deleted, verified gone")
         else:
@@ -241,7 +241,7 @@ def main() -> int:
 
     # Verify remaining files still readable
     try:
-        got = nx.sys_read("/project/main.py")
+        got = await nx.sys_read("/project/main.py")
         assert got == files["/project/main.py"]
         print("  OK   /project/main.py still readable after sibling delete")
     except Exception as e:

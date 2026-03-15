@@ -236,12 +236,6 @@ async def lifespan(app: "FastAPI") -> AsyncIterator[None]:
         elif hasattr(app.state.nexus_fs, "close"):
             app.state.nexus_fs.close()
 
-    # Shutdown CacheBrick (Issue #1524)
-    if app.state.cache_brick:
-        try:
-            await app.state.cache_brick.stop()
-            logger.info("CacheBrick stopped")
-        except Exception as e:
-            logger.warning("Error shutting down CacheBrick: %s", e, exc_info=True)
+    # CacheBrick stop is now handled by coordinator via aclose() (enlisted as PersistentService)
 
     await shutdown_observability(app, svc)

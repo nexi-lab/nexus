@@ -104,6 +104,53 @@ class ServiceLifecycleCoordinator:
         )
 
     # ------------------------------------------------------------------
+    # enlist — the ONE entry point for all four quadrants (Issue #1502)
+    # ------------------------------------------------------------------
+
+    async def enlist(
+        self,
+        name: str,
+        instance: Any,
+        *,
+        exports: tuple[str, ...] = (),
+        depends_on: tuple[str, ...] = (),
+    ) -> None:
+        """Enlist a service into the four-quadrant lifecycle system.
+
+        This is the **single entry point** all services must call — the
+        "strong label" that marks a service as migrated to the new contract.
+        The coordinator auto-detects the quadrant via ``isinstance`` checks:
+
+        - **Q1** (neither protocol): register only — no lifecycle, no hooks.
+        - **Q2** (HotSwappable): register + capture ``hook_spec()`` + activate.
+        - **Q3** (PersistentService): register + ``start()``.
+        - **Q4** (both): register + ``start()`` + capture hooks + activate.
+
+        Used by lifespan startup functions for services created *after*
+        ``NexusFS.bootstrap()`` has already been called.  For pre-bootstrap
+        factory services, ``register_service()`` + auto-lifecycle at bootstrap
+        is the equivalent path.
+        """
+        self.register_service(name, instance, exports=exports, depends_on=depends_on)
+
+        # Q3 / Q4: auto-start persistent background work
+        if isinstance(instance, PersistentService):
+            await instance.start()
+            logger.info("[COORDINATOR] enlist %r — started (PersistentService)", name)
+
+        # Q2 / Q4: auto-capture hooks and activate
+        if isinstance(instance, HotSwappable):
+            spec = instance.hook_spec()
+            self._hook_specs[name] = spec
+            if not spec.is_empty:
+                self._register_hooks(name)
+            await instance.activate()
+            logger.info("[COORDINATOR] enlist %r — activated (HotSwappable)", name)
+
+        if not isinstance(instance, PersistentService) and not isinstance(instance, HotSwappable):
+            logger.info("[COORDINATOR] enlist %r — registered (Q1 static)", name)
+
+    # ------------------------------------------------------------------
     # mount — BLM mount + register VFS hooks
     # ------------------------------------------------------------------
 

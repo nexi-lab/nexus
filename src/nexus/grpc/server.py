@@ -126,6 +126,12 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
     await server.start()
 
     app.state.grpc_server = server
+
+    # Enlist gRPC server (Q1 — infrastructure, manual start/stop)
+    coord = getattr(_svc, "service_coordinator", None)
+    if coord is not None:
+        await coord.enlist("grpc_server", server)
+
     return []
 
 

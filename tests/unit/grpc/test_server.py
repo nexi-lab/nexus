@@ -60,6 +60,7 @@ class TestStartupGrpc:
             subscription_manager=None,
         )
         svc = MagicMock()
+        svc.service_coordinator = None  # no coordinator in test
 
         mock_server = AsyncMock()
         with (

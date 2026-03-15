@@ -404,7 +404,7 @@ services:
   #   docker compose --profile zoekt-index up   # Build/rebuild index
   # ============================================
   zoekt:
-    image: sourcegraph/zoekt-webserver:latest
+    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
     container_name: nexus-zoekt
     restart: unless-stopped
     profiles:
@@ -442,7 +442,7 @@ services:
   # Zoekt indexer - runs once to build/update index
   # Uses zoekt-webserver image which includes zoekt-index binary
   zoekt-indexer:
-    image: sourcegraph/zoekt-webserver:latest
+    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
     container_name: nexus-zoekt-indexer
     profiles:
       - zoekt-index  # docker compose --profile zoekt-index run zoekt-indexer

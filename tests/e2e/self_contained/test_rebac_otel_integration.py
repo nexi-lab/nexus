@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 import nexus.bricks.rebac.rebac_tracing as _rebac_tracing_mod
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.manager import (
     EnhancedReBACManager,
 )
@@ -36,6 +37,7 @@ from nexus.bricks.rebac.rebac_tracing import (
     reset_tracer,
 )
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Helpers — in-memory span exporter compatible with all OTel SDK versions
@@ -111,6 +113,7 @@ def manager(engine):
         enable_graph_limits=True,
         enable_leopard=True,
         enable_tiger_cache=False,
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield mgr
     mgr.close()
@@ -214,6 +217,7 @@ class TestRealPermissionCheckSpans:
             enable_graph_limits=True,
             enable_leopard=True,
             enable_tiger_cache=False,
+            namespace_store=MetastoreNamespaceStore(DictMetastore()),
         )
         try:
             # Check permission on non-existent relation (cache miss → graph traversal)

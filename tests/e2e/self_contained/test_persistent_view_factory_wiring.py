@@ -15,11 +15,13 @@ This is the same code path used by fastapi_server.py when permissions are enable
 
 import pytest
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.bricks.rebac.namespace_factory import create_namespace_manager
 from nexus.bricks.rebac.namespace_manager import MountEntry
 from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -41,6 +43,7 @@ def rebac_manager(record_store):
         engine=record_store.engine,
         cache_ttl_seconds=300,
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield manager
     manager.close()

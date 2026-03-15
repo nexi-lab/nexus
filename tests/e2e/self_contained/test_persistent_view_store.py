@@ -9,9 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.storage.models import Base
 from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -271,7 +273,12 @@ class TestAgentReconnection:
         from nexus.bricks.rebac.manager import EnhancedReBACManager
         from nexus.bricks.rebac.namespace_manager import MountEntry, NamespaceManager
 
-        rebac = EnhancedReBACManager(engine=engine, cache_ttl_seconds=300, max_depth=10)
+        rebac = EnhancedReBACManager(
+            engine=engine,
+            cache_ttl_seconds=300,
+            max_depth=10,
+            namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        )
         try:
             # Grant files
             rebac.rebac_write(

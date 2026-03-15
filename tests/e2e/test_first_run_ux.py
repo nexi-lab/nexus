@@ -338,9 +338,11 @@ class TestFullWorkflow:
         compose_file = cfg.get("compose_file", "")
         assert Path(compose_file).exists(), f"compose file missing: {compose_file}"
 
-        # Run nexus up (with timeout — containers take a while)
+        # Run nexus up --build so Docker Compose uses the build: directive
+        # from the repo-root compose file (local branch code), instead of
+        # pulling the pinned GHCR image which wouldn't reflect PR changes.
         result = subprocess.run(
-            ["nexus", "up"],
+            ["nexus", "up", "--build"],
             capture_output=True,
             text=True,
             timeout=300,
@@ -382,9 +384,9 @@ class TestFullWorkflow:
         """
         config_path = initialized_project / "nexus.yaml"
 
-        # Step 1: nexus up
+        # Step 1: nexus up --build (build from branch code, not GHCR image)
         up_result = subprocess.run(
-            ["nexus", "up"],
+            ["nexus", "up", "--build"],
             capture_output=True,
             text=True,
             timeout=300,

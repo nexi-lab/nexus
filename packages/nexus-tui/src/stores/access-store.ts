@@ -1,7 +1,7 @@
 /**
  * Zustand store for the Access Control panel:
  * manifests (+ tuple entries), permission evaluation, governance alerts,
- * reputation leaderboard, credentials, disputes, fraud scores.
+ * credentials, fraud scores.
  */
 
 import { create } from "zustand";
@@ -81,20 +81,6 @@ export interface DelegationItem {
   readonly created_at: string;
 }
 
-export interface LeaderboardEntry {
-  readonly agent_id: string;
-  readonly context: string;
-  readonly window: string;
-  readonly composite_score: number;
-  readonly composite_confidence: number;
-  readonly total_interactions: number;
-  readonly positive_interactions: number;
-  readonly negative_interactions: number;
-  readonly global_trust_score: number | null;
-  readonly zone_id: string;
-  readonly updated_at: string;
-}
-
 export interface Credential {
   readonly credential_id: string;
   readonly issuer_did: string;
@@ -105,25 +91,6 @@ export interface Credential {
   readonly expires_at: string;
   readonly revoked_at: string | null;
   readonly delegation_depth: number;
-}
-
-/** Matches backend DisputeResponse from reputation.py. */
-export interface Dispute {
-  readonly id: string;
-  readonly exchange_id: string;
-  readonly zone_id: string;
-  readonly complainant_agent_id: string;
-  readonly respondent_agent_id: string;
-  readonly status: string;
-  readonly tier: number;
-  readonly reason: string;
-  readonly resolution: string | null;
-  readonly resolution_evidence_hash: string | null;
-  readonly escrow_amount: string | null;
-  readonly escrow_released: boolean;
-  readonly filed_at: string;
-  readonly resolved_at: string | null;
-  readonly appeal_deadline: string | null;
 }
 
 /** Matches backend FraudScoreResponse from governance.py:177. */
@@ -187,9 +154,7 @@ export interface GovernanceCheckResult {
 export type AccessTab =
   | "manifests"
   | "alerts"
-  | "reputation"
   | "credentials"
-  | "disputes"
   | "fraud"
   | "delegations";
 
@@ -212,18 +177,9 @@ export interface AccessState {
   readonly alertsLoading: boolean;
   readonly selectedAlertIndex: number;
 
-  // Reputation leaderboard
-  readonly leaderboard: readonly LeaderboardEntry[];
-  readonly leaderboardLoading: boolean;
-
   // Credentials
   readonly credentials: readonly Credential[];
   readonly credentialsLoading: boolean;
-
-  // Disputes
-  readonly disputes: readonly Dispute[];
-  readonly disputesLoading: boolean;
-  readonly selectedDisputeIndex: number;
 
   // Fraud scores
   readonly fraudScores: readonly FraudScore[];
@@ -263,22 +219,8 @@ export interface AccessState {
   readonly fetchAlerts: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
   readonly resolveAlert: (alertId: string, resolvedBy: string, zoneId: string | undefined, client: FetchClient) => Promise<void>;
 
-  // Actions — reputation
-  readonly fetchLeaderboard: (client: FetchClient) => Promise<void>;
-
   // Actions — credentials
   readonly fetchCredentials: (agentId: string, client: FetchClient) => Promise<void>;
-
-  // Actions — disputes
-  readonly fetchDispute: (disputeId: string, client: FetchClient) => Promise<void>;
-  readonly fileDispute: (
-    exchangeId: string,
-    complainantId: string,
-    respondentId: string,
-    reason: string,
-    client: FetchClient,
-  ) => Promise<void>;
-  readonly resolveDispute: (disputeId: string, resolution: string, client: FetchClient) => Promise<void>;
 
   // Actions — fraud scores
   readonly fetchFraudScores: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
@@ -330,7 +272,6 @@ export interface AccessState {
   readonly setActiveTab: (tab: AccessTab) => void;
   readonly setSelectedManifestIndex: (index: number) => void;
   readonly setSelectedAlertIndex: (index: number) => void;
-  readonly setSelectedDisputeIndex: (index: number) => void;
   readonly setSelectedFraudIndex: (index: number) => void;
   readonly setSelectedDelegationIndex: (index: number) => void;
 }
@@ -344,13 +285,8 @@ export const useAccessStore = create<AccessState>((set) => ({
   alerts: [],
   alertsLoading: false,
   selectedAlertIndex: 0,
-  leaderboard: [],
-  leaderboardLoading: false,
   credentials: [],
   credentialsLoading: false,
-  disputes: [],
-  disputesLoading: false,
-  selectedDisputeIndex: 0,
   fraudScores: [],
   fraudScoresLoading: false,
   selectedFraudIndex: 0,
@@ -488,26 +424,6 @@ export const useAccessStore = create<AccessState>((set) => ({
     }
   },
 
-  // ── Reputation ─────────────────────────────────────────────────────────
-
-  fetchLeaderboard: async (client) => {
-    set({ leaderboardLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly entries: readonly LeaderboardEntry[];
-      }>("/api/v2/reputation/leaderboard");
-      set({
-        leaderboard: response.entries,
-        leaderboardLoading: false,
-      });
-    } catch (err) {
-      set({
-        leaderboardLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch leaderboard",
-      });
-    }
-  },
-
   // ── Credentials ────────────────────────────────────────────────────────
 
   fetchCredentials: async (agentId, client) => {
@@ -527,71 +443,6 @@ export const useAccessStore = create<AccessState>((set) => ({
         credentialsLoading: false,
         error:
           err instanceof Error ? err.message : "Failed to fetch credentials",
-      });
-    }
-  },
-
-  // ── Disputes ───────────────────────────────────────────────────────────
-
-  fetchDispute: async (disputeId, client) => {
-    set({ disputesLoading: true, error: null });
-    try {
-      const dispute = await client.get<Dispute>(
-        `/api/v2/disputes/${encodeURIComponent(disputeId)}`,
-      );
-      set((state) => {
-        const existing = state.disputes.findIndex((d) => d.id === dispute.id);
-        const updated = existing >= 0
-          ? state.disputes.map((d, i) => (i === existing ? dispute : d))
-          : [...state.disputes, dispute];
-        return { disputes: updated, disputesLoading: false };
-      });
-    } catch (err) {
-      set({
-        disputesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch dispute",
-      });
-    }
-  },
-
-  fileDispute: async (exchangeId, complainantId, respondentId, reason, client) => {
-    set({ disputesLoading: true, error: null });
-    try {
-      const dispute = await client.post<Dispute>(
-        `/api/v2/exchanges/${encodeURIComponent(exchangeId)}/dispute`,
-        {
-          complainant_agent_id: complainantId,
-          respondent_agent_id: respondentId,
-          reason,
-        },
-      );
-      set((state) => ({
-        disputes: [...state.disputes, dispute],
-        disputesLoading: false,
-      }));
-    } catch (err) {
-      set({
-        disputesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to file dispute",
-      });
-    }
-  },
-
-  resolveDispute: async (disputeId, resolution, client) => {
-    set({ disputesLoading: true, error: null });
-    try {
-      const updated = await client.post<Dispute>(
-        `/api/v2/disputes/${encodeURIComponent(disputeId)}/resolve`,
-        { resolution },
-      );
-      set((state) => ({
-        disputes: state.disputes.map((d) => (d.id === disputeId ? updated : d)),
-        disputesLoading: false,
-      }));
-    } catch (err) {
-      set({
-        disputesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to resolve dispute",
       });
     }
   },
@@ -652,10 +503,6 @@ export const useAccessStore = create<AccessState>((set) => ({
 
   setSelectedAlertIndex: (index) => {
     set({ selectedAlertIndex: index });
-  },
-
-  setSelectedDisputeIndex: (index) => {
-    set({ selectedDisputeIndex: index });
   },
 
   setSelectedFraudIndex: (index) => {

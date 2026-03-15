@@ -12,10 +12,12 @@ class TestBrickAutoDiscovery:
         keys = {f.result_key for f in factories}
         assert "delegation_service" in keys
 
-    def test_discovers_reputation_brick(self) -> None:
+    def test_removed_bricks_absent(self) -> None:
+        """Verify bricks removed in #2988 are no longer discovered."""
         factories = _discover_brick_factories("independent")
         keys = {f.result_key for f in factories}
-        assert "reputation_service" in keys
+        assert "reputation_service" not in keys
+        assert "tools_service" not in keys
 
     def test_descriptor_fields(self) -> None:
         factories = _discover_brick_factories("independent")

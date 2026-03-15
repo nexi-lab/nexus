@@ -78,9 +78,8 @@ _ADD_COMMAND: dict[str, tuple[str, str]] = {
     "snapshots": ("snapshot", "snapshot"),
     "exchange": ("exchange", "exchange"),
     "federation": ("federation", "federation"),
-    # Issue #2812: Missing CLI commands for identity, reputation, ipc, etc.
+    # Issue #2812: Missing CLI commands for identity, ipc, etc.
     "identity": ("identity", "identity"),
-    "reputation": ("reputation", "reputation"),
     "ipc": ("ipc", "ipc"),
     "delegation": ("delegation", "delegation"),
     "scheduler_cli": ("scheduler", "scheduler"),

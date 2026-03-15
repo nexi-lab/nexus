@@ -274,7 +274,6 @@ class TestBootBrickServices:
             "ipc_storage_driver",
             "ipc_provisioner",
             "delegation_service",
-            "reputation_service",
             "version_service",
             "rebac_circuit_breaker",
             "governance_anomaly_service",

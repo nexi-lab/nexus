@@ -219,7 +219,7 @@ class TestFileOperationTools:
 
     async def test_read_file_success(self, mock_nx_basic):
         """Test reading a file successfully."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         # Access tool via helper
         read_tool = get_tool(server, "nexus_read_file")
@@ -231,7 +231,7 @@ class TestFileOperationTools:
     async def test_read_file_bytes_content(self, mock_nx_basic):
         """Test reading file with bytes content."""
         mock_nx_basic.sys_read.return_value = b"binary content"
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         read_tool = get_tool(server, "nexus_read_file")
         result = await read_tool.fn(path="/test.bin")
@@ -241,7 +241,7 @@ class TestFileOperationTools:
     async def test_read_file_error(self, mock_nx_basic):
         """Test read file error handling."""
         mock_nx_basic.sys_read.side_effect = FileNotFoundError("File not found")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         read_tool = get_tool(server, "nexus_read_file")
         result = await read_tool.fn(path="/missing.txt")
@@ -251,7 +251,7 @@ class TestFileOperationTools:
 
     async def test_write_file_success(self, mock_nx_basic):
         """Test writing a file successfully."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         write_tool = get_tool(server, "nexus_write_file")
         result = await write_tool.fn(path="/test.txt", content="new content")
@@ -268,7 +268,7 @@ class TestFileOperationTools:
     async def test_write_file_error(self, mock_nx_basic):
         """Test write file error handling."""
         mock_nx_basic.sys_write.side_effect = PermissionError("Permission denied")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         write_tool = get_tool(server, "nexus_write_file")
         result = await write_tool.fn(path="/test.txt", content="content")
@@ -278,7 +278,7 @@ class TestFileOperationTools:
 
     async def test_delete_file_success(self, mock_nx_basic):
         """Test deleting a file successfully."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         delete_tool = get_tool(server, "nexus_delete_file")
         result = await delete_tool.fn(path="/test.txt")
@@ -290,7 +290,7 @@ class TestFileOperationTools:
     async def test_delete_file_error(self, mock_nx_basic):
         """Test delete file error handling."""
         mock_nx_basic.sys_unlink.side_effect = FileNotFoundError("File not found")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         delete_tool = get_tool(server, "nexus_delete_file")
         result = await delete_tool.fn(path="/missing.txt")
@@ -300,7 +300,7 @@ class TestFileOperationTools:
 
     async def test_list_files_basic(self, mock_nx_basic):
         """Test listing files in a directory."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         list_tool = get_tool(server, "nexus_list_files")
         result = await list_tool.fn(path="/data")
@@ -317,7 +317,7 @@ class TestFileOperationTools:
 
     async def test_list_files_recursive(self, mock_nx_basic):
         """Test listing files recursively."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         list_tool = get_tool(server, "nexus_list_files")
         await list_tool.fn(path="/data", recursive=True, details=True)
@@ -327,7 +327,7 @@ class TestFileOperationTools:
     async def test_list_files_error(self, mock_nx_basic):
         """Test list files error handling."""
         mock_nx_basic.sys_readdir.side_effect = FileNotFoundError("Directory not found")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         list_tool = get_tool(server, "nexus_list_files")
         result = await list_tool.fn(path="/missing")
@@ -339,7 +339,7 @@ class TestFileOperationTools:
         """Test getting file info for existing file."""
         mock_nx_basic.sys_access.return_value = True
         mock_nx_basic.sys_is_directory.return_value = False
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
         result = await info_tool.fn(path="/test.txt")
@@ -352,7 +352,7 @@ class TestFileOperationTools:
     async def test_file_info_not_found(self, mock_nx_basic):
         """Test getting file info for non-existent file."""
         mock_nx_basic.sys_access.return_value = False
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
         result = await info_tool.fn(path="/missing.txt")
@@ -364,7 +364,7 @@ class TestFileOperationTools:
         """Test getting file info for directory."""
         mock_nx_basic.sys_access.return_value = True
         mock_nx_basic.sys_is_directory.return_value = True
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
         result = await info_tool.fn(path="/data")
@@ -381,9 +381,9 @@ class TestFileOperationTools:
 class TestEditFileTool:
     """Test suite for nexus_edit_file tool."""
 
-    def test_edit_file_success(self, mock_nx_basic):
+    async def test_edit_file_success(self, mock_nx_basic):
         """Test successful file edit returns JSON with diff."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")
         result = edit_tool.fn(
@@ -403,7 +403,7 @@ class TestEditFileTool:
             if_match=None,
         )
 
-    def test_edit_file_failure(self, mock_nx_basic):
+    async def test_edit_file_failure(self, mock_nx_basic):
         """Test failed edit returns error details."""
         mock_nx_basic.edit.return_value = {
             "success": False,
@@ -412,7 +412,7 @@ class TestEditFileTool:
             "matches": [{"edit_index": 0, "match_type": "failed", "similarity": 0.5}],
             "errors": ["No match found for edit 0"],
         }
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")
         result = edit_tool.fn(
@@ -424,9 +424,9 @@ class TestEditFileTool:
         assert response["success"] is False
         assert "No match found" in response["errors"][0]
 
-    def test_edit_file_with_preview(self, mock_nx_basic):
+    async def test_edit_file_with_preview(self, mock_nx_basic):
         """Test preview mode passes through correctly."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")
         edit_tool.fn(
@@ -443,9 +443,9 @@ class TestEditFileTool:
             if_match=None,
         )
 
-    def test_edit_file_with_if_match(self, mock_nx_basic):
+    async def test_edit_file_with_if_match(self, mock_nx_basic):
         """Test if_match etag passes through correctly."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")
         edit_tool.fn(
@@ -462,9 +462,9 @@ class TestEditFileTool:
             if_match="abc123",
         )
 
-    def test_edit_file_custom_fuzzy_threshold(self, mock_nx_basic):
+    async def test_edit_file_custom_fuzzy_threshold(self, mock_nx_basic):
         """Test custom fuzzy_threshold passes through."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")
         edit_tool.fn(
@@ -481,10 +481,10 @@ class TestEditFileTool:
             if_match=None,
         )
 
-    def test_edit_file_not_found(self, mock_nx_basic):
+    async def test_edit_file_not_found(self, mock_nx_basic):
         """Test FileNotFoundError handling."""
         mock_nx_basic.edit.side_effect = FileNotFoundError("File not found")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")
         result = edit_tool.fn(
@@ -496,10 +496,10 @@ class TestEditFileTool:
         assert "not found" in result.lower()
         assert "/missing.py" in result
 
-    def test_edit_file_permission_denied(self, mock_nx_basic):
+    async def test_edit_file_permission_denied(self, mock_nx_basic):
         """Test PermissionError handling."""
         mock_nx_basic.edit.side_effect = PermissionError("Permission denied")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")
         result = edit_tool.fn(
@@ -510,10 +510,10 @@ class TestEditFileTool:
         assert "Error" in result
         assert "permission" in result.lower() or "denied" in result.lower()
 
-    def test_edit_file_generic_error(self, mock_nx_basic):
+    async def test_edit_file_generic_error(self, mock_nx_basic):
         """Test generic exception handling."""
         mock_nx_basic.edit.side_effect = RuntimeError("Connection refused")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         edit_tool = get_tool(server, "nexus_edit_file")
         result = edit_tool.fn(
@@ -535,7 +535,7 @@ class TestDirectoryOperationTools:
 
     async def test_mkdir_success(self, mock_nx_basic):
         """Test creating a directory successfully."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         mkdir_tool = get_tool(server, "nexus_mkdir")
         result = await mkdir_tool.fn(path="/new_dir")
@@ -547,7 +547,7 @@ class TestDirectoryOperationTools:
     async def test_mkdir_error(self, mock_nx_basic):
         """Test mkdir error handling."""
         mock_nx_basic.sys_mkdir.side_effect = PermissionError("Permission denied")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         mkdir_tool = get_tool(server, "nexus_mkdir")
         result = await mkdir_tool.fn(path="/new_dir")
@@ -557,7 +557,7 @@ class TestDirectoryOperationTools:
 
     async def test_rmdir_success(self, mock_nx_basic):
         """Test removing a directory successfully."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         rmdir_tool = get_tool(server, "nexus_rmdir")
         result = await rmdir_tool.fn(path="/old_dir")
@@ -568,7 +568,7 @@ class TestDirectoryOperationTools:
 
     async def test_rmdir_recursive(self, mock_nx_basic):
         """Test removing a directory recursively."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         rmdir_tool = get_tool(server, "nexus_rmdir")
         await rmdir_tool.fn(path="/old_dir", recursive=True)
@@ -578,7 +578,7 @@ class TestDirectoryOperationTools:
     async def test_rmdir_error(self, mock_nx_basic):
         """Test rmdir error handling."""
         mock_nx_basic.sys_rmdir.side_effect = FileNotFoundError("Directory not found")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         rmdir_tool = get_tool(server, "nexus_rmdir")
         result = await rmdir_tool.fn(path="/missing_dir")
@@ -595,9 +595,9 @@ class TestDirectoryOperationTools:
 class TestSearchTools:
     """Test suite for search tools."""
 
-    def test_glob_success(self, mock_nx_basic):
+    async def test_glob_success(self, mock_nx_basic):
         """Test glob pattern search successfully."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
         result = glob_tool.fn(pattern="*.py", path="/src")
@@ -610,19 +610,19 @@ class TestSearchTools:
         assert "test.py" in response["items"]
         mock_nx_basic._mock_search.glob.assert_called_once_with("*.py", "/src")
 
-    def test_glob_default_path(self, mock_nx_basic):
+    async def test_glob_default_path(self, mock_nx_basic):
         """Test glob with default path."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
         glob_tool.fn(pattern="*.txt")
 
         mock_nx_basic._mock_search.glob.assert_called_once_with("*.txt", "/")
 
-    def test_glob_error(self, mock_nx_basic):
+    async def test_glob_error(self, mock_nx_basic):
         """Test glob error handling."""
         mock_nx_basic._mock_search.glob.side_effect = ValueError("Invalid pattern")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         glob_tool = get_tool(server, "nexus_glob")
         result = glob_tool.fn(pattern="[invalid")
@@ -630,9 +630,9 @@ class TestSearchTools:
         assert "Error" in result
         assert "Invalid pattern" in result
 
-    def test_grep_success(self, mock_nx_basic):
+    async def test_grep_success(self, mock_nx_basic):
         """Test grep content search successfully."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
         result = grep_tool.fn(pattern="TODO", path="/src")
@@ -644,21 +644,21 @@ class TestSearchTools:
         assert isinstance(response["items"], list)
         mock_nx_basic._mock_search.grep.assert_called_once_with("TODO", "/src", ignore_case=False)
 
-    def test_grep_ignore_case(self, mock_nx_basic):
+    async def test_grep_ignore_case(self, mock_nx_basic):
         """Test grep with case-insensitive search."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
         grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
 
         mock_nx_basic._mock_search.grep.assert_called_once_with("error", "/logs", ignore_case=True)
 
-    def test_grep_result_limiting(self, mock_nx_basic):
+    async def test_grep_result_limiting(self, mock_nx_basic):
         """Test grep pagination with default limit of 100 matches."""
         # Create 150 fake results
         large_results = [{"file": f"file{i}.py", "line": i, "content": "match"} for i in range(150)]
         mock_nx_basic._mock_search.grep.return_value = large_results
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
         result = grep_tool.fn(pattern="test")
@@ -671,10 +671,10 @@ class TestSearchTools:
         assert response["has_more"] is True
         assert response["next_offset"] == 100
 
-    def test_grep_error(self, mock_nx_basic):
+    async def test_grep_error(self, mock_nx_basic):
         """Test grep error handling."""
         mock_nx_basic._mock_search.grep.side_effect = ValueError("Invalid regex")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
         result = grep_tool.fn(pattern="[invalid")
@@ -682,9 +682,9 @@ class TestSearchTools:
         assert "Error" in result
         assert "Invalid regex" in result
 
-    def test_semantic_search_available(self, mock_nx_with_search):
+    async def test_semantic_search_available(self, mock_nx_with_search):
         """Test semantic search when available."""
-        server = create_mcp_server(nx=mock_nx_with_search)
+        server = await create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")
         result = search_tool.fn(query="authentication code", limit=5)
@@ -699,23 +699,23 @@ class TestSearchTools:
             "authentication code", path="/", limit=10
         )
 
-    def test_semantic_search_not_available(self, mock_nx_basic):
+    async def test_semantic_search_not_available(self, mock_nx_basic):
         """Test semantic search when not available."""
         # Remove semantic_search method
         if hasattr(mock_nx_basic, "semantic_search"):
             delattr(mock_nx_basic, "semantic_search")
 
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         search_tool = get_tool(server, "nexus_semantic_search")
         result = search_tool.fn(query="test")
 
         assert "Semantic search not available" in result
 
-    def test_semantic_search_error(self, mock_nx_with_search):
+    async def test_semantic_search_error(self, mock_nx_with_search):
         """Test semantic search error handling."""
         mock_nx_with_search.semantic_search.side_effect = RuntimeError("Search service down")
-        server = create_mcp_server(nx=mock_nx_with_search)
+        server = await create_mcp_server(nx=mock_nx_with_search)
 
         search_tool = get_tool(server, "nexus_semantic_search")
         result = search_tool.fn(query="test")
@@ -732,9 +732,9 @@ class TestSearchTools:
 class TestWorkflowTools:
     """Test suite for workflow tools."""
 
-    def test_list_workflows_success(self, mock_nx_with_workflows):
+    async def test_list_workflows_success(self, mock_nx_with_workflows):
         """Test listing workflows successfully."""
-        server = create_mcp_server(nx=mock_nx_with_workflows)
+        server = await create_mcp_server(nx=mock_nx_with_workflows)
 
         list_tool = get_tool(server, "nexus_list_workflows")
         result = list_tool.fn()
@@ -744,23 +744,23 @@ class TestWorkflowTools:
         assert len(workflows) > 0
         mock_nx_with_workflows.workflows.list_workflows.assert_called_once()
 
-    def test_list_workflows_not_available(self, mock_nx_basic):
+    async def test_list_workflows_not_available(self, mock_nx_basic):
         """Test listing workflows when system not available."""
         # Remove workflows attribute
         if hasattr(mock_nx_basic, "workflows"):
             delattr(mock_nx_basic, "workflows")
 
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         list_tool = get_tool(server, "nexus_list_workflows")
         result = list_tool.fn()
 
         assert "Workflow system not available" in result
 
-    def test_list_workflows_error(self, mock_nx_with_workflows):
+    async def test_list_workflows_error(self, mock_nx_with_workflows):
         """Test list workflows error handling."""
         mock_nx_with_workflows.workflows.list_workflows.side_effect = RuntimeError("Service down")
-        server = create_mcp_server(nx=mock_nx_with_workflows)
+        server = await create_mcp_server(nx=mock_nx_with_workflows)
 
         list_tool = get_tool(server, "nexus_list_workflows")
         result = list_tool.fn()
@@ -768,9 +768,9 @@ class TestWorkflowTools:
         assert "Error listing workflows" in result
         assert "Service down" in result
 
-    def test_execute_workflow_success(self, mock_nx_with_workflows):
+    async def test_execute_workflow_success(self, mock_nx_with_workflows):
         """Test executing workflow successfully."""
-        server = create_mcp_server(nx=mock_nx_with_workflows)
+        server = await create_mcp_server(nx=mock_nx_with_workflows)
 
         exec_tool = get_tool(server, "nexus_execute_workflow")
         result = exec_tool.fn(name="test_workflow", inputs='{"param": "value"}')
@@ -781,32 +781,32 @@ class TestWorkflowTools:
             "test_workflow", param="value"
         )
 
-    def test_execute_workflow_no_inputs(self, mock_nx_with_workflows):
+    async def test_execute_workflow_no_inputs(self, mock_nx_with_workflows):
         """Test executing workflow without inputs."""
-        server = create_mcp_server(nx=mock_nx_with_workflows)
+        server = await create_mcp_server(nx=mock_nx_with_workflows)
 
         exec_tool = get_tool(server, "nexus_execute_workflow")
         exec_tool.fn(name="simple_workflow", inputs=None)
 
         mock_nx_with_workflows.workflows.execute.assert_called_once_with("simple_workflow")
 
-    def test_execute_workflow_not_available(self, mock_nx_basic):
+    async def test_execute_workflow_not_available(self, mock_nx_basic):
         """Test executing workflow when system not available."""
         # Remove workflows attribute
         if hasattr(mock_nx_basic, "workflows"):
             delattr(mock_nx_basic, "workflows")
 
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         exec_tool = get_tool(server, "nexus_execute_workflow")
         result = exec_tool.fn(name="test")
 
         assert "Workflow system not available" in result
 
-    def test_execute_workflow_error(self, mock_nx_with_workflows):
+    async def test_execute_workflow_error(self, mock_nx_with_workflows):
         """Test execute workflow error handling."""
         mock_nx_with_workflows.workflows.execute.side_effect = ValueError("Invalid workflow")
-        server = create_mcp_server(nx=mock_nx_with_workflows)
+        server = await create_mcp_server(nx=mock_nx_with_workflows)
 
         exec_tool = get_tool(server, "nexus_execute_workflow")
         result = exec_tool.fn(name="invalid_workflow")
@@ -823,9 +823,9 @@ class TestWorkflowTools:
 class TestSandboxAvailability:
     """Test suite for sandbox availability detection."""
 
-    def test_sandbox_available_with_docker(self, mock_nx_with_sandbox):
+    async def test_sandbox_available_with_docker(self, mock_nx_with_sandbox):
         """Test sandbox tools registered when Docker provider available."""
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         list(server._tool_manager._tools.keys())
         assert tool_exists(server, "nexus_python")
@@ -834,12 +834,12 @@ class TestSandboxAvailability:
         assert tool_exists(server, "nexus_sandbox_list")
         assert tool_exists(server, "nexus_sandbox_stop")
 
-    def test_sandbox_not_available(self, mock_nx_no_sandbox):
+    async def test_sandbox_not_available(self, mock_nx_no_sandbox):
         """Test sandbox tools not registered when sandbox_available is False."""
         # Explicitly set sandbox_available to False (Mock returns truthy by default)
         mock_nx_no_sandbox.sandbox_available = False
 
-        server = create_mcp_server(nx=mock_nx_no_sandbox)
+        server = await create_mcp_server(nx=mock_nx_no_sandbox)
 
         list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
@@ -848,22 +848,22 @@ class TestSandboxAvailability:
         assert not tool_exists(server, "nexus_sandbox_list")
         assert not tool_exists(server, "nexus_sandbox_stop")
 
-    def test_sandbox_not_available_when_property_false(self, mock_nx_basic):
+    async def test_sandbox_not_available_when_property_false(self, mock_nx_basic):
         """Test sandbox not available when sandbox_available is False."""
         mock_nx_basic.sandbox_available = False
 
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
         assert not tool_exists(server, "nexus_bash")
 
-    def test_sandbox_detection_handles_missing_attribute(self, mock_nx_basic):
+    async def test_sandbox_detection_handles_missing_attribute(self, mock_nx_basic):
         """Test sandbox detection gracefully handles missing sandbox_available."""
         mock_nx_basic.sandbox_available = False
 
         # Should not raise, sandbox tools should just not be registered
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         list(server._tool_manager._tools.keys())
         assert not tool_exists(server, "nexus_python")
@@ -872,7 +872,7 @@ class TestSandboxAvailability:
 class TestSandboxTools:
     """Test suite for sandbox execution tools."""
 
-    def test_python_execution_success(self, mock_nx_with_sandbox):
+    async def test_python_execution_success(self, mock_nx_with_sandbox):
         """Test Python code execution successfully."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "Hello, World!",
@@ -880,7 +880,7 @@ class TestSandboxTools:
             "exit_code": 0,
             "execution_time": 0.456,
         }
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         python_tool = get_tool(server, "nexus_python")
         result = python_tool.fn(code='print("Hello, World!")', sandbox_id="test-123")
@@ -894,7 +894,7 @@ class TestSandboxTools:
             sandbox_id="test-123", language="python", code='print("Hello, World!")', timeout=300
         )
 
-    def test_python_execution_with_error(self, mock_nx_with_sandbox):
+    async def test_python_execution_with_error(self, mock_nx_with_sandbox):
         """Test Python execution with stderr output."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "",
@@ -902,7 +902,7 @@ class TestSandboxTools:
             "exit_code": 1,
             "execution_time": 0.123,
         }
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         python_tool = get_tool(server, "nexus_python")
         result = python_tool.fn(code="print(undefined)", sandbox_id="test-123")
@@ -911,7 +911,7 @@ class TestSandboxTools:
         assert "NameError" in result
         assert "Exit code: 1" in result
 
-    def test_python_execution_no_output(self, mock_nx_with_sandbox):
+    async def test_python_execution_no_output(self, mock_nx_with_sandbox):
         """Test Python execution with no output."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "",
@@ -919,7 +919,7 @@ class TestSandboxTools:
             "exit_code": 0,
             "execution_time": 0.01,
         }
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         python_tool = get_tool(server, "nexus_python")
         result = python_tool.fn(code="x = 1 + 1", sandbox_id="test-123")
@@ -930,12 +930,12 @@ class TestSandboxTools:
         assert "Output:" not in result
         assert "Errors:" not in result
 
-    def test_python_execution_error(self, mock_nx_with_sandbox):
+    async def test_python_execution_error(self, mock_nx_with_sandbox):
         """Test Python execution error handling."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.side_effect = RuntimeError(
             "Sandbox not found"
         )
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         python_tool = get_tool(server, "nexus_python")
         result = python_tool.fn(code="print('test')", sandbox_id="invalid")
@@ -943,7 +943,7 @@ class TestSandboxTools:
         assert "Error executing Python code" in result
         assert "Sandbox not found" in result
 
-    def test_bash_execution_success(self, mock_nx_with_sandbox):
+    async def test_bash_execution_success(self, mock_nx_with_sandbox):
         """Test bash command execution successfully."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "file1.txt\nfile2.txt\n",
@@ -951,7 +951,7 @@ class TestSandboxTools:
             "exit_code": 0,
             "execution_time": 0.089,
         }
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         bash_tool = get_tool(server, "nexus_bash")
         result = bash_tool.fn(command="ls -l", sandbox_id="test-123")
@@ -965,7 +965,7 @@ class TestSandboxTools:
             sandbox_id="test-123", language="bash", code="ls -l", timeout=300
         )
 
-    def test_bash_execution_with_error(self, mock_nx_with_sandbox):
+    async def test_bash_execution_with_error(self, mock_nx_with_sandbox):
         """Test bash execution with command error."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.return_value = {
             "stdout": "",
@@ -973,7 +973,7 @@ class TestSandboxTools:
             "exit_code": 127,
             "execution_time": 0.01,
         }
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         bash_tool = get_tool(server, "nexus_bash")
         result = bash_tool.fn(command="invalid_command", sandbox_id="test-123")
@@ -982,12 +982,12 @@ class TestSandboxTools:
         assert "command not found" in result
         assert "Exit code: 127" in result
 
-    def test_bash_execution_error(self, mock_nx_with_sandbox):
+    async def test_bash_execution_error(self, mock_nx_with_sandbox):
         """Test bash execution error handling."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_run.side_effect = TimeoutError(
             "Execution timeout"
         )
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         bash_tool = get_tool(server, "nexus_bash")
         result = bash_tool.fn(command="sleep 1000", sandbox_id="test-123")
@@ -995,9 +995,9 @@ class TestSandboxTools:
         assert "Error executing bash command" in result
         assert "Execution timeout" in result
 
-    def test_sandbox_create_success(self, mock_nx_with_sandbox):
+    async def test_sandbox_create_success(self, mock_nx_with_sandbox):
         """Test creating sandbox successfully."""
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         create_tool = get_tool(server, "nexus_sandbox_create")
         result = create_tool.fn(name="my-sandbox", ttl_minutes=15)
@@ -1010,9 +1010,9 @@ class TestSandboxTools:
             name="my-sandbox", ttl_minutes=15
         )
 
-    def test_sandbox_create_default_ttl(self, mock_nx_with_sandbox):
+    async def test_sandbox_create_default_ttl(self, mock_nx_with_sandbox):
         """Test creating sandbox with default TTL."""
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         create_tool = get_tool(server, "nexus_sandbox_create")
         create_tool.fn(name="test")
@@ -1020,12 +1020,12 @@ class TestSandboxTools:
         call_args = mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_create.call_args
         assert call_args.kwargs["ttl_minutes"] == 10
 
-    def test_sandbox_create_error(self, mock_nx_with_sandbox):
+    async def test_sandbox_create_error(self, mock_nx_with_sandbox):
         """Test sandbox create error handling."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_create.side_effect = RuntimeError(
             "No providers available"
         )
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         create_tool = get_tool(server, "nexus_sandbox_create")
         result = create_tool.fn(name="test")
@@ -1033,9 +1033,9 @@ class TestSandboxTools:
         assert "Error creating sandbox" in result
         assert "No providers available" in result
 
-    def test_sandbox_list_success(self, mock_nx_with_sandbox):
+    async def test_sandbox_list_success(self, mock_nx_with_sandbox):
         """Test listing sandboxes successfully."""
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         list_tool = get_tool(server, "nexus_sandbox_list")
         result = list_tool.fn()
@@ -1044,12 +1044,12 @@ class TestSandboxTools:
         assert isinstance(sandboxes, list)
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_list.assert_called_once()
 
-    def test_sandbox_list_error(self, mock_nx_with_sandbox):
+    async def test_sandbox_list_error(self, mock_nx_with_sandbox):
         """Test sandbox list error handling."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_list.side_effect = RuntimeError(
             "Connection failed"
         )
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         list_tool = get_tool(server, "nexus_sandbox_list")
         result = list_tool.fn()
@@ -1057,9 +1057,9 @@ class TestSandboxTools:
         assert "Error listing sandboxes" in result
         assert "Connection failed" in result
 
-    def test_sandbox_stop_success(self, mock_nx_with_sandbox):
+    async def test_sandbox_stop_success(self, mock_nx_with_sandbox):
         """Test stopping sandbox successfully."""
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         stop_tool = get_tool(server, "nexus_sandbox_stop")
         result = stop_tool.fn(sandbox_id="test-123")
@@ -1068,12 +1068,12 @@ class TestSandboxTools:
         assert "test-123" in result
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_stop.assert_called_once_with("test-123")
 
-    def test_sandbox_stop_error(self, mock_nx_with_sandbox):
+    async def test_sandbox_stop_error(self, mock_nx_with_sandbox):
         """Test sandbox stop error handling."""
         mock_nx_with_sandbox._mock_sandbox_rpc.sandbox_stop.side_effect = ValueError(
             "Sandbox not found"
         )
-        server = create_mcp_server(nx=mock_nx_with_sandbox)
+        server = await create_mcp_server(nx=mock_nx_with_sandbox)
 
         stop_tool = get_tool(server, "nexus_sandbox_stop")
         result = stop_tool.fn(sandbox_id="invalid")
@@ -1097,7 +1097,7 @@ class TestResources:
         from fastmcp.server.context import Context, _current_context
 
         mock_nx_basic.sys_read.return_value = b"resource content"
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         resource = get_resource_template(server, "nexus://files/")
         token = _current_context.set(Context(fastmcp=server))
@@ -1118,7 +1118,7 @@ class TestResources:
         from fastmcp.server.context import Context, _current_context
 
         mock_nx_basic.sys_read.return_value = b"binary data"
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         resource = get_resource_template(server, "nexus://files/")
         token = _current_context.set(Context(fastmcp=server))
@@ -1138,7 +1138,7 @@ class TestResources:
         from fastmcp.server.context import Context, _current_context
 
         mock_nx_basic.sys_read.side_effect = FileNotFoundError("File not found")
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         resource = get_resource_template(server, "nexus://files/")
         token = _current_context.set(Context(fastmcp=server))
@@ -1156,9 +1156,9 @@ class TestResources:
 class TestPrompts:
     """Test suite for MCP prompt templates."""
 
-    def test_file_analysis_prompt(self, mock_nx_basic):
+    async def test_file_analysis_prompt(self, mock_nx_basic):
         """Test file analysis prompt generation."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         # Find the prompt
         prompt = get_prompt(server, "file_analysis_prompt")
@@ -1169,9 +1169,9 @@ class TestPrompts:
         assert "nexus_read_file" in result
         assert "Analyze" in result
 
-    def test_search_and_summarize_prompt(self, mock_nx_basic):
+    async def test_search_and_summarize_prompt(self, mock_nx_basic):
         """Test search and summarize prompt generation."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         # Find the prompt
         prompt = get_prompt(server, "search_and_summarize_prompt")
@@ -1190,54 +1190,54 @@ class TestPrompts:
 class TestServerCreation:
     """Test suite for server creation scenarios."""
 
-    def test_server_with_provided_nx(self, mock_nx_full):
+    async def test_server_with_provided_nx(self, mock_nx_full):
         """Test creating server with provided NexusFS instance."""
-        server = create_mcp_server(nx=mock_nx_full)
+        server = await create_mcp_server(nx=mock_nx_full)
 
         assert server is not None
         assert len(server._tool_manager._tools) > 0
 
-    def test_server_with_remote_url(self):
+    async def test_server_with_remote_url(self):
         """Test creating server with remote URL."""
-        with patch("nexus.connect") as mock_connect:
+        with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
             mock_instance = Mock()
             mock_instance.sys_read = AsyncMock(return_value=b"test")
             mock_instance.sys_write = AsyncMock()
             mock_connect.return_value = mock_instance
 
-            server = create_mcp_server(remote_url="http://localhost:2026", api_key="test-key")
+            server = await create_mcp_server(remote_url="http://localhost:2026", api_key="test-key")
 
             mock_connect.assert_called_once_with(
                 config={"profile": "remote", "url": "http://localhost:2026", "api_key": "test-key"}
             )
             assert server is not None
 
-    def test_server_with_auto_connect(self):
+    async def test_server_with_auto_connect(self):
         """Test creating server with auto-connect."""
-        with patch("nexus.connect") as mock_connect:
+        with patch("nexus.connect", new_callable=AsyncMock) as mock_connect:
             mock_nx = Mock()
             mock_nx.sys_read = AsyncMock(return_value=b"test")
             mock_nx.sys_write = AsyncMock()
             mock_connect.return_value = mock_nx
 
-            server = create_mcp_server()
+            server = await create_mcp_server()
 
             mock_connect.assert_called_once()
             assert server is not None
 
-    def test_server_with_custom_name(self, mock_nx_basic):
+    async def test_server_with_custom_name(self, mock_nx_basic):
         """Test creating server with custom name."""
-        server = create_mcp_server(nx=mock_nx_basic, name="custom-nexus")
+        server = await create_mcp_server(nx=mock_nx_basic, name="custom-nexus")
 
         assert server.name == "custom-nexus"
 
-    def test_server_default_name(self, mock_nx_basic):
+    async def test_server_default_name(self, mock_nx_basic):
         """Test creating server with default name."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         assert server.name == "nexus"
 
-    def test_main_with_remote_url(self):
+    async def test_main_with_remote_url(self):
         """Test main function with remote URL from environment."""
         with (
             patch("nexus.bricks.mcp.server.create_mcp_server") as mock_create,
@@ -1253,7 +1253,7 @@ class TestServerCreation:
             assert os.getenv("NEXUS_URL") == "http://test:2026"
             assert os.getenv("NEXUS_API_KEY") == "key123"
 
-    def test_main_without_remote_url(self):
+    async def test_main_without_remote_url(self):
         """Test main function without remote URL."""
         with patch.dict("os.environ", {}, clear=True):
             import os
@@ -1262,9 +1262,9 @@ class TestServerCreation:
             assert os.getenv("NEXUS_URL") is None
             assert os.getenv("NEXUS_API_KEY") is None
 
-    def test_server_tool_count_without_optional_features(self, mock_nx_basic):
+    async def test_server_tool_count_without_optional_features(self, mock_nx_basic):
         """Test server has correct tool count with basic features only."""
-        server = create_mcp_server(nx=mock_nx_basic)
+        server = await create_mcp_server(nx=mock_nx_basic)
 
         # Basic tools: read, write, delete, list, file_info, mkdir, rmdir,
         # glob, grep, semantic_search, store_memory, query_memory,
@@ -1272,9 +1272,9 @@ class TestServerCreation:
         # = 14 tools minimum
         assert len(server._tool_manager._tools) >= 15
 
-    def test_server_tool_count_with_all_features(self, mock_nx_full):
+    async def test_server_tool_count_with_all_features(self, mock_nx_full):
         """Test server has correct tool count with all features."""
-        server = create_mcp_server(nx=mock_nx_full)
+        server = await create_mcp_server(nx=mock_nx_full)
 
         # All basic tools + 5 sandbox tools = 19 tools minimum
         list(server._tool_manager._tools.keys())

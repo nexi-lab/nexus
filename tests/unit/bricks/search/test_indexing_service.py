@@ -85,9 +85,9 @@ def _mock_file_reader(
         yield session
 
     reader.get_session = _get_session
-    reader.read_text.return_value = content
+    reader.read_text = AsyncMock(return_value=content)
     reader.get_searchable_text.return_value = searchable_text
-    reader.list_files.return_value = file_list or []
+    reader.list_files = AsyncMock(return_value=file_list or [])
 
     return reader
 

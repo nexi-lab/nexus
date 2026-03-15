@@ -10,6 +10,7 @@ Writes a project-local ``nexus.yaml`` with all defaults materialized.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -451,7 +452,7 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     default=None,
     help="Explicit image digest (sha256:...). Overrides tag and channel.",
 )
-async def init(
+def init(
     preset: str,
     data_dir: str,
     tls: bool,
@@ -544,13 +545,17 @@ async def init(
 
     # Initialize local Nexus workspace for 'local' preset
     if preset == "local":
-        try:
+
+        async def _init_local_workspace() -> None:
             import nexus
 
             nx = await nexus.connect(config={"data_dir": str(d_dir)})
             await nx.sys_mkdir("/workspace", exist_ok=True)
             await nx.sys_mkdir("/shared", exist_ok=True)
             nx.close()
+
+        try:
+            asyncio.run(_init_local_workspace())
         except ImportError:
             logger.debug("nexus package not available for local workspace init")
         except FileExistsError:

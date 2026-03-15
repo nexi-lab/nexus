@@ -21,6 +21,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.exc import IntegrityError
 
 from nexus.server.api.v2.dependencies import (
     _get_operation_context,
@@ -149,8 +150,7 @@ def _get_workspace_db_model(registry: Any, path: str, *, user_id: str | None = N
         stmt = select(WorkspaceConfigModel).filter_by(path=path)
         if user_id is not None:
             stmt = stmt.filter(
-                (WorkspaceConfigModel.user_id == user_id)
-                | (WorkspaceConfigModel.user_id.is_(None))
+                (WorkspaceConfigModel.user_id == user_id) | (WorkspaceConfigModel.user_id.is_(None))
             )
         return session.execute(stmt).scalars().first()
 
@@ -165,8 +165,7 @@ def _list_workspace_db_models(registry: Any, *, user_id: str | None = None) -> l
         stmt = select(WorkspaceConfigModel)
         if user_id is not None:
             stmt = stmt.filter(
-                (WorkspaceConfigModel.user_id == user_id)
-                | (WorkspaceConfigModel.user_id.is_(None))
+                (WorkspaceConfigModel.user_id == user_id) | (WorkspaceConfigModel.user_id.is_(None))
             )
         return list(session.execute(stmt).scalars().all())
 
@@ -220,8 +219,11 @@ def register_workspace(
             raise HTTPException(status_code=500, detail="Workspace registered but not found in DB")
         return _build_workspace_response(db_model)
 
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+    except (ValueError, IntegrityError) as e:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Workspace already registered: {request.path}",
+        ) from e
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     except HTTPException:

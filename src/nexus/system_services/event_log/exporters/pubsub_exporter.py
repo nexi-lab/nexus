@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.file_events import FileEvent
-from nexus.system_services.event_subsystem.types import serialize_event
+from nexus.system_services.event_bus.types import serialize_event
 
 if TYPE_CHECKING:
-    from nexus.system_services.event_subsystem.log.exporters.config import PubSubExporterConfig
+    from nexus.system_services.event_log.exporters.config import PubSubExporterConfig
 
 logger = logging.getLogger(__name__)
 

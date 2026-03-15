@@ -75,7 +75,7 @@ def db_path_agent2(temp_nexus_dir):
 @pytest.fixture
 async def shared_event_bus(redis_client):
     """Create a shared event bus for all NexusFS instances in a test."""
-    from nexus.system_services.event_subsystem.bus.redis import RedisEventBus
+    from nexus.system_services.event_bus.redis import RedisEventBus
 
     bus = RedisEventBus(redis_client)
     await bus.start()

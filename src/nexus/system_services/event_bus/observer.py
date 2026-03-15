@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.file_events import FileEvent
-    from nexus.system_services.event_subsystem.bus.protocol import EventBusProtocol
+    from nexus.system_services.event_bus.protocol import EventBusProtocol
 
 logger = logging.getLogger(__name__)
 

@@ -20,7 +20,7 @@ import pytest
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.system_services.event_subsystem.types import FileEvent
+from nexus.system_services.event_bus.types import FileEvent
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ class TestRunAsync:
 
     def test_run_async_without_loop(self) -> None:
         """_run_async should create a temporary loop when none is running."""
-        from nexus.system_services.event_subsystem.log.delivery import _run_async
+        from nexus.system_services.event_log.delivery import _run_async
 
         async def simple_coro():
             return 42
@@ -85,7 +85,7 @@ class TestRunAsync:
 
     def test_run_async_with_loop(self) -> None:
         """_run_async should use run_coroutine_threadsafe with an existing loop."""
-        from nexus.system_services.event_subsystem.log.delivery import _run_async
+        from nexus.system_services.event_log.delivery import _run_async
 
         loop = asyncio.new_event_loop()
 
@@ -116,8 +116,8 @@ class TestExporterRegistryIntegration:
     """Test EventDeliveryWorker with ExporterRegistry wired in."""
 
     def test_dispatch_calls_exporter_registry(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
-        from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.exporter_registry import ExporterRegistry
 
         _insert_undelivered(record_store.session_factory)
 
@@ -140,8 +140,8 @@ class TestExporterRegistryIntegration:
         assert isinstance(events[0], FileEvent)
 
     def test_exporter_failure_routes_to_dlq(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
-        from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.exporter_registry import ExporterRegistry
 
         _insert_undelivered(record_store.session_factory)
 
@@ -164,7 +164,7 @@ class TestExporterRegistryIntegration:
         assert worker.metrics["total_dlq"] == 1
 
     def test_no_exporter_registry_skips_export(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         _insert_undelivered(record_store.session_factory)
 
@@ -185,7 +185,7 @@ class TestDLQRouting:
     """Test DLQ routing after exhausting retries."""
 
     def test_routes_to_dlq_after_max_retries(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_id = _insert_undelivered(record_store.session_factory)
 
@@ -214,7 +214,7 @@ class TestDLQRouting:
 
     def test_retry_count_persists_then_delivers(self, record_store: SQLAlchemyRecordStore) -> None:
         """After a failure bumps retry_count, a successful retry marks delivered."""
-        from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_id = _insert_undelivered(record_store.session_factory)
 
@@ -266,7 +266,7 @@ class TestPersistentRetryCounts:
 
     def test_retry_count_survives_worker_restart(self, record_store: SQLAlchemyRecordStore) -> None:
         """A new worker picks up retry_count from DB, not from scratch."""
-        from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         op_id = _insert_undelivered(record_store.session_factory)
 
@@ -310,7 +310,7 @@ class TestPersistentRetryCounts:
 
     def test_dlq_row_not_repolled(self, record_store: SQLAlchemyRecordStore) -> None:
         """Once routed to DLQ and marked delivered, row is never picked up again."""
-        from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
+        from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         _insert_undelivered(record_store.session_factory)
 

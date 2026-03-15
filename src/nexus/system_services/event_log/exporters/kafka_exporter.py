@@ -15,10 +15,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.system_services.event_subsystem.types import FileEvent
+from nexus.system_services.event_bus.types import FileEvent
 
 if TYPE_CHECKING:
-    from nexus.system_services.event_subsystem.log.exporters.config import KafkaExporterConfig
+    from nexus.system_services.event_log.exporters.config import KafkaExporterConfig
 
 logger = logging.getLogger(__name__)
 

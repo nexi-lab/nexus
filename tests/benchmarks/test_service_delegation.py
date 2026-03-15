@@ -26,6 +26,14 @@ from nexus.system_services.gateway import NexusFSGateway
 
 
 @pytest.fixture
+def delegation_loop():
+    """Dedicated event loop for service delegation benchmarks."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest.fixture
 def mock_nexus_fs():
     """Create NexusFS with mock services for delegation benchmarks.
 
@@ -75,13 +83,17 @@ def mock_nexus_fs():
 
 @pytest.fixture
 def mock_gateway():
-    """Create a NexusFSGateway with mock NexusFS for gateway benchmarks."""
+    """Create a NexusFSGateway with mock NexusFS for gateway benchmarks.
+
+    Gateway sys_* methods are async and await the underlying NexusFS methods,
+    so the mock NexusFS methods must be AsyncMock.
+    """
     mock_fs = MagicMock()
-    mock_fs.sys_read = MagicMock(return_value=b"data")
-    mock_fs.sys_write = MagicMock()
-    mock_fs.sys_mkdir = MagicMock()
-    mock_fs.sys_readdir = MagicMock(return_value=["a.txt", "b.txt"])
-    mock_fs.sys_access = MagicMock(return_value=True)
+    mock_fs.sys_read = AsyncMock(return_value=b"data")
+    mock_fs.sys_write = AsyncMock()
+    mock_fs.sys_mkdir = AsyncMock()
+    mock_fs.sys_readdir = AsyncMock(return_value=["a.txt", "b.txt"])
+    mock_fs.sys_access = AsyncMock(return_value=True)
     mock_fs.metadata = MagicMock()
     mock_fs.metadata.get = MagicMock(return_value=MagicMock())
     mock_fs.metadata.list = MagicMock(return_value=[])
@@ -113,13 +125,13 @@ def context():
 
 
 # =============================================================================
-# NexusFS → Service Async Delegation Overhead
+# NexusFS -> Service Async Delegation Overhead
 # =============================================================================
 
 
 @pytest.mark.benchmark_ci
 class TestAsyncDelegationOverhead:
-    """Benchmark async delegation: NexusFS method → await service.method().
+    """Benchmark async delegation: NexusFS method -> await service.method().
 
     Measures the cost of the delegation wrapper around an async mock.
     """
@@ -180,13 +192,13 @@ class TestAsyncDelegationOverhead:
 
 
 # =============================================================================
-# NexusFS → Service Sync Delegation Overhead
+# NexusFS -> Service Sync Delegation Overhead
 # =============================================================================
 
 
 @pytest.mark.benchmark_ci
 class TestSyncDelegationOverhead:
-    """Benchmark sync delegation: NexusFS method → service.method().
+    """Benchmark sync delegation: NexusFS method -> service.method().
 
     Measures pure Python call overhead for sync delegation.
     """
@@ -217,16 +229,21 @@ class TestSyncDelegationOverhead:
         )
         benchmark(mock_nexus_fs.skill_service.rpc_get_prompt_context, 50, context)
 
-    def test_search_list_delegation(self, benchmark, mock_nexus_fs, context):
+    def test_search_list_delegation(self, benchmark, mock_nexus_fs, context, delegation_loop):
         """Benchmark sys_readdir() delegation to SearchService."""
-        benchmark(
-            mock_nexus_fs.sys_readdir,
-            path="/data",
-            recursive=True,
-            details=False,
-            show_parsed=True,
-            context=context,
-        )
+
+        def run():
+            delegation_loop.run_until_complete(
+                mock_nexus_fs.sys_readdir(
+                    path="/data",
+                    recursive=True,
+                    details=False,
+                    show_parsed=True,
+                    context=context,
+                )
+            )
+
+        benchmark(run)
 
     def test_search_glob_delegation(self, benchmark, mock_nexus_fs, context):
         """Benchmark glob() delegation to SearchService."""
@@ -255,28 +272,57 @@ class TestSyncDelegationOverhead:
 class TestGatewayDelegationOverhead:
     """Benchmark NexusFSGateway method delegation to NexusFS.
 
-    Measures the gateway facade's overhead for common operations.
+    Gateway sys_* methods are async, so we use a dedicated event loop
+    with run_until_complete() to drive them from sync benchmark functions.
     """
 
-    def test_gateway_read(self, benchmark, mock_gateway, context):
+    def test_gateway_read(self, benchmark, mock_gateway, context, delegation_loop):
         """Benchmark gateway.sys_read() delegation."""
-        benchmark(mock_gateway.sys_read, "/test/file.txt", context=context)
 
-    def test_gateway_write_bytes(self, benchmark, mock_gateway, context):
+        def run():
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_read("/test/file.txt", context=context)
+            )
+
+        benchmark(run)
+
+    def test_gateway_write_bytes(self, benchmark, mock_gateway, context, delegation_loop):
         """Benchmark gateway.sys_write() delegation with bytes."""
-        benchmark(mock_gateway.sys_write, "/test/file.txt", b"content", context=context)
 
-    def test_gateway_write_str_conversion(self, benchmark, mock_gateway, context):
-        """Benchmark gateway.sys_write() with str→bytes conversion."""
-        benchmark(mock_gateway.sys_write, "/test/file.txt", "text content", context=context)
+        def run():
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_write("/test/file.txt", b"content", context=context)
+            )
 
-    def test_gateway_exists(self, benchmark, mock_gateway, context):
+        benchmark(run)
+
+    def test_gateway_write_str_conversion(self, benchmark, mock_gateway, context, delegation_loop):
+        """Benchmark gateway.sys_write() with str->bytes conversion."""
+
+        def run():
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_write("/test/file.txt", "text content", context=context)
+            )
+
+        benchmark(run)
+
+    def test_gateway_exists(self, benchmark, mock_gateway, context, delegation_loop):
         """Benchmark gateway.sys_access() delegation."""
-        benchmark(mock_gateway.sys_access, "/test/file.txt", context=context)
 
-    def test_gateway_list(self, benchmark, mock_gateway, context):
+        def run():
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_access("/test/file.txt", context=context)
+            )
+
+        benchmark(run)
+
+    def test_gateway_list(self, benchmark, mock_gateway, context, delegation_loop):
         """Benchmark gateway.sys_readdir() delegation."""
-        benchmark(mock_gateway.sys_readdir, "/test", context=context)
+
+        def run():
+            delegation_loop.run_until_complete(mock_gateway.sys_readdir("/test", context=context))
+
+        benchmark(run)
 
     def test_gateway_metadata_get(self, benchmark, mock_gateway):
         """Benchmark gateway.metadata_get() delegation."""

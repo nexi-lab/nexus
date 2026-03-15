@@ -72,7 +72,7 @@ from nexus.storage.models.filesystem import WorkspaceSnapshotModel as WorkspaceS
 from nexus.storage.models.identity import AgentCredentialModel as AgentCredentialModel
 from nexus.storage.models.identity import AgentKeyModel as AgentKeyModel
 
-# Domain: Infrastructure (Sandbox, Config, Sessions, Migrations)
+# Domain: Infrastructure (Sandbox, Config, Sessions, Migrations, Settings)
 from nexus.storage.models.infrastructure import MigrationHistoryModel as MigrationHistoryModel
 from nexus.storage.models.infrastructure import SandboxMetadataModel as SandboxMetadataModel
 from nexus.storage.models.infrastructure import SubscriptionModel as SubscriptionModel

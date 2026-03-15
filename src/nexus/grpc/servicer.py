@@ -123,7 +123,9 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         if self._auth_provider:
             result = await self._auth_provider.authenticate(token)
             if result:
-                return dict(result)
+                from dataclasses import asdict
+
+                return asdict(result) if hasattr(result, "__dataclass_fields__") else dict(result)
 
         return {}
 

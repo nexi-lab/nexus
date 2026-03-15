@@ -34,7 +34,7 @@ Nexus fixes this. One VFS-style interface — start embedded in a single Python 
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  BRICKS (runtime-loadable)                                              │
 │  ReBAC · Auth · Agents · Delegation · Search · Memory · Governance      │
-│  Workflows · Pay · MCP · Snapshots · Skills · Catalog · 30+ more        │
+│  Workflows · Pay · MCP · Snapshots · Catalog · Identity · 25+ more      │
 └─────────────────────────────────────────────────────────────────────────┘
                               ↓ protocol interface
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -56,31 +56,31 @@ Nexus fixes this. One VFS-style interface — start embedded in a single Python 
 ### Option A: Docker (recommended)
 
 ```bash
-pip install nexus-ai-fs          # CLI + SDK
-nexus init --preset demo          # writes nexus.yaml + docker-compose
-nexus up                          # pulls image, starts Nexus + Postgres + Dragonfly + Zoekt
+pip install nexus-ai-fs                       # CLI + SDK
+nexus init --preset demo                       # writes nexus.yaml + nexus-stack.yml
+nexus up                                       # pulls image, starts Nexus + Postgres + Dragonfly + Zoekt
 ```
 
 Open `http://localhost:2026`. That's it.
 
-### Option B: Python SDK (no Docker)
+### Option B: Embedded (no Docker)
 
 ```bash
 pip install nexus-ai-fs
 ```
 
 ```python
-import nexus
+import asyncio, nexus
 
-nx = nexus.connect(config={"data_dir": "./my-data"})
+async def main():
+    nx = await nexus.connect(config={"data_dir": "./my-data"})
 
-nx.write("/notes/meeting.md", b"# Q3 Planning\n- Ship Nexus 1.0")
-print(nx.read("/notes/meeting.md").decode())
+    await nx.write("/notes/meeting.md", b"# Q3 Planning\n- Ship Nexus 1.0")
+    print((await nx.read("/notes/meeting.md")).decode())
 
-results = nx.search("planning", limit=5)      # semantic + keyword hybrid
-history = nx.versions("/notes/meeting.md")     # full version history
+    nx.close()
 
-nx.close()
+asyncio.run(main())
 ```
 
 ### Option C: CLI
@@ -89,9 +89,20 @@ nx.close()
 nexus write /hello.txt "hello world"
 nexus cat /hello.txt
 nexus ls /
-nexus search "hello" --mode hybrid
-nexus versions /hello.txt
+nexus search query "hello" --mode hybrid
+nexus versions history /hello.txt
 ```
+
+### Terminal UI
+
+The TUI is a separate TypeScript package built on OpenTUI:
+
+```bash
+bunx nexus-tui                                         # connects to localhost:2026
+bunx nexus-tui --url http://remote:2026 --api-key KEY  # connect to remote instance
+```
+
+File explorer, API inspector, monitoring dashboard, agent lifecycle management, and more — all from your terminal.
 
 ## What you get
 
@@ -112,9 +123,11 @@ nexus versions /hello.txt
 | **Federation** | Multi-zone Raft consensus with mTLS TOFU | Span data centers without a central coordinator |
 
 <details>
-<summary><strong>30+ more bricks →</strong></summary>
+<summary><strong>All bricks and system services →</strong></summary>
 
-Access Manifests · Agent Registry · Artifact Index · Auth (API key, OAuth, mTLS) · Catalog (schema extraction) · Context Manifests · Discovery · Event Log · Identity (DID + credentials) · LLM Provider · Parsers (50+ formats via MarkItDown) · Portability (import/export) · Reputation · RLM (retrieval-augmented reasoning) · Sandbox (Docker/Monty) · Scheduler (fair-share, priority tiers) · Share Links (capability URLs) · Skills · Snapshots · TUS Uploads (resumable) · Watch (filesystem events) · Workspace Registry
+**Bricks (runtime-loadable):** Access Manifests · Auth (API key, OAuth, mTLS) · Catalog (schema extraction) · Context Manifests · Delegation · Discovery · Identity (DID + credentials) · IPC (pipes) · MCP · Mount · Parsers (50+ formats via MarkItDown) · Pay · Portability (import/export) · ReBAC · Sandbox (Docker) · Search · Share Links (capability URLs) · Snapshots · Task Manager · TUS Uploads (resumable) · Versioning · Workflows · Workspace
+
+**System services:** Agent Registry · Agent Runtime · Event Bus · Event Log · Namespace · Scheduler (fair-share, priority tiers) · Sync · Lifecycle
 
 </details>
 
@@ -137,21 +150,42 @@ Every major agent framework works out of the box:
 | Mode | What | Who it's for |
 |---|---|---|
 | **Embedded** | `nexus.connect()` — in-process, zero infrastructure | Scripts, notebooks, single-agent apps |
-| **Shared daemon** | `nexus up` — Docker stack with Postgres, Dragonfly, Zoekt | Teams, multi-agent systems, staging |
+| **Shared daemon** | `nexus init --preset shared && nexus up` | Teams, multi-agent systems, staging |
 | **Federation** | Multi-zone Raft consensus across data centers | Production fleets, edge deployments |
+
+### `nexus init` presets
+
+| Preset | Services | Auth | Use case |
+|---|---|---|---|
+| `local` | None (embedded) | None | Single-process scripts, notebooks |
+| `shared` | Nexus + Postgres + Dragonfly + Zoekt | Static API key | Team dev, multi-agent staging |
+| `demo` | Same as shared | Database-backed | Demos, seed data, evaluation |
 
 ```bash
 # Embedded (no Docker)
-pip install nexus-ai-fs
+nexus init                                    # writes nexus.yaml for local embedded mode
 
 # Shared daemon
-nexus init --preset shared && nexus up
+nexus init --preset shared                    # writes nexus.yaml + nexus-stack.yml
+nexus up                                      # pulls image, starts stack, waits for health
 
-# With GPU acceleration
+# Demo with seed data
+nexus init --preset demo && nexus up
+
+# Add optional services
+nexus init --preset shared --with nats --with mcp --with frontend
+
+# GPU acceleration
 nexus init --preset shared --accelerator cuda
 
 # Pin to a specific version
-nexus init --preset shared --image-tag 0.9.3
+nexus init --preset shared --image-tag 0.9.4
+
+# Stack lifecycle
+nexus down                                    # stop all services
+nexus logs                                    # tail logs
+nexus restart                                 # down + up
+nexus upgrade                                 # pull latest image for your channel
 ```
 
 ### Docker image

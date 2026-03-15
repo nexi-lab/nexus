@@ -23,6 +23,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import (
     EnhancedReBACManager,
 )
@@ -30,6 +31,7 @@ from nexus.contracts.rebac_types import (
     WriteResult,
 )
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 
 @pytest.fixture
@@ -65,6 +67,7 @@ def engine():
 @pytest.fixture
 def manager(engine):
     """Create EnhancedReBACManager for testing."""
+    version_store = MetastoreVersionStore(DictMetastore())
     mgr = EnhancedReBACManager(
         engine=engine,
         cache_ttl_seconds=300,
@@ -73,6 +76,7 @@ def manager(engine):
         enable_graph_limits=True,
         enable_leopard=True,
         enable_tiger_cache=False,  # SQLite doesn't support Tiger
+        version_store=version_store,
     )
     yield mgr
     mgr.close()

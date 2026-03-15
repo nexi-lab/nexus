@@ -106,7 +106,6 @@ from nexus.storage.models.permissions import ReBACCheckCacheModel as ReBACCheckC
 from nexus.storage.models.permissions import ReBACGroupClosureModel as ReBACGroupClosureModel
 from nexus.storage.models.permissions import ReBACNamespaceModel as ReBACNamespaceModel
 from nexus.storage.models.permissions import ReBACTupleModel as ReBACTupleModel
-from nexus.storage.models.permissions import ReBACVersionSequenceModel as ReBACVersionSequenceModel
 from nexus.storage.models.permissions import TigerCacheModel as TigerCacheModel
 from nexus.storage.models.permissions import TigerCacheQueueModel as TigerCacheQueueModel
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TigerDirectoryGrantsModel

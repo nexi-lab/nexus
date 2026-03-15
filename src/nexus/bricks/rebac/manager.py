@@ -34,6 +34,7 @@ from nexus.bricks.rebac.batch.bulk_checker import BulkPermissionChecker
 from nexus.bricks.rebac.cache.leopard_facade import LeopardFacade
 from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.bricks.rebac.cache.tiger.facade import TigerFacade
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
@@ -131,6 +132,7 @@ class ReBACManager:
         enable_tiger_cache: bool = True,
         read_engine: "Engine | None" = None,
         is_postgresql: bool = False,
+        version_store: MetastoreVersionStore | None = None,
     ):
         """Initialize ReBAC manager.
 
@@ -145,10 +147,12 @@ class ReBACManager:
             read_engine: Optional separate engine for read-only operations (Issue #725).
                         Defaults to ``engine`` when not provided.
             is_postgresql: Whether the database is PostgreSQL (config-time flag).
+            version_store: MetastoreVersionStore for zone revision tracking (Issue #191).
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
         self._is_postgresql = is_postgresql
+        self._version_store = version_store
         self.cache_ttl_seconds = cache_ttl_seconds
         self.max_depth = max_depth
         self._last_cleanup_time: datetime | None = None
@@ -156,7 +160,12 @@ class ReBACManager:
         self._tuple_version: int = 0
 
         # Compose TupleRepository for data access delegation (Issue #725: read/write split)
-        self._repo = TupleRepository(engine, read_engine=read_engine, is_postgresql=is_postgresql)
+        self._repo = TupleRepository(
+            engine,
+            read_engine=read_engine,
+            is_postgresql=is_postgresql,
+            version_store=version_store,
+        )
 
         # Compose graph traversal and expand engines
         self._computer = PermissionComputer(self._repo, self.get_namespace, max_depth)
@@ -1929,7 +1938,9 @@ class ReBACManager:
 
     def _get_zone_revision_for_grant(self, zone_id: str) -> int:
         """Get current zone revision for consistency during expansion."""
-        return get_zone_revision_for_grant(self.engine, zone_id)
+        if self._version_store is not None:
+            return get_zone_revision_for_grant(self._version_store, zone_id)
+        return 0
 
     def _get_directory_descendants(self, directory_path: str, zone_id: str) -> list[str]:
         """Get all file paths under a directory."""
@@ -2020,7 +2031,9 @@ class ReBACManager:
 
         Delegates to consistency.revision module (Issue #1459).
         """
-        return increment_version_token(self.engine, zone_id, is_postgresql=self._is_postgresql)
+        if self._version_store is not None:
+            return increment_version_token(self._version_store, zone_id)
+        return "v0"
 
     def _get_cached_check_zone_aware_bounded(
         self,

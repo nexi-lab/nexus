@@ -67,8 +67,8 @@ jobs:
           load: true
           tags: ghcr.io/nexi-lab/nexus:smoke-test
           build-args: TORCH_VARIANT=${{ matrix.variant }}
-          cache-from: type=gha,scope=${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-${{ matrix.variant }}
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-${{ matrix.variant }},mode=max,ignore-error=true
 
       # ---- Smoke tests — must pass before push ----
       - name: Smoke test — critical imports
@@ -121,5 +121,5 @@ jobs:
           sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           build-args: TORCH_VARIANT=${{ matrix.variant }}
-          cache-from: type=gha,scope=${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-${{ matrix.variant }}
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-${{ matrix.variant }},mode=max,ignore-error=true

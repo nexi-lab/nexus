@@ -236,12 +236,6 @@ class TestFromAppEdgeCases:
         assert svc.write_observer is None  # extracted from _system_services (None here)
         assert svc.rebac_manager is None
 
-    def test_a2a_task_manager_extracted(self) -> None:
-        """a2a_task_manager from app.state is extracted."""
-        app = _make_app(a2a_task_manager="atm")
-        svc = LifespanServices.from_app(app)
-        assert svc.a2a_task_manager == "atm"
-
     def test_observability_registry_extracted(self) -> None:
         """observability_registry from app.state is extracted."""
         app = _make_app(observability_registry="obs_reg")

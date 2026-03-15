@@ -11,7 +11,6 @@ on demand via config gates.  See NEXUS-LEGO-ARCHITECTURE.md §3 for
 the brick rules and lifecycle.
 
 Current bricks:
-  - a2a              — Google A2A agent-to-agent protocol
   - context_manifest — Deterministic context pre-execution (Stripe Minions pattern)
   - delegation       — Agent identity delegation (COPY/CLEAN/SHARED modes)
   - discovery        — BM25-based MCP tool discovery

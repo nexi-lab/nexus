@@ -119,9 +119,6 @@ class NexusAppState:
     ipc_provisioner: Any = None
     ipc_sweeper: Any = None
 
-    # === A2A ===
-    a2a_task_manager: Any = None
-
     # === gRPC server (#1249) ===
     grpc_server: Any = None
 

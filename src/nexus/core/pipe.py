@@ -21,7 +21,7 @@ Design: SPSC (single-producer, single-consumer) message-oriented buffer with
 byte-capacity tracking. Data plane in Rust (nexus_fast.RingBufferCore) for
 ~0.5μs/op. asyncio.Event pairs provide blocking semantics from Python.
 
-See: federation-memo.md §7j, ISSUE-A2A-PHASE2-VFS-IPC.md
+See: federation-memo.md §7j
 """
 
 import asyncio

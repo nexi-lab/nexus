@@ -32,14 +32,13 @@ from fastapi import (
     Depends,
     FastAPI,
     HTTPException,
-    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
-from nexus.contracts.constants import DEFAULT_NEXUS_URL, ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusError,
 )
@@ -47,7 +46,6 @@ from nexus.server.auth.oauth_init import (  # noqa: E402
     initialize_oauth_provider as _initialize_oauth_provider,
 )
 from nexus.server.dependencies import (  # noqa: E402
-    get_auth_result,
     require_auth,
 )
 from nexus.server.error_handlers import (  # noqa: E402
@@ -169,7 +167,7 @@ def create_app(
         database_url: Database URL for async operations
         thread_pool_size: Thread pool size for sync operations (default: 200)
         operation_timeout: Timeout for sync operations in seconds (default: 30.0)
-        data_dir: Server data directory for persistent storage (A2A tasks, etc.)
+        data_dir: Server data directory for persistent storage
 
     Returns:
         Configured FastAPI application
@@ -646,48 +644,6 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Exchange protocol error handler registered")
     except ImportError as e:
         logger.warning(f"Failed to register Exchange error handler: {e}.")
-
-    # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
-    try:
-        from nexus.server.api.v2.routers.a2a import create_a2a_router
-
-        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
-        a2a_auth_required = bool(
-            getattr(app.state, "api_key", None) or getattr(app.state, "auth_provider", None)
-        )
-
-        # Auth adapter: server-side concern, NOT imported by the brick.
-        # Passes through the auth result for zone_id / agent_id extraction.
-        # Note: resolve_auth may return {"authenticated": False} for
-        # invalid tokens — this is consistent with the pre-existing
-        # behavior where the router checks for header presence, not
-        # token validity.  A separate fix for resolve_auth (#TBD) will
-        # tighten this.
-        async def _a2a_auth_adapter(request: Request) -> dict[str, Any] | None:
-            try:
-                return await get_auth_result(
-                    request=request,
-                    authorization=request.headers.get("Authorization"),
-                    x_agent_id=request.headers.get("X-Agent-ID"),
-                    x_nexus_subject=request.headers.get("X-Nexus-Subject"),
-                    x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
-                )
-            except Exception:
-                return None
-
-        a2a_router, a2a_task_manager = create_a2a_router(
-            nexus_fs=app.state.nexus_fs,
-            config=None,
-            base_url=a2a_base_url,
-            auth_required=a2a_auth_required,
-            auth_fn=_a2a_auth_adapter,
-            data_dir=getattr(app.state, "data_dir", None),
-        )
-        app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
-        app.include_router(a2a_router)
-        logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
-    except ImportError as e:
-        logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
 
     # IPC Brick endpoints (Issue #1727, LEGO §8)
     try:

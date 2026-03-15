@@ -102,7 +102,7 @@ class CacheStoreABC(ABC):
         """Return all keys matching a glob pattern.
 
         Supports ``*`` as wildcard. Examples:
-        - ``a2a:task:zone1:*`` — all zone1 task keys
+        - ``session:zone1:*`` — all zone1 session keys
         - ``perm:*:user:alice:*`` — permission keys for alice across zones
 
         Companion to ``delete_by_pattern`` — same pattern syntax, but returns

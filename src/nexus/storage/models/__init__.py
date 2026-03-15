@@ -74,7 +74,6 @@ from nexus.storage.models.identity import AgentKeyModel as AgentKeyModel
 
 # Domain: Infrastructure (Sandbox, Config, Sessions, Migrations)
 from nexus.storage.models.infrastructure import MigrationHistoryModel as MigrationHistoryModel
-from nexus.storage.models.infrastructure import MountConfigModel as MountConfigModel
 from nexus.storage.models.infrastructure import SandboxMetadataModel as SandboxMetadataModel
 from nexus.storage.models.infrastructure import SubscriptionModel as SubscriptionModel
 from nexus.storage.models.infrastructure import UserSessionModel as UserSessionModel

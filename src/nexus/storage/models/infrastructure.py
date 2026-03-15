@@ -81,53 +81,21 @@ class SandboxMetadataModel(Base):
             raise ValidationError(f"ttl_minutes must be >= 1, got {self.ttl_minutes}")
 
 
-class MountConfigModel(TimestampMixin, Base):
-    """Persistent mount configuration storage.
+class SystemSettingsModel(TimestampMixin, Base):
+    """System-wide settings stored in the database."""
 
-    Stores backend mount configurations to survive server restarts.
-    """
+    __tablename__ = "system_settings"
 
-    __tablename__ = "mount_configs"
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
 
-    mount_id: Mapped[str] = uuid_pk()
+    value: Mapped[str] = mapped_column(Text, nullable=False)
 
-    mount_point: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    backend_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    readonly: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
-
-    backend_config: Mapped[str] = mapped_column(Text, nullable=False)
-
-    owner_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    conflict_strategy: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
-
-    io_profile: Mapped[str] = mapped_column(String(50), nullable=False, default="balanced")
-
-    __table_args__ = (
-        Index("idx_mount_configs_owner", "owner_user_id"),
-        Index("idx_mount_configs_zone", "zone_id"),
-        Index("idx_mount_configs_backend_type", "backend_type"),
-    )
+    is_sensitive: Mapped[int] = mapped_column(Integer, default=0)
 
     def __repr__(self) -> str:
-        return f"<MountConfigModel(mount_id={self.mount_id}, mount_point={self.mount_point}, backend_type={self.backend_type})>"
-
-    def validate(self) -> None:
-        """Validate mount config model before database operations."""
-        if not self.mount_point:
-            raise ValidationError("mount_point is required")
-        if not self.mount_point.startswith("/"):
-            raise ValidationError(f"mount_point must start with '/', got {self.mount_point!r}")
-        if not self.backend_type:
-            raise ValidationError("backend_type is required")
-        if not self.backend_config:
-            raise ValidationError("backend_config is required")
-        try:
-            json.loads(self.backend_config)
-        except json.JSONDecodeError as e:
-            raise ValidationError(f"backend_config must be valid JSON: {e}") from None
+        value_display = "***" if self.is_sensitive else self.value[:50]
+        return f"<SystemSettingsModel(key={self.key}, value={value_display})>"
 
 
 class SubscriptionModel(TimestampMixin, Base):

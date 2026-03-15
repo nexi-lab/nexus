@@ -469,42 +469,6 @@ class TestEntityRegistryModelValidate:
             e.validate()
 
 
-class TestMountConfigModelValidate:
-    """Tests for MountConfigModel.validate()."""
-
-    def test_valid_config(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="/mnt/test",
-            backend_type="cas_local",
-            backend_config="{}",
-        )
-        m.validate()
-
-    def test_invalid_mount_point(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="mnt/test",
-            backend_type="cas_local",
-            backend_config="{}",
-        )
-        with pytest.raises(Exception, match="mount_point must start with '/'"):
-            m.validate()
-
-    def test_invalid_json(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="/mnt/test",
-            backend_type="cas_local",
-            backend_config="not json",
-        )
-        with pytest.raises(Exception, match="backend_config must be valid JSON"):
-            m.validate()
-
-
 class TestWorkflowModelValidate:
     """Tests for WorkflowModel.validate()."""
 

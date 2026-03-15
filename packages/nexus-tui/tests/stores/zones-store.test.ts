@@ -580,5 +580,27 @@ describe("ZonesStore", () => {
       await useZonesStore.getState().unregisterBrick("brick-gamma", client);
       expect(useZonesStore.getState().error).toBe("Failed to unregister brick");
     });
+
+    it("clears stale detail and clamps selectedIndex after unregister", async () => {
+      // Set up: select last brick (index 2), with stale detail loaded
+      useZonesStore.setState({
+        bricks: SAMPLE_BRICKS,
+        selectedIndex: 2,
+        brickDetail: SAMPLE_BRICKS[2]! as any,
+      });
+
+      // After unregister, health returns only 2 bricks
+      const twoRemainingBricks = SAMPLE_BRICKS.slice(0, 2);
+      const client = mockClient({
+        "/api/v2/bricks/brick-gamma/unregister": undefined,
+        "/api/v2/bricks/health": { total: 2, active: 1, failed: 1, bricks: twoRemainingBricks },
+      });
+
+      await useZonesStore.getState().unregisterBrick("brick-gamma", client);
+      const state = useZonesStore.getState();
+
+      expect(state.brickDetail).toBeNull();
+      expect(state.selectedIndex).toBeLessThanOrEqual(1);
+    });
   });
 });

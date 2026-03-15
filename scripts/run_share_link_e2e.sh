@@ -27,8 +27,8 @@ echo ""
 # Check if PostgreSQL is available
 echo "Checking PostgreSQL connection..."
 if ! pg_isready -h localhost -p 5432 -q 2>/dev/null; then
-    echo "PostgreSQL not running. Starting via docker-compose..."
-    docker-compose -f "$PROJECT_ROOT/docker-compose.demo.yml" up -d postgres
+    echo "PostgreSQL not running. Starting via docker compose..."
+    docker compose -f "$PROJECT_ROOT/dockerfiles/compose.yaml" up -d postgres
 
     # Wait for PostgreSQL to be ready
     echo "Waiting for PostgreSQL to be ready..."

@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 from nexus.contracts.exceptions import CircuitOpenError
+from nexus.lib.context_utils import get_subject_from_context
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -1555,61 +1556,6 @@ class ReBACService(ReBACShareMixin):
     # Helper Methods
     # =========================================================================
 
-    def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
-        """Extract subject from operation context.
-
-        Args:
-            context: Operation context (OperationContext or dict)
-
-        Returns:
-            Subject tuple (type, id) or None if not found
-
-        Examples:
-            >>> context = {"subject": ("user", "alice")}
-            >>> self._get_subject_from_context(context)
-            ('user', 'alice')
-
-            >>> context = OperationContext(user_id="alice", groups=[])
-            >>> self._get_subject_from_context(context)
-            ('user', 'alice')
-        """
-        if not context:
-            return None
-
-        # Handle dict format (used by RPC server and tests)
-        if isinstance(context, dict):
-            subject = context.get("subject")
-            if subject and isinstance(subject, tuple) and len(subject) == 2:
-                return (str(subject[0]), str(subject[1]))
-
-            # Construct from subject_type + subject_id
-            subject_type = context.get("subject_type", "user")
-            subject_id = context.get("subject_id") or context.get("user_id")
-            if subject_id:
-                return (subject_type, subject_id)
-
-            return None
-
-        # Handle OperationContext format - use get_subject() method
-        if hasattr(context, "get_subject") and callable(context.get_subject):
-            result = context.get_subject()
-            if result is not None:
-                return (str(result[0]), str(result[1]))
-            return None
-
-        # Fallback: construct from attributes
-        if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
-            subject_type = getattr(context, "subject_type", "user")
-            subject_id = getattr(context, "subject_id", None) or getattr(context, "user_id", None)
-            if subject_id:
-                return (subject_type, subject_id)
-
-        # Last resort: use user field
-        if hasattr(context, "user_id") and context.user_id:
-            return ("user", context.user_id)
-
-        return None
-
     def _check_share_permission(
         self,
         resource: tuple[str, str],
@@ -1686,7 +1632,7 @@ class ReBACService(ReBACShareMixin):
                     "ReBAC manager is not available. Ensure ReBACService is properly initialized."
                 )
             has_permission = self._rebac_manager.rebac_check(
-                subject=self._get_subject_from_context(context) or ("user", op_context.user_id),
+                subject=get_subject_from_context(context) or ("user", op_context.user_id),
                 permission="owner",  # Only owners can manage permissions
                 object=resource,
                 context=context,
@@ -1705,7 +1651,7 @@ class ReBACService(ReBACShareMixin):
             # If enforcer denied, also check direct ownership via ReBAC
             # (direct_owner relation may not imply execute in the permission graph)
             if not has_permission and self._rebac_manager:
-                subject = self._get_subject_from_context(context) or ("user", op_context.user_id)
+                subject = get_subject_from_context(context) or ("user", op_context.user_id)
                 has_permission = self._rebac_manager.rebac_check(
                     subject=subject,
                     permission="owner",

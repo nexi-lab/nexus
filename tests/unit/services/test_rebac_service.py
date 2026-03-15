@@ -743,40 +743,50 @@ class TestRegisterNamespace:
 
 
 # =========================================================================
-# _get_subject_from_context Tests
+# get_subject_from_context Tests (canonical function in lib/context_utils)
 # =========================================================================
 
 
 class TestGetSubjectFromContext:
-    """Test the helper method that extracts subjects from various context formats."""
+    """Test the public get_subject_from_context function."""
 
-    def test_extract_from_dict_with_subject_tuple(self, service):
+    def test_extract_from_dict_with_subject_tuple(self):
         """Test extracting subject from dict with 'subject' key."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         ctx = {"subject": ("user", "alice")}
-        result = service._get_subject_from_context(ctx)
+        result = get_subject_from_context(ctx)
         assert result == ("user", "alice")
 
-    def test_extract_from_dict_with_subject_type_and_id(self, service):
+    def test_extract_from_dict_with_subject_type_and_id(self):
         """Test extracting subject from dict with type and id keys."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         ctx = {"subject_type": "user", "subject_id": "bob"}
-        result = service._get_subject_from_context(ctx)
+        result = get_subject_from_context(ctx)
         assert result == ("user", "bob")
 
-    def test_extract_from_dict_with_user_id_key(self, service):
+    def test_extract_from_dict_with_user_id_key(self):
         """Test extracting subject from dict with 'user_id' key."""
+        from nexus.lib.context_utils import get_subject_from_context
+
         ctx = {"user_id": "charlie"}
-        result = service._get_subject_from_context(ctx)
+        result = get_subject_from_context(ctx)
         assert result == ("user", "charlie")
 
-    def test_extract_from_operation_context(self, service, operation_context):
+    def test_extract_from_operation_context(self, operation_context):
         """Test extracting subject from OperationContext."""
-        result = service._get_subject_from_context(operation_context)
+        from nexus.lib.context_utils import get_subject_from_context
+
+        result = get_subject_from_context(operation_context)
         assert result is not None
         assert result[1] == "test_user"
 
-    def test_returns_none_for_none_context(self, service):
+    def test_returns_none_for_none_context(self):
         """Test that None context returns None."""
-        result = service._get_subject_from_context(None)
+        from nexus.lib.context_utils import get_subject_from_context
+
+        result = get_subject_from_context(None)
         assert result is None
 
 

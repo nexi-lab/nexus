@@ -51,9 +51,14 @@ impl TaskStore {
         // Initialize counter from existing max task_id
         let max_id = Self::find_max_task_id(&tasks);
 
-        // Scan once to initialize all status counters and populate running_task_key
+        // Scan once to initialize all status counters
         let (pending, running, completed, cancelled, dead_letter_n) =
             Self::count_all_statuses(&tasks);
+
+        // Rebuild running_task_key reverse-lookup index from running_idx.
+        // This is necessary after restart/upgrade since running_task_key is
+        // an auxiliary index that may not have existed before this version.
+        Self::rebuild_running_task_key(&running_idx, &running_task_key)?;
 
         Ok(Self {
             db,
@@ -115,6 +120,21 @@ impl TaskStore {
         }
 
         (pending, running, completed, cancelled, dead_letter)
+    }
+
+    /// Rebuild the running_task_key reverse-lookup index by scanning running_idx.
+    /// Ensures that after restart or upgrade from a version without this index,
+    /// all running tasks have their reverse-lookup entry populated.
+    fn rebuild_running_task_key(running_idx: &Keyspace, running_task_key: &Keyspace) -> Result<()> {
+        for guard in running_idx.iter() {
+            if let Ok((key, _)) = guard.into_inner() {
+                if let Some((_, task_id)) = decode_running_key(key.as_ref()) {
+                    let running_key_bytes = key.as_ref().to_vec();
+                    running_task_key.insert(task_id.to_be_bytes(), running_key_bytes)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Generate a monotonically increasing task ID.

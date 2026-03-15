@@ -6,7 +6,7 @@ Extracted from fastapi_server.py (#1602).
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -25,35 +25,21 @@ async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     - WebSocket Manager (Issue #1116)
     - WriteBack Service (Issue #1129)
     - Lock Manager coordination (Issue #1186)
-
-    Services that implement PersistentService (start/stop) are registered
-    with the coordinator for auto-lifecycle management.
     """
     bg_tasks: list[asyncio.Task] = []
-    coord = svc.service_coordinator
 
-    await _startup_event_bus(app, svc, coord)
-    await _startup_exporter_registry(app, svc, coord)
-    await _startup_websocket(app, svc, coord)
-    await _startup_writeback(app, svc, coord)
-    await _startup_lock_manager(app, svc, coord)
-
-    # Enlist subscription_manager (Q1 — static, no lifecycle)
-    sub_mgr = getattr(app.state, "subscription_manager", None)
-    if sub_mgr is not None and coord is not None:
-        await coord.enlist("subscription_manager", sub_mgr)
+    await _startup_event_bus(app, svc)
+    _startup_exporter_registry(app, svc)
+    await _startup_websocket(app, svc)
+    await _startup_writeback(app, svc)
+    await _startup_lock_manager(app, svc)
 
     return bg_tasks
 
 
 async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Shutdown realtime infrastructure.
-
-    PersistentService instances (EventBus, WebSocketManager, WriteBackService)
-    are stopped automatically by the coordinator via ``aclose()``.
-    Only non-PersistentService cleanup remains here.
-    """
-    # Disconnect Lock Manager coordination client (Q1, manual)
+    """Shutdown realtime infrastructure in reverse order."""
+    # Disconnect Lock Manager coordination client (Issue #1186)
     coord_client = svc.coordination_client
     if svc.nexus_fs and coord_client is not None:
         try:
@@ -62,7 +48,32 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error disconnecting coordination client: %s", e, exc_info=True)
 
-    # Close ExporterRegistry (Q1, manual cleanup)
+    # Shutdown WebSocket manager (Issue #1116)
+    if app.state.websocket_manager:
+        try:
+            await app.state.websocket_manager.stop()
+            logger.info("WebSocket manager stopped")
+        except Exception as e:
+            logger.warning("Error shutting down WebSocket manager: %s", e, exc_info=True)
+
+    # Stop WriteBack Service (Issue #1129)
+    if app.state.write_back_service:
+        try:
+            await app.state.write_back_service.stop()
+            logger.info("WriteBack service stopped")
+        except Exception as e:
+            logger.warning("Error shutting down WriteBack service: %s", e, exc_info=True)
+
+    # Stop event bus (Issue #1331)
+    _ebus = svc.event_bus
+    if _ebus is not None:
+        try:
+            await _ebus.stop()
+            logger.info("Event bus stopped")
+        except Exception as e:
+            logger.warning("Error shutting down event bus: %s", e, exc_info=True)
+
+    # Close ExporterRegistry (Issue #1138)
     exporter_registry = app.state.exporter_registry
     if exporter_registry is not None:
         try:
@@ -71,7 +82,7 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error closing exporter registry: %s", e, exc_info=True)
 
-    # subscription_manager (Q1) — close + clear singleton
+    # Close subscription manager
     if app.state.subscription_manager:
         await app.state.subscription_manager.close()
         from nexus.server.subscriptions import set_subscription_manager
@@ -84,12 +95,8 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _startup_event_bus(
-    _app: "FastAPI",
-    svc: "LifespanServices",
-    coord: Any,
-) -> None:
-    """Start event bus (Q3 — PersistentService)."""
+async def _startup_event_bus(_app: "FastAPI", svc: "LifespanServices") -> None:
+    """Start event bus."""
     if not svc.nexus_fs:
         return
 
@@ -97,7 +104,7 @@ async def _startup_event_bus(
     if event_bus_ref is None:
         return
 
-    # Connect the underlying DragonflyClient (async init required before start)
+    # Connect the underlying DragonflyClient (async init required)
     redis_client = getattr(event_bus_ref, "_redis", None)
     if redis_client and hasattr(redis_client, "connect"):
         try:
@@ -105,46 +112,37 @@ async def _startup_event_bus(
         except Exception as e:
             logger.warning("Failed to connect event bus Redis client: %s", e)
 
-    # Enlist: coordinator auto-detects Q3 → calls start()
-    if coord is not None:
-        await coord.enlist("event_bus", event_bus_ref)
-    elif hasattr(event_bus_ref, "start") and not getattr(event_bus_ref, "_started", True):
-        await event_bus_ref.start()
-        logger.info("Event bus started (no coordinator)")
+    # Start the event bus
+    if hasattr(event_bus_ref, "start") and not getattr(event_bus_ref, "_started", True):
+        try:
+            await event_bus_ref.start()
+            logger.info("Event bus started for event publishing")
+        except Exception as e:
+            logger.warning("Failed to start event bus: %s", e)
 
     # Issue #1331: Store main event loop ref for cross-thread event publishing
     svc.nexus_fs._main_event_loop = asyncio.get_running_loop()
 
 
-async def _startup_websocket(
-    app: "FastAPI",
-    svc: "LifespanServices",
-    coord: Any,
-) -> None:
-    """Initialize WebSocket Manager (Q3 — PersistentService)."""
+async def _startup_websocket(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Initialize WebSocket Manager for real-time events (Issue #1116)."""
     try:
         from nexus.server.websocket import WebSocketManager
 
-        ws_mgr = WebSocketManager(
-            event_bus=svc.event_bus,
+        event_bus = svc.event_bus
+
+        app.state.websocket_manager = WebSocketManager(
+            event_bus=event_bus,
             reactive_manager=app.state.reactive_subscription_manager,
         )
-        app.state.websocket_manager = ws_mgr
-
-        if coord is not None:
-            await coord.enlist("websocket_manager", ws_mgr, depends_on=("event_bus",))
-        else:
-            await ws_mgr.start()
+        await app.state.websocket_manager.start()
+        logger.info("WebSocket manager started for real-time events")
     except Exception as e:
         logger.warning("Failed to start WebSocket manager: %s", e)
 
 
-async def _startup_writeback(
-    app: "FastAPI",
-    svc: "LifespanServices",
-    coord: Any,
-) -> None:
-    """Initialize WriteBack Service (Q3 — PersistentService).
+async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Initialize WriteBack Service for bidirectional sync (Issue #1129/#1130).
 
     When ``NEXUS_WRITE_BACK=true`` and an event bus is available, the full
     WriteBackService starts with conflict resolution and backlog stores.
@@ -159,24 +157,20 @@ async def _startup_writeback(
     write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
 
     try:
+        # Always initialize ConflictLogStore for the REST API, even when write-back is disabled
+        from nexus.system_services.gateway import NexusFSGateway
+        from nexus.system_services.sync.conflict_log_store import ConflictLogStore
+
+        gw = NexusFSGateway(svc.nexus_fs)
+        _is_pg = gw.is_postgresql
+        conflict_log_store = ConflictLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
+        app.state.conflict_log_store = conflict_log_store
+
         if write_back_enabled:
-            from nexus.system_services.gateway import NexusFSGateway
             from nexus.system_services.sync.change_log_store import ChangeLogStore
-            from nexus.system_services.sync.conflict_log_store import ConflictLogStore
             from nexus.system_services.sync.conflict_resolution import ConflictStrategy
             from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
             from nexus.system_services.sync.write_back_service import WriteBackService
-
-            gw = NexusFSGateway(svc.nexus_fs)
-
-            _is_pg = gw.is_postgresql
-            conflict_log_store = ConflictLogStore(
-                record_store=gw.record_store, is_postgresql=_is_pg
-            )
-            app.state.conflict_log_store = conflict_log_store
-            # Enlist conflict_log_store (Q1 — static, no lifecycle)
-            if coord is not None:
-                await coord.enlist("conflict_log_store", conflict_log_store)
 
             wb_event_bus = svc.event_bus
             if wb_event_bus:
@@ -185,6 +179,7 @@ async def _startup_writeback(
                     record_store=gw.record_store, is_postgresql=_is_pg
                 )
 
+                # Map env var to ConflictStrategy (backward compat)
                 _policy_map = {
                     "lww": ConflictStrategy.KEEP_NEWER,
                     "fork": ConflictStrategy.RENAME_CONFLICT,
@@ -195,7 +190,7 @@ async def _startup_writeback(
                 except ValueError:
                     default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
 
-                wb_svc = WriteBackService(
+                app.state.write_back_service = WriteBackService(
                     gateway=gw,
                     event_bus=wb_event_bus,
                     backlog_store=backlog_store,
@@ -203,69 +198,45 @@ async def _startup_writeback(
                     default_strategy=default_strategy,
                     conflict_log_store=conflict_log_store,
                 )
-                app.state.write_back_service = wb_svc
-
-                if coord is not None:
-                    await coord.enlist(
-                        "write_back",
-                        wb_svc,
-                        depends_on=("event_bus",),
-                    )
-                else:
-                    await wb_svc.start()
+                await app.state.write_back_service.start()
+                logger.info("WriteBack service started for bidirectional sync")
                 return
 
-        # Fallback: InMemoryWriteBack (structurally PersistentService, start/stop are no-ops)
+        # Fallback: provide InMemoryWriteBack so sync endpoints return
+        # zero-change responses instead of 503 in standalone mode.
         from nexus.contracts.protocols.write_back import InMemoryWriteBack
 
-        wb_fallback = InMemoryWriteBack()
-        app.state.write_back_service = wb_fallback
-
-        if coord is not None:
-            await coord.enlist("write_back", wb_fallback)
-        else:
-            await wb_fallback.start()
+        app.state.write_back_service = InMemoryWriteBack()
+        await app.state.write_back_service.start()
+        logger.info("WriteBack service started (in-memory fallback)")
     except Exception as e:
         logger.warning("Failed to start WriteBack service: %s", e)
 
 
-async def _startup_lock_manager(
-    _app: "FastAPI",
-    svc: "LifespanServices",
-    coord: Any,
-) -> None:
-    """Connect Lock Manager coordination client (Q1 — no lifecycle)."""
+async def _startup_lock_manager(_app: "FastAPI", svc: "LifespanServices") -> None:
+    """Connect Lock Manager coordination client (Issue #1186)."""
     if not svc.nexus_fs:
         return
 
     coord_client = svc.coordination_client
-    if coord_client is None:
-        return
-
-    # Q1: register for discoverability, no start/stop
-    if coord is not None:
-        await coord.enlist("coordination_client", coord_client)
-
-    try:
-        await coord_client.connect()
-        logger.info("Lock manager coordination client connected")
-    except Exception as e:
-        logger.warning("Failed to connect lock manager coordination client: %s", e)
+    if coord_client is not None:
+        try:
+            await coord_client.connect()
+            logger.info("Lock manager coordination client connected")
+        except Exception as e:
+            logger.warning("Failed to connect lock manager coordination client: %s", e)
 
 
-async def _startup_exporter_registry(
-    app: "FastAPI",
-    _svc: "LifespanServices",
-    coord: Any,
-) -> None:
-    """Initialize ExporterRegistry (Q1 — no lifecycle, manual cleanup)."""
+def _startup_exporter_registry(app: "FastAPI", _svc: "LifespanServices") -> None:
+    """Initialize ExporterRegistry and configured exporters (Issue #1138)."""
     app.state.exporter_registry = None
 
     try:
-        from nexus.system_services.event_log.exporter_registry import ExporterRegistry
-        from nexus.system_services.event_log.exporters.config import EventStreamConfig
-        from nexus.system_services.event_log.exporters.factory import create_exporter
+        from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
+        from nexus.system_services.event_subsystem.log.exporters.config import EventStreamConfig
+        from nexus.system_services.event_subsystem.log.exporters.factory import create_exporter
 
+        # Read config from env vars
         enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")
         if not enabled:
             logger.debug("Event stream export disabled (NEXUS_EVENT_STREAM_ENABLED not set)")
@@ -280,11 +251,6 @@ async def _startup_exporter_registry(
             registry.register(exporter)
 
         app.state.exporter_registry = registry
-
-        # Q1: register for discoverability
-        if coord is not None:
-            await coord.enlist("exporter_registry", registry)
-
         logger.info(
             "ExporterRegistry initialized (exporters=%s)",
             registry.exporter_names,

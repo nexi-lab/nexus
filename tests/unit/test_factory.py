@@ -189,6 +189,8 @@ class TestBootSystemServices:
             "scheduler_service",
             # Agent Runtime (AGENT-PROCESS-ARCHITECTURE)
             "agent_runtime",
+            # ACP coding agent service
+            "acp_service",
         }
         assert expected_keys == set(result.keys())
 

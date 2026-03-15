@@ -7,12 +7,10 @@ as stateless one-shot subprocesses tracked by the kernel ProcessTable.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.contracts.process_types import ProcessDescriptor
-    from nexus.system_services.acp.agents import AgentConfig
-    from nexus.system_services.acp.service import AcpResult
 
 
 @runtime_checkable
@@ -30,7 +28,7 @@ class AcpServiceProtocol(Protocol):
         timeout: float = 300.0,
         labels: dict[str, str] | None = None,
         session_id: str | None = None,
-    ) -> AcpResult: ...
+    ) -> Any: ...
 
     def list_agents(
         self,
@@ -41,6 +39,6 @@ class AcpServiceProtocol(Protocol):
 
     def kill_agent(self, pid: str) -> ProcessDescriptor: ...
 
-    def register_agent(self, config: AgentConfig) -> None: ...
+    def register_agent(self, config: Any) -> None: ...
 
     def close_all(self) -> None: ...

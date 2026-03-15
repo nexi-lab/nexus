@@ -14,6 +14,7 @@ import type { InfraTab } from "../../stores/infra-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ConnectorList } from "./connector-list.js";
 import { SubscriptionList } from "./subscription-list.js";
 import { LockList } from "./lock-list.js";
@@ -25,13 +26,13 @@ type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect";
 
 type PanelTab = "events" | "mcl" | InfraTab;
 
-const TAB_ORDER: readonly PanelTab[] = [
-  "events",
-  "mcl",
-  "connectors",
-  "subscriptions",
-  "locks",
-  "secrets",
+const ALL_TABS: readonly TabDef<PanelTab>[] = [
+  { id: "events", label: "Events", brick: "eventlog" },
+  { id: "mcl", label: "MCL", brick: "catalog" },
+  { id: "connectors", label: "Connectors", brick: null },
+  { id: "subscriptions", label: "Subscriptions", brick: "eventlog" },
+  { id: "locks", label: "Locks", brick: null },
+  { id: "secrets", label: "Secrets", brick: "auth" },
 ];
 
 const TAB_LABELS: Readonly<Record<PanelTab, string>> = {
@@ -45,6 +46,7 @@ const TAB_LABELS: Readonly<Record<PanelTab, string>> = {
 
 export default function EventsPanel(): React.ReactNode {
   const apiClient = useApi();
+  const visibleTabs = useVisibleTabs(ALL_TABS);
   const config = useGlobalStore((s) => s.config);
 
   // Filter input state
@@ -94,6 +96,14 @@ export default function EventsPanel(): React.ReactNode {
 
   // Track the combined active tab locally
   const [activeTab, setActiveTab] = React.useState<PanelTab>("events");
+
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab]);
 
   // Auto-connect SSE on mount, reconnect when identity changes
   useEffect(() => {
@@ -232,8 +242,9 @@ export default function EventsPanel(): React.ReactNode {
             setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
           },
           tab: () => {
-            const idx = TAB_ORDER.indexOf(activeTab);
-            const next = TAB_ORDER[(idx + 1) % TAB_ORDER.length];
+            const ids = visibleTabs.map((t) => t.id);
+            const idx = ids.indexOf(activeTab);
+            const next = ids[(idx + 1) % ids.length];
             if (next) setActiveTab(next);
           },
           c: () => clearEvents(),
@@ -286,9 +297,8 @@ export default function EventsPanel(): React.ReactNode {
       {/* Tab bar */}
       <box height={1} width="100%">
         <text>
-          {TAB_ORDER.map((tab) => {
-            const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
+          {visibleTabs.map((tab) => {
+            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
           }).join(" ")}
         </text>
       </box>

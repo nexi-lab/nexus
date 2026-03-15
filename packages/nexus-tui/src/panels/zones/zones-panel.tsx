@@ -10,6 +10,7 @@ import { useZonesStore } from "../../stores/zones-store.js";
 import type { ZoneTab } from "../../stores/zones-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ZoneList } from "./zone-list.js";
 import { BrickList } from "./brick-list.js";
 import { BrickDetail } from "./brick-detail.js";
@@ -18,7 +19,12 @@ import { ReindexStatus } from "./reindex-status.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { allowedActionsForState } from "../../shared/brick-states.js";
 
-const TAB_ORDER: readonly ZoneTab[] = ["zones", "bricks", "drift", "reindex"];
+const ALL_TABS: readonly TabDef<ZoneTab>[] = [
+  { id: "zones", label: "Zones", brick: null },
+  { id: "bricks", label: "Bricks", brick: null },
+  { id: "drift", label: "Drift", brick: null },
+  { id: "reindex", label: "Reindex", brick: ["search", "versioning"] },
+];
 const TAB_LABELS: Readonly<Record<ZoneTab, string>> = {
   zones: "Zones",
   bricks: "Bricks",
@@ -28,6 +34,7 @@ const TAB_LABELS: Readonly<Record<ZoneTab, string>> = {
 
 export default function ZonesPanel(): React.ReactNode {
   const client = useApi();
+  const visibleTabs = useVisibleTabs(ALL_TABS);
 
   const zones = useZonesStore((s) => s.zones);
   const zonesLoading = useZonesStore((s) => s.zonesLoading);
@@ -53,6 +60,14 @@ export default function ZonesPanel(): React.ReactNode {
   const resetBrick = useZonesStore((s) => s.resetBrick);
   const setSelectedIndex = useZonesStore((s) => s.setSelectedIndex);
   const setActiveTab = useZonesStore((s) => s.setActiveTab);
+
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   // Confirmation dialog state for destructive unregister action
   const [confirmUnregister, setConfirmUnregister] = useState(false);
@@ -136,9 +151,10 @@ export default function ZonesPanel(): React.ReactNode {
             setSelectedIndex(Math.max(selectedIndex - 1, 0));
           },
           tab: () => {
-            const currentIdx = TAB_ORDER.indexOf(activeTab);
-            const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-            const nextTab = TAB_ORDER[nextIdx];
+            const ids = visibleTabs.map((t) => t.id);
+            const currentIdx = ids.indexOf(activeTab);
+            const nextIdx = (currentIdx + 1) % ids.length;
+            const nextTab = ids[nextIdx];
             if (nextTab) {
               setActiveTab(nextTab);
             }
@@ -181,9 +197,8 @@ export default function ZonesPanel(): React.ReactNode {
       {/* Tab bar */}
       <box height={1} width="100%">
         <text>
-          {TAB_ORDER.map((tab) => {
-            const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
+          {visibleTabs.map((tab) => {
+            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
           }).join(" ")}
         </text>
       </box>

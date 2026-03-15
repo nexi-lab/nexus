@@ -15,6 +15,11 @@ describe("GlobalStore", () => {
       zoneId: null,
       uptime: null,
       userInfo: null,
+      enabledBricks: [],
+      profile: null,
+      mode: null,
+      featuresLoaded: false,
+      featuresLastFetched: 0,
     });
   });
 
@@ -78,6 +83,136 @@ describe("GlobalStore", () => {
       const state = useGlobalStore.getState();
       expect(state.serverVersion).toBe("1.0");
       expect(state.zoneId).toBe("z1");
+    });
+  });
+
+  describe("setFeatures", () => {
+    it("sets enabledBricks, profile, mode", () => {
+      useGlobalStore.getState().setFeatures({
+        profile: "full",
+        mode: "standalone",
+        enabled_bricks: ["search", "catalog", "pay"],
+        disabled_bricks: ["mcp"],
+        version: "0.8.0",
+        rate_limit_enabled: false,
+      });
+      const state = useGlobalStore.getState();
+      expect(state.enabledBricks).toEqual(["search", "catalog", "pay"]);
+      expect(state.profile).toBe("full");
+      expect(state.mode).toBe("standalone");
+    });
+
+    it("sets featuresLoaded to true", () => {
+      expect(useGlobalStore.getState().featuresLoaded).toBe(false);
+      useGlobalStore.getState().setFeatures({
+        profile: "lite",
+        mode: "standalone",
+        enabled_bricks: [],
+        disabled_bricks: [],
+        version: null,
+        rate_limit_enabled: false,
+      });
+      expect(useGlobalStore.getState().featuresLoaded).toBe(true);
+    });
+
+    it("updates featuresLastFetched timestamp", () => {
+      const before = Date.now();
+      useGlobalStore.getState().setFeatures({
+        profile: "lite",
+        mode: "standalone",
+        enabled_bricks: [],
+        disabled_bricks: [],
+        version: null,
+        rate_limit_enabled: false,
+      });
+      const after = Date.now();
+      const { featuresLastFetched } = useGlobalStore.getState();
+      expect(featuresLastFetched).toBeGreaterThanOrEqual(before);
+      expect(featuresLastFetched).toBeLessThanOrEqual(after);
+    });
+
+    it("handles null enabled_bricks gracefully", () => {
+      useGlobalStore.getState().setFeatures({
+        profile: "lite",
+        mode: "standalone",
+        enabled_bricks: null as unknown as string[],
+        disabled_bricks: [],
+        version: null,
+        rate_limit_enabled: false,
+      });
+      expect(useGlobalStore.getState().enabledBricks).toEqual([]);
+    });
+  });
+
+  describe("refreshFeatures", () => {
+    it("skips refresh when no client", async () => {
+      useGlobalStore.setState({ client: null, featuresLastFetched: 0 });
+      await useGlobalStore.getState().refreshFeatures();
+      expect(useGlobalStore.getState().featuresLoaded).toBe(false);
+    });
+
+    it("skips refresh when within TTL (10s)", async () => {
+      const mockFetchClient = {
+        get: mock(async () => ({
+          profile: "full",
+          mode: "standalone",
+          enabled_bricks: ["new_brick"],
+          disabled_bricks: [],
+          version: null,
+          rate_limit_enabled: false,
+        })),
+      } as unknown as FetchClient;
+
+      useGlobalStore.setState({
+        client: mockFetchClient,
+        featuresLastFetched: Date.now(), // just fetched
+        featuresLoaded: true,
+        enabledBricks: ["old_brick"],
+      });
+
+      await useGlobalStore.getState().refreshFeatures();
+      // Should NOT have called the API
+      expect(useGlobalStore.getState().enabledBricks).toEqual(["old_brick"]);
+    });
+
+    it("refreshes when TTL has expired", async () => {
+      const mockFetchClient = {
+        get: mock(async () => ({
+          profile: "full",
+          mode: "standalone",
+          enabled_bricks: ["new_brick"],
+          disabled_bricks: [],
+          version: null,
+          rate_limit_enabled: false,
+        })),
+      } as unknown as FetchClient;
+
+      useGlobalStore.setState({
+        client: mockFetchClient,
+        featuresLastFetched: Date.now() - 15_000, // 15s ago, past 10s TTL
+        featuresLoaded: true,
+        enabledBricks: ["old_brick"],
+      });
+
+      await useGlobalStore.getState().refreshFeatures();
+      expect(useGlobalStore.getState().enabledBricks).toEqual(["new_brick"]);
+    });
+
+    it("handles fetch errors gracefully (keeps last known state)", async () => {
+      const mockFetchClient = {
+        get: mock(async () => { throw new Error("Network error"); }),
+      } as unknown as FetchClient;
+
+      useGlobalStore.setState({
+        client: mockFetchClient,
+        featuresLastFetched: 0,
+        featuresLoaded: true,
+        enabledBricks: ["existing_brick"],
+      });
+
+      await useGlobalStore.getState().refreshFeatures();
+      // Should keep the existing bricks
+      expect(useGlobalStore.getState().enabledBricks).toEqual(["existing_brick"]);
     });
   });
 

@@ -8,6 +8,7 @@ import { usePaymentsStore } from "../../stores/payments-store.js";
 import type { PaymentsTab } from "../../stores/payments-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { BrickGate } from "../../shared/components/brick-gate.js";
 import { BalanceCard } from "./balance-card.js";
 import { ReservationList } from "./reservation-list.js";
 import { TransferForm } from "./transfer-form.js";
@@ -211,79 +212,81 @@ export default function PaymentsPanel(): React.ReactNode {
   );
 
   return (
-    <box height="100%" width="100%" flexDirection="column">
-      {/* Tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {TAB_ORDER.map((tab) => {
-            const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
-          }).join(" ")}
-        </text>
-      </box>
-
-      {/* Error display */}
-      {error && (
+    <BrickGate brick="pay">
+      <box height="100%" width="100%" flexDirection="column">
+        {/* Tab bar */}
         <box height={1} width="100%">
-          <text>{`Error: ${error}`}</text>
+          <text>
+            {TAB_ORDER.map((tab) => {
+              const label = TAB_LABELS[tab];
+              return tab === activeTab ? `[${label}]` : ` ${label} `;
+            }).join(" ")}
+          </text>
         </box>
-      )}
 
-      {/* Detail content */}
-      <box flexGrow={1} borderStyle="single">
-        {showTransfer ? (
-          <TransferForm
-            onSubmit={handleTransferSubmit}
-            onCancel={handleTransferCancel}
-          />
-        ) : (
-          <>
-            {activeTab === "balance" && (
-              <BalanceCard balance={balance} loading={balanceLoading} />
-            )}
-            {activeTab === "reservations" && (
-              <ReservationList
-                reservations={reservations}
-                selectedIndex={selectedReservationIndex}
-                loading={reservationsLoading}
-              />
-            )}
-            {activeTab === "transactions" && (
-              <TransactionList
-                transactions={transactions}
-                selectedIndex={selectedTransactionIndex}
-                loading={transactionsLoading}
-                hasMore={transactionsHasMore}
-                hasPrev={transactionsCursorStack.length > 0}
-                integrityResult={integrityResult}
-              />
-            )}
-            {activeTab === "policies" && (
-              <box flexDirection="column" height="100%" width="100%">
-                <BudgetCard budget={budget} loading={budgetLoading} />
-                <PolicyList
-                  policies={policies}
-                  selectedIndex={selectedPolicyIndex}
-                  loading={policiesLoading}
-                />
-              </box>
-            )}
-          </>
+        {/* Error display */}
+        {error && (
+          <box height={1} width="100%">
+            <text>{`Error: ${error}`}</text>
+          </box>
         )}
-      </box>
 
-      {/* Help bar */}
-      <box height={1} width="100%">
-        <text>
-          {showTransfer
-            ? "Tab:next field  Enter:submit  Escape:cancel"
-            : activeTab === "transactions"
-              ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  Tab:switch tab  r:refresh"
-              : activeTab === "policies"
-                ? "j/k:navigate  Tab:switch tab  d:delete  b:budget  r:refresh  q:quit"
-                : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
-        </text>
+        {/* Detail content */}
+        <box flexGrow={1} borderStyle="single">
+          {showTransfer ? (
+            <TransferForm
+              onSubmit={handleTransferSubmit}
+              onCancel={handleTransferCancel}
+            />
+          ) : (
+            <>
+              {activeTab === "balance" && (
+                <BalanceCard balance={balance} loading={balanceLoading} />
+              )}
+              {activeTab === "reservations" && (
+                <ReservationList
+                  reservations={reservations}
+                  selectedIndex={selectedReservationIndex}
+                  loading={reservationsLoading}
+                />
+              )}
+              {activeTab === "transactions" && (
+                <TransactionList
+                  transactions={transactions}
+                  selectedIndex={selectedTransactionIndex}
+                  loading={transactionsLoading}
+                  hasMore={transactionsHasMore}
+                  hasPrev={transactionsCursorStack.length > 0}
+                  integrityResult={integrityResult}
+                />
+              )}
+              {activeTab === "policies" && (
+                <box flexDirection="column" height="100%" width="100%">
+                  <BudgetCard budget={budget} loading={budgetLoading} />
+                  <PolicyList
+                    policies={policies}
+                    selectedIndex={selectedPolicyIndex}
+                    loading={policiesLoading}
+                  />
+                </box>
+              )}
+            </>
+          )}
+        </box>
+
+        {/* Help bar */}
+        <box height={1} width="100%">
+          <text>
+            {showTransfer
+              ? "Tab:next field  Enter:submit  Escape:cancel"
+              : activeTab === "transactions"
+                ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  Tab:switch tab  r:refresh"
+                : activeTab === "policies"
+                  ? "j/k:navigate  Tab:switch tab  d:delete  b:budget  r:refresh  q:quit"
+                  : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
+          </text>
+        </box>
       </box>
-    </box>
+    </BrickGate>
   );
 }

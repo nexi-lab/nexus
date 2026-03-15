@@ -7,11 +7,16 @@ import { useAgentsStore } from "../../stores/agents-store.js";
 import type { AgentTab } from "../../stores/agents-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { AgentStatusView } from "./agent-status-view.js";
 import { DelegationList } from "./delegation-list.js";
 import { InboxView } from "./inbox-view.js";
 
-const TAB_ORDER: readonly AgentTab[] = ["status", "delegations", "inbox"];
+const ALL_TABS: readonly TabDef<AgentTab>[] = [
+  { id: "status", label: "Status", brick: "agent_registry" },
+  { id: "delegations", label: "Delegations", brick: "delegation" },
+  { id: "inbox", label: "Inbox", brick: "ipc" },
+];
 const TAB_LABELS: Readonly<Record<AgentTab, string>> = {
   status: "Status",
   delegations: "Delegations",
@@ -20,6 +25,7 @@ const TAB_LABELS: Readonly<Record<AgentTab, string>> = {
 
 export default function AgentsPanel(): React.ReactNode {
   const client = useApi();
+  const visibleTabs = useVisibleTabs(ALL_TABS);
 
   const knownAgents = useAgentsStore((s) => s.knownAgents);
   const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
@@ -48,6 +54,14 @@ export default function AgentsPanel(): React.ReactNode {
   const fetchInbox = useAgentsStore((s) => s.fetchInbox);
   const revokeDelegation = useAgentsStore((s) => s.revokeDelegation);
   const setSelectedDelegationIndex = useAgentsStore((s) => s.setSelectedDelegationIndex);
+
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
@@ -120,9 +134,10 @@ export default function AgentsPanel(): React.ReactNode {
       }
     },
     tab: () => {
-      const currentIdx = TAB_ORDER.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-      const nextTab = TAB_ORDER[nextIdx];
+      const ids = visibleTabs.map((t) => t.id);
+      const currentIdx = ids.indexOf(activeTab);
+      const nextIdx = (currentIdx + 1) % ids.length;
+      const nextTab = ids[nextIdx];
       if (nextTab) {
         setActiveTab(nextTab);
       }
@@ -182,9 +197,8 @@ export default function AgentsPanel(): React.ReactNode {
           {/* Tab bar */}
           <box height={1} width="100%">
             <text>
-              {TAB_ORDER.map((tab) => {
-                const label = TAB_LABELS[tab];
-                return tab === activeTab ? `[${label}]` : ` ${label} `;
+              {visibleTabs.map((tab) => {
+                return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
               }).join(" ")}
             </text>
           </box>

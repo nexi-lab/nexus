@@ -5,12 +5,13 @@
  * Press / to enter search input mode, type query, Enter to submit, Escape to cancel.
  */
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useSearchStore } from "../../stores/search-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import type { SearchTab, SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SearchResults } from "./search-results.js";
 import { KnowledgeView } from "./knowledge-view.js";
 import { MemoryList } from "./memory-list.js";
@@ -19,7 +20,14 @@ import { RlmAnswerView } from "./rlm-answer-view.js";
 import { ColumnSearch } from "./column-search.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 
-const TAB_ORDER: readonly SearchTab[] = ["search", "knowledge", "memories", "playbooks", "ask", "columns"];
+const ALL_TABS: readonly TabDef<SearchTab>[] = [
+  { id: "search", label: "Search", brick: "search" },
+  { id: "knowledge", label: "Knowledge", brick: "catalog" },
+  { id: "memories", label: "Memories", brick: "memory" },
+  { id: "playbooks", label: "Playbooks", brick: null },
+  { id: "ask", label: "Ask", brick: "rlm" },
+  { id: "columns", label: "Columns", brick: "catalog" },
+];
 const TAB_LABELS: Readonly<Record<SearchTab, string>> = {
   search: "Search",
   knowledge: "Knowledge",
@@ -37,6 +45,7 @@ const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
 
 export default function SearchPanel(): React.ReactNode {
   const client = useApi();
+  const visibleTabs = useVisibleTabs(ALL_TABS);
   // Effective zone: explicit config > server-discovered zone (matches status-bar fallback)
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
   const serverZoneId = useGlobalStore((s) => s.zoneId);
@@ -96,6 +105,14 @@ export default function SearchPanel(): React.ReactNode {
   const setSelectedResultIndex = useSearchStore((s) => s.setSelectedResultIndex);
   const setSelectedMemoryIndex = useSearchStore((s) => s.setSelectedMemoryIndex);
   const setSearchQuery = useSearchStore((s) => s.setSearchQuery);
+
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   const submitSearch = useCallback(
     (query: string) => {
@@ -219,9 +236,10 @@ export default function SearchPanel(): React.ReactNode {
             }
           },
           tab: () => {
-            const currentIdx = TAB_ORDER.indexOf(activeTab);
-            const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-            const nextTab = TAB_ORDER[nextIdx];
+            const ids = visibleTabs.map((t) => t.id);
+            const currentIdx = ids.indexOf(activeTab);
+            const nextIdx = (currentIdx + 1) % ids.length;
+            const nextTab = ids[nextIdx];
             if (nextTab) {
               setActiveTab(nextTab);
             }
@@ -335,9 +353,8 @@ export default function SearchPanel(): React.ReactNode {
       {/* Tab bar */}
       <box height={1} width="100%">
         <text>
-          {TAB_ORDER.map((tab) => {
-            const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
+          {visibleTabs.map((tab) => {
+            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
           }).join(" ")}
         </text>
       </box>

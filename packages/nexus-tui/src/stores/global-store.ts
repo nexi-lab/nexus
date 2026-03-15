@@ -62,6 +62,8 @@ export interface GlobalState {
   readonly enabledBricks: readonly string[];
   readonly profile: string | null;
   readonly mode: string | null;
+  readonly featuresLoaded: boolean;
+  readonly featuresLastFetched: number;
 
   // Actions
   readonly initConfig: (overrides?: Partial<NexusClientOptions>) => void;
@@ -71,6 +73,7 @@ export interface GlobalState {
   readonly setServerInfo: (info: { version?: string; zoneId?: string; uptime?: number }) => void;
   readonly setIdentity: (identity: { agentId?: string; subject?: string; zoneId?: string }) => void;
   readonly setFeatures: (features: FeaturesResponse) => void;
+  readonly refreshFeatures: () => Promise<void>;
 }
 
 export const useGlobalStore = create<GlobalState>((set, get) => ({
@@ -88,6 +91,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   enabledBricks: [],
   profile: null,
   mode: null,
+  featuresLoaded: false,
+  featuresLastFetched: 0,
 
   initConfig: (overrides) => {
     const config = resolveConfig(overrides);
@@ -127,6 +132,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       activePanel: panel,
       panelHistory: [...state.panelHistory.slice(-9), current],
     }));
+    // Re-fetch features on panel switch (Decision 3A)
+    get().refreshFeatures();
   },
 
   setConnectionStatus: (status, error) => {
@@ -159,6 +166,28 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       enabledBricks: features.enabled_bricks ?? [],
       profile: features.profile ?? null,
       mode: features.mode ?? null,
+      featuresLoaded: true,
+      featuresLastFetched: Date.now(),
     });
+  },
+
+  refreshFeatures: async () => {
+    const { client, featuresLastFetched } = get();
+    if (!client) return;
+    // TTL: skip if fetched within the last 10 seconds (Decision 13A)
+    if (Date.now() - featuresLastFetched < 10_000) return;
+    try {
+      const features = await client.get<{
+        profile: string;
+        mode: string;
+        enabled_bricks: string[];
+        disabled_bricks: string[];
+        version: string | null;
+        rate_limit_enabled: boolean;
+      }>("/api/v2/features");
+      get().setFeatures(features);
+    } catch {
+      // Non-critical: use last known state
+    }
   },
 }));

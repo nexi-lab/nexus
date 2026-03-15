@@ -13,6 +13,7 @@ import {
 } from "../../stores/versions-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { BrickGate } from "../../shared/components/brick-gate.js";
 import { TransactionList } from "./transaction-list.js";
 import { EntryDetail } from "./entry-detail.js";
 import { TransactionActions } from "./transaction-actions.js";
@@ -82,42 +83,44 @@ export default function VersionsPanel(): React.ReactNode {
   const filterLabel = statusFilter ? ` [${statusFilter}]` : " [all]";
 
   return (
-    <box height="100%" width="100%" flexDirection="column">
-      {/* Title bar */}
-      <box height={1} width="100%">
-        <text>
-          {isLoading
-            ? `Versions & Snapshots${filterLabel} -- loading...`
-            : error
-              ? `Versions & Snapshots${filterLabel} -- error: ${error}`
-              : `Versions & Snapshots${filterLabel} -- ${transactions.length} transactions`}
-        </text>
-      </box>
-
-      {/* Main content: transaction list + entry detail */}
-      <box flexGrow={1} flexDirection="row">
-        {/* Left pane: transaction list (40%) */}
-        <box width="40%" height="100%" borderStyle="single">
-          <TransactionList
-            transactions={transactions}
-            selectedIndex={selectedIndex}
-          />
+    <BrickGate brick="versioning">
+      <box height="100%" width="100%" flexDirection="column">
+        {/* Title bar */}
+        <box height={1} width="100%">
+          <text>
+            {isLoading
+              ? `Versions & Snapshots${filterLabel} -- loading...`
+              : error
+                ? `Versions & Snapshots${filterLabel} -- error: ${error}`
+                : `Versions & Snapshots${filterLabel} -- ${transactions.length} transactions`}
+          </text>
         </box>
 
-        {/* Right pane: entry detail (60%) */}
-        <box width="60%" height="100%" borderStyle="single">
-          <EntryDetail
-            transaction={selectedTransaction}
-            entries={entries}
-            isLoading={entriesLoading}
-          />
+        {/* Main content: transaction list + entry detail */}
+        <box flexGrow={1} flexDirection="row">
+          {/* Left pane: transaction list (40%) */}
+          <box width="40%" height="100%" borderStyle="single">
+            <TransactionList
+              transactions={transactions}
+              selectedIndex={selectedIndex}
+            />
+          </box>
+
+          {/* Right pane: entry detail (60%) */}
+          <box width="60%" height="100%" borderStyle="single">
+            <EntryDetail
+              transaction={selectedTransaction}
+              entries={entries}
+              isLoading={entriesLoading}
+            />
+          </box>
+        </box>
+
+        {/* Help bar */}
+        <box height={1} width="100%">
+          <TransactionActions transaction={selectedTransaction} />
         </box>
       </box>
-
-      {/* Help bar */}
-      <box height={1} width="100%">
-        <TransactionActions transaction={selectedTransaction} />
-      </box>
-    </box>
+    </BrickGate>
   );
 }

@@ -15,10 +15,10 @@ from nexus.contracts.auth_store_types import (
     ZoneDTO,
 )
 from nexus.storage.auth_stores import (
+    MetastoreSettingsStore,
     SQLAlchemyAPIKeyStore,
     SQLAlchemyOAuthAccountStore,
     SQLAlchemyOAuthCredentialStore,
-    SQLAlchemySettingsStore,
     SQLAlchemyUserStore,
     SQLAlchemyZoneStore,
 )
@@ -317,8 +317,10 @@ class TestZoneStore:
 
 class TestSettingsStore:
     @pytest.fixture()
-    def store(self, session_factory):
-        return SQLAlchemySettingsStore(session_factory)
+    def store(self):
+        from tests.helpers.dict_metastore import DictMetastore
+
+        return MetastoreSettingsStore(DictMetastore())
 
     def test_set_and_get_setting(self, store):
         store.set_setting("key1", "value1", description="desc")

@@ -1326,15 +1326,15 @@ class NexusFS(  # type: ignore[misc]
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(path, is_admin=is_admin, check_write=False)
 
-        # DT_PIPE / DT_STREAM bypass
+        # DT_PIPE / DT_STREAM bypass (sync — range reads not applicable)
         from nexus.core.router import PipeRouteResult, StreamRouteResult
 
         if isinstance(route, PipeRouteResult | StreamRouteResult):
-            # Not applicable for range reads; return sentinel
+            # Range reads not applicable; use sync non-blocking path
             if isinstance(route, PipeRouteResult):
-                content = self._pipe_read(path, count=None, offset=0)
+                content = self._pipe_manager._get_buffer(path).read_nowait()
             else:
-                content = self._stream_read(path, count=None, offset=0)
+                content, _ = self._stream_manager.stream_read_at(path, 0)
             return (content, None, route, zone_id, agent_id)
 
         from dataclasses import replace
@@ -1479,9 +1479,9 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.router import PipeRouteResult, StreamRouteResult
 
         if isinstance(route, PipeRouteResult):
-            return self._pipe_read(path, count=count, offset=offset)
+            return await self._pipe_read(path, count=count, offset=offset)
         if isinstance(route, StreamRouteResult):
-            return self._stream_read(path, count=count, offset=offset)
+            return await self._stream_read(path, count=count, offset=offset)
 
         # Add backend_path to context for path-based connectors
         from dataclasses import replace
@@ -4442,9 +4442,9 @@ class NexusFS(  # type: ignore[misc]
             return None  # origin is self → local
         return addr.origin
 
-    def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_PIPE — non-blocking, raises PipeEmptyError if empty."""
-        from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeNotFoundError
+    async def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+        """Read from DT_PIPE — async blocking, waits until data is available."""
+        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
 
         if self._pipe_manager is None:
             raise NexusFileNotFoundError(path, "PipeManager not available")
@@ -4455,16 +4455,9 @@ class NexusFS(  # type: ignore[misc]
             return self._pipe_read_remote(remote_origin, path, count=count, offset=offset)
 
         try:
-            buf = self._pipe_manager._get_buffer(path)
+            data = await self._pipe_manager.pipe_read(path, blocking=True)
         except PipeNotFoundError:
-            try:
-                buf = self._pipe_manager.open(path)
-            except PipeNotFoundError:
-                raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
-        try:
-            data = buf.read_nowait()
-        except PipeEmptyError:
-            raise PipeEmptyError(f"pipe empty: {path}") from None
+            raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
         except PipeClosedError:
             raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
         if offset or count is not None:
@@ -4630,25 +4623,23 @@ class NexusFS(  # type: ignore[misc]
             return None
         return addr.origin
 
-    def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_STREAM — non-destructive, offset-based."""
-        from nexus.core.stream import StreamClosedError, StreamEmptyError, StreamNotFoundError
+    async def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+        """Read from DT_STREAM — async blocking, waits until data at offset is available."""
+        from nexus.core.stream import StreamClosedError, StreamNotFoundError
 
         # TODO: remote proxy (like _pipe_read_remote) when federation is wired
         try:
             if count is not None and count > 1:
-                items, _ = self._stream_manager.stream_read_batch(path, offset, count)
+                items, _ = await self._stream_manager.stream_read_batch_blocking(
+                    path, offset, count, blocking=True
+                )
                 return b"".join(items)
-            data, _ = self._stream_manager.stream_read_at(path, offset)
+            data, _ = await self._stream_manager.stream_read(path, offset, blocking=True)
             return data
         except StreamNotFoundError:
             raise NexusFileNotFoundError(path, f"Stream not found: {path}") from None
         except StreamClosedError:
             raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
-        except StreamEmptyError:
-            from nexus.core.stream import StreamEmptyError as _SE
-
-            raise _SE(f"stream empty at offset {offset}: {path}") from None
 
     def _stream_write(self, path: str, data: bytes) -> int:
         """Write to DT_STREAM — non-blocking append, returns byte offset."""

@@ -349,3 +349,168 @@ class TestStreamManagerFederation:
 
         meta = store["/s/test"]
         assert meta.backend_name == "stream@node1:5050"
+
+
+# ---------------------------------------------------------------------------
+# StreamBuffer — async blocking reads
+# ---------------------------------------------------------------------------
+
+
+class TestStreamBufferBlockingRead:
+    """Async blocking read waits for data, unblocks on push or close."""
+
+    async def test_blocking_read_with_existing_data(self):
+        """Blocking read returns immediately when data exists."""
+        buf = StreamBuffer(capacity=1024)
+        buf.write_nowait(b"hello")
+        data, next_off = await buf.read(0, blocking=True)
+        assert data == b"hello"
+        assert next_off > 0
+
+    async def test_blocking_read_waits_for_push(self):
+        """Blocking read blocks until producer pushes data."""
+        import asyncio
+
+        buf = StreamBuffer(capacity=1024)
+        results = []
+
+        async def consumer():
+            data, _ = await buf.read(0, blocking=True)
+            results.append(data)
+
+        async def producer():
+            await asyncio.sleep(0.01)
+            buf.write_nowait(b"delayed")
+
+        await asyncio.gather(consumer(), producer())
+        assert results == [b"delayed"]
+
+    async def test_blocking_read_unblocks_on_close(self):
+        """Blocking read raises StreamClosedError when buffer is closed."""
+        import asyncio
+
+        buf = StreamBuffer(capacity=1024)
+
+        async def consumer():
+            with pytest.raises(StreamClosedError):
+                await buf.read(0, blocking=True)
+
+        async def closer():
+            await asyncio.sleep(0.01)
+            buf.close()
+
+        await asyncio.gather(consumer(), closer())
+
+    async def test_non_blocking_read_raises_empty(self):
+        """Non-blocking read raises StreamEmptyError immediately."""
+        buf = StreamBuffer(capacity=1024)
+        with pytest.raises(StreamEmptyError):
+            await buf.read(0, blocking=False)
+
+    async def test_blocking_batch_waits_for_push(self):
+        """Blocking batch read waits until data is available."""
+        import asyncio
+
+        buf = StreamBuffer(capacity=1024)
+        results = []
+
+        async def consumer():
+            items, _ = await buf.read_batch_blocking(0, count=5, blocking=True)
+            results.extend(items)
+
+        async def producer():
+            await asyncio.sleep(0.01)
+            buf.write_nowait(b"a")
+            buf.write_nowait(b"b")
+
+        await asyncio.gather(consumer(), producer())
+        assert len(results) >= 1  # at least one message
+
+    async def test_multi_reader_blocking(self):
+        """Multiple async readers unblock independently."""
+        import asyncio
+
+        buf = StreamBuffer(capacity=1024)
+        r1_result = []
+        r2_result = []
+
+        async def reader1():
+            data, _ = await buf.read(0, blocking=True)
+            r1_result.append(data)
+
+        async def reader2():
+            data, _ = await buf.read(0, blocking=True)
+            r2_result.append(data)
+
+        async def producer():
+            await asyncio.sleep(0.01)
+            buf.write_nowait(b"shared")
+
+        await asyncio.gather(reader1(), reader2(), producer())
+        # Both readers see same data (non-destructive)
+        assert r1_result == [b"shared"]
+        assert r2_result == [b"shared"]
+
+
+# ---------------------------------------------------------------------------
+# StreamManager — async blocking reads
+# ---------------------------------------------------------------------------
+
+
+class TestStreamManagerBlockingRead:
+    """StreamManager async blocking read API."""
+
+    @pytest.fixture()
+    def manager(self):
+        from unittest.mock import MagicMock
+
+        from nexus.contracts.metadata import FileMetadata
+
+        store: dict[str, FileMetadata] = {}
+        mock = MagicMock()
+        mock.get = lambda p: store.get(p)
+        mock.put = lambda m: store.__setitem__(m.path, m)
+        mock.delete = lambda p: store.pop(p, None)
+
+        from nexus.core.stream_manager import StreamManager
+
+        return StreamManager(mock, zone_id="root")
+
+    async def test_stream_read_blocking(self, manager):
+        """stream_read() blocks until data arrives."""
+        import asyncio
+
+        manager.create("/s/test", capacity=1024)
+        results = []
+
+        async def consumer():
+            data, _ = await manager.stream_read("/s/test", 0, blocking=True)
+            results.append(data)
+
+        async def producer():
+            await asyncio.sleep(0.01)
+            manager.stream_write_nowait("/s/test", b"token1")
+
+        await asyncio.gather(consumer(), producer())
+        assert results == [b"token1"]
+
+    async def test_stream_read_batch_blocking(self, manager):
+        """stream_read_batch_blocking() blocks until data arrives."""
+        import asyncio
+
+        manager.create("/s/test", capacity=1024)
+        results = []
+
+        async def consumer():
+            items, _ = await manager.stream_read_batch_blocking(
+                "/s/test", 0, count=10, blocking=True
+            )
+            results.extend(items)
+
+        async def producer():
+            await asyncio.sleep(0.01)
+            manager.stream_write_nowait("/s/test", b"a")
+            manager.stream_write_nowait("/s/test", b"b")
+
+        await asyncio.gather(consumer(), producer())
+        assert len(results) >= 1

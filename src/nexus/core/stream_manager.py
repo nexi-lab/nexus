@@ -253,6 +253,16 @@ class StreamManager:
         """
         return self._get_buffer(path).read_at(byte_offset)
 
+    async def stream_read(
+        self, path: str, byte_offset: int = 0, *, blocking: bool = True
+    ) -> tuple[bytes, int]:
+        """Async read one message. Blocks until data at offset is available.
+
+        No lock needed — reads are non-destructive and lock-free.
+        Returns (data, next_offset).
+        """
+        return await self._get_buffer(path).read(byte_offset, blocking=blocking)
+
     def stream_read_batch(
         self, path: str, byte_offset: int = 0, count: int = 10
     ) -> tuple[list[bytes], int]:
@@ -261,6 +271,17 @@ class StreamManager:
         Returns (list_of_bytes, next_offset).
         """
         return self._get_buffer(path).read_batch(byte_offset, count)
+
+    async def stream_read_batch_blocking(
+        self, path: str, byte_offset: int = 0, count: int = 10, *, blocking: bool = True
+    ) -> tuple[list[bytes], int]:
+        """Async read up to `count` messages. Blocks until at least one available.
+
+        Returns (list_of_bytes, next_offset).
+        """
+        return await self._get_buffer(path).read_batch_blocking(
+            byte_offset, count, blocking=blocking
+        )
 
     # ------------------------------------------------------------------
     # Observability

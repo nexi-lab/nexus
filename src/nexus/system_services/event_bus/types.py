@@ -8,7 +8,7 @@ Per NEXUS-LEGO-ARCHITECTURE §2.4:
 - System services tier provides EventBus and EventLog implementations
 - Both tiers can use the same data types (upward import is allowed)
 
-Protocols and implementations live in nexus.system_services.event_subsystem.bus.
+Protocols and implementations live in nexus.system_services.event_bus.
 """
 
 import json

@@ -27,13 +27,13 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.operation_types import OperationType
-from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.storage.record_store import RecordStoreABC
-    from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
+    from nexus.system_services.event_log.exporter_registry import ExporterRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +307,7 @@ class EventDeliveryWorker:
         if retries >= self._max_retries:
             # Route to DLQ and mark delivered to stop re-polling
             try:
-                from nexus.system_services.event_subsystem.log.dead_letter import DeadLetterHandler
+                from nexus.system_services.event_log.dead_letter import DeadLetterHandler
 
                 handler = DeadLetterHandler()
                 handler.route_to_dlq(
@@ -351,7 +351,7 @@ class EventDeliveryWorker:
 
         # Route per-exporter failures to DLQ
         if failures:
-            from nexus.system_services.event_subsystem.log.dead_letter import DeadLetterHandler
+            from nexus.system_services.event_log.dead_letter import DeadLetterHandler
 
             handler = DeadLetterHandler()
             # Build event_id -> (event, record) map

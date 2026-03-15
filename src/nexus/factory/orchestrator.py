@@ -539,7 +539,7 @@ def _register_vfs_hooks(
     # Late-binding (Issue #969): always register with bus_provider=nx so that
     # post-construction overrides of nx._event_bus (e.g. E2E test fixtures
     # injecting a shared Redis bus) are picked up automatically.
-    from nexus.system_services.event_subsystem.bus.observer import EventBusObserver
+    from nexus.system_services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(bus_provider=nx)
     dispatch.register_observe(_bus_observer)

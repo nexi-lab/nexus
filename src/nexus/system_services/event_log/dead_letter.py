@@ -11,12 +11,12 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from nexus.system_services.event_subsystem.types import FileEvent
+from nexus.system_services.event_bus.types import FileEvent
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
+    from nexus.system_services.event_log.exporter_registry import ExporterRegistry
 
 logger = logging.getLogger(__name__)
 

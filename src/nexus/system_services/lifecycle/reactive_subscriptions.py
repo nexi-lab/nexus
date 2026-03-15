@@ -40,7 +40,7 @@ from nexus.storage.read_set import ReadSetRegistry
 
 if TYPE_CHECKING:
     from nexus.storage.read_set import ReadSet
-    from nexus.system_services.event_subsystem.types import FileEvent
+    from nexus.system_services.event_bus.types import FileEvent
 
 logger = logging.getLogger(__name__)
 

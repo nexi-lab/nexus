@@ -10,7 +10,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from nexus.core.file_events import FileEvent, FileEventType
-from nexus.system_services.event_subsystem.log.delivery import EventDeliveryWorker
+from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
 
 def _make_record(
@@ -156,7 +156,7 @@ class TestDeliveryWorkerOrdering:
         )
 
         with patch(
-            "nexus.system_services.event_subsystem.log.delivery._run_async",
+            "nexus.system_services.event_log.delivery._run_async",
             side_effect=lambda coro, loop=None: asyncio.run(coro),  # noqa: ARG005
         ):
             worker._dispatch_event_internal(worker._build_file_event(record), record)
@@ -170,7 +170,7 @@ class TestKafkaExporterPartitionKey:
 
     def test_publish_uses_zone_id_key(self):
         """Single publish uses zone_id as Kafka key."""
-        from nexus.system_services.event_subsystem.log.exporters.kafka_exporter import (
+        from nexus.system_services.event_log.exporters.kafka_exporter import (
             KafkaExporter,
         )
 
@@ -199,7 +199,7 @@ class TestKafkaExporterPartitionKey:
 
     def test_publish_batch_uses_zone_id_key(self):
         """Batch publish uses zone_id as Kafka key for each event."""
-        from nexus.system_services.event_subsystem.log.exporters.kafka_exporter import (
+        from nexus.system_services.event_log.exporters.kafka_exporter import (
             KafkaExporter,
         )
 

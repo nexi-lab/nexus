@@ -4,7 +4,7 @@ Provides Kafka, NATS, and Google Pub/Sub exporters that implement
 EventStreamExporterProtocol. Each exporter is an optional dependency.
 """
 
-from nexus.system_services.event_subsystem.log.exporters.config import (
+from nexus.system_services.event_log.exporters.config import (
     EventStreamConfig,
     KafkaExporterConfig,
     NatsExporterConfig,

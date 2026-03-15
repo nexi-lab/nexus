@@ -50,7 +50,7 @@ _FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
 _FACTORY_SKIP: frozenset[str] = frozenset(
     {
         # --- Not from nexus/bricks/ (services/infrastructure) ---
-        "event_bus",  # nexus/services/event_subsystem/
+        "event_bus",  # nexus/system_services/event_bus/
         "lock_manager",  # nexus/raft/
         "chunked_upload_service",  # nexus/services/upload/
         "task_queue_service",  # nexus/system_services/lifecycle/

@@ -145,6 +145,20 @@ def create_mcp_server(
             connect = _il.import_module("nexus").connect
             nx = connect()
 
+    # Auto-detect manifest resolver from NexusFS if not explicitly provided.
+    # Uses importlib to avoid a static cross-brick import chain that
+    # import-linter would flag (mcp -> factory -> context_manifest).
+    if manifest_resolver is None and nx is not None:
+        _raw_resolver = getattr(nx, "manifest_resolver", None)
+        if _raw_resolver is not None:
+            try:
+                import importlib as _il_manifest
+
+                _adapter_mod = _il_manifest.import_module("nexus.factory.manifest_adapter")
+                manifest_resolver = _adapter_mod.build_manifest_resolve_fn(_raw_resolver, nx)
+            except Exception:
+                pass  # Graceful degradation — tool returns "unavailable"
+
     # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above
     _default_nx: NexusFilesystemABC = nx

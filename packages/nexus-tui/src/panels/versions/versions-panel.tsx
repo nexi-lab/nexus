@@ -13,9 +13,10 @@ import {
 } from "../../stores/versions-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { BrickGate } from "../../shared/components/brick-gate.js";
 import { TransactionList } from "./transaction-list.js";
 import { EntryDetail } from "./entry-detail.js";
-import { TransactionActions } from "./transaction-actions.js";
+import { ConflictsView } from "./conflicts-tab.js";
 
 export default function VersionsPanel(): React.ReactNode {
   const client = useApi();
@@ -29,13 +30,26 @@ export default function VersionsPanel(): React.ReactNode {
   const entries = useVersionsStore((s) => s.entries);
   const entriesLoading = useVersionsStore((s) => s.entriesLoading);
 
+  const conflicts = useVersionsStore((s) => s.conflicts);
+  const conflictsLoading = useVersionsStore((s) => s.conflictsLoading);
+  const showConflicts = useVersionsStore((s) => s.showConflicts);
+
+  const transactionDetail = useVersionsStore((s) => s.transactionDetail);
+  const transactionDetailLoading = useVersionsStore((s) => s.transactionDetailLoading);
+  const diffContent = useVersionsStore((s) => s.diffContent);
+  const diffLoading = useVersionsStore((s) => s.diffLoading);
+  const fetchTransactionDetail = useVersionsStore((s) => s.fetchTransactionDetail);
+
   const fetchTransactions = useVersionsStore((s) => s.fetchTransactions);
   const setSelectedIndex = useVersionsStore((s) => s.setSelectedIndex);
   const setStatusFilter = useVersionsStore((s) => s.setStatusFilter);
   const fetchEntries = useVersionsStore((s) => s.fetchEntries);
+  const fetchDiff = useVersionsStore((s) => s.fetchDiff);
   const beginTransaction = useVersionsStore((s) => s.beginTransaction);
   const commitTransaction = useVersionsStore((s) => s.commitTransaction);
   const rollbackTransaction = useVersionsStore((s) => s.rollbackTransaction);
+  const fetchConflicts = useVersionsStore((s) => s.fetchConflicts);
+  const toggleConflicts = useVersionsStore((s) => s.toggleConflicts);
 
   // Fetch transactions on mount and when filter changes
   useEffect(() => {
@@ -44,12 +58,13 @@ export default function VersionsPanel(): React.ReactNode {
     }
   }, [client, statusFilter, fetchTransactions]);
 
-  // Fetch entries when selection changes
+  // Fetch entries and transaction detail when selection changes
   useEffect(() => {
     if (client && selectedTransaction) {
       fetchEntries(selectedTransaction.transaction_id, client);
+      fetchTransactionDetail(selectedTransaction.transaction_id, client);
     }
-  }, [client, selectedTransaction, fetchEntries]);
+  }, [client, selectedTransaction, fetchEntries, fetchTransactionDetail]);
 
   // Keyboard navigation
   useKeyboard({
@@ -77,47 +92,92 @@ export default function VersionsPanel(): React.ReactNode {
       const next = nextStatusFilter(statusFilter);
       setStatusFilter(next);
     },
+    "d": () => {
+      // Show diff for the first entry of the selected transaction
+      if (!client || !selectedTransaction || entries.length === 0) return;
+      const entry = entries[0];
+      if (entry && entry.original_hash && entry.new_hash) {
+        fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+      }
+    },
+    "c": () => {
+      // Toggle conflicts view; fetch on first open
+      toggleConflicts();
+      if (!showConflicts && client) {
+        fetchConflicts(client);
+      }
+    },
   });
 
   const filterLabel = statusFilter ? ` [${statusFilter}]` : " [all]";
 
   return (
-    <box height="100%" width="100%" flexDirection="column">
-      {/* Title bar */}
-      <box height={1} width="100%">
-        <text>
-          {isLoading
-            ? `Versions & Snapshots${filterLabel} -- loading...`
-            : error
-              ? `Versions & Snapshots${filterLabel} -- error: ${error}`
-              : `Versions & Snapshots${filterLabel} -- ${transactions.length} transactions`}
-        </text>
-      </box>
-
-      {/* Main content: transaction list + entry detail */}
-      <box flexGrow={1} flexDirection="row">
-        {/* Left pane: transaction list (40%) */}
-        <box width="40%" height="100%" borderStyle="single">
-          <TransactionList
-            transactions={transactions}
-            selectedIndex={selectedIndex}
-          />
+    <BrickGate brick="versioning">
+      <box height="100%" width="100%" flexDirection="column">
+        {/* Title bar */}
+        <box height={1} width="100%">
+          <text>
+            {isLoading
+              ? `Versions & Snapshots${filterLabel} -- loading...`
+              : error
+                ? `Versions & Snapshots${filterLabel} -- error: ${error}`
+                : `Versions & Snapshots${filterLabel} -- ${transactions.length} transactions`}
+          </text>
         </box>
 
-        {/* Right pane: entry detail (60%) */}
-        <box width="60%" height="100%" borderStyle="single">
-          <EntryDetail
-            transaction={selectedTransaction}
-            entries={entries}
-            isLoading={entriesLoading}
-          />
+        {/* Main content: transaction list + entry detail */}
+        <box flexGrow={1} flexDirection="row">
+          {/* Left pane: transaction list (40%) */}
+          <box width="40%" height="100%" borderStyle="single">
+            <TransactionList
+              transactions={transactions}
+              selectedIndex={selectedIndex}
+            />
+          </box>
+
+          {/* Right pane: entry detail (60%) */}
+          <box width="60%" height="100%" borderStyle="single">
+            <EntryDetail
+              transaction={selectedTransaction}
+              entries={entries}
+              isLoading={entriesLoading}
+            />
+          </box>
+        </box>
+
+        {/* Transaction detail (below entry detail) */}
+        {transactionDetail && !transactionDetailLoading && (
+          <box height={3} width="100%">
+            <text>
+              {`Detail: zone=${transactionDetail.zone_id} agent=${transactionDetail.agent_id ?? "n/a"} entries=${transactionDetail.entry_count} created=${transactionDetail.created_at} expires=${transactionDetail.expires_at}`}
+            </text>
+          </box>
+        )}
+
+        {/* Diff viewer */}
+        {diffContent && !diffLoading && (
+          <box height={5} width="100%" borderStyle="single" flexDirection="column">
+            <box height={1} width="100%"><text>--- Old ---</text></box>
+            <box width="100%"><text>{diffContent.old.slice(0, 200)}</text></box>
+            <box height={1} width="100%"><text>--- New ---</text></box>
+            <box width="100%"><text>{diffContent.new.slice(0, 200)}</text></box>
+          </box>
+        )}
+
+        {/* Conflicts pane (toggleable) */}
+        <ConflictsView
+          conflicts={conflicts}
+          loading={conflictsLoading}
+          visible={showConflicts}
+        />
+
+        {/* Help bar */}
+        <box height={1} width="100%">
+          <text>
+            {"j/k:navigate  n:new txn  Enter:commit  Backspace:rollback  f:filter  d:diff  c:conflicts  q:quit"}
+          </text>
         </box>
       </box>
-
-      {/* Help bar */}
-      <box height={1} width="100%">
-        <TransactionActions transaction={selectedTransaction} />
-      </box>
-    </box>
+    </BrickGate>
   );
 }

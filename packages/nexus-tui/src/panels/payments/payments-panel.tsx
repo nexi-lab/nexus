@@ -8,6 +8,7 @@ import { usePaymentsStore } from "../../stores/payments-store.js";
 import type { PaymentsTab } from "../../stores/payments-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { BrickGate } from "../../shared/components/brick-gate.js";
 import { BalanceCard } from "./balance-card.js";
 import { ReservationList } from "./reservation-list.js";
 import { TransferForm } from "./transfer-form.js";
@@ -31,6 +32,10 @@ const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
   const [showTransfer, setShowTransfer] = useState(false);
+  const [affordInputMode, setAffordInputMode] = useState(false);
+  const [affordBuffer, setAffordBuffer] = useState("");
+  const [policyInputMode, setPolicyInputMode] = useState(false);
+  const [policyBuffer, setPolicyBuffer] = useState("");
 
   const balance = usePaymentsStore((s) => s.balance);
   const balanceLoading = usePaymentsStore((s) => s.balanceLoading);
@@ -61,6 +66,9 @@ export default function PaymentsPanel(): React.ReactNode {
   const fetchPolicies = usePaymentsStore((s) => s.fetchPolicies);
   const fetchBudget = usePaymentsStore((s) => s.fetchBudget);
   const deletePolicy = usePaymentsStore((s) => s.deletePolicy);
+  const checkAfford = usePaymentsStore((s) => s.checkAfford);
+  const affordResult = usePaymentsStore((s) => s.affordResult);
+  const createPolicy = usePaymentsStore((s) => s.createPolicy);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
   const setSelectedReservationIndex = usePaymentsStore(
     (s) => s.setSelectedReservationIndex,
@@ -103,10 +111,42 @@ export default function PaymentsPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, client]);
 
+  const handleAffordUnhandled = useCallback(
+    (keyName: string) => {
+      if (!affordInputMode) return;
+      if (keyName.length === 1 && /[\d.]/.test(keyName)) {
+        setAffordBuffer((b) => b + keyName);
+      }
+    },
+    [affordInputMode],
+  );
+
   useKeyboard(
     showTransfer
       ? {}
-      : {
+      : affordInputMode
+        ? {
+            return: () => {
+              const amount = affordBuffer.trim();
+              if (amount && client) checkAfford(amount, client);
+              setAffordInputMode(false);
+              setAffordBuffer("");
+            },
+            escape: () => { setAffordInputMode(false); setAffordBuffer(""); },
+            backspace: () => { setAffordBuffer((b) => b.slice(0, -1)); },
+          }
+        : policyInputMode
+          ? {
+              return: () => {
+                const name = policyBuffer.trim();
+                if (name && client) createPolicy(name, {}, client);
+                setPolicyInputMode(false);
+                setPolicyBuffer("");
+              },
+              escape: () => { setPolicyInputMode(false); setPolicyBuffer(""); },
+              backspace: () => { setPolicyBuffer((b) => b.slice(0, -1)); },
+            }
+          : {
           j: () => {
             if (activeTab === "reservations") {
               setSelectedReservationIndex(
@@ -207,83 +247,131 @@ export default function PaymentsPanel(): React.ReactNode {
               verifyIntegrity(selected.id, client);
             }
           },
+          a: () => {
+            if (activeTab === "balance") {
+              setAffordInputMode(true);
+              setAffordBuffer("");
+            }
+          },
+          "shift+n": () => {
+            if (activeTab === "policies") {
+              setPolicyInputMode(true);
+              setPolicyBuffer("");
+            }
+          },
         },
+    (affordInputMode || policyInputMode) ? (keyName: string) => {
+      if (affordInputMode && keyName.length === 1 && /[\d.]/.test(keyName)) {
+        setAffordBuffer((b) => b + keyName);
+      } else if (policyInputMode && keyName.length === 1) {
+        setPolicyBuffer((b) => b + keyName);
+      } else if (policyInputMode && keyName === "space") {
+        setPolicyBuffer((b) => b + " ");
+      }
+    } : undefined,
   );
 
   return (
-    <box height="100%" width="100%" flexDirection="column">
-      {/* Tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {TAB_ORDER.map((tab) => {
-            const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
-          }).join(" ")}
-        </text>
-      </box>
-
-      {/* Error display */}
-      {error && (
+    <BrickGate brick="pay">
+      <box height="100%" width="100%" flexDirection="column">
+        {/* Tab bar */}
         <box height={1} width="100%">
-          <text>{`Error: ${error}`}</text>
+          <text>
+            {TAB_ORDER.map((tab) => {
+              const label = TAB_LABELS[tab];
+              return tab === activeTab ? `[${label}]` : ` ${label} `;
+            }).join(" ")}
+          </text>
         </box>
-      )}
 
-      {/* Detail content */}
-      <box flexGrow={1} borderStyle="single">
-        {showTransfer ? (
-          <TransferForm
-            onSubmit={handleTransferSubmit}
-            onCancel={handleTransferCancel}
-          />
-        ) : (
-          <>
-            {activeTab === "balance" && (
-              <BalanceCard balance={balance} loading={balanceLoading} />
-            )}
-            {activeTab === "reservations" && (
-              <ReservationList
-                reservations={reservations}
-                selectedIndex={selectedReservationIndex}
-                loading={reservationsLoading}
-              />
-            )}
-            {activeTab === "transactions" && (
-              <TransactionList
-                transactions={transactions}
-                selectedIndex={selectedTransactionIndex}
-                loading={transactionsLoading}
-                hasMore={transactionsHasMore}
-                hasPrev={transactionsCursorStack.length > 0}
-                integrityResult={integrityResult}
-              />
-            )}
-            {activeTab === "policies" && (
-              <box flexDirection="column" height="100%" width="100%">
-                <BudgetCard budget={budget} loading={budgetLoading} />
-                <PolicyList
-                  policies={policies}
-                  selectedIndex={selectedPolicyIndex}
-                  loading={policiesLoading}
-                />
-              </box>
-            )}
-          </>
+        {/* Afford check input */}
+        {affordInputMode && (
+          <box height={1} width="100%">
+            <text>{`Check afford amount: ${affordBuffer}\u2588  (Enter:check  Escape:cancel)`}</text>
+          </box>
         )}
-      </box>
 
-      {/* Help bar */}
-      <box height={1} width="100%">
-        <text>
-          {showTransfer
-            ? "Tab:next field  Enter:submit  Escape:cancel"
-            : activeTab === "transactions"
-              ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  Tab:switch tab  r:refresh"
-              : activeTab === "policies"
-                ? "j/k:navigate  Tab:switch tab  d:delete  b:budget  r:refresh  q:quit"
-                : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
-        </text>
+        {/* Policy create input */}
+        {policyInputMode && (
+          <box height={1} width="100%">
+            <text>{`New policy name: ${policyBuffer}\u2588  (Enter:create  Escape:cancel)`}</text>
+          </box>
+        )}
+
+        {/* Error display */}
+        {error && (
+          <box height={1} width="100%">
+            <text>{`Error: ${error}`}</text>
+          </box>
+        )}
+
+        {/* Detail content */}
+        <box flexGrow={1} borderStyle="single">
+          {showTransfer ? (
+            <TransferForm
+              onSubmit={handleTransferSubmit}
+              onCancel={handleTransferCancel}
+            />
+          ) : (
+            <>
+              {activeTab === "balance" && (
+                <>
+                  <BalanceCard balance={balance} loading={balanceLoading} />
+                  {affordResult && (
+                    <box height={1} width="100%" marginTop={1}>
+                      <text>
+                        {`Afford check: ${affordResult.can_afford ? "YES" : "NO"} (balance=${affordResult.balance} requested=${affordResult.requested})`}
+                      </text>
+                    </box>
+                  )}
+                </>
+              )}
+              {activeTab === "reservations" && (
+                <ReservationList
+                  reservations={reservations}
+                  selectedIndex={selectedReservationIndex}
+                  loading={reservationsLoading}
+                />
+              )}
+              {activeTab === "transactions" && (
+                <TransactionList
+                  transactions={transactions}
+                  selectedIndex={selectedTransactionIndex}
+                  loading={transactionsLoading}
+                  hasMore={transactionsHasMore}
+                  hasPrev={transactionsCursorStack.length > 0}
+                  integrityResult={integrityResult}
+                />
+              )}
+              {activeTab === "policies" && (
+                <box flexDirection="column" height="100%" width="100%">
+                  <BudgetCard budget={budget} loading={budgetLoading} />
+                  <PolicyList
+                    policies={policies}
+                    selectedIndex={selectedPolicyIndex}
+                    loading={policiesLoading}
+                  />
+                </box>
+              )}
+            </>
+          )}
+        </box>
+
+        {/* Help bar */}
+        <box height={1} width="100%">
+          <text>
+            {showTransfer
+              ? "Tab:next field  Enter:submit  Escape:cancel"
+              : activeTab === "transactions"
+                ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  Tab:switch tab  r:refresh"
+                : activeTab === "policies"
+                  ? "j/k:navigate  Tab:switch tab  Shift+N:new  d:delete  b:budget  r:refresh  q:quit"
+                  : activeTab === "balance"
+                  ? "Tab:switch tab  t:transfer  a:afford check  r:refresh  q:quit"
+                  : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
+          </text>
+        </box>
       </box>
-    </box>
+    </BrickGate>
   );
 }

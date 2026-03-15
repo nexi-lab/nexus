@@ -81,7 +81,25 @@ export interface InboxMessage {
   readonly filename: string;
 }
 
-export type AgentTab = "status" | "delegations" | "inbox";
+export interface AgentListItem {
+  readonly agent_id: string;
+  readonly owner_id: string;
+  readonly zone_id: string | null;
+  readonly name: string | null;
+  readonly state: string;
+  readonly generation: number;
+}
+
+export interface TrajectoryItem {
+  readonly trace_id: string;
+  readonly agent_id: string;
+  readonly status: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly step_count: number;
+}
+
+export type AgentTab = "status" | "delegations" | "inbox" | "trajectories";
 
 // =============================================================================
 // Store
@@ -93,6 +111,10 @@ export interface AgentsState {
   readonly selectedAgentId: string | null;
   readonly selectedAgentIndex: number;
 
+  // Fetched agent list
+  readonly agents: readonly AgentListItem[];
+  readonly agentsLoading: boolean;
+
   // Detail tabs
   readonly activeTab: AgentTab;
 
@@ -101,6 +123,14 @@ export interface AgentsState {
   readonly agentSpec: AgentSpec | null;
   readonly agentIdentity: AgentIdentity | null;
   readonly statusLoading: boolean;
+
+  // Trust score
+  readonly trustScore: number | null;
+  readonly trustScoreLoading: boolean;
+
+  // Reputation
+  readonly reputation: unknown | null;
+  readonly reputationLoading: boolean;
 
   // Delegations
   readonly delegations: readonly DelegationItem[];
@@ -112,6 +142,10 @@ export interface AgentsState {
   readonly inboxCount: number;
   readonly inboxLoading: boolean;
 
+  // Trajectories
+  readonly trajectories: readonly TrajectoryItem[];
+  readonly trajectoriesLoading: boolean;
+
   // Error
   readonly error: string | null;
 
@@ -120,12 +154,19 @@ export interface AgentsState {
   readonly setSelectedAgentIndex: (index: number) => void;
   readonly setActiveTab: (tab: AgentTab) => void;
   readonly addKnownAgent: (id: string) => void;
+  readonly fetchAgents: (zoneId: string, client: FetchClient) => Promise<void>;
   readonly fetchAgentStatus: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchAgentSpec: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchAgentIdentity: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchDelegations: (client: FetchClient) => Promise<void>;
   readonly fetchInbox: (agentId: string, client: FetchClient) => Promise<void>;
+  readonly fetchTrajectories: (agentId: string, client: FetchClient) => Promise<void>;
   readonly revokeDelegation: (delegationId: string, client: FetchClient) => Promise<void>;
+  readonly warmupAgent: (agentId: string, client: FetchClient) => Promise<void>;
+  readonly evictAgent: (agentId: string, client: FetchClient) => Promise<void>;
+  readonly verifyAgent: (agentId: string, client: FetchClient) => Promise<void>;
+  readonly fetchTrustScore: (agentId: string, client: FetchClient) => Promise<void>;
+  readonly fetchAgentReputation: (agentId: string, client: FetchClient) => Promise<void>;
   readonly setSelectedDelegationIndex: (index: number) => void;
 }
 
@@ -133,17 +174,25 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   knownAgents: [],
   selectedAgentId: null,
   selectedAgentIndex: 0,
+  agents: [],
+  agentsLoading: false,
   activeTab: "status",
   agentStatus: null,
   agentSpec: null,
   agentIdentity: null,
   statusLoading: false,
+  trustScore: null,
+  trustScoreLoading: false,
+  reputation: null,
+  reputationLoading: false,
   delegations: [],
   delegationsLoading: false,
   selectedDelegationIndex: 0,
   inboxMessages: [],
   inboxCount: 0,
   inboxLoading: false,
+  trajectories: [],
+  trajectoriesLoading: false,
   error: null,
 
   setSelectedAgentId: (id) => {
@@ -249,6 +298,24 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     }
   },
 
+  fetchTrajectories: async (agentId, client) => {
+    set({ trajectoriesLoading: true, error: null });
+    try {
+      const response = await client.get<{
+        readonly trajectories: readonly TrajectoryItem[];
+      }>(`/api/v2/trajectories?agent_id=${encodeURIComponent(agentId)}&limit=20`);
+      set({
+        trajectories: response.trajectories ?? [],
+        trajectoriesLoading: false,
+      });
+    } catch (err) {
+      set({
+        trajectoriesLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch trajectories",
+      });
+    }
+  },
+
   revokeDelegation: async (delegationId, client) => {
     try {
       await client.delete(`/api/v2/agents/delegate/${encodeURIComponent(delegationId)}`);
@@ -262,6 +329,84 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Failed to revoke delegation",
+      });
+    }
+  },
+
+  fetchAgents: async (zoneId, client) => {
+    set({ agentsLoading: true, error: null });
+    try {
+      const response = await client.get<{
+        readonly agents: readonly AgentListItem[];
+      }>(`/api/v2/agents?zone_id=${encodeURIComponent(zoneId)}&limit=50&offset=0`);
+      set({ agents: response.agents, agentsLoading: false });
+    } catch (err) {
+      set({
+        agentsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch agents",
+      });
+    }
+  },
+
+  warmupAgent: async (agentId, client) => {
+    set({ error: null });
+    try {
+      await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/warmup`, {});
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to warmup agent",
+      });
+    }
+  },
+
+  evictAgent: async (agentId, client) => {
+    set({ error: null });
+    try {
+      await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/evict`, {});
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to evict agent",
+      });
+    }
+  },
+
+  verifyAgent: async (agentId, client) => {
+    set({ error: null });
+    try {
+      await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/verify`, {});
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to verify agent",
+      });
+    }
+  },
+
+  fetchTrustScore: async (agentId, client) => {
+    set({ trustScoreLoading: true, error: null });
+    try {
+      const response = await client.get<{ readonly trust_score: number }>(
+        `/api/v2/agents/${encodeURIComponent(agentId)}/trust-score`,
+      );
+      set({ trustScore: response.trust_score, trustScoreLoading: false });
+    } catch (err) {
+      set({
+        trustScoreLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch trust score",
+      });
+    }
+  },
+
+  fetchAgentReputation: async (agentId, client) => {
+    set({ reputationLoading: true, error: null });
+    try {
+      const response = await client.get<unknown>(
+        `/api/v2/agents/${encodeURIComponent(agentId)}/reputation`,
+      );
+      set({ reputation: response, reputationLoading: false });
+    } catch (err) {
+      set({
+        reputationLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch agent reputation",
       });
     }
   },

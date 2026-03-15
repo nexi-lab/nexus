@@ -38,6 +38,18 @@ interface TransactionListResponse {
   readonly count: number;
 }
 
+export interface ConflictItem {
+  readonly path: string;
+  readonly reason: string;
+  readonly expected_hash: string | null;
+  readonly current_hash: string | null;
+  readonly transaction_id: string | null;
+}
+
+interface ConflictsResponse {
+  readonly conflicts: readonly ConflictItem[];
+}
+
 // =============================================================================
 // Status filter cycle
 // =============================================================================
@@ -82,6 +94,15 @@ export interface VersionsState {
   readonly diffContent: DiffContent | null;
   readonly diffLoading: boolean;
 
+  // Transaction detail
+  readonly transactionDetail: Transaction | null;
+  readonly transactionDetailLoading: boolean;
+
+  // Conflicts
+  readonly conflicts: readonly ConflictItem[];
+  readonly conflictsLoading: boolean;
+  readonly showConflicts: boolean;
+
   // Actions
   readonly fetchTransactions: (client: FetchClient) => Promise<void>;
   readonly selectTransaction: (txn: Transaction) => void;
@@ -94,6 +115,7 @@ export interface VersionsState {
     version2: string,
     client: FetchClient,
   ) => Promise<void>;
+  readonly fetchTransactionDetail: (txnId: string, client: FetchClient) => Promise<void>;
   readonly beginTransaction: (
     client: FetchClient,
     description?: string,
@@ -101,6 +123,8 @@ export interface VersionsState {
   ) => Promise<void>;
   readonly commitTransaction: (txnId: string, client: FetchClient) => Promise<void>;
   readonly rollbackTransaction: (txnId: string, client: FetchClient) => Promise<void>;
+  readonly fetchConflicts: (client: FetchClient) => Promise<void>;
+  readonly toggleConflicts: () => void;
 }
 
 export const useVersionsStore = create<VersionsState>((set, get) => ({
@@ -114,6 +138,11 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
   entriesLoading: false,
   diffContent: null,
   diffLoading: false,
+  transactionDetail: null,
+  transactionDetailLoading: false,
+  conflicts: [],
+  conflictsLoading: false,
+  showConflicts: false,
 
   fetchTransactions: async (client) => {
     set({ isLoading: true, error: null });
@@ -203,6 +232,21 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
     }
   },
 
+  fetchTransactionDetail: async (txnId, client) => {
+    set({ transactionDetailLoading: true, error: null });
+    try {
+      const detail = await client.get<Transaction>(
+        `/api/v2/snapshots/${encodeURIComponent(txnId)}`,
+      );
+      set({ transactionDetail: detail, transactionDetailLoading: false });
+    } catch (err) {
+      set({
+        transactionDetailLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch transaction detail",
+      });
+    }
+  },
+
   beginTransaction: async (client, description, ttlSeconds) => {
     set({ error: null });
 
@@ -250,5 +294,29 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         error: err instanceof Error ? err.message : "Failed to rollback transaction",
       });
     }
+  },
+
+  fetchConflicts: async (client) => {
+    set({ conflictsLoading: true, error: null });
+
+    try {
+      const response = await client.get<ConflictsResponse>(
+        "/api/v2/sync/conflicts",
+      );
+      set({
+        conflicts: response.conflicts ?? [],
+        conflictsLoading: false,
+      });
+    } catch (err) {
+      set({
+        conflicts: [],
+        conflictsLoading: false,
+        error: err instanceof Error ? err.message : "Failed to fetch conflicts",
+      });
+    }
+  },
+
+  toggleConflicts: () => {
+    set((state) => ({ showConflicts: !state.showConflicts }));
   },
 }));

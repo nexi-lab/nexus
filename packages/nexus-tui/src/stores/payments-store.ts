@@ -153,6 +153,9 @@ export interface PaymentsState {
   readonly budget: BudgetSummary | null;
   readonly budgetLoading: boolean;
 
+  // Affordability check
+  readonly affordResult: { can_afford: boolean; balance: string; requested: string } | null;
+
   // UI state
   readonly activeTab: PaymentsTab;
   readonly error: string | null;
@@ -180,6 +183,8 @@ export interface PaymentsState {
   readonly fetchBudget: (client: FetchClient) => Promise<void>;
   readonly deletePolicy: (policyId: string, client: FetchClient) => Promise<void>;
   readonly verifyIntegrity: (recordId: string, client: FetchClient) => Promise<IntegrityResult | null>;
+  readonly createPolicy: (name: string, rules: Record<string, unknown>, client: FetchClient) => Promise<void>;
+  readonly checkAfford: (amount: string, client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: PaymentsTab) => void;
   readonly setSelectedReservationIndex: (index: number) => void;
   readonly setSelectedTransactionIndex: (index: number) => void;
@@ -203,6 +208,7 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   policiesLoading: false,
   budget: null,
   budgetLoading: false,
+  affordResult: null,
   activeTab: "balance",
   error: null,
 
@@ -422,6 +428,28 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
           err instanceof Error ? err.message : "Failed to verify integrity",
       });
       return null;
+    }
+  },
+
+  createPolicy: async (name, rules, client) => {
+    set({ policiesLoading: true, error: null });
+    try {
+      await client.post("/api/v2/pay/policies", { name, rules });
+      await get().fetchPolicies(client);
+    } catch (err) {
+      set({ policiesLoading: false, error: err instanceof Error ? err.message : "Failed to create policy" });
+    }
+  },
+
+  checkAfford: async (amount, client) => {
+    set({ error: null });
+    try {
+      const result = await client.get<{ can_afford: boolean; balance: string; requested: string }>(
+        `/api/v2/pay/can-afford?amount=${encodeURIComponent(amount)}`,
+      );
+      set({ affordResult: result });
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : "Failed to check affordability" });
     }
   },
 

@@ -197,9 +197,7 @@ def create_async_files_router(
             # Build write kwargs with optional write_mode (Issue #2929)
             write_kwargs: dict[str, Any] = {
                 "path": request.path,
-                "content": content,
-                "if_match": request.if_match,
-                "if_none_match": request.if_none_match,
+                "buf": content,
                 "context": context,
             }
             if write_mode is not None:
@@ -220,11 +218,14 @@ def create_async_files_router(
                 **write_kwargs,
             )
 
+            modified = result["modified_at"]
+            if hasattr(modified, "isoformat"):
+                modified = modified.isoformat()
             response_data = WriteResponse(
                 etag=result["etag"],
                 version=result["version"],
                 size=result["size"],
-                modified_at=result["modified_at"],
+                modified_at=str(modified),
             )
             return Response(
                 content=response_data.model_dump_json(),
@@ -270,7 +271,7 @@ def create_async_files_router(
 
             # Get metadata first for ETag check
             if if_none_match:
-                meta = await asyncio.to_thread(fs.get_metadata, path)
+                meta = await asyncio.to_thread(fs.sys_stat, path)
                 if meta and meta.etag:
                     client_etag = if_none_match.strip('"')
                     if client_etag == meta.etag:
@@ -335,8 +336,8 @@ def create_async_files_router(
         """Delete a file."""
         try:
             fs = await _get_fs()
-            result = await asyncio.to_thread(fs.delete, path, context=context)
-            return DeleteResponse(deleted=result["deleted"], path=result["path"])
+            await asyncio.to_thread(fs.sys_unlink, path, context=context)
+            return DeleteResponse(deleted=True, path=path)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -360,7 +361,7 @@ def create_async_files_router(
         """Check if a file or directory exists."""
         try:
             fs = await _get_fs()
-            exists = await asyncio.to_thread(fs.exists, path, context=context)
+            exists = await asyncio.to_thread(fs.sys_access, path, context=context)
             return ExistsResponse(exists=exists)
 
         except NexusPermissionError as e:
@@ -385,7 +386,9 @@ def create_async_files_router(
             fs = await _get_fs()
 
             # NexusFS.list() returns full paths; strip prefix to get names
-            full_paths = await asyncio.to_thread(fs.list, path, recursive=False, context=context)
+            full_paths = await asyncio.to_thread(
+                fs.sys_readdir, path, recursive=False, context=context
+            )
             prefix = path.rstrip("/") + "/"
             items = [
                 fp[len(prefix) :] if fp.startswith(prefix) else fp.rsplit("/", 1)[-1]
@@ -416,7 +419,7 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
             await asyncio.to_thread(
-                fs.mkdir, request.path, parents=request.parents, context=context
+                fs.sys_mkdir, request.path, parents=request.parents, context=context
             )
             return {"created": True, "path": request.path}
 
@@ -444,7 +447,7 @@ def create_async_files_router(
         """Get file or directory metadata."""
         try:
             fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.get_metadata, path, context=context)
+            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -531,7 +534,7 @@ def create_async_files_router(
 
         try:
             fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.get_metadata, path, context=context)
+            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 

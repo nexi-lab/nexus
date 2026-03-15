@@ -5,6 +5,10 @@ Provides endpoints for coordinator-initiated agent delegation:
 - DELETE /api/v2/agents/delegate/{id}          — Revoke delegation
 - GET    /api/v2/agents/delegate               — List coordinator's delegations
 - GET    /api/v2/agents/delegate/{id}/chain    — Trace delegation chain
+- POST   /api/v2/agents/delegate/{id}/complete — Complete delegation with feedback
+- GET    /api/v2/agents/delegate/{id}/namespace — Namespace detail
+- PATCH  /api/v2/agents/delegate/{id}/namespace — Update namespace config
+- GET    /api/v2/agents/delegate/{id}          — Single delegation detail
 """
 
 import logging
@@ -179,6 +183,26 @@ class CompleteDelegationRequest(BaseModel):
     quality_score: float | None = Field(
         default=None, ge=0.0, le=1.0, description="Optional quality rating (0.0-1.0)"
     )
+
+
+class DelegationDetailResponse(BaseModel):
+    """Full delegation detail response."""
+
+    delegation_id: str
+    agent_id: str
+    parent_agent_id: str
+    delegation_mode: str
+    status: str
+    scope_prefix: str | None
+    lease_expires_at: datetime | None
+    zone_id: str | None
+    intent: str
+    depth: int
+    can_sub_delegate: bool
+    created_at: datetime
+    removed_grants: list[str]
+    added_grants: list[str]
+    readonly_paths: list[str]
 
 
 # =============================================================================
@@ -624,6 +648,40 @@ async def complete_delegation(
         "delegation_id": delegation_id,
         "outcome": request.outcome,
     }
+
+
+@router.get("/{delegation_id}", response_model=DelegationDetailResponse)
+async def get_delegation_detail(
+    delegation_id: str,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    service: Any = Depends(_get_delegation_service),
+) -> DelegationDetailResponse:
+    """Get a single delegation by ID."""
+    subject_type = auth_result.get("subject_type", "")
+    if subject_type != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can view delegations.")
+
+    record = service.get_delegation_by_id(delegation_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
+
+    return DelegationDetailResponse(
+        delegation_id=record.delegation_id,
+        agent_id=record.agent_id,
+        parent_agent_id=record.parent_agent_id,
+        delegation_mode=record.delegation_mode.value,
+        status=record.status.value,
+        scope_prefix=record.scope_prefix,
+        lease_expires_at=record.lease_expires_at,
+        zone_id=record.zone_id,
+        intent=record.intent,
+        depth=record.depth,
+        can_sub_delegate=record.can_sub_delegate,
+        created_at=record.created_at,
+        removed_grants=list(record.removed_grants),
+        added_grants=list(record.added_grants),
+        readonly_paths=list(record.readonly_paths),
+    )
 
 
 # =============================================================================

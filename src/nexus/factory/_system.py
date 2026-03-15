@@ -180,6 +180,7 @@ def _boot_system_services(
             extraction_hook = make_extraction_hook(
                 session_factory=ctx.record_store.session_factory,
                 backend=ctx.backend,
+                metastore=ctx.metadata_store,
                 max_extract_bytes=100 * 1024 * 1024,  # 100MB
             )
             write_observer.register_post_flush_hook(extraction_hook)

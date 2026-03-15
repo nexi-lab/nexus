@@ -22,10 +22,38 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _read_content(
+    metadata: dict[str, Any],
+    backend: Any,
+    metastore: Any,
+    path: str,
+) -> bytes | None:
+    """Read file content from inline storage or CAS backend."""
+    from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
+
+    physical_path = metadata.get("physical_path", "")
+    if physical_path.startswith(INLINE_PREFIX):
+        # Inline: content stored base64-encoded in metastore
+        import base64
+
+        raw = metastore.get_file_metadata(path, INLINE_CONTENT_KEY)
+        if raw is None:
+            return None
+        return base64.b64decode(raw)
+
+    # CAS: content stored in backend by hash
+    content_hash = metadata.get("etag")
+    if not content_hash:
+        return None
+    result: bytes | None = backend.read_content(content_hash)
+    return result
+
+
 def make_extraction_hook(
     *,
     session_factory: Callable[..., Any],
     backend: Any,
+    metastore: Any,
     max_extract_bytes: int = 100 * 1024 * 1024,
 ) -> Callable[[list[dict[str, Any]]], None]:
     """Create a post-flush hook for async-on-write extraction.
@@ -33,6 +61,7 @@ def make_extraction_hook(
     Args:
         session_factory: RecordStore session factory for AspectService.
         backend: Storage backend with read_content(content_hash).
+        metastore: Metastore for reading inline content.
         max_extract_bytes: Max file size for auto-extraction (100MB).
 
     Returns:
@@ -77,16 +106,9 @@ def make_extraction_hook(
                         if size and size > max_extract_bytes:
                             continue
 
-                        # Read content from backend via content hash.
-                        # NOTE: This is a full-content read — the CAS backend
-                        # returns bytes by hash, not a file path. Path-based
-                        # O(1) extraction (Avro/Parquet header) is only possible
-                        # in the reindex path where filesystem paths are available.
-                        content_hash = metadata.get("etag")
-                        if not content_hash:
-                            continue
-
-                        content = backend.read_content(content_hash)
+                        # Read content: inline files are stored in the metastore,
+                        # CAS files are stored in the backend.
+                        content = _read_content(metadata, backend, metastore, path)
                         if content is None:
                             continue
 

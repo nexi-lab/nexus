@@ -188,7 +188,7 @@ services:
     build:
       context: ./dockerfiles
       dockerfile: Dockerfile.zoekt
-    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:latest}
+    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
     restart: unless-stopped
     profiles:
       - search

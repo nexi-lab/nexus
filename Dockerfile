@@ -104,7 +104,6 @@ ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- Runtime dependencies ----------
 # libgomp1: OpenMP runtime required by txtai, scikit-learn, numpy (Issue #2946)
-# gosu: privilege drop in entrypoint for bind-mount permission fix
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         curl \
@@ -169,10 +168,7 @@ RUN useradd -r -m -u 1000 -s /bin/bash nexus
 RUN usermod -aG root nexus
 RUN mkdir -p /app/data && chown -R nexus:nexus /app
 
-# NOTE: No USER directive here — the entrypoint starts as root to fix
-# bind-mount ownership, then drops to nexus via gosu.  When compose
-# sets `user: root` or the image is run with `docker run` (default root),
-# the entrypoint handles both cases.
+USER nexus
 
 # ---------- Environment variables ----------
 # Prevent faiss SVE auto-detection crash on aarch64 in Docker containers

@@ -198,7 +198,7 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.delegation import router as delegation_router
 
-        registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=5))
+        registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=8))
     except ImportError as e:
         logger.warning("Failed to import Delegation routes: %s", e)
 
@@ -309,7 +309,7 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.agent_status import router as agent_status_router
 
-        registry.add(RouterEntry(router=agent_status_router, name="agent_status", endpoint_count=3))
+        registry.add(RouterEntry(router=agent_status_router, name="agent_status", endpoint_count=5))
     except ImportError as e:
         logger.warning("Failed to import Agent status routes: %s", e)
 

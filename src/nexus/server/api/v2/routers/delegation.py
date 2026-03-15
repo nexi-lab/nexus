@@ -205,28 +205,6 @@ class DelegationDetailResponse(BaseModel):
     readonly_paths: list[str]
 
 
-class NamespaceDetailResponse(BaseModel):
-    """Namespace configuration for a delegation."""
-
-    delegation_id: str
-    agent_id: str
-    delegation_mode: str
-    scope_prefix: str | None
-    removed_grants: list[str]
-    added_grants: list[str]
-    readonly_paths: list[str]
-    zone_id: str | None
-
-
-class NamespaceUpdateRequest(BaseModel):
-    """Request to update namespace configuration."""
-
-    scope_prefix: str | None = None
-    remove_grants: list[str] | None = None
-    add_grants: list[str] | None = None
-    readonly_paths: list[str] | None = None
-
-
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -670,81 +648,6 @@ async def complete_delegation(
         "delegation_id": delegation_id,
         "outcome": request.outcome,
     }
-
-
-@router.get("/{delegation_id}/namespace", response_model=NamespaceDetailResponse)
-async def get_namespace_detail(
-    delegation_id: str,
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),
-    service: Any = Depends(_get_delegation_service),
-) -> NamespaceDetailResponse:
-    """Get namespace configuration for a delegation."""
-    subject_type = auth_result.get("subject_type", "")
-    if subject_type != "agent":
-        raise HTTPException(status_code=403, detail="Only agents can view namespace details.")
-
-    record = service.get_delegation_by_id(delegation_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
-
-    return NamespaceDetailResponse(
-        delegation_id=record.delegation_id,
-        agent_id=record.agent_id,
-        delegation_mode=record.delegation_mode.value,
-        scope_prefix=record.scope_prefix,
-        removed_grants=list(record.removed_grants),
-        added_grants=list(record.added_grants),
-        readonly_paths=list(record.readonly_paths),
-        zone_id=record.zone_id,
-    )
-
-
-@router.patch("/{delegation_id}/namespace", response_model=NamespaceDetailResponse)
-async def update_namespace_config(
-    delegation_id: str,
-    body: NamespaceUpdateRequest,
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),
-    service: Any = Depends(_get_delegation_service),
-) -> NamespaceDetailResponse:
-    """Update namespace configuration for a delegation."""
-    subject_type = auth_result.get("subject_type", "")
-    if subject_type != "agent":
-        raise HTTPException(status_code=403, detail="Only agents can update namespace config.")
-
-    # Ownership check
-    record = service.get_delegation_by_id(delegation_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
-
-    agent_id = auth_result.get("subject_id", "")
-    if record.parent_agent_id != agent_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Only the parent agent can update namespace config.",
-        )
-
-    try:
-        updated = service.update_namespace_config(
-            delegation_id=delegation_id,
-            scope_prefix=body.scope_prefix,
-            remove_grants=body.remove_grants,
-            add_grants=body.add_grants,
-            readonly_paths=body.readonly_paths,
-        )
-    except Exception as e:
-        _handle_delegation_error(e)
-        raise
-
-    return NamespaceDetailResponse(
-        delegation_id=updated.delegation_id,
-        agent_id=updated.agent_id,
-        delegation_mode=updated.delegation_mode.value,
-        scope_prefix=updated.scope_prefix,
-        removed_grants=list(updated.removed_grants),
-        added_grants=list(updated.added_grants),
-        readonly_paths=list(updated.readonly_paths),
-        zone_id=updated.zone_id,
-    )
 
 
 @router.get("/{delegation_id}", response_model=DelegationDetailResponse)

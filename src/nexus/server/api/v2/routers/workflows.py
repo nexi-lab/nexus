@@ -131,16 +131,19 @@ def _get_workflow_engine(request: Request) -> Any:
     """Get WorkflowEngine from app state or brick lifecycle."""
     engine = getattr(request.app.state, "workflow_engine", None)
     if not engine:
-        # Fallback: check brick lifecycle manager for the mounted workflow_engine brick
-        blm = getattr(request.app.state, "brick_lifecycle_manager", None)
-        if blm is not None:
-            from nexus.bricks.workflows.engine import WorkflowEngine
-
-            for _name, _spec, _state, _retries, brick in blm.iter_bricks():
-                if isinstance(brick, WorkflowEngine):
-                    engine = brick
-                    request.app.state.workflow_engine = engine  # Cache for next request
-                    break
+        # Fallback: check NexusFS for workflow_engine attribute, or brick lifecycle
+        nx = getattr(request.app.state, "nexus_fs", None)
+        if nx is not None:
+            engine = getattr(nx, "_workflow_engine", None) or getattr(nx, "workflow_engine", None)
+        if not engine:
+            blm = getattr(request.app.state, "brick_lifecycle_manager", None)
+            if blm is not None:
+                for _name, _spec, _state, _retries, brick_inst in blm.iter_bricks():
+                    if _name == "workflow_engine" and brick_inst is not None:
+                        engine = brick_inst
+                        break
+        if engine:
+            request.app.state.workflow_engine = engine
     if not engine:
         raise HTTPException(status_code=503, detail="Workflow engine not available")
 

@@ -244,7 +244,6 @@ class TestWarmupEndpointE2E:
                         "steps": [
                             {"name": "load_credentials", "timeout_seconds": 5},
                             {"name": "verify_bricks", "timeout_seconds": 5},
-                            {"name": "load_context", "timeout_seconds": 5},
                         ]
                     },
                     headers={"Authorization": f"Bearer {api_key}"},

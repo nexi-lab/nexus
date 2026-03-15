@@ -10,7 +10,6 @@ Steps:
     verify_bricks      — Check required bricks are enabled
     warm_caches        — Pre-populate cache for agent's zone (optional)
     connect_mcp        — Validate MCP server configuration (optional)
-    load_context       — Pre-load context manifest sources
 """
 
 import logging
@@ -160,42 +159,6 @@ async def connect_mcp(ctx: "WarmupContext") -> bool:
         return False
 
 
-async def load_context(ctx: "WarmupContext") -> bool:
-    """Pre-load context manifest sources.
-
-    Validates that the agent's context_manifest (if any) references
-    sources that can be resolved. Does not fully load content — just
-    verifies manifest structure.
-    """
-    manifest = ctx.agent_record.context_manifest
-    if not manifest:
-        logger.debug("[WARMUP:context] No context manifest, skipping")
-        return True
-
-    try:
-        # Validate manifest entries are well-formed dicts
-        for i, entry in enumerate(manifest):
-            if not isinstance(entry, dict):
-                logger.warning(
-                    "[WARMUP:context] Manifest entry %d is not a dict for agent %s",
-                    i,
-                    ctx.agent_id,
-                )
-                return False
-
-        logger.debug(
-            "[WARMUP:context] Validated %d manifest entries for agent %s",
-            len(manifest),
-            ctx.agent_id,
-        )
-        return True
-    except Exception:
-        logger.exception(
-            "[WARMUP:context] Context manifest validation failed for agent %s", ctx.agent_id
-        )
-        return False
-
-
 def register_standard_steps(service: "AgentWarmupService") -> None:
     """Register all standard warmup steps into the service's step registry.
 
@@ -209,4 +172,3 @@ def register_standard_steps(service: "AgentWarmupService") -> None:
     service.register_step("verify_bricks", verify_bricks)
     service.register_step("warm_caches", warm_caches)
     service.register_step("connect_mcp", connect_mcp)
-    service.register_step("load_context", load_context)

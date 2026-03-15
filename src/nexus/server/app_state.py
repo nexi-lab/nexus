@@ -99,7 +99,6 @@ class NexusAppState:
 
     # === Permissions ===
     rebac_circuit_breaker: Any = None
-    manifest_resolver: Any = None
 
     # === Governance (Issue #2129) ===
     governance_anomaly_service: Any = None

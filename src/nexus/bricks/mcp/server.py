@@ -80,6 +80,7 @@ def create_mcp_server(
     remote_url: str | None = None,
     api_key: str | None = None,
     tool_namespace_middleware: Any | None = None,
+    manifest_resolver: Any | None = None,
 ) -> FastMCP:
     """Create an MCP server for Nexus operations.
 
@@ -91,6 +92,11 @@ def create_mcp_server(
         tool_namespace_middleware: Optional ToolNamespaceMiddleware for per-tool
             namespace filtering. When provided, discovery tools filter results
             to only show tools visible to the current subject.
+        manifest_resolver: Optional callable for context manifest resolution
+            (Issue #2984). When provided, enables the ``nexus_resolve_context``
+            tool. Expected signature: ``(sources_json: str, variables_json: str)
+            -> dict`` returning resolution results. Built by the factory via
+            ``build_manifest_resolve_fn()``.
 
     Returns:
         FastMCP server instance
@@ -138,6 +144,20 @@ def create_mcp_server(
 
             connect = _il.import_module("nexus").connect
             nx = connect()
+
+    # Auto-detect manifest resolver from NexusFS if not explicitly provided.
+    # Uses importlib to avoid a static cross-brick import chain that
+    # import-linter would flag (mcp -> factory -> context_manifest).
+    if manifest_resolver is None and nx is not None:
+        _raw_resolver = getattr(nx, "manifest_resolver", None)
+        if _raw_resolver is not None:
+            try:
+                import importlib as _il_manifest
+
+                _adapter_mod = _il_manifest.import_module("nexus.factory.manifest_adapter")
+                manifest_resolver = _adapter_mod.build_manifest_resolve_fn(_raw_resolver, nx)
+            except Exception:
+                pass  # Graceful degradation — tool returns "unavailable"
 
     # Store default connection and config for per-request API key support
     assert nx is not None  # guaranteed by the if-block above
@@ -820,6 +840,66 @@ def create_mcp_server(
             "has_more": has_more,
             "next_offset": offset + limit if has_more else None,
         }
+
+        return format_response(result, response_format)
+
+    # =========================================================================
+    # CONTEXT MANIFEST TOOLS (Issue #2984)
+    # =========================================================================
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    )
+    @handle_tool_errors("resolving context manifest")
+    def nexus_resolve_context(
+        sources: str,
+        variables: str = "{}",
+        response_format: str = "json",
+        ctx: Context | None = None,  # noqa: ARG001
+    ) -> str:
+        """Resolve a context manifest by executing all sources in parallel.
+
+        Implements the Stripe Minions "deterministic pre-execution" pattern:
+        all sources are resolved in parallel before the agent starts reasoning.
+        Supports 4 source types: file_glob, memory_query, workspace_snapshot,
+        mcp_tool.
+
+        Args:
+            sources: JSON string containing an array of context source
+                definitions. Each source must have a "type" field.
+            variables: JSON string containing template variable values
+                for substitution (default: "{}"). Supported variables:
+                agent.id, agent.owner_id, agent.zone_id, workspace.root,
+                task.description, task.id, workspace.id.
+            response_format: Output format - "json" or "markdown" (default: "json")
+
+        Returns:
+            Formatted string with resolution results containing:
+            - resolved_at: ISO-8601 timestamp
+            - total_ms: Total resolution time in milliseconds
+            - source_count: Number of sources resolved
+            - sources: Array of per-source results with status, data, elapsed_ms
+        """
+        # manifest_resolver is a callable built by the factory — no cross-brick
+        # imports needed. It handles validation, memory wiring, and resolution.
+        if manifest_resolver is None:
+            return tool_error(
+                "unavailable",
+                "Context manifest resolver not available.",
+            )
+
+        try:
+            result = manifest_resolver(sources, variables)
+        except Exception as e:
+            return tool_error("internal", f"Error resolving context manifest: {e}", str(e))
+
+        if isinstance(result, str) and result.startswith("Error:"):
+            return result
 
         return format_response(result, response_format)
 

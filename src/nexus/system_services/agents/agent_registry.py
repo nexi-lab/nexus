@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 def _safe_json_loads(raw: str | None, field_name: str, agent_id: str) -> Any:
     """Safely deserialize a JSON text column, returning a typed default on failure.
 
-    Returns {} for 'agent_metadata', [] for all other fields (e.g. 'context_manifest').
+    Returns {} for 'agent_metadata', [] for all other fields.
     """
     default: Any = {} if field_name == "agent_metadata" else []
     if not raw:
@@ -156,7 +156,6 @@ class AgentRegistry:
         name: str | None = None,
         metadata: dict[str, Any] | None = None,
         capabilities: list[str] | None = None,
-        context_manifest: list[dict[str, Any]] | None = None,
         qos: AgentQoS | None = None,
     ) -> AgentRecord:
         """Register a new agent. Returns existing record if agent_id already exists.
@@ -172,8 +171,6 @@ class AgentRegistry:
             metadata: Arbitrary agent metadata.
             capabilities: Optional list of agent capabilities for discovery
                 (e.g. ["search", "analyze", "code"]). Stored in metadata.
-            context_manifest: Optional list of context source dicts for
-                deterministic pre-execution (Issue #1341/1427).
             qos: Optional QoS assignment (Issue #2171). Defaults to
                 standard scheduling and eviction class.
 
@@ -219,7 +216,6 @@ class AgentRegistry:
                 last_heartbeat=None,
                 agent_metadata=json.dumps(metadata),
                 eviction_priority=EVICTION_ORDER.get(agent_qos.eviction_class, 1),
-                context_manifest=json.dumps(context_manifest) if context_manifest else None,
                 created_at=now,
                 updated_at=now,
             )
@@ -364,7 +360,6 @@ class AgentRegistry:
 
             # Build record from known values (no re-read needed)
             metadata_dict = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
-            manifest_list = _safe_json_loads(model.context_manifest, "context_manifest", agent_id)
 
             # Deserialize QoS from metadata (Issue #2171)
             qos_data = metadata_dict.get("qos")
@@ -381,7 +376,6 @@ class AgentRegistry:
                 metadata=types.MappingProxyType(metadata_dict),
                 created_at=model.created_at,
                 updated_at=now,
-                context_manifest=tuple(manifest_list),
                 qos=agent_qos,
             )
 
@@ -393,14 +387,6 @@ class AgentRegistry:
             model.generation,
             new_generation,
         )
-
-        # Structured log for observability when agent connects with manifest
-        if target_state is AgentState.CONNECTED and record.context_manifest:
-            logger.info(
-                "[AGENT-REG] Agent %s connected with %d manifest sources",
-                agent_id,
-                len(record.context_manifest),
-            )
 
         return record
 
@@ -558,57 +544,6 @@ class AgentRegistry:
 
         logger.debug("[AGENT-REG] Unregistered agent %s", agent_id)
         return True
-
-    def update_manifest(
-        self,
-        agent_id: str,
-        manifest: list[dict[str, Any]],
-    ) -> AgentRecord:
-        """Replace the context manifest for an existing agent.
-
-        Args:
-            agent_id: Agent identifier.
-            manifest: List of context source dicts (serialized ContextSource models).
-
-        Returns:
-            Updated AgentRecord snapshot.
-
-        Raises:
-            ValueError: If agent not found.
-        """
-        with self._get_session() as session:
-            # Verify agent exists
-            existing = session.execute(
-                select(AgentRecordModel.agent_id).where(AgentRecordModel.agent_id == agent_id)
-            ).scalar_one_or_none()
-
-            if existing is None:
-                raise ValueError(f"Agent '{agent_id}' not found")
-
-            now = datetime.now(UTC)
-            stmt = (
-                update(AgentRecordModel)
-                .where(AgentRecordModel.agent_id == agent_id)
-                .values(
-                    context_manifest=json.dumps(manifest),
-                    updated_at=now,
-                )
-            )
-            session.execute(stmt)
-            session.flush()
-
-            # Re-read for immutable snapshot
-            refreshed = session.execute(
-                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
-            ).scalar_one()
-            record = self._model_to_record(refreshed)
-
-        logger.debug(
-            "[AGENT-REG] Updated manifest for agent %s (%d sources)",
-            agent_id,
-            len(manifest),
-        )
-        return record
 
     def detect_stale(self, threshold_seconds: int = 300) -> list[AgentRecord]:
         """Find CONNECTED agents with stale heartbeats.
@@ -1054,7 +989,6 @@ class AgentRegistry:
             Frozen AgentRecord dataclass.
         """
         metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", model.agent_id)
-        manifest_list = _safe_json_loads(model.context_manifest, "context_manifest", model.agent_id)
 
         # Deserialize QoS from metadata (Issue #2171)
         qos_data = metadata.get("qos")
@@ -1071,7 +1005,6 @@ class AgentRegistry:
             metadata=types.MappingProxyType(metadata),
             created_at=model.created_at,
             updated_at=model.updated_at,
-            context_manifest=tuple(manifest_list),
             qos=agent_qos,
         )
 

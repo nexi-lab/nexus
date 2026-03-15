@@ -125,57 +125,6 @@ class FileMetadataModel(Base):
             )
 
 
-class ContentChunkModel(Base):
-    """Content chunks for deduplication.
-
-    Stores unique content chunks identified by hash, with reference counting
-    for garbage collection.
-    """
-
-    __tablename__ = "content_chunks"
-
-    chunk_id: Mapped[str] = uuid_pk()
-
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
-
-    ref_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-    last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    protected_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-    __table_args__ = (
-        Index("idx_content_chunks_ref_count", "ref_count"),
-        Index("idx_content_chunks_last_accessed", "last_accessed_at"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<ContentChunkModel(chunk_id={self.chunk_id}, content_hash={self.content_hash}, ref_count={self.ref_count})>"
-
-    def validate(self) -> None:
-        """Validate content chunk model before database operations."""
-        if not self.content_hash:
-            raise ValidationError("content_hash is required")
-        if len(self.content_hash) != 64:
-            raise ValidationError(
-                f"content_hash must be 64 characters (SHA-256), got {len(self.content_hash)}"
-            )
-        try:
-            int(self.content_hash, 16)
-        except ValueError:
-            raise ValidationError("content_hash must contain only hexadecimal characters") from None
-        if self.size_bytes < 0:
-            raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
-        if not self.storage_path:
-            raise ValidationError("storage_path is required")
-        if self.ref_count is not None and self.ref_count < 0:
-            raise ValidationError(f"ref_count cannot be negative, got {self.ref_count}")
-
-
 class WorkspaceSnapshotModel(Base):
     """Workspace snapshot tracking for registered workspaces.
 

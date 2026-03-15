@@ -115,12 +115,17 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     WriteHookContext,
                 )
 
+                # Capture the event loop at registration time — VFS hooks fire from
+                # synchronous threads (asyncio.to_thread), so get_running_loop()
+                # would raise RuntimeError. call_soon_threadsafe is thread-safe.
+                _loop = _asyncio.get_running_loop()
+
                 def _notify(path: str, change_type: str) -> None:
-                    try:
-                        loop = _asyncio.get_running_loop()
-                        loop.create_task(_daemon_ref.notify_file_change(path, change_type))
-                    except RuntimeError:
-                        pass
+                    with contextlib.suppress(RuntimeError):  # Loop closed during shutdown
+                        _loop.call_soon_threadsafe(
+                            _loop.create_task,
+                            _daemon_ref.notify_file_change(path, change_type),
+                        )
 
                 class _SearchWriteHook:
                     @property
@@ -155,7 +160,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Issue #2036: Register with BrickLifecycleManager
         _blm = svc.brick_lifecycle_manager
         if _blm is not None:
-            with contextlib.suppress(ImportError, AttributeError):
+            try:
                 from nexus.bricks.search.lifecycle_adapter import (
                     SearchBrickLifecycleAdapter,
                 )
@@ -164,6 +169,12 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     "search",
                     SearchBrickLifecycleAdapter(app.state.search_daemon),
                     protocol_name="SearchBrickProtocol",
+                )
+            except ImportError:
+                logger.debug("SearchBrickLifecycleAdapter not available, skipping registration")
+            except Exception:
+                logger.warning(
+                    "Failed to register search brick with lifecycle manager", exc_info=True
                 )
 
         stats = app.state.search_daemon.get_stats()

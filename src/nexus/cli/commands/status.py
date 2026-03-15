@@ -219,9 +219,17 @@ def _render_table(data: dict[str, Any]) -> None:
 )
 @click.option(
     "--url",
+    "--remote-url",
     default=None,
     envvar="NEXUS_URL",
     help="Server URL to check (default: http://localhost:2026).",
+)
+@click.option(
+    "--remote-api-key",
+    default=None,
+    envvar="NEXUS_API_KEY",
+    hidden=True,
+    help="Ignored — status does not require auth. Accepted for CLI consistency.",
 )
 @click.option(
     "--profile",
@@ -235,6 +243,7 @@ def status(
     output_opts: OutputOptions,
     watch: bool,
     url: str | None,
+    remote_api_key: str | None,  # noqa: ARG001
     profiles: tuple[str, ...],
 ) -> None:
     """Display Nexus service health, latency, and connection details.

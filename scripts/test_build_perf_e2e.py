@@ -48,7 +48,12 @@ def cli(
 ) -> subprocess.CompletedProcess[str]:
     key = api_key or ADMIN_KEY
     cmd = [NEXUS_CLI, *args, "--remote-url", NEXUS_URL, "--remote-api-key", key]
-    env = {**os.environ, "NEXUS_GRPC_PORT": GRPC_PORT}
+    env = {
+        **os.environ,
+        "NEXUS_GRPC_PORT": GRPC_PORT,
+        "NEXUS_URL": NEXUS_URL,
+        "NEXUS_API_KEY": key,
+    }
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
 
 
@@ -79,8 +84,8 @@ def main() -> None:
     except Exception as e:
         check("Health endpoint", False, str(e))
 
-    # nexus status
-    r = cli("status")
+    # nexus status (--json for machine-readable output with "server_reachable" key)
+    r = cli("status", "--json")
     check("nexus status", "server_reachable" in r.stdout or "healthy" in r.stdout.lower())
 
     # ls
@@ -178,6 +183,18 @@ def main() -> None:
     # =========================================================================
     print("\n=== 6. HERB QUALITY GATE (BM25+pgvector+SPLADE+reranker) ===")
     # =========================================================================
+    # Wait for search index to process demo files (5s debounce + indexing time).
+    # Auto-index hooks fire on write, but the refresh loop has a 5s debounce.
+    print("    Waiting for search index to process demo files...")
+    for _wait in range(6):
+        r = cli("search", "query", "Nexus Core", "--limit", "1")
+        if "prod-001" in r.stdout:
+            print(f"    Search index ready after {(_wait + 1) * 5}s")
+            break
+        time.sleep(5)
+    else:
+        print("    Warning: search index may not be fully populated")
+
     qa_set = [
         ("Which customer uses Nexus for medical document management?", "cust-002"),
         ("Who is the staff engineer working on semantic search quality?", "emp-002"),
@@ -259,10 +276,16 @@ def main() -> None:
             "edits": [["Deploy to production", "Deploy using Kubernetes orchestration"]],
         },
     )
-    print("    Waiting 8s for daemon auto-index...")
-    time.sleep(8)
-    r = cli("search", "query", "Kubernetes orchestration", "--limit", "3")
-    check("auto-index after edit", "plan.md" in r.stdout)
+    # Wait for auto-index: 5s debounce + indexing time. Retry up to 3 times.
+    indexed = False
+    for attempt in range(3):
+        print(f"    Waiting 8s for daemon auto-index (attempt {attempt + 1}/3)...")
+        time.sleep(8)
+        r = cli("search", "query", "Kubernetes orchestration", "--limit", "3")
+        if "plan.md" in r.stdout:
+            indexed = True
+            break
+    check("auto-index after edit", indexed)
     # Restore
     t.call_rpc(
         "edit",
@@ -281,18 +304,26 @@ def main() -> None:
         "sys_write",
         {"path": "/workspace/demo/delete-test.md", "buf": "Quantum entanglement teleportation"},
     )
-    print("    Waiting 8s for auto-index...")
-    time.sleep(8)
-    r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
-    indexed = "delete-test" in r.stdout
+    indexed = False
+    for attempt in range(3):
+        print(f"    Waiting 8s for auto-index (attempt {attempt + 1}/3)...")
+        time.sleep(8)
+        r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
+        if "delete-test" in r.stdout:
+            indexed = True
+            break
     check("file indexed before delete", indexed)
 
     # Delete the file
     t.call_rpc("sys_unlink", {"path": "/workspace/demo/delete-test.md"})
-    print("    Waiting 8s for delete to propagate...")
-    time.sleep(8)
-    r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
-    stale = "delete-test" in r.stdout
+    stale = True
+    for attempt in range(3):
+        print(f"    Waiting 8s for delete to propagate (attempt {attempt + 1}/3)...")
+        time.sleep(8)
+        r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
+        if "delete-test" not in r.stdout:
+            stale = False
+            break
     check(
         "deleted file removed from search", not stale, "stale result still present" if stale else ""
     )

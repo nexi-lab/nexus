@@ -36,8 +36,6 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     await _startup_governance(app, svc)
     await _startup_sandbox_auth(app, svc)
     await _startup_transactional_snapshot(app, svc)
-    await _startup_rlm_service(app, svc)
-
     # Agent background tasks depend on agent_registry
     agent_tasks = await _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
@@ -54,7 +52,7 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
 
     Q3 PersistentService instances are stopped by coordinator via
     aclose() → stop_persistent_services():
-    - task_runner, scheduler_service, rlm_service (#1598-#1601)
+    - task_runner, scheduler_service (#1598-#1601)
     - directory_grant_expander, workflow_dispatch, write_observer
     - zoekt_pipe_consumer, search_daemon
 
@@ -462,48 +460,6 @@ async def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices
         logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
     else:
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
-
-
-async def _startup_rlm_service(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize RLM inference service (Issue #1306).
-
-    Requires SandboxAuthService (for SandboxManager) and an LLM provider.
-    Falls back gracefully if either is unavailable — the /api/v2/rlm/infer
-    endpoint will return 503.
-    """
-    sandbox_auth = app.state.sandbox_auth_service
-    if sandbox_auth is None:
-        logger.debug("[RLM] SandboxAuthService not available, RLM service skipped")
-        return
-
-    sandbox_mgr = getattr(sandbox_auth, "_sandbox_manager", None)
-    if sandbox_mgr is None:
-        logger.debug("[RLM] SandboxManager not available, RLM service skipped")
-        return
-
-    llm_provider = svc.llm_provider
-
-    try:
-        from nexus.bricks.rlm.service import RLMInferenceService
-
-        nexus_api_url = os.environ.get("NEXUS_API_URL", "http://localhost:2026")
-        max_concurrent = int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8"))
-
-        app.state.rlm_service = RLMInferenceService(
-            sandbox_manager=sandbox_mgr,
-            llm_provider=llm_provider,
-            nexus_api_url=nexus_api_url,
-            max_concurrent=max_concurrent,
-        )
-
-        # Q3 PersistentService — coordinator auto-calls start()
-        coord = svc.service_coordinator
-        if coord is not None:
-            await coord.enlist("rlm_service", app.state.rlm_service)
-
-        logger.info("[RLM] RLMInferenceService initialized (max_concurrent=%d)", max_concurrent)
-    except Exception as e:
-        logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
 
 
 async def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:

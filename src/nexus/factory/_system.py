@@ -506,6 +506,23 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
 
+    # --- ACP Service (Stateless coding agent CLI caller) ---
+    acp_service: Any = None
+    if not _on("acp"):
+        logger.debug("[BOOT:SYSTEM] AcpService disabled by profile")
+    elif process_table is not None:
+        try:
+            from nexus.system_services.acp.service import AcpService
+
+            acp_service = AcpService(
+                process_table=process_table,
+                metastore=ctx.metadata_store,
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
+            )
+            logger.debug("[BOOT:SYSTEM] AcpService created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] AcpService unavailable: %s", exc)
+
     # --- Agent Runtime (Agent Process Engine, AGENT-PROCESS-ARCHITECTURE) ---
     agent_runtime: Any = None
     if _on("agent_runtime"):
@@ -558,6 +575,7 @@ def _boot_system_services(
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
+        "acp_service": acp_service,
         "agent_runtime": agent_runtime,
     }
 

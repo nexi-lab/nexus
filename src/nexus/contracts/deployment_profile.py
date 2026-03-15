@@ -42,6 +42,7 @@ BRICK_NAMESPACE = "namespace"
 BRICK_PERMISSIONS = "permissions"
 BRICK_SCHEDULER = "scheduler"
 BRICK_AGENT_RUNTIME = "agent_runtime"
+BRICK_ACP = "acp"
 
 # Infrastructure bricks
 BRICK_CACHE = "cache"
@@ -108,6 +109,7 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_SNAPSHOT,
         BRICK_FEDERATION,
         BRICK_AGENT_RUNTIME,
+        BRICK_ACP,
     }
 )
 
@@ -206,6 +208,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_PORTABILITY,
         BRICK_PARSERS,
         BRICK_SNAPSHOT,
+        BRICK_ACP,
     }
 )
 

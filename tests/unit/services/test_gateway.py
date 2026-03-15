@@ -48,14 +48,13 @@ def mock_fs():
     mock_descendant_checker = MagicMock()
     mock_descendant_checker.has_access = MagicMock(return_value=True)
 
-    # Wire up fs.service() to return the correct mock by service name.
-    # The gateway calls self._fs.service("rebac") and
-    # self._fs.service("descendant_checker") to get service instances.
+    # Wire up fs.service() for ServiceRegistry lookups and
+    # fs._descendant_checker for kernel DI (Issue #1504).
     _service_map = {
         "rebac": mock_rebac_svc,
-        "descendant_checker": mock_descendant_checker,
     }
     fs.service = MagicMock(side_effect=lambda name: _service_map.get(name, MagicMock()))
+    fs._descendant_checker = mock_descendant_checker
 
     fs._rebac_manager = MagicMock()
     fs._rebac_manager.rebac_delete = MagicMock()

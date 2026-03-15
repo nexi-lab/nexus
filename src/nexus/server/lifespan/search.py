@@ -121,13 +121,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                 _loop = _asyncio.get_running_loop()
 
                 def _notify(path: str, change_type: str) -> None:
-                    try:
+                    with contextlib.suppress(RuntimeError):  # Loop closed during shutdown
                         _loop.call_soon_threadsafe(
                             _loop.create_task,
                             _daemon_ref.notify_file_change(path, change_type),
                         )
-                    except RuntimeError:
-                        pass  # Loop closed during shutdown
 
                 class _SearchWriteHook:
                     @property

@@ -421,6 +421,7 @@ impl PyMetastore {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
+            now_secs: crate::prelude::FullStateMachine::now(),
         };
 
         let result = self.apply_command_raw(cmd)?;
@@ -465,6 +466,7 @@ impl PyMetastore {
             path: path.to_string(),
             lock_id: lock_id.to_string(),
             new_ttl_secs,
+            now_secs: crate::prelude::FullStateMachine::now(),
         };
         let result = self.apply_command_raw(cmd)?;
         match result {
@@ -1104,6 +1106,7 @@ impl PyZoneHandle {
             max_holders,
             ttl_secs,
             holder_info: holder_info.to_string(),
+            now_secs: crate::prelude::FullStateMachine::now(),
         };
         let result = self.propose_command_raw(py, cmd)?;
         match result {
@@ -1134,6 +1137,7 @@ impl PyZoneHandle {
             path: path.to_string(),
             lock_id: lock_id.to_string(),
             new_ttl_secs,
+            now_secs: crate::prelude::FullStateMachine::now(),
         };
         let result = self.propose_command_raw(py, cmd)?;
         Ok(matches!(result, CommandResult::Success))

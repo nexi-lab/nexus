@@ -92,10 +92,7 @@ impl ZoneRaftRegistry {
     /// * `zone_id` — Unique zone identifier.
     /// * `peers` — Peer nodes in this zone's Raft group.
     /// * `runtime_handle` — Tokio runtime handle for spawning the transport loop.
-    #[expect(
-        clippy::result_large_err,
-        reason = "TransportError contains tonic types; will Box in transport refactor"
-    )]
+    #[allow(clippy::result_large_err)]
     pub fn create_zone(
         &self,
         zone_id: &str,
@@ -119,10 +116,7 @@ impl ZoneRaftRegistry {
     /// The leader's snapshot will bring the correct voter set after ConfChange commit.
     ///
     /// After calling this, send a JoinZone RPC to the leader.
-    #[expect(
-        clippy::result_large_err,
-        reason = "TransportError contains tonic types; will Box in transport refactor"
-    )]
+    #[allow(clippy::result_large_err)]
     pub fn join_zone(
         &self,
         zone_id: &str,
@@ -143,10 +137,7 @@ impl ZoneRaftRegistry {
     }
 
     /// Internal: open sled, create ZoneConsensus + driver, spawn transport loop, register zone.
-    #[expect(
-        clippy::result_large_err,
-        reason = "TransportError contains tonic types; will Box in transport refactor"
-    )]
+    #[allow(clippy::result_large_err)]
     fn setup_zone(
         &self,
         zone_id: &str,
@@ -273,10 +264,7 @@ impl ZoneRaftRegistry {
     }
 
     /// Remove a zone, shutting down its transport loop.
-    #[expect(
-        clippy::result_large_err,
-        reason = "TransportError contains tonic types; will Box in transport refactor"
-    )]
+    #[allow(clippy::result_large_err)]
     pub fn remove_zone(&self, zone_id: &str) -> Result<(), TransportError> {
         match self.zones.remove(zone_id) {
             Some((_, entry)) => {

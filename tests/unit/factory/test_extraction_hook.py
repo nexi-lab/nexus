@@ -55,6 +55,7 @@ class TestExtractionHook:
         hook = make_extraction_hook(
             session_factory=db_session_factory,
             backend=mock_backend,
+            metastore=MagicMock(),
         )
 
         events = [
@@ -93,6 +94,7 @@ class TestExtractionHook:
         hook = make_extraction_hook(
             session_factory=db_session_factory,
             backend=mock_backend,
+            metastore=MagicMock(),
         )
 
         events = [
@@ -125,6 +127,7 @@ class TestExtractionHook:
         hook = make_extraction_hook(
             session_factory=db_session_factory,
             backend=mock_backend,
+            metastore=MagicMock(),
         )
 
         events = [
@@ -148,6 +151,7 @@ class TestExtractionHook:
         hook = make_extraction_hook(
             session_factory=db_session_factory,
             backend=mock_backend,
+            metastore=MagicMock(),
             max_extract_bytes=100,
         )
 
@@ -171,6 +175,7 @@ class TestExtractionHook:
         hook = make_extraction_hook(
             session_factory=db_session_factory,
             backend=mock_backend,
+            metastore=MagicMock(),
         )
 
         events = [
@@ -189,6 +194,7 @@ class TestExtractionHook:
         hook = make_extraction_hook(
             session_factory=db_session_factory,
             backend=mock_backend,
+            metastore=MagicMock(),
         )
 
         events = [
@@ -212,6 +218,7 @@ class TestExtractionHook:
         hook = make_extraction_hook(
             session_factory=db_session_factory,
             backend=mock_backend,
+            metastore=MagicMock(),
         )
 
         events = [
@@ -240,6 +247,7 @@ class TestExtractionHook:
         hook = make_extraction_hook(
             session_factory=db_session_factory,
             backend=mock_backend,
+            metastore=MagicMock(),
         )
 
         events = [

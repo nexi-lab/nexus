@@ -171,6 +171,23 @@ def _boot_system_services(
             logger.critical("[BOOT:SYSTEM] Critical service failure: %s", exc)
             raise BootError(str(exc), tier="system-critical") from exc
 
+    # --- Async-on-write extraction hook (Issue #2978) ---
+    # Degradable: extraction is best-effort; failures do not block writes.
+    if hasattr(write_observer, "register_post_flush_hook"):
+        try:
+            from nexus.factory._extraction_hook import make_extraction_hook
+
+            extraction_hook = make_extraction_hook(
+                session_factory=ctx.record_store.session_factory,
+                backend=ctx.backend,
+                metastore=ctx.metadata_store,
+                max_extract_bytes=100 * 1024 * 1024,  # 100MB
+            )
+            write_observer.register_post_flush_hook(extraction_hook)
+            logger.debug("[BOOT:SYSTEM] Async-on-write extraction hook registered")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] Extraction hook unavailable: %s", exc)
+
     # =====================================================================
     # DEGRADABLE FORMER-KERNEL SECTION (WARNING + None) — Issue #2193
     # =====================================================================

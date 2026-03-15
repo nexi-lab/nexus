@@ -456,3 +456,151 @@ class TestPipedWriteObserverE2E:
                 assert metrics["total_dropped"] == 0
             finally:
                 await observer.stop()
+
+
+# ======================================================================
+# PipedRecordStoreWriteObserver — Post-flush hook tests (Issue #2978)
+# ======================================================================
+
+
+class TestPostFlushHooks:
+    """Verify post-flush hooks are called after successful flush."""
+
+    @pytest.mark.asyncio
+    async def test_hook_called_after_flush(self) -> None:
+        """Post-flush hook receives events after successful commit."""
+        from nexus.storage.piped_record_store_write_observer import (
+            PipedRecordStoreWriteObserver,
+        )
+
+        # Create mock record store with session factory
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.commit = MagicMock()
+
+        mock_record_store = MagicMock()
+        mock_record_store.session_factory = MagicMock(return_value=mock_session)
+
+        observer = PipedRecordStoreWriteObserver(mock_record_store)
+
+        # Register a hook that captures events
+        captured_events = []
+
+        def capture_hook(events):
+            captured_events.extend(events)
+
+        observer.register_post_flush_hook(capture_hook)
+
+        # Simulate a flush batch
+        test_events = [
+            {
+                "op": "write",
+                "path": "/test.csv",
+                "is_new": True,
+                "zone_id": "z1",
+                "agent_id": None,
+                "snapshot_hash": None,
+                "metadata_snapshot": None,
+                "metadata": {"path": "/test.csv"},
+            },
+        ]
+
+        # Mock _process_events_in_session to be a no-op
+        with patch.object(observer, "_process_events_in_session"):
+            await observer._flush_batch(test_events)
+
+        assert len(captured_events) == 1
+        assert captured_events[0]["path"] == "/test.csv"
+
+    @pytest.mark.asyncio
+    async def test_hook_failure_does_not_block_flush(self) -> None:
+        """A failing hook must not prevent the audit trail from committing."""
+        from nexus.storage.piped_record_store_write_observer import (
+            PipedRecordStoreWriteObserver,
+        )
+
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.commit = MagicMock()
+
+        mock_record_store = MagicMock()
+        mock_record_store.session_factory = MagicMock(return_value=mock_session)
+
+        observer = PipedRecordStoreWriteObserver(mock_record_store)
+
+        # Register a hook that raises
+        def failing_hook(events):
+            raise RuntimeError("Hook failure!")
+
+        # Register a second hook to verify it still runs
+        second_hook_called = []
+
+        def second_hook(events):
+            second_hook_called.append(True)
+
+        observer.register_post_flush_hook(failing_hook)
+        observer.register_post_flush_hook(second_hook)
+
+        test_events = [
+            {
+                "op": "write",
+                "path": "/test.csv",
+                "is_new": True,
+                "zone_id": None,
+                "agent_id": None,
+                "snapshot_hash": None,
+                "metadata_snapshot": None,
+                "metadata": {"path": "/test.csv"},
+            }
+        ]
+
+        with patch.object(observer, "_process_events_in_session"):
+            await observer._flush_batch(test_events)
+
+        # Flush succeeded despite hook failure
+        assert observer._total_flushed == 1
+        # Second hook was still called
+        assert len(second_hook_called) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_hooks_no_error(self) -> None:
+        """Flush works fine with no hooks registered."""
+        from nexus.storage.piped_record_store_write_observer import (
+            PipedRecordStoreWriteObserver,
+        )
+
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.commit = MagicMock()
+
+        mock_record_store = MagicMock()
+        mock_record_store.session_factory = MagicMock(return_value=mock_session)
+
+        observer = PipedRecordStoreWriteObserver(mock_record_store)
+
+        test_events = [{"op": "mkdir", "path": "/dir", "zone_id": None, "agent_id": None}]
+
+        with patch.object(observer, "_process_events_in_session"):
+            await observer._flush_batch(test_events)
+
+        assert observer._total_flushed == 1
+
+    def test_register_multiple_hooks(self) -> None:
+        """Multiple hooks can be registered."""
+        from nexus.storage.piped_record_store_write_observer import (
+            PipedRecordStoreWriteObserver,
+        )
+
+        mock_record_store = MagicMock()
+        mock_record_store.session_factory = MagicMock()
+
+        observer = PipedRecordStoreWriteObserver(mock_record_store)
+
+        observer.register_post_flush_hook(lambda events: None)
+        observer.register_post_flush_hook(lambda events: None)
+        observer.register_post_flush_hook(lambda events: None)
+
+        assert len(observer._post_flush_hooks) == 3

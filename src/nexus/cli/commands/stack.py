@@ -204,6 +204,22 @@ def _compose_profiles(compose_file: str) -> set[str]:
     return profiles
 
 
+def _compose_has_build(compose_file: str) -> bool:
+    """Return True if the nexus service in the compose file has a ``build:`` directive."""
+    try:
+        with open(compose_file) as f:
+            stack = yaml.safe_load(f) or {}
+    except (FileNotFoundError, yaml.YAMLError):
+        return False
+    nexus_svc = (stack.get("services") or {}).get("nexus")
+    return isinstance(nexus_svc, dict) and "build" in nexus_svc
+
+
+def _is_channel_following(config: dict[str, Any]) -> bool:
+    """Return True if the config follows a mutable channel (stable/edge) rather than a pinned ref."""
+    return "image_channel" in config and "image_pin" not in config
+
+
 @functools.lru_cache(maxsize=1)
 def _find_docker_compose() -> str:
     """Return the docker compose command prefix (cached for the process lifetime)."""
@@ -456,9 +472,12 @@ def up(
     console.print()
     console.print(f"[bold]Starting Nexus preset: {preset}[/bold]")
     console.print(f"  Using stack: {cf}")
-    image_ref = _resolve_image_ref_from_config(config)
-    if image_ref:
-        console.print(f"  Image: {image_ref}")
+    if build:
+        console.print("  Image: [green]local build[/green] (from Dockerfile)")
+    else:
+        image_ref = _resolve_image_ref_from_config(config)
+        if image_ref:
+            console.print(f"  Image: {image_ref}")
     if addons:
         console.print(f"  Add-ons: {', '.join(addons)}")
     console.print()
@@ -475,6 +494,21 @@ def up(
     # Build environment from config (project name, ports, data dir, auth, image, TLS)
     compose_env = _derive_project_env(config, resolved_ports=resolved_ports)
 
+    # When --build is requested, drop NEXUS_IMAGE_REF so docker compose
+    # uses the ``build:`` directive from the compose file (local source)
+    # instead of pulling the pinned remote image.  Only safe when the
+    # compose file actually has a build: stanza (repo checkouts); the
+    # bundled portable compose file has no build: directive.
+    if build:
+        if _compose_has_build(cf):
+            compose_env.pop("NEXUS_IMAGE_REF", None)
+        else:
+            console.print(
+                "[yellow]Warning:[/yellow] --build ignored — compose file "
+                f"({Path(cf).name}) has no build: directive."
+            )
+            build = False
+
     data_dir = compose_env["NEXUS_HOST_DATA_DIR"]
 
     # Start compose
@@ -483,6 +517,13 @@ def up(
         compose_args.append("-d")
     if build:
         compose_args.append("--build")
+
+    # For channel-following configs (stable/edge), always pull the latest
+    # image so mutable tags pick up new releases.  Pinned configs skip
+    # this — their tag is immutable and already cached.
+    if not build and _is_channel_following(config):
+        compose_args.append("--pull")
+        compose_args.append("always")
 
     result = _run_compose(cf, profiles, *compose_args, extra_env=compose_env)
     if result.returncode != 0:
@@ -654,12 +695,25 @@ def restart(build: bool | None) -> None:
     if build is None:
         build = False
 
+    # Same --build / --pull logic as `up`
+    if build:
+        if _compose_has_build(cf):
+            compose_env.pop("NEXUS_IMAGE_REF", None)
+        else:
+            console.print(
+                "[yellow]Warning:[/yellow] --build ignored — compose file "
+                f"({Path(cf).name}) has no build: directive."
+            )
+            build = False
+
     console.print(f"[bold]Restarting Nexus preset: {preset}[/bold]")
     _run_compose(cf, profiles, "down", extra_env=compose_env)
 
     args: list[str] = ["up", "-d"]
     if build:
         args.append("--build")
+    if not build and _is_channel_following(config):
+        args.extend(["--pull", "always"])
     result = _run_compose(cf, profiles, *args, extra_env=compose_env)
     if result.returncode == 0:
         console.print("[green]✓[/green] Stack restarted.")
@@ -746,6 +800,22 @@ def upgrade(
         image_tag=image_tag,
         image_digest=image_digest,
     )
+
+    # For channel-following configs (stable/edge), the ref string doesn't
+    # change between releases — the tag is mutable.  Pull the latest image
+    # and restart instead of comparing strings.
+    if new_ref == current_ref and _is_channel_following(config) and not (image_tag or image_digest):
+        console.print(f"[bold]Pulling latest image for channel '{effective_channel}'...[/bold]")
+        cf = config.get("compose_file", "./nexus-stack.yml")
+        profiles = _resolve_profiles(config)
+        compose_env = _derive_project_env(config)
+        pull_result = _run_compose(cf, profiles, "pull", "nexus", extra_env=compose_env)
+        if pull_result.returncode != 0:
+            console.print("[red]Error:[/red] Failed to pull image.")
+            raise SystemExit(pull_result.returncode)
+        console.print(f"[green]✓[/green] Pulled latest {new_ref}")
+        console.print("  Run `nexus restart` to apply.")
+        return
 
     if new_ref == current_ref:
         console.print(f"[green]Already up to date:[/green] {current_ref}")

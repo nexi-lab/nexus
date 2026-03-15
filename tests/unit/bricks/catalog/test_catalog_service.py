@@ -32,6 +32,9 @@ def _reset_registry():
     registry = AspectRegistry.get()
     registry.register("path", PathAspect, max_versions=5)
     registry.register("schema_metadata", SchemaMetadataAspect, max_versions=20)
+    from nexus.contracts.aspects import DocumentStructureAspect
+
+    registry.register("document_structure", DocumentStructureAspect, max_versions=10)
     yield
     AspectRegistry.reset()
 
@@ -188,3 +191,200 @@ class TestCatalogSearchByColumn:
         results = catalog_service.search_by_column("col_a", zone_id="z1")
         assert len(results) == 1
         assert "z1" in results[0]["entity_urn"]
+
+
+class TestCatalogFilenameDetection:
+    """Test filename-based format detection for all formats (Issue #2978, Issue 12)."""
+
+    def test_csv_by_filename(self, catalog_service: CatalogService, db_session: Session) -> None:
+        content = b"name,age\nAlice,30\n"
+        result = catalog_service.extract_schema(
+            entity_urn="urn:nexus:file:z1:fn1",
+            content=content,
+            mime_type=None,
+            filename="data.csv",
+            zone_id="z1",
+        )
+        db_session.commit()
+        assert result.schema is not None
+        assert result.format == "csv"
+
+    def test_tsv_by_filename(self, catalog_service: CatalogService) -> None:
+        content = b"name\tage\nAlice\t30\n"
+        result = catalog_service.extract_schema(
+            entity_urn="urn:nexus:file:z1:fn2",
+            content=content,
+            mime_type=None,
+            filename="data.tsv",
+        )
+        assert result.schema is not None
+
+    def test_json_by_filename(self, catalog_service: CatalogService) -> None:
+        import json
+
+        content = json.dumps([{"id": 1}]).encode()
+        result = catalog_service.extract_schema(
+            entity_urn="urn:nexus:file:z1:fn3",
+            content=content,
+            mime_type=None,
+            filename="data.json",
+        )
+        assert result.schema is not None
+        assert result.format == "json"
+
+    def test_jsonl_by_filename(self, catalog_service: CatalogService) -> None:
+        content = b'{"id": 1}\n{"id": 2}\n'
+        result = catalog_service.extract_schema(
+            entity_urn="urn:nexus:file:z1:fn4",
+            content=content,
+            mime_type=None,
+            filename="data.jsonl",
+        )
+        assert result.schema is not None
+
+    def test_avro_by_filename(self, catalog_service: CatalogService) -> None:
+        # Without fastavro, this should return an error (not crash)
+        result = catalog_service.extract_schema(
+            entity_urn="urn:nexus:file:z1:fn5",
+            content=b"not real avro",
+            mime_type=None,
+            filename="data.avro",
+        )
+        assert result.format == "avro"
+
+    def test_unknown_extension(self, catalog_service: CatalogService) -> None:
+        result = catalog_service.extract_schema(
+            entity_urn="urn:nexus:file:z1:fn6",
+            content=b"hello",
+            mime_type=None,
+            filename="data.xyz",
+        )
+        assert result.schema is None
+        assert result.error is not None
+
+    def test_no_extension(self, catalog_service: CatalogService) -> None:
+        result = catalog_service.extract_schema(
+            entity_urn="urn:nexus:file:z1:fn7",
+            content=b"hello",
+            mime_type=None,
+            filename="Makefile",
+        )
+        assert result.schema is None
+
+
+class TestCatalogDocumentExtraction:
+    """Test document extraction (Markdown -> document_structure aspect)."""
+
+    def test_extract_markdown_stores_document_structure(
+        self, catalog_service: CatalogService, db_session: Session
+    ) -> None:
+        content = b"# My Doc\n\nSome text here.\n"
+        result = catalog_service.extract_document(
+            entity_urn="urn:nexus:file:z1:md1",
+            content=content,
+            mime_type="text/markdown",
+            zone_id="z1",
+        )
+        db_session.commit()
+
+        assert result.error is None
+        assert result.title == "My Doc"
+
+        stored = catalog_service.get_document_structure("urn:nexus:file:z1:md1")
+        assert stored is not None
+        assert stored["title"] == "My Doc"
+        assert len(stored["headings"]) == 1
+
+    def test_extract_markdown_by_filename(
+        self, catalog_service: CatalogService, db_session: Session
+    ) -> None:
+        content = b"# Hello\n\nWorld.\n"
+        result = catalog_service.extract_document(
+            entity_urn="urn:nexus:file:z1:md2",
+            content=content,
+            mime_type=None,
+            filename="readme.md",
+            zone_id="z1",
+        )
+        db_session.commit()
+
+        assert result.error is None
+        assert result.title == "Hello"
+
+    def test_unsupported_document_format(self, catalog_service: CatalogService) -> None:
+        result = catalog_service.extract_document(
+            entity_urn="urn:nexus:file:z1:md3",
+            content=b"not markdown",
+            mime_type="text/plain",
+        )
+        assert result.error is not None
+
+    def test_document_too_large(self, db_session: Session) -> None:
+        from nexus.storage.aspect_service import AspectService
+
+        catalog = CatalogService(AspectService(db_session), max_auto_extract_bytes=10)
+        content = b"# " + b"x" * 100
+        result = catalog.extract_document(
+            entity_urn="urn:nexus:file:z1:md4",
+            content=content,
+            mime_type="text/markdown",
+        )
+        assert result.error is not None
+
+
+class TestCatalogExtractAuto:
+    """Test extract_auto() dispatching."""
+
+    def test_auto_detects_csv(self, catalog_service: CatalogService, db_session: Session) -> None:
+        content = b"a,b\n1,2\n"
+        result = catalog_service.extract_auto(
+            entity_urn="urn:nexus:file:z1:auto1",
+            content=content,
+            filename="data.csv",
+            zone_id="z1",
+        )
+        db_session.commit()
+        from nexus.bricks.catalog.extractors import ExtractionResult
+
+        assert isinstance(result, ExtractionResult)
+        assert result.schema is not None
+
+    def test_auto_detects_markdown(
+        self, catalog_service: CatalogService, db_session: Session
+    ) -> None:
+        content = b"# Title\n\nBody text.\n"
+        result = catalog_service.extract_auto(
+            entity_urn="urn:nexus:file:z1:auto2",
+            content=content,
+            filename="readme.md",
+            zone_id="z1",
+        )
+        db_session.commit()
+        from nexus.bricks.catalog.extractors import DocumentExtractionResult
+
+        assert isinstance(result, DocumentExtractionResult)
+        assert result.title == "Title"
+
+    def test_auto_unknown_format(self, catalog_service: CatalogService) -> None:
+        result = catalog_service.extract_auto(
+            entity_urn="urn:nexus:file:z1:auto3",
+            content=b"unknown",
+            filename="data.xyz",
+        )
+        assert result.error is not None
+
+
+class TestCatalogHasExtractor:
+    """Test has_extractor() format-gate."""
+
+    def test_has_schema_extractor(self, catalog_service: CatalogService) -> None:
+        assert catalog_service.has_extractor(filename="data.csv") is True
+        assert catalog_service.has_extractor(mime_type="text/csv") is True
+
+    def test_has_document_extractor(self, catalog_service: CatalogService) -> None:
+        assert catalog_service.has_extractor(filename="readme.md") is True
+        assert catalog_service.has_extractor(mime_type="text/markdown") is True
+
+    def test_no_extractor(self, catalog_service: CatalogService) -> None:
+        assert catalog_service.has_extractor(filename="data.xyz") is False
+        assert catalog_service.has_extractor(mime_type="text/plain") is False

@@ -317,3 +317,33 @@ class GovernanceClassificationAspect(AspectBase):
         self.owner = owner
         self.reason = reason
         self.review_date = review_date
+
+
+@register_aspect("document_structure", max_versions=10)
+class DocumentStructureAspect(AspectBase):
+    """Structure metadata for non-tabular documents (Markdown, PDF, etc.).
+
+    Unlike schema_metadata (columns/types for tabular data), this captures
+    document-level structure: headings, front matter, code blocks, etc.
+    Issue #2978.
+    """
+
+    def __init__(
+        self,
+        title: str | None = None,
+        headings: list[dict[str, Any]] | None = None,
+        front_matter: dict[str, Any] | None = None,
+        word_count: int = 0,
+        link_count: int = 0,
+        code_languages: list[str] | None = None,
+        format: str = "unknown",
+        confidence: float = 1.0,
+    ) -> None:
+        self.title = title
+        self.headings = headings or []
+        self.front_matter = front_matter
+        self.word_count = word_count
+        self.link_count = link_count
+        self.code_languages = code_languages or []
+        self.format = format
+        self.confidence = confidence

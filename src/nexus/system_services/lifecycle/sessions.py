@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
 from nexus.storage.models import (
     MemoryModel,
+    PathRegistrationModel,
     UserSessionModel,
-    WorkspaceConfigModel,
 )
 
 
@@ -157,7 +157,7 @@ def delete_session_resources(session: "Session", session_id: str) -> dict[str, i
 
     # Delete session-scoped workspace configs
     ws_result: Any = session.execute(
-        delete(WorkspaceConfigModel).where(WorkspaceConfigModel.session_id == session_id)
+        delete(PathRegistrationModel).where(PathRegistrationModel.session_id == session_id)
     )
     counts["workspace_configs"] = ws_result.rowcount
 
@@ -302,7 +302,7 @@ def cleanup_inactive_sessions(
 
     # Bulk-delete related resources (avoids N+1 per-session queries)
     session.execute(
-        delete(WorkspaceConfigModel).where(WorkspaceConfigModel.session_id.in_(inactive_ids))
+        delete(PathRegistrationModel).where(PathRegistrationModel.session_id.in_(inactive_ids))
     )
 
     session.execute(delete(MemoryModel).where(MemoryModel.session_id.in_(inactive_ids)))

@@ -78,7 +78,6 @@ from nexus.storage.models.infrastructure import MountConfigModel as MountConfigM
 from nexus.storage.models.infrastructure import SandboxMetadataModel as SandboxMetadataModel
 from nexus.storage.models.infrastructure import SubscriptionModel as SubscriptionModel
 from nexus.storage.models.infrastructure import UserSessionModel as UserSessionModel
-from nexus.storage.models.infrastructure import WorkspaceConfigModel as WorkspaceConfigModel
 
 # Domain: Memory and Knowledge Graph
 from nexus.storage.models.memory import EntityMentionModel as EntityMentionModel
@@ -90,6 +89,9 @@ from nexus.storage.models.metadata_change_log import (
     MetadataChangeLogModel as MetadataChangeLogModel,
 )
 from nexus.storage.models.operation_log import OperationLogModel as OperationLogModel
+
+# Domain: Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)
+from nexus.storage.models.path_registration import PathRegistrationModel as PathRegistrationModel
 
 # Domain: Payments
 from nexus.storage.models.payments import AgentWalletMeta as AgentWalletMeta

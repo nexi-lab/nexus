@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
 
@@ -9,56 +10,65 @@ use crate::priority::{
 };
 use crate::task::{TaskRecord, TaskStatus};
 
-/// Fjall-backed task storage with 4 keyspaces (column families).
+/// Fjall-backed task storage with 5 keyspaces (column families).
 ///
 /// Keyspaces:
-/// - `tasks`:       task_id (u64 BE)          -> TaskRecord (bincode)
-/// - `pending_idx`: composite priority key     -> () (empty value)
-/// - `running_idx`: [lease_expires][task_id]   -> () (empty value)
-/// - `dead_letter`: task_id (u64 BE)           -> TaskRecord (bincode)
+/// - `tasks`:            task_id (u64 BE)          -> TaskRecord (bincode)
+/// - `pending_idx`:      composite priority key     -> () (empty value)
+/// - `running_idx`:      [lease_expires][task_id]   -> () (empty value)
+/// - `running_task_key`: task_id (u64 BE)           -> running_idx key bytes
+/// - `dead_letter`:      task_id (u64 BE)           -> TaskRecord (bincode)
 pub struct TaskStore {
     db: Database,
     tasks: Keyspace,
     pending_idx: Keyspace,
     running_idx: Keyspace,
+    /// Reverse lookup: task_id -> running_idx key, for O(1) removal.
+    running_task_key: Keyspace,
     dead_letter: Keyspace,
     id_counter: AtomicU64,
-    /// Cached pending count — updated atomically on submit/claim/requeue.
-    /// Avoids O(n) scan on every admission control check.
+    /// Prevents concurrent claim_next races (Issue #3029 / Bug 2).
+    claim_lock: Mutex<()>,
+    // Atomic status counters — O(1) stats instead of full-table scans.
     pending_count: AtomicU64,
+    running_count: AtomicU64,
+    completed_count: AtomicU64,
+    cancelled_count: AtomicU64,
+    dead_letter_count: AtomicU64,
 }
 
 impl TaskStore {
     /// Open or create the task store at the given path.
     pub fn open(path: &str) -> Result<Self> {
-        let db = Database::builder(Path::new(path))
-            .open()
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
+        let db = Database::builder(Path::new(path)).open()?;
 
-        let tasks = db
-            .keyspace("tasks", KeyspaceCreateOptions::default)
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
-        let pending_idx = db
-            .keyspace("pending_idx", KeyspaceCreateOptions::default)
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
-        let running_idx = db
-            .keyspace("running_idx", KeyspaceCreateOptions::default)
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
-        let dead_letter = db
-            .keyspace("dead_letter", KeyspaceCreateOptions::default)
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
+        let tasks = db.keyspace("tasks", KeyspaceCreateOptions::default)?;
+        let pending_idx = db.keyspace("pending_idx", KeyspaceCreateOptions::default)?;
+        let running_idx = db.keyspace("running_idx", KeyspaceCreateOptions::default)?;
+        let running_task_key = db.keyspace("running_task_key", KeyspaceCreateOptions::default)?;
+        let dead_letter = db.keyspace("dead_letter", KeyspaceCreateOptions::default)?;
 
         // Initialize counter from existing max task_id
         let max_id = Self::find_max_task_id(&tasks);
+
+        // Scan once to initialize all status counters and populate running_task_key
+        let (pending, running, completed, cancelled, dead_letter_n) =
+            Self::count_all_statuses(&tasks);
 
         Ok(Self {
             db,
             tasks,
             pending_idx,
             running_idx,
+            running_task_key,
             dead_letter,
             id_counter: AtomicU64::new(max_id + 1),
-            pending_count: AtomicU64::new(0), // Will be initialized by first count_pending call
+            claim_lock: Mutex::new(()),
+            pending_count: AtomicU64::new(pending),
+            running_count: AtomicU64::new(running),
+            completed_count: AtomicU64::new(completed),
+            cancelled_count: AtomicU64::new(cancelled),
+            dead_letter_count: AtomicU64::new(dead_letter_n),
         })
     }
 
@@ -81,6 +91,32 @@ impl TaskStore {
         max_id
     }
 
+    /// Scan all tasks to count by status. Used once at startup.
+    fn count_all_statuses(tasks: &Keyspace) -> (u64, u64, u64, u64, u64) {
+        let mut pending = 0u64;
+        let mut running = 0u64;
+        let mut completed = 0u64;
+        let mut cancelled = 0u64;
+        let mut dead_letter = 0u64;
+
+        for guard in tasks.iter() {
+            if let Ok((_, value)) = guard.into_inner() {
+                if let Ok(record) = bincode::deserialize::<TaskRecord>(value.as_ref()) {
+                    match record.status {
+                        TaskStatus::Pending => pending += 1,
+                        TaskStatus::Running => running += 1,
+                        TaskStatus::Completed => completed += 1,
+                        TaskStatus::Cancelled => cancelled += 1,
+                        TaskStatus::DeadLetter => dead_letter += 1,
+                        TaskStatus::Failed => {} // transient, not counted
+                    }
+                }
+            }
+        }
+
+        (pending, running, completed, cancelled, dead_letter)
+    }
+
     /// Generate a monotonically increasing task ID.
     pub fn generate_id(&self) -> u64 {
         self.id_counter.fetch_add(1, Ordering::Relaxed)
@@ -95,21 +131,15 @@ impl TaskStore {
         let mut batch = self.db.batch();
         batch.insert(&self.tasks, task_key, task_value);
         batch.insert(&self.pending_idx, pending_key, vec![]);
-        batch
-            .commit()
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
-        self.pending_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        batch.commit()?;
+        self.pending_count.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
     /// Get a task by ID from the primary store.
     pub fn get_task(&self, task_id: u64) -> Result<Option<TaskRecord>> {
         let key = task_id.to_be_bytes();
-        match self
-            .tasks
-            .get(key)
-            .map_err(|e| TaskError::Storage(e.to_string()))?
-        {
+        match self.tasks.get(key)? {
             Some(bytes) => {
                 let record: TaskRecord = bincode::deserialize(bytes.as_ref())?;
                 Ok(Some(record))
@@ -122,14 +152,24 @@ impl TaskStore {
     pub fn update_task(&self, task: &TaskRecord) -> Result<()> {
         let key = task.task_id.to_be_bytes();
         let value = bincode::serialize(task)?;
-        self.tasks
-            .insert(key, value)
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
+        self.tasks.insert(key, value)?;
         Ok(())
+    }
+
+    /// Look up the running_idx key for a task via the reverse-lookup keyspace.
+    /// Returns O(1) instead of scanning the running index.
+    fn find_running_key(&self, task_id: u64) -> Result<Option<Vec<u8>>> {
+        match self.running_task_key.get(task_id.to_be_bytes())? {
+            Some(val) => Ok(Some(val.as_ref().to_vec())),
+            None => Ok(None),
+        }
     }
 
     /// Claim the next pending task. Atomically moves from pending_idx to running_idx.
     /// Returns None if no eligible tasks are available.
+    ///
+    /// Protected by a process-local mutex to prevent concurrent claim races
+    /// (Issue #3029 / Bug 2).
     pub fn claim_next(
         &self,
         worker_id: &str,
@@ -137,6 +177,8 @@ impl TaskStore {
         now: u64,
         max_wait_secs: u64,
     ) -> Result<Option<TaskRecord>> {
+        let _guard = self.claim_lock.lock().unwrap();
+
         // Check for anti-starvation: if the oldest low-priority task has waited too long, promote it
         let mut target_key = None;
 
@@ -184,9 +226,7 @@ impl TaskStore {
         // Load the task record
         let Some(mut task) = self.get_task(task_id)? else {
             // Stale index entry — remove and return None
-            self.pending_idx
-                .remove(&key_bytes)
-                .map_err(|e| TaskError::Storage(e.to_string()))?;
+            self.pending_idx.remove(&key_bytes)?;
             return Ok(None);
         };
 
@@ -206,20 +246,22 @@ impl TaskStore {
         let task_value = bincode::serialize(&task)?;
         let running_key = encode_running_key(lease_expires, task_id);
 
-        // Atomic: remove from pending, add to running, update task
+        // Atomic: remove from pending, add to running + reverse lookup, update task
         let mut batch = self.db.batch();
         batch.remove(&self.pending_idx, &key_bytes);
-        batch.insert(&self.running_idx, running_key, vec![]);
+        batch.insert(&self.running_idx, &running_key, vec![]);
+        batch.insert(&self.running_task_key, task_id.to_be_bytes(), &running_key);
         batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
-        batch
-            .commit()
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
-        self.pending_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        batch.commit()?;
+        self.pending_count.fetch_sub(1, Ordering::Relaxed);
+        self.running_count.fetch_add(1, Ordering::Relaxed);
 
         Ok(Some(task))
     }
 
-    /// Move a running task to completed state. Removes from running_idx.
+    /// Move a running task to completed state. Atomically removes from running_idx
+    /// and updates the task record in a single batch (Issue #3029 / Bug 3).
+    ///
     /// Verifies that `worker_id` matches the current owner to prevent stale workers
     /// from overwriting a re-claimed task after lease expiry.
     pub fn complete_task(
@@ -248,18 +290,31 @@ impl TaskStore {
             });
         }
 
-        // Find and remove running index entry
-        self.remove_from_running_idx(task_id)?;
+        let running_key = self.find_running_key(task_id)?;
 
         task.status = TaskStatus::Completed;
         task.result = Some(result.to_vec());
         task.completed_at = Some(now);
+        let task_value = bincode::serialize(&task)?;
 
-        self.update_task(&task)?;
+        let mut batch = self.db.batch();
+        if let Some(ref rk) = running_key {
+            batch.remove(&self.running_idx, rk);
+        }
+        batch.remove(&self.running_task_key, task_id.to_be_bytes());
+        batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
+        batch.commit()?;
+
+        self.running_count.fetch_sub(1, Ordering::Relaxed);
+        self.completed_count.fetch_add(1, Ordering::Relaxed);
+
         Ok(task)
     }
 
     /// Fail a running task. If retries remain, re-queue to pending; otherwise dead-letter.
+    /// All index updates and task writes are in a single atomic batch
+    /// (Issue #3029 / Bug 3 + Bug 5).
+    ///
     /// Verifies that `worker_id` matches the current owner to prevent stale workers
     /// from overwriting a re-claimed task after lease expiry.
     pub fn fail_task(
@@ -288,64 +343,71 @@ impl TaskStore {
             });
         }
 
-        // Remove from running index
-        self.remove_from_running_idx(task_id)?;
-
+        let running_key = self.find_running_key(task_id)?;
         task.error_message = Some(error_message.to_string());
 
         let dead_lettered = crate::retry::should_dead_letter(task.attempt, task.max_retries);
 
+        let mut batch = self.db.batch();
+
+        // Remove from running index (atomically in batch)
+        if let Some(ref rk) = running_key {
+            batch.remove(&self.running_idx, rk);
+        }
+        batch.remove(&self.running_task_key, task_id.to_be_bytes());
+
         if dead_lettered {
-            // Move to dead letter
             task.status = TaskStatus::DeadLetter;
             task.completed_at = Some(now);
             let task_value = bincode::serialize(&task)?;
-
-            let mut batch = self.db.batch();
             batch.insert(&self.tasks, task_id.to_be_bytes(), task_value.clone());
             batch.insert(&self.dead_letter, task_id.to_be_bytes(), task_value);
-            batch
-                .commit()
-                .map_err(|e| TaskError::Storage(e.to_string()))?;
         } else {
-            // Re-queue with backoff delay
             let delay = crate::retry::backoff_secs(task.attempt, task_id);
             task.status = TaskStatus::Pending;
             task.run_at = now + delay;
             task.claimed_at = None;
             task.claimed_by = None;
-
             let task_value = bincode::serialize(&task)?;
             let pending_key = encode_pending_key(task.priority, task.run_at, task_id);
-
-            let mut batch = self.db.batch();
             batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
             batch.insert(&self.pending_idx, pending_key, vec![]);
-            batch
-                .commit()
-                .map_err(|e| TaskError::Storage(e.to_string()))?;
+        }
+
+        batch.commit()?;
+
+        self.running_count.fetch_sub(1, Ordering::Relaxed);
+        if dead_lettered {
+            self.dead_letter_count.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.pending_count.fetch_add(1, Ordering::Relaxed);
         }
 
         Ok((task, dead_lettered))
     }
 
     /// Cancel a task. Works for both pending and running tasks.
+    /// All index updates and task writes are in a single atomic batch
+    /// (Issue #3029 / Bug 3).
     pub fn cancel_task(&self, task_id: u64, now: u64) -> Result<TaskRecord> {
         let mut task = self
             .get_task(task_id)?
             .ok_or(TaskError::NotFound(task_id))?;
 
-        match task.status {
+        let prev_status = task.status;
+
+        let mut batch = self.db.batch();
+
+        match prev_status {
             TaskStatus::Pending => {
-                // Remove from pending index
                 let pending_key = encode_pending_key(task.priority, task.run_at, task_id);
-                self.pending_idx
-                    .remove(pending_key)
-                    .map_err(|e| TaskError::Storage(e.to_string()))?;
+                batch.remove(&self.pending_idx, pending_key);
             }
             TaskStatus::Running => {
-                // Remove from running index
-                self.remove_from_running_idx(task_id)?;
+                if let Some(rk) = self.find_running_key(task_id)? {
+                    batch.remove(&self.running_idx, &rk);
+                }
+                batch.remove(&self.running_task_key, task_id.to_be_bytes());
             }
             _ => {
                 return Err(TaskError::InvalidTransition {
@@ -358,13 +420,27 @@ impl TaskStore {
 
         task.status = TaskStatus::Cancelled;
         task.completed_at = Some(now);
-        self.update_task(&task)?;
+        let task_value = bincode::serialize(&task)?;
+        batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
+        batch.commit()?;
+
+        match prev_status {
+            TaskStatus::Pending => {
+                self.pending_count.fetch_sub(1, Ordering::Relaxed);
+            }
+            TaskStatus::Running => {
+                self.running_count.fetch_sub(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        self.cancelled_count.fetch_add(1, Ordering::Relaxed);
+
         Ok(task)
     }
 
     /// Requeue tasks whose leases have expired. Returns count of requeued tasks.
+    /// All mutations are committed in a single batch (Issue #3029 / Issue 15).
     pub fn requeue_abandoned(&self, now: u64) -> Result<u32> {
-        let mut count = 0u32;
         let upper_bound = encode_running_key(now, u64::MAX);
 
         // Collect expired entries first (avoid holding iterator across writes)
@@ -379,19 +455,24 @@ impl TaskStore {
             })
             .collect();
 
-        for (running_key, task_id) in expired {
-            let Some(mut task) = self.get_task(task_id)? else {
-                // Stale index entry — just clean it up
-                self.running_idx
-                    .remove(&running_key)
-                    .map_err(|e| TaskError::Storage(e.to_string()))?;
+        if expired.is_empty() {
+            return Ok(0);
+        }
+
+        let mut batch = self.db.batch();
+        let mut requeued = 0u32;
+
+        for (running_key, task_id) in &expired {
+            let Some(mut task) = self.get_task(*task_id)? else {
+                // Stale index entry — clean up
+                batch.remove(&self.running_idx, running_key);
+                batch.remove(&self.running_task_key, task_id.to_be_bytes());
                 continue;
             };
 
             if task.status != TaskStatus::Running {
-                self.running_idx
-                    .remove(&running_key)
-                    .map_err(|e| TaskError::Storage(e.to_string()))?;
+                batch.remove(&self.running_idx, running_key);
+                batch.remove(&self.running_task_key, task_id.to_be_bytes());
                 continue;
             }
 
@@ -402,29 +483,34 @@ impl TaskStore {
             task.error_message = Some("lease expired (abandoned)".to_string());
 
             let task_value = bincode::serialize(&task)?;
-            let pending_key = encode_pending_key(task.priority, task.run_at, task_id);
+            let pending_key = encode_pending_key(task.priority, task.run_at, *task_id);
 
-            let mut batch = self.db.batch();
-            batch.remove(&self.running_idx, &running_key);
+            batch.remove(&self.running_idx, running_key);
+            batch.remove(&self.running_task_key, task_id.to_be_bytes());
             batch.insert(&self.pending_idx, pending_key, vec![]);
             batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
-            batch
-                .commit()
-                .map_err(|e| TaskError::Storage(e.to_string()))?;
 
-            count += 1;
+            requeued += 1;
         }
 
-        Ok(count)
+        batch.commit()?;
+
+        // Update counters for requeued tasks (Running → Pending)
+        self.running_count
+            .fetch_sub(requeued as u64, Ordering::Relaxed);
+        self.pending_count
+            .fetch_add(requeued as u64, Ordering::Relaxed);
+
+        Ok(requeued)
     }
 
     /// Remove completed/failed tasks older than max_age_secs. Returns count of cleaned tasks.
+    /// All removals are committed in a single batch (Issue #3029 / Issue 15).
     pub fn cleanup(&self, max_age_secs: u64, now: u64) -> Result<u32> {
         let cutoff = now.saturating_sub(max_age_secs);
-        let mut count = 0u32;
 
         // Scan all tasks and collect IDs of old terminal tasks
-        let to_remove: Vec<(u64, bool)> = self
+        let to_remove: Vec<(u64, bool, TaskStatus)> = self
             .tasks
             .iter()
             .filter_map(|guard| {
@@ -433,8 +519,11 @@ impl TaskStore {
                 if record.status.is_terminal() {
                     if let Some(completed_at) = record.completed_at {
                         if completed_at < cutoff {
-                            let is_dead_letter = record.status == TaskStatus::DeadLetter;
-                            return Some((record.task_id, is_dead_letter));
+                            return Some((
+                                record.task_id,
+                                record.status == TaskStatus::DeadLetter,
+                                record.status,
+                            ));
                         }
                     }
                 }
@@ -442,47 +531,55 @@ impl TaskStore {
             })
             .collect();
 
-        for (task_id, is_dead_letter) in to_remove {
-            let mut batch = self.db.batch();
+        if to_remove.is_empty() {
+            return Ok(0);
+        }
+
+        let mut batch = self.db.batch();
+        for &(task_id, is_dead_letter, _) in &to_remove {
             batch.remove(&self.tasks, task_id.to_be_bytes());
             if is_dead_letter {
                 batch.remove(&self.dead_letter, task_id.to_be_bytes());
             }
-            batch
-                .commit()
-                .map_err(|e| TaskError::Storage(e.to_string()))?;
-            count += 1;
         }
+        batch.commit()?;
 
-        Ok(count)
-    }
-
-    /// Count tasks in each status for stats.
-    pub fn count_by_status(&self) -> Result<crate::task::QueueStats> {
-        let mut stats = crate::task::QueueStats::default();
-
-        for guard in self.tasks.iter() {
-            let (_, value) = guard
-                .into_inner()
-                .map_err(|e| TaskError::Storage(e.to_string()))?;
-            let record: TaskRecord = bincode::deserialize(value.as_ref())?;
-            match record.status {
-                TaskStatus::Pending => stats.pending += 1,
-                TaskStatus::Running => stats.running += 1,
-                TaskStatus::Completed => stats.completed += 1,
-                TaskStatus::Failed => stats.failed += 1,
-                TaskStatus::DeadLetter => stats.dead_letter += 1,
-                TaskStatus::Cancelled => stats.cancelled += 1,
+        // Update counters
+        for &(_, _, status) in &to_remove {
+            match status {
+                TaskStatus::Completed => {
+                    self.completed_count.fetch_sub(1, Ordering::Relaxed);
+                }
+                TaskStatus::DeadLetter => {
+                    self.dead_letter_count.fetch_sub(1, Ordering::Relaxed);
+                }
+                TaskStatus::Cancelled => {
+                    self.cancelled_count.fetch_sub(1, Ordering::Relaxed);
+                }
+                _ => {}
             }
         }
 
-        Ok(stats)
+        Ok(to_remove.len() as u32)
+    }
+
+    /// Count tasks in each status. Uses atomic counters for O(1) performance
+    /// (Issue #3029 / Issue 14).
+    pub fn count_by_status(&self) -> Result<crate::task::QueueStats> {
+        Ok(crate::task::QueueStats {
+            pending: self.pending_count.load(Ordering::Relaxed) as usize,
+            running: self.running_count.load(Ordering::Relaxed) as usize,
+            completed: self.completed_count.load(Ordering::Relaxed) as usize,
+            failed: 0, // Failed is a transient state (→ Pending or DeadLetter)
+            dead_letter: self.dead_letter_count.load(Ordering::Relaxed) as usize,
+            cancelled: self.cancelled_count.load(Ordering::Relaxed) as usize,
+        })
     }
 
     /// Count pending tasks (for admission control).
     /// Uses cached atomic counter for O(1) performance instead of scanning the index.
     pub fn count_pending(&self) -> Result<usize> {
-        Ok(self.pending_count.load(std::sync::atomic::Ordering::Relaxed) as usize)
+        Ok(self.pending_count.load(Ordering::Relaxed) as usize)
     }
 
     /// List tasks with optional filters.
@@ -537,18 +634,7 @@ impl TaskStore {
         new_lease_expires: u64,
         task: &TaskRecord,
     ) -> Result<()> {
-        // Find old running_idx entry
-        let mut old_key: Option<Vec<u8>> = None;
-        for guard in self.running_idx.iter() {
-            if let Ok((key, _)) = guard.into_inner() {
-                if let Some((_, tid)) = decode_running_key(key.as_ref()) {
-                    if tid == task_id {
-                        old_key = Some(key.as_ref().to_vec());
-                        break;
-                    }
-                }
-            }
-        }
+        let old_key = self.find_running_key(task_id)?;
 
         let new_running_key = encode_running_key(new_lease_expires, task_id);
         let task_value = bincode::serialize(task)?;
@@ -557,37 +643,21 @@ impl TaskStore {
         if let Some(ref old) = old_key {
             batch.remove(&self.running_idx, old);
         }
-        batch.insert(&self.running_idx, new_running_key, vec![]);
+        batch.insert(&self.running_idx, &new_running_key, vec![]);
+        batch.insert(
+            &self.running_task_key,
+            task_id.to_be_bytes(),
+            &new_running_key,
+        );
         batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
-        batch
-            .commit()
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
+        batch.commit()?;
 
-        Ok(())
-    }
-
-    /// Remove a task from the running index by scanning for its task_id.
-    fn remove_from_running_idx(&self, task_id: u64) -> Result<()> {
-        for guard in self.running_idx.iter() {
-            if let Ok((key, _)) = guard.into_inner() {
-                if let Some((_, tid)) = decode_running_key(key.as_ref()) {
-                    if tid == task_id {
-                        self.running_idx
-                            .remove(key.as_ref())
-                            .map_err(|e| TaskError::Storage(e.to_string()))?;
-                        return Ok(());
-                    }
-                }
-            }
-        }
         Ok(())
     }
 
     /// Persist all in-memory data to disk.
     pub fn flush(&self) -> Result<()> {
-        self.db
-            .persist(PersistMode::SyncAll)
-            .map_err(|e| TaskError::Storage(e.to_string()))?;
+        self.db.persist(PersistMode::SyncAll)?;
         Ok(())
     }
 }
@@ -596,6 +666,8 @@ impl TaskStore {
 mod tests {
     use super::*;
     use crate::task::{TaskPriority, TaskStatus};
+    use std::collections::HashSet;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn test_store() -> (TaskStore, TempDir) {
@@ -627,6 +699,92 @@ mod tests {
         }
     }
 
+    /// Verify that all indexes are consistent with task records.
+    /// Every task in pending_idx must be Pending in the tasks keyspace,
+    /// every task in running_idx must be Running, and vice versa.
+    fn verify_index_consistency(store: &TaskStore) {
+        // Collect all task IDs from pending_idx
+        let mut pending_ids: HashSet<u64> = HashSet::new();
+        for guard in store.pending_idx.iter() {
+            if let Ok((key, _)) = guard.into_inner() {
+                if let Some((_, _, task_id)) = decode_pending_key(key.as_ref()) {
+                    pending_ids.insert(task_id);
+                }
+            }
+        }
+
+        // Collect all task IDs from running_idx
+        let mut running_ids: HashSet<u64> = HashSet::new();
+        for guard in store.running_idx.iter() {
+            if let Ok((key, _)) = guard.into_inner() {
+                if let Some((_, task_id)) = decode_running_key(key.as_ref()) {
+                    running_ids.insert(task_id);
+                }
+            }
+        }
+
+        // Verify each pending task in the index is actually Pending
+        for &task_id in &pending_ids {
+            let task = store
+                .get_task(task_id)
+                .unwrap()
+                .expect("pending index references nonexistent task");
+            assert_eq!(
+                task.status,
+                TaskStatus::Pending,
+                "task {} in pending_idx has status {:?}",
+                task_id,
+                task.status
+            );
+        }
+
+        // Verify each running task in the index is actually Running
+        for &task_id in &running_ids {
+            let task = store
+                .get_task(task_id)
+                .unwrap()
+                .expect("running index references nonexistent task");
+            assert_eq!(
+                task.status,
+                TaskStatus::Running,
+                "task {} in running_idx has status {:?}",
+                task_id,
+                task.status
+            );
+        }
+
+        // Verify running_task_key reverse lookup is consistent with running_idx
+        for &task_id in &running_ids {
+            assert!(
+                store.find_running_key(task_id).unwrap().is_some(),
+                "task {} in running_idx has no reverse-lookup entry",
+                task_id
+            );
+        }
+
+        // Verify no Pending tasks are missing from pending_idx
+        for guard in store.tasks.iter() {
+            if let Ok((_, value)) = guard.into_inner() {
+                if let Ok(record) = bincode::deserialize::<TaskRecord>(value.as_ref()) {
+                    if record.status == TaskStatus::Pending && record.run_at == 0 {
+                        assert!(
+                            pending_ids.contains(&record.task_id),
+                            "task {} is Pending but not in pending_idx",
+                            record.task_id
+                        );
+                    }
+                    if record.status == TaskStatus::Running {
+                        assert!(
+                            running_ids.contains(&record.task_id),
+                            "task {} is Running but not in running_idx",
+                            record.task_id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_open_and_generate_id() {
         let (store, _dir) = test_store();
@@ -646,6 +804,7 @@ mod tests {
         assert_eq!(loaded.task_id, task_id);
         assert_eq!(loaded.task_type, "test.echo");
         assert_eq!(loaded.status, TaskStatus::Pending);
+        verify_index_consistency(&store);
     }
 
     #[test]
@@ -691,6 +850,8 @@ mod tests {
             .claim_next("w-0", 300, 1700000000, 0)
             .unwrap()
             .is_none());
+
+        verify_index_consistency(&store);
     }
 
     #[test]
@@ -706,6 +867,7 @@ mod tests {
             .unwrap();
         assert_eq!(claimed.status, TaskStatus::Running);
         assert_eq!(claimed.attempt, 1);
+        verify_index_consistency(&store);
 
         let completed = store
             .complete_task(task_id, b"done", 1700000001, "w-0")
@@ -715,6 +877,7 @@ mod tests {
 
         let loaded = store.get_task(task_id).unwrap().unwrap();
         assert_eq!(loaded.status, TaskStatus::Completed);
+        verify_index_consistency(&store);
     }
 
     #[test]
@@ -727,12 +890,11 @@ mod tests {
 
         // Claim and fail — should re-queue (attempt 1 < max_retries 3)
         store.claim_next("w-0", 300, 1700000000, 0).unwrap();
-        let (failed, dead) = store
-            .fail_task(task_id, "oops", 1700000001, "w-0")
-            .unwrap();
+        let (failed, dead) = store.fail_task(task_id, "oops", 1700000001, "w-0").unwrap();
         assert!(!dead);
         assert_eq!(failed.status, TaskStatus::Pending);
         assert!(failed.run_at > 1700000001); // backoff applied
+        verify_index_consistency(&store);
     }
 
     #[test]
@@ -750,6 +912,7 @@ mod tests {
             .unwrap();
         assert!(dead);
         assert_eq!(failed.status, TaskStatus::DeadLetter);
+        verify_index_consistency(&store);
     }
 
     #[test]
@@ -767,6 +930,7 @@ mod tests {
             .claim_next("w-0", 300, 1700000000, 0)
             .unwrap()
             .is_none());
+        verify_index_consistency(&store);
     }
 
     #[test]
@@ -790,6 +954,7 @@ mod tests {
         // Task is pending again
         let loaded = store.get_task(task_id).unwrap().unwrap();
         assert_eq!(loaded.status, TaskStatus::Pending);
+        verify_index_consistency(&store);
     }
 
     #[test]
@@ -861,6 +1026,136 @@ mod tests {
             let store = TaskStore::open(path).unwrap();
             let loaded = store.get_task(task_id).unwrap().unwrap();
             assert_eq!(loaded.task_type, "persist");
+
+            // Verify counters are initialized correctly on reopen
+            let stats = store.count_by_status().unwrap();
+            assert_eq!(stats.pending, 1);
         }
+    }
+
+    /// Test that concurrent claim_next calls never produce duplicate claims
+    /// (Issue #3029 / Bug 2 regression test).
+    #[test]
+    fn test_concurrent_claim_no_duplicates() {
+        let dir = TempDir::new().unwrap();
+        let store = Arc::new(TaskStore::open(dir.path().to_str().unwrap()).unwrap());
+
+        let num_tasks = 50;
+        let num_workers = 8;
+
+        // Insert tasks
+        for i in 0..num_tasks {
+            let mut task = make_task(&store, &format!("task-{}", i), TaskPriority::Normal);
+            task.run_at = 0;
+            store.insert_task(&task).unwrap();
+        }
+
+        // Spawn workers that race to claim
+        let claimed: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+
+        for w in 0..num_workers {
+            let store = Arc::clone(&store);
+            let claimed = Arc::clone(&claimed);
+            handles.push(std::thread::spawn(move || {
+                let worker_id = format!("worker-{}", w);
+                loop {
+                    match store.claim_next(&worker_id, 300, 1700000000, 0).unwrap() {
+                        Some(task) => {
+                            claimed.lock().unwrap().push(task.task_id);
+                        }
+                        None => break,
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let claimed = claimed.lock().unwrap();
+        let unique: HashSet<u64> = claimed.iter().copied().collect();
+
+        // Every task claimed exactly once: no duplicates, no losses
+        assert_eq!(
+            claimed.len(),
+            num_tasks,
+            "expected {} claims, got {}",
+            num_tasks,
+            claimed.len()
+        );
+        assert_eq!(unique.len(), num_tasks, "duplicate claims detected");
+
+        verify_index_consistency(&store);
+    }
+
+    /// Test that complete_task, cancel_task, fail_task maintain index consistency
+    /// (Issue #3029 / Bug 3 regression test).
+    #[test]
+    fn test_index_consistency_across_transitions() {
+        let (store, _dir) = test_store();
+
+        // Create tasks for each transition path
+        let t_complete = make_task(&store, "complete", TaskPriority::Normal);
+        let t_cancel_pending = make_task(&store, "cancel_p", TaskPriority::Normal);
+        let t_cancel_running = make_task(&store, "cancel_r", TaskPriority::Normal);
+        let t_fail_retry = make_task(&store, "fail_retry", TaskPriority::Normal);
+        let mut t_fail_dl = make_task(&store, "fail_dl", TaskPriority::Normal);
+        t_fail_dl.max_retries = 1;
+
+        let id_complete = t_complete.task_id;
+        let id_cancel_p = t_cancel_pending.task_id;
+        let id_cancel_r = t_cancel_running.task_id;
+        let id_fail_retry = t_fail_retry.task_id;
+        let id_fail_dl = t_fail_dl.task_id;
+
+        store.insert_task(&t_complete).unwrap();
+        store.insert_task(&t_cancel_pending).unwrap();
+        store.insert_task(&t_cancel_running).unwrap();
+        store.insert_task(&t_fail_retry).unwrap();
+        store.insert_task(&t_fail_dl).unwrap();
+        verify_index_consistency(&store);
+
+        // Cancel a pending task
+        store.cancel_task(id_cancel_p, 1700000001).unwrap();
+        verify_index_consistency(&store);
+
+        // Claim remaining tasks
+        store.claim_next("w-0", 300, 1700000000, 0).unwrap(); // complete
+        store.claim_next("w-0", 300, 1700000000, 0).unwrap(); // cancel_r
+        store.claim_next("w-0", 300, 1700000000, 0).unwrap(); // fail_retry
+        store.claim_next("w-0", 300, 1700000000, 0).unwrap(); // fail_dl
+        verify_index_consistency(&store);
+
+        // Complete
+        store
+            .complete_task(id_complete, b"ok", 1700000001, "w-0")
+            .unwrap();
+        verify_index_consistency(&store);
+
+        // Cancel running
+        store.cancel_task(id_cancel_r, 1700000001).unwrap();
+        verify_index_consistency(&store);
+
+        // Fail with retry
+        store
+            .fail_task(id_fail_retry, "oops", 1700000001, "w-0")
+            .unwrap();
+        verify_index_consistency(&store);
+
+        // Fail to dead letter
+        store
+            .fail_task(id_fail_dl, "fatal", 1700000001, "w-0")
+            .unwrap();
+        verify_index_consistency(&store);
+
+        // Verify final status counts
+        let stats = store.count_by_status().unwrap();
+        assert_eq!(stats.completed, 1);
+        assert_eq!(stats.cancelled, 2);
+        assert_eq!(stats.dead_letter, 1);
+        assert_eq!(stats.pending, 1); // fail_retry was re-queued
+        assert_eq!(stats.running, 0);
     }
 }

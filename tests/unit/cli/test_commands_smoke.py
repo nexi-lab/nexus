@@ -8,7 +8,8 @@ These tests mock the filesystem layer and validate:
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -27,15 +28,16 @@ def _make_mock_nx() -> MagicMock:
     """Create a mock NexusFilesystem with common methods."""
     nx = MagicMock()
     nx.close = MagicMock()
+    # sys_readdir is async in the real NexusFilesystem
+    nx.sys_readdir = AsyncMock()
     return nx
 
 
 def _patch_open_filesystem(nx: MagicMock):
     """Patch open_filesystem to yield the mock."""
-    from contextlib import contextmanager
 
-    @contextmanager
-    def _mock_open(remote_url=None, remote_api_key=None, **kwargs):
+    @asynccontextmanager
+    async def _mock_open(remote_url=None, remote_api_key=None, **kwargs):
         yield nx
 
     return patch("nexus.cli.commands.directory.open_filesystem", _mock_open)
@@ -43,10 +45,9 @@ def _patch_open_filesystem(nx: MagicMock):
 
 def _patch_search_open_filesystem(nx: MagicMock):
     """Patch open_filesystem for search module."""
-    from contextlib import contextmanager
 
-    @contextmanager
-    def _mock_open(remote_url=None, remote_api_key=None, **kwargs):
+    @asynccontextmanager
+    async def _mock_open(remote_url=None, remote_api_key=None, **kwargs):
         yield nx
 
     return patch("nexus.cli.commands.search.open_filesystem", _mock_open)

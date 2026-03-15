@@ -1,5 +1,6 @@
 """Directory operation commands - ls, mkdir, rmdir, tree."""
 
+import asyncio
 import contextlib
 from typing import Any
 
@@ -64,7 +65,7 @@ def _format_file_entry(file: dict[str, Any] | str) -> dict[str, Any]:
 )
 @add_output_options
 @add_backend_options
-async def list_files(
+def list_files(
     path: str,
     recursive: bool,
     long: bool,
@@ -86,79 +87,86 @@ async def list_files(
         # Time-travel: List files at historical operation point
         nexus ls /workspace --at-operation op_abc123
     """
-    timing = CommandTiming()
 
-    try:
-        async with open_filesystem(
-            remote_url,
-            remote_api_key,
-            allow_local_default=True,
-        ) as nx:
-            with timing.phase("connect"):
-                pass  # connection already established by async with
+    async def _impl() -> None:
+        timing = CommandTiming()
 
-            if at_operation:
-                _ls_time_travel(nx, path, at_operation, recursive, long, output_opts, timing)
+        try:
+            async with open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx:
+                with timing.phase("connect"):
+                    pass  # connection already established by async with
+
+                if at_operation:
+                    _ls_time_travel(nx, path, at_operation, recursive, long, output_opts, timing)
+                    return
+
+                with timing.phase("server"):
+                    files_raw = await nx.sys_readdir(path, recursive=recursive, details=True)
+                    files = _normalize_readdir(files_raw)
+
+            if not files:
+                render_output(
+                    data=[],
+                    output_opts=output_opts,
+                    timing=timing,
+                    message=f"No files found in {path}",
+                )
                 return
 
-            with timing.phase("server"):
-                files_raw = await nx.sys_readdir(path, recursive=recursive, details=True)
-                files = _normalize_readdir(files_raw)
+            data = [_format_file_entry(f) for f in files]
 
-        if not files:
+            def _print_human(entries: list[dict[str, Any]]) -> None:
+                if long:
+                    from rich.table import Table
+
+                    table = Table(title=f"Files in {path}")
+                    table.add_column("Type", style="magenta", width=4)
+                    table.add_column("Path", style="cyan")
+                    table.add_column("Size", justify="right", style="green")
+                    table.add_column("Modified", style="yellow")
+
+                    for entry in entries:
+                        is_dir = entry["type"] == "directory"
+                        table.add_row(
+                            "dir" if is_dir else "file",
+                            f"{entry['path']}/" if is_dir else entry["path"],
+                            f"{entry['size']:,} bytes" if entry["size"] is not None else "-",
+                            format_timestamp(entry.get("modified_at"))
+                            if entry.get("modified_at")
+                            else "-",
+                        )
+                    console.print(table)
+                else:
+                    for entry in entries:
+                        if entry["type"] == "directory":
+                            console.print(f"  [bold cyan]{entry['path']}/[/bold cyan]")
+                        else:
+                            console.print(f"  {entry['path']}")
+
             render_output(
-                data=[],
+                data=data,
                 output_opts=output_opts,
                 timing=timing,
-                message=f"No files found in {path}",
+                human_formatter=_print_human,
             )
-            return
+        except Exception as e:
+            if output_opts.json_output:
+                from nexus.cli.exit_codes import ExitCode
 
-        data = [_format_file_entry(f) for f in files]
-
-        def _print_human(entries: list[dict[str, Any]]) -> None:
-            if long:
-                from rich.table import Table
-
-                table = Table(title=f"Files in {path}")
-                table.add_column("Type", style="magenta", width=4)
-                table.add_column("Path", style="cyan")
-                table.add_column("Size", justify="right", style="green")
-                table.add_column("Modified", style="yellow")
-
-                for entry in entries:
-                    is_dir = entry["type"] == "directory"
-                    table.add_row(
-                        "dir" if is_dir else "file",
-                        f"{entry['path']}/" if is_dir else entry["path"],
-                        f"{entry['size']:,} bytes" if entry["size"] is not None else "-",
-                        format_timestamp(entry.get("modified_at"))
-                        if entry.get("modified_at")
-                        else "-",
-                    )
-                console.print(table)
+                render_error(
+                    error=e,
+                    output_opts=output_opts,
+                    exit_code=ExitCode.GENERAL_ERROR,
+                    timing=timing,
+                )
             else:
-                for entry in entries:
-                    if entry["type"] == "directory":
-                        console.print(f"  [bold cyan]{entry['path']}/[/bold cyan]")
-                    else:
-                        console.print(f"  {entry['path']}")
+                handle_error(e)
 
-        render_output(
-            data=data,
-            output_opts=output_opts,
-            timing=timing,
-            human_formatter=_print_human,
-        )
-    except Exception as e:
-        if output_opts.json_output:
-            from nexus.cli.exit_codes import ExitCode
-
-            render_error(
-                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
-            )
-        else:
-            handle_error(e)
+    asyncio.run(_impl())
 
 
 def _ls_time_travel(
@@ -220,7 +228,7 @@ def _ls_time_travel(
 )
 @add_dry_run_option
 @add_backend_options
-async def mkdir(
+def mkdir(
     path: str,
     parents: bool,
     if_not_exists: bool,
@@ -236,26 +244,30 @@ async def mkdir(
         nexus mkdir /workspace/data --dry-run
         nexus mkdir /workspace/data --if-not-exists
     """
-    try:
-        if dry_run:
-            preview = dry_run_preview("mkdir", path=path, details={"parents": parents})
-            render_dry_run(preview)
-            return
 
-        async with open_filesystem(
-            remote_url,
-            remote_api_key,
-            allow_local_default=True,
-        ) as nx:
-            if if_not_exists:
-                with contextlib.suppress(FileExistsError):
+    async def _impl() -> None:
+        try:
+            if dry_run:
+                preview = dry_run_preview("mkdir", path=path, details={"parents": parents})
+                render_dry_run(preview)
+                return
+
+            async with open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx:
+                if if_not_exists:
+                    with contextlib.suppress(FileExistsError):
+                        await nx.sys_mkdir(path, parents=parents, exist_ok=True)
+                    console.print(f"[green]✓[/green] Directory exists: [cyan]{path}[/cyan]")
+                else:
                     await nx.sys_mkdir(path, parents=parents, exist_ok=True)
-                console.print(f"[green]✓[/green] Directory exists: [cyan]{path}[/cyan]")
-            else:
-                await nx.sys_mkdir(path, parents=parents, exist_ok=True)
-                console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
-    except Exception as e:
-        handle_error(e)
+                    console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
+        except Exception as e:
+            handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @click.command()
@@ -264,7 +276,7 @@ async def mkdir(
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
 @add_dry_run_option
 @add_backend_options
-async def rmdir(
+def rmdir(
     path: str,
     recursive: bool,
     force: bool,
@@ -279,28 +291,32 @@ async def rmdir(
         nexus rmdir /workspace/data --recursive --force
         nexus rmdir /workspace/data --dry-run
     """
-    try:
-        if dry_run:
-            preview = dry_run_preview(
-                "rmdir",
-                path=path,
-                details={"recursive": recursive},
-            )
-            render_dry_run(preview)
-            return
 
-        async with open_filesystem(
-            remote_url,
-            remote_api_key,
-            allow_local_default=True,
-        ) as nx:
-            if not force and not click.confirm(f"Remove directory {path}?"):
-                console.print("[yellow]Cancelled[/yellow]")
+    async def _impl() -> None:
+        try:
+            if dry_run:
+                preview = dry_run_preview(
+                    "rmdir",
+                    path=path,
+                    details={"recursive": recursive},
+                )
+                render_dry_run(preview)
                 return
-            await nx.sys_rmdir(path, recursive=recursive)
-        console.print(f"[green]✓[/green] Removed directory [cyan]{path}[/cyan]")
-    except Exception as e:
-        handle_error(e)
+
+            async with open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx:
+                if not force and not click.confirm(f"Remove directory {path}?"):
+                    console.print("[yellow]Cancelled[/yellow]")
+                    return
+                await nx.sys_rmdir(path, recursive=recursive)
+            console.print(f"[green]✓[/green] Removed directory [cyan]{path}[/cyan]")
+        except Exception as e:
+            handle_error(e)
+
+    asyncio.run(_impl())
 
 
 @click.command(name="tree")
@@ -309,7 +325,7 @@ async def rmdir(
 @click.option("--show-size", is_flag=True, help="Show file sizes")
 @add_output_options
 @add_backend_options
-async def tree(
+def tree(
     path: str,
     level: int | None,
     show_size: bool,
@@ -325,117 +341,124 @@ async def tree(
         nexus tree /workspace --show-size
         nexus tree /workspace --json
     """
-    timing = CommandTiming()
 
-    try:
-        async with open_filesystem(
-            remote_url,
-            remote_api_key,
-            allow_local_default=True,
-        ) as nx:
-            with timing.phase("connect"):
-                pass  # connection already established by async with
+    async def _impl() -> None:
+        timing = CommandTiming()
 
-            with timing.phase("server"):
-                files_raw = await nx.sys_readdir(path, recursive=True, details=True)
+        try:
+            async with open_filesystem(
+                remote_url,
+                remote_api_key,
+                allow_local_default=True,
+            ) as nx:
+                with timing.phase("connect"):
+                    pass  # connection already established by async with
 
-        files = _normalize_readdir(files_raw)
-        if not files:
-            render_output(
-                data={"files": [], "total_files": 0},
-                output_opts=output_opts,
-                timing=timing,
-                message=f"No files found in {path}",
-            )
-            return
+                with timing.phase("server"):
+                    files_raw = await nx.sys_readdir(path, recursive=True, details=True)
 
-        entries = [_format_file_entry(f) for f in files]
+            files = _normalize_readdir(files_raw)
+            if not files:
+                render_output(
+                    data={"files": [], "total_files": 0},
+                    output_opts=output_opts,
+                    timing=timing,
+                    message=f"No files found in {path}",
+                )
+                return
 
-        # Apply level filter for JSON
-        if level is not None:
-            entries = [e for e in entries if e["path"].count("/") <= level]
+            entries = [_format_file_entry(f) for f in files]
 
-        tree_data = {
-            "root": path,
-            "files": entries,
-            "total_files": len(entries),
-            "total_size": sum(e["size"] or 0 for e in entries),
-        }
+            # Apply level filter for JSON
+            if level is not None:
+                entries = [e for e in entries if e["path"].count("/") <= level]
 
-        def _print_human(data: dict[str, Any]) -> None:
-            from collections import defaultdict
-            from pathlib import PurePosixPath
+            tree_data = {
+                "root": path,
+                "files": entries,
+                "total_files": len(entries),
+                "total_size": sum(e["size"] or 0 for e in entries),
+            }
 
-            tree_dict: dict[str, Any] = defaultdict(dict)
-            # Strip the base path prefix so depth is relative to target path
-            base_parts = PurePosixPath(path).parts
-            for entry in data["files"]:
-                parts = PurePosixPath(entry["path"]).parts
-                rel_parts = parts[len(base_parts) :]
-                if not rel_parts:
-                    continue
-                current = tree_dict
-                for i, part in enumerate(rel_parts):
-                    if i == len(rel_parts) - 1:
-                        current[part] = entry["size"]
-                    else:
-                        if part not in current or not isinstance(current[part], dict):
-                            current[part] = {}
-                        current = current[part]
+            def _print_human(data: dict[str, Any]) -> None:
+                from collections import defaultdict
+                from pathlib import PurePosixPath
 
-            def _fmt_size(size: int) -> str:
-                size_float = float(size)
-                for unit in ["B", "KB", "MB", "GB", "TB"]:
-                    if size_float < 1024.0:
-                        return f"{size_float:.1f} {unit}"
-                    size_float /= 1024.0
-                return f"{size_float:.1f} PB"
-
-            def _print_node(
-                node: dict[str, Any], prefix: str = "", depth: int = 0
-            ) -> tuple[int, int]:
-                if level is not None and depth >= level:
-                    return 0, 0
-                items = sorted(node.items())
-                total_files = 0
-                total_size = 0
-                for i, (name, value) in enumerate(items):
-                    is_last = i == len(items) - 1
-                    connector = "└── " if is_last else "├── "
-                    extension = "    " if is_last else "│   "
-                    if isinstance(value, dict):
-                        console.print(f"{prefix}{connector}[bold cyan]{name}/[/bold cyan]")
-                        f, s = _print_node(value, prefix + extension, depth + 1)
-                        total_files += f
-                        total_size += s
-                    else:
-                        total_files += 1
-                        if show_size and value is not None:
-                            console.print(
-                                f"{prefix}{connector}{name} [dim]({_fmt_size(value)})[/dim]"
-                            )
-                            total_size += value
+                tree_dict: dict[str, Any] = defaultdict(dict)
+                # Strip the base path prefix so depth is relative to target path
+                base_parts = PurePosixPath(path).parts
+                for entry in data["files"]:
+                    parts = PurePosixPath(entry["path"]).parts
+                    rel_parts = parts[len(base_parts) :]
+                    if not rel_parts:
+                        continue
+                    current = tree_dict
+                    for i, part in enumerate(rel_parts):
+                        if i == len(rel_parts) - 1:
+                            current[part] = entry["size"]
                         else:
-                            console.print(f"{prefix}{connector}{name}")
-                return total_files, total_size
+                            if part not in current or not isinstance(current[part], dict):
+                                current[part] = {}
+                            current = current[part]
 
-            console.print(f"[bold green]{path}[/bold green]")
-            file_count, total_sz = _print_node(tree_dict)
-            console.print()
-            if show_size:
-                console.print(f"[dim]{file_count} files, {_fmt_size(total_sz)} total[/dim]")
-            else:
-                console.print(f"[dim]{file_count} files[/dim]")
+                def _fmt_size(size: int) -> str:
+                    size_float = float(size)
+                    for unit in ["B", "KB", "MB", "GB", "TB"]:
+                        if size_float < 1024.0:
+                            return f"{size_float:.1f} {unit}"
+                        size_float /= 1024.0
+                    return f"{size_float:.1f} PB"
 
-        render_output(
-            data=tree_data, output_opts=output_opts, timing=timing, human_formatter=_print_human
-        )
-    except Exception as e:
-        if output_opts.json_output:
-            from nexus.cli.exit_codes import ExitCode
+                def _print_node(
+                    node: dict[str, Any], prefix: str = "", depth: int = 0
+                ) -> tuple[int, int]:
+                    if level is not None and depth >= level:
+                        return 0, 0
+                    items = sorted(node.items())
+                    total_files = 0
+                    total_size = 0
+                    for i, (name, value) in enumerate(items):
+                        is_last = i == len(items) - 1
+                        connector = "└── " if is_last else "├── "
+                        extension = "    " if is_last else "│   "
+                        if isinstance(value, dict):
+                            console.print(f"{prefix}{connector}[bold cyan]{name}/[/bold cyan]")
+                            f, s = _print_node(value, prefix + extension, depth + 1)
+                            total_files += f
+                            total_size += s
+                        else:
+                            total_files += 1
+                            if show_size and value is not None:
+                                console.print(
+                                    f"{prefix}{connector}{name} [dim]({_fmt_size(value)})[/dim]"
+                                )
+                                total_size += value
+                            else:
+                                console.print(f"{prefix}{connector}{name}")
+                    return total_files, total_size
 
-            render_error(
-                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
+                console.print(f"[bold green]{path}[/bold green]")
+                file_count, total_sz = _print_node(tree_dict)
+                console.print()
+                if show_size:
+                    console.print(f"[dim]{file_count} files, {_fmt_size(total_sz)} total[/dim]")
+                else:
+                    console.print(f"[dim]{file_count} files[/dim]")
+
+            render_output(
+                data=tree_data, output_opts=output_opts, timing=timing, human_formatter=_print_human
             )
-        else:
-            handle_error(e)
+        except Exception as e:
+            if output_opts.json_output:
+                from nexus.cli.exit_codes import ExitCode
+
+                render_error(
+                    error=e,
+                    output_opts=output_opts,
+                    exit_code=ExitCode.GENERAL_ERROR,
+                    timing=timing,
+                )
+            else:
+                handle_error(e)
+
+    asyncio.run(_impl())

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TASK_DISPATCH_PIPE_PATH = "/nexus/pipes/task-dispatch"
-_TASK_DISPATCH_PIPE_CAPACITY = 65_536  # 64KB
+_TASK_DISPATCH_PIPE_CAPACITY = 65_536  # 64 KiB
 
 
 class TaskDispatchPipeConsumer:
@@ -358,7 +358,8 @@ class TaskDispatchPipeConsumer:
         )
         stdout, _ = await proc.communicate()
         try:
-            return json.loads(stdout.decode()).get("instruction", "do the task")
+            result: str = json.loads(stdout.decode()).get("instruction", "do the task")
+            return result
         except Exception:
             return "do the task"
 
@@ -377,7 +378,8 @@ class TaskDispatchPipeConsumer:
         try:
             comments = json.loads(stdout.decode())
             if comments:
-                return comments[-1].get("content", "")
+                content: str = comments[-1].get("content", "")
+                return content
         except Exception:
             pass
         return "(no worker comment found)"

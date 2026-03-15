@@ -74,8 +74,6 @@ EXPECTED_MODELS = [
     "BackendChangeLogModel",
     "SyncBacklogModel",
     "ConflictLogModel",
-    # Namespace
-    "PersistentNamespaceViewModel",
     # Chunked Uploads (Issue #788)
     "UploadSessionModel",
     # Spending Policy (Issue #1358)

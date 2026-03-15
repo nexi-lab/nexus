@@ -62,7 +62,6 @@ EXPECTED_MODELS = [
     "MigrationHistoryModel",
     # Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)
     "PathRegistrationModel",
-    "UserSessionModel",
     # Agents
     "AgentRecordModel",
     "AgentEventModel",

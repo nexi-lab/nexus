@@ -254,28 +254,6 @@ class TestOAuthCredentialModel:
             cred.validate()
 
 
-class TestUserSessionModelIsExpired:
-    """Tests for UserSessionModel.is_expired()."""
-
-    def test_persistent_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=None)
-        assert s.is_expired() is False
-
-    def test_unexpired_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=datetime.now(UTC) + timedelta(hours=1))
-        assert s.is_expired() is False
-
-    def test_expired_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=datetime.now(UTC) - timedelta(hours=1))
-        assert s.is_expired() is True
-
-
 class TestSyncJobModelToDict:
     """Tests for SyncJobModel.to_dict()."""
 

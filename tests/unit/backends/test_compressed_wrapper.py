@@ -25,9 +25,14 @@ from unittest.mock import patch
 
 import pytest
 
+from nexus.backends.wrappers.compressed import is_zstd_available
 from nexus.contracts.describable import Describable
 from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock
+
+pytestmark = pytest.mark.skipif(
+    not is_zstd_available(), reason="zstd not available (install zstandard or use Python 3.14+)"
+)
 
 # ---------------------------------------------------------------------------
 # describe() Tests

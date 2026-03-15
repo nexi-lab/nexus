@@ -15,9 +15,6 @@ _BRICK_MODULES = [
     "nexus.bricks.delegation.models",
     "nexus.bricks.delegation.errors",
     "nexus.bricks.delegation.derivation",
-    "nexus.bricks.reputation.errors",
-    "nexus.bricks.reputation.reputation_math",
-    "nexus.bricks.reputation.reputation_records",
     "nexus.bricks.snapshot.errors",
     "nexus.bricks.snapshot.registry",
     # ReBAC brick (Issue #2179)

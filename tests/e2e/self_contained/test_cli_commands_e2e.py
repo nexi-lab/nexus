@@ -218,25 +218,6 @@ class TestDelegationE2E:
 
 
 # =========================================================================
-# reputation (server may return 503 if RecordStore not initialized)
-# =========================================================================
-
-
-class TestReputationE2E:
-    """nexus reputation commands against a running server."""
-
-    def test_reputation_show_unknown_agent(self, remote_server):
-        result = _run_cli(["reputation", "show", "nonexistent_agent", "--json"], remote_server)
-        envelope = _parse_json_envelope(result)
-        assert "data" in envelope or "error" in envelope
-
-    def test_reputation_leaderboard_json_envelope(self, remote_server):
-        result = _run_cli(["reputation", "leaderboard", "--json"], remote_server)
-        envelope = _parse_json_envelope(result)
-        assert envelope["_timing"]["total_ms"] > 0
-
-
-# =========================================================================
 # scheduler (server may return 503 if scheduler not available)
 # =========================================================================
 
@@ -405,7 +386,6 @@ class TestJsonEnvelopeConsistency:
             pytest.param("upload", ["status", "upl_test_123"], id="upload-status"),
             pytest.param("scheduler", ["status"], id="scheduler-status"),
             pytest.param("rlm", ["infer", "/test.txt", "--prompt", "test"], id="rlm-infer"),
-            pytest.param("reputation", ["leaderboard"], id="reputation-leaderboard"),
         ],
     )
     def test_envelope_has_timing_and_structure(

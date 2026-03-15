@@ -59,10 +59,6 @@ from nexus.storage.models.auth import ZoneModel as ZoneModel
 # Domain: Context Branching (Issue #1315)
 from nexus.storage.models.context_branch import ContextBranchModel as ContextBranchModel
 from nexus.storage.models.dead_letter import DeadLetterModel as DeadLetterModel
-
-# Domain: Context Branching (Issue #1315)
-# Issue #1356: Reputation & Trust models
-from nexus.storage.models.dispute import DisputeModel as DisputeModel
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel
 from nexus.storage.models.file_path import FilePathModel as FilePathModel
 
@@ -90,7 +86,6 @@ from nexus.storage.models.infrastructure import WorkspaceConfigModel as Workspac
 from nexus.storage.models.memory import EntityMentionModel as EntityMentionModel
 from nexus.storage.models.memory import EntityModel as EntityModel
 from nexus.storage.models.memory import EntityRegistryModel as EntityRegistryModel
-from nexus.storage.models.memory import MemoryConfigModel as MemoryConfigModel
 from nexus.storage.models.memory import MemoryModel as MemoryModel
 from nexus.storage.models.memory import RelationshipModel as RelationshipModel
 from nexus.storage.models.metadata_change_log import (
@@ -127,8 +122,6 @@ from nexus.storage.models.persistent_namespace_view import (
 from nexus.storage.models.refresh_token_history import (
     RefreshTokenHistoryModel as RefreshTokenHistoryModel,
 )
-from nexus.storage.models.reputation_event import ReputationEventModel as ReputationEventModel
-from nexus.storage.models.reputation_score import ReputationScoreModel as ReputationScoreModel
 
 # Domain: Scheduler (Task Queue, Issue #1212)
 from nexus.storage.models.scheduler import ScheduledTaskModel as ScheduledTaskModel

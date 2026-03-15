@@ -1,6 +1,6 @@
 """Tests for WorkspaceRegistry.
 
-These tests verify workspace and memory registration functionality.
+These tests verify workspace registration functionality.
 """
 
 from datetime import datetime
@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.bricks.workspace.workspace_registry import (
-    MemoryConfig,
     WorkspaceConfig,
     WorkspaceRegistry,
 )
@@ -66,48 +65,6 @@ class TestWorkspaceConfig:
         assert result["created_at"] is None
 
 
-class TestMemoryConfig:
-    """Test MemoryConfig dataclass."""
-
-    def test_init_minimal(self) -> None:
-        """Test minimal initialization."""
-        config = MemoryConfig(path="/my-memory")
-        assert config.path == "/my-memory"
-        assert config.name is None
-        assert config.description == ""
-
-    def test_init_full(self) -> None:
-        """Test full initialization."""
-        now = datetime.now()
-        config = MemoryConfig(
-            path="/memory",
-            name="Knowledge Base",
-            description="Test memory",
-            created_at=now,
-            created_by="alice",
-            metadata={"type": "kb"},
-        )
-        assert config.path == "/memory"
-        assert config.name == "Knowledge Base"
-        assert config.description == "Test memory"
-        assert config.created_at == now
-        assert config.created_by == "alice"
-        assert config.metadata == {"type": "kb"}
-
-    def test_to_dict(self) -> None:
-        """Test to_dict conversion."""
-        now = datetime.now()
-        config = MemoryConfig(
-            path="/memory",
-            name="KB",
-            created_at=now,
-        )
-        result = config.to_dict()
-        assert result["path"] == "/memory"
-        assert result["name"] == "KB"
-        assert result["created_at"] == now.isoformat()
-
-
 class TestWorkspaceRegistry:
     """Test WorkspaceRegistry functionality."""
 
@@ -134,7 +91,6 @@ class TestWorkspaceRegistry:
         with patch("nexus.bricks.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
             reg = WorkspaceRegistry(mock_metadata, record_store=mock_record_store)
             reg._workspaces = {}
-            reg._memories = {}
             return reg
 
     def test_init(self, mock_metadata: MagicMock, mock_record_store: MagicMock) -> None:
@@ -229,91 +185,6 @@ class TestWorkspaceRegistry:
         assert "/ws1" in paths
         assert "/ws2" in paths
 
-    def test_register_memory(self, registry: WorkspaceRegistry) -> None:
-        """Test memory registration."""
-        with patch.object(registry, "_save_memory_to_db"):
-            config = registry.register_memory(
-                path="/my-memory",
-                name="Test Memory",
-                description="A test memory",
-            )
-            assert config.path == "/my-memory"
-            assert config.name == "Test Memory"
-            assert config.description == "A test memory"
-            assert "/my-memory" in registry._memories
-
-    def test_register_memory_duplicate_raises(self, registry: WorkspaceRegistry) -> None:
-        """Test that registering duplicate memory raises."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/memory")
-
-        with pytest.raises(ValueError, match="already registered"):
-            registry.register_memory("/memory")
-
-    def test_unregister_memory(self, registry: WorkspaceRegistry) -> None:
-        """Test memory unregistration."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/memory")
-
-        with patch.object(registry, "_delete_memory_from_db"):
-            result = registry.unregister_memory("/memory")
-            assert result is True
-            assert "/memory" not in registry._memories
-
-    def test_unregister_memory_not_found(self, registry: WorkspaceRegistry) -> None:
-        """Test unregistering non-existent memory."""
-        result = registry.unregister_memory("/nonexistent")
-        assert result is False
-
-    def test_get_memory(self, registry: WorkspaceRegistry) -> None:
-        """Test getting memory by path."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/memory", name="KB")
-
-        config = registry.get_memory("/memory")
-        assert config is not None
-        assert config.name == "KB"
-
-    def test_get_memory_not_found(self, registry: WorkspaceRegistry) -> None:
-        """Test getting non-existent memory."""
-        config = registry.get_memory("/nonexistent")
-        assert config is None
-
-    def test_find_memory_for_path_exact(self, registry: WorkspaceRegistry) -> None:
-        """Test finding memory for exact path."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/my-memory")
-
-        config = registry.find_memory_for_path("/my-memory")
-        assert config is not None
-        assert config.path == "/my-memory"
-
-    def test_find_memory_for_path_nested(self, registry: WorkspaceRegistry) -> None:
-        """Test finding memory for nested path."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/my-memory")
-
-        config = registry.find_memory_for_path("/my-memory/docs/file.md")
-        assert config is not None
-        assert config.path == "/my-memory"
-
-    def test_find_memory_for_path_not_found(self, registry: WorkspaceRegistry) -> None:
-        """Test finding memory for unregistered path."""
-        config = registry.find_memory_for_path("/random/path")
-        assert config is None
-
-    def test_list_memories(self, registry: WorkspaceRegistry) -> None:
-        """Test listing memories."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/mem1", name="M1")
-            registry.register_memory("/mem2", name="M2")
-
-        memories = registry.list_memories()
-        assert len(memories) == 2
-        paths = [m.path for m in memories]
-        assert "/mem1" in paths
-        assert "/mem2" in paths
-
     def test_register_workspace_with_context_dict(self, registry: WorkspaceRegistry) -> None:
         """Test workspace registration with context as dict."""
         with patch.object(registry, "_save_workspace_to_db"):
@@ -332,13 +203,3 @@ class TestWorkspaceRegistry:
                 metadata={"key": "value", "count": 42},
             )
             assert config.metadata == {"key": "value", "count": 42}
-
-    def test_register_memory_with_context_dict(self, registry: WorkspaceRegistry) -> None:
-        """Test memory registration with context as dict."""
-        with patch.object(registry, "_save_memory_to_db"):
-            context = {"user_id": "bob", "zone_id": "team1"}
-            config = registry.register_memory(
-                path="/memory",
-                context=context,
-            )
-            assert config.created_by == "bob"

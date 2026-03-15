@@ -409,7 +409,6 @@ class TestBrickServices:
             "ipc_provisioner",
             "agent_event_log",
             "delegation_service",
-            "reputation_service",
             "version_service",
             # Factory-created bricks (Issue #2134)
             "parse_fn",

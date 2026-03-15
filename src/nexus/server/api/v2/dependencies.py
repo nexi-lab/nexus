@@ -145,48 +145,6 @@ async def get_exchange_audit_logger(
 
 
 # =============================================================================
-# Reputation & Trust dependencies (Issue #1356)
-# =============================================================================
-
-
-async def get_reputation_context(
-    nexus_fs: Any = Depends(get_nexus_fs),
-    auth_result: dict[str, Any] = Depends(require_auth),
-) -> tuple[Any, Any, dict[str, Any]]:
-    """Get ReputationService + DisputeService + auth context.
-
-    Prefers the singleton ReputationService on app.state (#1619),
-    falling back to per-request instantiation for backward compat.
-
-    Returns:
-        Tuple of (ReputationService, DisputeService, auth_context dict).
-    """
-    from nexus.bricks.reputation.dispute_service import DisputeService
-    from nexus.bricks.reputation.reputation_service import ReputationService
-
-    _record_store = getattr(nexus_fs, "_record_store", None)
-    if _record_store is None:
-        raise HTTPException(status_code=503, detail="RecordStore not initialized")
-
-    # Per-request instantiation (singleton DI via app.state planned in #1619)
-    reputation_service = ReputationService(
-        record_store=_record_store,
-    )
-    dispute_service = DisputeService(record_store=_record_store)
-
-    context = get_operation_context(auth_result)
-    auth_ctx = {
-        "user_id": context.user_id or "",
-        "subject_id": getattr(context, "subject_id", ""),
-        "subject_type": getattr(context, "subject_type", ""),
-        "is_admin": getattr(context, "is_admin", False),
-        "zone_id": context.zone_id,
-    }
-
-    return reputation_service, dispute_service, auth_ctx
-
-
-# =============================================================================
 # Aspect & Catalog dependencies (Issue #2930)
 # =============================================================================
 

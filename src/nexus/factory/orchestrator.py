@@ -218,9 +218,8 @@ def create_nexus_services(
         ipc_provisioner=brick_dict["ipc_provisioner"],
         # Sandbox Brick (Issue #1307)
         agent_event_log=brick_dict["agent_event_log"],
-        # Delegation & Reputation Bricks (Issue #2131)
+        # Delegation Brick (Issue #2131)
         delegation_service=brick_dict["delegation_service"],
-        reputation_service=brick_dict["reputation_service"],
         # Version Brick (Issue #2034: moved from kernel)
         version_service=brick_dict["version_service"],
         # Governance Brick (Issue #2129)

@@ -8,7 +8,6 @@ from nexus.cli.clients.graph import GraphClient
 from nexus.cli.clients.identity import IdentityClient
 from nexus.cli.clients.ipc import IPCClient
 from nexus.cli.clients.manifest import ManifestClient
-from nexus.cli.clients.reputation import ReputationClient
 from nexus.cli.clients.rlm import RLMClient
 from nexus.cli.clients.scheduler import SchedulerClient
 from nexus.cli.clients.secrets_audit import SecretsAuditClient
@@ -26,7 +25,6 @@ __all__ = [
     "ManifestClient",
     "NexusAPIError",
     "RLMClient",
-    "ReputationClient",
     "SchedulerClient",
     "SecretsAuditClient",
     "ShareClient",

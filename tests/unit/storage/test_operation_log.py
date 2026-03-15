@@ -92,7 +92,7 @@ async def test_write_update_operation_logged(
     content2 = b"Version 2"
 
     # Write initial version (use write() to get metadata dict with etag)
-    result1 = nx.write(path, content1)
+    result1 = await nx.write(path, content1)
     old_hash = result1["etag"]
 
     # Update file
@@ -126,7 +126,7 @@ async def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
     content = b"Test content"
 
     # Write and then delete (use write() to get metadata dict with etag)
-    result = nx.write(path, content)
+    result = await nx.write(path, content)
     content_hash = result["etag"]
     await nx.sys_unlink(path)
 
@@ -308,7 +308,7 @@ async def test_undo_write_update(
     content2 = _cas(b"Version 2")
 
     # Write initial version (use write() to get metadata dict with etag)
-    result1 = nx.write(path, content1)
+    result1 = await nx.write(path, content1)
     old_hash = result1["etag"]
 
     # Update file
@@ -341,7 +341,7 @@ async def test_undo_delete(
     content = b"Test content"
 
     # Write and delete (use write() to get metadata dict with etag)
-    result = nx.write(path, content)
+    result = await nx.write(path, content)
     content_hash = result["etag"]
     local_backend.write_content(content)  # Hold extra CAS reference so blob survives unlink
     await nx.sys_unlink(path)

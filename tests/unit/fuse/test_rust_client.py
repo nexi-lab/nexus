@@ -108,21 +108,19 @@ class TestDataClasses:
 
 
 class TestRead:
-    @pytest.mark.asyncio
-    async def test_read_decodes_base64(self, mock_client: RustFUSEClient) -> None:
+    def test_read_decodes_base64(self, mock_client: RustFUSEClient) -> None:
         content = b"hello world"
         encoded = base64.b64encode(content).decode()
         mock_client.sock.recv.return_value = _mock_rpc_response({"data": encoded})
 
-        result = await mock_client.sys_read("/test.txt")
+        result = mock_client.sys_read("/test.txt")
         assert result == content
 
-    @pytest.mark.asyncio
-    async def test_read_sends_correct_request(self, mock_client: RustFUSEClient) -> None:
+    def test_read_sends_correct_request(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response(
             {"data": base64.b64encode(b"x").decode()}
         )
-        await mock_client.sys_read("/my/path.txt")
+        mock_client.sys_read("/my/path.txt")
 
         sent = mock_client.sock.sendall.call_args[0][0]
         request = json.loads(sent.decode())
@@ -135,10 +133,9 @@ class TestRead:
 
 
 class TestWrite:
-    @pytest.mark.asyncio
-    async def test_write_encodes_base64(self, mock_client: RustFUSEClient) -> None:
+    def test_write_encodes_base64(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({})
-        await mock_client.sys_write("/test.txt", b"hello")
+        mock_client.sys_write("/test.txt", b"hello")
 
         sent = mock_client.sock.sendall.call_args[0][0]
         request = json.loads(sent.decode())
@@ -151,15 +148,14 @@ class TestWrite:
 
 
 class TestList:
-    @pytest.mark.asyncio
-    async def test_list_parses_entries(self, mock_client: RustFUSEClient) -> None:
+    def test_list_parses_entries(self, mock_client: RustFUSEClient) -> None:
         files = [
             {"name": "a.txt", "type": "file", "size": 10},
             {"name": "subdir", "type": "directory", "size": 0},
         ]
         mock_client.sock.recv.return_value = _mock_rpc_response({"files": files})
 
-        result = await mock_client.sys_readdir("/")
+        result = mock_client.sys_readdir("/")
         assert len(result) == 2
         assert result[0].name == "a.txt"
         assert result[0].entry_type == "file"
@@ -187,56 +183,49 @@ class TestStat:
 
 
 class TestOtherOps:
-    @pytest.mark.asyncio
-    async def test_mkdir(self, mock_client: RustFUSEClient) -> None:
+    def test_mkdir(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({})
-        await mock_client.sys_mkdir("/new-dir")
+        mock_client.sys_mkdir("/new-dir")
         sent = json.loads(mock_client.sock.sendall.call_args[0][0].decode())
         assert sent["method"] == "mkdir"
 
-    @pytest.mark.asyncio
-    async def test_delete(self, mock_client: RustFUSEClient) -> None:
+    def test_delete(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({})
-        await mock_client.sys_unlink("/to-del.txt")
+        mock_client.sys_unlink("/to-del.txt")
         sent = json.loads(mock_client.sock.sendall.call_args[0][0].decode())
         assert sent["method"] == "delete"
 
-    @pytest.mark.asyncio
-    async def test_rename(self, mock_client: RustFUSEClient) -> None:
+    def test_rename(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({})
-        await mock_client.sys_rename("/old.txt", "/new.txt")
+        mock_client.sys_rename("/old.txt", "/new.txt")
         sent = json.loads(mock_client.sock.sendall.call_args[0][0].decode())
         assert sent["method"] == "rename"
         assert sent["params"]["old_path"] == "/old.txt"
         assert sent["params"]["new_path"] == "/new.txt"
 
-    @pytest.mark.asyncio
-    async def test_exists_true(self, mock_client: RustFUSEClient) -> None:
+    def test_exists_true(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
-        assert await mock_client.sys_access("/here.txt") is True
+        assert mock_client.sys_access("/here.txt") is True
 
-    @pytest.mark.asyncio
-    async def test_exists_false(self, mock_client: RustFUSEClient) -> None:
+    def test_exists_false(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": False})
-        assert await mock_client.sys_access("/gone.txt") is False
+        assert mock_client.sys_access("/gone.txt") is False
 
 
 # ── Error Handling ────────────────────────────────────────
 
 
 class TestErrorHandling:
-    @pytest.mark.asyncio
-    async def test_rpc_error_raises_oserror(self, mock_client: RustFUSEClient) -> None:
+    def test_rpc_error_raises_oserror(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_error(-32000, "File not found", errno.ENOENT)
         with pytest.raises(OSError) as exc_info:
-            await mock_client.sys_read("/missing.txt")
+            mock_client.sys_read("/missing.txt")
         assert exc_info.value.errno == errno.ENOENT
 
-    @pytest.mark.asyncio
-    async def test_rpc_error_default_errno(self, mock_client: RustFUSEClient) -> None:
+    def test_rpc_error_default_errno(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_error(-32603, "Internal error")
         with pytest.raises(OSError) as exc_info:
-            await mock_client.sys_read("/broken.txt")
+            mock_client.sys_read("/broken.txt")
         assert exc_info.value.errno == 5  # EIO default
 
     def test_connection_closed_triggers_reconnect(self, mock_client: RustFUSEClient) -> None:
@@ -269,8 +258,7 @@ class TestErrorHandling:
 
 
 class TestAutoRestart:
-    @pytest.mark.asyncio
-    async def test_dead_daemon_triggers_reconnect(self, mock_client: RustFUSEClient) -> None:
+    def test_dead_daemon_triggers_reconnect(self, mock_client: RustFUSEClient) -> None:
         mock_client.daemon_process.poll.return_value = 1  # Process dead
 
         with patch.object(mock_client, "_reconnect") as mock_reconnect:
@@ -279,7 +267,7 @@ class TestAutoRestart:
                 mock_client.daemon_process, "poll", MagicMock(return_value=None)
             )
             mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
-            await mock_client.sys_access("/test.txt")
+            mock_client.sys_access("/test.txt")
             mock_reconnect.assert_called_once()
 
     def test_reconnect_exceeds_max_attempts(self, mock_client: RustFUSEClient) -> None:
@@ -288,23 +276,19 @@ class TestAutoRestart:
         with pytest.raises(RuntimeError, match="failed.*times"):
             mock_client._reconnect()
 
-    @pytest.mark.asyncio
-    async def test_successful_request_resets_restart_count(
-        self, mock_client: RustFUSEClient
-    ) -> None:
+    def test_successful_request_resets_restart_count(self, mock_client: RustFUSEClient) -> None:
         mock_client._restart_count = 2
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
 
-        await mock_client.sys_access("/test.txt")
+        mock_client.sys_access("/test.txt")
         assert mock_client._restart_count == 0
 
-    @pytest.mark.asyncio
-    async def test_request_id_increments(self, mock_client: RustFUSEClient) -> None:
+    def test_request_id_increments(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
 
         start_id = mock_client.request_id
-        await mock_client.sys_access("/a.txt")
-        await mock_client.sys_access("/b.txt")
+        mock_client.sys_access("/a.txt")
+        mock_client.sys_access("/b.txt")
         assert mock_client.request_id == start_id + 2
 
 

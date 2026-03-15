@@ -18,9 +18,10 @@ Note: Uses `direct_owner` relation which grants `read` permission in the
 default ReBAC namespace configuration.
 """
 
+import asyncio
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -46,14 +47,16 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-async def nx(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
+def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with ReBAC enabled."""
-    nx = await create_nexus_fs(
-        backend=CASLocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        parsing=ParseConfig(auto_parse=False),
-        permissions=PermissionConfig(enforce=True),
+    nx = asyncio.run(
+        create_nexus_fs(
+            backend=CASLocalBackend(temp_dir),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=True),
+        )
     )
     yield nx
     nx.close()

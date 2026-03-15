@@ -5,6 +5,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.core.config import BrickServices, KernelServices, WiredServices
 
@@ -297,6 +299,35 @@ def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] AgentRPCService unavailable: %s", exc)
 
+    acp_rpc_service: Any = None
+    _acp_service = getattr(system_services, "acp_service", None)
+    if _acp_service is None:
+        # System tier didn't create AcpService (e.g. no record_store / local connect).
+        # Construct it here if ProcessTable + metastore are available.
+        try:
+            from nexus.core.process_table import ProcessTable
+            from nexus.system_services.acp.service import AcpService
+
+            _acp_pt = getattr(system_services, "process_table", None)
+            if _acp_pt is None:
+                _acp_pt = ProcessTable(nx.metadata, zone_id=ROOT_ZONE_ID)
+            _acp_service = AcpService(
+                process_table=_acp_pt,
+                metastore=nx.metadata,
+                zone_id=ROOT_ZONE_ID,
+            )
+            logger.debug("[BOOT:WIRED] AcpService created (inline)")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
+    if _acp_service is not None:
+        try:
+            from nexus.system_services.acp.acp_rpc_service import AcpRPCService
+
+            acp_rpc_service = AcpRPCService(acp_service=_acp_service)
+            logger.debug("[BOOT:WIRED] AcpRPCService created")
+        except Exception as exc:
+            logger.warning("[BOOT:WIRED] AcpRPCService unavailable: %s", exc)
+
     user_provisioning_service: Any = None
     try:
         from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
@@ -417,6 +448,7 @@ def _boot_wired_services(
         operations_service=operations_service,
         workspace_rpc_service=workspace_rpc_service,
         agent_rpc_service=agent_rpc_service,
+        acp_rpc_service=acp_rpc_service,
         user_provisioning_service=user_provisioning_service,
         sandbox_rpc_service=sandbox_rpc_service,
         metadata_export_service=metadata_export_service,

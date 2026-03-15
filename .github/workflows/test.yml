@@ -55,8 +55,41 @@ jobs:
           echo ""
           uv run pytest tests/unit/server/test_rpc_parity.py -v
 
+  # Build Rust extensions once per OS, share wheels with downstream jobs
+  build-rust:
+    name: Build Rust Extensions (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build Rust extensions
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: dev
+          rust-cache-shared-key: "rust-test"
+          output-dir: dist
+          github-token: ${{ github.token }}
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-wheels-${{ matrix.os }}
+          path: dist/*.whl
+          retention-days: 1
+
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    needs: build-rust
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -82,36 +115,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python ${{ matrix.python-version }}
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-${{ matrix.os }}"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-${{ matrix.os }}
+          path: dist
 
-      - name: Build Rust extension (nexus_fast)
-        run: |
-          cd rust/nexus_pyo3
-          pip install maturin
-          maturin develop --release
-        shell: bash
-
-      - name: Build Rust extension (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          maturin develop --release --features python
-        shell: bash
-
-      - name: Build Rust extension (nexus_tasks)
-        run: |
-          cd rust/nexus_tasks
-          maturin develop --release --features mimalloc
-        shell: bash
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: |
@@ -153,6 +164,7 @@ jobs:
 
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
+    needs: build-rust
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -172,28 +184,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Install protoc
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features full && cd ../..
-          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
-
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -205,6 +203,7 @@ jobs:
 
   e2e-postgres:
     name: E2E Tests (PostgreSQL)
+    needs: build-rust
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -240,24 +239,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"
@@ -269,6 +258,7 @@ jobs:
 
   e2e-redis:
     name: E2E Tests (Redis)
+    needs: build-rust
     runs-on: ubuntu-latest
     services:
       redis:
@@ -302,24 +292,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -331,6 +311,7 @@ jobs:
 
   e2e-docker:
     name: E2E Tests (Docker)
+    needs: build-rust
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -350,24 +331,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -379,6 +350,7 @@ jobs:
 
   e2e-nats:
     name: E2E Tests (NATS)
+    needs: build-rust
     runs-on: ubuntu-latest
     env:
       NEXUS_NATS_URL: nats://localhost:4222
@@ -405,24 +377,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release --features mimalloc && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"

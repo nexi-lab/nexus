@@ -435,30 +435,107 @@ def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
 async def handle_semantic_search_index(
     nexus_fs: "NexusFS", params: Any, _context: Any
 ) -> dict[str, Any]:
-    """Handle semantic_search_index method."""
+    """Index documents for semantic search via the SearchDaemon's txtai backend.
+
+    Single indexing path: reads files via NexusFS, upserts through the daemon's
+    txtai backend which stores embeddings + BM25 tokens in pgvector. No separate
+    document_chunks table needed — txtai is the single source of truth.
+
+    Falls back to the SearchService pipeline if the daemon is unavailable.
+    """
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
     path = getattr(params, "path", "/")
     recursive = getattr(params, "recursive", True)
 
+    search = nexus_fs.service("search")
+    if search is None:
+        raise ValueError("SearchService required for semantic search")
+
+    # Prefer single-path indexing through the SearchDaemon's txtai backend.
+    daemon = getattr(search, "_search_daemon", None)
+    if daemon is not None and getattr(daemon, "_backend", None) is not None:
+        context = _context
+        zone_id = getattr(context, "zone_id", None) or "root"
+
+        # RPC may scope paths as /zone/{id}/...; DB stores unscoped virtual_path.
+        db_path = unscope_internal_path(path)
+
+        # Query file paths from the daemon's database connection
+        paths_to_index: list[str] = []
+        if hasattr(daemon, "_async_session") and daemon._async_session is not None:
+            from sqlalchemy import text as sa_text
+
+            async with daemon._async_session() as sess:
+                if recursive:
+                    # Match both the path itself (single file) and children (directory)
+                    like_pattern = db_path.rstrip("/") + "/%"
+                    result = await sess.execute(
+                        sa_text(
+                            "SELECT virtual_path FROM file_paths"
+                            " WHERE virtual_path LIKE :like OR virtual_path = :exact"
+                        ),
+                        {"like": like_pattern, "exact": db_path},
+                    )
+                    paths_to_index = [r[0] for r in result.fetchall()]
+                else:
+                    paths_to_index = [db_path]
+            _log.info(
+                "semantic_search_index: found %d files under %s", len(paths_to_index), db_path
+            )
+
+        # Read content and build documents for txtai
+        documents: list[dict[str, Any]] = []
+        read_errors = 0
+        total_chunks = 0
+        for file_path in paths_to_index:
+            try:
+                content = nexus_fs.sys_read(file_path, context=context)
+                if isinstance(content, bytes):
+                    content_str = content.decode("utf-8", errors="replace")
+                else:
+                    content_str = content
+                if content_str.strip():
+                    doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
+                    documents.append({"id": doc_id, "text": content_str, "path": file_path})
+            except Exception as read_err:
+                read_errors += 1
+                _log.warning("Skipping %s: %s", file_path, read_err)
+
+        _log.info(
+            "semantic_search_index: %d documents read (%d errors)", len(documents), read_errors
+        )
+
+        # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
+        results: dict[str, int] = {}
+        if documents:
+            await daemon.index_documents(documents, zone_id=zone_id)
+            # Estimate per-file chunk counts from content length (~2KB/chunk)
+            for doc in documents:
+                chunks = max(1, len(doc["text"]) // 2000)
+                results[doc["path"]] = chunks
+                total_chunks += chunks
+            _log.info(
+                "semantic_search_index: indexed %d docs (~%d chunks)", len(documents), total_chunks
+            )
+
+        return {"indexed": results, "total_files": len(documents), "total_chunks": total_chunks}
+
+    # Fallback: SearchService pipeline (when daemon is unavailable)
     try:
-        search = nexus_fs.service("search")
-        assert search is not None, "SearchService required for semantic search"
         await search.ainitialize_semantic_search(nx=nexus_fs, record_store_engine=None)
     except Exception as e:
-        raise ValueError(
-            f"Semantic search is not initialized and could not be auto-initialized: {e}"
-        ) from e
+        raise ValueError(f"Semantic search could not be initialized: {e}") from e
 
-    search = nexus_fs.service("search")
-    assert search is not None
     results = await search.semantic_search_index(path=path, recursive=recursive)
-
     total_chunks = 0
     for v in results.values():
         if isinstance(v, int):
             total_chunks += v
         elif isinstance(v, dict) and "chunks" in v:
             total_chunks += v["chunks"]
-
     return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
 
@@ -473,6 +550,7 @@ async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any
         path=getattr(params, "path", "/"),
         limit=getattr(params, "limit", 10),
         search_mode=getattr(params, "search_mode", "semantic"),
+        context=_context,
         adaptive_k=getattr(params, "adaptive_k", False),
     )
     return {"results": results}

@@ -80,9 +80,9 @@ Only needed for development or unsupported platforms:
 cd rust/nexus_pyo3
 
 # Build and install in development mode
-maturin develop --release
+maturin develop
 
-# Or build a wheel for distribution
+# Or build an optimized wheel for distribution
 maturin build --release
 pip install target/wheels/*.whl
 ```
@@ -361,7 +361,7 @@ When modifying the Rust code:
 1. Run tests: `python test_nexus_fast.py`
 2. Check formatting: `cargo fmt`
 3. Run linter: `cargo clippy`
-4. Rebuild: `maturin develop --release`
+4. Rebuild: `maturin develop`
 
 ## Future Enhancements
 

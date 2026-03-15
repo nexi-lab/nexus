@@ -969,9 +969,22 @@ def _init_semantic_search(nx: Any, config: dict[str, Any], manifest: dict[str, A
     try:
         search_svc = nx.service("search")
         results = search_svc.semantic_search_index("/workspace/demo", recursive=True)
-        indexed = sum(1 for v in results.values() if v > 0)
+        # RPC handler wraps results as {"indexed": {path: count, ...}, ...}
+        if isinstance(results, dict) and "indexed" in results:
+            indexed_map = results["indexed"]
+            total_chunks = results.get("total_chunks", 0)
+            indexed = sum(1 for v in indexed_map.values() if isinstance(v, int) and v > 0)
+        else:
+            # Direct call (non-RPC) returns dict[str, int]
+            indexed_map = results
+            indexed = sum(1 for v in results.values() if isinstance(v, int) and v > 0)
+            total_chunks = sum(v for v in results.values() if isinstance(v, int) and v > 0)
         if indexed > 0:
-            logger.info("Semantic search: indexed %d files via real pipeline", indexed)
+            logger.info(
+                "Semantic search: indexed %d files (%d chunks) via real pipeline",
+                indexed,
+                total_chunks,
+            )
             manifest["semantic_engine"] = "vector"
             manifest["semantic_indexed_files"] = indexed
             return True

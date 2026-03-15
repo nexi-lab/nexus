@@ -38,6 +38,7 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(move_cmd)
     cli.add_command(sync_cmd)
     cli.add_command(rm)
+    cli.add_command(edit)
 
 
 @click.command()
@@ -941,5 +942,107 @@ def rm(
         nx.close()
 
         console.print(f"[green]✓[/green] Deleted [cyan]{path}[/cyan]")
+    except Exception as e:
+        handle_error(e)
+
+
+@click.command()
+@click.argument("path", type=str)
+@click.argument("old_string", type=str)
+@click.argument("new_string", type=str)
+@click.option(
+    "--fuzzy",
+    type=float,
+    default=None,
+    help="Fuzzy matching threshold (0.0-1.0). Default: exact match only.",
+)
+@click.option(
+    "--if-match",
+    type=str,
+    default=None,
+    help="Only edit if current ETag matches (optimistic concurrency control).",
+)
+@click.option(
+    "--preview",
+    is_flag=True,
+    help="Show what would change without writing.",
+)
+@add_backend_options
+def edit(
+    path: str,
+    old_string: str,
+    new_string: str,
+    fuzzy: float | None,
+    if_match: str | None,
+    preview: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Surgical search-and-replace edit on a file.
+
+    Finds OLD_STRING in the file and replaces it with NEW_STRING.
+    Creates a new version on success. Supports exact, whitespace-normalized,
+    and fuzzy matching.
+
+    Examples:
+        # Exact replacement
+        nexus edit /workspace/doc.md "old text" "new text"
+
+        # Fuzzy match (tolerates typos, threshold 0.0-1.0)
+        nexus edit /workspace/doc.md "aproximate" "approximate" --fuzzy 0.8
+
+        # Preview changes without writing
+        nexus edit /workspace/doc.md "old" "new" --preview
+
+        # OCC: only edit if no one else modified the file
+        nexus edit /workspace/doc.md "old" "new" --if-match abc123
+    """
+    try:
+        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+
+        kwargs: dict[str, Any] = {
+            "edits": [(old_string, new_string)],
+            "preview": preview,
+        }
+        if fuzzy is not None:
+            kwargs["fuzzy_threshold"] = fuzzy
+        if if_match is not None:
+            kwargs["if_match"] = if_match
+
+        result = nx.edit(path, **kwargs)
+        nx.close()
+
+        success = result.get("success", False)
+        applied = result.get("applied_count", 0)
+        diff = result.get("diff", "")
+        matches = result.get("matches", [])
+        etag = result.get("etag", "")
+
+        if preview:
+            if success and applied > 0:
+                console.print(f"[yellow]Preview:[/yellow] {applied} edit(s) would apply")
+                if diff:
+                    syntax = Syntax(diff, "diff", theme="monokai")
+                    console.print(syntax)
+            else:
+                console.print("[yellow]Preview:[/yellow] No matches found")
+            return
+
+        if success and applied > 0:
+            console.print(f"[green]✓[/green] {applied} edit(s) applied to [cyan]{path}[/cyan]")
+            if etag:
+                console.print(f"  [dim]etag: {etag}[/dim]")
+            for m in matches:
+                sim = m.get("similarity")
+                method = m.get("method", "exact")
+                if sim and sim < 1.0:
+                    console.print(f"  [dim]match: similarity={sim:.2f} ({method})[/dim]")
+            if diff:
+                syntax = Syntax(diff, "diff", theme="monokai")
+                console.print(syntax)
+        else:
+            console.print(f"[yellow]No matches found[/yellow] for the search string in {path}")
+            if fuzzy is None:
+                console.print("[dim]Hint: use --fuzzy 0.8 for approximate matching[/dim]")
     except Exception as e:
         handle_error(e)

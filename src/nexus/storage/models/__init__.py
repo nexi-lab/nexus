@@ -101,7 +101,6 @@ from nexus.storage.models.payments import UsageEvent as UsageEvent
 # Domain: Permissions (ReBAC + Tiger Cache)
 from nexus.storage.models.permissions import AdminBypassAuditModel as AdminBypassAuditModel
 from nexus.storage.models.permissions import ReBACChangelogModel as ReBACChangelogModel
-from nexus.storage.models.permissions import ReBACCheckCacheModel as ReBACCheckCacheModel
 from nexus.storage.models.permissions import ReBACGroupClosureModel as ReBACGroupClosureModel
 from nexus.storage.models.permissions import ReBACNamespaceModel as ReBACNamespaceModel
 from nexus.storage.models.permissions import ReBACTupleModel as ReBACTupleModel

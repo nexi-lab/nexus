@@ -233,7 +233,7 @@ export interface AccessState {
   readonly computeFraudScores: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
 
   // Actions — delegations
-  readonly fetchDelegations: (client: FetchClient) => Promise<void>;
+  readonly fetchDelegations: (client: FetchClient, status?: string | null) => Promise<void>;
   readonly createDelegation: (
     request: {
       readonly worker_id: string;
@@ -590,13 +590,15 @@ export const useAccessStore = create<AccessState>((set, get) => ({
 
   // ── Delegations ─────────────────────────────────────────────────────────
 
-  fetchDelegations: async (client) => {
+  fetchDelegations: async (client, status) => {
     set({ delegationsLoading: true, error: null });
     try {
+      let url = "/api/v2/agents/delegate";
+      if (status) url += `?status=${encodeURIComponent(status)}`;
       const response = await client.get<{
         readonly delegations: readonly DelegationItem[];
         readonly count: number;
-      }>("/api/v2/agents/delegate");
+      }>(url);
       set({
         delegations: response.delegations,
         delegationsLoading: false,

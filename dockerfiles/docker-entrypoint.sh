@@ -307,10 +307,8 @@ build_serve_cmd() {
         if [ -n "${NEXUS_PROFILE:-}" ]; then
             cmd="$cmd --profile ${NEXUS_PROFILE}"
         fi
-        if [ "${NEXUS_BACKEND:-}" = "gcs" ]; then
-            cmd="$cmd --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET:-}"
-            [ -n "${NEXUS_GCS_PROJECT:-}" ] && cmd="$cmd --gcs-project ${NEXUS_GCS_PROJECT}"
-        fi
+        # GCS/S3 backends are configured via env vars (NEXUS_GCS_BUCKET_NAME,
+        # NEXUS_GCS_PROJECT_ID) read by the config loader, not CLI flags.
         echo "$cmd"
     fi
 }

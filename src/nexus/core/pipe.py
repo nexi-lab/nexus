@@ -77,6 +77,7 @@ class RingBuffer:
 
     __slots__ = (
         "_core",
+        "_loop",
         "_not_empty",
         "_not_full",
         "_readers_waiting",
@@ -98,6 +99,13 @@ class RingBuffer:
         self._not_full.set()  # initially not full
         self._readers_waiting = False
         self._writers_waiting = False
+        # Capture the event loop for cross-thread signalling.
+        # RPC handlers run in a thread pool, so write_nowait() must use
+        # call_soon_threadsafe() to wake the async consumer.
+        try:
+            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
     # -- async write/read ---------------------------------------------------
 
@@ -158,7 +166,12 @@ class RingBuffer:
     # -- sync nowait --------------------------------------------------------
 
     def write_nowait(self, data: bytes) -> int:
-        """Synchronous non-blocking write. Raises PipeFullError if full."""
+        """Synchronous non-blocking write. Raises PipeFullError if full.
+
+        Thread-safe: may be called from RPC worker threads.  Uses
+        ``call_soon_threadsafe`` so the asyncio.Event signal reaches the
+        consumer task on the event-loop thread.
+        """
         try:
             n = self._core.push(data)
         except RuntimeError as exc:
@@ -167,10 +180,14 @@ class RingBuffer:
         except ValueError:
             raise  # oversized message — already a ValueError from Rust
 
-        # Wake blocked reader only if one is actually waiting.
-        # Skipping Event.set() when no reader is blocked saves ~55ns/op.
+        # Wake blocked reader.  The writer may run on a thread-pool
+        # thread (RPC dispatch), so Event.set() must be delivered to
+        # the event-loop thread via call_soon_threadsafe.
         if self._readers_waiting:
-            self._not_empty.set()
+            if self._loop is not None and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._not_empty.set)
+            else:
+                self._not_empty.set()
         return int(n)
 
     def read_nowait(self) -> bytes:
@@ -200,7 +217,10 @@ class RingBuffer:
             raise
 
         if self._readers_waiting:
-            self._not_empty.set()
+            if self._loop is not None and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._not_empty.set)
+            else:
+                self._not_empty.set()
 
     def read_u64_nowait(self) -> int:
         """Pop a u64 from the ring. Returns Python int directly."""

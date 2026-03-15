@@ -85,7 +85,7 @@ def server():
     meta_dir = os.path.join(data_dir, "metadata")
     db_path = os.path.join(data_dir, "nexus.db")
     server_script = f"""
-import sys, os
+import sys, os, asyncio
 sys.path.insert(0, '{src_path}')
 from nexus.backends.local import LocalBackend
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -98,11 +98,11 @@ backend = LocalBackend(root_path='{backend_root}')
 metadata_store = RaftMetadataStore.embedded('{meta_dir}')
 record_store = SQLAlchemyRecordStore(db_path='{db_path}')
 
-nx = create_nexus_fs(
+nx = asyncio.run(create_nexus_fs(
     backend=backend,
     metadata_store=metadata_store,
     record_store=record_store,
-)
+))
 app = create_app(nexus_fs=nx)
 uvicorn.run(app, host='127.0.0.1', port={port}, log_level='warning')
 """

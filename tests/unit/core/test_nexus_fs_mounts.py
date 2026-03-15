@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,9 +37,9 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+async def nx(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance for testing."""
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -51,9 +51,9 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 
 
 @pytest.fixture
-def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
+async def nx_with_permissions(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
     """Create a NexusFS instance with permissions enabled."""
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -304,10 +304,11 @@ class TestRemoveMount:
 class TestSaveMount:
     """Tests for save_mount method."""
 
-    def test_save_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_save_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that save_mount raises RuntimeError without mount manager."""
         # Create NexusFS without database (no mount manager)
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-save-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_save_mount.db"),
@@ -351,9 +352,12 @@ class TestSaveMount:
 class TestListSavedMounts:
     """Tests for list_saved_mounts method."""
 
-    def test_list_saved_mounts_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_list_saved_mounts_without_mount_manager_raises_error(
+        self, temp_dir: Path
+    ) -> None:
         """Test that list_saved_mounts raises RuntimeError without mount manager."""
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(
                 str(temp_dir / "raft-test-list-saved-mounts")
@@ -374,9 +378,10 @@ class TestListSavedMounts:
 class TestLoadMount:
     """Tests for load_mount method."""
 
-    def test_load_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_load_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that load_mount raises RuntimeError without mount manager."""
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-load-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_load_mount.db"),
@@ -395,9 +400,12 @@ class TestLoadMount:
 class TestDeleteSavedMount:
     """Tests for delete_saved_mount method."""
 
-    def test_delete_saved_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_delete_saved_mount_without_mount_manager_raises_error(
+        self, temp_dir: Path
+    ) -> None:
         """Test that delete_saved_mount raises RuntimeError without mount manager."""
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(
                 str(temp_dir / "raft-test-delete-saved-mount")

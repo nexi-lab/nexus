@@ -101,7 +101,7 @@ def vfs() -> InMemoryStorageDriver:
 
 
 @pytest.fixture
-def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
+async def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     """FastAPI app with permissions enabled + database auth."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -130,7 +130,7 @@ def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
     backend = CASLocalBackend(root_path=tmpdir)
     metadata_store = DictMetastore()
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

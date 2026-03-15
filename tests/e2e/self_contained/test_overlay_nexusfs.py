@@ -88,7 +88,7 @@ def overlay_resolver(
 
 
 @pytest.fixture
-def nexus_fs(
+async def nexus_fs(
     local_backend: CASLocalBackend,
     metadata_store: DictMetastore,
     overlay_resolver: OverlayResolver,
@@ -106,7 +106,7 @@ def nexus_fs(
 
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=local_backend,
         metadata_store=metadata_store,
         record_store=record_store,

@@ -297,7 +297,7 @@ class TestSkillDocGeneration:
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
         backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),

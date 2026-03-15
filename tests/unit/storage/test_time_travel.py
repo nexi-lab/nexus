@@ -55,7 +55,7 @@ class TestTimeTravelDebug:
         return CASLocalBackend(root_path=data_dir)
 
     @pytest.fixture
-    def nx(self, temp_dir, record_store, backend):
+    async def nx(self, temp_dir, record_store, backend):
         """Create NexusFS instance for testing.
 
         Uses RaftMetadataStore. TODO: Time travel depends on FilePathModel
@@ -64,7 +64,7 @@ class TestTimeTravelDebug:
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
         metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,

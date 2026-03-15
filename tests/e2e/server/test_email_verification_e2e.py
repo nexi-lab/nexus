@@ -54,7 +54,7 @@ pytestmark = [
 # ---------------------------------------------------------------------------
 
 
-def _create_nexus_fs(tmp_path: Path, *, enforce_permissions: bool = False) -> NexusFS:
+async def _create_nexus_fs(tmp_path: Path, *, enforce_permissions: bool = False) -> NexusFS:
     """Create a real NexusFS with RaftMetadataStore."""
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
@@ -67,7 +67,7 @@ def _create_nexus_fs(tmp_path: Path, *, enforce_permissions: bool = False) -> Ne
 
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / 'records_email_verify.db'}")
 
-    return create_nexus_fs(
+    return await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -126,7 +126,7 @@ def _rpc_post(
 
 
 @pytest.fixture()
-def _env(tmp_path: Path, monkeypatch):
+async def _env(tmp_path: Path, monkeypatch):
     """Set up environment and database for the full-stack E2E test."""
     # Create database for auth
     db_path = tmp_path / "email_verify_e2e.db"
@@ -136,7 +136,7 @@ def _env(tmp_path: Path, monkeypatch):
     session_factory = sessionmaker(bind=engine)
 
     # Create NexusFS with permissions enforced
-    nx = _create_nexus_fs(tmp_path, enforce_permissions=True)
+    nx = await _create_nexus_fs(tmp_path, enforce_permissions=True)
 
     # Build DiscriminatingAuthProvider (same as production `nexus serve`)
     jwt_secret = "e2e-test-jwt-secret-for-verification"

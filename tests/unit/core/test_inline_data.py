@@ -7,7 +7,7 @@ and transitions between the two.
 """
 
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
 import pytest
@@ -28,9 +28,9 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+async def nx(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
     """Create NexusFS instance for inline data tests."""
-    fs = create_nexus_fs(
+    fs = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

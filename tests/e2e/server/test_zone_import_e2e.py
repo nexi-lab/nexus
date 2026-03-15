@@ -39,7 +39,7 @@ async def source_nexus_fs(temp_dir):
     data_dir = temp_dir / "source_data"
     data_dir.mkdir()
 
-    fs = create_nexus_fs(
+    fs = await create_nexus_fs(
         backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
@@ -58,12 +58,12 @@ async def source_nexus_fs(temp_dir):
 
 
 @pytest.fixture
-def target_nexus_fs(temp_dir):
+async def target_nexus_fs(temp_dir):
     """Create target NexusFS instance for import."""
     data_dir = temp_dir / "target_data"
     data_dir.mkdir()
 
-    fs = create_nexus_fs(
+    fs = await create_nexus_fs(
         backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),

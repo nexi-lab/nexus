@@ -55,7 +55,7 @@ def _make_isolated_mock_backend() -> IsolatedBackend:
 # ── Helper: Real FastAPI app with IsolatedBackend ─────────────────────
 
 
-def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: bool = True):
+async def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app using IsolatedBackend as the storage backend."""
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
@@ -75,7 +75,7 @@ def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: 
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -104,7 +104,7 @@ class TestIsolatedBackendWithFastAPI:
 
     async def test_health_endpoint(self, tmp_path) -> None:
         """Server with IsolatedBackend boots and /health returns OK."""
-        app, api_key, backend = _create_test_app_with_isolated_backend(
+        app, api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -120,7 +120,7 @@ class TestIsolatedBackendWithFastAPI:
 
     async def test_write_read_via_api(self, tmp_path) -> None:
         """Write → read through real FastAPI with IsolatedBackend."""
-        app, api_key, backend = _create_test_app_with_isolated_backend(
+        app, api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -161,7 +161,7 @@ class TestIsolatedBackendWithFastAPI:
 
     async def test_mkdir_via_api(self, tmp_path) -> None:
         """mkdir through real FastAPI with IsolatedBackend."""
-        app, api_key, backend = _create_test_app_with_isolated_backend(
+        app, api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -192,7 +192,7 @@ class TestIsolatedBackendPermissions:
 
     async def test_no_api_key_returns_401(self, tmp_path) -> None:
         """Request without API key → 401 (not 500, not swallowed)."""
-        app, _api_key, backend = _create_test_app_with_isolated_backend(
+        app, _api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(
@@ -214,7 +214,7 @@ class TestIsolatedBackendPermissions:
 
     async def test_wrong_api_key_returns_401(self, tmp_path) -> None:
         """Request with wrong API key → 401."""
-        app, _api_key, backend = _create_test_app_with_isolated_backend(
+        app, _api_key, backend = await _create_test_app_with_isolated_backend(
             tmp_path / "srv", enforce_permissions=True
         )
         async with httpx.AsyncClient(

@@ -165,3 +165,6 @@ class AsyncTaskRunner:
         """Signal graceful shutdown. Workers will finish current tasks."""
         logger.info("Shutdown requested")
         self._shutdown = True
+
+    # PersistentService protocol alias
+    stop = shutdown

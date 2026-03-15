@@ -48,6 +48,9 @@ class LifespanServices:
     profile_tuning: Any = None
     thread_pool_size: int = 40
 
+    # --- Coordinator (post-bootstrap service registration) ---------------
+    service_coordinator: Any = None  # ServiceLifecycleCoordinator
+
     # --- System services (from nexus_fs._system_services) ----------------
     brick_lifecycle_manager: Any = None
     brick_reconciler: Any = None
@@ -94,12 +97,16 @@ class LifespanServices:
         _sys = getattr(nx, "_system_services", None) if nx else None
         _brk = getattr(nx, "_brick_services", None) if nx else None
 
+        _coord = getattr(nx, "_service_coordinator", None) if nx else None
+
         return cls(
             # Core / kernel
             nexus_fs=nx,
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
+            # Coordinator
+            service_coordinator=_coord,
             # Configuration
             deployment_profile=getattr(app.state, "deployment_profile", "full"),
             deployment_mode=getattr(app.state, "deployment_mode", "standalone"),

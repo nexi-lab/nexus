@@ -156,6 +156,9 @@ class ExporterRegistry:
         self._exporters.clear()
         self._breakers.clear()
 
+    # PersistentService protocol alias
+    stop = close_all
+
     async def health_check(self) -> dict[str, bool]:
         """Check health of all registered exporters."""
         results: dict[str, bool] = {}

@@ -29,13 +29,14 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """
     bg_tasks: list[asyncio.Task] = []
 
-    _startup_agent_registry(app, svc)
-    _startup_key_service(app, svc)
-    _startup_credential_service(app, svc)
+    await _startup_agent_registry(app, svc)
+    await _startup_key_service(app, svc)
+    await _startup_credential_service(app, svc)
     _startup_delegation_from_bricks(app, svc)
     _startup_governance(app, svc)
-    _startup_sandbox_auth(app, svc)
+    await _startup_sandbox_auth(app, svc)
     _startup_transactional_snapshot(app, svc)
+    await _startup_rlm_service(app, svc)
 
     # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app, svc)
@@ -141,7 +142,7 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
     if svc.nexus_fs and svc.session_factory:
         try:
@@ -186,6 +187,11 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
                 )
                 app.state.agent_warmup_service = None
 
+            # Enlist with coordinator (Q1 — no lifecycle)
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("agent_registry", app.state.agent_registry)
+
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
             logger.warning("[AGENT-REG] Failed to initialize AgentRegistry: %s", e, exc_info=True)
@@ -196,7 +202,7 @@ def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
         app.state.async_agent_registry = None
 
 
-def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
     if svc.nexus_fs and svc.session_factory:
         try:
@@ -227,6 +233,11 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
             # Inject into NexusFS for register_agent integration
             svc.nexus_fs._key_service = app.state.key_service
 
+            # Enlist with coordinator (Q1 — no lifecycle)
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("key_service", app.state.key_service)
+
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
             logger.warning("[KYA] Failed to initialize KeyService: %s", e, exc_info=True)
@@ -235,7 +246,7 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
         app.state.key_service = None
 
 
-def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize CredentialService for agent capability attestation (Issue #1753).
 
     Depends on KeyService being initialized first. Pre-decrypts the kernel's
@@ -289,6 +300,12 @@ def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None
         )
 
         app.state.credential_service = credential_service
+
+        # Enlist with coordinator (Q1 — no lifecycle)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("credential_service", credential_service)
+
         logger.info(
             "[VC] CredentialService initialized (kernel DID=%s)",
             kernel_key_record.did,
@@ -351,7 +368,7 @@ def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.info("[GOV] Governance services wired from brick_dict")
 
 
-def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
     if svc.nexus_fs and not app.state.agent_registry:
         logger.info(
@@ -426,6 +443,12 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
             event_log=app.state.agent_event_log,
             budget_enforcement=False,
         )
+
+        # Enlist with coordinator (Q1 — no lifecycle)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("sandbox_auth", app.state.sandbox_auth_service)
+
         logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
     except Exception as e:
         logger.warning(
@@ -441,6 +464,49 @@ def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> 
         logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
     else:
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
+
+
+async def _startup_rlm_service(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Initialize RLM inference service (Issue #1306).
+
+    Requires SandboxAuthService (for SandboxManager) and an LLM provider.
+    Falls back gracefully if either is unavailable — the /api/v2/rlm/infer
+    endpoint will return 503.
+    """
+    sandbox_auth = app.state.sandbox_auth_service
+    if sandbox_auth is None:
+        logger.debug("[RLM] SandboxAuthService not available, RLM service skipped")
+        return
+
+    sandbox_mgr = getattr(sandbox_auth, "_sandbox_manager", None)
+    if sandbox_mgr is None:
+        logger.debug("[RLM] SandboxManager not available, RLM service skipped")
+        return
+
+    llm_provider = svc.llm_provider
+
+    try:
+        from nexus.bricks.rlm.service import RLMInferenceService
+
+        nexus_api_url = os.environ.get("NEXUS_API_URL", "http://localhost:2026")
+        max_concurrent = int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8"))
+
+        app.state.rlm_service = RLMInferenceService(
+            sandbox_manager=sandbox_mgr,
+            llm_provider=llm_provider,
+            nexus_api_url=nexus_api_url,
+            max_concurrent=max_concurrent,
+        )
+
+        # Enlist with coordinator (Q3 PersistentService)
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("rlm_service", app.state.rlm_service)
+
+        logger.info("[RLM] RLMInferenceService initialized (max_concurrent=%d)", max_concurrent)
+    except Exception as e:
+        logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
+
 
 
 def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
@@ -552,6 +618,11 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     # Always expose the scheduler on app.state (Issue #2360)
     app.state.scheduler_service = scheduler
 
+    # Enlist with coordinator (Q1 for now — needs PersistentService refactoring, #1600)
+    coord = svc.service_coordinator
+    if coord is not None:
+        await coord.enlist("scheduler_service", scheduler)
+
     # InMemoryScheduler doesn't need PostgreSQL init
     from nexus.system_services.scheduler.in_memory import InMemoryScheduler
 
@@ -619,7 +690,11 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
     wds = app.state.workflow_dispatch
     if wds is not None:
         try:
-            await wds.start()
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("workflow_dispatch", wds)
+            else:
+                await wds.start()
             logger.info("Workflow dispatch service started")
         except Exception as e:
             logger.warning("Workflow dispatch service start failed (non-fatal): %s", e)
@@ -640,12 +715,17 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     if pipe_manager is None:
         return
 
+    coord = svc.service_coordinator
+
     # Issue #809: PipedRecordStoreWriteObserver
     wo = svc.write_observer
     if wo is not None and hasattr(wo, "set_pipe_manager"):
         try:
             wo.set_pipe_manager(pipe_manager)
-            await wo.start()
+            if coord is not None:
+                await coord.enlist("write_observer", wo)
+            else:
+                await wo.start()
             app.state.write_observer = wo
             logger.info("[PIPE] PipedRecordStoreWriteObserver started")
         except Exception as e:
@@ -658,7 +738,10 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     if zpc is not None and hasattr(zpc, "set_pipe_manager"):
         try:
             zpc.set_pipe_manager(pipe_manager)
-            await zpc.start()
+            if coord is not None:
+                await coord.enlist("zoekt_pipe_consumer", zpc)
+            else:
+                await zpc.start()
             app.state.zoekt_pipe_consumer = zpc
             logger.info("[PIPE] ZoektPipeConsumer started")
         except Exception as e:

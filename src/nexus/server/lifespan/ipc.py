@@ -58,7 +58,11 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
             interval=60,
         )
         app.state.ipc_sweeper = sweeper
-        await sweeper.start()  # creates internal asyncio.Task
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("ipc_sweeper", sweeper)
+        else:
+            await sweeper.start()  # creates internal asyncio.Task
         logger.info("[IPC] TTLSweeper started (zone=%s)", zone_id)
     except Exception as exc:
         logger.warning("[IPC] TTLSweeper unavailable: %s", exc)

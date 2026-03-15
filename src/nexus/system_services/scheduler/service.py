@@ -144,6 +144,9 @@ class SchedulerService:
             self._initialized = False
             logger.info("SchedulerService shutdown (pool closed)")
 
+    # PersistentService protocol alias
+    stop = shutdown
+
     # =========================================================================
     # SchedulerProtocol — 8 methods
     # =========================================================================

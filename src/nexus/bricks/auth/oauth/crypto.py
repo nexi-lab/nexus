@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from cryptography.fernet import Fernet, InvalidToken
 
 if TYPE_CHECKING:
-    from nexus.storage.record_store import RecordStoreABC
+    from nexus.contracts.auth_store_protocols import SystemSettingsStoreProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +24,9 @@ class OAuthCrypto:
         self,
         encryption_key: str | None = None,
         *,
-        record_store: "RecordStoreABC | None" = None,
+        settings_store: "SystemSettingsStoreProtocol | None" = None,
     ) -> None:
-        self._session_factory = record_store.session_factory if record_store else None
+        self._settings_store = settings_store
 
         if encryption_key is not None:
             if logger.isEnabledFor(logging.DEBUG):
@@ -34,14 +34,14 @@ class OAuthCrypto:
             self._init_fernet(encryption_key)
             return
 
-        if record_store:
+        if settings_store:
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("OAuthCrypto: Trying to load key from database")
-            db_key = self._load_or_create_key_from_db()
+                logger.debug("OAuthCrypto: Trying to load key from settings store")
+            db_key = self._load_or_create_key()
             if db_key:
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
-                        "OAuthCrypto: Loaded key from database (starts with: %s...)",
+                        "OAuthCrypto: Loaded key from settings store (starts with: %s...)",
                         db_key[:10],
                     )
                 self._init_fernet(db_key)
@@ -49,7 +49,7 @@ class OAuthCrypto:
 
         logger.warning(
             "Generating random OAuth encryption key. This key will NOT persist "
-            "across restarts! Pass encryption_key or record_store "
+            "across restarts! Pass encryption_key or settings_store "
             "for production use."
         )
         key_bytes: bytes = Fernet.generate_key()
@@ -66,52 +66,37 @@ class OAuthCrypto:
         except Exception as e:
             raise ValueError(f"Invalid encryption key: {e}") from e
 
-    def _load_or_create_key_from_db(self) -> str | None:
+    def _load_or_create_key(self) -> str | None:
         try:
-            from sqlalchemy import select
-
-            from nexus.storage.models import SystemSettingsModel
-
-            if self._session_factory is None:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("OAuthCrypto: No session_factory — cannot load key")
+            if self._settings_store is None:
                 return None
 
-            Session = self._session_factory
+            setting = self._settings_store.get_setting(OAUTH_ENCRYPTION_KEY_NAME)
 
-            with Session() as session:
-                stmt = select(SystemSettingsModel).where(
-                    SystemSettingsModel.key == OAUTH_ENCRYPTION_KEY_NAME
-                )
-                setting = session.execute(stmt).scalar_one_or_none()
-
-                if setting:
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(
-                            "OAuthCrypto: Loaded key from database (key=%s, value starts with: %s...)",
-                            OAUTH_ENCRYPTION_KEY_NAME,
-                            setting.value[:10],
-                        )
-                    return str(setting.value)
-
+            if setting:
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("OAuthCrypto: No key found in database, generating new one")
-                new_key = Fernet.generate_key().decode("utf-8")
+                    logger.debug(
+                        "OAuthCrypto: Loaded key from store (key=%s, value starts with: %s...)",
+                        OAUTH_ENCRYPTION_KEY_NAME,
+                        setting.value[:10],
+                    )
+                return setting.value
 
-                new_setting = SystemSettingsModel(
-                    key=OAUTH_ENCRYPTION_KEY_NAME,
-                    value=new_key,
-                    description="Fernet encryption key for OAuth token encryption",
-                    is_sensitive=1,
-                )
-                session.add(new_setting)
-                session.commit()
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("OAuthCrypto: No key found in store, generating new one")
+            new_key = Fernet.generate_key().decode("utf-8")
 
-                logger.info("Generated and stored new OAuth encryption key in database")
-                return str(new_key)
+            self._settings_store.set_setting(
+                OAUTH_ENCRYPTION_KEY_NAME,
+                new_key,
+                description="Fernet encryption key for OAuth token encryption",
+            )
+
+            logger.info("Generated and stored new OAuth encryption key")
+            return new_key
 
         except Exception:
-            logger.warning("Failed to load/store encryption key from database", exc_info=True)
+            logger.warning("Failed to load/store encryption key", exc_info=True)
             return None
 
     @staticmethod

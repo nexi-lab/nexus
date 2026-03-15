@@ -135,15 +135,11 @@ def db_session_factory():
 @pytest.fixture
 def clean_db(db_session_factory):
     """Clean database before and after test."""
-    from nexus.storage.models import OperationLogModel, SystemSettingsModel
+    from nexus.storage.models import OperationLogModel
 
     def _clean():
         with db_session_factory() as session:
-            # Use synchronize_session='fetch' to ensure proper deletion
             session.query(OperationLogModel).delete(synchronize_session="fetch")
-            session.query(SystemSettingsModel).filter(
-                SystemSettingsModel.key.like("node_sync_checkpoint:%")
-            ).delete(synchronize_session="fetch")
             session.commit()
 
     _clean()
@@ -259,7 +255,9 @@ class TestStartupSyncBasic:
     async def test_startup_sync_respects_checkpoint(self, db_session_factory, clean_db):
         """Test that startup_sync only processes events after the checkpoint."""
         from nexus.cache.dragonfly import DragonflyClient
-        from nexus.storage.models import OperationLogModel, SystemSettingsModel
+        from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+        from nexus.storage.dict_metastore import DictMetastore
+        from nexus.storage.models import OperationLogModel
         from nexus.system_services.event_bus.redis import RedisEventBus
 
         redis_url = os.environ.get(
@@ -273,14 +271,15 @@ class TestStartupSyncBasic:
         # Set a checkpoint 20 minutes ago
         checkpoint_time = base_time - timedelta(minutes=20)
 
-        with db_session_factory() as session:
-            # Insert checkpoint
-            setting = SystemSettingsModel(
-                key="node_sync_checkpoint:test-node",
-                value=checkpoint_time.isoformat(),
-            )
-            session.add(setting)
+        # Create settings store and set checkpoint
+        metastore = DictMetastore()
+        settings_store = MetastoreSettingsStore(metastore)
+        settings_store.set_setting(
+            "node_sync_checkpoint:test-node",
+            checkpoint_time.isoformat(),
+        )
 
+        with db_session_factory() as session:
             # Insert operations: 2 before checkpoint (should be skipped), 2 after (should be synced)
             for i, offset in enumerate([30, 25, 15, 10]):  # minutes ago
                 op = OperationLogModel(
@@ -301,6 +300,7 @@ class TestStartupSyncBasic:
                 redis_client=client,
                 session_factory=db_session_factory,
                 node_id="test-node",
+                settings_store=settings_store,
             )
             await event_bus.start()
 

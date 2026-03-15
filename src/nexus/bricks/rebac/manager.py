@@ -160,7 +160,12 @@ class ReBACManager:
         self._tuple_version: int = 0
 
         # Compose TupleRepository for data access delegation (Issue #725: read/write split)
-        self._repo = TupleRepository(engine, read_engine=read_engine, is_postgresql=is_postgresql)
+        self._repo = TupleRepository(
+            engine,
+            read_engine=read_engine,
+            is_postgresql=is_postgresql,
+            version_store=version_store,
+        )
 
         # Compose graph traversal and expand engines
         self._computer = PermissionComputer(self._repo, self.get_namespace, max_depth)

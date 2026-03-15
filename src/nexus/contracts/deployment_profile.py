@@ -63,6 +63,8 @@ BRICK_ACCESS_MANIFEST = "access_manifest"
 BRICK_CATALOG = "catalog"
 BRICK_DELEGATION = "delegation"
 BRICK_IDENTITY = "identity"
+BRICK_SHARE_LINK = "share_link"
+BRICK_VERSIONING = "versioning"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -95,6 +97,8 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_CATALOG,
         BRICK_DELEGATION,
         BRICK_IDENTITY,
+        BRICK_SHARE_LINK,
+        BRICK_VERSIONING,
         BRICK_FEDERATION,
         BRICK_AGENT_RUNTIME,
     }
@@ -189,6 +193,8 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_CATALOG,
         BRICK_DELEGATION,
         BRICK_IDENTITY,
+        BRICK_SHARE_LINK,
+        BRICK_VERSIONING,
     }
 )
 

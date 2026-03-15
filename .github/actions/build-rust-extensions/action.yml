@@ -40,10 +40,20 @@ runs:
           rust/nexus_tasks
 
     - name: Install protoc
-      uses: arduino/setup-protoc@v3
-      with:
-        version: "3.20.3"
-        repo-token: ${{ inputs.github-token }}
+      run: |
+        # raft-proto's protobuf-build requires protoc >= 3.1.0 (semver 3.x).
+        # Modern protoc (28.x+) uses a different version scheme that fails the check.
+        # Ubuntu's apt provides 3.12.x; macOS needs a manual 3.x install.
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        elif [ "$RUNNER_OS" = "macOS" ]; then
+          PROTOC_VERSION="3.20.3"
+          PROTOC_ARCH="osx-aarch_64"
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${PROTOC_ARCH}.zip" -o /tmp/protoc.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
+          protoc --version
+        fi
+      shell: bash
 
     - name: Install maturin
       run: pip install maturin

@@ -135,15 +135,13 @@ def _do_initialize(nx: Any) -> None:
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
     )
 
-    # --- BLM registration for parsers/cache bricks (Issue #1704) ---
+    # --- BLM registration for late bricks (Issue #1704, #2991) ---
     _blm = getattr(nx._system_services, "brick_lifecycle_manager", None)
     if _blm is not None:
+        from nexus.factory._helpers import _register_late_bricks
+
         _cache_brick = getattr(nx._brick_services, "cache_brick", None)
-        _parsers_brick = getattr(nx, "_parsers_brick", None)
-        if _parsers_brick is not None:
-            _blm.register("parsers", _parsers_brick, protocol_name="ParsersProtocol")
-        if _cache_brick is not None:
-            _blm.register("cache", _cache_brick, protocol_name="CacheProtocol")
+        _register_late_bricks(_blm, {"cache": _cache_brick})
 
     # --- ServiceLifecycleCoordinator (Issue #1452 Phase 3) ---
     if _blm is not None:

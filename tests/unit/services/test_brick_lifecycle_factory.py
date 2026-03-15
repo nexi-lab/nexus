@@ -148,13 +148,16 @@ class TestRegisterFactoryBricks:
     """Verify _register_factory_bricks registers the correct bricks."""
 
     def test_registers_non_none_bricks(self) -> None:
-        """Non-None brick entries should be registered with the manager."""
+        """Non-None brick entries should be registered with the manager.
+
+        _FACTORY_BRICKS is now empty (stateless bricks moved to _FACTORY_SKIP).
+        Only workflow_engine is registered (via adapter), so total=1.
+        """
         manager = BrickLifecycleManager()
         brick_dict = {
             "manifest_resolver": MagicMock(),
             "chunked_upload_service": MagicMock(),
             "snapshot_service": MagicMock(),
-            "ipc_vfs_driver": MagicMock(),
             "wallet_provisioner": MagicMock(),
             "workflow_engine": MagicMock(),
             # Infrastructure — should NOT be registered
@@ -164,14 +167,20 @@ class TestRegisterFactoryBricks:
 
         _register_factory_bricks(manager, brick_dict)
 
-        # 5 standard bricks + 1 workflow engine = 6
+        # Only workflow_engine is registered (via adapter); stateless bricks are in _FACTORY_SKIP
         report = manager.health()
-        assert report.total == 6
+        assert report.total == 1
 
         # Verify workflow engine is wrapped in adapter
         status = manager.get_status("workflow_engine")
         assert status is not None
         assert status.protocol_name == "WorkflowProtocol"
+
+        # Verify stateless bricks are NOT registered
+        assert manager.get_status("manifest_resolver") is None
+        assert manager.get_status("chunked_upload_service") is None
+        assert manager.get_status("snapshot_service") is None
+        assert manager.get_status("wallet_provisioner") is None
 
         # Verify infrastructure entries are NOT registered
         assert manager.get_status("event_bus") is None
@@ -181,18 +190,13 @@ class TestRegisterFactoryBricks:
         """None entries in brick_dict should be silently skipped."""
         manager = BrickLifecycleManager()
         brick_dict = {
-            "manifest_resolver": MagicMock(),
-            "chunked_upload_service": None,
-            "snapshot_service": None,
-            "ipc_vfs_driver": None,
-            "wallet_provisioner": None,
             "workflow_engine": None,
         }
 
         _register_factory_bricks(manager, brick_dict)
 
         report = manager.health()
-        assert report.total == 1  # Only manifest_resolver
+        assert report.total == 0  # workflow_engine is None, so skipped
 
     def test_skips_missing_keys(self) -> None:
         """Missing keys in brick_dict should be silently skipped."""
@@ -299,7 +303,7 @@ class TestBrickDictCoverage:
 
         assert dict_keys, "Could not parse brick_dict keys from _boot_brick_services"
 
-        registered = {name for name, _ in _FACTORY_BRICKS}
+        registered = {name for name, _, _ in _FACTORY_BRICKS}
         registered.add("workflow_engine")  # special-cased with adapter
         known = registered | _FACTORY_SKIP
 

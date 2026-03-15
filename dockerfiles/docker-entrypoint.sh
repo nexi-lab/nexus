@@ -39,6 +39,26 @@ SERVER_PID=""
 ZOEKT_PID=""
 
 # -----------------------------------------------------------------------------
+# Bind-mount directory init + privilege drop
+# -----------------------------------------------------------------------------
+# When a host directory is bind-mounted over /app/data, the image's
+# pre-created subdirectories (skills/, .zoekt-index/) disappear and the
+# mount may be owned by a different uid.  If we're root, fix that now
+# and re-exec as the nexus user.
+fix_data_dir_and_drop_privileges() {
+    if [ "$(id -u)" = "0" ]; then
+        # Create required subdirectories inside the (possibly bind-mounted) data dir
+        mkdir -p /app/data/skills /app/data/.zoekt-index
+        chown -R nexus:nexus /app/data
+
+        # Re-exec the entrypoint as the nexus user
+        exec gosu nexus "$0" "$@"
+    fi
+}
+
+fix_data_dir_and_drop_privileges "$@"
+
+# -----------------------------------------------------------------------------
 # Functions
 # -----------------------------------------------------------------------------
 print_banner() {
@@ -287,10 +307,8 @@ build_serve_cmd() {
         if [ -n "${NEXUS_PROFILE:-}" ]; then
             cmd="$cmd --profile ${NEXUS_PROFILE}"
         fi
-        if [ "${NEXUS_BACKEND:-}" = "gcs" ]; then
-            cmd="$cmd --backend gcs --gcs-bucket ${NEXUS_GCS_BUCKET:-}"
-            [ -n "${NEXUS_GCS_PROJECT:-}" ] && cmd="$cmd --gcs-project ${NEXUS_GCS_PROJECT}"
-        fi
+        # GCS/S3 backends are configured via env vars (NEXUS_GCS_BUCKET_NAME,
+        # NEXUS_GCS_PROJECT_ID) read by the config loader, not CLI flags.
         echo "$cmd"
     fi
 }

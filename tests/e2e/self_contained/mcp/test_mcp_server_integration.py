@@ -243,14 +243,14 @@ class TestSearchIntegration:
         grep_tool = get_tool(mcp_server, "nexus_grep")
 
         # Search for TODO comments
-        result = grep_tool.fn(pattern="TODO", path="/search")
+        result = await grep_tool.fn(pattern="TODO", path="/search")
         matches = extract_items(result)
 
         assert isinstance(matches, list)
         assert len(matches) >= 2  # Should find 2 files with TODO
 
         # Search case-insensitively
-        result_case = grep_tool.fn(pattern="hello", path="/search", ignore_case=True)
+        result_case = await grep_tool.fn(pattern="hello", path="/search", ignore_case=True)
         matches_case = extract_items(result_case)
 
         assert len(matches_case) >= 1
@@ -649,7 +649,9 @@ class TestComprehensiveMCPToolsWorkflow:
 
         # Step 7: Test nexus_grep
         grep_tool = get_tool(mcp_server, "nexus_grep")
-        grep_result = grep_tool.fn(pattern="Hello", path="/mcp_integration_test", ignore_case=False)
+        grep_result = await grep_tool.fn(
+            pattern="Hello", path="/mcp_integration_test", ignore_case=False
+        )
         grep_matches = extract_items(grep_result)
         assert len(grep_matches) > 0
 

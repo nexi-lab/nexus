@@ -55,7 +55,9 @@ def mock_nx_basic():
     nx.sys_readdir = AsyncMock(return_value=["/file1.txt", "/file2.txt"])
     _mock_search = Mock()
     _mock_search.glob = Mock(return_value=["test.py", "main.py"])
-    _mock_search.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
+    _mock_search.grep = AsyncMock(
+        return_value=[{"file": "test.py", "line": 10, "content": "match"}]
+    )
     _service_map = {"search": _mock_search}
     nx.service = Mock(side_effect=lambda name: _service_map.get(name))
     nx._mock_search = _mock_search  # internal alias for assertion access
@@ -635,7 +637,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
-        result = grep_tool.fn(pattern="TODO", path="/src")
+        result = await grep_tool.fn(pattern="TODO", path="/src")
 
         response = json.loads(result)
         assert isinstance(response, dict)
@@ -649,7 +651,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
-        grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
+        await grep_tool.fn(pattern="error", path="/logs", ignore_case=True)
 
         mock_nx_basic._mock_search.grep.assert_called_once_with("error", "/logs", ignore_case=True)
 
@@ -661,7 +663,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
-        result = grep_tool.fn(pattern="test")
+        result = await grep_tool.fn(pattern="test")
 
         response = json.loads(result)
         assert isinstance(response, dict)
@@ -677,7 +679,7 @@ class TestSearchTools:
         server = await create_mcp_server(nx=mock_nx_basic)
 
         grep_tool = get_tool(server, "nexus_grep")
-        result = grep_tool.fn(pattern="[invalid")
+        result = await grep_tool.fn(pattern="[invalid")
 
         assert "Error" in result
         assert "Invalid regex" in result

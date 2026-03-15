@@ -5,7 +5,7 @@
 # Uses Docker PostgreSQL for integration tests.
 #
 # Prerequisites:
-#   docker compose -f docker-compose.demo.yml up postgres -d
+#   docker compose -f dockerfiles/compose.yaml up postgres -d
 #
 # Usage:
 #   ./scripts/test-revision-cache.sh
@@ -36,7 +36,7 @@ POSTGRES_URL="${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@localhost:5432/n
 
 if ! pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then
     echo -e "${YELLOW}PostgreSQL not running. Starting...${NC}"
-    docker compose -f docker-compose.demo.yml up postgres -d
+    docker compose -f dockerfiles/compose.yaml up postgres -d
     echo "Waiting for PostgreSQL to be ready..."
     for i in {1..30}; do
         if pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then

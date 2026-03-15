@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ============================================================================
   # Nexus RPC Server (Backend for MCP server or direct API access)
@@ -32,7 +30,7 @@ services:
       # Tiger Cache - disabled by default for simpler debugging
       - NEXUS_ENABLE_TIGER_CACHE=${NEXUS_ENABLE_TIGER_CACHE:-false}
     volumes:
-      # Persistent data directory - use bind mount to match docker-compose.demo.yml
+      # Persistent data directory - use bind mount to match dockerfiles/compose.yaml
       - ./nexus-data:/app/data
       # Docker socket for sandbox container management
       - /var/run/docker.sock:/var/run/docker.sock

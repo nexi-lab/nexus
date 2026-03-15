@@ -12,15 +12,15 @@
 #   docker compose --profile full up          # Everything
 #
 # Or via the helper script:
-#   ./scripts/docker-demo.sh                    # Start with local environment
-#   ./scripts/docker-demo.sh --env=production   # Start with production environment
+#   ./scripts/nexus-docker.sh                    # Start with local environment
+#   ./scripts/nexus-docker.sh --env=production   # Start with production environment
 #
 # Direct compose commands:
-#   docker compose -f docker-compose.demo.yml --profile full up -d   # All services, background
-#   docker compose -f docker-compose.demo.yml down                   # Stop all
-#   docker compose -f docker-compose.demo.yml logs -f                # View logs
+#   docker compose -f dockerfiles/compose.yaml --profile full up -d   # All services, background
+#   docker compose -f dockerfiles/compose.yaml down                   # Stop all
+#   docker compose -f dockerfiles/compose.yaml logs -f                # View logs
 #
-# Environment Files (loaded by docker-demo.sh):
+# Environment Files (loaded by nexus-docker.sh):
 #   Local mode:      .env (or .env.example as fallback)
 #   Production mode: .env.production + .env.production.secrets
 #
@@ -222,7 +222,7 @@ services:
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)
       # Automatically finds credentials from: gcloud, ./gcs-credentials.json, or GCS_CREDENTIALS_PATH
       - ../gcs-credentials.json:/app/gcs-credentials.json:ro
-      # AWS credentials (auto-detected - see docker-start.sh)
+      # AWS credentials (auto-detected - see nexus-docker.sh)
       # Automatically finds credentials from: ~/.aws/credentials or AWS_CREDENTIALS_PATH
       - ${AWS_CREDENTIALS_PATH:-../aws-credentials}:/app/aws-credentials:ro
       - ${AWS_CONFIG_PATH:-../aws-config}:/app/aws-config:ro
@@ -541,8 +541,8 @@ services:
   # Runs unit and integration tests to verify Linux-specific code (inotify)
   #
   # Usage:
-  #   docker compose -f docker-compose.demo.yml --profile test run --rm test
-  #   docker compose -f docker-compose.demo.yml --profile test run --rm test pytest tests/unit -v
+  #   docker compose -f dockerfiles/compose.yaml --profile test run --rm test
+  #   docker compose -f dockerfiles/compose.yaml --profile test run --rm test pytest tests/unit -v
   # ============================================
   test:
     image: python:3.13

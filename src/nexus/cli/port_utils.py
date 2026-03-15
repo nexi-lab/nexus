@@ -150,9 +150,26 @@ def resolve_ports(
             sys.exit(1)
         elif strategy == "prompt":
             label = PORT_LABELS.get(service, service)
+            default_free = _find_free_unclaimed(port + 1, host, claimed)
+
+            # In non-interactive contexts (CI, piped stdin), fall back to
+            # "fail" behaviour instead of blocking on a prompt that nobody
+            # will answer.  Matches the Create-React-App / Next.js pattern.
+            if not sys.stdin.isatty():
+                from nexus.cli.utils import console
+
+                console.print(
+                    f"[red]Error:[/red] Port {port} ({label}) is already in use "
+                    f"(non-interactive terminal — cannot prompt)."
+                )
+                console.print(
+                    f"[yellow]Hint:[/yellow] Use --port-strategy auto to auto-select "
+                    f"a free port, or set the port explicitly (suggested: {default_free})."
+                )
+                sys.exit(1)
+
             import click
 
-            default_free = _find_free_unclaimed(port + 1, host, claimed)
             new_port = click.prompt(
                 f"Port {port} ({label}) is in use. Enter alternative port",
                 type=int,

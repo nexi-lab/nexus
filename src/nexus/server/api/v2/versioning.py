@@ -391,6 +391,20 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import x402 routes: %s", e)
 
+    # ---- Workspace/memory registry router (Issue #2987) ----
+    try:
+        from nexus.server.api.v2.routers.workspace import (
+            workspace_router as registry_workspace_router,
+        )
+
+        registry.add(
+            RouterEntry(
+                router=registry_workspace_router, name="registry_workspaces", endpoint_count=5
+            )
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Workspace registry routes: %s", e)
+
     return registry
 
 

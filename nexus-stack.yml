@@ -182,6 +182,7 @@ services:
   # ============================================================================
   zoekt:
     image: sourcegraph/zoekt-webserver:latest
+    platform: linux/amd64  # no arm64 image available — runs under QEMU on Apple Silicon
     restart: unless-stopped
     profiles:
       - search

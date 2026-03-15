@@ -23,6 +23,7 @@ import type { AccessTab } from "../../stores/access-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ManifestList } from "./manifest-list.js";
 import { AlertList } from "./alert-list.js";
 import { CredentialList } from "./credential-list.js";
@@ -34,12 +35,12 @@ import { DelegationCompleter } from "./delegation-completer.js";
 import { DelegationChainView } from "./delegation-chain-view.js";
 import { NamespaceConfigView } from "./namespace-config-view.js";
 
-const TAB_ORDER: readonly AccessTab[] = [
-  "manifests",
-  "alerts",
-  "credentials",
-  "fraud",
-  "delegations",
+const ALL_TABS: readonly TabDef<AccessTab>[] = [
+  { id: "manifests", label: "Manifests", brick: "access_manifest" },
+  { id: "alerts", label: "Alerts", brick: "governance" },
+  { id: "credentials", label: "Credentials", brick: "auth" },
+  { id: "fraud", label: "Fraud", brick: "governance" },
+  { id: "delegations", label: "Delegations", brick: "delegation" },
 ];
 const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
   manifests: "Manifests",
@@ -59,7 +60,16 @@ type OverlayMode =
 
 export default function AccessPanel(): React.ReactNode {
   const client = useApi();
+  const visibleTabs = useVisibleTabs(ALL_TABS);
   const [overlay, setOverlay] = useState<OverlayMode>("none");
+
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   // Zone for fraud score queries
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
@@ -174,9 +184,10 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     tab: () => {
-      const currentIdx = TAB_ORDER.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-      const nextTab = TAB_ORDER[nextIdx];
+      const ids = visibleTabs.map((t) => t.id);
+      const currentIdx = ids.indexOf(activeTab);
+      const nextIdx = (currentIdx + 1) % ids.length;
+      const nextTab = ids[nextIdx];
       if (nextTab) {
         setActiveTab(nextTab);
       }
@@ -272,9 +283,8 @@ export default function AccessPanel(): React.ReactNode {
       <box height="100%" width="100%" flexDirection="column">
         <box height={1} width="100%">
           <text>
-            {TAB_ORDER.map((tab) => {
-              const label = TAB_LABELS[tab];
-              return tab === activeTab ? `[${label}]` : ` ${label} `;
+            {visibleTabs.map((tab) => {
+              return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
             }).join(" ")}
             {overlayLabel}
           </text>
@@ -331,9 +341,8 @@ export default function AccessPanel(): React.ReactNode {
       {/* Tab bar */}
       <box height={1} width="100%">
         <text>
-          {TAB_ORDER.map((tab) => {
-            const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
+          {visibleTabs.map((tab) => {
+            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
           }).join(" ")}
         </text>
       </box>

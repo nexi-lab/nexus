@@ -8,6 +8,7 @@ import { useWorkflowsStore } from "../../stores/workflows-store.js";
 import type { WorkflowTab } from "../../stores/workflows-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { BrickGate } from "../../shared/components/brick-gate.js";
 import { WorkflowList } from "./workflow-list.js";
 import { ExecutionList } from "./execution-list.js";
 import { SchedulerView } from "./scheduler-view.js";
@@ -140,63 +141,65 @@ export default function WorkflowsPanel(): React.ReactNode {
   });
 
   return (
-    <box height="100%" width="100%" flexDirection="column">
-      {/* Tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {TAB_ORDER.map((tab) => {
-            const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
-          }).join(" ")}
-        </text>
-      </box>
-
-      {/* Error display */}
-      {error && (
+    <BrickGate brick={["workflows", "scheduler"]}>
+      <box height="100%" width="100%" flexDirection="column">
+        {/* Tab bar */}
         <box height={1} width="100%">
-          <text>{`Error: ${error}`}</text>
-        </box>
-      )}
-
-      {/* Detail content */}
-      <box flexGrow={1} borderStyle="single">
-        {activeTab === "workflows" && (
-          <WorkflowList
-            workflows={workflows}
-            selectedIndex={selectedWorkflowIndex}
-            loading={workflowsLoading}
-          />
-        )}
-        {activeTab === "executions" && (
-          <ExecutionList
-            executions={executions}
-            selectedIndex={selectedExecutionIndex}
-            loading={executionsLoading}
-          />
-        )}
-        {activeTab === "scheduler" && (
-          <SchedulerView
-            metrics={schedulerMetrics}
-            loading={schedulerLoading}
-          />
-        )}
-      </box>
-
-      {/* Workflow detail overlay when loaded */}
-      {selectedWorkflow && activeTab === "workflows" && !detailLoading && (
-        <box height={3} width="100%">
           <text>
-            {`Detail: ${selectedWorkflow.name} | v${selectedWorkflow.version} | ${selectedWorkflow.enabled ? "enabled" : "disabled"} | ${selectedWorkflow.triggers.length} triggers | ${selectedWorkflow.actions.length} actions`}
+            {TAB_ORDER.map((tab) => {
+              const label = TAB_LABELS[tab];
+              return tab === activeTab ? `[${label}]` : ` ${label} `;
+            }).join(" ")}
           </text>
         </box>
-      )}
 
-      {/* Help bar */}
-      <box height={1} width="100%">
-        <text>
-          {"j/k:navigate  Tab:switch tab  e:execute  r:refresh  Enter:detail  q:quit"}
-        </text>
+        {/* Error display */}
+        {error && (
+          <box height={1} width="100%">
+            <text>{`Error: ${error}`}</text>
+          </box>
+        )}
+
+        {/* Detail content */}
+        <box flexGrow={1} borderStyle="single">
+          {activeTab === "workflows" && (
+            <WorkflowList
+              workflows={workflows}
+              selectedIndex={selectedWorkflowIndex}
+              loading={workflowsLoading}
+            />
+          )}
+          {activeTab === "executions" && (
+            <ExecutionList
+              executions={executions}
+              selectedIndex={selectedExecutionIndex}
+              loading={executionsLoading}
+            />
+          )}
+          {activeTab === "scheduler" && (
+            <SchedulerView
+              metrics={schedulerMetrics}
+              loading={schedulerLoading}
+            />
+          )}
+        </box>
+
+        {/* Workflow detail overlay when loaded */}
+        {selectedWorkflow && activeTab === "workflows" && !detailLoading && (
+          <box height={3} width="100%">
+            <text>
+              {`Detail: ${selectedWorkflow.name} | v${selectedWorkflow.version} | ${selectedWorkflow.enabled ? "enabled" : "disabled"} | ${selectedWorkflow.triggers.length} triggers | ${selectedWorkflow.actions.length} actions`}
+            </text>
+          </box>
+        )}
+
+        {/* Help bar */}
+        <box height={1} width="100%">
+          <text>
+            {"j/k:navigate  Tab:switch tab  e:execute  r:refresh  Enter:detail  q:quit"}
+          </text>
+        </box>
       </box>
-    </box>
+    </BrickGate>
   );
 }

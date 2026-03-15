@@ -3,11 +3,16 @@
 Issue #625: ReBAC brick hook for dynamic viewer grants.
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.vfs_hooks import ReadHookContext
+
+if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +27,19 @@ class DynamicViewerReadHook:
       - get_viewer_config:      (subject, file_path) -> dict | None
       - apply_filter:           (data, column_config, file_format) -> dict
     """
+
+    # ── HotSwappable protocol (Issue #1610) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(read_hooks=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(
         self,

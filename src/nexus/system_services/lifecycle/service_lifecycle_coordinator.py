@@ -53,7 +53,7 @@ class ServiceLifecycleCoordinator:
     Kernel stays pure — this coordinator lives at system services tier.
     """
 
-    __slots__ = ("_registry", "_blm", "_dispatch", "_hook_specs")
+    __slots__ = ("_registry", "_blm", "_dispatch", "_hook_specs", "_hooks_on_dispatch")
 
     def __init__(
         self,
@@ -65,6 +65,10 @@ class ServiceLifecycleCoordinator:
         self._blm = lifecycle_manager
         self._dispatch = dispatch
         self._hook_specs: dict[str, HookSpec] = {}
+        # Tracks services whose hooks were pre-registered on dispatch at
+        # initialize() time by _enlist_hook().  activate_hot_swappable_services()
+        # skips _register_hooks() for these to avoid double registration.
+        self._hooks_on_dispatch: set[str] = set()
 
     # ------------------------------------------------------------------
     # insmod — register service in both Registry and BLM
@@ -436,8 +440,9 @@ class ServiceLifecycleCoordinator:
                     spec = info.instance.hook_spec()
                     if spec is not None and not spec.is_empty:
                         self._hook_specs[name] = spec
-                # Register hooks into dispatch
-                self._register_hooks(name)
+                # Register hooks into dispatch (skip if pre-registered by _enlist_hook)
+                if name not in self._hooks_on_dispatch:
+                    self._register_hooks(name)
                 # Activate service
                 await info.instance.activate()
                 activated.append(name)

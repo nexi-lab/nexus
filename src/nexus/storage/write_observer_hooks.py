@@ -14,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.vfs_hooks import (
         DeleteHookContext,
         MkdirHookContext,
@@ -38,6 +39,26 @@ class AuditWriteInterceptor:
     name = "audit_write_observer"
 
     __slots__ = ("_observer", "_strict_mode")
+
+    # ── HotSwappable protocol (Issue #1613) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(
+            write_hooks=(self,),
+            write_batch_hooks=(self,),
+            delete_hooks=(self,),
+            rename_hooks=(self,),
+            mkdir_hooks=(self,),
+            rmdir_hooks=(self,),
+        )
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(self, observer: WriteObserverProtocol, *, strict_mode: bool = True) -> None:
         self._observer = observer

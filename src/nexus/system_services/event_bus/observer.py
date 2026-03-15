@@ -17,6 +17,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.file_events import FileEvent
     from nexus.system_services.event_bus.protocol import EventBusProtocol
 
@@ -38,6 +39,19 @@ class EventBusObserver:
        so post-construction overrides (e.g. test fixtures injecting a
        shared Redis bus) are picked up automatically.
     """
+
+    # ── HotSwappable protocol (Issue #1616) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(observers=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(
         self,

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.types import Permission
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.vfs_hooks import (
         DeleteHookContext,
         MkdirHookContext,
@@ -44,6 +45,26 @@ class PermissionCheckHook:
     """
 
     name = "permission_check"
+
+    # ── HotSwappable protocol (Issue #1610) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(
+            read_hooks=(self,),
+            write_hooks=(self,),
+            delete_hooks=(self,),
+            rename_hooks=(self,),
+            mkdir_hooks=(self,),
+            rmdir_hooks=(self,),
+        )
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(
         self,

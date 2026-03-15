@@ -85,6 +85,9 @@ async def _do_link(
     def _brick_on(name: str) -> bool:
         return name in _resolved_bricks
 
+    # Stash on kernel so _do_initialize() can pass it to _register_vfs_hooks()
+    nx._brick_on = _brick_on
+
     # --- Boot wired services → register into ServiceRegistry ---
     _wired = await _boot_wired_services(
         nx,
@@ -133,6 +136,7 @@ def _do_initialize(nx: Any) -> None:
         nx,
         permission_checker=nx._permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
+        brick_on=getattr(nx, "_brick_on", None),
     )
 
     # --- BLM registration for late bricks (Issue #1704, #2991) ---

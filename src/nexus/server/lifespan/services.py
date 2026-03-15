@@ -40,6 +40,8 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     agent_tasks = await _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
 
+    _startup_task_manager(app, svc)
+
     await _startup_scheduler(app, svc)
     await _startup_workflow_engine(app, svc)
     await _startup_pipe_consumers(app, svc)
@@ -558,6 +560,48 @@ async def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[
     return tasks
 
 
+def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Initialize TaskManagerService backed by NexusFS."""
+    if svc.nexus_fs is None:
+        app.state.task_manager_service = None
+        return
+
+    try:
+        from nexus.bricks.task_manager.service import TaskManagerService
+
+        task_svc = TaskManagerService(nexus_fs=svc.nexus_fs)
+        app.state.task_manager_service = task_svc
+        logger.info("[TASK-MGR] TaskManagerService initialized")
+
+        task_write_hook = getattr(svc.nexus_fs, "_task_write_hook", None)
+        if task_write_hook is not None:
+            app.state.task_write_hook = task_write_hook
+
+            # Wire up DT_PIPE dispatch consumer for task signals
+            from nexus.bricks.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
+
+            dispatch_consumer = TaskDispatchPipeConsumer()
+            dispatch_consumer.set_task_service(task_svc)
+            task_write_hook.register_handler(dispatch_consumer)
+            app.state.task_dispatch_consumer = dispatch_consumer
+
+        # Set up DT_STREAM for SSE notifications
+        stream_manager = getattr(svc.nexus_fs, "_stream_manager", None)
+        if stream_manager is not None:
+            from nexus.core.stream import StreamError
+
+            _SSE_STREAM_PATH = "/nexus/streams/task-events"
+            try:
+                stream_manager.create(_SSE_STREAM_PATH, capacity=65_536, owner_id="kernel")
+            except StreamError:
+                stream_manager.open(_SSE_STREAM_PATH, capacity=65_536)
+            app.state.task_stream_manager = stream_manager
+            logger.info("[TASK-MGR] DT_STREAM for SSE initialized at %s", _SSE_STREAM_PATH)
+    except Exception as e:
+        logger.warning("[TASK-MGR] Failed to initialize TaskManagerService: %s", e, exc_info=True)
+        app.state.task_manager_service = None
+
+
 async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize factory-created SchedulerService with async pool (Issue #2195, #2360).
 
@@ -704,5 +748,15 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
             logger.info("[PIPE] ZoektPipeConsumer started")
         except Exception as e:
             logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
+
+    # TaskDispatchPipeConsumer
+    tdc = getattr(app.state, "task_dispatch_consumer", None)
+    if tdc is not None and hasattr(tdc, "set_pipe_manager"):
+        try:
+            tdc.set_pipe_manager(pipe_manager)
+            await tdc.start()
+            logger.info("[PIPE] TaskDispatchPipeConsumer started")
+        except Exception as e:
+            logger.warning("[PIPE] TaskDispatchPipeConsumer start failed: %s", e, exc_info=True)
 
     # write_observer (Q3), zoekt_pipe_consumer (Q3) — stopped by coordinator via aclose()

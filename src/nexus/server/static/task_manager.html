@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus Task Manager</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #1a1a2e; height: 100vh; display: flex; flex-direction: column; }
+
+/* Header */
+.header { background: #1a1a2e; color: #fff; padding: 8px 16px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+.header h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
+.header input { background: #2a2a4e; border: 1px solid #3a3a5e; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+.header #apiKey { width: 260px; }
+.header label { font-size: 12px; color: #aaa; white-space: nowrap; }
+.header .spacer { flex: 1; }
+.header .dispatch-count { font-size: 12px; color: #8f8; background: #2a4a2e; padding: 2px 8px; border-radius: 10px; }
+
+/* Layout */
+.container { display: flex; flex: 1; overflow: hidden; }
+.panel { overflow-y: auto; padding: 12px; }
+.left { width: 280px; min-width: 220px; background: #fff; border-right: 1px solid #ddd; }
+.center { flex: 1; background: #f8f9fa; }
+.right { width: 360px; min-width: 300px; background: #fff; border-left: 1px solid #ddd; }
+
+/* Section headers */
+.section-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.section-hdr h2 { font-size: 14px; font-weight: 600; }
+
+/* Buttons */
+button { cursor: pointer; border: none; border-radius: 4px; padding: 4px 10px; font-size: 12px; font-weight: 500; }
+.btn-primary { background: #4361ee; color: #fff; }
+.btn-primary:hover { background: #3a56d4; }
+.btn-sm { padding: 2px 8px; font-size: 11px; }
+.btn-danger { background: #e74c3c; color: #fff; }
+.btn-danger:hover { background: #c0392b; }
+.btn-success { background: #27ae60; color: #fff; }
+.btn-success:hover { background: #219a52; }
+.btn-warning { background: #f39c12; color: #fff; }
+.btn-warning:hover { background: #d68910; }
+.btn-secondary { background: #95a5a6; color: #fff; }
+.btn-secondary:hover { background: #7f8c8d; }
+.btn-info { background: #3498db; color: #fff; }
+.btn-info:hover { background: #2980b9; }
+
+/* Status badges */
+.badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px; }
+.badge-created { background: #e8f4fd; color: #2980b9; }
+.badge-running { background: #fef3e2; color: #e67e22; }
+.badge-in_review { background: #f3e8fd; color: #8e44ad; }
+.badge-completed { background: #e8fde8; color: #27ae60; }
+.badge-failed { background: #fde8e8; color: #e74c3c; }
+.badge-cancelled { background: #f0f0f0; color: #7f8c8d; }
+.badge-partial_complete { background: #fef9e7; color: #d4ac0d; }
+
+/* Mission list */
+.mission-item { padding: 8px 10px; border: 1px solid #e8e8e8; border-radius: 6px; margin-bottom: 6px; cursor: pointer; transition: background 0.15s; }
+.mission-item:hover { background: #f0f4ff; }
+.mission-item.selected { background: #e8f0ff; border-color: #4361ee; }
+.mission-item .mission-title { font-size: 13px; font-weight: 500; margin-bottom: 3px; word-break: break-word; }
+.mission-item .mission-meta { font-size: 11px; color: #888; }
+
+/* Task cards */
+.task-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.task-card .task-instruction { font-size: 13px; margin-bottom: 6px; word-break: break-word; }
+.task-card .task-meta { font-size: 11px; color: #888; margin-bottom: 6px; }
+.task-card .task-blocked { font-size: 11px; color: #e74c3c; margin-bottom: 6px; }
+.task-card .task-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.task-card.selected-task { border-color: #4361ee; box-shadow: 0 0 0 2px rgba(67,97,238,0.15); }
+
+/* Detail panel */
+.detail-section { margin-bottom: 16px; }
+.detail-section h3 { font-size: 13px; font-weight: 600; margin-bottom: 6px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+.detail-field { font-size: 12px; margin-bottom: 4px; }
+.detail-field strong { color: #555; }
+
+/* Comments */
+.comment { padding: 6px 8px; border-radius: 6px; margin-bottom: 6px; font-size: 12px; }
+.comment-copilot { background: #e8f4fd; border-left: 3px solid #3498db; }
+.comment-worker { background: #fef3e2; border-left: 3px solid #e67e22; }
+.comment .comment-author { font-weight: 600; font-size: 11px; text-transform: uppercase; }
+.comment .comment-time { font-size: 10px; color: #999; }
+.comment .comment-text { margin-top: 3px; word-break: break-word; }
+
+/* Audit entries */
+.audit-entry { padding: 4px 8px; border-radius: 6px; margin-bottom: 6px; font-size: 12px; background: #f0f0f5; border-left: 3px solid #95a5a6; }
+.audit-entry .audit-action { font-weight: 600; font-size: 11px; color: #555; }
+.audit-entry .audit-time { font-size: 10px; color: #999; }
+.audit-entry .audit-detail { margin-top: 2px; color: #666; }
+
+/* Artifacts */
+.artifact-item { font-size: 12px; padding: 4px 8px; background: #f8f9fa; border-radius: 4px; margin-bottom: 4px; }
+.artifact-item .artifact-type { font-weight: 600; text-transform: uppercase; font-size: 10px; color: #666; }
+
+/* Forms */
+.form-group { margin-bottom: 8px; }
+.form-group label { display: block; font-size: 11px; font-weight: 600; color: #555; margin-bottom: 2px; }
+.form-group input, .form-group textarea, .form-group select { width: 100%; padding: 5px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; font-family: inherit; }
+.form-group textarea { resize: vertical; min-height: 50px; }
+
+/* Modal overlay */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 100; align-items: center; justify-content: center; }
+.modal-overlay.active { display: flex; }
+.modal { background: #fff; border-radius: 10px; padding: 20px; min-width: 380px; max-width: 500px; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
+.modal h3 { margin-bottom: 12px; }
+.modal .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+
+/* Empty state */
+.empty-state { text-align: center; color: #aaa; padding: 40px 20px; font-size: 13px; }
+
+/* Toast */
+.toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 16px; border-radius: 8px; color: #fff; font-size: 13px; z-index: 200; animation: fadeIn 0.3s; max-width: 400px; word-break: break-word; }
+.toast-error { background: #e74c3c; }
+.toast-success { background: #27ae60; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Loading */
+.loading { text-align: center; color: #aaa; padding: 20px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Nexus Task Manager</h1>
+  <div class="spacer"></div>
+  <label>API Key:</label>
+  <input type="password" id="apiKey" placeholder="Enter API key..." />
+  <span class="dispatch-count" id="dispatchCount" title="Dispatchable tasks">Dispatch: --</span>
+</div>
+
+<div class="container">
+  <!-- Left: Mission List -->
+  <div class="panel left" id="missionPanel">
+    <div class="section-hdr">
+      <h2>Missions</h2>
+      <button class="btn-primary btn-sm" onclick="openNewMissionModal()">+ New</button>
+    </div>
+    <div>
+      <select id="missionStatusFilter" style="width:100%;margin-bottom:8px;padding:3px 6px;font-size:12px;border:1px solid #ddd;border-radius:4px;">
+        <option value="">All statuses</option>
+        <option value="running">Running</option>
+        <option value="partial_complete">Partial Complete</option>
+        <option value="completed">Completed</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+    </div>
+    <div id="missionList"><div class="loading">Loading...</div></div>
+  </div>
+
+  <!-- Center: Task Board -->
+  <div class="panel center" id="taskPanel">
+    <div class="section-hdr">
+      <h2 id="taskPanelTitle">Tasks</h2>
+      <button class="btn-primary btn-sm" id="newTaskBtn" onclick="openNewTaskModal()" style="display:none;">+ New Task</button>
+    </div>
+    <div id="missionActions" style="display:none;margin-bottom:8px;"></div>
+    <div id="taskList"><div class="empty-state">Select a mission to view tasks</div></div>
+  </div>
+
+  <!-- Right: Task Detail -->
+  <div class="panel right" id="detailPanel">
+    <div id="taskDetail"><div class="empty-state">Select a task to view details</div></div>
+  </div>
+</div>
+
+<!-- New Mission Modal -->
+<div class="modal-overlay" id="newMissionModal">
+  <div class="modal">
+    <h3>New Mission</h3>
+    <div class="form-group">
+      <label>Title *</label>
+      <input type="text" id="newMissionTitle" />
+    </div>
+    <div class="form-group">
+      <label>Context Summary</label>
+      <textarea id="newMissionContext" rows="3"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('newMissionModal')">Cancel</button>
+      <button class="btn-primary" onclick="createMission()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Task Modal -->
+<div class="modal-overlay" id="newTaskModal">
+  <div class="modal">
+    <h3>New Task</h3>
+    <div class="form-group">
+      <label>Instruction *</label>
+      <textarea id="newTaskInstruction" rows="3"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Worker Type</label>
+      <input type="text" id="newTaskWorkerType" placeholder="e.g. copilot, worker" />
+    </div>
+    <div class="form-group">
+      <label>Label</label>
+      <input type="text" id="newTaskLabel" />
+    </div>
+    <div class="form-group">
+      <label>Blocked By (comma-separated task IDs)</label>
+      <input type="text" id="newTaskBlockedBy" placeholder="task-id-1, task-id-2" />
+    </div>
+    <div class="form-group">
+      <label>Deadline (ISO 8601)</label>
+      <input type="text" id="newTaskDeadline" placeholder="2025-12-31T23:59:59Z" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('newTaskModal')">Cancel</button>
+      <button class="btn-primary" onclick="createTask()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Comment Modal -->
+<div class="modal-overlay" id="newCommentModal">
+  <div class="modal">
+    <h3>Add Comment</h3>
+    <div class="form-group">
+      <label>Author *</label>
+      <select id="newCommentAuthor">
+        <option value="copilot">copilot</option>
+        <option value="worker">worker</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Content *</label>
+      <textarea id="newCommentContent" rows="4"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('newCommentModal')">Cancel</button>
+      <button class="btn-primary" onclick="createComment()">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Artifact Modal -->
+<div class="modal-overlay" id="newArtifactModal">
+  <div class="modal">
+    <h3>Create Artifact</h3>
+    <div class="form-group">
+      <label>Title *</label>
+      <input type="text" id="newArtifactTitle" />
+    </div>
+    <div class="form-group">
+      <label>Type *</label>
+      <select id="newArtifactType">
+        <option value="document">document</option>
+        <option value="code">code</option>
+        <option value="folder">folder</option>
+        <option value="pr">pr</option>
+        <option value="image">image</option>
+        <option value="data">data</option>
+        <option value="spreadsheet">spreadsheet</option>
+        <option value="presentation">presentation</option>
+        <option value="other">other</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>URI *</label>
+      <input type="text" id="newArtifactUri" placeholder="nexus://path/to/file" />
+    </div>
+    <div class="form-group">
+      <label>MIME Type</label>
+      <input type="text" id="newArtifactMime" placeholder="text/plain" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('newArtifactModal')">Cancel</button>
+      <button class="btn-primary" onclick="createArtifact()">Create</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- State ----
+let selectedMissionId = null;
+let selectedTaskId = null;
+let currentMission = null;
+
+// ---- Config ----
+const BASE_URL = window.location.origin;
+
+function getApiKey() {
+  return document.getElementById('apiKey').value.trim();
+}
+
+function headers() {
+  const h = { 'Content-Type': 'application/json' };
+  const key = getApiKey();
+  if (key) h['Authorization'] = 'Bearer ' + key;
+  return h;
+}
+
+// ---- Persistence ----
+document.getElementById('apiKey').value = localStorage.getItem('nexus_api_key') || '';
+document.getElementById('apiKey').addEventListener('input', function() {
+  localStorage.setItem('nexus_api_key', this.value);
+  loadMissions();
+  refreshDispatch();
+});
+
+// ---- API helpers ----
+async function api(method, path, body) {
+  const opts = { method, headers: headers() };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(BASE_URL + path, opts);
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { const j = await res.json(); msg = j.detail || JSON.stringify(j); } catch {}
+    throw new Error(`${res.status}: ${msg}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ---- Toast ----
+function toast(msg, type) {
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + type;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ---- Modal helpers ----
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+// ---- Badge helper ----
+function badge(status) {
+  return `<span class="badge badge-${status}">${status.replace('_', ' ')}</span>`;
+}
+
+// ---- Format time ----
+function fmtTime(iso) {
+  if (!iso) return '--';
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+
+// ---- Missions ----
+async function loadMissions() {
+  const statusFilter = document.getElementById('missionStatusFilter').value;
+  let path = '/api/v2/missions?limit=100';
+  if (statusFilter) path += '&status=' + statusFilter;
+  try {
+    const data = await api('GET', path);
+    renderMissions(data.items || []);
+  } catch (e) {
+    document.getElementById('missionList').innerHTML = '<div class="empty-state">Error loading missions: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+function renderMissions(missions) {
+  const container = document.getElementById('missionList');
+  if (!missions.length) {
+    container.innerHTML = '<div class="empty-state">No missions yet</div>';
+    return;
+  }
+  container.innerHTML = missions.map(m => `
+    <div class="mission-item ${m.id === selectedMissionId ? 'selected' : ''}" onclick="selectMission('${m.id}')">
+      <div class="mission-title">${escHtml(m.title)}</div>
+      <div class="mission-meta">${badge(m.status)} &middot; ${fmtTime(m.created_at)}</div>
+    </div>
+  `).join('');
+}
+
+async function selectMission(id) {
+  selectedMissionId = id;
+  selectedTaskId = null;
+  document.getElementById('taskDetail').innerHTML = '<div class="empty-state">Select a task to view details</div>';
+  document.querySelectorAll('.mission-item').forEach(el => el.classList.remove('selected'));
+  try {
+    currentMission = await api('GET', '/api/v2/missions/' + id);
+    document.getElementById('taskPanelTitle').textContent = 'Tasks: ' + currentMission.title;
+    document.getElementById('newTaskBtn').style.display = '';
+    renderMissionActions(currentMission);
+    renderTasks(currentMission.tasks || []);
+    // Highlight in list
+    document.querySelectorAll('.mission-item').forEach(el => {
+      if (el.onclick && el.onclick.toString().includes(id)) el.classList.add('selected');
+    });
+    loadMissions(); // refresh list to update selection highlight
+  } catch (e) {
+    toast('Failed to load mission: ' + e.message, 'error');
+  }
+}
+
+function renderMissionActions(mission) {
+  const container = document.getElementById('missionActions');
+  container.style.display = '';
+  const statusButtons = {
+    running: [
+      { label: 'Complete', status: 'completed', cls: 'btn-success' },
+      { label: 'Partial Complete', status: 'partial_complete', cls: 'btn-warning' },
+      { label: 'Cancel', status: 'cancelled', cls: 'btn-danger' },
+    ],
+    partial_complete: [
+      { label: 'Complete', status: 'completed', cls: 'btn-success' },
+      { label: 'Cancel', status: 'cancelled', cls: 'btn-danger' },
+    ],
+    completed: [],
+    cancelled: [],
+  };
+  const actions = statusButtons[mission.status] || [];
+  container.innerHTML = '<span style="font-size:12px;color:#888;">Mission: </span>' + badge(mission.status) + ' ' +
+    actions.map(a => `<button class="${a.cls} btn-sm" onclick="updateMissionStatus('${a.status}')" style="margin-left:4px;">${a.label}</button>`).join('');
+}
+
+async function updateMissionStatus(status) {
+  try {
+    const body = { status };
+    if (status === 'completed' || status === 'partial_complete') {
+      const conclusion = prompt('Conclusion (optional):');
+      if (conclusion) body.conclusion = conclusion;
+    }
+    await api('PATCH', '/api/v2/missions/' + selectedMissionId, body);
+    toast('Mission updated', 'success');
+    selectMission(selectedMissionId);
+    loadMissions();
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+function openNewMissionModal() { openModal('newMissionModal'); document.getElementById('newMissionTitle').focus(); }
+
+async function createMission() {
+  const title = document.getElementById('newMissionTitle').value.trim();
+  if (!title) { toast('Title is required', 'error'); return; }
+  const body = { title };
+  const ctx = document.getElementById('newMissionContext').value.trim();
+  if (ctx) body.context_summary = ctx;
+  try {
+    const m = await api('POST', '/api/v2/missions', body);
+    closeModal('newMissionModal');
+    document.getElementById('newMissionTitle').value = '';
+    document.getElementById('newMissionContext').value = '';
+    toast('Mission created', 'success');
+    loadMissions();
+    selectMission(m.id);
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+document.getElementById('missionStatusFilter').addEventListener('change', loadMissions);
+
+// ---- Tasks ----
+function renderTasks(tasks) {
+  const container = document.getElementById('taskList');
+  if (!tasks.length) {
+    container.innerHTML = '<div class="empty-state">No tasks in this mission</div>';
+    return;
+  }
+  container.innerHTML = tasks.map(t => {
+    const transitions = getTransitions(t.status);
+    return `
+      <div class="task-card ${t.id === selectedTaskId ? 'selected-task' : ''}" onclick="selectTask('${t.id}')">
+        <div class="task-instruction">${escHtml(t.instruction)}</div>
+        <div class="task-meta">
+          ${badge(t.status)}
+          ${t.label ? ' &middot; <strong>' + escHtml(t.label) + '</strong>' : ''}
+          ${t.worker_type ? ' &middot; ' + escHtml(t.worker_type) : ''}
+          &middot; ${fmtTime(t.created_at)}
+        </div>
+        ${t.blocked_by && t.blocked_by.length ? '<div class="task-blocked">Blocked by: ' + t.blocked_by.map(id => id.substring(0,8) + '...').join(', ') + '</div>' : ''}
+        <div class="task-actions" onclick="event.stopPropagation()">
+          ${transitions.map(tr => `<button class="${tr.cls} btn-sm" onclick="transitionTask('${t.id}','${tr.status}')">${tr.label}</button>`).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function getTransitions(status) {
+  const map = {
+    created:   [{ label:'Start', status:'running', cls:'btn-primary' }, { label:'Cancel', status:'cancelled', cls:'btn-danger' }],
+    running:   [{ label:'Complete', status:'completed', cls:'btn-success' }, { label:'Fail', status:'failed', cls:'btn-danger' }, { label:'Review', status:'in_review', cls:'btn-info' }, { label:'Cancel', status:'cancelled', cls:'btn-secondary' }],
+    in_review: [{ label:'Approve', status:'completed', cls:'btn-success' }, { label:'Send Back', status:'running', cls:'btn-warning' }, { label:'Cancel', status:'cancelled', cls:'btn-danger' }],
+    completed: [{ label:'Cancel', status:'cancelled', cls:'btn-danger' }],
+    failed:    [{ label:'Cancel', status:'cancelled', cls:'btn-danger' }],
+    cancelled: [],
+  };
+  return map[status] || [];
+}
+
+async function transitionTask(taskId, newStatus) {
+  try {
+    await api('PATCH', '/api/v2/tasks/' + taskId, { status: newStatus });
+    toast('Task updated', 'success');
+    selectMission(selectedMissionId);
+    if (taskId === selectedTaskId) selectTask(taskId);
+    refreshDispatch();
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+async function selectTask(id) {
+  selectedTaskId = id;
+  // Highlight card
+  document.querySelectorAll('.task-card').forEach(el => el.classList.remove('selected-task'));
+  try {
+    const t = await api('GET', '/api/v2/tasks/' + id);
+    renderTaskDetail(t);
+  } catch (e) {
+    toast('Failed to load task: ' + e.message, 'error');
+  }
+}
+
+function renderTaskDetail(t) {
+  const transitions = getTransitions(t.status);
+  const comments = t.comments || [];
+  const artifacts = t.artifacts || [];
+
+  document.getElementById('taskDetail').innerHTML = `
+    <div class="detail-section">
+      <h3>Task Detail</h3>
+      <div class="detail-field"><strong>ID:</strong> ${t.id}</div>
+      <div class="detail-field"><strong>Status:</strong> ${badge(t.status)}</div>
+      <div class="detail-field"><strong>Instruction:</strong> ${escHtml(t.instruction)}</div>
+      ${t.worker_type ? `<div class="detail-field"><strong>Worker:</strong> ${escHtml(t.worker_type)}</div>` : ''}
+      ${t.label ? `<div class="detail-field"><strong>Label:</strong> ${escHtml(t.label)}</div>` : ''}
+      ${t.deadline ? `<div class="detail-field"><strong>Deadline:</strong> ${fmtTime(t.deadline)}</div>` : ''}
+      <div class="detail-field"><strong>Created:</strong> ${fmtTime(t.created_at)}</div>
+      ${t.started_at ? `<div class="detail-field"><strong>Started:</strong> ${fmtTime(t.started_at)}</div>` : ''}
+      ${t.completed_at ? `<div class="detail-field"><strong>Completed:</strong> ${fmtTime(t.completed_at)}</div>` : ''}
+      ${t.blocked_by && t.blocked_by.length ? `<div class="detail-field"><strong>Blocked by:</strong> ${t.blocked_by.join(', ')}</div>` : ''}
+      ${t.output_refs && t.output_refs.length ? `<div class="detail-field"><strong>Output refs:</strong> ${t.output_refs.join(', ')}</div>` : ''}
+      <div style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap;">
+        ${transitions.map(tr => `<button class="${tr.cls} btn-sm" onclick="transitionTask('${t.id}','${tr.status}')">${tr.label}</button>`).join('')}
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <div class="section-hdr">
+        <h3>History (${(t.history || []).length})</h3>
+        <button class="btn-primary btn-sm" onclick="openCommentModal()">+ Comment</button>
+      </div>
+      ${(t.history || []).length ? (t.history || []).map(h => {
+        if (h.type === 'comment') {
+          return `
+            <div class="comment comment-${h.author}">
+              <span class="comment-author">${escHtml(h.author)}</span>
+              <span class="comment-time">${fmtTime(h.created_at)}</span>
+              <div class="comment-text">${escHtml(h.content)}</div>
+              ${h.artifact_refs && h.artifact_refs.length ? `<div style="font-size:10px;color:#888;margin-top:2px;">Refs: ${h.artifact_refs.join(', ')}</div>` : ''}
+            </div>`;
+        } else {
+          return `
+            <div class="audit-entry">
+              <span class="audit-action">${escHtml(h.action)}</span>
+              ${h.actor ? `<span style="font-size:10px;color:#888;"> by ${escHtml(h.actor)}</span>` : ''}
+              <span class="audit-time">${fmtTime(h.created_at)}</span>
+              ${h.detail ? `<div class="audit-detail">${escHtml(h.detail)}</div>` : ''}
+            </div>`;
+        }
+      }).join('') : '<div class="empty-state" style="padding:10px;">No history yet</div>'}
+    </div>
+
+    <div class="detail-section">
+      <div class="section-hdr">
+        <h3>Artifacts (${artifacts.length})</h3>
+        <button class="btn-primary btn-sm" onclick="openArtifactModal()">+ Add</button>
+      </div>
+      ${artifacts.length ? artifacts.map(a => `
+        <div class="artifact-item">
+          <span class="artifact-type">${a.type}</span>
+          <strong>${escHtml(a.title)}</strong>
+          <div style="font-size:11px;color:#888;">${escHtml(a.uri)}${a.mime_type ? ' &middot; ' + a.mime_type : ''}</div>
+        </div>
+      `).join('') : '<div class="empty-state" style="padding:10px;">No artifacts</div>'}
+    </div>
+  `;
+}
+
+// ---- New Task ----
+function openNewTaskModal() { openModal('newTaskModal'); document.getElementById('newTaskInstruction').focus(); }
+
+async function createTask() {
+  const instruction = document.getElementById('newTaskInstruction').value.trim();
+  if (!instruction) { toast('Instruction is required', 'error'); return; }
+  const body = { mission_id: selectedMissionId, instruction };
+  const wt = document.getElementById('newTaskWorkerType').value.trim();
+  if (wt) body.worker_type = wt;
+  const label = document.getElementById('newTaskLabel').value.trim();
+  if (label) body.label = label;
+  const bb = document.getElementById('newTaskBlockedBy').value.trim();
+  if (bb) body.blocked_by = bb.split(',').map(s => s.trim()).filter(Boolean);
+  const dl = document.getElementById('newTaskDeadline').value.trim();
+  if (dl) body.deadline = dl;
+  try {
+    await api('POST', '/api/v2/tasks', body);
+    closeModal('newTaskModal');
+    document.getElementById('newTaskInstruction').value = '';
+    document.getElementById('newTaskWorkerType').value = '';
+    document.getElementById('newTaskLabel').value = '';
+    document.getElementById('newTaskBlockedBy').value = '';
+    document.getElementById('newTaskDeadline').value = '';
+    toast('Task created', 'success');
+    selectMission(selectedMissionId);
+    refreshDispatch();
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+// ---- Comments ----
+function openCommentModal() { openModal('newCommentModal'); document.getElementById('newCommentContent').focus(); }
+
+async function createComment() {
+  const content = document.getElementById('newCommentContent').value.trim();
+  if (!content) { toast('Content is required', 'error'); return; }
+  const body = {
+    task_id: selectedTaskId,
+    author: document.getElementById('newCommentAuthor').value,
+    content,
+  };
+  try {
+    await api('POST', '/api/v2/comments', body);
+    closeModal('newCommentModal');
+    document.getElementById('newCommentContent').value = '';
+    toast('Comment added', 'success');
+    selectTask(selectedTaskId);
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+// ---- Artifacts ----
+function openArtifactModal() { openModal('newArtifactModal'); document.getElementById('newArtifactTitle').focus(); }
+
+async function createArtifact() {
+  const title = document.getElementById('newArtifactTitle').value.trim();
+  const uri = document.getElementById('newArtifactUri').value.trim();
+  if (!title || !uri) { toast('Title and URI are required', 'error'); return; }
+  const body = {
+    type: document.getElementById('newArtifactType').value,
+    uri,
+    title,
+  };
+  const mime = document.getElementById('newArtifactMime').value.trim();
+  if (mime) body.mime_type = mime;
+  try {
+    const artifact = await api('POST', '/api/v2/artifacts', body);
+    closeModal('newArtifactModal');
+    document.getElementById('newArtifactTitle').value = '';
+    document.getElementById('newArtifactUri').value = '';
+    document.getElementById('newArtifactMime').value = '';
+    toast('Artifact created (ID: ' + artifact.id + ')', 'success');
+    if (selectedTaskId) selectTask(selectedTaskId);
+  } catch (e) {
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+// ---- Dispatch count ----
+async function refreshDispatch() {
+  try {
+    const tasks = await api('GET', '/api/v2/tasks');
+    document.getElementById('dispatchCount').textContent = 'Dispatch: ' + (tasks.length || 0);
+  } catch {
+    document.getElementById('dispatchCount').textContent = 'Dispatch: --';
+  }
+}
+
+// ---- Utility ----
+function escHtml(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ---- SSE live updates ----
+let _evtSource = null;
+
+function connectSSE() {
+  if (_evtSource) _evtSource.close();
+  _evtSource = new EventSource(BASE_URL + '/api/v2/tasks/events');
+
+  _evtSource.onmessage = function(e) {
+    try {
+      const msg = JSON.parse(e.data);
+      // Refresh task detail if we're looking at the changed task
+      if (selectedTaskId && msg.task_id === selectedTaskId) {
+        selectTask(selectedTaskId);
+      }
+      // Refresh mission task list if a mission is selected
+      if (selectedMissionId) {
+        selectMission(selectedMissionId);
+      }
+      refreshDispatch();
+    } catch {}
+  };
+
+  _evtSource.onerror = function() {
+    // Reconnect after a brief delay (browser auto-reconnects SSE,
+    // but we reset state just in case)
+    setTimeout(connectSSE, 5000);
+  };
+}
+
+// ---- Init ----
+loadMissions();
+refreshDispatch();
+connectSSE();
+setInterval(refreshDispatch, 30000);
+</script>
+</body>
+</html>

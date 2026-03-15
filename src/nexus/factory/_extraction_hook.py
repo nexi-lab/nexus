@@ -41,16 +41,17 @@ def _read_content(
         raw = metastore.get_file_metadata(path, INLINE_CONTENT_KEY)
         if raw is None:
             return None
-        # NexusFS stores base64(content) in the metastore. The Raft
-        # metastore adds another base64 layer when storing arbitrary
-        # string values, so the value we read is base64(base64(content)).
-        # Decode both layers.
+        # NexusFS stores base64(content) in the metastore.  The Raft
+        # metastore may add another base64 layer when storing string
+        # values, producing base64(base64(content)).  Use the known
+        # file size from metadata to detect whether a second decode
+        # is needed: base64 always changes the length, so if the
+        # first decode already matches the file size, it produced
+        # the original content.  If not, decode again.
+        expected_size = metadata.get("size", 0)
         content = base64.b64decode(raw)
-        if isinstance(content, bytes):
-            import contextlib
-
-            with contextlib.suppress(Exception):
-                content = base64.b64decode(content)
+        if expected_size and len(content) != expected_size:
+            content = base64.b64decode(content)
         return content
 
     # CAS: content stored in backend by hash

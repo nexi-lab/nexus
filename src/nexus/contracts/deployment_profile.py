@@ -65,6 +65,7 @@ BRICK_DELEGATION = "delegation"
 BRICK_IDENTITY = "identity"
 BRICK_SHARE_LINK = "share_link"
 BRICK_VERSIONING = "versioning"
+BRICK_WORKSPACE = "workspace"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -99,6 +100,7 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_IDENTITY,
         BRICK_SHARE_LINK,
         BRICK_VERSIONING,
+        BRICK_WORKSPACE,
         BRICK_FEDERATION,
         BRICK_AGENT_RUNTIME,
     }
@@ -195,6 +197,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_IDENTITY,
         BRICK_SHARE_LINK,
         BRICK_VERSIONING,
+        BRICK_WORKSPACE,
     }
 )
 

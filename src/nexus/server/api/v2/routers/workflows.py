@@ -136,7 +136,7 @@ def _get_workflow_engine(request: Request) -> Any:
         if blm is not None:
             from nexus.bricks.workflows.engine import WorkflowEngine
 
-            for brick in getattr(blm, "_active_bricks", {}).values():
+            for _name, brick in blm.iter_bricks():
                 if isinstance(brick, WorkflowEngine):
                     engine = brick
                     request.app.state.workflow_engine = engine  # Cache for next request

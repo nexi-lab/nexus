@@ -276,6 +276,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           SUFFIX="${{ matrix.suffix }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:stable${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
 
       - name: Build image (local load for smoke tests)
@@ -344,7 +345,7 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          tags: ghcr.io/nexi-lab/nexus-zoekt:${{ github.ref_name }},ghcr.io/nexi-lab/nexus-zoekt:stable,ghcr.io/nexi-lab/nexus-zoekt:latest
+          tags: ghcr.io/nexi-lab/nexus-zoekt:${{ steps.meta.outputs.version }},ghcr.io/nexi-lab/nexus-zoekt:stable,ghcr.io/nexi-lab/nexus-zoekt:latest
           cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus-zoekt:buildcache
           cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus-zoekt:buildcache,mode=max,ignore-error=true
 

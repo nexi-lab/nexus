@@ -6,7 +6,7 @@ use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyWrite,
     Request, FUSE_ROOT_ID,
 };
-use libc::{ENOENT, ENOTDIR, ENOTEMPTY, EISDIR, EIO};
+use libc::{EIO, EISDIR, ENOENT, ENOTDIR, ENOTEMPTY};
 use log::{debug, error};
 use lru::LruCache;
 use std::ffi::OsStr;
@@ -41,7 +41,7 @@ impl InodeTable {
         let mut inode_to_path = LruCache::new(cap);
         let mut path_to_inode = LruCache::new(cap);
 
-        // Root inode
+        // Root inode — always present, re-pinned after eviction-prone operations.
         inode_to_path.put(FUSE_ROOT_ID, "/".to_string());
         path_to_inode.put("/".to_string(), FUSE_ROOT_ID);
 
@@ -49,6 +49,17 @@ impl InodeTable {
             inode_to_path,
             path_to_inode,
             next_inode: FUSE_ROOT_ID + 1,
+        }
+    }
+
+    /// Ensure root inode is present in both maps (Issue #3029 / Bug 4).
+    /// Called after operations that could trigger LRU eviction.
+    fn ensure_root_pinned(&mut self) {
+        if self.inode_to_path.peek(&FUSE_ROOT_ID).is_none() {
+            self.inode_to_path.put(FUSE_ROOT_ID, "/".to_string());
+        }
+        if self.path_to_inode.peek("/").is_none() {
+            self.path_to_inode.put("/".to_string(), FUSE_ROOT_ID);
         }
     }
 
@@ -62,8 +73,23 @@ impl InodeTable {
         let inode = self.next_inode;
         self.next_inode += 1;
 
-        self.path_to_inode.put(path.to_string(), inode);
-        self.inode_to_path.put(inode, path.to_string());
+        // Insert into both maps, synchronizing evictions (Issue #3029 / Bug 4).
+        // `push` returns the evicted (key, value) if the cache was at capacity.
+        if let Some((_evicted_path, evicted_inode)) =
+            self.path_to_inode.push(path.to_string(), inode)
+        {
+            // path_to_inode evicted an entry; remove the stale reverse mapping.
+            self.inode_to_path.pop(&evicted_inode);
+        }
+        if let Some((_evicted_inode, evicted_path)) =
+            self.inode_to_path.push(inode, path.to_string())
+        {
+            // inode_to_path evicted an entry; remove the stale reverse mapping.
+            self.path_to_inode.pop(&evicted_path);
+        }
+
+        // Re-pin root after potential evictions
+        self.ensure_root_pinned();
 
         inode
     }
@@ -92,9 +118,15 @@ impl InodeTable {
         }
     }
 
-    /// Get inode for a path (for cache lookups, doesn't promote in LRU).
+    /// Get inode for a path (promotes in LRU).
     fn get_inode(&mut self, path: &str) -> Option<u64> {
         self.path_to_inode.get(path).copied()
+    }
+
+    /// Peek inode for a path without promoting in LRU (Issue #3029 / Issue 8).
+    /// Used for speculative lookups where promotion is undesirable.
+    fn peek_inode(&self, path: &str) -> Option<u64> {
+        self.path_to_inode.peek(path).copied()
     }
 }
 
@@ -150,7 +182,14 @@ impl NexusFs {
     }
 
     /// Create FileAttr from metadata.
-    fn make_attr(&self, inode: u64, entry_type: &str, size: u64, created: Option<&String>, updated: Option<&String>) -> FileAttr {
+    fn make_attr(
+        &self,
+        inode: u64,
+        entry_type: &str,
+        size: u64,
+        created: Option<&String>,
+        updated: Option<&String>,
+    ) -> FileAttr {
         let kind = if entry_type == "directory" {
             FileType::Directory
         } else {
@@ -163,7 +202,11 @@ impl NexusFs {
 
         let nlink = if kind == FileType::Directory { 2 } else { 1 };
         // Use permissive permissions - access control is done by Nexus API key
-        let perm = if kind == FileType::Directory { 0o777 } else { 0o666 };
+        let perm = if kind == FileType::Directory {
+            0o777
+        } else {
+            0o666
+        };
 
         FileAttr {
             ino: inode,
@@ -195,7 +238,7 @@ impl NexusFs {
         // Fast path: check attr_cache for existing info
         {
             let inodes = self.inodes.lock().unwrap();
-            if let Some(&inode) = inodes.path_to_inode.peek(path) {
+            if let Some(inode) = inodes.peek_inode(path) {
                 let mut cache = self.attr_cache.lock().unwrap();
                 if let Some((attr, cached_at)) = cache.get(&inode) {
                     if cached_at.elapsed().unwrap_or(Duration::MAX) < ATTR_TTL {
@@ -235,7 +278,11 @@ impl NexusFs {
         // Use stat() for single API call
         match self.client.stat(path) {
             Ok(meta) => {
-                let entry_type = if meta.is_directory { "directory" } else { "file" };
+                let entry_type = if meta.is_directory {
+                    "directory"
+                } else {
+                    "file"
+                };
                 let attr = self.make_attr(
                     inode,
                     entry_type,
@@ -276,11 +323,15 @@ impl NexusFs {
         // Extract inode info while holding inodes lock, then release
         let (inode, parent_inode) = {
             let inodes = self.inodes.lock().unwrap();
-            let inode = inodes.get_inode(path);
+            let inode = inodes.peek_inode(path);
             let parent_inode = if let Some(parent) = std::path::Path::new(path).parent() {
                 let parent_path = parent.to_string_lossy().to_string();
-                let parent_path = if parent_path.is_empty() { "/".to_string() } else { parent_path };
-                inodes.get_inode(&parent_path)
+                let parent_path = if parent_path.is_empty() {
+                    "/".to_string()
+                } else {
+                    parent_path
+                };
+                inodes.peek_inode(&parent_path)
             } else {
                 None
             };
@@ -420,18 +471,18 @@ impl Filesystem for NexusFs {
             let mut cache = self.dir_cache.lock().unwrap();
             if let Some((entries, cached_at)) = cache.get(&ino) {
                 if cached_at.elapsed().unwrap_or(Duration::MAX) < ATTR_TTL {
-                    Some(entries.clone())  // Cache hit (may be empty dir)
+                    Some(entries.clone()) // Cache hit (may be empty dir)
                 } else {
                     cache.pop(&ino);
-                    None  // Cache expired
+                    None // Cache expired
                 }
             } else {
-                None  // Cache miss
+                None // Cache miss
             }
         };
 
         let entries = match cached_entries {
-            Some(entries) => entries,  // Cache hit - use cached (even if empty)
+            Some(entries) => entries, // Cache hit - use cached (even if empty)
             None => {
                 // Cache miss - fetch from server
                 match self.client.list(&path) {
@@ -472,7 +523,11 @@ impl Filesystem for NexusFs {
 
             // Pre-populate attr_cache from list() response to avoid N stat() calls
             // when kernel calls lookup()/getattr() for each entry
-            let entry_type = if entry.entry_type == "directory" { "directory" } else { "file" };
+            let entry_type = if entry.entry_type == "directory" {
+                "directory"
+            } else {
+                "file"
+            };
             let attr = self.make_attr(
                 child_inode,
                 entry_type,
@@ -480,7 +535,10 @@ impl Filesystem for NexusFs {
                 entry.created_at.as_ref(),
                 entry.updated_at.as_ref(),
             );
-            self.attr_cache.lock().unwrap().put(child_inode, (attr, SystemTime::now()));
+            self.attr_cache
+                .lock()
+                .unwrap()
+                .put(child_inode, (attr, SystemTime::now()));
 
             all_entries.push((child_inode, kind, entry.name.clone()));
         }
@@ -755,13 +813,19 @@ impl Filesystem for NexusFs {
         // Only log if RENAME_NOREPLACE (flag bit 0) is set — the server should
         // handle this, but we note it for debugging.
         if flags & 1 != 0 {
-            debug!("rename: RENAME_NOREPLACE flag set for {} -> {}", old_path, new_path);
+            debug!(
+                "rename: RENAME_NOREPLACE flag set for {} -> {}",
+                old_path, new_path
+            );
         }
 
         match self.client.rename(&old_path, &new_path) {
             Ok(_) => {
                 // Update inode mappings atomically (single lock)
-                self.inodes.lock().unwrap().rename_path(&old_path, &new_path);
+                self.inodes
+                    .lock()
+                    .unwrap()
+                    .rename_path(&old_path, &new_path);
                 self.invalidate_path(&old_path);
                 self.invalidate_path(&new_path);
                 reply.ok();
@@ -893,7 +957,14 @@ impl Filesystem for NexusFs {
         }
     }
 
-    fn flush(&mut self, _req: &Request, _ino: u64, _fh: u64, _lock_owner: u64, reply: fuser::ReplyEmpty) {
+    fn flush(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        _fh: u64,
+        _lock_owner: u64,
+        reply: fuser::ReplyEmpty,
+    ) {
         reply.ok();
     }
 
@@ -910,7 +981,14 @@ impl Filesystem for NexusFs {
         reply.ok();
     }
 
-    fn releasedir(&mut self, _req: &Request, _ino: u64, _fh: u64, _flags: i32, reply: fuser::ReplyEmpty) {
+    fn releasedir(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        _fh: u64,
+        _flags: i32,
+        reply: fuser::ReplyEmpty,
+    ) {
         reply.ok();
     }
 
@@ -924,5 +1002,141 @@ impl Filesystem for NexusFs {
         } else {
             reply.error(ENOENT);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_or_create_idempotent() {
+        let mut table = InodeTable::new();
+        let inode1 = table.get_or_create("/foo/bar");
+        let inode2 = table.get_or_create("/foo/bar");
+        assert_eq!(inode1, inode2, "Same path must return same inode");
+    }
+
+    #[test]
+    fn test_get_or_create_unique() {
+        let mut table = InodeTable::new();
+        let a = table.get_or_create("/a");
+        let b = table.get_or_create("/b");
+        assert_ne!(a, b, "Different paths must get different inodes");
+    }
+
+    #[test]
+    fn test_get_path_roundtrip() {
+        let mut table = InodeTable::new();
+        let inode = table.get_or_create("/foo");
+        let path = table.get_path(inode);
+        assert_eq!(path.as_deref(), Some("/foo"));
+    }
+
+    #[test]
+    fn test_root_inode_accessible() {
+        let mut table = InodeTable::new();
+        assert_eq!(table.get_path(FUSE_ROOT_ID), Some("/".to_string()));
+        assert_eq!(table.get_inode("/"), Some(FUSE_ROOT_ID));
+        assert_eq!(table.peek_inode("/"), Some(FUSE_ROOT_ID));
+    }
+
+    /// Root inode must survive even when MAX_INODE_ENTRIES are inserted
+    /// (Issue #3029 / Bug 4 regression test).
+    #[test]
+    fn test_root_inode_survives_eviction() {
+        // Use a small capacity to make the test fast
+        let cap = NonZeroUsize::new(100).unwrap();
+        let mut table = InodeTable {
+            inode_to_path: LruCache::new(cap),
+            path_to_inode: LruCache::new(cap),
+            next_inode: FUSE_ROOT_ID + 1,
+        };
+        // Manually insert root
+        table.inode_to_path.put(FUSE_ROOT_ID, "/".to_string());
+        table.path_to_inode.put("/".to_string(), FUSE_ROOT_ID);
+
+        // Insert more entries than capacity — should evict old entries but not root
+        for i in 0..200 {
+            table.get_or_create(&format!("/deep/path/entry-{}", i));
+        }
+
+        // Root must still be accessible
+        assert_eq!(
+            table.get_path(FUSE_ROOT_ID),
+            Some("/".to_string()),
+            "Root inode was evicted from inode_to_path"
+        );
+        assert_eq!(
+            table.peek_inode("/"),
+            Some(FUSE_ROOT_ID),
+            "Root inode was evicted from path_to_inode"
+        );
+    }
+
+    /// After eviction, both maps must agree — no stale reverse mappings
+    /// (Issue #3029 / Bug 4 regression test).
+    #[test]
+    fn test_eviction_sync() {
+        let cap = NonZeroUsize::new(10).unwrap();
+        let mut table = InodeTable {
+            inode_to_path: LruCache::new(cap),
+            path_to_inode: LruCache::new(cap),
+            next_inode: FUSE_ROOT_ID + 1,
+        };
+        table.inode_to_path.put(FUSE_ROOT_ID, "/".to_string());
+        table.path_to_inode.put("/".to_string(), FUSE_ROOT_ID);
+
+        // Record first batch of inodes
+        let mut first_inodes = Vec::new();
+        for i in 0..9 {
+            let inode = table.get_or_create(&format!("/file-{}", i));
+            first_inodes.push((inode, format!("/file-{}", i)));
+        }
+
+        // Now insert enough to trigger evictions of the first batch
+        for i in 0..20 {
+            table.get_or_create(&format!("/new-{}", i));
+        }
+
+        // For any inode in inode_to_path, path_to_inode must agree (and vice versa)
+        // Check: if get_path returns a path, peek_inode on that path must return the same inode
+        for inode_val in 1..table.next_inode {
+            if let Some(path) = table.inode_to_path.peek(&inode_val).cloned() {
+                let reverse = table.path_to_inode.peek(&path).copied();
+                assert_eq!(
+                    reverse,
+                    Some(inode_val),
+                    "Desync: inode {} -> path {:?} but path -> inode {:?}",
+                    inode_val,
+                    path,
+                    reverse,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_rename_path() {
+        let mut table = InodeTable::new();
+        let inode = table.get_or_create("/old/name");
+        table.rename_path("/old/name", "/new/name");
+
+        // Old path should not resolve
+        assert_eq!(table.peek_inode("/old/name"), None);
+        // New path should resolve to same inode
+        assert_eq!(table.peek_inode("/new/name"), Some(inode));
+        // Inode should map to new path
+        assert_eq!(table.get_path(inode), Some("/new/name".to_string()));
+    }
+
+    #[test]
+    fn test_remove_path() {
+        let mut table = InodeTable::new();
+        let inode = table.get_or_create("/to-delete");
+        let removed = table.remove_path("/to-delete");
+        assert_eq!(removed, Some(inode));
+        assert_eq!(table.peek_inode("/to-delete"), None);
+        assert_eq!(table.get_path(inode), None);
     }
 }

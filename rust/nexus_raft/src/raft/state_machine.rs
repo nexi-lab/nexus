@@ -49,6 +49,10 @@ pub enum Command {
         ttl_secs: u32,
         /// Information about the holder (e.g., "agent:xxx").
         holder_info: String,
+        /// Wall-clock timestamp captured at proposal time (Unix secs).
+        /// All replicas use this value instead of local clocks to ensure
+        /// deterministic state machine application (Issue #3029 / Bug 1).
+        now_secs: u64,
     },
 
     /// Release a distributed lock.
@@ -67,6 +71,10 @@ pub enum Command {
         lock_id: String,
         /// New TTL in seconds (from now).
         new_ttl_secs: u32,
+        /// Wall-clock timestamp captured at proposal time (Unix secs).
+        /// All replicas use this value instead of local clocks to ensure
+        /// deterministic state machine application (Issue #3029 / Bug 1).
+        now_secs: u64,
     },
 
     /// Compare-and-swap metadata: write only if current version matches.
@@ -146,7 +154,7 @@ pub struct HolderInfo {
 }
 
 /// Lock entry stored in the state machine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockInfo {
     /// Resource path.
     pub path: String,
@@ -520,8 +528,9 @@ impl FullStateMachine {
         })
     }
 
-    /// Get current Unix timestamp.
-    fn now() -> u64 {
+    /// Get current Unix timestamp. Public so proposal sites can capture
+    /// the timestamp before it enters the replicated command.
+    pub fn now() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -684,6 +693,9 @@ impl FullStateMachine {
     }
 
     /// Apply AcquireLock command.
+    ///
+    /// `now` is the wall-clock timestamp from the replicated command, ensuring
+    /// all replicas compute identical lock state (Issue #3029 / Bug 1).
     fn apply_acquire_lock(
         &self,
         path: &str,
@@ -691,8 +703,8 @@ impl FullStateMachine {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
+        now: u64,
     ) -> Result<CommandResult> {
-        let now = Self::now();
         let expires_at = now + ttl_secs as u64;
 
         let new_holder = HolderInfo {
@@ -777,13 +789,16 @@ impl FullStateMachine {
     }
 
     /// Apply ExtendLock command.
+    ///
+    /// `now` is the wall-clock timestamp from the replicated command, ensuring
+    /// all replicas compute identical lock state (Issue #3029 / Bug 1).
     fn apply_extend_lock(
         &self,
         path: &str,
         lock_id: &str,
         new_ttl_secs: u32,
+        now: u64,
     ) -> Result<CommandResult> {
-        let now = Self::now();
         let new_expires_at = now + new_ttl_secs as u64;
 
         let mut lock_info: LockInfo = match self.locks.get(path.as_bytes())? {
@@ -908,13 +923,22 @@ impl FullStateMachine {
                 max_holders,
                 ttl_secs,
                 holder_info,
-            } => self.apply_acquire_lock(path, lock_id, *max_holders, *ttl_secs, holder_info),
+                now_secs,
+            } => self.apply_acquire_lock(
+                path,
+                lock_id,
+                *max_holders,
+                *ttl_secs,
+                holder_info,
+                *now_secs,
+            ),
             Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id),
             Command::ExtendLock {
                 path,
                 lock_id,
                 new_ttl_secs,
-            } => self.apply_extend_lock(path, lock_id, *new_ttl_secs),
+                now_secs,
+            } => self.apply_extend_lock(path, lock_id, *new_ttl_secs, *now_secs),
             Command::AdjustCounter { key, delta } => self.apply_adjust_counter(key, *delta),
             Command::Noop => Ok(CommandResult::Success),
         }
@@ -1090,6 +1114,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test".into(),
+            now_secs: 1000,
         };
 
         let serialized = bincode::serialize(&cmd).unwrap();
@@ -1102,15 +1127,106 @@ mod tests {
                 max_holders,
                 ttl_secs,
                 holder_info,
+                now_secs,
             } => {
                 assert_eq!(path, "/data/test.txt");
                 assert_eq!(lock_id, "uuid-123");
                 assert_eq!(max_holders, 3);
                 assert_eq!(ttl_secs, 30);
                 assert_eq!(holder_info, "agent:test");
+                assert_eq!(now_secs, 1000);
             }
             _ => panic!("wrong command type"),
         }
+    }
+
+    /// Determinism regression test (Issue #3029 / Bug 1):
+    /// Two state machines applying the same commands must produce byte-identical snapshots.
+    #[test]
+    fn test_state_machine_determinism() {
+        let store1 = RedbStore::open_temporary().unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm1 = FullStateMachine::new(&store1).unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+
+        // Build a sequence of commands with explicit timestamps
+        let commands: Vec<(u64, Command)> = vec![
+            (
+                1,
+                Command::SetMetadata {
+                    key: "/file1".into(),
+                    value: b"data1".to_vec(),
+                },
+            ),
+            (
+                2,
+                Command::AcquireLock {
+                    path: "/file1".into(),
+                    lock_id: "lock-1".into(),
+                    max_holders: 1,
+                    ttl_secs: 60,
+                    holder_info: "agent:a".into(),
+                    now_secs: 1000,
+                },
+            ),
+            (
+                3,
+                Command::AcquireLock {
+                    path: "/file2".into(),
+                    lock_id: "lock-2".into(),
+                    max_holders: 3,
+                    ttl_secs: 30,
+                    holder_info: "agent:b".into(),
+                    now_secs: 1001,
+                },
+            ),
+            (
+                4,
+                Command::ExtendLock {
+                    path: "/file1".into(),
+                    lock_id: "lock-1".into(),
+                    new_ttl_secs: 120,
+                    now_secs: 1010,
+                },
+            ),
+            (
+                5,
+                Command::ReleaseLock {
+                    path: "/file2".into(),
+                    lock_id: "lock-2".into(),
+                },
+            ),
+            // Acquire after TTL-based expiry cleanup
+            (
+                6,
+                Command::AcquireLock {
+                    path: "/file2".into(),
+                    lock_id: "lock-3".into(),
+                    max_holders: 1,
+                    ttl_secs: 60,
+                    holder_info: "agent:c".into(),
+                    now_secs: 2000, // well past lock-2's 30s TTL
+                },
+            ),
+        ];
+
+        // Apply identical commands to both state machines
+        for (idx, cmd) in &commands {
+            sm1.apply(*idx, cmd).unwrap();
+            sm2.apply(*idx, cmd).unwrap();
+        }
+
+        // Snapshots must be logically identical (HashMap serialization order may vary)
+        let snap1 = sm1.snapshot().unwrap();
+        let snap2 = sm2.snapshot().unwrap();
+        let decoded1: Snapshot = bincode::deserialize(&snap1).unwrap();
+        let decoded2: Snapshot = bincode::deserialize(&snap2).unwrap();
+        assert_eq!(decoded1.metadata, decoded2.metadata, "Metadata diverged");
+        assert_eq!(decoded1.locks, decoded2.locks, "Locks diverged");
+        assert_eq!(
+            decoded1.last_applied, decoded2.last_applied,
+            "last_applied diverged"
+        );
     }
 
     #[test]
@@ -1153,6 +1269,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1169,6 +1286,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(2, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1193,6 +1311,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(4, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1214,6 +1333,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1231,6 +1351,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(2, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1247,6 +1368,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test3".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(3, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1263,6 +1385,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test4".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(4, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1286,6 +1409,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test4".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(6, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1326,6 +1450,7 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 3600,
                 holder_info: "agent:test".into(),
+                now_secs: 1000,
             },
         )
         .unwrap();
@@ -1357,6 +1482,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
 
@@ -1376,13 +1502,14 @@ mod tests {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        // Acquire a lock with 1-second TTL
+        // Acquire a lock with 1-second TTL at time 1000
         let cmd = Command::AcquireLock {
             path: "/test/expire".into(),
             lock_id: "holder-1".into(),
             max_holders: 1,
             ttl_secs: 1,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1391,16 +1518,15 @@ mod tests {
             panic!("Expected LockResult");
         }
 
-        // Wait for TTL to expire
-        std::thread::sleep(std::time::Duration::from_secs(2));
-
-        // Another holder should be able to acquire because the first expired
+        // Another holder acquires at time 1002 (after the 1s TTL expired)
+        // No sleep needed — deterministic timestamps from the command.
         let cmd2 = Command::AcquireLock {
             path: "/test/expire".into(),
             lock_id: "holder-2".into(),
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1002,
         };
         let result = sm.apply(2, &cmd2).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1426,6 +1552,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1441,6 +1568,7 @@ mod tests {
             max_holders: 1, // Mismatch: 1 != 3
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(2, &cmd2).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1456,21 +1584,19 @@ mod tests {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        // Acquire a lock with 1-second TTL
+        // Acquire a lock with 1-second TTL at time 1000 (expires at 1001)
         let cmd = Command::AcquireLock {
             path: "/test/snap-expire".into(),
             lock_id: "holder-1".into(),
             max_holders: 1,
             ttl_secs: 1,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
 
-        // Wait for TTL to expire
-        std::thread::sleep(std::time::Duration::from_secs(2));
-
         // Take snapshot — should still include the expired holder
-        // (cleanup happens during acquire, not snapshot)
+        // (cleanup happens during acquire, not snapshot; the lock expired at 1001)
         let snapshot_data = sm.snapshot().unwrap();
 
         // Restore to a new state machine
@@ -1499,6 +1625,7 @@ mod tests {
             max_holders: u32::MAX,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {

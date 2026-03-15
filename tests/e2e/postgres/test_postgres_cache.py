@@ -6,7 +6,7 @@ and Protocol conformance.
 
 Requirements:
     - PostgreSQL running at postgresql://postgres:nexus@localhost:5432/nexus
-    - Start with: docker compose -f docker-compose.demo.yml up postgres -d
+    - Start with: docker compose -f dockerfiles/compose.yaml up postgres -d
 
 Run tests with:
     pytest tests/integration/test_postgres_cache.py -v
@@ -53,7 +53,7 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
         not _pg_is_available(),
-        reason="PostgreSQL not available. Start with: docker compose -f docker-compose.demo.yml up postgres -d",
+        reason="PostgreSQL not available. Start with: docker compose -f dockerfiles/compose.yaml up postgres -d",
     ),
 ]
 

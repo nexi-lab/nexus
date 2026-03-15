@@ -9,7 +9,7 @@ Tests verify that:
 
 Requirements:
     - PostgreSQL running at postgresql://postgres:nexus@localhost:5432/nexus
-    - Start with: docker compose -f docker-compose.demo.yml up postgres -d
+    - Start with: docker compose -f dockerfiles/compose.yaml up postgres -d
     - Or set NEXUS_DATABASE_URL environment variable
 """
 

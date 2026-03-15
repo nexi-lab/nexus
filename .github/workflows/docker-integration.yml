@@ -20,7 +20,9 @@ on:
       # Docker-related files
       - 'Dockerfile'
       - 'docker-compose*.yml'
-      - 'scripts/docker-demo.sh'
+      - 'dockerfiles/compose.yaml'
+      - 'nexus-stack.yml'
+      - 'scripts/nexus-docker.sh'
       - 'docker-entrypoint.sh'
       - '.github/workflows/docker-integration.yml'
       # Core source files that affect Docker integration
@@ -86,7 +88,7 @@ jobs:
           echo '${{ secrets.NEXUS_GCS_CREDENTIALS }}' > gcs-credentials.json
 
           # Create .env file with config from GitHub secrets
-          # Note: docker-demo.sh looks for .env (not .env)
+          # Note: nexus-docker.sh looks for .env (not .env)
           cat > .env << 'EOF'
           # ============================================
           # PostgreSQL Database
@@ -208,15 +210,15 @@ jobs:
             exit 1
           fi
 
-      - name: Make docker-demo.sh executable
+      - name: Make nexus-docker.sh executable
         working-directory: nexus
-        run: chmod +x scripts/docker-demo.sh
+        run: chmod +x scripts/nexus-docker.sh
 
-      - name: Test docker-demo.sh --init --build
+      - name: Test nexus-docker.sh --init --build
         working-directory: nexus
         run: |
-          echo "🚀 Testing docker-demo.sh --init --build --yes..."
-          ./scripts/docker-demo.sh --init --build --rebuild --yes
+          echo "🚀 Testing nexus-docker.sh --init --build --yes..."
+          ./scripts/nexus-docker.sh --init --build --rebuild --yes
         timeout-minutes: 20
 
       - name: Wait for services to be healthy
@@ -317,7 +319,7 @@ jobs:
             echo "   Checking .env file..."
             grep "ANTHROPIC_API_KEY" .env || echo "   Not found in .env"
             echo "   Checking docker-compose environment..."
-            docker-compose -f docker-compose.demo.yml config | grep -A 5 "ANTHROPIC_API_KEY" || echo "   Not found in docker-compose config"
+            docker compose -f dockerfiles/compose.yaml config | grep -A 5 "ANTHROPIC_API_KEY" || echo "   Not found in docker-compose config"
             exit 1
           fi
 
@@ -1710,14 +1712,14 @@ jobs:
             exit 1
           fi
 
-      - name: Test docker-demo.sh --restart
+      - name: Test nexus-docker.sh --restart
         working-directory: nexus
         run: |
-          echo "🔄 Testing docker-demo.sh --restart..."
+          echo "🔄 Testing nexus-docker.sh --restart..."
           echo ""
 
           # Restart services
-          ./scripts/docker-demo.sh --restart
+          ./scripts/nexus-docker.sh --restart
 
           echo "⏳ Waiting for services to become healthy after restart..."
           MAX_WAIT=180  # 3 minutes
@@ -1788,14 +1790,14 @@ jobs:
           echo "🎉 Restart test completed successfully!"
           echo "   All services recovered and are fully functional."
 
-      - name: Test docker-demo.sh --status
+      - name: Test nexus-docker.sh --status
         working-directory: nexus
         run: |
-          echo "📊 Testing docker-demo.sh --status..."
+          echo "📊 Testing nexus-docker.sh --status..."
           echo ""
 
           # Run status command and capture output
-          STATUS_OUTPUT=$(./scripts/docker-demo.sh --status 2>&1)
+          STATUS_OUTPUT=$(./scripts/nexus-docker.sh --status 2>&1)
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -1821,14 +1823,14 @@ jobs:
           echo ""
           echo "🎉 Status test completed successfully!"
 
-      - name: Test docker-demo.sh --logs
+      - name: Test nexus-docker.sh --logs
         working-directory: nexus
         run: |
-          echo "📝 Testing docker-demo.sh --logs..."
+          echo "📝 Testing nexus-docker.sh --logs..."
           echo ""
 
           # Run logs command in background and capture output for 5 seconds
-          timeout 5s ./scripts/docker-demo.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
+          timeout 5s ./scripts/nexus-docker.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
 
           # Verify log file has content
           if [ ! -s /tmp/docker_logs_test.txt ]; then
@@ -1849,10 +1851,10 @@ jobs:
           echo ""
           echo "🎉 Logs test completed successfully!"
 
-      - name: Test docker-demo.sh --stop
+      - name: Test nexus-docker.sh --stop
         working-directory: nexus
         run: |
-          echo "🛑 Testing docker-demo.sh --stop..."
+          echo "🛑 Testing nexus-docker.sh --stop..."
           echo ""
 
           # Record running containers before stop
@@ -1860,7 +1862,7 @@ jobs:
           echo "Containers running before stop: $CONTAINERS_BEFORE"
 
           # Run stop command
-          ./scripts/docker-demo.sh --stop
+          ./scripts/nexus-docker.sh --stop
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -1918,5 +1920,5 @@ jobs:
         working-directory: nexus
         run: |
           echo "🧹 Cleaning up containers..."
-          ./scripts/docker-demo.sh --stop || true
+          ./scripts/nexus-docker.sh --stop || true
           docker system prune -af || true

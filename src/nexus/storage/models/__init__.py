@@ -63,7 +63,6 @@ from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as Exc
 from nexus.storage.models.file_path import FilePathModel as FilePathModel
 
 # Domain: Filesystem
-from nexus.storage.models.filesystem import ContentChunkModel as ContentChunkModel
 from nexus.storage.models.filesystem import DirectoryEntryModel as DirectoryEntryModel
 from nexus.storage.models.filesystem import DocumentChunkModel as DocumentChunkModel
 from nexus.storage.models.filesystem import FileMetadataModel as FileMetadataModel
@@ -101,9 +100,6 @@ from nexus.storage.models.payments import UsageEvent as UsageEvent
 
 # Domain: Permissions (ReBAC + Tiger Cache)
 from nexus.storage.models.permissions import AdminBypassAuditModel as AdminBypassAuditModel
-from nexus.storage.models.permissions import (
-    FileSystemVersionSequenceModel as FileSystemVersionSequenceModel,
-)
 from nexus.storage.models.permissions import ReBACChangelogModel as ReBACChangelogModel
 from nexus.storage.models.permissions import ReBACCheckCacheModel as ReBACCheckCacheModel
 from nexus.storage.models.permissions import ReBACGroupClosureModel as ReBACGroupClosureModel

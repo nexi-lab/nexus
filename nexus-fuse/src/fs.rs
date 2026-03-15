@@ -111,10 +111,24 @@ impl InodeTable {
     }
 
     /// Update path for an existing inode (rename).
+    /// Uses `push` for synchronized eviction and re-pins root (Issue #3029 / Bug 4).
     fn rename_path(&mut self, old_path: &str, new_path: &str) {
         if let Some(inode) = self.path_to_inode.pop(old_path) {
-            self.inode_to_path.put(inode, new_path.to_string());
-            self.path_to_inode.put(new_path.to_string(), inode);
+            self.inode_to_path.pop(&inode);
+
+            // Re-insert with synchronized eviction (same pattern as get_or_create)
+            if let Some((_evicted_path, evicted_inode)) =
+                self.path_to_inode.push(new_path.to_string(), inode)
+            {
+                self.inode_to_path.pop(&evicted_inode);
+            }
+            if let Some((_evicted_inode, evicted_path)) =
+                self.inode_to_path.push(inode, new_path.to_string())
+            {
+                self.path_to_inode.pop(&evicted_path);
+            }
+
+            self.ensure_root_pinned();
         }
     }
 

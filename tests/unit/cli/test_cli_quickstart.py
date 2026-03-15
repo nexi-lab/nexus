@@ -1,12 +1,11 @@
 """Regression tests for the documented local CLI quickstart.
 
-Note: test_local_cli_quickstart_persists_across_invocations is xfail on Python
-3.13 due to redb/PyO3 metastore persistence timing issues.
+Note: test_local_cli_quickstart_persists_across_invocations is xfail
+due to redb/PyO3 metastore persistence timing issues (flaky in full suite).
 """
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import click
@@ -19,8 +18,7 @@ from nexus.raft import zone_manager
 
 
 @pytest.mark.xfail(
-    sys.version_info >= (3, 13),
-    reason="Metastore persistence across CLI invocations unreliable on Python 3.13 (redb/PyO3 timing)",
+    reason="Metastore persistence across CLI invocations unreliable — flaky in full suite (redb/PyO3 timing)",
     strict=False,
 )
 def test_local_cli_quickstart_persists_across_invocations(

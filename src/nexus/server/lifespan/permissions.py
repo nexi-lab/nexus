@@ -35,7 +35,7 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
     bg_tasks.extend(await _startup_tiger_cache(app, svc))
     bg_tasks.extend(_startup_backfill(app, svc))
     _startup_cache_warmup(app, svc)
-    _startup_circuit_breaker(app, svc)
+    await _startup_circuit_breaker(app, svc)
 
     return bg_tasks
 
@@ -278,8 +278,16 @@ def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> None:
         logger.debug("[WARMUP] Server startup warmup skipped: %s", e)
 
 
-def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Wire circuit breaker from factory (Issue #726)."""
+async def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Wire circuit breaker and manifest resolver from factory (Issue #726, #2130)."""
     if svc.nexus_fs:
         brk = svc.brick_services
         app.state.rebac_circuit_breaker = getattr(brk, "rebac_circuit_breaker", None)
+        app.state.manifest_resolver = getattr(brk, "manifest_resolver", None) if brk else None
+        # Enlist Q1 — static, no lifecycle
+        coord = svc.service_coordinator
+        if coord is not None:
+            if app.state.rebac_circuit_breaker is not None:
+                await coord.enlist("rebac_circuit_breaker", app.state.rebac_circuit_breaker)
+            if app.state.manifest_resolver is not None:
+                await coord.enlist("manifest_resolver", app.state.manifest_resolver)

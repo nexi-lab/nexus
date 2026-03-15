@@ -39,7 +39,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     await _startup_rlm_service(app, svc)
 
     # Agent background tasks depend on agent_registry
-    agent_tasks = _startup_agent_tasks(app, svc)
+    agent_tasks = await _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
 
     await _startup_scheduler(app, svc)
@@ -189,6 +189,8 @@ async def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> No
             coord = svc.service_coordinator
             if coord is not None:
                 await coord.enlist("agent_registry", app.state.agent_registry)
+                if app.state.agent_warmup_service is not None:
+                    await coord.enlist("agent_warmup_service", app.state.agent_warmup_service)
 
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
@@ -537,8 +539,7 @@ async def _startup_rlm_service(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
 
 
-
-def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
+async def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
     if not app.state.agent_registry:
         return []
@@ -615,6 +616,10 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                 policy=eviction_policy,
                 tuning=_eviction_tuning,
             )
+            # Enlist fallback eviction_manager (Q1 — no lifecycle)
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("eviction_manager", app.state.eviction_manager)
             app.state._eviction_task = asyncio.create_task(
                 agent_eviction_task(
                     app.state.eviction_manager,

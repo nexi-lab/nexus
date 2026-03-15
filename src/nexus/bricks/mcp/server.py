@@ -824,97 +824,6 @@ def create_mcp_server(
         return format_response(result, response_format)
 
     # =========================================================================
-    # MEMORY TOOLS
-    # =========================================================================
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "idempotentHint": False,  # Each store creates a new memory entry
-            "openWorldHint": True,
-        }
-    )
-    def nexus_store_memory(
-        content: str,
-        memory_type: str | None = None,
-        importance: float = 0.5,
-        ctx: Context | None = None,
-    ) -> str:
-        """Store a memory in Nexus memory system.
-
-        Args:
-            content: Memory content to store
-            memory_type: Optional memory type/category
-            importance: Importance score 0.0-1.0 (default: 0.5)
-
-        Returns:
-            Success message or error
-        """
-        nx_instance = _get_nexus_instance(ctx)
-        _provider = nx_instance.service("memory_provider")
-        if _provider is None:
-            return tool_error("unavailable", "Memory system not available (requires NexusFS).")
-        mem = _provider.get_or_create()
-
-        try:
-            mem.store(
-                content,
-                scope="user",
-                memory_type=memory_type,
-                importance=importance,
-            )
-            if hasattr(mem, "session"):
-                mem.session.commit()
-            return f"Successfully stored memory: {content[:80]}..."
-        except Exception as e:
-            if hasattr(mem, "session"):
-                try:
-                    mem.session.rollback()
-                except Exception as rb_err:
-                    logger.debug("Failed to rollback memory session: %s", rb_err)
-            return tool_error("internal", f"Error storing memory: {e}", str(e))
-
-    @mcp.tool(
-        annotations={
-            "readOnlyHint": True,
-            "destructiveHint": False,
-            "idempotentHint": True,
-            "openWorldHint": True,
-        }
-    )
-    @handle_tool_errors("querying memory")
-    def nexus_query_memory(
-        query: str,
-        memory_type: str | None = None,
-        limit: int = 5,
-        ctx: Context | None = None,
-    ) -> str:
-        """Query memories using semantic search.
-
-        Args:
-            query: Search query
-            memory_type: Optional filter by memory type
-            limit: Maximum number of results (default: 5)
-
-        Returns:
-            JSON string with matching memories
-        """
-        nx_instance = _get_nexus_instance(ctx)
-        _provider = nx_instance.service("memory_provider")
-        if _provider is None:
-            return tool_error("unavailable", "Memory system not available (requires NexusFS).")
-        mem = _provider.get_or_create()
-
-        memories = mem.search(
-            query,
-            scope="user",
-            memory_type=memory_type,
-            limit=limit,
-        )
-        return json.dumps(memories, indent=2)
-
-    # =========================================================================
     # WORKFLOW TOOLS
     # =========================================================================
 
@@ -1160,8 +1069,6 @@ def create_mcp_server(
         ToolInfo("nexus_glob", "Find files matching a glob pattern", "nexus"),
         ToolInfo("nexus_grep", "Search file contents with regex", "nexus"),
         ToolInfo("nexus_semantic_search", "Search files by semantic similarity", "nexus"),
-        ToolInfo("nexus_store_memory", "Store information in memory", "nexus"),
-        ToolInfo("nexus_query_memory", "Query stored memories", "nexus"),
         ToolInfo("nexus_list_workflows", "List available workflows", "nexus"),
         ToolInfo("nexus_execute_workflow", "Execute a workflow", "nexus"),
     ]
@@ -1753,7 +1660,6 @@ Use the nexus_read_file tool to read the content first.
 1. Use nexus_semantic_search to find relevant files
 2. Read the most relevant files using nexus_read_file
 3. Summarize the findings
-4. Store key insights in memory using nexus_store_memory
 
 Start by running the semantic search.
 """

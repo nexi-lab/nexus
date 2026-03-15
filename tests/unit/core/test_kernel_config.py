@@ -411,7 +411,6 @@ class TestBrickServices:
             "delegation_service",
             "reputation_service",
             "version_service",
-            "memory_permission",
             # Factory-created bricks (Issue #2134)
             "parse_fn",
             "content_cache",

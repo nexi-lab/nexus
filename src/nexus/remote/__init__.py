@@ -26,14 +26,11 @@ from nexus.contracts.exceptions import (
 )
 from nexus.remote.domain import (
     AsyncAdminClient,
-    AsyncLLMClient,
     AsyncMCPClient,
-    AsyncMemoryClient,
     AsyncOAuthClient,
     AsyncSandboxClient,
     AsyncShareLinksClient,
     MCPClient,
-    MemoryClient,
     OAuthClient,
     SandboxClient,
     ShareLinksClient,
@@ -53,9 +50,6 @@ __all__ = [
     "AsyncMCPClient",
     "ShareLinksClient",
     "AsyncShareLinksClient",
-    "MemoryClient",
-    "AsyncMemoryClient",
     # Async-only domain clients
     "AsyncAdminClient",
-    "AsyncLLMClient",
 ]

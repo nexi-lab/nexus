@@ -25,10 +25,9 @@ class _FakeCoordinator:
 
 
 def _full_hook_refs() -> dict[str, object]:
-    """Return hook_refs dict with all 11 hook objects present."""
+    """Return hook_refs dict with all 10 hook objects present."""
     return {
         "events_observer": sentinel.events_obs,
-        "mem_resolver": sentinel.mem_resolver,
         "perm_hook": sentinel.perm_hook,
         "audit": sentinel.audit,
         "viewer_hook": sentinel.viewer_hook,
@@ -48,13 +47,12 @@ def _full_hook_refs() -> dict[str, object]:
 
 class TestBuildRetroactiveHookSpecs:
     def test_all_hooks_captured(self) -> None:
-        """Full boot — all 11 hook groups result in specs."""
+        """Full boot — all 10 hook groups result in specs."""
         coord = _FakeCoordinator()
         _build_retroactive_hook_specs(coord, _full_hook_refs())
 
         expected_names = {
             "events",
-            "memory_provider",
             "permission",
             "audit",
             "viewer",
@@ -67,15 +65,14 @@ class TestBuildRetroactiveHookSpecs:
         assert set(coord.specs.keys()) == expected_names
 
     def test_partial_hooks_captured(self) -> None:
-        """Minimal boot — only events + memory provided."""
+        """Minimal boot — only events provided."""
         coord = _FakeCoordinator()
         hook_refs = dict.fromkeys(_full_hook_refs())
         hook_refs["events_observer"] = sentinel.events_obs
-        hook_refs["mem_resolver"] = sentinel.mem_resolver
 
         _build_retroactive_hook_specs(coord, hook_refs)
 
-        assert set(coord.specs.keys()) == {"events", "memory_provider"}
+        assert set(coord.specs.keys()) == {"events"}
 
     def test_none_hooks_skipped(self) -> None:
         """All None — no specs set at all."""
@@ -198,7 +195,6 @@ class TestSingleChannelHookSpecs:
             ("bus_observer", "event_bus", "observers"),
             ("rev_observer", "revision_tracking", "observers"),
             ("events_observer", "events", "observers"),
-            ("mem_resolver", "memory_provider", "resolvers"),
         ],
     )
     def test_single_channel(self, ref_key: str, spec_name: str, field: str) -> None:

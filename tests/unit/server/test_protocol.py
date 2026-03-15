@@ -318,8 +318,8 @@ class TestCodegenConsistency:
 
     def test_method_params_count(self):
         """METHOD_PARAMS should have a reasonable number of entries."""
-        assert len(METHOD_PARAMS) >= 140, (
-            f"Expected at least 140 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
+        assert len(METHOD_PARAMS) >= 120, (
+            f"Expected at least 120 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
         )
 
     def test_method_params_names_are_strings(self):
@@ -345,7 +345,6 @@ class TestCodegenConsistency:
         # Override entries
         assert "sys_read" in METHOD_PARAMS
         assert "admin_create_key" in METHOD_PARAMS
-        assert "store_memory" in METHOD_PARAMS
 
     def test_parse_method_params_works_for_all(self):
         """parse_method_params should work for every METHOD_PARAMS entry (with defaults)."""

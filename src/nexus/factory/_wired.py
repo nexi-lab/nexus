@@ -125,19 +125,6 @@ def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] MCPService disabled by profile")
 
-    # --- LLMService: LLM integration ---
-    llm_service: Any = None
-    if _on("llm"):
-        try:
-            from nexus.bricks.llm.llm_service import LLMService
-
-            llm_service = LLMService(nexus_fs=nx)
-            logger.debug("[BOOT:WIRED] LLMService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] LLMService unavailable: %s", exc)
-    else:
-        logger.debug("[BOOT:WIRED] LLMService disabled by profile")
-
     # --- MountCoreService: Internal mount operations (gateway-dependent) ---
     mount_core_service: Any = None
     if gateway is not None:
@@ -271,16 +258,6 @@ def _boot_wired_services(
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_default_context: Any = getattr(nx, "_default_context", None)
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
-    # Build memory_config dict from _default_context (NexusFS stores the
-    # MemoryConfig dataclass as _memory_config_obj, not _memory_config).
-    _nx_memory_config: Any = None
-    if _nx_default_context is not None:
-        _nx_memory_config = {
-            "zone_id": getattr(_nx_default_context, "zone_id", None),
-            "user_id": getattr(_nx_default_context, "user_id", None),
-            "agent_id": getattr(_nx_default_context, "agent_id", None),
-        }
-
     workspace_rpc_service: Any = None
     try:
         from nexus.system_services.workspace.workspace_rpc_service import WorkspaceRPCService
@@ -385,26 +362,6 @@ def _boot_wired_services(
     except Exception as exc:
         logger.debug("[BOOT:WIRED] DescendantAccessChecker unavailable: %s", exc)
 
-    memory_provider: Any = None
-    if not _on("memory"):
-        logger.debug("[BOOT:WIRED] MemoryProvider disabled by profile")
-    else:
-        try:
-            from nexus.bricks.memory.memory_provider import MemoryProvider
-
-            memory_provider = MemoryProvider(
-                session_factory=_nx_session_factory,
-                backend=_root_backend,
-                entity_registry=system_services.entity_registry,
-                enable_paging=getattr(nx, "_enable_memory_paging", True),
-                main_capacity=getattr(nx, "_memory_main_capacity", 100),
-                recall_max_age_hours=getattr(nx, "_memory_recall_max_age_hours", 24.0),
-                memory_config=_nx_memory_config,
-            )
-            logger.debug("[BOOT:WIRED] MemoryProvider created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] MemoryProvider unavailable: %s", exc)
-
     # --- TimeTravelService: historical operation-point queries (Issue #882) ---
     time_travel_service: Any = None
     if _nx_session_factory is not None:
@@ -452,7 +409,6 @@ def _boot_wired_services(
         sync_job_service=sync_job_service,
         mount_persist_service=mount_persist_service,
         mcp_service=mcp_service,
-        llm_service=llm_service,
         oauth_service=oauth_service,
         search_service=search_service,
         share_link_service=share_link_service,
@@ -465,7 +421,6 @@ def _boot_wired_services(
         sandbox_rpc_service=sandbox_rpc_service,
         metadata_export_service=metadata_export_service,
         descendant_checker=descendant_checker,
-        memory_provider=memory_provider,
     )
 
     elapsed = time.perf_counter() - t0

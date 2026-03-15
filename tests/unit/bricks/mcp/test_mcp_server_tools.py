@@ -76,31 +76,6 @@ def mock_nx_basic():
 
 
 @pytest.fixture
-def mock_nx_with_memory():
-    """Create mock NexusFS with memory system."""
-    nx = Mock()
-    nx.sys_read = Mock(return_value=b"test")
-    nx.sys_write = Mock()
-
-    # Add memory system via service("memory_provider") (get_memory_api() reads this)
-    mock_memory = Mock()
-    mock_memory.store = Mock()
-    mock_memory.search = Mock(
-        return_value=[{"content": "test memory", "importance": 0.8, "type": "technical"}]
-    )
-    mock_memory.session = Mock()
-    mock_memory.session.commit = Mock()
-    mock_memory.session.rollback = Mock()
-    mock_provider = Mock()
-    mock_provider.get_or_create.return_value = mock_memory
-    _service_map = {"memory_provider": mock_provider}
-    nx.service = Mock(side_effect=lambda name: _service_map.get(name))
-    nx.memory = mock_memory  # alias for assertions
-
-    return nx
-
-
-@pytest.fixture
 def mock_nx_with_workflows():
     """Create mock NexusFS with workflow system."""
     nx = Mock()
@@ -752,115 +727,6 @@ class TestSearchTools:
 
 
 # ============================================================================
-# MEMORY TOOLS TESTS
-# ============================================================================
-
-
-class TestMemoryTools:
-    """Test suite for memory tools."""
-
-    def test_store_memory_success(self, mock_nx_with_memory):
-        """Test storing memory successfully."""
-        server = create_mcp_server(nx=mock_nx_with_memory)
-
-        store_tool = get_tool(server, "nexus_store_memory")
-        result = store_tool.fn(
-            content="Important information about auth", memory_type="technical", importance=0.8
-        )
-
-        assert "Successfully stored memory" in result
-        mock_nx_with_memory.memory.store.assert_called_once_with(
-            "Important information about auth",
-            scope="user",
-            memory_type="technical",
-            importance=0.8,
-        )
-        mock_nx_with_memory.memory.session.commit.assert_called_once()
-
-    def test_store_memory_default_importance(self, mock_nx_with_memory):
-        """Test storing memory with default importance."""
-        server = create_mcp_server(nx=mock_nx_with_memory)
-
-        store_tool = get_tool(server, "nexus_store_memory")
-        store_tool.fn(content="Test memory")
-
-        # Verify importance defaults to 0.5
-        call_args = mock_nx_with_memory.memory.store.call_args
-        assert call_args.kwargs["importance"] == 0.5
-
-    def test_store_memory_with_rollback(self, mock_nx_with_memory):
-        """Test memory storage error triggers rollback."""
-        mock_nx_with_memory.memory.store.side_effect = RuntimeError("Storage error")
-        server = create_mcp_server(nx=mock_nx_with_memory)
-
-        store_tool = get_tool(server, "nexus_store_memory")
-        result = store_tool.fn(content="Test")
-
-        assert "Error storing memory" in result
-        assert "Storage error" in result
-        # Rollback should be called on error
-        mock_nx_with_memory.memory.session.rollback.assert_called_once()
-
-    def test_store_memory_not_available(self, mock_nx_basic):
-        """Test storing memory when system not available."""
-        # Implementation checks service("memory_provider"), not ._memory_provider
-        mock_nx_basic.service = Mock(return_value=None)
-
-        server = create_mcp_server(nx=mock_nx_basic)
-
-        store_tool = get_tool(server, "nexus_store_memory")
-        result = store_tool.fn(content="Test")
-
-        assert "Memory system not available" in result
-
-    def test_query_memory_success(self, mock_nx_with_memory):
-        """Test querying memory successfully."""
-        server = create_mcp_server(nx=mock_nx_with_memory)
-
-        query_tool = get_tool(server, "nexus_query_memory")
-        result = query_tool.fn(query="authentication", limit=3)
-
-        memories = json.loads(result)
-        assert isinstance(memories, list)
-        mock_nx_with_memory.memory.search.assert_called_once_with(
-            "authentication", scope="user", memory_type=None, limit=3
-        )
-
-    def test_query_memory_with_type_filter(self, mock_nx_with_memory):
-        """Test querying memory with type filter."""
-        server = create_mcp_server(nx=mock_nx_with_memory)
-
-        query_tool = get_tool(server, "nexus_query_memory")
-        query_tool.fn(query="test", memory_type="technical", limit=5)
-
-        call_args = mock_nx_with_memory.memory.search.call_args
-        assert call_args.kwargs["memory_type"] == "technical"
-
-    def test_query_memory_not_available(self, mock_nx_basic):
-        """Test querying memory when system not available."""
-        # Implementation checks service("memory_provider"), not ._memory_provider
-        mock_nx_basic.service = Mock(return_value=None)
-
-        server = create_mcp_server(nx=mock_nx_basic)
-
-        query_tool = get_tool(server, "nexus_query_memory")
-        result = query_tool.fn(query="test")
-
-        assert "Memory system not available" in result
-
-    def test_query_memory_error(self, mock_nx_with_memory):
-        """Test query memory error handling."""
-        mock_nx_with_memory.memory.search.side_effect = RuntimeError("Query failed")
-        server = create_mcp_server(nx=mock_nx_with_memory)
-
-        query_tool = get_tool(server, "nexus_query_memory")
-        result = query_tool.fn(query="test")
-
-        assert "Error querying memory" in result
-        assert "Query failed" in result
-
-
-# ============================================================================
 # WORKFLOW TOOLS TESTS
 # ============================================================================
 
@@ -1316,7 +1182,6 @@ class TestPrompts:
         assert "authentication logic" in result
         assert "nexus_semantic_search" in result
         assert "nexus_read_file" in result
-        assert "nexus_store_memory" in result
 
 
 # ============================================================================

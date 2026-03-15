@@ -39,7 +39,6 @@ _WIRED_FIELDS: list[str] = [
     "sync_job_service",
     "mount_persist_service",
     "mcp_service",
-    "llm_service",
     "oauth_service",
     "search_service",
     "share_link_service",
@@ -50,7 +49,6 @@ _WIRED_FIELDS: list[str] = [
     "sandbox_rpc_service",
     "metadata_export_service",
     "descendant_checker",
-    "memory_provider",
     # Versioning services (Issue #882)
     "time_travel_service",
     "operations_service",

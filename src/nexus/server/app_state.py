@@ -82,11 +82,9 @@ class NexusAppState:
     task_runner: Any = None
     workflow_engine: Any = None
     workflow_dispatch: Any = None
-    rlm_service: Any = None
     sandbox_auth_service: Any = None
     agent_event_log: Any = None
     transactional_snapshot_service: Any = None
-    memory_service: Any = None
 
     # === Realtime ===
     subscription_manager: Any = None

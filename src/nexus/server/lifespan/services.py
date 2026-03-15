@@ -36,7 +36,6 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_governance(app, svc)
     _startup_sandbox_auth(app, svc)
     _startup_transactional_snapshot(app, svc)
-    _startup_rlm_service(app, svc)
 
     # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app, svc)
@@ -103,15 +102,6 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
-
-    # Shutdown RLM thread pool (Issue #1306)
-    rlm_service = app.state.rlm_service
-    if rlm_service is not None:
-        try:
-            rlm_service.shutdown()
-            logger.info("[RLM] Thread pool shut down")
-        except Exception as e:
-            logger.warning("[RLM] Error shutting down thread pool: %s", e, exc_info=True)
 
     # SandboxManager cleanup
     if app.state.sandbox_auth_service:
@@ -455,42 +445,6 @@ def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> 
         logger.info("[SNAPSHOT] TransactionalSnapshotService wired to app.state")
     else:
         logger.debug("[SNAPSHOT] TransactionalSnapshotService not available")
-
-
-def _startup_rlm_service(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize RLM inference service (Issue #1306).
-
-    Requires SandboxAuthService (for SandboxManager) and an LLM provider.
-    Falls back gracefully if either is unavailable — the /api/v2/rlm/infer
-    endpoint will return 503.
-    """
-    sandbox_auth = app.state.sandbox_auth_service
-    if sandbox_auth is None:
-        logger.debug("[RLM] SandboxAuthService not available, RLM service skipped")
-        return
-
-    sandbox_mgr = getattr(sandbox_auth, "_sandbox_manager", None)
-    if sandbox_mgr is None:
-        logger.debug("[RLM] SandboxManager not available, RLM service skipped")
-        return
-
-    llm_provider = svc.llm_provider
-
-    try:
-        from nexus.bricks.rlm.service import RLMInferenceService
-
-        nexus_api_url = os.environ.get("NEXUS_API_URL", "http://localhost:2026")
-        max_concurrent = int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8"))
-
-        app.state.rlm_service = RLMInferenceService(
-            sandbox_manager=sandbox_mgr,
-            llm_provider=llm_provider,
-            nexus_api_url=nexus_api_url,
-            max_concurrent=max_concurrent,
-        )
-        logger.info("[RLM] RLMInferenceService initialized (max_concurrent=%d)", max_concurrent)
-    except Exception as e:
-        logger.warning("[RLM] Failed to initialize RLMInferenceService: %s", e, exc_info=True)
 
 
 def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:

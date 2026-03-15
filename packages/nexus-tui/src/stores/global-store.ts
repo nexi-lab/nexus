@@ -20,6 +20,16 @@ export type PanelId =
   | "infrastructure"
   | "console";
 
+/** Response from GET /api/v2/features */
+export interface FeaturesResponse {
+  readonly profile: string;
+  readonly mode: string;
+  readonly enabled_bricks: readonly string[];
+  readonly disabled_bricks: readonly string[];
+  readonly version: string | null;
+  readonly rate_limit_enabled: boolean;
+}
+
 /** Response from GET /auth/me */
 export interface UserInfo {
   readonly user_id: string;
@@ -48,6 +58,11 @@ export interface GlobalState {
   readonly uptime: number | null;
   readonly userInfo: UserInfo | null;
 
+  // Features (from GET /api/v2/features)
+  readonly enabledBricks: readonly string[];
+  readonly profile: string | null;
+  readonly mode: string | null;
+
   // Actions
   readonly initConfig: (overrides?: Partial<NexusClientOptions>) => void;
   readonly testConnection: () => Promise<void>;
@@ -55,6 +70,7 @@ export interface GlobalState {
   readonly setConnectionStatus: (status: ConnectionStatus, error?: string) => void;
   readonly setServerInfo: (info: { version?: string; zoneId?: string; uptime?: number }) => void;
   readonly setIdentity: (identity: { agentId?: string; subject?: string; zoneId?: string }) => void;
+  readonly setFeatures: (features: FeaturesResponse) => void;
 }
 
 export const useGlobalStore = create<GlobalState>((set, get) => ({
@@ -69,6 +85,9 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   zoneId: null,
   uptime: null,
   userInfo: null,
+  enabledBricks: [],
+  profile: null,
+  mode: null,
 
   initConfig: (overrides) => {
     const config = resolveConfig(overrides);
@@ -133,5 +152,13 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
     };
     const client = config.apiKey ? new FetchClient(config) : null;
     set({ config, client });
+  },
+
+  setFeatures: (features) => {
+    set({
+      enabledBricks: features.enabled_bricks ?? [],
+      profile: features.profile ?? null,
+      mode: features.mode ?? null,
+    });
   },
 }));

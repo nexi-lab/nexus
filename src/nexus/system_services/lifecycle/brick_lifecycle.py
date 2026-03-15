@@ -23,6 +23,7 @@ References:
 import asyncio
 import logging
 import time
+from collections import deque
 from dataclasses import replace
 from graphlib import CycleError, TopologicalSorter
 from typing import Any
@@ -49,6 +50,9 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for brick.start() in seconds
 DEFAULT_START_TIMEOUT: float = 5.0
+
+# Maximum number of state transitions to retain per brick
+MAX_TRANSITION_HISTORY: int = 50
 
 # ---------------------------------------------------------------------------
 # OTel tracing — zero-overhead when telemetry is not enabled
@@ -125,6 +129,7 @@ class _BrickEntry:
         "unmounted_at",
         "retry_count",
         "lock",
+        "transitions",
     )
 
     def __init__(
@@ -141,6 +146,7 @@ class _BrickEntry:
         self.unmounted_at: float | None = None
         self.retry_count: int = 0
         self.lock = asyncio.Lock()
+        self.transitions: deque[tuple[float, str, str, str]] = deque(maxlen=MAX_TRANSITION_HISTORY)
 
     # Convenience accessors (delegate to spec)
     @property
@@ -280,6 +286,7 @@ class BrickLifecycleManager:
 
         old_state = entry.state
         entry.state = new_state
+        entry.transitions.append((time.monotonic(), event, old_state.name, new_state.name))
         logger.debug("[LIFECYCLE] %s: %s + %s → %s", name, old_state.name, event, new_state.name)
         return new_state
 
@@ -288,7 +295,9 @@ class BrickLifecycleManager:
         entry = self._bricks.get(name)
         if entry is None:
             raise KeyError(f"Brick {name!r} not found")
+        old_state = entry.state
         entry.state = state
+        entry.transitions.append((time.monotonic(), "force", old_state.name, state.name))
 
     # ------------------------------------------------------------------
     # Status & health
@@ -367,6 +376,19 @@ class BrickLifecycleManager:
         if entry is None:
             raise KeyError(f"Brick {name!r} not found")
         return entry.retry_count
+
+    def get_transitions(self, name: str) -> list[tuple[float, str, str, str]]:
+        """Return transition history for a brick.
+
+        Each tuple is (timestamp, event, from_state, to_state).
+
+        Raises:
+            KeyError: If brick not found.
+        """
+        entry = self._bricks.get(name)
+        if entry is None:
+            raise KeyError(f"Brick {name!r} not found")
+        return list(entry.transitions)
 
     def update_spec(self, name: str, *, enabled: bool | None = None) -> BrickSpec:
         """Update a brick's spec fields. Returns the new spec.

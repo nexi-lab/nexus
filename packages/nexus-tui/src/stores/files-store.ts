@@ -233,7 +233,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   writeFile: async (path, content, client) => {
     set({ error: null });
     try {
-      await client.put(`/api/v2/files/${encodeURIComponent(path)}`, { content });
+      await client.post("/api/v2/files/write", { path, content });
       get().invalidate(path.split("/").slice(0, -1).join("/") || "/");
     } catch (err) {
       set({ error: err instanceof Error ? err.message : "Failed to write file" });
@@ -243,7 +243,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   deleteFile: async (path, client) => {
     set({ error: null });
     try {
-      await client.delete(`/api/v2/files/${encodeURIComponent(path)}`);
+      await client.delete(`/api/v2/files/delete?path=${encodeURIComponent(path)}`);
       const parentPath = path.split("/").slice(0, -1).join("/") || "/";
       get().invalidate(parentPath);
       await get().fetchFiles(parentPath, client);
@@ -255,7 +255,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   mkdirFile: async (path, client) => {
     set({ error: null });
     try {
-      await client.post(`/api/v2/files/${encodeURIComponent(path)}?mkdir=true`, {});
+      await client.post("/api/v2/files/mkdir", { path });
       const parentPath = path.split("/").slice(0, -1).join("/") || "/";
       get().invalidate(parentPath);
       await get().fetchFiles(parentPath, client);
@@ -267,7 +267,8 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   renameFile: async (oldPath, newPath, client) => {
     set({ error: null });
     try {
-      await client.post(`/api/v2/files/${encodeURIComponent(oldPath)}?move_to=${encodeURIComponent(newPath)}`, {});
+      await client.post("/api/v2/files/write", { path: newPath, source_path: oldPath });
+      await client.delete(`/api/v2/files/delete?path=${encodeURIComponent(oldPath)}`);
       const parentPath = oldPath.split("/").slice(0, -1).join("/") || "/";
       get().invalidate(parentPath);
       await get().fetchFiles(parentPath, client);

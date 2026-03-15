@@ -149,38 +149,30 @@ class TestRegisterFactoryBricks:
 
     def test_registers_non_none_bricks(self) -> None:
         """Non-None brick entries should be registered with the manager."""
+        from nexus.factory._helpers import _FACTORY_BRICKS
+
         manager = BrickLifecycleManager()
-        brick_dict = {
-            "manifest_resolver": MagicMock(),
-            "chunked_upload_service": MagicMock(),
-            "snapshot_service": MagicMock(),
-            "task_queue_service": MagicMock(),
-            "ipc_vfs_driver": MagicMock(),
-            "wallet_provisioner": MagicMock(),
-            "workflow_engine": MagicMock(),
-            "event_bus": MagicMock(),
-            "lock_manager": MagicMock(),
-            "delegation_service": MagicMock(),
-            "reputation_service": MagicMock(),
-            "version_service": MagicMock(),
-        }
+        # Provide instances for ALL _FACTORY_BRICKS entries + workflow_engine
+        brick_dict = {name: MagicMock() for name, _, _ in _FACTORY_BRICKS}
+        brick_dict["workflow_engine"] = MagicMock()
 
         _register_factory_bricks(manager, brick_dict)
 
-        # 11 standard bricks + 1 workflow engine = 12
+        # All _FACTORY_BRICKS + workflow_engine
+        expected_count = len(_FACTORY_BRICKS) + 1  # +1 for workflow_engine
         report = manager.health()
-        assert report.total == 12
+        assert report.total == expected_count
 
         # Verify workflow engine is wrapped in adapter
         status = manager.get_status("workflow_engine")
         assert status is not None
         assert status.protocol_name == "WorkflowProtocol"
 
-        # Verify event_bus and lock_manager ARE registered (Issue #2991)
-        assert manager.get_status("event_bus") is not None
-        assert manager.get_status("event_bus").protocol_name == "EventBusProtocol"
-        assert manager.get_status("lock_manager") is not None
-        assert manager.get_status("lock_manager").protocol_name == "LockManagerProtocol"
+        # Verify every _FACTORY_BRICKS entry is registered
+        for name, protocol, _ in _FACTORY_BRICKS:
+            status = manager.get_status(name)
+            assert status is not None, f"Brick {name!r} not registered"
+            assert status.protocol_name == protocol
 
         # Verify dependency edges (Issue #2991)
         ipc_spec = manager.get_spec("ipc_vfs_driver")
@@ -194,6 +186,10 @@ class TestRegisterFactoryBricks:
         wf_spec = manager.get_spec("workflow_engine")
         assert wf_spec is not None
         assert "event_bus" in wf_spec.depends_on
+
+        gov_spec = manager.get_spec("governance_response_service")
+        assert gov_spec is not None
+        assert "governance_anomaly_service" in gov_spec.depends_on
 
     def test_skips_none_values(self) -> None:
         """None entries in brick_dict should be silently skipped."""

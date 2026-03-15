@@ -355,20 +355,42 @@ class TestGlobalRegistrationGuard:
 
         # These are ALL the brick names that should be registered with lifecycle manager
         expected_minimum = {
+            # Infrastructure
             "event_bus",
             "lock_manager",
+            # Core bricks
             "manifest_resolver",
+            "manifest_metrics",
             "chunked_upload_service",
             "snapshot_service",
             "task_queue_service",
             "ipc_vfs_driver",
+            "ipc_storage_driver",
+            "ipc_provisioner",
             "wallet_provisioner",
             "delegation_service",
             "reputation_service",
             "version_service",
             "workflow_engine",
+            # Middleware & tools
+            "api_key_creator",
+            "tool_namespace_middleware",
+            # Observability & resilience
+            "agent_event_log",
+            "rebac_circuit_breaker",
+            # Memory
+            "memory_permission",
+            # Governance
+            "governance_anomaly_service",
+            "governance_collusion_service",
+            "governance_graph_service",
+            "governance_response_service",
+            # Search
+            "zoekt_pipe_consumer",
+            # Late bricks (create_nexus_fs)
             "parsers",
             "cache",
+            # Lifespan
             "search",
         }
 

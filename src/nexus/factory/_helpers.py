@@ -34,17 +34,45 @@ def _make_gate(brick_on: Callable[[str], bool] | None) -> Callable[[str], bool]:
 
 # (name, protocol_name, depends_on)
 _FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
+    # --- Infrastructure ---
     ("event_bus", "EventBusProtocol", ()),
     ("lock_manager", "LockManagerProtocol", ()),
+    # --- Core bricks ---
     ("manifest_resolver", "ManifestProtocol", ()),
+    ("manifest_metrics", "ManifestMetricsProtocol", ()),
     ("chunked_upload_service", "ChunkedUploadProtocol", ()),
     ("snapshot_service", "SnapshotProtocol", ()),
     ("task_queue_service", "TaskQueueProtocol", ()),
     ("ipc_vfs_driver", "IPCProtocol", ("event_bus",)),
+    ("ipc_storage_driver", "IPCStorageProtocol", ("ipc_vfs_driver",)),
+    ("ipc_provisioner", "IPCProvisionerProtocol", ("ipc_storage_driver",)),
     ("wallet_provisioner", "WalletProtocol", ()),
     ("delegation_service", "DelegationProtocol", ("reputation_service",)),
     ("reputation_service", "ReputationProtocol", ()),
     ("version_service", "VersionProtocol", ()),
+    # --- Middleware & tools ---
+    ("api_key_creator", "ApiKeyProtocol", ()),
+    ("tool_namespace_middleware", "ToolNamespaceProtocol", ()),
+    # --- Observability & resilience ---
+    ("agent_event_log", "AgentEventLogProtocol", ()),
+    ("rebac_circuit_breaker", "CircuitBreakerProtocol", ()),
+    # --- Memory brick ---
+    ("memory_permission", "MemoryPermissionProtocol", ()),
+    # --- Governance brick (Issue #2129) ---
+    ("governance_anomaly_service", "GovernanceAnomalyProtocol", ()),
+    ("governance_collusion_service", "GovernanceCollusionProtocol", ()),
+    ("governance_graph_service", "GovernanceGraphProtocol", ()),
+    (
+        "governance_response_service",
+        "GovernanceResponseProtocol",
+        (
+            "governance_anomaly_service",
+            "governance_collusion_service",
+            "governance_graph_service",
+        ),
+    ),
+    # --- Search/DT_PIPE ---
+    ("zoekt_pipe_consumer", "ZoektPipeProtocol", ()),
 ]
 
 # Entries intentionally NOT registered with lifecycle manager.
@@ -53,21 +81,8 @@ _FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
 # to ``_FACTORY_BRICKS``.
 _FACTORY_SKIP: frozenset[str] = frozenset(
     {
-        "api_key_creator",  # class reference, not instance
-        "tool_namespace_middleware",  # stateless middleware, no lifecycle
-        "manifest_metrics",  # observability helper, not a brick
-        "ipc_storage_driver",  # internal to ipc_vfs_driver
-        "ipc_provisioner",  # provisioning helper, not a brick
-        "skill_service",  # wired later via NexusFS gateway adapters
-        "skill_package_service",  # wired later via NexusFS gateway adapters
-        "agent_event_log",  # event log, not a lifecycle brick
-        "rebac_circuit_breaker",  # Issue #2034: passive resilience wrapper, no lifecycle
-        "memory_permission",  # singleton component for Memory brick (Issue #2177)
-        "governance_anomaly_service",  # governance brick, no lifecycle (Issue #2129)
-        "governance_collusion_service",  # governance brick, no lifecycle (Issue #2129)
-        "governance_graph_service",  # governance brick, no lifecycle (Issue #2129)
-        "governance_response_service",  # governance brick, no lifecycle (Issue #2129)
-        "zoekt_pipe_consumer",  # DT_PIPE consumer, no lifecycle (Issue #810)
+        "skill_service",  # always None at boot; wired later via NexusFS gateway adapters
+        "skill_package_service",  # always None at boot; wired later via NexusFS gateway adapters
     }
 )
 

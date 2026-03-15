@@ -12,6 +12,18 @@ from nexus.core.stream import (
     StreamFullError,
 )
 
+try:
+    from nexus_fast import StreamBufferCore  # noqa: F401
+
+    _HAS_STREAM_CORE = True
+except ImportError:
+    _HAS_STREAM_CORE = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_STREAM_CORE,
+    reason="nexus_fast.StreamBufferCore not built — rebuild Rust extension",
+)
+
 # ---------------------------------------------------------------------------
 # StreamBuffer (kstream) — basic operations
 # ---------------------------------------------------------------------------

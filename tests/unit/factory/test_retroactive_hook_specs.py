@@ -1,7 +1,9 @@
 """Unit tests for _build_retroactive_hook_specs() (Issue #1452 Phase 4).
 
-Verifies that all 11 hook groups from _register_vfs_hooks() are captured
-as HookSpecs so swap_service() can cleanly unregister them during hot-swap.
+Verifies that all retroactive hook groups from _register_vfs_hooks() are
+captured as HookSpecs so swap_service() can cleanly unregister them during
+hot-swap.  Services that implement HotSwappable.hook_spec() (e.g. EventsService)
+are NOT in this table — they self-register at bootstrap time.
 """
 
 from __future__ import annotations
@@ -25,9 +27,12 @@ class _FakeCoordinator:
 
 
 def _full_hook_refs() -> dict[str, object]:
-    """Return hook_refs dict with all 10 hook objects present."""
+    """Return hook_refs dict with all retroactive hook objects present.
+
+    EventsService is excluded — it implements HotSwappable.hook_spec()
+    and self-registers at bootstrap time (Issue #1611).
+    """
     return {
-        "events_observer": sentinel.events_obs,
         "perm_hook": sentinel.perm_hook,
         "audit": sentinel.audit,
         "viewer_hook": sentinel.viewer_hook,
@@ -47,12 +52,11 @@ def _full_hook_refs() -> dict[str, object]:
 
 class TestBuildRetroactiveHookSpecs:
     def test_all_hooks_captured(self) -> None:
-        """Full boot — all 10 hook groups result in specs."""
+        """Full boot — all retroactive hook groups result in specs."""
         coord = _FakeCoordinator()
         _build_retroactive_hook_specs(coord, _full_hook_refs())
 
         expected_names = {
-            "events",
             "permission",
             "audit",
             "viewer",
@@ -65,14 +69,14 @@ class TestBuildRetroactiveHookSpecs:
         assert set(coord.specs.keys()) == expected_names
 
     def test_partial_hooks_captured(self) -> None:
-        """Minimal boot — only events provided."""
+        """Minimal boot — only bus_observer provided."""
         coord = _FakeCoordinator()
         hook_refs = dict.fromkeys(_full_hook_refs())
-        hook_refs["events_observer"] = sentinel.events_obs
+        hook_refs["bus_observer"] = sentinel.bus_observer
 
         _build_retroactive_hook_specs(coord, hook_refs)
 
-        assert set(coord.specs.keys()) == {"events"}
+        assert set(coord.specs.keys()) == {"event_bus"}
 
     def test_none_hooks_skipped(self) -> None:
         """All None — no specs set at all."""
@@ -194,7 +198,6 @@ class TestSingleChannelHookSpecs:
             ("vview_resolver", "virtual_view", "resolvers"),
             ("bus_observer", "event_bus", "observers"),
             ("rev_observer", "revision_tracking", "observers"),
-            ("events_observer", "events", "observers"),
         ],
     )
     def test_single_channel(self, ref_key: str, spec_name: str, field: str) -> None:

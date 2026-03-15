@@ -96,7 +96,20 @@ async def _do_link(
         nx._brick_services,
         _brick_on,
     )
-    populate_service_registry(nx._service_registry, _wired)
+
+    # Issue #1615: Create coordinator early so wired services are registered
+    # in both ServiceRegistry and BLM in one shot.
+    _blm = getattr(nx._system_services, "brick_lifecycle_manager", None)
+    if _blm is not None:
+        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+            ServiceLifecycleCoordinator,
+        )
+
+        coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
+        nx._service_coordinator = coordinator
+        populate_service_registry(coordinator, _wired)
+    else:
+        populate_service_registry(nx._service_registry, _wired)
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.
@@ -147,16 +160,11 @@ def _do_initialize(nx: Any) -> None:
         _cache_brick = getattr(nx._brick_services, "cache_brick", None)
         _register_late_bricks(_blm, {"cache": _cache_brick})
 
-    # --- ServiceLifecycleCoordinator (Issue #1452 Phase 3) ---
-    if _blm is not None:
-        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-            ServiceLifecycleCoordinator,
-        )
-
-        coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
-        nx._service_coordinator = coordinator
-
-        # Build retroactive HookSpecs for hooks registered above
+    # --- Retroactive HookSpec capture (Issue #1452 Phase 3, #1615) ---
+    # Coordinator was created in _do_link() (Phase 1).  Reuse it here to
+    # bind retroactive hook specs for VFS hooks registered above.
+    coordinator = getattr(nx, "_service_coordinator", None)
+    if coordinator is not None:
         from nexus.factory.orchestrator import _build_retroactive_hook_specs
 
         _build_retroactive_hook_specs(coordinator, _hook_refs)

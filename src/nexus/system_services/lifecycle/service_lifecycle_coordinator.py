@@ -77,6 +77,7 @@ class ServiceLifecycleCoordinator:
         *,
         dependencies: tuple[str, ...] = (),
         exports: tuple[str, ...] = (),
+        is_remote: bool = False,
         hook_spec: HookSpec | None = None,
         depends_on: tuple[str, ...] = (),
         protocol_name: str = "",
@@ -87,6 +88,7 @@ class ServiceLifecycleCoordinator:
             instance,
             dependencies=dependencies,
             exports=exports,
+            is_remote=is_remote,
         )
         self._blm.register(
             name,

@@ -119,20 +119,6 @@ async def create_semantic_search_components(
         cross_doc_batching=True,
     )
 
-    # --- ContextBuilder (optional, Issue #2036) ---
-    _context_builder = None
-    try:
-        from nexus.bricks.llm.llm_context_builder import (
-            AdaptiveRetrievalConfig,
-            ContextBuilder,
-        )
-
-        _context_builder = ContextBuilder(adaptive_config=AdaptiveRetrievalConfig())
-    except ImportError:
-        pass  # optional dependency
-    except Exception:
-        logger.warning("Failed to create ContextBuilder", exc_info=True)
-
     # --- QueryService ---
     # Removed: txtai handles this (Issue #2663)
     query_service = None

@@ -84,10 +84,7 @@ dependencies = [
     "google-auth-httplib2>=0.2.1", # Google auth HTTP adapter
     "google-auth-oauthlib>=1.2.0", # Google OAuth flow
     "slack-sdk>=3.39.0", # Slack API for Slack connector
-    # LLM Provider Abstraction
-    "litellm>=1.8.10", # Multi-provider LLM support
-    "tiktoken>=0.12", # Token counting for OpenAI models and chunking
-    "anthropic>=0.75", # Native Anthropic SDK for better Claude support
+    "tiktoken>=0.12", # Token counting for chunking
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
     "fastmcp>=2.0.0", # Model Context Protocol server
@@ -554,12 +551,6 @@ disallow_untyped_defs = false
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-module = "nexus.bricks.llm.provider"
-# litellm's completion_cost has complex overloads that mypy can't resolve with **kwargs
-# Different mypy versions handle this differently, so we disable the check
-warn_unused_ignores = false
-
-[[tool.mypy.overrides]]
 module = "nexus.storage.cache"
 # cachetools library has complex generic types
 disable_error_code = ["no-any-return", "misc", "call-overload", "import-untyped"]
@@ -884,12 +875,8 @@ ignore_imports = [
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.entity_registry",
-    # search -> memory: memory path routing (Phase 2 Integration v0.4.0)
-    "nexus.bricks.search.search_service -> nexus.bricks.memory.router",
     # search -> gateway (TYPE_CHECKING): NexusFSGateway type hint — transitive to workflows/parsers
     "nexus.bricks.search.search_service -> nexus.system_services.gateway",
-    # search -> factory -> llm: semantic search init delegates to factory helper (Issue #2075)
-    "nexus.factory._semantic_search -> nexus.bricks.llm.llm_context_builder",
     # mount -> permission_utils -> gateway: transitive chain to workflows/parsers
     "nexus.lib.permission_utils -> nexus.system_services.gateway",
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
@@ -946,7 +933,6 @@ ignore_imports = [
     "nexus.system_services.namespace.agent_namespace -> nexus.bricks.rebac.namespace_manager",
     "nexus.system_services.namespace.namespace_fork_service -> nexus.bricks.rebac.namespace_manager",
     # search_semantic → factory._semantic_search → bricks (transitive chain)
-    "nexus.factory._semantic_search -> nexus.bricks.llm.llm_context_builder",
     "nexus.factory._semantic_search -> nexus.bricks.search.chunking",
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing",
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing_service",

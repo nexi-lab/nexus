@@ -223,8 +223,6 @@ def create_nexus_services(
         reputation_service=brick_dict["reputation_service"],
         # Version Brick (Issue #2034: moved from kernel)
         version_service=brick_dict["version_service"],
-        # Memory Brick (Issue #2177)
-        memory_permission=brick_dict["memory_permission"],
         # Governance Brick (Issue #2129)
         governance_anomaly_service=brick_dict["governance_anomaly_service"],
         governance_collusion_service=brick_dict["governance_collusion_service"],
@@ -523,24 +521,6 @@ def _register_vfs_hooks(
     hook_refs["tiger_rename_hook"] = _tiger_rename_hook
     hook_refs["tiger_write_hook"] = _tiger_write_hook
 
-    # ── PRE-DISPATCH: Memory virtual path resolver (Issue #889) ────────
-    # memory_router removed from BrickServices — get it from MemoryPermissionEnforcer
-    _mem_perm = getattr(nx._brick_services, "memory_permission", None)
-    _mem_router = getattr(_mem_perm, "memory_router", None) if _mem_perm else None
-    _mem_info = _raw_svc("memory_provider")
-    _mem_provider = _mem_info.instance if _mem_info else None
-    _mem_resolver = None
-    if _mem_router is not None and _mem_provider is not None:
-        from nexus.bricks.memory.io_handler import MemoryIOHandler
-
-        _mem_resolver = MemoryIOHandler(
-            memory_router=_mem_router,
-            memory_provider=_mem_provider,
-            path_router=nx.router,
-        )
-        dispatch.register_resolver(_mem_resolver)
-    hook_refs["mem_resolver"] = _mem_resolver
-
     # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
     from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
 
@@ -613,11 +593,6 @@ def _build_retroactive_hook_specs(coordinator: Any, hook_refs: dict[str, Any]) -
     _events_obs = hook_refs.get("events_observer")
     if _events_obs is not None:
         coordinator.set_hook_spec("events", HookSpec(observers=(_events_obs,)))
-
-    # memory_provider → resolver
-    _mem_resolver = hook_refs.get("mem_resolver")
-    if _mem_resolver is not None:
-        coordinator.set_hook_spec("memory_provider", HookSpec(resolvers=(_mem_resolver,)))
 
     # permission → 6 dispatch channels
     _perm = hook_refs.get("perm_hook")

@@ -21,7 +21,6 @@ References:
 """
 
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
-from nexus.contracts.protocols.adaptive_k import AdaptiveKProtocol
 from nexus.contracts.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.contracts.protocols.auth import APIKeyCreatorProtocol
 from nexus.contracts.protocols.brick_lifecycle import (
@@ -33,14 +32,7 @@ from nexus.contracts.protocols.brick_lifecycle import (
 from nexus.contracts.protocols.chunked_upload import ChunkedUploadProtocol
 from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
 from nexus.contracts.protocols.file_reader import FileReaderProtocol
-from nexus.contracts.protocols.llm import LLMServiceProtocol
-from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
 from nexus.contracts.protocols.mcp import MCPProtocol
-from nexus.contracts.protocols.memory import MemoryProtocol
-from nexus.contracts.protocols.memory_deps import (
-    MemoryEntityRegistryProtocol,
-    MemoryPermissionProtocol,
-)
 from nexus.contracts.protocols.mount import MountProtocol, ProgressCallback
 from nexus.contracts.protocols.mount_core import MountCoreProtocol
 from nexus.contracts.protocols.mount_persist import MountPersistProtocol
@@ -68,7 +60,6 @@ from nexus.contracts.protocols.write_back import WriteBackProtocol
 
 __all__ = [
     "APIKeyCreatorProtocol",
-    "AdaptiveKProtocol",
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
@@ -77,13 +68,8 @@ __all__ = [
     "EntityRegistryProtocol",
     "FileReaderProtocol",
     "HotSwappable",
-    "LLMProviderProtocol",
-    "LLMServiceProtocol",
     "LifecycleManagerProtocol",
     "MCPProtocol",
-    "MemoryEntityRegistryProtocol",
-    "MemoryPermissionProtocol",
-    "MemoryProtocol",
     "MountCoreProtocol",
     "MountPersistProtocol",
     "MountProtocol",

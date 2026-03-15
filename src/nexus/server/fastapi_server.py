@@ -318,7 +318,6 @@ def create_app(
         _brick_sources: list[Any] = []
         for _svc_name in (
             "mcp",
-            "llm",
             "oauth",
             "mount",
             "search",
@@ -340,16 +339,6 @@ def create_app(
         _workspace_rpc = nexus_fs.service("workspace_rpc")
         if _workspace_rpc is not None:
             _brick_sources.append(_workspace_rpc)
-        # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
-        try:
-            from nexus.factory import create_memory_service
-
-            _memory_svc = create_memory_service(nexus_fs)
-            if _memory_svc is not None:
-                _brick_sources.append(_memory_svc)
-                app.state.memory_service = _memory_svc  # for cleanup in lifespan
-        except Exception as _exc:
-            logger.debug("MemoryService unavailable: %s", _exc)
         # Issue #841: MetadataExportService lives outside kernel
         try:
             from nexus.factory import create_metadata_export_service

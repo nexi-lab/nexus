@@ -46,6 +46,13 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     app.state.ipc_storage_driver = ipc_storage
     app.state.ipc_provisioner = ipc_provisioner
 
+    # Enlist IPC driver + provisioner (Q1 — static, no lifecycle)
+    coord = svc.service_coordinator
+    if coord is not None:
+        await coord.enlist("ipc_storage_driver", ipc_storage)
+        if ipc_provisioner is not None:
+            await coord.enlist("ipc_provisioner", ipc_provisioner)
+
     zone_id = svc.zone_id or ROOT_ZONE_ID
 
     # Start TTLSweeper background task
@@ -58,7 +65,6 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
             interval=60,
         )
         app.state.ipc_sweeper = sweeper
-        coord = svc.service_coordinator
         if coord is not None:
             await coord.enlist("ipc_sweeper", sweeper)
         else:

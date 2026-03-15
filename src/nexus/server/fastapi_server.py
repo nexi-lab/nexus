@@ -339,6 +339,10 @@ def create_app(
         _workspace_rpc = nexus_fs.service("workspace_rpc")
         if _workspace_rpc is not None:
             _brick_sources.append(_workspace_rpc)
+        # AcpRPCService
+        _acp_rpc = nexus_fs.service("acp_rpc")
+        if _acp_rpc is not None:
+            _brick_sources.append(_acp_rpc)
         # Issue #841: MetadataExportService lives outside kernel
         try:
             from nexus.factory import create_metadata_export_service

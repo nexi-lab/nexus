@@ -75,6 +75,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "process_table",
         "scheduler_service",
         "agent_runtime",
+        "acp_service",
     }
 )
 

@@ -264,6 +264,9 @@ class SystemServices:
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
 
+    # ACP — stateless coding agent CLI caller
+    acp_service: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure
@@ -365,6 +368,7 @@ class WiredServices:
     agent_rpc_service: Any = None
     user_provisioning_service: Any = None
     sandbox_rpc_service: Any = None
+    acp_rpc_service: Any = None
     metadata_export_service: Any = None
     descendant_checker: Any = None
 

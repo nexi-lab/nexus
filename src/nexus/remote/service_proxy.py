@@ -83,7 +83,13 @@ class RemoteServiceProxy:
             kwargs.pop("context", None)
             kwargs.pop("_context", None)
 
-            return self._call_rpc(rpc_name, kwargs or None)
+            # Extract timeout hint for gRPC transport deadline override.
+            # The timeout value stays in kwargs (sent as RPC param to server)
+            # AND is used as gRPC read_timeout so the channel doesn't kill
+            # long-running calls like ACP agent invocations.
+            read_timeout = kwargs.get("timeout")
+
+            return self._call_rpc(rpc_name, kwargs or None, read_timeout=read_timeout)
 
         # Preserve method name for debugging
         rpc_forwarder.__name__ = name

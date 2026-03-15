@@ -21,8 +21,6 @@ Domain modules:
     models.audit_checkpoint -- AuditCheckpointModel
     models.exchange_audit_log -- ExchangeAuditLogModel
     models.identity        -- AgentKeyModel (Issue #1355)
-    models.a2a             -- A2ATaskModel
-
     models.transaction_snapshot -- TransactionSnapshotModel, SnapshotEntryModel (Issue #1752)
 """
 
@@ -34,9 +32,6 @@ from nexus.storage.models._base import ZoneIsolationMixin as ZoneIsolationMixin
 from nexus.storage.models._base import _generate_uuid as _generate_uuid
 from nexus.storage.models._base import _get_uuid_server_default as _get_uuid_server_default
 from nexus.storage.models._base import uuid_pk as uuid_pk
-
-# Domain: A2A (Task persistence)
-from nexus.storage.models.a2a import A2ATaskModel as A2ATaskModel
 
 # Domain: Access Manifests (Issue #1754)
 from nexus.storage.models.access_manifest import AccessManifestModel as AccessManifestModel

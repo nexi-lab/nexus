@@ -82,11 +82,14 @@ class FeaturesConfig(BaseModel):
     skills: bool | None = Field(default=None, description="Enable skills brick")
     sandbox: bool | None = Field(default=None, description="Enable sandbox brick")
     workflows: bool | None = Field(default=None, description="Enable workflow brick")
-    a2a: bool | None = Field(default=None, description="Enable A2A protocol brick")
     discovery: bool | None = Field(default=None, description="Enable agent discovery")
     mcp: bool | None = Field(default=None, description="Enable MCP server brick")
     memory: bool | None = Field(default=None, description="Enable agent memory")
     federation: bool | None = Field(default=None, description="Enable federation brick")
+
+    # Deprecated — accepted but ignored to avoid startup failures on upgrade.
+    # The A2A brick was removed in #2979; MCP covers the use case.
+    a2a: bool | None = Field(default=None, description="Deprecated: A2A brick removed in #2979")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -96,9 +99,10 @@ class FeaturesConfig(BaseModel):
         Returns:
             Dict of brick_name -> enabled for fields that are explicitly set.
         """
+        _skip = {"semantic_search", "a2a"}
         overrides: dict[str, bool] = {}
         for field_name, value in self:
-            if field_name == "semantic_search":
+            if field_name in _skip:
                 continue
             if value is not None:
                 overrides[field_name] = value

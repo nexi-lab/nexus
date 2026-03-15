@@ -12,6 +12,8 @@ tools. The a2a_tasks table and its indexes are no longer needed.
 from collections.abc import Sequence
 from typing import Union
 
+from sqlalchemy import inspect
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -22,7 +24,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_table("a2a_tasks")
+    conn = op.get_bind()
+    if inspect(conn).has_table("a2a_tasks"):
+        op.drop_table("a2a_tasks")
 
 
 def downgrade() -> None:

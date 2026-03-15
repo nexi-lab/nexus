@@ -2,13 +2,13 @@
  * Delegation creator form: create a new delegation with namespace scope.
  *
  * Tab cycles between fields.
- * Enter submits via the store's createDelegation().
+ * Enter submits via the delegation store's createDelegation().
  * Escape cancels and returns to normal mode.
  */
 
 import React, { useState, useCallback } from "react";
-import { useAccessStore } from "../../stores/access-store.js";
-import type { DelegationCreateResponse } from "../../stores/access-store.js";
+import { useDelegationStore } from "../../stores/delegation-store.js";
+import type { DelegationCreateResponse } from "../../stores/delegation-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 
@@ -19,7 +19,12 @@ type ActiveField =
   | "scopePrefix"
   | "intent"
   | "canSubDelegate"
-  | "ttlSeconds";
+  | "ttlSeconds"
+  | "removeGrants"
+  | "addGrants"
+  | "readonlyPaths"
+  | "scopeOps"
+  | "minTrustScore";
 
 const FIELD_ORDER: readonly ActiveField[] = [
   "workerId",
@@ -29,6 +34,11 @@ const FIELD_ORDER: readonly ActiveField[] = [
   "intent",
   "canSubDelegate",
   "ttlSeconds",
+  "removeGrants",
+  "addGrants",
+  "readonlyPaths",
+  "scopeOps",
+  "minTrustScore",
 ];
 
 interface DelegationCreatorProps {
@@ -37,10 +47,10 @@ interface DelegationCreatorProps {
 
 export function DelegationCreator({ onClose }: DelegationCreatorProps): React.ReactNode {
   const client = useApi();
-  const createDelegation = useAccessStore((s) => s.createDelegation);
-  const delegationsLoading = useAccessStore((s) => s.delegationsLoading);
-  const lastResult = useAccessStore((s) => s.lastDelegationCreate);
-  const error = useAccessStore((s) => s.error);
+  const createDelegation = useDelegationStore((s) => s.createDelegation);
+  const delegationsLoading = useDelegationStore((s) => s.delegationsLoading);
+  const lastResult = useDelegationStore((s) => s.lastDelegationCreate);
+  const error = useDelegationStore((s) => s.error);
 
   const [workerId, setWorkerId] = useState("");
   const [workerName, setWorkerName] = useState("");
@@ -49,6 +59,11 @@ export function DelegationCreator({ onClose }: DelegationCreatorProps): React.Re
   const [intent, setIntent] = useState("");
   const [canSubDelegate, setCanSubDelegate] = useState("no");
   const [ttlSeconds, setTtlSeconds] = useState("");
+  const [removeGrants, setRemoveGrants] = useState("");
+  const [addGrants, setAddGrants] = useState("");
+  const [readonlyPaths, setReadonlyPaths] = useState("");
+  const [scopeOps, setScopeOps] = useState("");
+  const [minTrustScore, setMinTrustScore] = useState("");
   const [activeField, setActiveField] = useState<ActiveField>("workerId");
 
   const setters: Readonly<Record<ActiveField, (fn: (b: string) => string) => void>> = {
@@ -59,6 +74,11 @@ export function DelegationCreator({ onClose }: DelegationCreatorProps): React.Re
     intent: (fn) => setIntent((b) => fn(b)),
     canSubDelegate: (fn) => setCanSubDelegate((b) => fn(b)),
     ttlSeconds: (fn) => setTtlSeconds((b) => fn(b)),
+    removeGrants: (fn) => setRemoveGrants((b) => fn(b)),
+    addGrants: (fn) => setAddGrants((b) => fn(b)),
+    readonlyPaths: (fn) => setReadonlyPaths((b) => fn(b)),
+    scopeOps: (fn) => setScopeOps((b) => fn(b)),
+    minTrustScore: (fn) => setMinTrustScore((b) => fn(b)),
   };
 
   const handleSubmit = useCallback(() => {
@@ -73,10 +93,17 @@ export function DelegationCreator({ onClose }: DelegationCreatorProps): React.Re
         intent: intent.trim(),
         can_sub_delegate: canSubDelegate.toLowerCase() === "yes",
         ttl_seconds: Number.isFinite(ttl) ? ttl : undefined,
+        remove_grants: removeGrants.trim() ? removeGrants.split(",").map(s => s.trim()) : undefined,
+        add_grants: addGrants.trim() ? addGrants.split(",").map(s => s.trim()) : undefined,
+        readonly_paths: readonlyPaths.trim() ? readonlyPaths.split(",").map(s => s.trim()) : undefined,
+        scope: scopeOps.trim() ? {
+          allowed_operations: scopeOps.split(",").map(s => s.trim()),
+        } : undefined,
+        min_trust_score: minTrustScore.trim() ? parseFloat(minTrustScore.trim()) : undefined,
       },
       client,
     );
-  }, [client, workerId, workerName, namespaceMode, scopePrefix, intent, canSubDelegate, ttlSeconds, createDelegation]);
+  }, [client, workerId, workerName, namespaceMode, scopePrefix, intent, canSubDelegate, ttlSeconds, removeGrants, addGrants, readonlyPaths, scopeOps, minTrustScore, createDelegation]);
 
   const handleUnhandledKey = useCallback(
     (keyName: string) => {
@@ -119,6 +146,11 @@ export function DelegationCreator({ onClose }: DelegationCreatorProps): React.Re
     { key: "intent", label: "Intent         ", value: intent },
     { key: "canSubDelegate", label: "Sub-delegate?  ", value: canSubDelegate, hint: "yes|no" },
     { key: "ttlSeconds", label: "TTL (seconds)  ", value: ttlSeconds, hint: "1-86400, blank=none" },
+    { key: "removeGrants", label: "Remove Grants  ", value: removeGrants, hint: "comma-separated paths" },
+    { key: "addGrants", label: "Add Grants     ", value: addGrants, hint: "comma-separated paths" },
+    { key: "readonlyPaths", label: "Readonly Paths ", value: readonlyPaths, hint: "comma-separated paths" },
+    { key: "scopeOps", label: "Scope Ops      ", value: scopeOps, hint: "comma-separated operations" },
+    { key: "minTrustScore", label: "Min Trust Score", value: minTrustScore, hint: "0.0-1.0, blank=none" },
   ];
 
   const showResult = lastResult && !delegationsLoading;

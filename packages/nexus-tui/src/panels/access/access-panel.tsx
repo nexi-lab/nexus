@@ -5,10 +5,11 @@
  * Key bindings:
  *   j/k or up/down : navigate within lists
  *   Tab            : cycle tabs
- *   Enter          : manifests → fetch detail (tuple entries)
+ *   Enter          : manifests -> fetch detail (tuple entries)
  *   p              : open permission checker (+ governance edge check)
  *   Shift+R        : (alerts tab) resolve selected
- *   c              : (fraud tab) compute fraud scores
+ *   c              : (manifests tab) create new manifest; (fraud tab) compute fraud scores
+ *   Shift+X        : (manifests tab) revoke selected manifest
  *   n              : (delegations tab) create new delegation
  *   x              : (delegations tab) revoke selected delegation
  *   o              : (delegations tab) complete selected delegation
@@ -34,6 +35,7 @@ import { DelegationCreator } from "./delegation-creator.js";
 import { DelegationCompleter } from "./delegation-completer.js";
 import { DelegationChainView } from "./delegation-chain-view.js";
 import { NamespaceConfigView } from "./namespace-config-view.js";
+import { ManifestCreator } from "./manifest-creator.js";
 
 const ALL_TABS: readonly TabDef<AccessTab>[] = [
   { id: "manifests", label: "Manifests", brick: "access_manifest" },
@@ -56,20 +58,13 @@ type OverlayMode =
   | "delegationCreator"
   | "delegationCompleter"
   | "delegationChainView"
-  | "namespaceConfigView";
+  | "namespaceConfigView"
+  | "manifestCreator";
 
 export default function AccessPanel(): React.ReactNode {
   const client = useApi();
   const visibleTabs = useVisibleTabs(ALL_TABS);
   const [overlay, setOverlay] = useState<OverlayMode>("none");
-
-  // Fall back to first visible tab if the active tab becomes hidden
-  const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
-      setActiveTab(visibleIds[0]!);
-    }
-  }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   // Zone for fraud score queries
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
@@ -99,6 +94,7 @@ export default function AccessPanel(): React.ReactNode {
 
   const fetchManifests = useAccessStore((s) => s.fetchManifests);
   const fetchManifestDetail = useAccessStore((s) => s.fetchManifestDetail);
+  const revokeManifest = useAccessStore((s) => s.revokeManifest);
   const fetchAlerts = useAccessStore((s) => s.fetchAlerts);
   const resolveAlert = useAccessStore((s) => s.resolveAlert);
   const fetchCredentials = useAccessStore((s) => s.fetchCredentials);
@@ -111,6 +107,14 @@ export default function AccessPanel(): React.ReactNode {
   const setSelectedAlertIndex = useAccessStore((s) => s.setSelectedAlertIndex);
   const setSelectedFraudIndex = useAccessStore((s) => s.setSelectedFraudIndex);
   const setSelectedDelegationIndex = useAccessStore((s) => s.setSelectedDelegationIndex);
+
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
@@ -245,9 +249,19 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     c: () => {
-      // Compute fraud scores
-      if (activeTab === "fraud" && client) {
+      if (activeTab === "manifests" && overlay === "none") {
+        setOverlay("manifestCreator");
+      } else if (activeTab === "fraud" && client) {
+        // Compute fraud scores
         computeFraudScores(effectiveZoneId, client);
+      }
+    },
+    "shift+x": () => {
+      if (activeTab === "manifests" && overlay === "none" && client) {
+        const selected = manifests[selectedManifestIndex];
+        if (selected && selected.status === "active") {
+          revokeManifest(selected.manifest_id, client);
+        }
       }
     },
     "shift+r": () => {
@@ -275,6 +289,7 @@ export default function AccessPanel(): React.ReactNode {
     delegationCompleter: " | Complete Delegation",
     delegationChainView: " | Delegation Chain",
     namespaceConfigView: " | Namespace Editor",
+    manifestCreator: " | New Manifest",
   };
   const overlayLabel = OVERLAY_LABELS[overlay];
 
@@ -322,6 +337,9 @@ export default function AccessPanel(): React.ReactNode {
               onClose={closeOverlay}
             />
           )}
+          {overlay === "manifestCreator" && (
+            <ManifestCreator onClose={closeOverlay} />
+          )}
         </box>
       </box>
     );
@@ -329,7 +347,7 @@ export default function AccessPanel(): React.ReactNode {
 
   // Tab-specific help text
   const HELP: Readonly<Record<AccessTab, string>> = {
-    manifests: "j/k:navigate  Enter:show entries  p:perm check  Tab:tab  r:refresh  q:quit",
+    manifests: "j/k:navigate  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  Tab:tab  r:refresh  q:quit",
     alerts: "j/k:navigate  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
     credentials: "Tab:tab  r:refresh  q:quit",
     fraud: "j/k:navigate  c:compute  Tab:tab  r:refresh  q:quit",

@@ -8,6 +8,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useZonesStore } from "../../stores/zones-store.js";
 import type { ZoneTab } from "../../stores/zones-store.js";
+import { useWorkspaceStore } from "../../stores/workspace-store.js";
+import { useMcpStore } from "../../stores/mcp-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
@@ -16,6 +18,10 @@ import { BrickList } from "./brick-list.js";
 import { BrickDetail } from "./brick-detail.js";
 import { DriftView } from "./drift-view.js";
 import { ReindexStatus } from "./reindex-status.js";
+import { WorkspacesTab } from "./workspaces-tab.js";
+import { MemoriesTab } from "./memories-tab.js";
+import { McpMountsTab } from "./mcp-mounts-tab.js";
+import { CacheTab } from "./cache-tab.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { allowedActionsForState } from "../../shared/brick-states.js";
 
@@ -24,12 +30,20 @@ const ALL_TABS: readonly TabDef<ZoneTab>[] = [
   { id: "bricks", label: "Bricks", brick: null },
   { id: "drift", label: "Drift", brick: null },
   { id: "reindex", label: "Reindex", brick: ["search", "versioning"] },
+  { id: "workspaces", label: "Workspaces", brick: "workspace" },
+  { id: "memories", label: "Memories", brick: "workspace" },
+  { id: "mcp", label: "MCP", brick: "mcp" },
+  { id: "cache", label: "Cache", brick: "cache" },
 ];
 const TAB_LABELS: Readonly<Record<ZoneTab, string>> = {
   zones: "Zones",
   bricks: "Bricks",
   drift: "Drift",
   reindex: "Reindex",
+  workspaces: "Workspaces",
+  memories: "Memories",
+  mcp: "MCP",
+  cache: "Cache",
 };
 
 export default function ZonesPanel(): React.ReactNode {
@@ -58,8 +72,38 @@ export default function ZonesPanel(): React.ReactNode {
   const unregisterBrick = useZonesStore((s) => s.unregisterBrick);
   const remountBrick = useZonesStore((s) => s.remountBrick);
   const resetBrick = useZonesStore((s) => s.resetBrick);
+  const cacheStats = useZonesStore((s) => s.cacheStats);
+  const cacheStatsLoading = useZonesStore((s) => s.cacheStatsLoading);
+  const hotFiles = useZonesStore((s) => s.hotFiles);
+  const hotFilesLoading = useZonesStore((s) => s.hotFilesLoading);
+  const fetchCacheStats = useZonesStore((s) => s.fetchCacheStats);
+  const fetchHotFiles = useZonesStore((s) => s.fetchHotFiles);
   const setSelectedIndex = useZonesStore((s) => s.setSelectedIndex);
   const setActiveTab = useZonesStore((s) => s.setActiveTab);
+
+  // Workspace store selectors
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const workspacesLoading = useWorkspaceStore((s) => s.workspacesLoading);
+  const selectedWorkspaceIndex = useWorkspaceStore((s) => s.selectedWorkspaceIndex);
+  const memories = useWorkspaceStore((s) => s.memories);
+  const memoriesLoading = useWorkspaceStore((s) => s.memoriesLoading);
+  const selectedMemoryIndex = useWorkspaceStore((s) => s.selectedMemoryIndex);
+  const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces);
+  const fetchMemories = useWorkspaceStore((s) => s.fetchMemories);
+  const unregisterWorkspace = useWorkspaceStore((s) => s.unregisterWorkspace);
+  const unregisterMemory = useWorkspaceStore((s) => s.unregisterMemory);
+  const setSelectedWorkspaceIndex = useWorkspaceStore((s) => s.setSelectedWorkspaceIndex);
+  const setSelectedMemoryIndex = useWorkspaceStore((s) => s.setSelectedMemoryIndex);
+
+  // MCP store selectors
+  const mcpMounts = useMcpStore((s) => s.mounts);
+  const mcpMountsLoading = useMcpStore((s) => s.mountsLoading);
+  const selectedMountIndex = useMcpStore((s) => s.selectedMountIndex);
+  const fetchMcpMounts = useMcpStore((s) => s.fetchMounts);
+  const unmountServer = useMcpStore((s) => s.unmountServer);
+  const syncServer = useMcpStore((s) => s.syncServer);
+  const fetchTools = useMcpStore((s) => s.fetchTools);
+  const setSelectedMountIndex = useMcpStore((s) => s.setSelectedMountIndex);
 
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
@@ -69,8 +113,12 @@ export default function ZonesPanel(): React.ReactNode {
     }
   }, [visibleIds.join(","), activeTab, setActiveTab]);
 
-  // Confirmation dialog state for destructive unregister action
+  // Confirmation dialog state for destructive actions
   const [confirmUnregister, setConfirmUnregister] = useState(false);
+  const [confirmWorkspaceUnregister, setConfirmWorkspaceUnregister] = useState(false);
+  const [confirmMcpUnmount, setConfirmMcpUnmount] = useState(false);
+
+  const anyDialogOpen = confirmUnregister || confirmWorkspaceUnregister || confirmMcpUnmount;
 
   // Currently selected brick (if on bricks tab)
   const selectedBrick = activeTab === "bricks" ? bricks[selectedIndex] ?? null : null;
@@ -91,8 +139,17 @@ export default function ZonesPanel(): React.ReactNode {
       fetchBricks(client);
     } else if (activeTab === "drift") {
       fetchDrift(client);
+    } else if (activeTab === "workspaces") {
+      fetchWorkspaces(client);
+    } else if (activeTab === "memories") {
+      fetchMemories(client);
+    } else if (activeTab === "mcp") {
+      fetchMcpMounts(client);
+    } else if (activeTab === "cache") {
+      fetchCacheStats(client);
+      fetchHotFiles(client);
     }
-  }, [activeTab, client, fetchZones, fetchBricks, fetchDrift]);
+  }, [activeTab, client, fetchZones, fetchBricks, fetchDrift, fetchWorkspaces, fetchMemories, fetchMcpMounts, fetchCacheStats, fetchHotFiles]);
 
   // Auto-fetch data on mount and when tab changes
   useEffect(() => {
@@ -120,6 +177,34 @@ export default function ZonesPanel(): React.ReactNode {
     setConfirmUnregister(false);
   }, []);
 
+  // Workspace unregister confirmation handlers
+  const handleConfirmWorkspaceUnregister = useCallback(() => {
+    if (!client) return;
+    const ws = workspaces[selectedWorkspaceIndex];
+    if (ws) {
+      unregisterWorkspace(ws.path, client);
+    }
+    setConfirmWorkspaceUnregister(false);
+  }, [client, workspaces, selectedWorkspaceIndex, unregisterWorkspace]);
+
+  const handleCancelWorkspaceUnregister = useCallback(() => {
+    setConfirmWorkspaceUnregister(false);
+  }, []);
+
+  // MCP unmount confirmation handlers
+  const handleConfirmMcpUnmount = useCallback(() => {
+    if (!client) return;
+    const mount = mcpMounts[selectedMountIndex];
+    if (mount) {
+      unmountServer(mount.name, client);
+    }
+    setConfirmMcpUnmount(false);
+  }, [client, mcpMounts, selectedMountIndex, unmountServer]);
+
+  const handleCancelMcpUnmount = useCallback(() => {
+    setConfirmMcpUnmount(false);
+  }, []);
+
   // Build context-aware help text for the bricks tab
   const brickHelpText = useMemo(() => {
     const parts: string[] = ["j/k:navigate", "Tab:switch tab"];
@@ -132,23 +217,56 @@ export default function ZonesPanel(): React.ReactNode {
     return parts.join("  ");
   }, [allowed]);
 
+  // Compute current list length and set-index for navigation across all tabs
+  const currentListLength = useCallback((): number => {
+    if (activeTab === "zones") return zones.length;
+    if (activeTab === "bricks") return bricks.length;
+    if (activeTab === "workspaces") return workspaces.length;
+    if (activeTab === "memories") return memories.length;
+    if (activeTab === "mcp") return mcpMounts.length;
+    return 0;
+  }, [activeTab, zones.length, bricks.length, workspaces.length, memories.length, mcpMounts.length]);
+
+  const currentNavIndex = useCallback((): number => {
+    if (activeTab === "workspaces") return selectedWorkspaceIndex;
+    if (activeTab === "memories") return selectedMemoryIndex;
+    if (activeTab === "mcp") return selectedMountIndex;
+    return selectedIndex;
+  }, [activeTab, selectedIndex, selectedWorkspaceIndex, selectedMemoryIndex, selectedMountIndex]);
+
+  const setCurrentNavIndex = useCallback((index: number): void => {
+    if (activeTab === "workspaces") {
+      setSelectedWorkspaceIndex(index);
+    } else if (activeTab === "memories") {
+      setSelectedMemoryIndex(index);
+    } else if (activeTab === "mcp") {
+      setSelectedMountIndex(index);
+    } else {
+      setSelectedIndex(index);
+    }
+  }, [activeTab, setSelectedIndex, setSelectedWorkspaceIndex, setSelectedMemoryIndex, setSelectedMountIndex]);
+
   useKeyboard(
-    confirmUnregister
+    anyDialogOpen
       ? {} // ConfirmDialog handles its own keys when visible
       : {
           j: () => {
-            const maxLen = activeTab === "zones" ? zones.length : bricks.length;
-            setSelectedIndex(Math.min(selectedIndex + 1, maxLen - 1));
+            const maxLen = currentListLength();
+            if (maxLen > 0) {
+              setCurrentNavIndex(Math.min(currentNavIndex() + 1, maxLen - 1));
+            }
           },
           down: () => {
-            const maxLen = activeTab === "zones" ? zones.length : bricks.length;
-            setSelectedIndex(Math.min(selectedIndex + 1, maxLen - 1));
+            const maxLen = currentListLength();
+            if (maxLen > 0) {
+              setCurrentNavIndex(Math.min(currentNavIndex() + 1, maxLen - 1));
+            }
           },
           k: () => {
-            setSelectedIndex(Math.max(selectedIndex - 1, 0));
+            setCurrentNavIndex(Math.max(currentNavIndex() - 1, 0));
           },
           up: () => {
-            setSelectedIndex(Math.max(selectedIndex - 1, 0));
+            setCurrentNavIndex(Math.max(currentNavIndex() - 1, 0));
           },
           tab: () => {
             const ids = visibleTabs.map((t) => t.id);
@@ -184,13 +302,44 @@ export default function ZonesPanel(): React.ReactNode {
             if (!client || !selectedBrick || !allowed.has("reset")) return;
             resetBrick(selectedBrick.name, client);
           },
+          // d: Unregister workspace or unmount MCP (with confirmation)
+          d: () => {
+            if (!client) return;
+            if (activeTab === "workspaces") {
+              const ws = workspaces[selectedWorkspaceIndex];
+              if (ws) setConfirmWorkspaceUnregister(true);
+            } else if (activeTab === "mcp") {
+              const mount = mcpMounts[selectedMountIndex];
+              if (mount) setConfirmMcpUnmount(true);
+            }
+          },
+          // s: Sync MCP server
+          s: () => {
+            if (!client || activeTab !== "mcp") return;
+            const mount = mcpMounts[selectedMountIndex];
+            if (mount) syncServer(mount.name, client);
+          },
+          // return: Show tools for selected MCP mount
+          return: () => {
+            if (!client || activeTab !== "mcp") return;
+            const mount = mcpMounts[selectedMountIndex];
+            if (mount) fetchTools(mount.name, client);
+          },
           r: () => {
             refreshActiveTab();
           },
         },
   );
 
-  const defaultHelp = "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
+  // Context-aware help text per tab
+  const helpText = useMemo((): string => {
+    const base = "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
+    if (activeTab === "bricks") return brickHelpText;
+    if (activeTab === "workspaces") return "j/k:navigate  Tab:switch tab  d:unregister  r:refresh  q:quit";
+    if (activeTab === "memories") return "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
+    if (activeTab === "mcp") return "j/k:navigate  Tab:switch tab  d:unmount  s:sync  Enter:tools  r:refresh  q:quit";
+    return base;
+  }, [activeTab, brickHelpText]);
 
   return (
     <box height="100%" width="100%" flexDirection="column">
@@ -251,12 +400,44 @@ export default function ZonesPanel(): React.ReactNode {
         )}
 
         {activeTab === "reindex" && <ReindexStatus />}
+
+        {activeTab === "workspaces" && (
+          <WorkspacesTab
+            workspaces={workspaces}
+            selectedIndex={selectedWorkspaceIndex}
+            loading={workspacesLoading}
+          />
+        )}
+
+        {activeTab === "memories" && (
+          <MemoriesTab
+            memories={memories}
+            selectedIndex={selectedMemoryIndex}
+            loading={memoriesLoading}
+          />
+        )}
+
+        {activeTab === "mcp" && (
+          <McpMountsTab
+            mounts={mcpMounts}
+            selectedIndex={selectedMountIndex}
+            loading={mcpMountsLoading}
+          />
+        )}
+
+        {activeTab === "cache" && (
+          <CacheTab
+            stats={cacheStats}
+            hotFiles={hotFiles}
+            loading={cacheStatsLoading || hotFilesLoading}
+          />
+        )}
       </box>
 
       {/* Context-aware help bar */}
       <box height={1} width="100%">
         <text>
-          {activeTab === "bricks" ? brickHelpText : defaultHelp}
+          {helpText}
         </text>
       </box>
 
@@ -267,6 +448,24 @@ export default function ZonesPanel(): React.ReactNode {
         message={`Permanently unregister "${selectedBrick?.name ?? ""}"? This cannot be undone.`}
         onConfirm={handleConfirmUnregister}
         onCancel={handleCancelUnregister}
+      />
+
+      {/* Workspace unregister confirmation dialog */}
+      <ConfirmDialog
+        visible={confirmWorkspaceUnregister}
+        title="Unregister Workspace"
+        message={`Unregister workspace "${workspaces[selectedWorkspaceIndex]?.name ?? ""}"?`}
+        onConfirm={handleConfirmWorkspaceUnregister}
+        onCancel={handleCancelWorkspaceUnregister}
+      />
+
+      {/* MCP unmount confirmation dialog */}
+      <ConfirmDialog
+        visible={confirmMcpUnmount}
+        title="Unmount MCP Server"
+        message={`Unmount MCP server "${mcpMounts[selectedMountIndex]?.name ?? ""}"?`}
+        onConfirm={handleConfirmMcpUnmount}
+        onCancel={handleCancelMcpUnmount}
       />
     </box>
   );

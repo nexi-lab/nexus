@@ -16,7 +16,7 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { TransactionList } from "./transaction-list.js";
 import { EntryDetail } from "./entry-detail.js";
-import { TransactionActions } from "./transaction-actions.js";
+import { ConflictsView } from "./conflicts-tab.js";
 
 export default function VersionsPanel(): React.ReactNode {
   const client = useApi();
@@ -30,13 +30,20 @@ export default function VersionsPanel(): React.ReactNode {
   const entries = useVersionsStore((s) => s.entries);
   const entriesLoading = useVersionsStore((s) => s.entriesLoading);
 
+  const conflicts = useVersionsStore((s) => s.conflicts);
+  const conflictsLoading = useVersionsStore((s) => s.conflictsLoading);
+  const showConflicts = useVersionsStore((s) => s.showConflicts);
+
   const fetchTransactions = useVersionsStore((s) => s.fetchTransactions);
   const setSelectedIndex = useVersionsStore((s) => s.setSelectedIndex);
   const setStatusFilter = useVersionsStore((s) => s.setStatusFilter);
   const fetchEntries = useVersionsStore((s) => s.fetchEntries);
+  const fetchDiff = useVersionsStore((s) => s.fetchDiff);
   const beginTransaction = useVersionsStore((s) => s.beginTransaction);
   const commitTransaction = useVersionsStore((s) => s.commitTransaction);
   const rollbackTransaction = useVersionsStore((s) => s.rollbackTransaction);
+  const fetchConflicts = useVersionsStore((s) => s.fetchConflicts);
+  const toggleConflicts = useVersionsStore((s) => s.toggleConflicts);
 
   // Fetch transactions on mount and when filter changes
   useEffect(() => {
@@ -78,6 +85,21 @@ export default function VersionsPanel(): React.ReactNode {
       const next = nextStatusFilter(statusFilter);
       setStatusFilter(next);
     },
+    "d": () => {
+      // Show diff for the first entry of the selected transaction
+      if (!client || !selectedTransaction || entries.length === 0) return;
+      const entry = entries[0];
+      if (entry && entry.original_hash && entry.new_hash) {
+        fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+      }
+    },
+    "c": () => {
+      // Toggle conflicts view; fetch on first open
+      toggleConflicts();
+      if (!showConflicts && client) {
+        fetchConflicts(client);
+      }
+    },
   });
 
   const filterLabel = statusFilter ? ` [${statusFilter}]` : " [all]";
@@ -116,9 +138,18 @@ export default function VersionsPanel(): React.ReactNode {
           </box>
         </box>
 
+        {/* Conflicts pane (toggleable) */}
+        <ConflictsView
+          conflicts={conflicts}
+          loading={conflictsLoading}
+          visible={showConflicts}
+        />
+
         {/* Help bar */}
         <box height={1} width="100%">
-          <TransactionActions transaction={selectedTransaction} />
+          <text>
+            {"j/k:navigate  n:new txn  Enter:commit  Backspace:rollback  f:filter  d:diff  c:conflicts  q:quit"}
+          </text>
         </box>
       </box>
     </BrickGate>

@@ -224,6 +224,11 @@ export interface SearchState {
   readonly removeRlmContextPath: (path: string) => void;
   readonly clearRlmContextPaths: () => void;
   readonly askRlm: (query: string, client: FetchClient, zoneId?: string) => Promise<void>;
+
+  // Memory mutations
+  readonly createMemory: (content: string, metadata: Record<string, unknown>, client: FetchClient) => Promise<void>;
+  readonly updateMemory: (memoryId: string, content: string, client: FetchClient) => Promise<void>;
+  readonly deleteMemory: (memoryId: string, client: FetchClient) => Promise<void>;
 }
 
 export const useSearchStore = create<SearchState>((set, get) => ({
@@ -710,6 +715,44 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         rlmLoading: false,
         error: err instanceof Error ? err.message : "Failed to query RLM",
       });
+    }
+  },
+
+  createMemory: async (content, metadata, client) => {
+    set({ memoriesLoading: true, error: null });
+    try {
+      await client.post("/api/v2/memories", { content, metadata });
+      // Re-fetch to get updated list
+      const query = get().searchQuery;
+      await get().fetchMemories(query || "", client);
+    } catch (err) {
+      set({ memoriesLoading: false, error: err instanceof Error ? err.message : "Failed to create memory" });
+    }
+  },
+
+  updateMemory: async (memoryId, content, client) => {
+    set({ memoriesLoading: true, error: null });
+    try {
+      await client.put(`/api/v2/memories/${encodeURIComponent(memoryId)}`, { content });
+      set({ memoriesLoading: false });
+      // Re-fetch detail
+      await get().fetchMemoryDetail(memoryId, client);
+    } catch (err) {
+      set({ memoriesLoading: false, error: err instanceof Error ? err.message : "Failed to update memory" });
+    }
+  },
+
+  deleteMemory: async (memoryId, client) => {
+    set({ memoriesLoading: true, error: null });
+    try {
+      await client.delete(`/api/v2/memories/${encodeURIComponent(memoryId)}`);
+      set((state) => ({
+        memories: state.memories.filter((m) => (m as Record<string, unknown>).memory_id !== memoryId),
+        selectedMemoryIndex: Math.min(state.selectedMemoryIndex, Math.max(state.memories.length - 2, 0)),
+        memoriesLoading: false,
+      }));
+    } catch (err) {
+      set({ memoriesLoading: false, error: err instanceof Error ? err.message : "Failed to delete memory" });
     }
   },
 }));

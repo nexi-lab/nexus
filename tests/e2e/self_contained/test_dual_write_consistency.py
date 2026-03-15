@@ -92,10 +92,11 @@ async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[N
 class TestWriteConsistency:
     """After write(), both Metastore and RecordStore should be consistent."""
 
-    def test_new_file_exists_in_both_stores(
+    @pytest.mark.asyncio
+    async def test_new_file_exists_in_both_stores(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        result = nx.write("/test.txt", b"hello world")
+        result = await nx.write("/test.txt", b"hello world")
 
         # Metastore has the file
         meta = nx.metadata.get("/test.txt")
@@ -272,7 +273,8 @@ class TestRenameConsistency:
 class TestBatchWriteConsistency:
     """After write_batch(), all files exist in both stores."""
 
-    def test_batch_all_files_in_both_stores(
+    @pytest.mark.asyncio
+    async def test_batch_all_files_in_both_stores(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         files = [
@@ -280,7 +282,7 @@ class TestBatchWriteConsistency:
             ("/batch_b.txt", b"bbb"),
             ("/batch_c.txt", b"ccc"),
         ]
-        results = nx.write_batch(files)
+        results = await nx.write_batch(files)
         assert len(results) == 3
 
         # All files in Metastore
@@ -302,11 +304,12 @@ class TestBatchWriteConsistency:
             for path, _ in files:
                 assert path in record_paths, f"{path} missing from RecordStore"
 
-    def test_batch_operation_log_entries(
+    @pytest.mark.asyncio
+    async def test_batch_operation_log_entries(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         files = [("/x.txt", b"x"), ("/y.txt", b"y")]
-        nx.write_batch(files)
+        await nx.write_batch(files)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)

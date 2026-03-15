@@ -6,7 +6,7 @@ the inline data path (Issue #1508).
 """
 
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
 import pytest
@@ -44,12 +44,14 @@ def local_backend(temp_dir: Path) -> CASLocalBackend:
 
 
 @pytest.fixture
-def embedded_cas(temp_dir: Path, local_backend: CASLocalBackend) -> Generator[NexusFS, None, None]:
+async def embedded_cas(
+    temp_dir: Path, local_backend: CASLocalBackend
+) -> AsyncGenerator[NexusFS, None]:
     """Create an Embedded instance (CAS always enabled) with isolated database.
 
     (Environment variable isolation is handled by the global conftest fixture)
     """
-    emb = create_nexus_fs(
+    emb = await create_nexus_fs(
         backend=local_backend,
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

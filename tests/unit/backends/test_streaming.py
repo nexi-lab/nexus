@@ -483,7 +483,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -512,7 +512,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -541,7 +541,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -566,7 +566,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -595,7 +595,7 @@ class TestStatRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -618,14 +618,15 @@ class TestStatRPC:
         finally:
             nx.close()
 
-    def test_stat_file_not_found(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_stat_file_not_found(self, tmp_path: Path) -> None:
         """Test stat() raises error for non-existent file."""
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -646,7 +647,7 @@ class TestStatRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),

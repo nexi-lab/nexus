@@ -46,6 +46,8 @@ def _extract_tuple_id(result):
 
 
 def main():
+    import asyncio
+
     passed = failed = 0
 
     def check(name, ok, detail=""):
@@ -72,13 +74,15 @@ def main():
         metadata_store = RaftMetadataStore.embedded(METADATA_DIR)
         record_store = SQLAlchemyRecordStore(db_path=RECORD_DB)
 
-        nx = create_nexus_fs(
-            backend=backend,
-            metadata_store=metadata_store,
-            record_store=record_store,
-            permissions=PermissionConfig(
-                enforce=True, allow_admin_bypass=True, enforce_zone_isolation=False
-            ),
+        nx = asyncio.run(
+            create_nexus_fs(
+                backend=backend,
+                metadata_store=metadata_store,
+                record_store=record_store,
+                permissions=PermissionConfig(
+                    enforce=True, allow_admin_bypass=True, enforce_zone_isolation=False
+                ),
+            )
         )
 
         # ── Wire namespace manager (dcache + L3 + event-driven invalidation) ──

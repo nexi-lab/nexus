@@ -443,7 +443,8 @@ class TestCreateNexusServices:
 class TestBrickServicesFieldCompleteness:
     """Issue #2134: Factory-created bricks are packed into BrickServices container."""
 
-    def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
+    @pytest.mark.asyncio
+    async def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
         """create_nexus_fs() packs parse_fn, content_cache, registries, lock manager
         into BrickServices rather than passing as flat NexusFS params (Issue #2134).
         """
@@ -463,7 +464,7 @@ class TestBrickServicesFieldCompleteness:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -492,7 +493,8 @@ class TestBrickServicesFieldCompleteness:
         # _do_link() (MagicMock backend doesn't set up proper route table).
         # The factory gracefully degrades — ContentCache is optional.
 
-    def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
+    @pytest.mark.asyncio
+    async def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
         """workflow_engine param is packed into BrickServices (Issue #2134)."""
         record_store = MagicMock()
         record_store.engine = MagicMock()
@@ -512,7 +514,7 @@ class TestBrickServicesFieldCompleteness:
 
         sentinel_engine = MagicMock()
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,

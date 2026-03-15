@@ -1,7 +1,7 @@
 """Unit tests for Embedded filesystem."""
 
 import tempfile
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from datetime import timedelta
 from pathlib import Path
 
@@ -28,9 +28,9 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
+async def embedded(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
     """Create an Embedded filesystem instance."""
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -44,12 +44,13 @@ def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     # Note: Windows cleanup delay is handled by windows_cleanup_delay fixture in conftest.py
 
 
-def test_init_creates_directories(temp_dir: Path) -> None:
+@pytest.mark.asyncio
+async def test_init_creates_directories(temp_dir: Path) -> None:
     """Test that initialization creates necessary directories."""
     data_dir = temp_dir / "nexus-data"
     assert not data_dir.exists()
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
@@ -385,7 +386,7 @@ async def test_context_manager(temp_dir: Path) -> None:
     """Test using Embedded as context manager."""
     content = b"Test content"
 
-    with create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=CASLocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -393,10 +394,13 @@ async def test_context_manager(temp_dir: Path) -> None:
         permissions=PermissionConfig(
             enforce=False
         ),  # Disable permissions for basic functionality test
-    ) as nx:
+    )
+    try:
         await nx.sys_write("/test.txt", content)
         result = await nx.sys_read("/test.txt")
         assert result == content
+    finally:
+        nx.close()
 
 
 @pytest.mark.asyncio

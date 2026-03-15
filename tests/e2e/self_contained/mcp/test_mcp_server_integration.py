@@ -75,10 +75,10 @@ def extract_items(result: str | list | dict) -> list:
 
 
 @pytest.fixture
-def nexus_fs(isolated_db, tmp_path):
+async def nexus_fs(isolated_db, tmp_path):
     """Create a real NexusFS instance with CASLocalBackend for testing."""
     backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
         record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
@@ -95,7 +95,6 @@ def mcp_server(nexus_fs):
 
 
 @pytest.fixture
-@pytest.mark.asyncio
 async def test_files(nexus_fs, tmp_path):
     """Create some test files in the filesystem."""
     # Create test files
@@ -541,10 +540,11 @@ class TestSandboxIntegration:
 class TestServerConfiguration:
     """Integration tests for server configuration and setup."""
 
-    def test_server_with_local_backend(self, isolated_db, tmp_path):
+    @pytest.mark.asyncio
+    async def test_server_with_local_backend(self, isolated_db, tmp_path):
         """Test server creation with CASLocalBackend."""
         backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),

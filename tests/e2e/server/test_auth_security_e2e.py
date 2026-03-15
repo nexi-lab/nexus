@@ -78,7 +78,7 @@ def _rpc_post(
     return resp.status_code, resp.json()
 
 
-def _create_nexus_fs(
+async def _create_nexus_fs(
     tmp_path: Path,
     *,
     enforce_permissions: bool = False,
@@ -96,7 +96,7 @@ def _create_nexus_fs(
 
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / f'records{suffix}.db'}")
 
-    return create_nexus_fs(
+    return await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -126,17 +126,17 @@ def _session_factory(_db_engine):
 
 
 @pytest.fixture()
-def nexus_fs_enforced(tmp_path: Path):
+async def nexus_fs_enforced(tmp_path: Path):
     """NexusFS with enforce_permissions=True and services (ReBAC, etc.)."""
-    nx = _create_nexus_fs(tmp_path, enforce_permissions=True, suffix="_enforced")
+    nx = await _create_nexus_fs(tmp_path, enforce_permissions=True, suffix="_enforced")
     yield nx
     nx.close()
 
 
 @pytest.fixture()
-def nexus_fs_open(tmp_path: Path):
+async def nexus_fs_open(tmp_path: Path):
     """NexusFS with enforce_permissions=False (for writing seed data)."""
-    nx = _create_nexus_fs(tmp_path, enforce_permissions=False, suffix="_open")
+    nx = await _create_nexus_fs(tmp_path, enforce_permissions=False, suffix="_open")
     yield nx
     nx.close()
 

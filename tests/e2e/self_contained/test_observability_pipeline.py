@@ -23,7 +23,7 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture()
-def app_and_key(tmp_path):
+async def app_and_key(tmp_path):
     """Build a real FastAPI app with NexusFS + Prometheus middleware."""
     from nexus.server.fastapi_server import create_app
     from nexus.server.metrics import setup_prometheus, shutdown_prometheus
@@ -39,7 +39,7 @@ def app_and_key(tmp_path):
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

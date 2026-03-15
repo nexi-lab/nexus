@@ -23,7 +23,7 @@ class UserProvisionerProtocol(Protocol):
     wired by factory.py / server lifespan.
     """
 
-    def provision_user(
+    async def provision_user(
         self,
         *,
         user_id: str,

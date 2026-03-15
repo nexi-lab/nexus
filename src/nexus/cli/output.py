@@ -11,10 +11,10 @@ Usage::
 
     @click.command()
     @add_output_options
-    def ls(output_opts: OutputOptions, ...) -> None:
+    async def ls(output_opts: OutputOptions, ...) -> None:
         timing = CommandTiming()
         with timing.phase("server"):
-            files = nx.sys_readdir(path)
+            files = await nx.sys_readdir(path)
 
         render_output(
             data=files,

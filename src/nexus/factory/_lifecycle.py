@@ -12,7 +12,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _do_link(
+async def _do_link(
     nx: Any,
     *,
     enabled_bricks: "frozenset[str] | None" = None,
@@ -86,7 +86,7 @@ def _do_link(
         return name in _resolved_bricks
 
     # --- Boot wired services → register into ServiceRegistry ---
-    _wired = _boot_wired_services(
+    _wired = await _boot_wired_services(
         nx,
         nx._kernel_services,
         nx._system_services,

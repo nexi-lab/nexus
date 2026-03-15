@@ -62,7 +62,7 @@ class NexusFilesystemABC(ABC):
     # ── Content I/O ────────────────────────────────────────────────
 
     @abstractmethod
-    def sys_read(
+    async def sys_read(
         self,
         path: str,
         *,
@@ -84,7 +84,7 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    def sys_write(
+    async def sys_write(
         self,
         path: str,
         buf: bytes | str,
@@ -113,7 +113,7 @@ class NexusFilesystemABC(ABC):
     # ── Metadata I/O ───────────────────────────────────────────────
 
     @abstractmethod
-    def sys_stat(self, path: str, context: Any = None) -> dict[str, Any] | None:
+    async def sys_stat(self, path: str, context: Any = None) -> dict[str, Any] | None:
         """Read all file metadata (POSIX stat(2)).
 
         Returns:
@@ -122,7 +122,7 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    def sys_setattr(self, path: str, context: Any = None, **attrs: Any) -> dict[str, Any]:
+    async def sys_setattr(self, path: str, context: Any = None, **attrs: Any) -> dict[str, Any]:
         """Upsert file metadata (chmod/chown/utimensat + mknod analog).
 
         Upsert semantics — create-on-write for metadata:
@@ -144,7 +144,7 @@ class NexusFilesystemABC(ABC):
     # ── Namespace ──────────────────────────────────────────────────
 
     @abstractmethod
-    def sys_unlink(self, path: str, context: Any = None) -> dict[str, Any]:
+    async def sys_unlink(self, path: str, context: Any = None) -> dict[str, Any]:
         """Remove a directory entry (POSIX unlink(2)).
 
         NOT "delete" — unlink is precise: removes directory entry,
@@ -153,14 +153,14 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    def sys_rename(self, old_path: str, new_path: str, context: Any = None) -> dict[str, Any]:
+    async def sys_rename(self, old_path: str, new_path: str, context: Any = None) -> dict[str, Any]:
         """Rename/move a file (POSIX rename(2))."""
         ...
 
     # ── Directory ──────────────────────────────────────────────────
 
     @abstractmethod
-    def sys_mkdir(
+    async def sys_mkdir(
         self,
         path: str,
         parents: bool = False,
@@ -171,12 +171,12 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    def sys_rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:
+    async def sys_rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:
         """Remove a directory (POSIX rmdir(2))."""
         ...
 
     @abstractmethod
-    def sys_readdir(
+    async def sys_readdir(
         self,
         path: str = "/",
         recursive: bool = True,
@@ -198,7 +198,7 @@ class NexusFilesystemABC(ABC):
     # ── Query ──────────────────────────────────────────────────────
 
     @abstractmethod
-    def sys_access(self, path: str, context: Any = None) -> bool:
+    async def sys_access(self, path: str, context: Any = None) -> bool:
         """Check if a file exists (POSIX access(2)).
 
         Simplified to existence check. Permission checks handled
@@ -207,7 +207,7 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    def sys_is_directory(self, path: str, context: OperationContext | None = None) -> bool:
+    async def sys_is_directory(self, path: str, context: OperationContext | None = None) -> bool:
         """Check if path is a directory.
 
         Linux uses stat(2) + S_ISDIR macro — we provide direct check
@@ -246,7 +246,7 @@ class NexusFilesystemABC(ABC):
 
     # ── VFS Half ──────────────────────────────────────────────────
 
-    def read(
+    async def read(
         self,
         path: str,
         *,
@@ -270,10 +270,10 @@ class NexusFilesystemABC(ABC):
         Returns:
             bytes if return_metadata=False, else dict with content + metadata.
         """
-        content = self.sys_read(path, count=count, offset=offset, context=context)
+        content = await self.sys_read(path, count=count, offset=offset, context=context)
         if not return_metadata:
             return content
-        meta = self.sys_stat(path, context=context)
+        meta = await self.sys_stat(path, context=context)
         result: dict[str, Any] = {"content": content}
         if meta:
             result.update(
@@ -286,7 +286,7 @@ class NexusFilesystemABC(ABC):
             )
         return result
 
-    def write(
+    async def write(
         self,
         path: str,
         buf: bytes | str,
@@ -310,11 +310,11 @@ class NexusFilesystemABC(ABC):
         Returns:
             Dict with metadata (etag, version, modified_at, size).
         """
-        self.sys_write(path, buf, count=count, offset=offset, context=context)
-        meta = self.sys_stat(path, context=context)
+        await self.sys_write(path, buf, count=count, offset=offset, context=context)
+        meta = await self.sys_stat(path, context=context)
         return meta or {}
 
-    def append(
+    async def append(
         self,
         path: str,
         content: bytes | str,
@@ -326,16 +326,16 @@ class NexusFilesystemABC(ABC):
         User-space: read + write.
         """
         try:
-            existing = self.sys_read(path, context=context)
+            existing = await self.sys_read(path, context=context)
         except FileNotFoundError:
             existing = b""
         if isinstance(content, str):
             content = content.encode("utf-8")
         if isinstance(existing, str):
             existing = existing.encode("utf-8")
-        return self.write(path, existing + content, context=context)
+        return await self.write(path, existing + content, context=context)
 
-    def edit(
+    async def edit(
         self,
         path: str,
         edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
@@ -351,14 +351,14 @@ class NexusFilesystemABC(ABC):
         """
         raise NotImplementedError("Override in NexusFS (requires EditEngine)")
 
-    def write_batch(
+    async def write_batch(
         self,
         files: builtins.list[tuple[str, bytes]],
         *,
         context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
         """Write multiple files. Default: N × write()."""
-        return [self.write(p, c, context=context) for p, c in files]
+        return [await self.write(p, c, context=context) for p, c in files]
 
     def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
         """Find files matching a glob pattern (like glob(3)).

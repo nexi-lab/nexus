@@ -19,8 +19,8 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
     from nexus.sdk import connect
 
     nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
-    nx.sys_write("/workspace/data.txt", b"Hello World")
-    content = nx.sys_read("/workspace/data.txt")
+    await nx.sys_write("/workspace/data.txt", b"Hello World")
+    content = await nx.sys_read("/workspace/data.txt")
 
 For command-line usage, use the nexus CLI:
 
@@ -141,7 +141,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
-def connect(
+async def connect(
     config: "str | Path | dict | NexusConfig | None" = None,
 ) -> "NexusFilesystem":
     """
@@ -178,7 +178,7 @@ def connect(
 
         Default (development/testing):
             >>> nx = nexus.connect()
-            >>> nx.sys_write("/workspace/file.txt", b"Hello World")
+            >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
 
         Federation (auto-detected when Rust extensions available):
             >>> # Requires NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars
@@ -507,7 +507,7 @@ def connect(
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
-    nx_fs = create_nexus_fs(
+    nx_fs = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

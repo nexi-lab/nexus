@@ -118,7 +118,7 @@ class IndexingService:
                 return existing
 
         # --- Step 2: Read document content ---------------------------------
-        content = self._read_content(path)
+        content = await self._read_content(path)
 
         # --- Step 3: Delegate to pipeline (atomic delete+insert) -----------
         # The pipeline's _bulk_insert handles DELETE old chunks + INSERT new
@@ -168,7 +168,7 @@ class IndexingService:
         Returns:
             Mapping of virtual path to ``IndexResult``.
         """
-        files_result = self._file_reader.list_files(path, recursive=True)
+        files_result = await self._file_reader.list_files(path, recursive=True)
         files = files_result.items if hasattr(files_result, "items") else files_result
 
         # Build (path, content, path_id) tuples, skipping binary files.
@@ -183,7 +183,7 @@ class IndexingService:
                     continue
 
                 try:
-                    content = self._read_content(file_path)
+                    content = await self._read_content(file_path)
                     file_model = self._query_file_model(session, file_path)
                     if file_model is not None:
                         documents.append(
@@ -265,11 +265,11 @@ class IndexingService:
         """Return a context-manager that yields a DB session."""
         return self._file_reader.get_session()
 
-    def _read_content(self, path: str) -> str:
+    async def _read_content(self, path: str) -> str:
         """Read document content, preferring pre-processed searchable text."""
         content = self._file_reader.get_searchable_text(path)
         if content is None:
-            content = self._file_reader.read_text(path)
+            content = await self._file_reader.read_text(path)
         return content
 
     @staticmethod

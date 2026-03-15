@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 
-def occ_write(
+async def occ_write(
     fs: Any,
     path: str,
     buf: bytes | str,
@@ -63,7 +63,7 @@ def occ_write(
     if if_match is not None or if_none_match:
         from nexus.contracts.exceptions import ConflictError
 
-        meta = fs.sys_stat(path, context=context)
+        meta = await fs.sys_stat(path, context=context)
 
         if if_none_match and meta is not None:
             raise FileExistsError(f"File already exists: {path}")

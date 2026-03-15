@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _boot_wired_services(
+async def _boot_wired_services(
     nx: Any,
     kernel_services: "KernelServices",
     system_services: Any,
@@ -78,7 +78,7 @@ def _boot_wired_services(
             enforce_permissions=nx._enforce_permissions,
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
-            file_reader=lambda path: nx.sys_read(path),
+            file_reader=nx.sys_read,
             permission_enforcer=nx._permission_enforcer,
         )
         logger.debug("[BOOT:WIRED] ReBACService created")

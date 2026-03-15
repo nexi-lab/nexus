@@ -68,7 +68,7 @@ class SessionStore:
         self._line_cache[pid] = all_lines
 
         content = "\n".join(all_lines)
-        self._vfs.sys_write(session_path, content.encode("utf-8"), context=ctx)
+        await self._vfs.sys_write(session_path, content.encode("utf-8"), context=ctx)
 
         logger.debug(
             "Checkpoint saved: pid=%s, messages=%d (new=%d), path=%s",
@@ -121,12 +121,12 @@ class SessionStore:
         session_path = _resolve_session_path(cwd)
 
         # Check if session file exists
-        if not self._vfs.sys_access(session_path, context=ctx):
+        if not await self._vfs.sys_access(session_path, context=ctx):
             logger.debug("No checkpoint found for pid=%s at %s", pid, session_path)
             return []
 
         # Read JSONL content
-        raw = self._vfs.sys_read(session_path, context=ctx)
+        raw = await self._vfs.sys_read(session_path, context=ctx)
         if isinstance(raw, dict):
             raw = raw.get("content", b"")
         text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)

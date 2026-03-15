@@ -45,7 +45,7 @@ def ops_group() -> None:
 @click.argument("operation_2", type=str)
 @click.option("--show-content", is_flag=True, help="Show content diff (for text files)")
 @add_backend_options
-def ops_diff(
+async def ops_diff(
     path: str,
     operation_1: str,
     operation_2: str,
@@ -63,7 +63,7 @@ def ops_diff(
         nexus ops diff /workspace/code.py op_abc123 op_def456 --show-content
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         time_travel = nx.service("time_travel")
         if time_travel is None:
@@ -167,7 +167,7 @@ def ops_diff(
 @click.option("--status", "-s", type=click.Choice(["success", "failure"]), help="Filter by status")
 @click.option("--limit", "-l", type=int, default=50, help="Maximum number of operations to show")
 @add_backend_options
-def ops_log(
+async def ops_log(
     agent: str | None,
     zone: str | None,
     op_type: str | None,
@@ -188,7 +188,7 @@ def ops_log(
         nexus ops log --status failure
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         ops_service = nx.service("operations")
         if ops_service is None:
@@ -325,7 +325,9 @@ def ops_replay(
 @click.option("--agent", "-a", help="Filter by agent ID (undo last operation by this agent)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @add_backend_options
-def undo(agent: str | None, yes: bool, remote_url: str | None, remote_api_key: str | None) -> None:
+async def undo(
+    agent: str | None, yes: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Undo the last successful operation.
 
     Reverts the most recent filesystem operation.
@@ -336,7 +338,7 @@ def undo(agent: str | None, yes: bool, remote_url: str | None, remote_api_key: s
         nexus undo --yes
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         ops_service = nx.service("operations")
         if ops_service is None:

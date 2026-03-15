@@ -1,6 +1,5 @@
 """File operation commands - read, write, cat, cp, mv, rm, sync."""
 
-import contextlib
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -43,7 +42,7 @@ def register_commands(cli: click.Group) -> None:
 
 @click.command()
 @click.argument("path", default="./nexus-workspace", type=click.Path())
-def init(path: str) -> None:
+async def init(path: str) -> None:
     """Initialize a new Nexus workspace.
 
     Creates a new Nexus workspace with the following structure:
@@ -63,11 +62,11 @@ def init(path: str) -> None:
         data_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Nexus
-        nx = connect_local_workspace(str(data_dir))
+        nx = await connect_local_workspace(str(data_dir))
 
         # Create default directories
-        nx.sys_mkdir("/workspace", exist_ok=True)
-        nx.sys_mkdir("/shared", exist_ok=True)
+        await nx.sys_mkdir("/workspace", exist_ok=True)
+        await nx.sys_mkdir("/shared", exist_ok=True)
 
         nx.close()
 
@@ -96,7 +95,7 @@ def init(path: str) -> None:
 @add_output_options
 @add_backend_options
 @add_context_options
-def cat(
+async def cat(
     path: str,
     metadata: bool,
     at_operation: str | None,
@@ -117,22 +116,21 @@ def cat(
     timing = CommandTiming()
 
     try:
-        with contextlib.ExitStack() as stack:
+        async with open_filesystem(
+            remote_url,
+            remote_api_key,
+            allow_local_default=True,
+        ) as nx:
             with timing.phase("connect"):
-                nx = stack.enter_context(
-                    open_filesystem(
-                        remote_url,
-                        remote_api_key,
-                        allow_local_default=True,
-                    )
-                )
+                pass  # connection already established by async with
+
             if at_operation:
                 _cat_time_travel(nx, path, at_operation, metadata, output_opts, timing)
                 return
 
             with timing.phase("server"):
                 if metadata:
-                    read_result = nx.read(
+                    read_result = await nx.read(
                         path, context=cast(Any, operation_context), return_metadata=True
                     )
                     assert isinstance(read_result, dict), "Expected dict when return_metadata=True"
@@ -164,7 +162,7 @@ def cat(
                         sys.stdout.buffer.flush()
                         return
 
-                    content = nx.sys_read(path, context=cast(Any, operation_context))
+                    content = await nx.sys_read(path, context=cast(Any, operation_context))
                     meta_data = None
 
         # JSON mode: return structured data
@@ -312,7 +310,7 @@ def _print_content(path: str, content: bytes) -> None:
 @add_dry_run_option
 @add_backend_options
 @add_context_options
-def write(
+async def write(
     path: str,
     content: str | None,
     input_file: Any,
@@ -357,7 +355,7 @@ def write(
             render_dry_run(preview)
             return
 
-        with open_filesystem(
+        async with open_filesystem(
             remote_url,
             remote_api_key,
             allow_local_default=True,
@@ -367,7 +365,7 @@ def write(
             if (if_match or if_none_match) and not force:
                 from nexus.lib.occ import occ_write
 
-                result = occ_write(
+                result = await occ_write(
                     nx,
                     path,
                     file_content,
@@ -376,7 +374,7 @@ def write(
                     if_none_match=if_none_match,
                 )
             else:
-                result = nx.write(path, file_content, context=ctx)
+                result = await nx.write(path, file_content, context=ctx)
 
         console.print(f"[green]✓[/green] Wrote {len(file_content)} bytes to [cyan]{path}[/cyan]")
 
@@ -410,7 +408,7 @@ def write(
 )
 @add_backend_options
 @add_context_options
-def append(
+async def append(
     path: str,
     content: str | None,
     input_file: Any,
@@ -436,14 +434,14 @@ def append(
     try:
         file_content = resolve_content(content, input_file)
 
-        with open_filesystem(
+        async with open_filesystem(
             remote_url,
             remote_api_key,
             allow_local_default=True,
         ) as nx:
             # Append with OCC parameters and context.
             # CAS params (if_match, force) are NexusFS-specific (transitional, see #1323).
-            result = cast(Any, nx).append(
+            result = await cast(Any, nx).append(
                 path,
                 file_content,
                 context=operation_context,
@@ -495,7 +493,7 @@ def append(
     help="Number of files to write in each batch (default: 100)",
 )
 @add_backend_options
-def write_batch(
+async def write_batch(
     source_dir: str,
     dest_prefix: str,
     pattern: str,
@@ -538,7 +536,7 @@ def write_batch(
             TimeElapsedColumn,
         )
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+        nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
         source_path = Path(source_dir)
 
         # Ensure dest_prefix starts with /
@@ -606,7 +604,7 @@ def write_batch(
                     total_bytes += len(content)
 
                 # Write batch
-                nx.write_batch(batch_data)
+                await nx.write_batch(batch_data)
                 total_files += len(batch_data)
 
                 # Update progress
@@ -636,7 +634,7 @@ def write_batch(
 @click.argument("dest", type=str)
 @add_dry_run_option
 @add_backend_options
-def cp(
+async def cp(
     source: str,
     dest: str,
     dry_run: bool,
@@ -655,16 +653,16 @@ def cp(
             render_dry_run(preview)
             return
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+        nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         # Read source
-        content = nx.sys_read(source)
+        content = await nx.sys_read(source)
 
         # Type narrowing: when return_metadata=False (default), result is bytes
         assert isinstance(content, bytes), "Expected bytes from read()"
 
         # Write to destination
-        nx.sys_write(dest, content)
+        await nx.sys_write(dest, content)
 
         nx.close()
 
@@ -680,7 +678,7 @@ def cp(
 @click.option("--checksum", is_flag=True, help="Skip identical files (hash-based)", default=True)
 @click.option("--no-checksum", is_flag=True, help="Disable checksum verification")
 @add_backend_options
-def copy_cmd(
+async def copy_cmd(
     source: str,
     dest: str,
     recursive: bool,
@@ -714,14 +712,14 @@ def copy_cmd(
     try:
         from nexus.sync import copy_file, copy_recursive, is_local_path
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+        nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         # Handle --no-checksum flag
         use_checksum = checksum and not no_checksum
 
         if recursive:
             # Use progress bar from sync module (tqdm)
-            stats = copy_recursive(nx, source, dest, checksum=use_checksum, progress=True)
+            stats = await copy_recursive(nx, source, dest, checksum=use_checksum, progress=True)
             nx.close()
 
             # Display results
@@ -741,7 +739,9 @@ def copy_cmd(
             is_source_local = is_local_path(source)
             is_dest_local = is_local_path(dest)
 
-            bytes_copied = copy_file(nx, source, dest, is_source_local, is_dest_local, use_checksum)
+            bytes_copied = await copy_file(
+                nx, source, dest, is_source_local, is_dest_local, use_checksum
+            )
 
             nx.close()
 
@@ -765,7 +765,7 @@ def copy_cmd(
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
 @add_dry_run_option
 @add_backend_options
-def move_cmd(
+async def move_cmd(
     source: str,
     dest: str,
     force: bool,
@@ -791,7 +791,7 @@ def move_cmd(
 
         from nexus.sync import move_file
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+        nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         # Confirm unless --force
         if not force and not click.confirm(f"Move {source} to {dest}?"):
@@ -800,7 +800,7 @@ def move_cmd(
             return
 
         with console.status(f"[yellow]Moving {source} to {dest}...[/yellow]", spinner="dots"):
-            success = move_file(nx, source, dest)
+            success = await move_file(nx, source, dest)
 
         nx.close()
 
@@ -821,7 +821,7 @@ def move_cmd(
 @click.option("--dry-run", is_flag=True, help="Preview changes without making them")
 @click.option("--no-checksum", is_flag=True, help="Disable hash-based comparison")
 @add_backend_options
-def sync_cmd(
+async def sync_cmd(
     source: str,
     dest: str,
     delete: bool,
@@ -853,7 +853,7 @@ def sync_cmd(
     try:
         from nexus.sync import sync_directories
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+        nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         use_checksum = not no_checksum
 
@@ -868,7 +868,7 @@ def sync_cmd(
         console.print()
 
         # Use progress bar from sync module (tqdm)
-        stats = sync_directories(
+        stats = await sync_directories(
             nx, source, dest, delete=delete, dry_run=dry_run, checksum=use_checksum, progress=True
         )
 
@@ -904,7 +904,7 @@ def sync_cmd(
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
 @add_dry_run_option
 @add_backend_options
-def rm(
+async def rm(
     path: str,
     force: bool,
     dry_run: bool,
@@ -924,10 +924,10 @@ def rm(
             render_dry_run(preview)
             return
 
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+        nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         # Check if file exists
-        if not nx.sys_access(path):
+        if not await nx.sys_access(path):
             console.print(f"[yellow]File does not exist:[/yellow] {path}")
             nx.close()
             return
@@ -938,7 +938,7 @@ def rm(
             nx.close()
             return
 
-        nx.sys_unlink(path)
+        await nx.sys_unlink(path)
         nx.close()
 
         console.print(f"[green]✓[/green] Deleted [cyan]{path}[/cyan]")
@@ -968,7 +968,7 @@ def rm(
     help="Show what would change without writing.",
 )
 @add_backend_options
-def edit(
+async def edit(
     path: str,
     old_string: str,
     new_string: str,
@@ -998,7 +998,7 @@ def edit(
         nexus edit /workspace/doc.md "old" "new" --if-match abc123
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key, allow_local_default=True)
+        nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
         kwargs: dict[str, Any] = {
             "edits": [(old_string, new_string)],
@@ -1009,7 +1009,7 @@ def edit(
         if if_match is not None:
             kwargs["if_match"] = if_match
 
-        result = nx.edit(path, **kwargs)
+        result = await nx.edit(path, **kwargs)
         nx.close()
 
         success = result.get("success", False)

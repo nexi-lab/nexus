@@ -27,6 +27,7 @@ from nexus.bricks.mcp.profiles import (
 )
 from nexus.bricks.mcp.server import create_mcp_server
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
 from tests.helpers.dict_metastore import DictMetastore
@@ -51,6 +52,7 @@ def rebac_manager(rebac_engine):
         engine=rebac_engine,
         cache_ttl_seconds=1,
         version_store=MetastoreVersionStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
 
 

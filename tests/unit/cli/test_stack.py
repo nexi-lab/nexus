@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -40,7 +40,7 @@ def shared_config(tmp_path: Path) -> Path:
         "compose_file": str(tmp_path / "nexus-stack.yml"),
         "auth": "static",
         "tls": False,
-        "image_ref": "ghcr.io/nexi-lab/nexus:0.9.2",
+        "image_ref": "ghcr.io/nexi-lab/nexus:stable",
         "image_channel": "stable",
         "image_accelerator": "cpu",
     }
@@ -417,11 +417,21 @@ class TestUpgradeCommand:
             assert result.exit_code == 0
             assert "does not use a prebuilt image" in result.output
 
-    def test_already_up_to_date(self, runner: CliRunner, shared_config: Path) -> None:
+    def test_already_up_to_date_pinned(self, runner: CliRunner, shared_config: Path) -> None:
+        """Pinned configs (no image_channel) report 'up to date' when ref matches."""
+        # Override config to be pinned (no image_channel)
+        cfg_path = shared_config / "nexus.yaml"
+        with open(cfg_path) as f:
+            config = yaml.safe_load(f)
+        config["image_pin"] = "tag"
+        config.pop("image_channel", None)
+        with open(cfg_path, "w") as f:
+            yaml.dump(config, f)
+
         with (
             patch(
                 "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
-                (str(shared_config / "nexus.yaml"),),
+                (str(cfg_path),),
             ),
             patch(
                 "nexus.cli.commands.stack._resolve_image_ref",
@@ -430,7 +440,33 @@ class TestUpgradeCommand:
         ):
             result = runner.invoke(upgrade)
             assert result.exit_code == 0
-            assert "up to date" in result.output.lower()
+            assert "pinned" in result.output.lower()
+
+    def test_channel_following_pulls_latest(self, runner: CliRunner, shared_config: Path) -> None:
+        """Channel-following configs pull the latest image on upgrade."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with (
+            patch(
+                "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+                (str(shared_config / "nexus.yaml"),),
+            ),
+            patch(
+                "nexus.cli.commands.stack._resolve_image_ref",
+                return_value="ghcr.io/nexi-lab/nexus:stable",
+            ),
+            patch(
+                "nexus.cli.commands.stack._run_compose",
+                return_value=mock_result,
+            ) as mock_compose,
+        ):
+            result = runner.invoke(upgrade)
+            assert result.exit_code == 0
+            assert "pulling" in result.output.lower()
+            # Verify docker compose pull was called
+            mock_compose.assert_called_once()
+            call_args = mock_compose.call_args
+            assert "pull" in call_args[0]
 
     def test_upgrade_with_yes_flag(self, runner: CliRunner, shared_config: Path) -> None:
         with (

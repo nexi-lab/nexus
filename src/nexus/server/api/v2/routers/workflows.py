@@ -128,8 +128,19 @@ def _get_require_auth() -> Any:
 
 
 def _get_workflow_engine(request: Request) -> Any:
-    """Get WorkflowEngine from app state (set by lifespan)."""
+    """Get WorkflowEngine from app state or brick lifecycle."""
     engine = getattr(request.app.state, "workflow_engine", None)
+    if not engine:
+        # Fallback: check brick lifecycle manager for the mounted workflow_engine brick
+        blm = getattr(request.app.state, "brick_lifecycle_manager", None)
+        if blm is not None:
+            from nexus.bricks.workflows.engine import WorkflowEngine
+
+            for brick in getattr(blm, "_active_bricks", {}).values():
+                if isinstance(brick, WorkflowEngine):
+                    engine = brick
+                    request.app.state.workflow_engine = engine  # Cache for next request
+                    break
     if not engine:
         raise HTTPException(status_code=503, detail="Workflow engine not available")
 

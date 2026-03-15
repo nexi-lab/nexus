@@ -34,6 +34,12 @@ export default function VersionsPanel(): React.ReactNode {
   const conflictsLoading = useVersionsStore((s) => s.conflictsLoading);
   const showConflicts = useVersionsStore((s) => s.showConflicts);
 
+  const transactionDetail = useVersionsStore((s) => s.transactionDetail);
+  const transactionDetailLoading = useVersionsStore((s) => s.transactionDetailLoading);
+  const diffContent = useVersionsStore((s) => s.diffContent);
+  const diffLoading = useVersionsStore((s) => s.diffLoading);
+  const fetchTransactionDetail = useVersionsStore((s) => s.fetchTransactionDetail);
+
   const fetchTransactions = useVersionsStore((s) => s.fetchTransactions);
   const setSelectedIndex = useVersionsStore((s) => s.setSelectedIndex);
   const setStatusFilter = useVersionsStore((s) => s.setStatusFilter);
@@ -52,12 +58,13 @@ export default function VersionsPanel(): React.ReactNode {
     }
   }, [client, statusFilter, fetchTransactions]);
 
-  // Fetch entries when selection changes
+  // Fetch entries and transaction detail when selection changes
   useEffect(() => {
     if (client && selectedTransaction) {
       fetchEntries(selectedTransaction.transaction_id, client);
+      fetchTransactionDetail(selectedTransaction.transaction_id, client);
     }
-  }, [client, selectedTransaction, fetchEntries]);
+  }, [client, selectedTransaction, fetchEntries, fetchTransactionDetail]);
 
   // Keyboard navigation
   useKeyboard({
@@ -137,6 +144,25 @@ export default function VersionsPanel(): React.ReactNode {
             />
           </box>
         </box>
+
+        {/* Transaction detail (below entry detail) */}
+        {transactionDetail && !transactionDetailLoading && (
+          <box height={3} width="100%">
+            <text>
+              {`Detail: zone=${transactionDetail.zone_id} agent=${transactionDetail.agent_id ?? "n/a"} entries=${transactionDetail.entry_count} created=${transactionDetail.created_at} expires=${transactionDetail.expires_at}`}
+            </text>
+          </box>
+        )}
+
+        {/* Diff viewer */}
+        {diffContent && !diffLoading && (
+          <box height={5} width="100%" borderStyle="single" flexDirection="column">
+            <box height={1} width="100%"><text>--- Old ---</text></box>
+            <box width="100%"><text>{diffContent.old.slice(0, 200)}</text></box>
+            <box height={1} width="100%"><text>--- New ---</text></box>
+            <box width="100%"><text>{diffContent.new.slice(0, 200)}</text></box>
+          </box>
+        )}
 
         {/* Conflicts pane (toggleable) */}
         <ConflictsView

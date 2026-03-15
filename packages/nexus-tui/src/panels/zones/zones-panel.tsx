@@ -95,6 +95,10 @@ export default function ZonesPanel(): React.ReactNode {
   const setSelectedWorkspaceIndex = useWorkspaceStore((s) => s.setSelectedWorkspaceIndex);
   const setSelectedMemoryIndex = useWorkspaceStore((s) => s.setSelectedMemoryIndex);
 
+  // Workspace/memory register actions
+  const registerWorkspace = useWorkspaceStore((s) => s.registerWorkspace);
+  const registerMemory = useWorkspaceStore((s) => s.registerMemory);
+
   // MCP store selectors
   const mcpMounts = useMcpStore((s) => s.mounts);
   const mcpMountsLoading = useMcpStore((s) => s.mountsLoading);
@@ -103,6 +107,7 @@ export default function ZonesPanel(): React.ReactNode {
   const unmountServer = useMcpStore((s) => s.unmountServer);
   const syncServer = useMcpStore((s) => s.syncServer);
   const fetchTools = useMcpStore((s) => s.fetchTools);
+  const mountServer = useMcpStore((s) => s.mountServer);
   const setSelectedMountIndex = useMcpStore((s) => s.setSelectedMountIndex);
 
   // Fall back to first visible tab if the active tab becomes hidden
@@ -112,6 +117,10 @@ export default function ZonesPanel(): React.ReactNode {
       setActiveTab(visibleIds[0]!);
     }
   }, [visibleIds.join(","), activeTab, setActiveTab]);
+
+  // Input mode state for create/register flows
+  const [inputMode, setInputMode] = useState<"none" | "workspace" | "memory" | "mcpMount">("none");
+  const [inputBuffer, setInputBuffer] = useState("");
 
   // Confirmation dialog state for destructive actions
   const [confirmUnregister, setConfirmUnregister] = useState(false);
@@ -246,98 +255,156 @@ export default function ZonesPanel(): React.ReactNode {
     }
   }, [activeTab, setSelectedIndex, setSelectedWorkspaceIndex, setSelectedMemoryIndex, setSelectedMountIndex]);
 
+  // In input mode, capture printable characters via onUnhandled
+  const handleUnhandledKey = useCallback(
+    (keyName: string) => {
+      if (inputMode === "none") return;
+      if (keyName.length === 1) {
+        setInputBuffer((b) => b + keyName);
+      } else if (keyName === "space") {
+        setInputBuffer((b) => b + " ");
+      }
+    },
+    [inputMode],
+  );
+
   useKeyboard(
     anyDialogOpen
       ? {} // ConfirmDialog handles its own keys when visible
-      : {
-          j: () => {
-            const maxLen = currentListLength();
-            if (maxLen > 0) {
-              setCurrentNavIndex(Math.min(currentNavIndex() + 1, maxLen - 1));
-            }
-          },
-          down: () => {
-            const maxLen = currentListLength();
-            if (maxLen > 0) {
-              setCurrentNavIndex(Math.min(currentNavIndex() + 1, maxLen - 1));
-            }
-          },
-          k: () => {
-            setCurrentNavIndex(Math.max(currentNavIndex() - 1, 0));
-          },
-          up: () => {
-            setCurrentNavIndex(Math.max(currentNavIndex() - 1, 0));
-          },
-          tab: () => {
-            const ids = visibleTabs.map((t) => t.id);
-            const currentIdx = ids.indexOf(activeTab);
-            const nextIdx = (currentIdx + 1) % ids.length;
-            const nextTab = ids[nextIdx];
-            if (nextTab) {
-              setActiveTab(nextTab);
-            }
-          },
-          // M (shift+m): Mount — valid for registered/unmounted
-          "shift+m": () => {
-            if (!client || !selectedBrick || !allowed.has("mount")) return;
-            mountBrick(selectedBrick.name, client);
-          },
-          // U: Unmount — valid for active
-          "shift+u": () => {
-            if (!client || !selectedBrick || !allowed.has("unmount")) return;
-            unmountBrick(selectedBrick.name, client);
-          },
-          // D: Unregister — valid for unmounted (with confirmation)
-          "shift+d": () => {
-            if (!client || !selectedBrick || !allowed.has("unregister")) return;
-            setConfirmUnregister(true);
-          },
-          // m: Remount (existing) — valid for unmounted only
-          m: () => {
-            if (!client || !selectedBrick || !allowed.has("remount")) return;
-            remountBrick(selectedBrick.name, client);
-          },
-          // x: Reset (existing) — valid for failed
-          x: () => {
-            if (!client || !selectedBrick || !allowed.has("reset")) return;
-            resetBrick(selectedBrick.name, client);
-          },
-          // d: Unregister workspace or unmount MCP (with confirmation)
-          d: () => {
-            if (!client) return;
-            if (activeTab === "workspaces") {
-              const ws = workspaces[selectedWorkspaceIndex];
-              if (ws) setConfirmWorkspaceUnregister(true);
-            } else if (activeTab === "mcp") {
+      : inputMode !== "none"
+        ? {
+            return: () => {
+              const value = inputBuffer.trim();
+              if (!value || !client) {
+                setInputMode("none");
+                setInputBuffer("");
+                return;
+              }
+              if (inputMode === "workspace") {
+                registerWorkspace({ path: value, name: value.split("/").pop() || value }, client);
+              } else if (inputMode === "memory") {
+                registerMemory({ path: value, name: value.split("/").pop() || value }, client);
+              } else if (inputMode === "mcpMount") {
+                if (value.startsWith("http://") || value.startsWith("https://")) {
+                  mountServer({ name: value.split("/").pop() || "mcp-server", url: value }, client);
+                } else {
+                  mountServer({ name: value.split(" ")[0] || "mcp-server", command: value }, client);
+                }
+              }
+              setInputMode("none");
+              setInputBuffer("");
+            },
+            escape: () => {
+              setInputMode("none");
+              setInputBuffer("");
+            },
+            backspace: () => {
+              setInputBuffer((b) => b.slice(0, -1));
+            },
+          }
+        : {
+            j: () => {
+              const maxLen = currentListLength();
+              if (maxLen > 0) {
+                setCurrentNavIndex(Math.min(currentNavIndex() + 1, maxLen - 1));
+              }
+            },
+            down: () => {
+              const maxLen = currentListLength();
+              if (maxLen > 0) {
+                setCurrentNavIndex(Math.min(currentNavIndex() + 1, maxLen - 1));
+              }
+            },
+            k: () => {
+              setCurrentNavIndex(Math.max(currentNavIndex() - 1, 0));
+            },
+            up: () => {
+              setCurrentNavIndex(Math.max(currentNavIndex() - 1, 0));
+            },
+            tab: () => {
+              const ids = visibleTabs.map((t) => t.id);
+              const currentIdx = ids.indexOf(activeTab);
+              const nextIdx = (currentIdx + 1) % ids.length;
+              const nextTab = ids[nextIdx];
+              if (nextTab) {
+                setActiveTab(nextTab);
+              }
+            },
+            // n: Register workspace/memory or mount MCP server
+            n: () => {
+              if (activeTab === "workspaces") {
+                setInputMode("workspace");
+                setInputBuffer("");
+              } else if (activeTab === "memories") {
+                setInputMode("memory");
+                setInputBuffer("");
+              } else if (activeTab === "mcp") {
+                setInputMode("mcpMount");
+                setInputBuffer("");
+              }
+            },
+            // M (shift+m): Mount — valid for registered/unmounted
+            "shift+m": () => {
+              if (!client || !selectedBrick || !allowed.has("mount")) return;
+              mountBrick(selectedBrick.name, client);
+            },
+            // U: Unmount — valid for active
+            "shift+u": () => {
+              if (!client || !selectedBrick || !allowed.has("unmount")) return;
+              unmountBrick(selectedBrick.name, client);
+            },
+            // D: Unregister — valid for unmounted (with confirmation)
+            "shift+d": () => {
+              if (!client || !selectedBrick || !allowed.has("unregister")) return;
+              setConfirmUnregister(true);
+            },
+            // m: Remount (existing) — valid for unmounted only
+            m: () => {
+              if (!client || !selectedBrick || !allowed.has("remount")) return;
+              remountBrick(selectedBrick.name, client);
+            },
+            // x: Reset (existing) — valid for failed
+            x: () => {
+              if (!client || !selectedBrick || !allowed.has("reset")) return;
+              resetBrick(selectedBrick.name, client);
+            },
+            // d: Unregister workspace or unmount MCP (with confirmation)
+            d: () => {
+              if (!client) return;
+              if (activeTab === "workspaces") {
+                const ws = workspaces[selectedWorkspaceIndex];
+                if (ws) setConfirmWorkspaceUnregister(true);
+              } else if (activeTab === "mcp") {
+                const mount = mcpMounts[selectedMountIndex];
+                if (mount) setConfirmMcpUnmount(true);
+              }
+            },
+            // s: Sync MCP server
+            s: () => {
+              if (!client || activeTab !== "mcp") return;
               const mount = mcpMounts[selectedMountIndex];
-              if (mount) setConfirmMcpUnmount(true);
-            }
+              if (mount) syncServer(mount.name, client);
+            },
+            // return: Show tools for selected MCP mount
+            return: () => {
+              if (!client || activeTab !== "mcp") return;
+              const mount = mcpMounts[selectedMountIndex];
+              if (mount) fetchTools(mount.name, client);
+            },
+            r: () => {
+              refreshActiveTab();
+            },
           },
-          // s: Sync MCP server
-          s: () => {
-            if (!client || activeTab !== "mcp") return;
-            const mount = mcpMounts[selectedMountIndex];
-            if (mount) syncServer(mount.name, client);
-          },
-          // return: Show tools for selected MCP mount
-          return: () => {
-            if (!client || activeTab !== "mcp") return;
-            const mount = mcpMounts[selectedMountIndex];
-            if (mount) fetchTools(mount.name, client);
-          },
-          r: () => {
-            refreshActiveTab();
-          },
-        },
+    inputMode !== "none" ? handleUnhandledKey : undefined,
   );
 
   // Context-aware help text per tab
   const helpText = useMemo((): string => {
     const base = "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
     if (activeTab === "bricks") return brickHelpText;
-    if (activeTab === "workspaces") return "j/k:navigate  Tab:switch tab  d:unregister  r:refresh  q:quit";
-    if (activeTab === "memories") return "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
-    if (activeTab === "mcp") return "j/k:navigate  Tab:switch tab  d:unmount  s:sync  Enter:tools  r:refresh  q:quit";
+    if (activeTab === "workspaces") return "j/k:navigate  n:register  d:unregister  Tab:tab  r:refresh  q:quit";
+    if (activeTab === "memories") return "j/k:navigate  n:register  Tab:tab  r:refresh  q:quit";
+    if (activeTab === "mcp") return "j/k:navigate  n:mount  d:unmount  s:sync  Enter:tools  Tab:tab  r:refresh  q:quit";
     return base;
   }, [activeTab, brickHelpText]);
 
@@ -351,6 +418,19 @@ export default function ZonesPanel(): React.ReactNode {
           }).join(" ")}
         </text>
       </box>
+
+      {/* Input bar for register/mount */}
+      {inputMode !== "none" && (
+        <box height={1} width="100%">
+          <text>
+            {inputMode === "workspace"
+              ? `Register workspace path: ${inputBuffer}\u2588`
+              : inputMode === "memory"
+                ? `Register memory path: ${inputBuffer}\u2588`
+                : `Mount MCP server (URL or command): ${inputBuffer}\u2588`}
+          </text>
+        </box>
+      )}
 
       {/* Error display */}
       {error && (
@@ -437,7 +517,9 @@ export default function ZonesPanel(): React.ReactNode {
       {/* Context-aware help bar */}
       <box height={1} width="100%">
         <text>
-          {helpText}
+          {inputMode !== "none"
+            ? "Type path/URL, Enter:submit, Escape:cancel, Backspace:delete"
+            : helpText}
         </text>
       </box>
 

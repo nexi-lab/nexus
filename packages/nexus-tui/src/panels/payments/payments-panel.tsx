@@ -62,6 +62,8 @@ export default function PaymentsPanel(): React.ReactNode {
   const fetchPolicies = usePaymentsStore((s) => s.fetchPolicies);
   const fetchBudget = usePaymentsStore((s) => s.fetchBudget);
   const deletePolicy = usePaymentsStore((s) => s.deletePolicy);
+  const checkAfford = usePaymentsStore((s) => s.checkAfford);
+  const affordResult = usePaymentsStore((s) => s.affordResult);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
   const setSelectedReservationIndex = usePaymentsStore(
     (s) => s.setSelectedReservationIndex,
@@ -208,6 +210,11 @@ export default function PaymentsPanel(): React.ReactNode {
               verifyIntegrity(selected.id, client);
             }
           },
+          a: () => {
+            if (activeTab === "balance" && client) {
+              checkAfford("1.0", client);
+            }
+          },
         },
   );
 
@@ -241,7 +248,16 @@ export default function PaymentsPanel(): React.ReactNode {
           ) : (
             <>
               {activeTab === "balance" && (
-                <BalanceCard balance={balance} loading={balanceLoading} />
+                <>
+                  <BalanceCard balance={balance} loading={balanceLoading} />
+                  {affordResult && (
+                    <box height={1} width="100%" marginTop={1}>
+                      <text>
+                        {`Afford check: ${affordResult.can_afford ? "YES" : "NO"} (balance=${affordResult.balance} requested=${affordResult.requested})`}
+                      </text>
+                    </box>
+                  )}
+                </>
               )}
               {activeTab === "reservations" && (
                 <ReservationList
@@ -283,6 +299,8 @@ export default function PaymentsPanel(): React.ReactNode {
                 ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  Tab:switch tab  r:refresh"
                 : activeTab === "policies"
                   ? "j/k:navigate  Tab:switch tab  d:delete  b:budget  r:refresh  q:quit"
+                  : activeTab === "balance"
+                  ? "Tab:switch tab  t:transfer  a:afford check  r:refresh  q:quit"
                   : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
           </text>
         </box>

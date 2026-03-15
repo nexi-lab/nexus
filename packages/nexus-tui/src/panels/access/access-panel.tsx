@@ -18,7 +18,7 @@
  *   r              : refresh current tab
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAccessStore } from "../../stores/access-store.js";
 import type { AccessTab } from "../../stores/access-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
@@ -98,6 +98,7 @@ export default function AccessPanel(): React.ReactNode {
   const fetchAlerts = useAccessStore((s) => s.fetchAlerts);
   const resolveAlert = useAccessStore((s) => s.resolveAlert);
   const fetchCredentials = useAccessStore((s) => s.fetchCredentials);
+  const revokeCredential = useAccessStore((s) => s.revokeCredential);
   const fetchFraudScores = useAccessStore((s) => s.fetchFraudScores);
   const computeFraudScores = useAccessStore((s) => s.computeFraudScores);
   const fetchDelegations = useAccessStore((s) => s.fetchDelegations);
@@ -108,6 +109,12 @@ export default function AccessPanel(): React.ReactNode {
   const setSelectedFraudIndex = useAccessStore((s) => s.setSelectedFraudIndex);
   const setSelectedDelegationIndex = useAccessStore((s) => s.setSelectedDelegationIndex);
 
+  // Credential selection index
+  const [selectedCredentialIndex, setSelectedCredentialIndex] = useState(0);
+
+  // Delegation status filter
+  const [delegationFilter, setDelegationFilter] = useState<string | null>(null);
+
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
   useEffect(() => {
@@ -117,7 +124,7 @@ export default function AccessPanel(): React.ReactNode {
   }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   // Refresh current view based on active tab
-  const refreshCurrentView = (): void => {
+  const refreshCurrentView = useCallback((): void => {
     if (!client) return;
 
     if (activeTab === "manifests") {
@@ -132,9 +139,9 @@ export default function AccessPanel(): React.ReactNode {
     } else if (activeTab === "fraud") {
       fetchFraudScores(effectiveZoneId, client);
     } else if (activeTab === "delegations") {
-      fetchDelegations(client);
+      fetchDelegations(client, delegationFilter);
     }
-  };
+  }, [client, activeTab, manifests, selectedManifestIndex, effectiveZoneId, delegationFilter, fetchManifests, fetchAlerts, fetchCredentials, fetchFraudScores, fetchDelegations]);
 
   // Auto-fetch when tab changes
   useEffect(() => {
@@ -148,6 +155,8 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(Math.min(selectedManifestIndex + 1, manifests.length - 1));
       } else if (activeTab === "alerts") {
         setSelectedAlertIndex(Math.min(selectedAlertIndex + 1, alerts.length - 1));
+      } else if (activeTab === "credentials") {
+        setSelectedCredentialIndex(Math.min(selectedCredentialIndex + 1, credentials.length - 1));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.min(selectedFraudIndex + 1, fraudScores.length - 1));
       } else if (activeTab === "delegations") {
@@ -159,6 +168,8 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(Math.min(selectedManifestIndex + 1, manifests.length - 1));
       } else if (activeTab === "alerts") {
         setSelectedAlertIndex(Math.min(selectedAlertIndex + 1, alerts.length - 1));
+      } else if (activeTab === "credentials") {
+        setSelectedCredentialIndex(Math.min(selectedCredentialIndex + 1, credentials.length - 1));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.min(selectedFraudIndex + 1, fraudScores.length - 1));
       } else if (activeTab === "delegations") {
@@ -170,6 +181,8 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(Math.max(selectedManifestIndex - 1, 0));
       } else if (activeTab === "alerts") {
         setSelectedAlertIndex(Math.max(selectedAlertIndex - 1, 0));
+      } else if (activeTab === "credentials") {
+        setSelectedCredentialIndex(Math.max(selectedCredentialIndex - 1, 0));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
       } else if (activeTab === "delegations") {
@@ -181,6 +194,8 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedManifestIndex(Math.max(selectedManifestIndex - 1, 0));
       } else if (activeTab === "alerts") {
         setSelectedAlertIndex(Math.max(selectedAlertIndex - 1, 0));
+      } else if (activeTab === "credentials") {
+        setSelectedCredentialIndex(Math.max(selectedCredentialIndex - 1, 0));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
       } else if (activeTab === "delegations") {
@@ -221,6 +236,11 @@ export default function AccessPanel(): React.ReactNode {
         const selected = delegations[selectedDelegationIndex];
         if (selected && selected.status === "active") {
           revokeDelegation(selected.delegation_id, client);
+        }
+      } else if (activeTab === "credentials" && overlay === "none" && client) {
+        const selected = credentials[selectedCredentialIndex];
+        if (selected && selected.is_active) {
+          revokeCredential(selected.credential_id, selected.subject_agent_id, client);
         }
       }
     },
@@ -271,6 +291,15 @@ export default function AccessPanel(): React.ReactNode {
         if (selected && !selected.resolved) {
           resolveAlert(selected.alert_id, "tui-operator", effectiveZoneId, client);
         }
+      }
+    },
+    f: () => {
+      if (activeTab === "delegations") {
+        const cycle: (string | null)[] = [null, "active", "revoked", "expired", "completed"];
+        const idx = cycle.indexOf(delegationFilter);
+        const next = cycle[(idx + 1) % cycle.length] ?? null;
+        setDelegationFilter(next);
+        if (client) fetchDelegations(client, next);
       }
     },
   });
@@ -346,12 +375,13 @@ export default function AccessPanel(): React.ReactNode {
   }
 
   // Tab-specific help text
+  const delegationFilterLabel = delegationFilter ? ` [${delegationFilter}]` : "";
   const HELP: Readonly<Record<AccessTab, string>> = {
     manifests: "j/k:navigate  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  Tab:tab  r:refresh  q:quit",
     alerts: "j/k:navigate  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
-    credentials: "Tab:tab  r:refresh  q:quit",
+    credentials: "j/k:navigate  x:revoke  Tab:tab  r:refresh  q:quit",
     fraud: "j/k:navigate  c:compute  Tab:tab  r:refresh  q:quit",
-    delegations: "j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  Tab:tab  r:refresh  q:quit",
+    delegations: `j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  f:filter${delegationFilterLabel}  Tab:tab  r:refresh  q:quit`,
   };
 
   return (

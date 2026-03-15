@@ -93,6 +93,7 @@ export default function SearchPanel(): React.ReactNode {
   const fetchMemories = useSearchStore((s) => s.fetchMemories);
   const fetchPlaybooks = useSearchStore((s) => s.fetchPlaybooks);
   const deletePlaybook = useSearchStore((s) => s.deletePlaybook);
+  const deleteMemory = useSearchStore((s) => s.deleteMemory);
   const setSelectedPlaybookIndex = useSearchStore((s) => s.setSelectedPlaybookIndex);
   const askRlm = useSearchStore((s) => s.askRlm);
   const addRlmContextPath = useSearchStore((s) => s.addRlmContextPath);
@@ -310,10 +311,18 @@ export default function SearchPanel(): React.ReactNode {
             }
           },
           d: () => {
-            if (!client || activeTab !== "playbooks") return;
-            const playbook = playbooks[selectedPlaybookIndex];
-            if (playbook) {
-              deletePlaybook(playbook.playbook_id, client);
+            if (!client) return;
+            if (activeTab === "playbooks") {
+              const playbook = playbooks[selectedPlaybookIndex];
+              if (playbook) {
+                deletePlaybook(playbook.playbook_id, client);
+              }
+            } else if (activeTab === "memories") {
+              const memory = memories[selectedMemoryIndex];
+              if (memory) {
+                const memId = String((memory as Record<string, unknown>).memory_id ?? "");
+                if (memId) deleteMemory(memId, client);
+              }
             }
           },
           a: () => {
@@ -416,7 +425,7 @@ export default function SearchPanel(): React.ReactNode {
           {inputMode
             ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
             : activeTab === "memories"
-              ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  Esc:close  r:refresh  q:quit"
+              ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  d:delete  Esc:close  r:refresh  q:quit"
               : activeTab === "ask"
                 ? "/:ask  a:clear context  Tab:switch tab  r:refresh  q:quit"
                 : activeTab === "columns"

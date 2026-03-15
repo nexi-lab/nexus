@@ -10,6 +10,8 @@ interface AgentStatusViewProps {
   readonly spec: AgentSpec | null;
   readonly identity: AgentIdentity | null;
   readonly loading: boolean;
+  readonly trustScore?: number | null;
+  readonly reputation?: unknown | null;
 }
 
 const PHASE_BADGES: Readonly<Record<AgentPhase, string>> = {
@@ -42,6 +44,8 @@ export function AgentStatusView({
   spec,
   identity,
   loading,
+  trustScore,
+  reputation,
 }: AgentStatusViewProps): React.ReactNode {
   if (loading) {
     return (
@@ -159,6 +163,30 @@ export function AgentStatusView({
               <text>{`Expires: ${formatTimestamp(identity.expires_at)}`}</text>
             </box>
           )}
+        </>
+      )}
+
+      {/* Trust Score */}
+      {trustScore != null && (
+        <>
+          <box height={1} width="100%" marginTop={1}>
+            <text>--- Trust ---</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{`Trust score: ${trustScore.toFixed(2)} ${renderUsageBar(trustScore * 100, 20)}`}</text>
+          </box>
+        </>
+      )}
+
+      {/* Reputation */}
+      {reputation != null && (
+        <>
+          <box height={1} width="100%" marginTop={1}>
+            <text>--- Reputation ---</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{`${JSON.stringify(reputation, null, 2)}`}</text>
+          </box>
         </>
       )}
     </scrollbox>

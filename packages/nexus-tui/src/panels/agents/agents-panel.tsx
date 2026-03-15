@@ -46,6 +46,8 @@ export default function AgentsPanel(): React.ReactNode {
   const agentSpec = useAgentsStore((s) => s.agentSpec);
   const agentIdentity = useAgentsStore((s) => s.agentIdentity);
   const statusLoading = useAgentsStore((s) => s.statusLoading);
+  const trustScore = useAgentsStore((s) => s.trustScore);
+  const reputation = useAgentsStore((s) => s.reputation);
   const delegations = useAgentsStore((s) => s.delegations);
   const delegationsLoading = useAgentsStore((s) => s.delegationsLoading);
   const selectedDelegationIndex = useAgentsStore((s) => s.selectedDelegationIndex);
@@ -64,6 +66,8 @@ export default function AgentsPanel(): React.ReactNode {
   const fetchAgentStatus = useAgentsStore((s) => s.fetchAgentStatus);
   const fetchAgentSpec = useAgentsStore((s) => s.fetchAgentSpec);
   const fetchAgentIdentity = useAgentsStore((s) => s.fetchAgentIdentity);
+  const fetchTrustScore = useAgentsStore((s) => s.fetchTrustScore);
+  const fetchAgentReputation = useAgentsStore((s) => s.fetchAgentReputation);
   const fetchDelegations = useAgentsStore((s) => s.fetchDelegations);
   const fetchInbox = useAgentsStore((s) => s.fetchInbox);
   const fetchTrajectories = useAgentsStore((s) => s.fetchTrajectories);
@@ -102,6 +106,8 @@ export default function AgentsPanel(): React.ReactNode {
       fetchAgentStatus(selectedAgentId, client);
       fetchAgentSpec(selectedAgentId, client);
       fetchAgentIdentity(selectedAgentId, client);
+      fetchTrustScore(selectedAgentId, client);
+      fetchAgentReputation(selectedAgentId, client);
     } else if (activeTab === "delegations") {
       fetchDelegations(client);
     } else if (activeTab === "inbox" && selectedAgentId) {
@@ -273,6 +279,8 @@ export default function AgentsPanel(): React.ReactNode {
                 spec={agentSpec}
                 identity={agentIdentity}
                 loading={statusLoading}
+                trustScore={trustScore}
+                reputation={reputation}
               />
             )}
             {activeTab === "delegations" && (

@@ -276,7 +276,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           SUFFIX="${{ matrix.suffix }}"
-          echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:stable${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
 
       - name: Build image (local load for smoke tests)
         uses: docker/build-push-action@v6

@@ -106,48 +106,6 @@ def _bundled_compose_file() -> Path | None:
     return None
 
 
-def _query_latest_stable_tag() -> str | None:
-    """Query GHCR for the latest stable (semver) tag.
-
-    Returns the tag string (e.g. '0.9.2') or None if the query fails.
-    This is a best-effort network call — callers must handle None.
-    """
-    import urllib.request
-
-    # GHCR token endpoint (public, no auth needed for public images)
-    token_url = "https://ghcr.io/token?scope=repository:nexi-lab/nexus:pull"
-    tags_url = "https://ghcr.io/v2/nexi-lab/nexus/tags/list"
-
-    try:
-        # Get anonymous token
-        with urllib.request.urlopen(token_url, timeout=5) as resp:
-            import json
-
-            token_data = json.loads(resp.read())
-            token = token_data.get("token", "")
-
-        # List tags
-        req = urllib.request.Request(tags_url)
-        req.add_header("Authorization", f"Bearer {token}")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            tags_data = json.loads(resp.read())
-            tags: list[str] = tags_data.get("tags", [])
-
-        # Filter to semver-like tags (X.Y.Z), exclude edge/latest/sha-*
-        import re
-
-        semver_re = re.compile(r"^\d+\.\d+\.\d+$")
-        semver_tags = [t for t in tags if semver_re.match(t)]
-        if not semver_tags:
-            return None
-
-        # Sort by semver and return latest
-        semver_tags.sort(key=lambda t: tuple(int(x) for x in t.split(".")))
-        return semver_tags[-1]
-    except Exception:
-        return None
-
-
 def _resolve_image_ref(
     channel: str,
     accelerator: str,
@@ -160,28 +118,18 @@ def _resolve_image_ref(
       1. Explicit digest → ghcr.io/nexi-lab/nexus@sha256:...
       2. Explicit tag → ghcr.io/nexi-lab/nexus:<tag>
       3. Channel resolution:
-         - ``stable``: query GHCR for latest semver tag, fall back to CLI version
-         - ``edge``: use ``edge`` mutable tag
+         - ``stable``: use mutable ``stable`` tag (updated on every release)
+         - ``edge``: use mutable ``edge`` tag (updated on every develop push)
     """
     registry = DEFAULT_IMAGE_REGISTRY
 
     if image_digest:
         return f"{registry}@{image_digest}"
 
-    if image_tag:
-        tag = image_tag
-    elif channel == "edge":
-        tag = "edge"
-    else:
-        # Stable channel: try remote resolution first, fall back to CLI version
-        remote_tag = _query_latest_stable_tag()
-        if remote_tag:
-            tag = remote_tag
-        else:
-            import nexus as _nexus_mod
-
-            tag = getattr(_nexus_mod, "__version__", "latest")
-            logger.debug("GHCR query failed, falling back to CLI version: %s", tag)
+    # Both channels use mutable tags managed by CI:
+    #   stable → pushed by release.yml on every git tag (v*)
+    #   edge   → pushed by docker-publish.yml on every develop push
+    tag = image_tag or channel
 
     if accelerator == "cuda" and not image_digest:
         tag = f"{tag}-cuda"

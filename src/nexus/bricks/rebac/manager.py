@@ -93,6 +93,7 @@ if TYPE_CHECKING:
 
     from nexus.bricks.rebac.cache.leopard import LeopardIndex
     from nexus.bricks.rebac.cache.tiger import TigerCache, TigerCacheUpdater
+    from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ class ReBACManager:
         read_engine: "Engine | None" = None,
         is_postgresql: bool = False,
         version_store: MetastoreVersionStore | None = None,
+        namespace_store: "MetastoreNamespaceStore | None" = None,
     ):
         """Initialize ReBAC manager.
 
@@ -148,11 +150,13 @@ class ReBACManager:
                         Defaults to ``engine`` when not provided.
             is_postgresql: Whether the database is PostgreSQL (config-time flag).
             version_store: MetastoreVersionStore for zone revision tracking (Issue #191).
+            namespace_store: MetastoreNamespaceStore for namespace config (Issue #183).
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
         self._is_postgresql = is_postgresql
         self._version_store = version_store
+        self._namespace_store = namespace_store
         self.cache_ttl_seconds = cache_ttl_seconds
         self.max_depth = max_depth
         self._last_cleanup_time: datetime | None = None
@@ -2641,6 +2645,28 @@ class ReBACManager:
             DEFAULT_TRAJECTORY_NAMESPACE,
         )
 
+        all_defaults = [
+            DEFAULT_FILE_NAMESPACE,
+            DEFAULT_GROUP_NAMESPACE,
+            DEFAULT_MEMORY_NAMESPACE,
+            DEFAULT_PLAYBOOK_NAMESPACE,
+            DEFAULT_TRAJECTORY_NAMESPACE,
+            DEFAULT_SKILL_NAMESPACE,
+        ]
+
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            try:
+                for ns_config in all_defaults:
+                    self._namespace_store.create_or_update_default(ns_config)
+                return
+            except Exception as e:
+                logger.warning(
+                    f"Failed to register default namespaces via metastore: {type(e).__name__}: {e}"
+                )
+                logger.debug(traceback.format_exc())
+                return
+
         try:
             cursor = self._create_cursor(conn)
 
@@ -2656,14 +2682,7 @@ class ReBACManager:
                 return  # Table doesn't exist yet
 
             # Check and create/update namespaces
-            for ns_config in [
-                DEFAULT_FILE_NAMESPACE,
-                DEFAULT_GROUP_NAMESPACE,
-                DEFAULT_MEMORY_NAMESPACE,
-                DEFAULT_PLAYBOOK_NAMESPACE,
-                DEFAULT_TRAJECTORY_NAMESPACE,
-                DEFAULT_SKILL_NAMESPACE,
-            ]:
+            for ns_config in all_defaults:
                 cursor.execute(
                     self._fix_sql_placeholders(
                         "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
@@ -2703,7 +2722,6 @@ class ReBACManager:
                         )
             conn.commit()
         except Exception as e:  # fail-safe: tables may not exist yet at startup
-            logger = logging.getLogger(__name__)
             logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
             logger.debug(traceback.format_exc())
 
@@ -2718,6 +2736,12 @@ class ReBACManager:
         Args:
             namespace: Namespace configuration to create
         """
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            self._namespace_store.create_or_update(namespace)
+            self._invalidate_cache_for_namespace(namespace.object_type)
+            return
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
@@ -2779,6 +2803,25 @@ class ReBACManager:
         Returns:
             NamespaceConfig or None if not found
         """
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            data = self._namespace_store.get(object_type)
+            if data is None:
+                return None
+            created_at = data.get("created_at", "")
+            updated_at = data.get("updated_at", "")
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at) if created_at else datetime.now(UTC)
+            if isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at) if updated_at else datetime.now(UTC)
+            return NamespaceConfig(
+                namespace_id=data["namespace_id"],
+                object_type=data["object_type"],
+                config=data["config"],
+                created_at=created_at,
+                updated_at=updated_at,
+            )
+
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
 
@@ -2823,6 +2866,9 @@ class ReBACManager:
             List of namespace dicts with keys: namespace_id, object_type,
             config (parsed JSON), created_at, updated_at.
         """
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            return self._namespace_store.list_all()
 
         with self._connection(readonly=True) as conn:
             cursor = self._create_cursor(conn)
@@ -2854,6 +2900,15 @@ class ReBACManager:
         Returns:
             True if namespace was deleted, False if not found.
         """
+        # Prefer metastore-backed namespace store (Issue #183)
+        if self._namespace_store is not None:
+            deleted = self._namespace_store.delete(object_type)
+            if deleted:
+                cache = getattr(self, "_cache", None)
+                if cache is not None:
+                    cache.clear()
+            return deleted
+
         conn = self._get_connection()
         try:
             cursor = self._create_cursor(conn)

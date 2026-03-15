@@ -181,10 +181,18 @@ services:
   # Zoekt — Fast Code Search
   # ============================================================================
   zoekt:
-    image: sourcegraph/zoekt-webserver:latest
+    # Build from Go source for native multi-arch support (amd64 + arm64).
+    # sourcegraph/zoekt-webserver only publishes amd64 images, which forces
+    # slow QEMU emulation on Apple Silicon. Building from source produces
+    # a native binary on any platform.
+    build:
+      context: ./dockerfiles
+      dockerfile: Dockerfile.zoekt
+    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:latest}
     restart: unless-stopped
     profiles:
       - search
+    command: ["-index", "/index", "-listen", ":6070"]
     environment:
       ZOEKT_INDEX_DIR: /index
       ZOEKT_DATA_DIR: /data

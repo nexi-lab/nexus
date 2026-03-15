@@ -213,13 +213,13 @@ class TestUpdateNamespaceConfig:
         assert data["removed_grants"] == ["/old-secret"]
         assert data["added_grants"] == ["/new-public"]
         assert data["readonly_paths"] == ["/new-readonly"]
-        _mock_service.update_namespace_config.assert_called_once_with(
-            delegation_id="del-001",
-            scope_prefix="/new-data",
-            remove_grants=["/old-secret"],
-            add_grants=["/new-public"],
-            readonly_paths=["/new-readonly"],
-        )
+        _mock_service.update_namespace_config.assert_called_once()
+        call_args = _mock_service.update_namespace_config.call_args
+        assert call_args.args == ("del-001",) or call_args.kwargs.get("delegation_id") == "del-001"
+        assert call_args.kwargs["scope_prefix"] == "/new-data"
+        assert call_args.kwargs["remove_grants"] == ["/old-secret"]
+        assert call_args.kwargs["add_grants"] == ["/new-public"]
+        assert call_args.kwargs["readonly_paths"] == ["/new-readonly"]
 
     def test_404_nonexistent_delegation(self) -> None:
         _mock_service.get_delegation_by_id.return_value = None

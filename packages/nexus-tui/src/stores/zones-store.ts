@@ -247,6 +247,10 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
         {},
       );
       await get().fetchBricks(client);
+      // Clamp selectedIndex and clear stale detail after brick removal
+      const { bricks, selectedIndex } = get();
+      const clamped = Math.min(selectedIndex, Math.max(0, bricks.length - 1));
+      set({ selectedIndex: clamped, brickDetail: null });
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Failed to unregister brick",

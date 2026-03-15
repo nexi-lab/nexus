@@ -119,7 +119,7 @@ export function BrickDetail({ brick, loading }: BrickDetailProps): React.ReactNo
       ) : (
         brick.transitions.map((t, i) => (
           <box key={i} height={1} width="100%">
-            <text>{`  ${t.from_state} → ${t.to_state}  (${t.event})`}</text>
+            <text>{`  ${formatEpoch(t.timestamp)}  ${t.from_state} → ${t.to_state}  (${t.event})`}</text>
           </box>
         ))
       )}

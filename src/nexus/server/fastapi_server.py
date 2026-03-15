@@ -623,7 +623,7 @@ def _register_routes(app: FastAPI) -> None:
     from fastapi.responses import HTMLResponse
 
     @app.get("/dashboard/tasks", response_class=HTMLResponse, include_in_schema=False)
-    async def task_manager_dashboard():
+    async def task_manager_dashboard() -> HTMLResponse:
         html_path = Path(__file__).parent / "static" / "task_manager.html"
         return HTMLResponse(html_path.read_text())
 

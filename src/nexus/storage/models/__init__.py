@@ -76,7 +76,7 @@ from nexus.storage.models.identity import AgentKeyModel as AgentKeyModel
 from nexus.storage.models.infrastructure import MigrationHistoryModel as MigrationHistoryModel
 from nexus.storage.models.infrastructure import SandboxMetadataModel as SandboxMetadataModel
 from nexus.storage.models.infrastructure import SubscriptionModel as SubscriptionModel
-from nexus.storage.models.infrastructure import UserSessionModel as UserSessionModel
+from nexus.storage.models.infrastructure import SystemSettingsModel as SystemSettingsModel
 
 # Domain: Memory and Knowledge Graph
 from nexus.storage.models.memory import EntityMentionModel as EntityMentionModel

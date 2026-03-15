@@ -620,10 +620,17 @@ class TestNamespaceE2E:
 
     def test_namespace_manager_with_postgres(self, pg_engine):
         """NamespaceManager works with PostgreSQL-backed ReBAC."""
+        from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
         from nexus.bricks.rebac.manager import EnhancedReBACManager
         from nexus.bricks.rebac.namespace_manager import NamespaceManager
+        from tests.helpers.dict_metastore import DictMetastore
 
-        rebac = EnhancedReBACManager(engine=pg_engine, cache_ttl_seconds=5, max_depth=10)
+        rebac = EnhancedReBACManager(
+            engine=pg_engine,
+            cache_ttl_seconds=5,
+            max_depth=10,
+            version_store=MetastoreVersionStore(DictMetastore()),
+        )
         tuple_ids: list[str] = []
 
         try:

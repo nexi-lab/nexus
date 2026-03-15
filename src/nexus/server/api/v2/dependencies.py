@@ -54,6 +54,16 @@ async def get_nexus_fs(request: Request) -> VFSCoreProtocol:
     return cast(VFSCoreProtocol, request.app.state.nexus_fs)
 
 
+async def get_workspace_registry(
+    nexus_fs: Any = Depends(get_nexus_fs),
+) -> Any:
+    """Get WorkspaceRegistry instance from NexusFS."""
+    registry = getattr(nexus_fs, "_workspace_registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="WorkspaceRegistry not initialized")
+    return registry
+
+
 async def get_record_store(request: Request) -> Any:
     """Get RecordStoreABC instance from app state (Issue #2200).
 

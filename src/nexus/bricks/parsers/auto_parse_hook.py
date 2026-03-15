@@ -3,12 +3,17 @@
 Issue #625: Lives in parsers/ (service-layer, not kernel).
 """
 
+from __future__ import annotations
+
 import logging
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.vfs_hooks import WriteHookContext
+
+if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +29,19 @@ class AutoParseWriteHook:
       - parse_fn:    (content: bytes, path: str) -> bytes | None
       - metadata:    MetastoreABC (optional, for cache invalidation)
     """
+
+    # ── HotSwappable protocol (Issue #1612) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(write_hooks=(self,))
+
+    async def drain(self) -> None:
+        self.shutdown()
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(
         self,

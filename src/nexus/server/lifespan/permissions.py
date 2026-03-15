@@ -99,7 +99,11 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
                 record_store=record_store,
             )
 
-        await cache_brick.start()
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("cache_brick", cache_brick)
+        else:
+            await cache_brick.start()
         app.state.cache_brick = cache_brick
         logger.info("CacheBrick initialized with %s backend", cache_brick.backend_name)
 

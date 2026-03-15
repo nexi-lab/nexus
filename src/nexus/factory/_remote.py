@@ -27,41 +27,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# All fields accepted by bind_wired_services() (dict path).
-# Derived from nexus.factory.service_routing.bind_wired_services.
-_WIRED_FIELDS: list[str] = [
-    # Services
-    "rebac_service",
-    "mount_service",
-    "gateway",
-    "mount_core_service",
-    "sync_service",
-    "sync_job_service",
-    "mount_persist_service",
-    "mcp_service",
-    "oauth_service",
-    "search_service",
-    "share_link_service",
-    "events_service",
-    "workspace_rpc_service",
-    "agent_rpc_service",
-    "user_provisioning_service",
-    "sandbox_rpc_service",
-    "metadata_export_service",
-    "descendant_checker",
-    # Versioning services (Issue #882)
-    "time_travel_service",
-    "operations_service",
-]
-
 
 def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
-    """Wire RemoteServiceProxy instances as all service attributes.
+    """Wire RemoteServiceProxy instances into ServiceRegistry.
 
     Like ``mount -t nfs``: fills VFS service slots with RPC forwarders
     instead of local service implementations.
 
     Called by ``connect(profile="remote")`` after NexusFS construction.
+
+    Issue #1502: bind_wired_services() deleted — sole registration path is
+    now populate_service_registry() → ServiceRegistry.
 
     Args:
         nfs: The NexusFS instance to wire services onto.
@@ -71,11 +47,10 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
 
     proxy = RemoteServiceProxy(call_rpc, service_name="universal")
 
-    # Fill all wired service slots via bind_wired_services (dict path)
-    from nexus.factory.service_routing import bind_wired_services, populate_service_registry
+    # Register all canonical services via ServiceRegistry (sole path)
+    from nexus.factory.service_routing import _CANONICAL_NAMES, populate_service_registry
 
-    wired_dict: dict[str, Any] = dict.fromkeys(_WIRED_FIELDS, proxy)
-    bind_wired_services(nfs, wired_dict)
+    wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
     populate_service_registry(nfs._service_registry, wired_dict, is_remote=True)
 
     # BrickServices field not covered by WiredServices
@@ -83,5 +58,5 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
 
     logger.info(
         "REMOTE profile: wired %d service slots with RPC forwarders (kernel runs naturally)",
-        len(_WIRED_FIELDS) + 1,
+        len(_CANONICAL_NAMES) + 1,
     )

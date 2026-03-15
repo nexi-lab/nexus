@@ -85,7 +85,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Embeddings are now handled by txtai backend (Issue #2663).
         # The old nexus.bricks.search.embeddings module has been deleted.
 
-        await app.state.search_daemon.startup()
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("search_daemon", app.state.search_daemon)
+        else:
+            await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True
 
         # Issue #1520: Set FileReaderProtocol for index refresh

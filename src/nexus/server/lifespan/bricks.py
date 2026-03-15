@@ -45,7 +45,11 @@ async def startup_bricks(_app: "FastAPI", svc: "LifespanServices") -> list[async
     reconciler = svc.brick_reconciler
     if reconciler is not None:
         try:
-            await reconciler.start()
+            coord = svc.service_coordinator
+            if coord is not None:
+                await coord.enlist("brick_reconciler", reconciler)
+            else:
+                await reconciler.start()
         except Exception as exc:
             logger.warning("[RECONCILER] Failed to start: %s", exc)
 

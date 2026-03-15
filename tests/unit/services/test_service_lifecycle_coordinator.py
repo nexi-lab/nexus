@@ -893,3 +893,95 @@ class TestAutoLifecycleQ4BothProtocols:
         assert q4.drained is True
         assert dispatch.read_hook_count == 0
         assert dispatch.observer_count == 0
+
+
+# ---------------------------------------------------------------------------
+# enlist — the ONE entry point for all four quadrants (Issue #1502)
+# ---------------------------------------------------------------------------
+
+
+class TestEnlist:
+    """Tests for ``coord.enlist()`` — the single entry point for all quadrants."""
+
+    @pytest.mark.asyncio
+    async def test_enlist_q1_static(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+    ) -> None:
+        """Q1 service: enlist registers only, no start/activate."""
+        svc = _FakeService()
+        await coordinator.enlist("q1_svc", svc)
+
+        info = registry.service_info("q1_svc")
+        assert info is not None
+        assert info.instance is svc
+
+    @pytest.mark.asyncio
+    async def test_enlist_q3_persistent(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+    ) -> None:
+        """Q3 service: enlist registers + calls start()."""
+        svc = _PersistentFakeService()
+        assert svc.started is False
+
+        await coordinator.enlist("q3_svc", svc)
+
+        assert svc.started is True
+        info = registry.service_info("q3_svc")
+        assert info is not None
+
+    @pytest.mark.asyncio
+    async def test_enlist_q2_hot_swappable(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+    ) -> None:
+        """Q2 service: enlist registers + captures hooks + activates."""
+        svc = _HotSwappableService()
+        assert svc.activated is False
+
+        await coordinator.enlist("q2_svc", svc)
+
+        assert svc.activated is True
+        info = registry.service_info("q2_svc")
+        assert info is not None
+        assert coordinator.get_hook_spec("q2_svc") is not None
+
+    @pytest.mark.asyncio
+    async def test_enlist_q4_both(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+    ) -> None:
+        """Q4 service: enlist registers + start + hooks + activate."""
+        svc = _BothProtocolsService()
+        assert svc.started is False
+        assert svc.activated is False
+
+        await coordinator.enlist("q4_svc", svc)
+
+        assert svc.started is True
+        assert svc.activated is True
+        info = registry.service_info("q4_svc")
+        assert info is not None
+
+    @pytest.mark.asyncio
+    async def test_enlist_with_depends_on(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+        blm: BrickLifecycleManager,
+    ) -> None:
+        """enlist passes depends_on to BLM for dependency ordering."""
+        dep = _FakeService()
+        await coordinator.enlist("dep", dep)
+
+        svc = _PersistentFakeService()
+        await coordinator.enlist("child", svc, depends_on=("dep",))
+
+        spec = blm.get_spec("child")
+        assert spec is not None
+        assert "dep" in spec.depends_on

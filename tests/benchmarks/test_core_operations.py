@@ -25,9 +25,9 @@ class TestFileOperationBenchmarks:
         content = sample_files["tiny"]
         counter = [0]
 
-        def write_file():
+        async def write_file():
             counter[0] += 1
-            nx.sys_write(f"/bench_tiny_{counter[0]}.txt", content)
+            await nx.sys_write(f"/bench_tiny_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
@@ -38,9 +38,9 @@ class TestFileOperationBenchmarks:
         content = sample_files["small"]
         counter = [0]
 
-        def write_file():
+        async def write_file():
             counter[0] += 1
-            nx.sys_write(f"/bench_small_{counter[0]}.txt", content)
+            await nx.sys_write(f"/bench_small_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
@@ -50,9 +50,9 @@ class TestFileOperationBenchmarks:
         content = sample_files["medium"]
         counter = [0]
 
-        def write_file():
+        async def write_file():
             counter[0] += 1
-            nx.sys_write(f"/bench_medium_{counter[0]}.txt", content)
+            await nx.sys_write(f"/bench_medium_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
@@ -62,9 +62,9 @@ class TestFileOperationBenchmarks:
         content = sample_files["large"]
         counter = [0]
 
-        def write_file():
+        async def write_file():
             counter[0] += 1
-            nx.sys_write(f"/bench_large_{counter[0]}.txt", content)
+            await nx.sys_write(f"/bench_large_{counter[0]}.txt", content)
 
         benchmark(write_file)
 
@@ -72,8 +72,8 @@ class TestFileOperationBenchmarks:
         """Benchmark reading a tiny file (13 bytes)."""
         nx = populated_nexus
 
-        def read_file():
-            return nx.sys_read("/test_tiny.bin")
+        async def read_file():
+            return await nx.sys_read("/test_tiny.bin")
 
         result = benchmark(read_file)
         assert len(result) == 13
@@ -83,8 +83,8 @@ class TestFileOperationBenchmarks:
         """Benchmark reading a small file (1 KB)."""
         nx = populated_nexus
 
-        def read_file():
-            return nx.sys_read("/test_small.bin")
+        async def read_file():
+            return await nx.sys_read("/test_small.bin")
 
         result = benchmark(read_file)
         assert len(result) == 1024
@@ -93,8 +93,8 @@ class TestFileOperationBenchmarks:
         """Benchmark reading a medium file (64 KB)."""
         nx = populated_nexus
 
-        def read_file():
-            return nx.sys_read("/test_medium.bin")
+        async def read_file():
+            return await nx.sys_read("/test_medium.bin")
 
         result = benchmark(read_file)
         assert len(result) == 64 * 1024
@@ -103,22 +103,23 @@ class TestFileOperationBenchmarks:
         """Benchmark reading a large file (1 MB)."""
         nx = populated_nexus
 
-        def read_file():
-            return nx.sys_read("/test_large.bin")
+        async def read_file():
+            return await nx.sys_read("/test_large.bin")
 
         result = benchmark(read_file)
         assert len(result) == 1024 * 1024
 
     @pytest.mark.benchmark_ci
-    def test_read_cached_file(self, benchmark, populated_nexus):
+    @pytest.mark.asyncio
+    async def test_read_cached_file(self, benchmark, populated_nexus):
         """Benchmark reading a file that's already in cache."""
         nx = populated_nexus
         # Pre-warm cache
-        nx.sys_read("/test_small.bin")
-        nx.sys_read("/test_small.bin")
+        await nx.sys_read("/test_small.bin")
+        await nx.sys_read("/test_small.bin")
 
-        def read_file():
-            return nx.sys_read("/test_small.bin")
+        async def read_file():
+            return await nx.sys_read("/test_small.bin")
 
         result = benchmark(read_file)
         assert len(result) == 1024
@@ -128,8 +129,8 @@ class TestFileOperationBenchmarks:
         """Benchmark file existence check."""
         nx = populated_nexus
 
-        def check_exists():
-            return nx.sys_access("/test_small.bin")
+        async def check_exists():
+            return await nx.sys_access("/test_small.bin")
 
         result = benchmark(check_exists)
         assert result is True
@@ -138,8 +139,8 @@ class TestFileOperationBenchmarks:
         """Benchmark existence check for nonexistent file."""
         nx = populated_nexus
 
-        def check_exists():
-            return nx.sys_access("/nonexistent_file.txt")
+        async def check_exists():
+            return await nx.sys_access("/nonexistent_file.txt")
 
         result = benchmark(check_exists)
         assert result is False
@@ -150,11 +151,11 @@ class TestFileOperationBenchmarks:
         content = sample_files["small"]
         counter = [0]
 
-        def delete_file():
+        async def delete_file():
             counter[0] += 1
             path = f"/delete_bench_{counter[0]}.txt"
-            nx.sys_write(path, content)
-            nx.sys_unlink(path)
+            await nx.sys_write(path, content)
+            await nx.sys_unlink(path)
 
         benchmark(delete_file)
 
@@ -172,8 +173,8 @@ class TestGlobBenchmarks:
         """Benchmark listing a directory with ~10 items."""
         nx = populated_nexus
 
-        def list_dir():
-            return nx.sys_readdir("/dir_0")
+        async def list_dir():
+            return await nx.sys_readdir("/dir_0")
 
         result = benchmark(list_dir)
         assert len(result) > 0
@@ -183,8 +184,8 @@ class TestGlobBenchmarks:
         """Benchmark listing a directory with ~300 items."""
         nx = populated_nexus
 
-        def list_dir():
-            return nx.sys_readdir("/many_files")
+        async def list_dir():
+            return await nx.sys_readdir("/many_files")
 
         result = benchmark(list_dir)
         assert len(result) >= 100
@@ -193,8 +194,8 @@ class TestGlobBenchmarks:
         """Benchmark recursive directory listing."""
         nx = populated_nexus
 
-        def list_recursive():
-            return nx.sys_readdir("/", recursive=True)
+        async def list_recursive():
+            return await nx.sys_readdir("/", recursive=True)
 
         result = benchmark(list_recursive)
         assert len(result) > 100
@@ -234,26 +235,28 @@ class TestGlobBenchmarks:
         assert len(result) > 0
 
     @pytest.mark.benchmark_ci
-    def test_list_1k_files(self, benchmark, benchmark_nexus):
+    @pytest.mark.asyncio
+    async def test_list_1k_files(self, benchmark, benchmark_nexus):
         """Benchmark listing directory with 1000 files."""
         nx = benchmark_nexus
         for i in range(1000):
-            nx.sys_write(f"/bench_1k/file_{i:04d}.txt", b"x")
+            await nx.sys_write(f"/bench_1k/file_{i:04d}.txt", b"x")
 
-        def list_dir():
-            return nx.sys_readdir("/bench_1k")
+        async def list_dir():
+            return await nx.sys_readdir("/bench_1k")
 
         result = benchmark(list_dir)
         assert len(result) == 1000
 
-    def test_list_10k_files(self, benchmark, benchmark_nexus):
+    @pytest.mark.asyncio
+    async def test_list_10k_files(self, benchmark, benchmark_nexus):
         """Benchmark listing directory with 10K files."""
         nx = benchmark_nexus
         for i in range(10_000):
-            nx.sys_write(f"/bench_10k/file_{i:05d}.txt", b"x")
+            await nx.sys_write(f"/bench_10k/file_{i:05d}.txt", b"x")
 
-        def list_dir():
-            return nx.sys_readdir("/bench_10k")
+        async def list_dir():
+            return await nx.sys_readdir("/bench_10k")
 
         result = benchmark(list_dir)
         assert len(result) == 10_000
@@ -469,9 +472,9 @@ class TestPermissionBenchmarks:
                 object=("file", "/test_permission.txt"),
             )
 
-        def check_perm():
+        async def check_perm():
             # This will go through permission checking
-            return nx.sys_access("/test_permission.txt")
+            return await nx.sys_access("/test_permission.txt")
 
         benchmark(check_perm)
 

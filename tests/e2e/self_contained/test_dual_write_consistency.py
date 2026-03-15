@@ -117,11 +117,12 @@ class TestWriteConsistency:
             assert fp.size_bytes == len(b"hello world")
             assert fp.current_version == 1
 
-    def test_field_consistency_after_write(
+    @pytest.mark.asyncio
+    async def test_field_consistency_after_write(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         """All overlapping fields should match between Metastore and RecordStore."""
-        nx.sys_write("/consistent.txt", b"data")
+        await nx.sys_write("/consistent.txt", b"data")
 
         meta = nx.metadata.get("/consistent.txt")
         assert meta is not None
@@ -142,13 +143,14 @@ class TestWriteConsistency:
             assert fp.size_bytes == meta.size
             assert fp.current_version == meta.version
 
-    def test_update_version_consistency(
+    @pytest.mark.asyncio
+    async def test_update_version_consistency(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
         """After update, version numbers should match across stores."""
-        nx.sys_write("/ver.txt", b"v1")
-        nx.sys_write("/ver.txt", b"v2")
-        nx.sys_write("/ver.txt", b"v3")
+        await nx.sys_write("/ver.txt", b"v1")
+        await nx.sys_write("/ver.txt", b"v2")
+        await nx.sys_write("/ver.txt", b"v3")
 
         meta = nx.metadata.get("/ver.txt")
         assert meta is not None
@@ -186,19 +188,21 @@ class TestWriteConsistency:
 class TestDeleteConsistency:
     """After delete(), Metastore entry is gone, RecordStore is soft-deleted."""
 
-    def test_delete_removes_from_metastore(
+    @pytest.mark.asyncio
+    async def test_delete_removes_from_metastore(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.sys_write("/del.txt", b"content")
-        nx.sys_unlink("/del.txt")
+        await nx.sys_write("/del.txt", b"content")
+        await nx.sys_unlink("/del.txt")
 
         assert nx.metadata.get("/del.txt") is None
 
-    def test_delete_soft_deletes_in_record_store(
+    @pytest.mark.asyncio
+    async def test_delete_soft_deletes_in_record_store(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.sys_write("/del.txt", b"content")
-        nx.sys_unlink("/del.txt")
+        await nx.sys_write("/del.txt", b"content")
+        await nx.sys_unlink("/del.txt")
 
         with record_store.session_factory() as session:
             fp = (
@@ -210,11 +214,12 @@ class TestDeleteConsistency:
             )
             assert fp.deleted_at is not None
 
-    def test_delete_audit_trail_exists(
+    @pytest.mark.asyncio
+    async def test_delete_audit_trail_exists(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.sys_write("/del.txt", b"content")
-        nx.sys_unlink("/del.txt")
+        await nx.sys_write("/del.txt", b"content")
+        await nx.sys_unlink("/del.txt")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -232,20 +237,24 @@ class TestDeleteConsistency:
 class TestRenameConsistency:
     """After rename(), Metastore reflects new path, RecordStore has audit trail."""
 
-    def test_rename_updates_metastore_path(
+    @pytest.mark.asyncio
+    async def test_rename_updates_metastore_path(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
-        nx.sys_write("/old.txt", b"content")
-        nx.sys_rename("/old.txt", "/new.txt")
+        await nx.sys_write("/old.txt", b"content")
+        await nx.sys_rename("/old.txt", "/new.txt")
 
         assert nx.metadata.get("/old.txt") is None
         meta = nx.metadata.get("/new.txt")
         assert meta is not None
         assert meta.path == "/new.txt"
 
-    def test_rename_audit_trail(self, nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
-        nx.sys_write("/old.txt", b"content")
-        nx.sys_rename("/old.txt", "/new.txt")
+    @pytest.mark.asyncio
+    async def test_rename_audit_trail(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        await nx.sys_write("/old.txt", b"content")
+        await nx.sys_rename("/old.txt", "/new.txt")
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)

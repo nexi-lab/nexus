@@ -158,7 +158,8 @@ class TestResolveContent:
 
 
 class TestConnectLocalWorkspace:
-    def test_reapplies_local_env_for_operations(
+    @pytest.mark.asyncio
+    async def test_reapplies_local_env_for_operations(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: pytest.TempPathFactory,
@@ -197,7 +198,7 @@ class TestConnectLocalWorkspace:
         assert os.environ["NEXUS_DATABASE_URL"] == ambient_database_url
         assert os.environ["NEXUS_URL"] == "http://127.0.0.1:65535"
 
-        assert filesystem.sys_read("/workspace/demo.txt") == b"ok"
+        assert await filesystem.sys_read("/workspace/demo.txt") == b"ok"
         filesystem.close()
 
         assert seen["sys_read"] == {

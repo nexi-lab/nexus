@@ -64,7 +64,7 @@ FILES = {
 }
 
 
-def test_profile(profile: str) -> dict[str, str]:
+async def test_profile(profile: str) -> dict[str, str]:
     """Run all operations for a single profile. Returns {op: "OK"|"FAIL"}."""
     data_dir = f"{BASE_DIR}/{profile}"
     os.makedirs(data_dir, exist_ok=True)
@@ -86,7 +86,7 @@ def test_profile(profile: str) -> dict[str, str]:
     write_ok = True
     for path, content in FILES.items():
         try:
-            nx.sys_write(path, content)
+            await nx.sys_write(path, content)
             print(f"    OK   {path} ({len(content)} bytes)")
         except Exception as e:
             print(f"    FAIL {path}: {e}")
@@ -98,7 +98,7 @@ def test_profile(profile: str) -> dict[str, str]:
     read_ok = True
     for path, expected in FILES.items():
         try:
-            got = nx.sys_read(path)
+            got = await nx.sys_read(path)
             if got == expected:
                 print(f"    OK   {path} — content matches ({len(got)} bytes)")
             else:
@@ -112,7 +112,7 @@ def test_profile(profile: str) -> dict[str, str]:
     # --- STAT ---
     print("  STAT")
     try:
-        info = nx.sys_stat("/project/src/main.py")
+        info = await nx.sys_stat("/project/src/main.py")
         size_v = info.get("size", None) if isinstance(info, dict) else getattr(info, "size", None)
         expected_size = len(FILES["/project/src/main.py"])
         if size_v is not None and int(size_v) == expected_size:
@@ -131,7 +131,7 @@ def test_profile(profile: str) -> dict[str, str]:
     # --- LIST ---
     print("  LIST")
     try:
-        entries = nx.sys_readdir("/project/src")
+        entries = await nx.sys_readdir("/project/src")
         names = sorted(entries) if isinstance(entries, list) else entries
         # Verify main.py and utils.py are listed
         found = {str(e) for e in (names if isinstance(names, list) else [])}

@@ -222,7 +222,8 @@ def test_http_concurrent_requests(
 # =============================================================================
 
 
-def test_in_process_thread_exhaustion(
+@pytest.mark.asyncio
+async def test_in_process_thread_exhaustion(
     num_requests: int = 20,
     timeout: float = 60.0,
 ) -> TestResults:
@@ -251,7 +252,7 @@ def test_in_process_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(50):
             path = f"/test_file_{i}.txt"
-            nx.sys_write(path, f"Test content {i}".encode())
+            await nx.sys_write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -284,12 +285,12 @@ def test_in_process_thread_exhaustion(
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 
-        def make_list_call(request_id: int) -> RequestResult:
+        async def make_list_call(request_id: int) -> RequestResult:
             thread_name = threading.current_thread().name
             start = time.time()
             try:
                 # This is the slow path - list with permission checks
-                _result = nx.sys_readdir("/", recursive=False, context=context)
+                _result = await nx.sys_readdir("/", recursive=False, context=context)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,
@@ -367,7 +368,7 @@ async def test_async_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(100):
             path = f"/test_file_{i}.txt"
-            nx.sys_write(path, f"Test content {i}".encode())
+            await nx.sys_write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -405,12 +406,12 @@ async def test_async_thread_exhaustion(
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 
-        def sync_list_operation(request_id: int) -> RequestResult:
+        async def sync_list_operation(request_id: int) -> RequestResult:
             """Sync operation that will be run in thread pool."""
             thread_name = threading.current_thread().name
             start = time.time()
             try:
-                _result = nx.sys_readdir("/", recursive=False, context=context)
+                _result = await nx.sys_readdir("/", recursive=False, context=context)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,

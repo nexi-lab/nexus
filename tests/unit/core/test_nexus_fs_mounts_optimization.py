@@ -44,7 +44,8 @@ def nx_with_hierarchy(temp_dir: Path):
 class TestMountSyncOptimization:
     """Test mount sync optimizations for performance."""
 
-    def test_no_parent_tuple_recreation_for_existing_files(
+    @pytest.mark.asyncio
+    async def test_no_parent_tuple_recreation_for_existing_files(
         self, nx_with_hierarchy: NexusFS, temp_dir: Path
     ):
         """Test that sync doesn't recreate parent tuples for existing files."""
@@ -53,7 +54,7 @@ class TestMountSyncOptimization:
         test_file.write_text("content")
 
         # Write file to NexusFS (creates parent tuples)
-        nx_with_hierarchy.sys_write("/test.txt", b"content")
+        await nx_with_hierarchy.sys_write("/test.txt", b"content")
 
         # Create a mock backend with the file
         mock_backend = Mock()
@@ -120,7 +121,8 @@ class TestMountSyncOptimization:
                 # For NEW files, ensure_parent_tuples SHOULD be called
                 # This is correct behavior - new files need their parent tuples
 
-    def test_sync_performance_with_many_existing_files(
+    @pytest.mark.asyncio
+    async def test_sync_performance_with_many_existing_files(
         self, nx_with_hierarchy: NexusFS, temp_dir: Path
     ):
         """Test that sync is fast with many existing files (no redundant tuple checks)."""
@@ -133,7 +135,7 @@ class TestMountSyncOptimization:
             file.write_text(f"content{i}")
             files.append(f"file{i}.txt")
             # Pre-create in NexusFS metadata
-            nx_with_hierarchy.sys_write(f"/file{i}.txt", f"content{i}".encode())
+            await nx_with_hierarchy.sys_write(f"/file{i}.txt", f"content{i}".encode())
 
         # Create mock backend
         mock_backend = Mock()

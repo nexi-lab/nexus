@@ -221,13 +221,14 @@ class TestResolveFileSize:
         assert result == _VIRTUAL_VIEW_DEFAULT_SIZE
 
     @patch("nexus.fuse.ops.metadata_handler.stat_size_fallback", return_value=0)
-    def test_virtual_view_no_full_read_triggered(
+    @pytest.mark.asyncio
+    async def test_virtual_view_no_full_read_triggered(
         self,
         _mock_stat: MagicMock,
         mock_nexus_fs: MagicMock,
         mock_cache: MagicMock,
     ) -> None:
-        """nexus_fs.sys_read() must NEVER be called during _resolve_file_size."""
+        await """nexus_fs.sys_read() must NEVER be called during _resolve_file_size."""
         mock_cache.get_parsed_size.return_value = None
         mock_cache.get_content.return_value = None
         handler = self._make_handler(mock_nexus_fs, mock_cache)

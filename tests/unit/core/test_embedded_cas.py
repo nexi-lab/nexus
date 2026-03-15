@@ -72,27 +72,31 @@ def embedded_cas(temp_dir: Path, local_backend: CASLocalBackend) -> Generator[Ne
         time.sleep(0.05)  # 50ms extra delay on Windows
 
 
-def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_cas_write_and_read(embedded_cas: NexusFS) -> None:
     """Test writing and reading with CAS."""
     content = _cas_content(b"Hello, CAS World!")
 
-    embedded_cas.sys_write("/test/file.txt", content)
+    await embedded_cas.sys_write("/test/file.txt", content)
 
-    result = embedded_cas.sys_read("/test/file.txt")
+    result = await embedded_cas.sys_read("/test/file.txt")
     assert result == content
 
 
-def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
+@pytest.mark.asyncio
+async def test_cas_automatic_deduplication(
+    embedded_cas: NexusFS, local_backend: CASLocalBackend
+) -> None:
     """Test that identical content is automatically deduplicated."""
     content = _cas_content(b"Duplicate content")
 
     # Write same content to two different paths
-    embedded_cas.sys_write("/file1.txt", content)
-    embedded_cas.sys_write("/file2.txt", content)
+    await embedded_cas.sys_write("/file1.txt", content)
+    await embedded_cas.sys_write("/file2.txt", content)
 
     # Check both files exist
-    assert embedded_cas.sys_access("/file1.txt")
-    assert embedded_cas.sys_access("/file2.txt")
+    assert await embedded_cas.sys_access("/file1.txt")
+    assert await embedded_cas.sys_access("/file2.txt")
 
     # Get metadata - should have same content hash (etag)
     meta1 = embedded_cas.metadata.get("/file1.txt")
@@ -107,15 +111,16 @@ def test_cas_automatic_deduplication(embedded_cas: NexusFS, local_backend: CASLo
     assert local_backend.get_ref_count(meta1.etag) == 2
 
 
-def test_cas_delete_with_ref_counting(
+@pytest.mark.asyncio
+async def test_cas_delete_with_ref_counting(
     embedded_cas: NexusFS, local_backend: CASLocalBackend
 ) -> None:
     """Test that delete properly handles reference counting."""
     content = _cas_content(b"Shared content")
 
     # Write same content to two paths
-    embedded_cas.sys_write("/shared1.txt", content)
-    embedded_cas.sys_write("/shared2.txt", content)
+    await embedded_cas.sys_write("/shared1.txt", content)
+    await embedded_cas.sys_write("/shared2.txt", content)
 
     meta1 = embedded_cas.metadata.get("/shared1.txt")
     content_hash = meta1.etag
@@ -124,26 +129,29 @@ def test_cas_delete_with_ref_counting(
     assert local_backend.get_ref_count(content_hash) == 2
 
     # Delete first file
-    embedded_cas.sys_unlink("/shared1.txt")
+    await embedded_cas.sys_unlink("/shared1.txt")
 
     # First file should not exist
-    assert not embedded_cas.sys_access("/shared1.txt")
+    assert not await embedded_cas.sys_access("/shared1.txt")
 
     # Second file should still exist
-    assert embedded_cas.sys_access("/shared2.txt")
+    assert await embedded_cas.sys_access("/shared2.txt")
 
     # Content should still exist in CAS with ref count 1
     assert local_backend.content_exists(content_hash)
     assert local_backend.get_ref_count(content_hash) == 1
 
     # Delete second file
-    embedded_cas.sys_unlink("/shared2.txt")
+    await embedded_cas.sys_unlink("/shared2.txt")
 
     # Content should now be deleted from CAS
     assert not local_backend.content_exists(content_hash)
 
 
-def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
+@pytest.mark.asyncio
+async def test_cas_update_file_content(
+    embedded_cas: NexusFS, local_backend: CASLocalBackend
+) -> None:
     """Test updating file content with version tracking (v0.3.5).
 
     With version tracking enabled, old content is preserved in CAS
@@ -154,7 +162,7 @@ def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalB
     content2 = _cas_content(b"Updated content")
 
     # Write initial content
-    embedded_cas.sys_write("/test.txt", content1)
+    await embedded_cas.sys_write("/test.txt", content1)
     meta1 = embedded_cas.metadata.get("/test.txt")
     hash1 = meta1.etag
 
@@ -162,7 +170,7 @@ def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalB
     assert local_backend.get_ref_count(hash1) == 1
 
     # Update with new content
-    embedded_cas.sys_write("/test.txt", content2)
+    await embedded_cas.sys_write("/test.txt", content2)
     meta2 = embedded_cas.metadata.get("/test.txt")
     hash2 = meta2.etag
 
@@ -178,17 +186,20 @@ def test_cas_update_file_content(embedded_cas: NexusFS, local_backend: CASLocalB
     assert local_backend.get_ref_count(hash2) == 1
 
 
-def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
+@pytest.mark.asyncio
+async def test_cas_storage_efficiency(
+    embedded_cas: NexusFS, local_backend: CASLocalBackend
+) -> None:
     """Test storage efficiency with multiple files."""
     content = _cas_content(b"x" * 1000)
 
     # Write same content 10 times
     for i in range(10):
-        embedded_cas.sys_write(f"/file{i}.txt", content)
+        await embedded_cas.sys_write(f"/file{i}.txt", content)
 
     # All files should exist
     for i in range(10):
-        assert embedded_cas.sys_access(f"/file{i}.txt")
+        assert await embedded_cas.sys_access(f"/file{i}.txt")
 
     # Get content hash
     meta = embedded_cas.metadata.get("/file0.txt")
@@ -201,10 +212,11 @@ def test_cas_storage_efficiency(embedded_cas: NexusFS, local_backend: CASLocalBa
     assert local_backend.get_content_size(content_hash) == len(content)
 
 
-def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
     """Test that different content produces different hashes."""
-    embedded_cas.sys_write("/file1.txt", _cas_content(b"Content A"))
-    embedded_cas.sys_write("/file2.txt", _cas_content(b"Content B"))
+    await embedded_cas.sys_write("/file1.txt", _cas_content(b"Content A"))
+    await embedded_cas.sys_write("/file2.txt", _cas_content(b"Content B"))
 
     meta1 = embedded_cas.metadata.get("/file1.txt")
     meta2 = embedded_cas.metadata.get("/file2.txt")
@@ -213,53 +225,58 @@ def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
     assert meta1.etag != meta2.etag
 
 
-def test_cas_list_files(embedded_cas: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_cas_list_files(embedded_cas: NexusFS) -> None:
     """Test listing files with CAS."""
-    embedded_cas.sys_write("/dir1/file1.txt", _cas_content(b"Content 1"))
-    embedded_cas.sys_write("/dir1/file2.txt", _cas_content(b"Content 2"))
-    embedded_cas.sys_write("/dir2/file3.txt", _cas_content(b"Content 3"))
+    await embedded_cas.sys_write("/dir1/file1.txt", _cas_content(b"Content 1"))
+    await embedded_cas.sys_write("/dir1/file2.txt", _cas_content(b"Content 2"))
+    await embedded_cas.sys_write("/dir2/file3.txt", _cas_content(b"Content 3"))
 
-    all_files = [f for f in embedded_cas.sys_readdir() if f not in _SYSTEM_PATHS]
+    all_files = [f for f in await embedded_cas.sys_readdir() if f not in _SYSTEM_PATHS]
     assert len(all_files) == 3
     assert "/dir1/file1.txt" in all_files
     assert "/dir1/file2.txt" in all_files
     assert "/dir2/file3.txt" in all_files
 
 
-def test_cas_binary_content(embedded_cas: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_cas_binary_content(embedded_cas: NexusFS) -> None:
     """Test CAS with binary content."""
     content = _cas_content(bytes(range(256)))
 
-    embedded_cas.sys_write("/binary.bin", content)
+    await embedded_cas.sys_write("/binary.bin", content)
 
-    result = embedded_cas.sys_read("/binary.bin")
+    result = await embedded_cas.sys_read("/binary.bin")
     assert result == content
 
 
-def test_cas_empty_content(embedded_cas: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_cas_empty_content(embedded_cas: NexusFS) -> None:
     """Test CAS with empty content (goes through inline path)."""
-    embedded_cas.sys_write("/empty.txt", b"")
+    await embedded_cas.sys_write("/empty.txt", b"")
 
-    result = embedded_cas.sys_read("/empty.txt")
+    result = await embedded_cas.sys_read("/empty.txt")
     assert result == b""
 
 
-def test_cas_large_content(embedded_cas: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_cas_large_content(embedded_cas: NexusFS) -> None:
     """Test CAS with large content."""
     content = b"x" * (1024 * 1024)  # 1MB
 
-    embedded_cas.sys_write("/large.bin", content)
+    await embedded_cas.sys_write("/large.bin", content)
 
-    result = embedded_cas.sys_read("/large.bin")
+    result = await embedded_cas.sys_read("/large.bin")
     assert len(result) == len(content)
     assert result == content
 
 
-def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     """Test that metadata is stored correctly with CAS."""
     content = _cas_content(b"Test metadata")
 
-    embedded_cas.sys_write("/test.txt", content)
+    await embedded_cas.sys_write("/test.txt", content)
 
     meta = embedded_cas.metadata.get("/test.txt")
     assert meta is not None
@@ -270,7 +287,8 @@ def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
     assert len(meta.etag) == 64  # SHA-256 hash length
 
 
-def test_cas_concurrent_deduplication(
+@pytest.mark.asyncio
+async def test_cas_concurrent_deduplication(
     embedded_cas: NexusFS, local_backend: CASLocalBackend
 ) -> None:
     """Test deduplication with multiple writes of same content."""
@@ -279,11 +297,11 @@ def test_cas_concurrent_deduplication(
     # Write same content multiple times rapidly
     paths = [f"/concurrent{i}.txt" for i in range(20)]
     for path in paths:
-        embedded_cas.sys_write(path, content)
+        await embedded_cas.sys_write(path, content)
 
     # All files should exist
     for path in paths:
-        assert embedded_cas.sys_access(path)
+        assert await embedded_cas.sys_access(path)
 
     # Get content hash
     meta = embedded_cas.metadata.get(paths[0])
@@ -294,21 +312,22 @@ def test_cas_concurrent_deduplication(
 
     # Delete all files
     for path in paths:
-        embedded_cas.sys_unlink(path)
+        await embedded_cas.sys_unlink(path)
 
     # Content should be completely deleted
     assert not local_backend.content_exists(content_hash)
 
 
-def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:
+@pytest.mark.asyncio
+async def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:
     """Test that updating content preserves created_at timestamp."""
-    embedded_cas.sys_write("/test.txt", _cas_content(b"Original"))
+    await embedded_cas.sys_write("/test.txt", _cas_content(b"Original"))
 
     meta1 = embedded_cas.metadata.get("/test.txt")
     created_at = meta1.created_at
 
     # Wait a tiny bit and update
-    embedded_cas.sys_write("/test.txt", _cas_content(b"Updated"))
+    await embedded_cas.sys_write("/test.txt", _cas_content(b"Updated"))
 
     meta2 = embedded_cas.metadata.get("/test.txt")
 

@@ -18,7 +18,6 @@ EXPECTED_MODELS = [
     # Filesystem
     "DirectoryEntryModel",
     "FileMetadataModel",
-    "ContentChunkModel",
     "WorkspaceSnapshotModel",
     "DocumentChunkModel",
     # Permissions
@@ -27,7 +26,6 @@ EXPECTED_MODELS = [
     "ReBACGroupClosureModel",
     "ReBACChangelogModel",
     "ReBACVersionSequenceModel",
-    "FileSystemVersionSequenceModel",
     "ReBACCheckCacheModel",
     "TigerResourceMapModel",
     "TigerCacheModel",

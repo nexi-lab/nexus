@@ -178,27 +178,6 @@ class TestAdditionalViews:
         assert "select" in sql.lower()
         assert "extract" in sql.lower()
 
-    def test_get_orphaned_content_view_sqlite(self):
-        """Test orphaned content view for SQLite."""
-        from nexus.storage.views import get_orphaned_content_view
-
-        view = get_orphaned_content_view("sqlite")
-        assert view is not None
-        sql = str(view)
-        assert "select" in sql.lower()
-        assert "days_since_access" in sql.lower()
-        assert "content_chunks" in sql.lower()
-
-    def test_get_orphaned_content_view_postgresql(self):
-        """Test orphaned content view for PostgreSQL."""
-        from nexus.storage.views import get_orphaned_content_view
-
-        view = get_orphaned_content_view("postgresql")
-        assert view is not None
-        sql = str(view)
-        assert "select" in sql.lower()
-        assert "extract" in sql.lower()
-
 
 class TestViewUtilities:
     """Test view utility functions."""

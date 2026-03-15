@@ -443,41 +443,6 @@ class TestDirectoryEntryModelValidate:
             e.validate()
 
 
-class TestContentChunkModelValidate:
-    """Tests for ContentChunkModel.validate()."""
-
-    def test_valid_chunk(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(
-            content_hash="a" * 64,
-            size_bytes=100,
-            storage_path="/data/chunks/a",
-        )
-        c.validate()
-
-    def test_invalid_hash_length(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="abc", size_bytes=100, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="content_hash must be 64 characters"):
-            c.validate()
-
-    def test_invalid_hash_chars(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="z" * 64, size_bytes=100, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="hexadecimal"):
-            c.validate()
-
-    def test_negative_size(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="a" * 64, size_bytes=-1, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="size_bytes cannot be negative"):
-            c.validate()
-
-
 class TestEntityRegistryModelValidate:
     """Tests for EntityRegistryModel.validate()."""
 

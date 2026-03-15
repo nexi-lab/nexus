@@ -13,7 +13,6 @@ _LAZY_STORAGE: dict[str, tuple[str, str]] = {
     "FileContentCache": ("nexus.storage.file_cache", "FileContentCache"),
     "FilePathModel": ("nexus.storage.models", "FilePathModel"),
     "FileMetadataModel": ("nexus.storage.models", "FileMetadataModel"),
-    "ContentChunkModel": ("nexus.storage.models", "ContentChunkModel"),
     "UserModel": ("nexus.storage.models", "UserModel"),
     "UserOAuthAccountModel": ("nexus.storage.models", "UserOAuthAccountModel"),
     "ZoneModel": ("nexus.storage.models", "ZoneModel"),
@@ -35,7 +34,6 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "FilePathModel",
     "FileMetadataModel",
-    "ContentChunkModel",
     "UserModel",
     "UserOAuthAccountModel",
     "ZoneModel",

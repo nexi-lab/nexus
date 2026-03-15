@@ -57,7 +57,7 @@ EXPECTED_MODELS = [
     "ShareLinkAccessLogModel",
     # Infrastructure
     "SandboxMetadataModel",
-    "MountConfigModel",
+    "SystemSettingsModel",
     "SubscriptionModel",
     "MigrationHistoryModel",
     # Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)

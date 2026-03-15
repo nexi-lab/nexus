@@ -263,10 +263,12 @@ def _boot_system_services(
     # --- Mount Manager ---
     mount_manager: Any = None
     try:
+        from nexus.bricks.mount.metastore_mount_store import MetastoreMountStore
         from nexus.bricks.mount.mount_manager import MountManager
 
-        mount_manager = MountManager(ctx.record_store)
-        logger.debug("[BOOT:SYSTEM] MountManager created")
+        _mount_store = MetastoreMountStore(ctx.metadata_store)
+        mount_manager = MountManager(_mount_store)
+        logger.debug("[BOOT:SYSTEM] MountManager created (metastore-backed)")
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] MountManager unavailable: %s", exc)
 

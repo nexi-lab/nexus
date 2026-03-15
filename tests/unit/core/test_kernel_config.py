@@ -326,6 +326,7 @@ class TestSystemServices:
             "zone_lifecycle",
             "process_table",
             "scheduler_service",
+            "acp_service",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

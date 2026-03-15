@@ -34,7 +34,6 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
         "_rebac_manager": None,
         "_event_bus": None,
         "_coordination_client": None,
-        "_llm_provider": None,
         "workflow_engine": None,
         "_snapshot_service": None,
         "_namespace_manager": None,
@@ -97,7 +96,6 @@ class TestFromAppExtraction:
             _rebac_manager="rebac_mgr",
             _event_bus="event_bus",
             _coordination_client="coord_client",
-            _llm_provider="llm_prov",
             workflow_engine="wf_engine",
             _snapshot_service="snap_svc",
             _namespace_manager="ns_mgr",
@@ -114,7 +112,6 @@ class TestFromAppExtraction:
         assert svc.rebac_manager == "rebac_mgr"
         assert svc.event_bus == "event_bus"
         assert svc.coordination_client == "coord_client"
-        assert svc.llm_provider == "llm_prov"
         assert svc.workflow_engine == "wf_engine"
         assert svc.snapshot_service == "snap_svc"
         assert svc.namespace_manager == "ns_mgr"

@@ -73,7 +73,6 @@ class LifespanServices:
     rebac_manager: Any = None
     event_bus: Any = None
     coordination_client: Any = None
-    llm_provider: Any = None
     workflow_engine: Any = None
     snapshot_service: Any = None
     namespace_manager: Any = None
@@ -130,7 +129,6 @@ class LifespanServices:
             rebac_manager=(getattr(nx, "_rebac_manager", None) if nx else None),
             event_bus=getattr(nx, "_event_bus", None) if nx else None,
             coordination_client=(getattr(nx, "_coordination_client", None) if nx else None),
-            llm_provider=(getattr(nx, "_llm_provider", None) if nx else None),
             workflow_engine=(getattr(nx, "workflow_engine", None) if nx else None),
             snapshot_service=(getattr(nx, "_snapshot_service", None) if nx else None),
             namespace_manager=(getattr(nx, "_namespace_manager", None) if nx else None),

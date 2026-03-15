@@ -312,9 +312,6 @@ class BrickServices:
     # --- Version Brick (Issue #2034: moved from KernelServices) ---
     version_service: Any = None  # VersionService (file history, rollback, diff)
 
-    # --- Memory Brick (Issue #2177) ---
-    memory_permission: Any = None  # MemoryPermissionProtocol adapter
-
     # --- Search Brick (Issue #810) ---
     zoekt_pipe_consumer: Any = None  # DT_PIPE consumer for Zoekt index notifications
 
@@ -356,7 +353,6 @@ class WiredServices:
     sync_job_service: Any = None
     mount_persist_service: Any = None
     mcp_service: Any = None
-    llm_service: Any = None
     oauth_service: Any = None
     search_service: Any = None
     share_link_service: Any = None
@@ -372,7 +368,6 @@ class WiredServices:
     sandbox_rpc_service: Any = None
     metadata_export_service: Any = None
     descendant_checker: Any = None
-    memory_provider: Any = None
 
 
 # ---------------------------------------------------------------------------

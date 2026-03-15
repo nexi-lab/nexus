@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import Depends, HTTPException, Request
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
 from nexus.contracts.protocols.write_back import WriteBackProtocol
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.server.dependencies import get_operation_context, require_auth
@@ -74,41 +73,6 @@ async def get_auth_result(
     if auth_result is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     return auth_result
-
-
-async def get_memory_api(
-    nexus_fs: Any = Depends(get_nexus_fs),
-) -> Any:
-    """Get Memory API instance from NexusFS."""
-    from nexus.bricks.memory.memory_provider import get_memory_api as _get_mem
-
-    return _get_mem(nexus_fs)
-
-
-async def get_db_session(
-    nexus_fs: Any = Depends(get_nexus_fs),
-) -> Any:
-    """Get database session from NexusFS."""
-    from nexus.bricks.memory.memory_provider import get_memory_api as _get_mem
-
-    return _get_mem(nexus_fs).session
-
-
-async def get_backend(
-    nexus_fs: Any = Depends(get_nexus_fs),
-) -> Any:
-    """Get storage backend from NexusFS."""
-    from nexus.bricks.memory.memory_provider import get_memory_api as _get_mem
-
-    return _get_mem(nexus_fs).backend
-
-
-async def get_llm_provider(
-    nexus_fs: Any = Depends(get_nexus_fs),
-) -> LLMProviderProtocol | None:
-    """Get LLM provider from NexusFS (may be None)."""
-    provider = nexus_fs.llm_provider
-    return cast(LLMProviderProtocol, provider) if provider is not None else None
 
 
 # =============================================================================

@@ -83,13 +83,6 @@ EXCLUDED_METHODS: set[str] = {
     "lock",
     "extend_lock",
     "unlock",
-    "llm_read",
-    "llm_read_detailed",
-    "llm_read_stream",
-    "create_llm_reader",
-    "ace_retrieve_trajectory",
-    "ace_get_trajectory_stats",
-    "ace_export_trajectories",
 }
 
 # Modules to scan for @rpc_expose methods.  We inspect each class in each
@@ -104,14 +97,12 @@ MODULES_TO_SCAN: list[str] = [
     "nexus.bricks.mount.mount_service",
     "nexus.services.oauth.oauth_service",
     "nexus.bricks.memory.memory_service",
-    "nexus.services.ace_rpc_service",
     "nexus.system_services.workspace.workspace_rpc_service",
     "nexus.system_services.lifecycle.user_provisioning",
     "nexus.system_services.agents.agent_service",
     # System services
     "nexus.system_services.lifecycle.events_service",
     # Brick services with @rpc_expose
-    "nexus.bricks.llm.llm_service",
     "nexus.bricks.mcp.mcp_service",
     "nexus.bricks.rebac.rebac_service",
 ]

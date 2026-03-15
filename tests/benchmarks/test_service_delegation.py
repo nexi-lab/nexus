@@ -55,9 +55,6 @@ def mock_nexus_fs():
     fs.skill_service.get_prompt_context = MagicMock(
         return_value=MagicMock(to_dict=MagicMock(return_value={}))
     )
-    mock_llm_svc = MagicMock()
-    mock_llm_svc.create_llm_reader = MagicMock()
-    fs._service_registry.register_service("llm", mock_llm_svc)
     mock_oauth_svc = MagicMock()
     mock_oauth_svc.oauth_list_providers = AsyncMock(return_value=[])
     fs._service_registry.register_service("oauth", mock_oauth_svc)
@@ -247,10 +244,6 @@ class TestSyncDelegationOverhead:
             "auto",
             context,
         )
-
-    def test_create_llm_reader_delegation(self, benchmark, mock_nexus_fs):
-        """Benchmark create_llm_reader sync delegation via llm_service."""
-        benchmark(mock_nexus_fs.service("llm").create_llm_reader)
 
 
 # =============================================================================

@@ -3,7 +3,7 @@
 Sends messages+tools to LLM, dispatches tool calls, repeats until
 no more tool calls or turn limit reached.
 
-Uses LLMProviderProtocol.complete_async() for tool-call turns.
+Uses Any.complete_async() for tool-call turns.
 Emits AgentEvent callbacks for streaming to the API layer.
 
 Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §7.
@@ -31,7 +31,6 @@ from nexus.system_services.agent_runtime.types import (
 # it real Message objects — NOT pre-serialised dicts.
 
 if TYPE_CHECKING:
-    from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
     from nexus.contracts.types import OperationContext
     from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
     from nexus.system_services.agent_runtime.types import (
@@ -47,7 +46,7 @@ _READ_ONLY_TOOLS = frozenset({"read_file", "grep", "glob", "list_dir"})
 
 
 async def agent_loop(
-    llm: LLMProviderProtocol,
+    llm: Any,
     dispatcher: ToolDispatcher,
     context: AgentContext,
     config: AgentProcessConfig,
@@ -161,7 +160,7 @@ async def agent_loop(
 
 
 def _trim_to_budget(
-    llm: LLMProviderProtocol,
+    llm: Any,
     system_msg: Message,
     messages: list[Message],
     max_tokens: int,

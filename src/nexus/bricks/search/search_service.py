@@ -394,12 +394,6 @@ class SearchService:
                 cursor=cursor,
                 context=context,
             )
-        # Phase 2 Integration (v0.4.0): Intercept memory paths
-        from nexus.bricks.memory.router import MemoryViewRouter
-
-        if path and MemoryViewRouter.is_memory_path(path):
-            return self._list_memory_path(path, details)
-
         # Check if path routes to a dynamic API-backed connector
         if path and path != "/" and self.router:
             try:
@@ -1386,59 +1380,6 @@ class SearchService:
             has_more=final_has_more,
             total_count=None,
         )
-
-    def _list_memory_path(
-        self, path: str, details: bool = False
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
-        """List memories via virtual path (Phase 2 Integration v0.4.0)."""
-        if self._gw_session_factory is None:
-            logger.warning("session_factory not provided, cannot list memory paths")
-            return []
-
-        from nexus.bricks.memory.router import MemoryViewRouter
-        from nexus.bricks.rebac.entity_registry import EntityRegistry
-
-        parts = [p for p in path.split("/") if p]
-        session = self._gw_session_factory()
-        try:
-            registry = EntityRegistry(session)
-            router = MemoryViewRouter(session, registry)
-            ids = registry.extract_ids_from_path_parts(parts)
-            memories = router.query_memories(
-                zone_id=ids.get("zone_id"),
-                user_id=ids.get("user_id"),
-                agent_id=ids.get("agent_id"),
-            )
-
-            if details:
-                detail_results: builtins.list[dict[str, Any]] = []
-                for mem in memories:
-                    paths = router.get_virtual_paths(mem)
-                    mem_path = paths[0] if paths else f"/objs/memory/{mem.memory_id}"
-                    size = 0
-                    if self._gw_backend:
-                        try:
-                            size = len(self._gw_backend.read_content(mem.content_hash))
-                        except Exception:
-                            logger.debug("Failed to read memory content size: %s", mem.memory_id)
-                    detail_results.append(
-                        {
-                            "path": mem_path,
-                            "size": size,
-                            "modified_at": mem.created_at,
-                            "etag": mem.content_hash,
-                        }
-                    )
-                return detail_results
-            else:
-                path_results: builtins.list[str] = []
-                for mem in memories:
-                    paths = router.get_virtual_paths(mem)
-                    if paths:
-                        path_results.append(paths[0])
-                return path_results
-        finally:
-            session.close()
 
     def _get_cross_zone_shared_paths(
         self,
@@ -2501,7 +2442,6 @@ class SearchService:
         limit: int = 10,
         filters: dict[str, Any] | None = None,  # noqa: ARG002
         search_mode: str = "semantic",
-        adaptive_k: bool = False,
         context: "OperationContext | None" = None,
     ) -> builtins.list[dict[str, Any]]:
         """Search documents using natural language queries.
@@ -2512,7 +2452,6 @@ class SearchService:
             limit: Maximum number of results
             filters: Optional filters (currently unused)
             search_mode: "keyword", "semantic", or "hybrid"
-            adaptive_k: If True, dynamically adjust limit (Issue #1021)
 
         Raises:
             ValueError: If semantic search is not initialized
@@ -2526,7 +2465,6 @@ class SearchService:
                 path=path,
                 limit=limit,
                 search_mode=search_mode,
-                adaptive_k=adaptive_k,
             )
             return [_result_to_dict(r) for r in results]
 
@@ -2546,7 +2484,6 @@ class SearchService:
                 limit=fetch_limit,
                 path_filter=db_path,
                 zone_id=zone_id,
-                adaptive_k=adaptive_k,
             )
             hits = [
                 {

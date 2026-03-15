@@ -56,7 +56,6 @@ class TestNexusFSServiceComposition:
         assert fs.service("rebac") is not None, "ReBACService not instantiated"
         assert fs.service("mount") is not None, "MountService not instantiated"
         assert fs.service("mcp") is not None, "MCPService not instantiated"
-        assert fs.service("llm") is not None, "LLMService not instantiated"
         assert fs.service("oauth") is not None, "OAuthService not instantiated"
         assert fs.service("search") is not None, "SearchService not instantiated"
         assert fs.service("share_link") is not None, "ShareLinkService not instantiated"
@@ -67,7 +66,6 @@ class TestNexusFSServiceComposition:
         assert fs.service("rebac") is not None
         assert fs.service("mount") is not None
         assert fs.service("mcp") is not None
-        assert fs.service("llm") is not None
         assert fs.service("oauth") is not None
         assert fs.service("search") is not None
         assert fs.service("share_link") is not None
@@ -90,7 +88,6 @@ class TestNexusFSServiceComposition:
 
         # Services that take filesystem should have it
         assert fs.service("mcp")._filesystem == fs
-        assert fs.service("llm").nexus_fs == fs
         # SearchService should have metadata and permission_enforcer
         assert fs.service("search").metadata == fs.metadata
         assert fs.service("search")._permission_enforcer == fs._permission_enforcer

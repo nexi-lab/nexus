@@ -859,7 +859,6 @@ class SemanticSearchParams:
     limit: int = 10
     filters: dict[str, Any] | None = None
     search_mode: str = "semantic"
-    adaptive_k: bool = False
 
 
 @dataclass

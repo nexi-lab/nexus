@@ -152,12 +152,6 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                 _dispatch.register_intercept_rename(_SearchRenameHook())
                 logger.info("Search auto-index hooks registered (write/delete/rename)")
 
-        # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
-        with contextlib.suppress(ImportError):
-            from nexus.bricks.llm.llm_context_builder import ContextBuilder
-
-            app.state.search_daemon._adaptive_k_provider = ContextBuilder()
-
         # Issue #2036: Register with BrickLifecycleManager
         _blm = svc.brick_lifecycle_manager
         if _blm is not None:

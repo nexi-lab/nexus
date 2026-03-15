@@ -115,12 +115,19 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     WriteHookContext,
                 )
 
+                # Capture the event loop at registration time — VFS hooks fire from
+                # synchronous threads (asyncio.to_thread), so get_running_loop()
+                # would raise RuntimeError. call_soon_threadsafe is thread-safe.
+                _loop = _asyncio.get_running_loop()
+
                 def _notify(path: str, change_type: str) -> None:
                     try:
-                        loop = _asyncio.get_running_loop()
-                        loop.create_task(_daemon_ref.notify_file_change(path, change_type))
+                        _loop.call_soon_threadsafe(
+                            _loop.create_task,
+                            _daemon_ref.notify_file_change(path, change_type),
+                        )
                     except RuntimeError:
-                        pass
+                        pass  # Loop closed during shutdown
 
                 class _SearchWriteHook:
                     @property

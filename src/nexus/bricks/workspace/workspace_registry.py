@@ -132,7 +132,8 @@ class WorkspaceRegistry:
         """Compute expiration datetime from a timedelta TTL."""
         if ttl is None:
             return None
-        return datetime.now(UTC) + ttl
+        result: datetime = datetime.now(UTC) + ttl
+        return result
 
     def _auto_grant_ownership(self, path: str, user_id: str | None, zone_id: str | None) -> None:
         """Auto-grant direct_owner permission via ReBAC. Non-fatal."""

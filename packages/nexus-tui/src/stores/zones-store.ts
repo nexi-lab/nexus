@@ -22,6 +22,21 @@ export interface BrickStatusResponse {
   readonly unmounted_at: number | null;
 }
 
+export interface BrickTransitionItem {
+  readonly timestamp: number;
+  readonly event: string;
+  readonly from_state: string;
+  readonly to_state: string;
+}
+
+export interface BrickDetailResponse extends BrickStatusResponse {
+  readonly enabled: boolean;
+  readonly depends_on: readonly string[];
+  readonly depended_by: readonly string[];
+  readonly retry_count: number;
+  readonly transitions: readonly BrickTransitionItem[];
+}
+
 export interface DriftReportItem {
   readonly brick_name: string;
   readonly spec_state: string;
@@ -90,8 +105,8 @@ export interface ZonesState {
   // Active tab
   readonly activeTab: ZoneTab;
 
-  // Brick detail
-  readonly brickDetail: BrickStatusResponse | null;
+  // Brick detail (extended with spec/dependency info)
+  readonly brickDetail: BrickDetailResponse | null;
   readonly detailLoading: boolean;
 
   // Drift report (global, not per-brick)
@@ -103,6 +118,9 @@ export interface ZonesState {
   readonly fetchBricks: (client: FetchClient) => Promise<void>;
   readonly fetchBrickDetail: (name: string, client: FetchClient) => Promise<void>;
   readonly fetchDrift: (client: FetchClient) => Promise<void>;
+  readonly mountBrick: (name: string, client: FetchClient) => Promise<void>;
+  readonly unmountBrick: (name: string, client: FetchClient) => Promise<void>;
+  readonly unregisterBrick: (name: string, client: FetchClient) => Promise<void>;
   readonly remountBrick: (name: string, client: FetchClient) => Promise<void>;
   readonly resetBrick: (name: string, client: FetchClient) => Promise<void>;
   readonly setSelectedIndex: (index: number) => void;
@@ -158,7 +176,7 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     set({ detailLoading: true, error: null });
 
     try {
-      const detail = await client.get<BrickStatusResponse>(
+      const detail = await client.get<BrickDetailResponse>(
         `/api/v2/bricks/${encodeURIComponent(name)}`,
       );
       set({ brickDetail: detail, detailLoading: false });
@@ -184,6 +202,58 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
         driftReport: null,
         driftLoading: false,
         error: err instanceof Error ? err.message : "Failed to fetch drift report",
+      });
+    }
+  },
+
+  mountBrick: async (name, client) => {
+    set({ error: null });
+
+    try {
+      await client.post<void>(
+        `/api/v2/bricks/${encodeURIComponent(name)}/mount`,
+        {},
+      );
+      await get().fetchBricks(client);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to mount brick",
+      });
+    }
+  },
+
+  unmountBrick: async (name, client) => {
+    set({ error: null });
+
+    try {
+      await client.post<void>(
+        `/api/v2/bricks/${encodeURIComponent(name)}/unmount`,
+        {},
+      );
+      await get().fetchBricks(client);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to unmount brick",
+      });
+    }
+  },
+
+  unregisterBrick: async (name, client) => {
+    set({ error: null });
+
+    try {
+      await client.post<void>(
+        `/api/v2/bricks/${encodeURIComponent(name)}/unregister`,
+        {},
+      );
+      await get().fetchBricks(client);
+      // Clamp selectedIndex and clear stale detail after brick removal
+      const { bricks, selectedIndex } = get();
+      const clamped = Math.min(selectedIndex, Math.max(0, bricks.length - 1));
+      set({ selectedIndex: clamped, brickDetail: null });
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Failed to unregister brick",
       });
     }
   },

@@ -24,6 +24,7 @@ from nexus.contracts.protocols.brick_lifecycle import (
     BrickState,
 )
 from nexus.system_services.lifecycle.brick_lifecycle import (
+    MAX_TRANSITION_HISTORY,
     BrickLifecycleManager,
     CyclicDependencyError,
     InvalidTransitionError,
@@ -936,3 +937,82 @@ class TestShutdown:
         assert status is not None
         assert status.unmounted_at is not None
         assert status.unmounted_at > 0
+
+
+# ---------------------------------------------------------------------------
+# Transition history tests
+# ---------------------------------------------------------------------------
+
+
+class TestTransitionHistory:
+    """Test transition recording and get_transitions()."""
+
+    @pytest.fixture
+    def manager(self) -> BrickLifecycleManager:
+        return BrickLifecycleManager()
+
+    @pytest.mark.asyncio
+    async def test_mount_records_transitions(self, manager: BrickLifecycleManager) -> None:
+        """Mount should record REGISTERED→STARTING and STARTING→ACTIVE transitions."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        await manager.mount("search")
+
+        transitions = manager.get_transitions("search")
+        assert len(transitions) == 2
+        # First: REGISTERED → STARTING (mount event)
+        _, event0, from0, to0 = transitions[0]
+        assert event0 == EVENT_MOUNT
+        assert from0 == "REGISTERED"
+        assert to0 == "STARTING"
+        # Second: STARTING → ACTIVE (started event)
+        _, event1, from1, to1 = transitions[1]
+        assert event1 == EVENT_STARTED
+        assert from1 == "STARTING"
+        assert to1 == "ACTIVE"
+
+    def test_cap_enforcement(self, manager: BrickLifecycleManager) -> None:
+        """More than MAX_TRANSITION_HISTORY transitions should keep only the last N."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+
+        # Force many transitions by alternating states
+        for _ in range(MAX_TRANSITION_HISTORY + 20):
+            manager._force_state("search", BrickState.REGISTERED)
+
+        transitions = manager.get_transitions("search")
+        assert len(transitions) == MAX_TRANSITION_HISTORY
+
+    def test_get_transitions_unknown_raises(self, manager: BrickLifecycleManager) -> None:
+        """get_transitions() should raise KeyError for unknown brick."""
+        with pytest.raises(KeyError, match="not found"):
+            manager.get_transitions("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_transitions_survive_reset(self, manager: BrickLifecycleManager) -> None:
+        """Transitions should NOT be cleared on reset()."""
+        brick = _make_lifecycle_brick("search")
+        brick.start = AsyncMock(side_effect=[RuntimeError("fail"), None])
+        manager.register("search", brick, protocol_name="SearchProtocol")
+
+        await manager.mount("search")  # REGISTERED→STARTING→FAILED
+        transitions_before = manager.get_transitions("search")
+        assert len(transitions_before) > 0
+
+        manager.reset("search")  # FAILED→REGISTERED
+        transitions_after = manager.get_transitions("search")
+        # Should have MORE transitions (the reset itself adds one)
+        assert len(transitions_after) > len(transitions_before)
+
+    def test_force_state_records_transition(self, manager: BrickLifecycleManager) -> None:
+        """_force_state() should record a transition with event='force'."""
+        brick = _make_lifecycle_brick("search")
+        manager.register("search", brick, protocol_name="SearchProtocol")
+        manager._force_state("search", BrickState.ACTIVE)
+
+        transitions = manager.get_transitions("search")
+        assert len(transitions) == 1
+        _, event, from_state, to_state = transitions[0]
+        assert event == "force"
+        assert from_state == "REGISTERED"
+        assert to_state == "ACTIVE"

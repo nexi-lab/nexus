@@ -99,7 +99,8 @@ class TaskManagerService:
 
     def _read_json(self, path: str) -> dict[str, Any]:
         raw = self._fs.sys_read(path)
-        return json.loads(raw)
+        result: dict[str, Any] = json.loads(raw)
+        return result
 
     def _write_json(self, path: str, data: dict[str, Any]) -> None:
         self._fs.sys_write(path, json.dumps(data, default=str))

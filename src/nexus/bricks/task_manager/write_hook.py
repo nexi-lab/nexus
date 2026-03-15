@@ -55,7 +55,7 @@ class TaskWriteHook:
             return
 
         if ctx.is_new_file:
-            event = TaskCreatedEvent(
+            created_event = TaskCreatedEvent(
                 task_id=doc.get("id", ""),
                 mission_id=doc.get("mission_id", ""),
                 instruction=doc.get("instruction", ""),
@@ -67,12 +67,12 @@ class TaskWriteHook:
             )
             logger.info(
                 "[TASK-HOOK] task_created task_id=%s mission_id=%s",
-                event.task_id,
-                event.mission_id,
+                created_event.task_id,
+                created_event.mission_id,
             )
             for handler in self._handlers:
                 try:
-                    handler.on_task_created(event)
+                    handler.on_task_created(created_event)
                 except Exception:
                     logger.warning(
                         "[TASK-HOOK] handler %r failed on task_created",
@@ -80,7 +80,7 @@ class TaskWriteHook:
                         exc_info=True,
                     )
         else:
-            event = TaskUpdatedEvent(
+            updated_event = TaskUpdatedEvent(
                 task_id=doc.get("id", ""),
                 mission_id=doc.get("mission_id", ""),
                 status=doc.get("status", ""),
@@ -92,12 +92,12 @@ class TaskWriteHook:
             )
             logger.info(
                 "[TASK-HOOK] task_updated task_id=%s status=%s",
-                event.task_id,
-                event.status,
+                updated_event.task_id,
+                updated_event.status,
             )
             for handler in self._handlers:
                 try:
-                    handler.on_task_updated(event)
+                    handler.on_task_updated(updated_event)
                 except Exception:
                     logger.warning(
                         "[TASK-HOOK] handler %r failed on task_updated",

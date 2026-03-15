@@ -280,6 +280,7 @@ def serve(
                 "nexus_glob",
                 "nexus_grep",
                 "nexus_semantic_search",
+                "nexus_resolve_context",
                 "nexus_store_memory",
                 "nexus_query_memory",
                 "nexus_list_workflows",
@@ -305,8 +306,25 @@ def serve(
             console.print("[yellow]Press Ctrl+C to stop[/yellow]")
             console.print()
 
+        # Build manifest resolver callable if available (Issue #2984)
+        manifest_resolve_fn = None
+        if nx is not None:
+            _raw_resolver = getattr(nx, "manifest_resolver", None)
+            if _raw_resolver is not None:
+                try:
+                    from nexus.factory.manifest_adapter import build_manifest_resolve_fn
+
+                    manifest_resolve_fn = build_manifest_resolve_fn(_raw_resolver, nx)
+                except Exception:
+                    pass  # Graceful degradation — tool returns "unavailable"
+
         # Create and run MCP server
-        mcp_server = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
+        mcp_server = create_mcp_server(
+            nx=nx,
+            remote_url=remote_url,
+            api_key=api_key,
+            manifest_resolver=manifest_resolve_fn,
+        )
 
         # Add HTTP middleware and routes (for http/sse transports)
         if transport in ["http", "sse"]:

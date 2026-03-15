@@ -1,7 +1,16 @@
 /**
  * Zustand store for upload session management.
  *
- * Tracks active upload sessions with progress tracking and lifecycle actions.
+ * The backend uses the tus.io v1.0.0 protocol which only provides:
+ * - OPTIONS /api/v2/uploads         — Server capabilities
+ * - POST    /api/v2/uploads         — Create upload session
+ * - PATCH   /api/v2/uploads/{id}    — Upload chunk
+ * - HEAD    /api/v2/uploads/{id}    — Get upload offset (for resumption)
+ * - DELETE  /api/v2/uploads/{id}    — Terminate upload
+ *
+ * There is no GET/list endpoint in tus. Sessions are tracked client-side
+ * by recording IDs from POST responses. The TUI surface is for monitoring
+ * and managing sessions the user has created elsewhere.
  */
 
 import { create } from "zustand";
@@ -17,7 +26,6 @@ export interface UploadSession {
   readonly offset: number;
   readonly length: number;
   readonly expires_at: string | null;
-  readonly created_at: string;
 }
 
 // =============================================================================
@@ -25,49 +33,56 @@ export interface UploadSession {
 // =============================================================================
 
 export interface UploadState {
+  /** Locally tracked sessions (added via addSession or manual entry). */
   readonly sessions: readonly UploadSession[];
-  readonly sessionsLoading: boolean;
   readonly selectedSessionIndex: number;
   readonly error: string | null;
 
-  readonly fetchSessions: (client: FetchClient) => Promise<void>;
+  /**
+   * Add a session to track. Since tus has no list endpoint, sessions
+   * must be added manually (e.g., from a POST /api/v2/uploads response
+   * or user input).
+   */
+  readonly addSession: (session: UploadSession) => void;
+  /** Remove a session from tracking (does NOT call DELETE). */
+  readonly removeSession: (sessionId: string) => void;
+  /** Terminate an upload session via DELETE and remove from tracking. */
   readonly terminateSession: (sessionId: string, client: FetchClient) => Promise<void>;
+  /**
+   * Refresh a session's offset via HEAD (tus resumption check).
+   * Parses Upload-Offset and Upload-Length from response headers.
+   */
   readonly refreshSessionStatus: (sessionId: string, client: FetchClient) => Promise<void>;
   readonly setSelectedSessionIndex: (index: number) => void;
 }
 
 export const useUploadStore = create<UploadState>((set, get) => ({
   sessions: [],
-  sessionsLoading: false,
   selectedSessionIndex: 0,
   error: null,
 
-  fetchSessions: async (client) => {
-    set({ sessionsLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly sessions: readonly UploadSession[];
-      }>("/api/v2/uploads");
-      set({
-        sessions: response.sessions ?? [],
-        sessionsLoading: false,
-        selectedSessionIndex: 0,
-      });
-    } catch (err) {
-      set({
-        sessionsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch upload sessions",
-      });
-    }
+  addSession: (session) => {
+    set((state) => {
+      if (state.sessions.some((s) => s.id === session.id)) return state;
+      return { sessions: [...state.sessions, session] };
+    });
+  },
+
+  removeSession: (sessionId) => {
+    set((state) => ({
+      sessions: state.sessions.filter((s) => s.id !== sessionId),
+      selectedSessionIndex: Math.min(
+        state.selectedSessionIndex,
+        Math.max(state.sessions.length - 2, 0),
+      ),
+    }));
   },
 
   terminateSession: async (sessionId, client) => {
     set({ error: null });
     try {
       await client.delete(`/api/v2/uploads/${encodeURIComponent(sessionId)}`);
-      set((state) => ({
-        sessions: state.sessions.filter((s) => s.id !== sessionId),
-      }));
+      get().removeSession(sessionId);
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Failed to terminate upload session",
@@ -78,12 +93,25 @@ export const useUploadStore = create<UploadState>((set, get) => ({
   refreshSessionStatus: async (sessionId, client) => {
     set({ error: null });
     try {
-      const response = await client.get<UploadSession>(
+      // HEAD returns Upload-Offset and Upload-Length headers
+      const response = await client.rawRequest(
+        "HEAD",
         `/api/v2/uploads/${encodeURIComponent(sessionId)}`,
       );
+
+      if (!response.ok) {
+        throw new Error(`HEAD returned ${response.status}`);
+      }
+
+      const offset = parseInt(response.headers.get("Upload-Offset") ?? "0", 10);
+      const length = parseInt(response.headers.get("Upload-Length") ?? "0", 10);
+      const expiresAt = response.headers.get("Upload-Expires") ?? null;
+
       set((state) => ({
         sessions: state.sessions.map((s) =>
-          s.id === sessionId ? response : s,
+          s.id === sessionId
+            ? { ...s, offset, length, expires_at: expiresAt }
+            : s,
         ),
       }));
     } catch (err) {

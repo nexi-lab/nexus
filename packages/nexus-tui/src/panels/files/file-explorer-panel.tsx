@@ -34,8 +34,8 @@ type FilesTab = "explorer" | "shareLinks" | "uploads";
 
 const ALL_TABS: readonly TabDef<FilesTab>[] = [
   { id: "explorer", label: "Explorer", brick: null },
-  { id: "shareLinks", label: "Share Links", brick: null },
-  { id: "uploads", label: "Uploads", brick: null },
+  { id: "shareLinks", label: "Share Links", brick: "share_link" },
+  { id: "uploads", label: "Uploads", brick: "uploads" },
 ];
 
 export default function FileExplorerPanel(): React.ReactNode {
@@ -75,12 +75,11 @@ export default function FileExplorerPanel(): React.ReactNode {
   const fetchLinks = useShareLinkStore((s) => s.fetchLinks);
   const setSelectedLinkIndex = useShareLinkStore((s) => s.setSelectedLinkIndex);
 
-  // Upload store
+  // Upload store (tus has no list endpoint — sessions are tracked locally)
   const uploadSessions = useUploadStore((s) => s.sessions);
-  const uploadsLoading = useUploadStore((s) => s.sessionsLoading);
   const selectedSessionIndex = useUploadStore((s) => s.selectedSessionIndex);
-  const fetchSessions = useUploadStore((s) => s.fetchSessions);
   const setSelectedSessionIndex = useUploadStore((s) => s.setSelectedSessionIndex);
+  const revokeLink = useShareLinkStore((s) => s.revokeLink);
 
   // Get selected file item for metadata display
   const cachedFiles = fileCache.get(currentPath)?.data ?? [];
@@ -118,15 +117,13 @@ export default function FileExplorerPanel(): React.ReactNode {
   const [inputMode, setInputMode] = useState<"none" | "mkdir" | "rename">("none");
   const [inputBuffer, setInputBuffer] = useState("");
 
-  // Fetch share links / uploads when switching to those tabs
+  // Fetch share links when switching to that tab
   useEffect(() => {
     if (!client) return;
     if (activeTab === "shareLinks") {
       fetchLinks(client);
-    } else if (activeTab === "uploads") {
-      fetchSessions(client);
     }
-  }, [activeTab, client, fetchLinks, fetchSessions]);
+  }, [activeTab, client, fetchLinks]);
 
   // Handle unhandled keys for input mode
   const handleUnhandledKey = useCallback(
@@ -276,6 +273,22 @@ export default function FileExplorerPanel(): React.ReactNode {
                 setInputBuffer(selectedItem.name);
               }
             },
+            "r": () => {
+              // Refresh: re-fetch data for the active tab
+              if (!client) return;
+              if (activeTab === "shareLinks") {
+                fetchLinks(client);
+              }
+            },
+            "x": () => {
+              // Revoke share link (shareLinks tab)
+              if (activeTab === "shareLinks" && client) {
+                const link = shareLinks[selectedLinkIndex];
+                if (link && link.status === "active") {
+                  revokeLink(link.link_id, client);
+                }
+              }
+            },
           },
     inputMode !== "none" ? handleUnhandledKey : undefined,
   );
@@ -368,7 +381,7 @@ export default function FileExplorerPanel(): React.ReactNode {
           <UploadsTab
             sessions={uploadSessions}
             selectedIndex={selectedSessionIndex}
-            loading={uploadsLoading}
+            loading={false}
           />
         </box>
       )}
@@ -383,8 +396,8 @@ export default function FileExplorerPanel(): React.ReactNode {
                 ? "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m/a/s:meta  d:delete  N:mkdir  R:rename  q:quit"
                 : "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m:meta  d:delete  N:mkdir  R:rename  q:quit"
               : activeTab === "shareLinks"
-                ? "j/k:navigate  Tab:switch tab  n:create  q:quit"
-                : "j/k:navigate  Tab:switch tab  r:refresh  q:quit"}
+                ? "j/k:navigate  x:revoke  r:refresh  Tab:switch tab  q:quit"
+                : "j/k:navigate  Tab:switch tab  q:quit"}
         </text>
       </box>
 

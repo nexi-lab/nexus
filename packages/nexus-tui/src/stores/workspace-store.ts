@@ -1,8 +1,9 @@
 /**
  * Store for workspace and memory directory management.
  *
- * Backend prerequisite: #2987 (REST API). Until then, store actions
- * will call the expected endpoints and fail gracefully.
+ * Workspaces use REST API at /api/v2/registry/workspaces (#2987, merged).
+ * Memory directories use JSON-RPC via /api/nfs/ (register_workspace with
+ * memory-specific params).
  */
 
 import { create } from "zustand";
@@ -81,7 +82,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const response = await client.get<{
         workspaces: readonly WorkspaceInfo[];
-      }>("/api/v2/workspaces");
+      }>("/api/v2/registry/workspaces");
       set({
         workspaces: response.workspaces ?? [],
         workspacesLoading: false,
@@ -100,7 +101,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
 
     try {
-      await client.post("/api/v2/workspaces", params);
+      await client.post("/api/v2/registry/workspaces", params);
       await get().fetchWorkspaces(client);
     } catch (err) {
       set({
@@ -117,7 +118,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     try {
       await client.delete(
-        `/api/v2/workspaces/${encodeURIComponent(path)}`,
+        `/api/v2/registry/workspaces/${encodeURIComponent(path)}`,
       );
       set((state) => ({
         workspaces: state.workspaces.filter((w) => w.path !== path),
@@ -140,11 +141,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ memoriesLoading: true, error: null });
 
     try {
-      const response = await client.get<{
-        memories: readonly MemoryInfo[];
-      }>("/api/v2/memories");
+      const response = await client.post<{
+        result: { memories: readonly MemoryInfo[] };
+      }>("/api/nfs/list_workspaces", { params: { type: "memory" } });
       set({
-        memories: response.memories ?? [],
+        memories: response.result?.memories ?? [],
         memoriesLoading: false,
         selectedMemoryIndex: 0,
       });
@@ -161,7 +162,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
 
     try {
-      await client.post("/api/v2/memories", params);
+      await client.post("/api/nfs/register_workspace", { params: { ...params, type: "memory" } });
       await get().fetchMemories(client);
     } catch (err) {
       set({
@@ -175,9 +176,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ error: null });
 
     try {
-      await client.delete(
-        `/api/v2/memories/${encodeURIComponent(path)}`,
-      );
+      await client.post("/api/nfs/unregister_workspace", { params: { path } });
       set((state) => ({
         memories: state.memories.filter((m) => m.path !== path),
         selectedMemoryIndex: Math.min(

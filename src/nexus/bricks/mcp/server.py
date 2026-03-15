@@ -1755,24 +1755,7 @@ def main() -> None:
     if not remote_url:
         nx = connect()
 
-    # Build manifest resolver callable if available (Issue #2984)
-    _manifest_resolve_fn = None
-    if nx is not None:
-        _raw_resolver = getattr(nx, "manifest_resolver", None)
-        if _raw_resolver is not None:
-            try:
-                from nexus.factory.manifest_adapter import build_manifest_resolve_fn
-
-                _manifest_resolve_fn = build_manifest_resolve_fn(_raw_resolver, nx)
-            except Exception:
-                pass  # Graceful degradation
-
-    mcp = create_mcp_server(
-        nx=nx,
-        remote_url=remote_url,
-        api_key=api_key,
-        manifest_resolver=_manifest_resolve_fn,
-    )
+    mcp = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
 
     # Add API key middleware for HTTP transports
     # Note: We add it to the underlying Starlette app, not FastMCP's middleware system

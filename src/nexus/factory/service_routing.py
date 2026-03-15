@@ -29,7 +29,6 @@ def bind_wired_services(target: object, wired: "WiredServices | dict[str, Any]")
         "sync_job_service": "_sync_job_service",
         "mount_persist_service": "_mount_persist_service",
         "mcp_service": "mcp_service",
-        "llm_service": "llm_service",
         "oauth_service": "oauth_service",
         "search_service": "search_service",
         "share_link_service": "share_link_service",
@@ -40,7 +39,6 @@ def bind_wired_services(target: object, wired: "WiredServices | dict[str, Any]")
         "sandbox_rpc_service": "_sandbox_rpc_service",
         "metadata_export_service": "_metadata_export_service",
         "descendant_checker": "_descendant_checker",
-        "memory_provider": "_memory_provider",
         "time_travel_service": "time_travel_service",
         "operations_service": "operations_service",
     }
@@ -67,7 +65,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     "sync_job": (),
     "mount_persist": (),
     "mcp": (),
-    "llm": (),
     "oauth": (),
     "share_link": (),
     "time_travel": (),
@@ -78,7 +75,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     "sandbox_rpc": (),
     "metadata_export": (),
     "descendant_checker": (),
-    "memory_provider": (),
 }
 
 # ---------------------------------------------------------------------------
@@ -94,7 +90,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "sync_job_service": "sync_job",
     "mount_persist_service": "mount_persist",
     "mcp_service": "mcp",
-    "llm_service": "llm",
     "oauth_service": "oauth",
     "search_service": "search",
     "share_link_service": "share_link",
@@ -107,7 +102,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "sandbox_rpc_service": "sandbox_rpc",
     "metadata_export_service": "metadata_export",
     "descendant_checker": "descendant_checker",
-    "memory_provider": "memory_provider",
 }
 
 

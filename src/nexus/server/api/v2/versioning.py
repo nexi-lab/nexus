@@ -93,14 +93,12 @@ def build_v2_registry(
         from nexus.server.api.v2.routers import (
             audit,
             conflicts,
-            memories,
             mobile_search,
             operations,
             sync_push,
         )
 
         _core_routers: list[RouterEntry] = [
-            RouterEntry(router=memories.router, name="memories", endpoint_count=14),
             RouterEntry(router=mobile_search.router, name="mobile_search", endpoint_count=2),
             RouterEntry(router=conflicts.router, name="conflicts", endpoint_count=3),
             RouterEntry(router=operations.router, name="operations", endpoint_count=2),
@@ -211,14 +209,6 @@ def build_v2_registry(
         registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=5))
     except ImportError as e:
         logger.warning("Failed to import Delegation routes: %s", e)
-
-    # ---- RLM inference router (Issue #1306) ----
-    try:
-        from nexus.server.api.v2.routers.rlm import router as rlm_router
-
-        registry.add(RouterEntry(router=rlm_router, name="rlm", endpoint_count=1))
-    except ImportError as e:
-        logger.warning("Failed to import RLM routes: %s", e)
 
     # ---- Workflows router (Issue #1522) ----
     try:

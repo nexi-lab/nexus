@@ -32,7 +32,6 @@ from nexus.system_services.agent_runtime.types import (
 )
 
 if TYPE_CHECKING:
-    from nexus.contracts.protocols.llm_provider import LLMProviderProtocol
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
@@ -55,7 +54,7 @@ class ProcessManager:
     def __init__(
         self,
         vfs: NexusFS,
-        llm_provider: LLMProviderProtocol,
+        llm_provider: Any,
         *,
         agent_registry: Any | None = None,
         sandbox: Any | None = None,

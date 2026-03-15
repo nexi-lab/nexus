@@ -144,12 +144,6 @@ def assert_protocol_compliance(
 _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     # ── Fully extracted (expect pass) ──────────────────────────────────
     (
-        "LLMServiceProtocol",
-        "nexus.contracts.protocols.llm",
-        "nexus.bricks.llm.llm_service.LLMService",
-        True,  # Fixed: llm_read_stream uses def (not async) in protocol for async generator compat
-    ),
-    (
         "MountProtocol",
         "nexus.contracts.protocols.mount",
         "nexus.bricks.mount.mount_service.MountService",
@@ -228,26 +222,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.services.scheduler.in_memory.InMemoryScheduler",
         True,
     ),
-    # ── Narrow dependency Protocols (Issue #2190) ────────────────────
-    (
-        "MemoryPermissionCheckerProtocol",
-        "nexus.contracts.protocols.memory",
-        "nexus.bricks.rebac.memory_permission_enforcer.MemoryPermissionEnforcer",
-        True,
-    ),
-    (
-        "EntityResolverProtocol",
-        "nexus.contracts.protocols.memory",
-        "nexus.bricks.rebac.entity_registry.EntityRegistry",
-        True,
-    ),
     # ── Brick-level protocols ─────────────────────────────────────────
-    (
-        "LLMProviderProtocol",
-        "nexus.contracts.protocols.llm_provider",
-        "nexus.bricks.llm.provider.LiteLLMProvider",
-        True,
-    ),
     (
         "ParseProtocol",
         "nexus.contracts.protocols.parse",
@@ -364,11 +339,8 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
     ("auth", "nexus/contracts/protocols/auth.py"),
     ("event_log", "nexus/services/event_subsystem/log/protocol.py"),
     ("governance", "nexus/bricks/governance/protocols.py"),
-    ("llm", "nexus/contracts/protocols/llm.py"),
-    ("llm_provider", "nexus/contracts/protocols/llm_provider.py"),
     ("lock", "nexus/contracts/protocols/lock.py"),
     ("mcp", "nexus/contracts/protocols/mcp.py"),
-    ("memory", "nexus/contracts/protocols/memory.py"),
     ("mount", "nexus/contracts/protocols/mount.py"),
     ("namespace_manager", "nexus/contracts/protocols/namespace_manager.py"),
     ("oauth", "nexus/contracts/protocols/oauth.py"),

@@ -188,9 +188,6 @@ class SearchDaemon:
         # Issue #1520: Replaces direct NexusFS dependency
         self._file_reader: Any = None
 
-        # Issue #2036: Injected adaptive-k provider (replaces lazy import)
-        self._adaptive_k_provider: Any = None
-
         # SPLADE learned sparse retrieval (optional, initialized in startup)
         self._splade: Any = None
 
@@ -521,7 +518,6 @@ class SearchDaemon:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
-        adaptive_k: bool = False,
         zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
@@ -529,29 +525,16 @@ class SearchDaemon:
         Args:
             query: Search query text
             search_type: Type of search ("keyword", "semantic", "hybrid")
-            limit: Maximum number of results (used as k_base when adaptive_k=True)
+            limit: Maximum number of results
             path_filter: Optional path prefix filter
             alpha: Weight for semantic vs keyword (0.0 = all keyword, 1.0 = all semantic)
             fusion_method: Fusion algorithm for hybrid search ("rrf", "weighted", "rrf_weighted")
-            adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
 
         Returns:
             List of search results sorted by relevance
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
-
-        # Apply adaptive k if enabled (Issue #1021, #2036: protocol-based DI)
-        if adaptive_k and self._adaptive_k_provider is not None:
-            original_limit = limit
-            limit = self._adaptive_k_provider.calculate_k_dynamic(query, k_base=limit)
-            if limit != original_limit:
-                logger.info(
-                    "[SEARCH-DAEMON] Adaptive k applied: %d -> %d for query: %s",
-                    original_limit,
-                    limit,
-                    query[:50],
-                )
 
         from nexus.contracts.constants import ROOT_ZONE_ID
 

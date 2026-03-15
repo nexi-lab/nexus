@@ -121,31 +121,6 @@ class TestMCPServiceSmoke:
 
 
 # =============================================================================
-# LLMService Smoke Tests
-# =============================================================================
-
-
-class TestLLMServiceSmoke:
-    """Smoke tests for LLMService."""
-
-    def test_llm_service_init(self):
-        """Test LLMService can be instantiated."""
-        from nexus.bricks.llm.llm_service import LLMService
-
-        service = LLMService(nexus_fs=None)
-        assert service.nexus_fs is None
-
-    def test_create_llm_reader_raises_without_nexus_fs(self):
-        """Test create_llm_reader raises if nexus_fs not set."""
-        from nexus.bricks.llm.llm_service import LLMService
-
-        service = LLMService(nexus_fs=None)
-
-        with pytest.raises(RuntimeError, match="NexusFS not configured"):
-            service.create_llm_reader()
-
-
-# =============================================================================
 # OAuthCredentialService Smoke Tests
 # =============================================================================
 
@@ -305,7 +280,6 @@ class TestServiceIntegrationSmoke:
         """Test that all services can be instantiated together."""
 
         from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
-        from nexus.bricks.llm.llm_service import LLMService
         from nexus.bricks.mcp.mcp_service import MCPService
         from nexus.bricks.mount.mount_service import MountService
         from nexus.bricks.rebac.rebac_service import ReBACService
@@ -319,7 +293,6 @@ class TestServiceIntegrationSmoke:
             router=mock_router,
         )
         mcp_svc = MCPService(filesystem=None)
-        llm_svc = LLMService(nexus_fs=None)
         oauth_svc = OAuthCredentialService(oauth_factory=None, token_manager=None)
         search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)
         mount_svc = MountService(router=mock_router)
@@ -328,7 +301,6 @@ class TestServiceIntegrationSmoke:
         # Verify all instantiated
         assert version_svc is not None
         assert mcp_svc is not None
-        assert llm_svc is not None
         assert oauth_svc is not None
         assert search_svc is not None
         assert mount_svc is not None
@@ -337,7 +309,6 @@ class TestServiceIntegrationSmoke:
         # Verify they have expected attributes
         assert hasattr(version_svc, "list_versions")
         assert hasattr(mcp_svc, "mcp_mount")
-        assert hasattr(llm_svc, "llm_read")
         assert hasattr(oauth_svc, "list_providers")
         assert hasattr(search_svc, "semantic_search")
         assert hasattr(mount_svc, "list_mounts")

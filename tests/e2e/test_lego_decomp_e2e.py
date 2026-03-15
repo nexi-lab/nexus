@@ -1,9 +1,6 @@
 """E2E tests for Issue #2033 LEGO decomposition — verify delegated methods work.
 
 Tests all APIs that were refactored from NexusFS to services:
-- memory property → MemoryProvider.get_or_create()
-- _get_memory_api() → MemoryProvider.get_for_context()
-- _ensure_entity_registry() → MemoryProvider.ensure_entity_registry()
 - sync_mount → _SERVICE_ALIASES → SyncService.sync_mount_flat
 - sync_mount_async → _SERVICE_ALIASES → SyncJobService.sync_mount_async
 - cancel_sync_job → _SERVICE_ALIASES → SyncJobService.cancel_sync_job
@@ -25,11 +22,9 @@ from typing import Any
 
 import pytest
 
-from nexus.bricks.memory.memory_provider import get_memory_api
 from nexus.contracts.types import OperationContext
 from nexus.core.config import (
     DistributedConfig,
-    MemoryConfig,
     ParseConfig,
     PermissionConfig,
 )
@@ -108,7 +103,6 @@ def _create_factory_nexus_fs(
             enable_locks=False,
             enable_workflows=False,
         ),
-        memory=MemoryConfig(enable_paging=False),
         enable_write_buffer=False,  # Sync writes so versions are immediately visible
     )
 
@@ -250,63 +244,7 @@ class TestKernelSanity:
 
 
 # ---------------------------------------------------------------------------
-# 2. Memory property delegation (MemoryProvider)
-# ---------------------------------------------------------------------------
-
-
-class TestMemoryDelegation:
-    """Verify memory property and helpers delegate correctly with PG backend."""
-
-    def test_memory_property_returns_memory_api(self, nx):
-        """get_memory_api() should return a Memory instance via MemoryProvider."""
-        mem = get_memory_api(nx)
-        assert mem is not None
-        assert hasattr(mem, "store")
-        assert hasattr(mem, "query")
-        assert hasattr(mem, "list")
-        assert hasattr(mem, "get")
-
-    def test_memory_property_is_singleton(self, nx):
-        """Same Memory instance should be returned on repeated access."""
-        mem1 = get_memory_api(nx)
-        mem2 = get_memory_api(nx)
-        assert mem1 is mem2
-
-    def test_memory_store_and_query(self, nx):
-        """End-to-end memory store + query through get_memory_api() with PG."""
-        mem = get_memory_api(nx)
-        mid = mem.store(
-            content="Test memory from E2E with PostgreSQL",
-            scope="user",
-            memory_type="observation",
-        )
-        assert mid is not None
-
-        result = mem.get(mid)
-        assert result is not None
-        assert "Test memory from E2E with PostgreSQL" in str(result.get("content", result))
-
-    def test_memory_provider_returns_fresh_instance(self, nx):
-        """_memory_provider.get_for_context() should return a fresh Memory per context."""
-        ctx = {"zone_id": "test-zone", "user_id": "alice"}
-        mem = nx.service("memory_provider").get_for_context(ctx)
-        assert mem is not None
-        assert hasattr(mem, "store")
-
-    def test_memory_provider_with_none_context(self, nx):
-        """_memory_provider.get_for_context(None) should use defaults."""
-        mem = nx.service("memory_provider").get_for_context(None)
-        assert mem is not None
-
-    def test_ensure_entity_registry(self, nx):
-        """_memory_provider.ensure_entity_registry should return an EntityRegistry."""
-        reg = nx.service("memory_provider").ensure_entity_registry()
-        assert reg is not None
-        assert hasattr(reg, "session") or hasattr(reg, "_session_factory")
-
-
-# ---------------------------------------------------------------------------
-# 3. Sync mount delegation (SyncService / SyncJobService)
+# 2. Sync mount delegation (SyncService / SyncJobService)
 # ---------------------------------------------------------------------------
 
 
@@ -561,25 +499,6 @@ class TestFastAPIIntegration:
         assert "result" in result
         assert isinstance(result.get("result"), list)
 
-    def test_memory_store_via_server(self, client):
-        """Memory store should work via get_memory_api() delegation with PG."""
-        nx = client["nx"]
-        mem = get_memory_api(nx)
-        mid = mem.store(
-            content="E2E memory test via FastAPI + PostgreSQL",
-            scope="user",
-            memory_type="observation",
-        )
-        assert mid is not None
-
-    def test_memory_provider_via_server(self, client):
-        """_memory_provider.get_for_context() should work when called as server does."""
-        nx = client["nx"]
-        context_dict = {"zone_id": "root", "user_id": "test-user"}
-        mem = nx.service("memory_provider").get_for_context(context_dict)
-        assert mem is not None
-        assert hasattr(mem, "store")
-
     def test_exists_via_rpc(self, client):
         """exists via RPC endpoint."""
         path = f"/exists-rpc-{uuid.uuid4().hex[:8]}.txt"
@@ -691,19 +610,6 @@ class TestFastAPIWithPermissions:
             pytest.skip("VersionService not available")
         assert "result" in result
 
-    def test_memory_with_perms(self, client_perms):
-        """Memory store should work with permissions enabled."""
-        nx = client_perms["nx"]
-        mem = get_memory_api(nx)
-        mid = mem.store(
-            content="E2E memory with permissions + PG",
-            scope="user",
-            memory_type="observation",
-        )
-        assert mid is not None
-        result = mem.get(mid)
-        assert result is not None
-
 
 # ---------------------------------------------------------------------------
 # 9. Service wiring verification (factory created all expected services)
@@ -712,10 +618,6 @@ class TestFastAPIWithPermissions:
 
 class TestFactoryServiceWiring:
     """Verify factory wired all expected services for the extracted methods."""
-
-    def test_memory_provider_wired(self, nx):
-        """MemoryProvider should be wired by service_wiring."""
-        assert nx.service("memory_provider") is not None
 
     def test_sync_service_wired(self, nx):
         """SyncService should be wired."""
@@ -741,11 +643,6 @@ class TestFactoryServiceWiring:
     def test_workspace_registry_wired(self, nx):
         """WorkspaceRegistry should be wired by factory."""
         assert nx._workspace_registry is not None
-
-    def test_entity_registry_wired(self, nx):
-        """EntityRegistry should be wired by factory."""
-        reg = nx.service("memory_provider").ensure_entity_registry()
-        assert reg is not None
 
     def test_kernel_dispatch_wired(self, nx):
         """KernelDispatch should be wired."""

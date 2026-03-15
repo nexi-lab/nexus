@@ -10,6 +10,7 @@ No imports from nexus.core, nexus.storage, or nexus.server.
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+# WorkflowLLMProtocol removed — LLM integration has been removed.
 from nexus.contracts.workflow_types import (
     MetadataStoreProtocol,
     NexusOperationsProtocol,
@@ -26,18 +27,6 @@ class GlobMatchFn(Protocol):
     """Callable that checks whether *path* matches any of *patterns*."""
 
     def __call__(self, path: str, patterns: list[str]) -> bool: ...
-
-
-@runtime_checkable
-class WorkflowLLMProtocol(Protocol):
-    """Narrow LLM provider surface used by LLMAction.
-
-    This is intentionally minimal — only the ``generate`` helper that
-    workflow actions need.  For the full brick-level LLM provider
-    contract see ``nexus.contracts.protocols.llm_provider.LLMProviderProtocol``.
-    """
-
-    async def generate(self, *, model: str, prompt: str, system: str) -> str: ...
 
 
 # ---------------------------------------------------------------------------
@@ -92,5 +81,4 @@ class WorkflowServices:
 
     nexus_ops: NexusOperationsProtocol | None = None
     metadata_store: MetadataStoreProtocol | None = None
-    llm_provider: WorkflowLLMProtocol | None = None
     glob_match: GlobMatchFn | None = None

@@ -474,32 +474,6 @@ def _boot_independent_bricks(
     except Exception as _vs_exc:
         logger.debug("[BOOT:BRICK] VersionService unavailable: %s", _vs_exc)
 
-    # --- Memory Brick (Issue #2177) ---
-    memory_router: Any = None
-    memory_permission: Any = None
-    if not _on("memory"):
-        logger.debug("[BOOT:BRICK] Memory brick disabled by profile")
-    else:
-        try:
-            from nexus.bricks.memory.router import MemoryViewRouter as _MemoryViewRouter
-
-            memory_router = _MemoryViewRouter(
-                session_factory=ctx.record_store.session_factory,
-                entity_registry=system["entity_registry"],
-            )
-
-            from nexus.bricks.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
-
-            memory_permission = MemoryPermissionEnforcer(
-                metadata_store=ctx.metadata_store,
-                rebac_manager=system["rebac_manager"],
-                memory_router=memory_router,
-                entity_registry=system["entity_registry"],
-            )
-            logger.debug("[BOOT:BRICK] Memory brick created (router + permission)")
-        except Exception as _mem_exc:
-            logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
-
     # --- Governance Brick (Issue #2129) ---
     governance_anomaly_service: Any = None
     governance_collusion_service: Any = None
@@ -568,7 +542,6 @@ def _boot_independent_bricks(
         "reputation_service": reputation_service,
         "version_service": version_service,
         "rebac_circuit_breaker": rebac_circuit_breaker,
-        "memory_permission": memory_permission,
         # Governance Brick (Issue #2129)
         "governance_anomaly_service": governance_anomaly_service,
         "governance_collusion_service": governance_collusion_service,

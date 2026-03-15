@@ -60,7 +60,6 @@ from nexus.factory._helpers import (
     _safe_create,
 )
 from nexus.factory._kernel import _boot_kernel_services
-from nexus.factory._memory import create_memory_service
 from nexus.factory._metadata_export import create_metadata_export_service
 from nexus.factory._record_store import create_record_store
 from nexus.factory._system import _boot_system_services
@@ -73,6 +72,5 @@ __all__ = [
     "create_nexus_fs",
     "create_nexus_services",
     "create_record_store",
-    "create_memory_service",
     "create_metadata_export_service",
 ]

@@ -173,7 +173,6 @@ class TestSemanticSearch:
             path="/docs",
             limit=5,
             search_mode="semantic",
-            adaptive_k=False,
         )
         assert len(results) == 1
         assert results[0]["path"] == "/doc.txt"
@@ -210,16 +209,6 @@ class TestSemanticSearch:
         svc = _make_svc(query_service=None)
         with pytest.raises(ValueError, match="not available"):
             await svc.semantic_search(query="test")
-
-    @pytest.mark.asyncio
-    async def test_adaptive_k_passed_through(self, svc_with_engine, mock_query_service):
-        """adaptive_k parameter should be passed to QueryService."""
-        await svc_with_engine.semantic_search(
-            query="test",
-            adaptive_k=True,
-        )
-        call_kwargs = mock_query_service.search.call_args.kwargs
-        assert call_kwargs["adaptive_k"] is True
 
     @pytest.mark.asyncio
     async def test_empty_results(self, svc_with_engine, mock_query_service):

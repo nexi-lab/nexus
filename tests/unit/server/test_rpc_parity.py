@@ -122,7 +122,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "parse",  # Async - requires async RPC support
         # Already exposed via different mechanism
         "write_batch",  # Exposed via different RPC endpoint
-        "list_memories",  # Handled manually by dispatcher, calls memory.list() instead
         # Tiger Cache internal methods - server-side optimization only
         "grant_traverse_on_implicit_dirs",  # Internal - grants TRAVERSE on implicit dirs during init
         "process_tiger_cache_queue",  # Internal - background worker processes cache updates
@@ -144,11 +143,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "arebac_explain",  # Delegates to rebac_service.rebac_explain()
         "arebac_list_tuples",  # Delegates to rebac_service.rebac_list_tuples()
         "aget_namespace",  # Delegates to rebac_service.get_namespace()
-        # LLMService delegation (4 methods) — Issue #1287 Phase B: mixin removed
-        "create_llm_reader",  # Delegates to llm_service.create_llm_reader()
-        "llm_read",  # Delegates to llm_service.llm_read()
-        "llm_read_detailed",  # Delegates to llm_service.llm_read_detailed()
-        "llm_read_stream",  # Delegates to llm_service.llm_read_stream()
         # MountService delegation (15 methods)
         "aadd_mount",  # Delegates to mount_service.add_mount()
         "aremove_mount",  # Delegates to mount_service.remove_mount()
@@ -191,10 +185,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "unregister_workspace",  # ABC stub → _workspace_rpc_service.unregister_workspace()
         "list_workspaces",  # ABC stub → _workspace_rpc_service.list_workspaces()
         "get_workspace_info",  # ABC stub → _workspace_rpc_service.get_workspace_info()
-        # Memory registry — delegates to _workspace_rpc_service
-        "register_memory",  # ABC stub → _workspace_rpc_service.register_memory()
-        "unregister_memory",  # ABC stub → _workspace_rpc_service.unregister_memory()
-        "get_memory_info",  # ABC stub → _workspace_rpc_service.get_memory_info()
         # Sandbox — delegates to _sandbox_rpc_service
         "sandbox_create",  # ABC stub → _sandbox_rpc_service.sandbox_create()
         "sandbox_get_or_create",  # ABC stub → _sandbox_rpc_service.sandbox_get_or_create()

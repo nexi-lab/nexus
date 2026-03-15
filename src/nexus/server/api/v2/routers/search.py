@@ -168,7 +168,6 @@ async def search_query(
     path: str | None = Query(None, description="Optional path prefix filter"),
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
-    adaptive_k: bool = Query(False, description="Adaptive retrieval"),
     rerank: bool | None = Query(  # noqa: ARG001
         None, description="Override reranker (true/false, default: use config)"
     ),
@@ -295,7 +294,6 @@ async def search_query(
             path_filter=path,
             alpha=alpha,
             fusion_method=fusion,
-            adaptive_k=adaptive_k,
             zone_id=zone_id,
         )
 

@@ -24,7 +24,7 @@ import time
 import traceback
 import uuid
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import bindparam, text
@@ -1507,97 +1507,21 @@ class ReBACManager:
     def _get_cached_check_zone_aware(
         self, subject: Entity, permission: str, obj: Entity, zone_id: str
     ) -> bool | None:
-        """Get cached permission check result (zone-aware cache key)."""
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
+        """Get cached permission check result (zone-aware cache key).
 
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT result, expires_at
-                    FROM rebac_check_cache
-                    WHERE zone_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                      AND expires_at > ?
-                    """
-                ),
-                (
-                    zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            row = cursor.fetchone()
-            if row:
-                result = row["result"]
-                return bool(result)
-            return None
+        Note: L2 SQL cache (rebac_check_cache) removed — always returns None (cache miss).
+        L1 in-memory cache is checked by callers before this method.
+        """
+        return None
 
     def _cache_check_result_zone_aware(
         self, subject: Entity, permission: str, obj: Entity, zone_id: str, result: bool
     ) -> None:
-        """Cache permission check result (zone-aware cache key)."""
-        cache_id = str(uuid.uuid4())
-        computed_at = datetime.now(UTC)
-        expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
+        """Cache permission check result (zone-aware cache key).
 
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # Delete existing cache entry if present
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE zone_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                    """
-                ),
-                (
-                    zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                ),
-            )
-
-            # Insert new cache entry
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_check_cache (
-                        cache_id, zone_id, subject_type, subject_id, permission,
-                        object_type, object_id, result, computed_at, expires_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    cache_id,
-                    zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    int(result),
-                    computed_at.isoformat(),
-                    expires_at.isoformat(),
-                ),
-            )
-
-            conn.commit()
+        Note: L2 SQL cache (rebac_check_cache) removed — no-op.
+        L1 in-memory caching is handled by callers.
+        """
 
     # ============================================================================
     # End Zone-Aware Methods
@@ -2045,43 +1969,9 @@ class ReBACManager:
     ) -> bool | None:
         """Get cached result with bounded staleness (P0-1).
 
-        Returns None if cache entry is older than max_age_seconds.
+        Note: L2 SQL cache (rebac_check_cache) removed — always returns None (cache miss).
         """
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
-
-            min_computed_at = datetime.now(UTC) - timedelta(seconds=max_age_seconds)
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT result, computed_at, expires_at
-                    FROM rebac_check_cache
-                    WHERE zone_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                      AND computed_at >= ?
-                      AND expires_at > ?
-                    """
-                ),
-                (
-                    zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    min_computed_at.isoformat(),
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            row = cursor.fetchone()
-            if row:
-                result = row["result"]
-                return bool(result)
-            return None
+        return None
 
     def rebac_check_bulk(
         self,
@@ -3774,7 +3664,7 @@ class ReBACManager:
     ) -> bool | None:
         """Get cached permission check result.
 
-        Checks L1 (in-memory) cache first, then L2 (database) cache.
+        Checks L1 (in-memory) cache only. L2 SQL cache (rebac_check_cache) removed.
 
         Args:
             subject: Subject entity
@@ -3785,7 +3675,7 @@ class ReBACManager:
         Returns:
             Cached result or None if not cached or expired
         """
-        # Check L1 cache first (if enabled)
+        # Check L1 cache (if enabled)
         if self._l1_cache:
             l1_result = self._l1_cache.get(
                 subject.entity_type,
@@ -3796,53 +3686,11 @@ class ReBACManager:
                 zone_id,
             )
             if l1_result is not None:
-                logger.debug("✅ L1 CACHE HIT")
+                logger.debug("L1 CACHE HIT")
                 return l1_result
 
-        # L1 miss - check L2 (database) cache
-        with self._connection(readonly=True) as conn:
-            cursor = self._create_cursor(conn)
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT result, expires_at
-                    FROM rebac_check_cache
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                      AND expires_at > ?
-                    """
-                ),
-                (
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            row = cursor.fetchone()
-            if row:
-                result = bool(row["result"])
-                logger.debug("✅ L2 CACHE HIT (populating L1)")
-
-                # Populate L1 cache from L2
-                if self._l1_cache:
-                    self._l1_cache.set(
-                        subject.entity_type,
-                        subject.entity_id,
-                        permission,
-                        obj.entity_type,
-                        obj.entity_id,
-                        result,
-                        zone_id,
-                    )
-
-                return result
-            return None
+        # L2 SQL cache removed — return None (cache miss)
+        return None
 
     # ============================================================
     # Background Refresh (Issue #932)
@@ -3955,7 +3803,9 @@ class ReBACManager:
         conn: Any | None = None,
         delta: float = 0.0,
     ) -> None:
-        """Cache permission check result in both L1 and L2 caches.
+        """Cache permission check result in L1 cache.
+
+        L2 SQL cache (rebac_check_cache) has been removed.
 
         Args:
             subject: Subject entity
@@ -3963,10 +3813,10 @@ class ReBACManager:
             obj: Object entity
             result: Check result
             zone_id: Optional zone ID for multi-zone isolation
-            conn: Optional database connection
+            conn: Optional database connection (unused, kept for API compatibility)
             delta: Recomputation time in seconds for XFetch (Issue #718)
         """
-        # Cache in L1 first (faster)
+        # Cache in L1 (in-memory)
         if self._l1_cache:
             self._l1_cache.set(
                 subject.entity_type,
@@ -3979,71 +3829,7 @@ class ReBACManager:
                 delta=delta,
             )
 
-        # Then cache in L2 (database)
-        cache_id = str(uuid.uuid4())
-        computed_at = datetime.now(UTC)
-        expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
-
-        # Use "root" zone if not specified
-        effective_zone_id = zone_id if zone_id is not None else ROOT_ZONE_ID
-
-        # Use provided connection or create new one (avoids SQLite lock contention)
-        should_close = conn is None
-        if conn is None:
-            conn = self._get_connection()
-        try:
-            cursor = self._create_cursor(conn)
-
-            # Delete existing cache entry if present
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE zone_id = ?
-                      AND subject_type = ? AND subject_id = ?
-                      AND permission = ?
-                      AND object_type = ? AND object_id = ?
-                    """
-                ),
-                (
-                    effective_zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                ),
-            )
-
-            # Insert new cache entry
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_check_cache (
-                        cache_id, zone_id, subject_type, subject_id, permission,
-                        object_type, object_id, result, computed_at, expires_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    cache_id,
-                    effective_zone_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    permission,
-                    obj.entity_type,
-                    obj.entity_id,
-                    int(result),  # Convert boolean to int for PostgreSQL compatibility
-                    computed_at.isoformat(),
-                    expires_at.isoformat(),
-                ),
-            )
-
-            conn.commit()
-        finally:
-            if should_close:
-                self._close_connection(conn)
+        # L2 SQL cache (rebac_check_cache) removed — no-op.
 
     def _invalidate_cache_for_tuple(
         self,

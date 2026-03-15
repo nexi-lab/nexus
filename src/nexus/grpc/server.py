@@ -107,12 +107,21 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
         server.add_secure_port(f"[::]:{port}", creds)
         logger.info("gRPC server started on port %d (mTLS)", port)
     else:
-        server.add_insecure_port(f"127.0.0.1:{port}")
-        logger.warning(
-            "gRPC server started on port %d (insecure, loopback only). "
-            "Configure TLS to bind on all interfaces.",
-            port,
-        )
+        bind_all = os.environ.get("NEXUS_GRPC_BIND_ALL", "").lower() in ("true", "1")
+        bind_addr = "0.0.0.0" if bind_all else "127.0.0.1"
+        server.add_insecure_port(f"{bind_addr}:{port}")
+        if bind_all:
+            logger.warning(
+                "gRPC server started on port %d (insecure, all interfaces). "
+                "Use only in trusted networks or containers.",
+                port,
+            )
+        else:
+            logger.warning(
+                "gRPC server started on port %d (insecure, loopback only). "
+                "Configure TLS to bind on all interfaces.",
+                port,
+            )
 
     await server.start()
 

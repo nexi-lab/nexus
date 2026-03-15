@@ -84,14 +84,8 @@ def main() -> None:
     except Exception as e:
         check("Health endpoint", False, str(e))
 
-    # nexus status (uses --url env var, not --remote-url; --json for machine output)
-    r = subprocess.run(
-        [NEXUS_CLI, "status", "--json", "--url", NEXUS_URL],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env={**os.environ, "NEXUS_URL": NEXUS_URL},
-    )
+    # nexus status (--json for machine-readable output with "server_reachable" key)
+    r = cli("status", "--json")
     check("nexus status", "server_reachable" in r.stdout or "healthy" in r.stdout.lower())
 
     # ls

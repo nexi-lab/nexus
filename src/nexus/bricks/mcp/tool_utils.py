@@ -73,7 +73,7 @@ def handle_tool_errors(operation: str) -> Any:
 
     Catches common exceptions and returns standardized error responses
     via ``tool_error()``. Preserves function signature for FastMCP
-    parameter introspection.
+    parameter introspection. Supports both sync and async tool functions.
 
     Caught exceptions (in order):
         - ``FileNotFoundError`` → ``"not_found"``
@@ -101,39 +101,50 @@ def handle_tool_errors(operation: str) -> Any:
             return content.decode("utf-8")
     """
 
+    def _handle_error(args: tuple[Any, ...], kwargs: dict[str, Any], exc: Exception) -> str:
+        """Shared error handling for both sync and async wrappers."""
+        if isinstance(exc, FileNotFoundError):
+            path = _extract_path_hint(args, kwargs)
+            hint = f" at '{path}'" if path else ""
+            return tool_error(
+                "not_found",
+                f"File not found{hint}. Use nexus_list_files to check available files.",
+                str(exc),
+            )
+        elif isinstance(exc, PermissionError):
+            path = _extract_path_hint(args, kwargs)
+            hint = f" for '{path}'" if path else ""
+            return tool_error(
+                "permission_denied",
+                f"Permission denied{hint}. Check file permissions.",
+                str(exc),
+            )
+        else:
+            return tool_error(
+                "internal",
+                f"Error {operation}: {exc}",
+                f"{type(exc).__name__}: {exc}",
+            )
+
     def decorator(fn: Any) -> Any:
         if asyncio.iscoroutinefunction(fn):
-            raise TypeError(
-                f"@handle_tool_errors cannot wrap async function '{fn.__name__}'. "
-                "All MCP tools must be synchronous."
-            )
+
+            @functools.wraps(fn)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> str:
+                try:
+                    result = await fn(*args, **kwargs)
+                    return str(result)
+                except (FileNotFoundError, PermissionError, Exception) as exc:
+                    return _handle_error(args, kwargs, exc)
+
+            return async_wrapper
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> str:
             try:
                 return fn(*args, **kwargs)  # type: ignore[no-any-return]
-            except FileNotFoundError as exc:
-                path = _extract_path_hint(args, kwargs)
-                hint = f" at '{path}'" if path else ""
-                return tool_error(
-                    "not_found",
-                    f"File not found{hint}. Use nexus_list_files to check available files.",
-                    str(exc),
-                )
-            except PermissionError as exc:
-                path = _extract_path_hint(args, kwargs)
-                hint = f" for '{path}'" if path else ""
-                return tool_error(
-                    "permission_denied",
-                    f"Permission denied{hint}. Check file permissions.",
-                    str(exc),
-                )
-            except Exception as exc:
-                return tool_error(
-                    "internal",
-                    f"Error {operation}: {exc}",
-                    f"{type(exc).__name__}: {exc}",
-                )
+            except (FileNotFoundError, PermissionError, Exception) as exc:
+                return _handle_error(args, kwargs, exc)
 
         return wrapper
 

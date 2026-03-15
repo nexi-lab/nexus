@@ -7,7 +7,7 @@ All async service methods are tested via asyncio.run().
 """
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -25,7 +25,7 @@ def mock_gateway():
     """Create a mock NexusFSGateway with session factory."""
     gw = MagicMock()
     gw.rebac_check.return_value = True
-    gw.sys_access.return_value = True
+    gw.sys_access = AsyncMock(return_value=True)
     gw.metadata_get.return_value = MagicMock(is_dir=False)
     gw.session_factory = MagicMock()
     return gw

@@ -5,6 +5,7 @@ Tests cover performance optimizations:
 - Only creating parent tuples for new files
 """
 
+import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -27,15 +28,17 @@ def temp_dir():
 
 
 @pytest.fixture
-async def nx_with_hierarchy(temp_dir: Path):
+def nx_with_hierarchy(temp_dir: Path):
     """Create a NexusFS instance with hierarchy manager enabled."""
 
-    nx = await create_nexus_fs(
-        backend=CASLocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        parsing=ParseConfig(auto_parse=False),
-        permissions=PermissionConfig(enforce=False),  # Disable to allow test operations
+    nx = asyncio.run(
+        create_nexus_fs(
+            backend=CASLocalBackend(temp_dir),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),  # Disable to allow test operations
+        )
     )
     yield nx
     nx.close()

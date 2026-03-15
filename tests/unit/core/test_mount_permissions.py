@@ -5,8 +5,9 @@ Tests cover:
 - list_saved_mounts: User-based filtering of saved mount configurations
 """
 
+import asyncio
 import tempfile
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,28 +29,32 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-async def nx_with_permissions(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
+def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
-    nx = await create_nexus_fs(
-        backend=CASLocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        parsing=ParseConfig(auto_parse=False),
-        permissions=PermissionConfig(enforce=True),
+    nx = asyncio.run(
+        create_nexus_fs(
+            backend=CASLocalBackend(temp_dir),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=True),
+        )
     )
     yield nx
     nx.close()
 
 
 @pytest.fixture
-async def nx_without_permissions(temp_dir: Path) -> AsyncGenerator[NexusFS, None]:
+def nx_without_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance without permissions (backward compatibility)."""
-    nx = await create_nexus_fs(
-        backend=CASLocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-noperm")),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
-        parsing=ParseConfig(auto_parse=False),
-        permissions=PermissionConfig(enforce=False),
+    nx = asyncio.run(
+        create_nexus_fs(
+            backend=CASLocalBackend(temp_dir),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-noperm")),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False),
+        )
     )
     yield nx
     nx.close()

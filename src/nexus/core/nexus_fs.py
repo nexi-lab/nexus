@@ -253,14 +253,14 @@ class NexusFS(  # type: ignore[misc]
         self._permission_checker: Any = None  # set by link()
         # Factory-injected lifecycle implementations.
         # Keeps nexus.core free of nexus.factory / nexus.bricks imports.
-        self._link_fn: Callable[..., None] | None = None
+        self._link_fn: Callable[..., Any] | None = None
         self._initialize_fn: Callable[..., None] | None = None
 
     # =====================================================================
     # Lifecycle methods: link() → initialize() → bootstrap()
     # =====================================================================
 
-    def link(
+    async def link(
         self,
         *,
         enabled_bricks: "frozenset[str] | None" = None,
@@ -277,7 +277,7 @@ class NexusFS(  # type: ignore[misc]
         if self._linked:
             return
         if self._link_fn is not None:
-            self._link_fn(
+            await self._link_fn(
                 self,
                 enabled_bricks=enabled_bricks,
                 parsing=parsing,
@@ -285,7 +285,7 @@ class NexusFS(  # type: ignore[misc]
             )
         self._linked = True
 
-    def initialize(self) -> None:
+    async def initialize(self) -> None:
         """Phase 2: One-time side effects.  NO background threads.
 
         Implementation is injected via ``_initialize_fn`` by the factory layer.
@@ -295,7 +295,7 @@ class NexusFS(  # type: ignore[misc]
         if self._initialized:
             return
         if not self._linked:
-            self.link()
+            await self.link()
         if self._initialize_fn is not None:
             self._initialize_fn(self)
         self._initialized = True
@@ -312,7 +312,7 @@ class NexusFS(  # type: ignore[misc]
         if self._bootstrapped:
             return
         if not self._initialized:
-            self.initialize()
+            await self.initialize()
         for cb in self._bootstrap_callbacks:
             await cb()
         # Auto-lifecycle: activate HotSwappable hooks, start PersistentService (Issue #1580)
@@ -539,7 +539,7 @@ class NexusFS(  # type: ignore[misc]
     # === Directory Operations ===
 
     @rpc_expose(description="Create directory")
-    def sys_mkdir(
+    async def sys_mkdir(
         self,
         path: str,
         parents: bool = False,
@@ -671,7 +671,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
     @rpc_expose(description="Remove directory")
-    def sys_rmdir(
+    async def sys_rmdir(
         self,
         path: str,
         recursive: bool = False,
@@ -836,7 +836,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
     @rpc_expose(description="Check if path is a directory")
-    def sys_is_directory(
+    async def sys_is_directory(
         self,
         path: str,
         context: OperationContext | None = None,
@@ -915,7 +915,7 @@ class NexusFS(  # type: ignore[misc]
         return sorted(names)
 
     @rpc_expose(description="Get file metadata for FUSE operations")
-    def sys_stat(
+    async def sys_stat(
         self,
         path: str,
         context: OperationContext | None = None,
@@ -925,7 +925,7 @@ class NexusFS(  # type: ignore[misc]
         normalized = self._validate_path(path, allow_root=True)
 
         # Check if it's a directory first
-        is_dir = self.sys_is_directory(normalized, context=ctx)
+        is_dir = await self.sys_is_directory(normalized, context=ctx)
 
         if is_dir:
             # Return directory metadata
@@ -967,7 +967,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
     @rpc_expose(description="Upsert file metadata attributes")
-    def sys_setattr(
+    async def sys_setattr(
         self,
         path: str,
         context: OperationContext | None = None,
@@ -1404,7 +1404,7 @@ class NexusFS(  # type: ignore[misc]
         return (content, meta, route, zone_id, agent_id)
 
     @rpc_expose(description="Read file content")
-    def sys_read(
+    async def sys_read(
         self,
         path: str,
         *,
@@ -2251,7 +2251,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
     @rpc_expose(description="Write file content")
-    def sys_write(
+    async def sys_write(
         self,
         path: str,
         buf: bytes | str,
@@ -2318,7 +2318,7 @@ class NexusFS(  # type: ignore[misc]
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
 
     @rpc_expose(description="Read file with optional metadata")
-    def read(
+    async def read(
         self,
         path: str,
         *,
@@ -2341,13 +2341,13 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             bytes if return_metadata=False, else dict with content + metadata.
         """
-        content = self.sys_read(path, count=count, offset=offset, context=context)
+        content = await self.sys_read(path, count=count, offset=offset, context=context)
 
         if not return_metadata:
             return content
 
         # Compose with sys_stat for metadata
-        meta_dict = self.sys_stat(path, context=context)
+        meta_dict = await self.sys_stat(path, context=context)
         result: dict[str, Any] = {"content": content}
         if meta_dict:
             result.update(
@@ -2361,7 +2361,7 @@ class NexusFS(  # type: ignore[misc]
         return result
 
     @rpc_expose(description="Write file with metadata return")
-    def write(
+    async def write(
         self,
         path: str,
         buf: bytes | str,
@@ -2748,14 +2748,14 @@ class NexusFS(  # type: ignore[misc]
 
         lock_id = await self._lock_manager.acquire(path, timeout=timeout, ttl=ttl)
         try:
-            content = self.sys_read(path, context=context)
+            content = await self.sys_read(path, context=context)
             new_content = update_fn(content)
-            return self.write(path, new_content, context=context)
+            return await self.write(path, new_content, context=context)
         finally:
             await self._lock_manager.release(lock_id, path)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
-    def append(
+    async def append(
         self,
         path: str,
         content: bytes | str,
@@ -2828,7 +2828,7 @@ class NexusFS(  # type: ignore[misc]
         # For non-existent files, we'll create them (existing_content stays empty)
         existing_content = b""
         try:
-            result = self.read(path, context=context, return_metadata=True)
+            result = await self.read(path, context=context, return_metadata=True)
             # Tier 2 read(return_metadata=True) always returns dict
             assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
@@ -2866,14 +2866,14 @@ class NexusFS(  # type: ignore[misc]
         # - Workflow triggers
         # - Parent tuple creation
         # OCC check already done above (line 2985-2996), so just write.
-        return self.write(
+        return await self.write(
             path,
             final_content,
             context=context,
         )
 
     @rpc_expose(description="Apply surgical search/replace edits to a file")
-    def edit(
+    async def edit(
         self,
         path: str,
         edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
@@ -2959,7 +2959,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # Read current content with metadata (via Tier 2 convenience)
-        result = self.read(path, context=context, return_metadata=True)
+        result = await self.read(path, context=context, return_metadata=True)
         assert isinstance(result, dict), "Expected dict when return_metadata=True"
 
         content_bytes: bytes = result["content"]
@@ -3058,7 +3058,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Write the edited content. OCC check already done above (line 3117-3123).
         new_content_bytes = edit_result.content.encode("utf-8")
-        write_result = self.write(
+        write_result = await self.write(
             path,
             new_content_bytes,
             context=context,
@@ -3076,7 +3076,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
     @rpc_expose(description="Write multiple files in a single transaction")
-    def write_batch(
+    async def write_batch(
         self, files: list[tuple[str, bytes]], context: OperationContext | None = None
     ) -> list[dict[str, Any]]:
         """
@@ -3355,7 +3355,9 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Delete file")
-    def sys_unlink(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
+    async def sys_unlink(
+        self, path: str, context: OperationContext | None = None
+    ) -> dict[str, Any]:
         """
         Delete a file or memory.
 
@@ -3499,7 +3501,7 @@ class NexusFS(  # type: ignore[misc]
         return {}
 
     @rpc_expose(description="Rename/move file")
-    def sys_rename(
+    async def sys_rename(
         self, old_path: str, new_path: str, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """
@@ -3527,8 +3529,8 @@ class NexusFS(  # type: ignore[misc]
             AccessDeniedError: If access is denied (zone isolation)
 
         Example:
-            >>> nx.sys_rename('/workspace/old.txt', '/workspace/new.txt')
-            >>> nx.sys_rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
+            >>> await nx.sys_rename('/workspace/old.txt', '/workspace/new.txt')
+            >>> await nx.sys_rename('/folder-a/file.txt', '/shared/folder-a/file.txt')
         """
         old_path = self._validate_path(old_path)
         new_path = self._validate_path(new_path)
@@ -3956,7 +3958,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Check if file exists")
-    def sys_access(self, path: str, context: OperationContext | None = None) -> bool:
+    async def sys_access(self, path: str, context: OperationContext | None = None) -> bool:
         """
         Check if a file or directory exists.
 
@@ -4018,7 +4020,7 @@ class NexusFS(  # type: ignore[misc]
             return False
 
     @rpc_expose(description="Check existence of multiple paths in single call")
-    def exists_batch(
+    async def exists_batch(
         self, paths: list[str], context: OperationContext | None = None
     ) -> dict[str, bool]:
         """
@@ -4047,7 +4049,7 @@ class NexusFS(  # type: ignore[misc]
         results: dict[str, bool] = {}
         for path in paths:
             try:
-                results[path] = self.sys_access(path, context=context)
+                results[path] = await self.sys_access(path, context=context)
             except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
                 logger.debug("Exists check failed for %s: %s", path, exc)
@@ -4055,7 +4057,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Get metadata for multiple paths in single call")
-    def metadata_batch(
+    async def metadata_batch(
         self, paths: list[str], context: OperationContext | None = None
     ) -> dict[str, dict[str, Any] | None]:
         """
@@ -4121,7 +4123,7 @@ class NexusFS(  # type: ignore[misc]
                         continue
 
                 # Check if it's a directory
-                is_dir = self.sys_is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
+                is_dir = await self.sys_is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
 
                 results[path] = {
                     "path": meta.path,
@@ -4143,7 +4145,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Delete multiple files/directories")
-    def delete_bulk(
+    async def delete_bulk(
         self,
         paths: list[str],
         recursive: bool = False,
@@ -4196,7 +4198,7 @@ class NexusFS(  # type: ignore[misc]
                     )
                 else:
                     # Use delete for files
-                    self.sys_unlink(path, context=context)
+                    await self.sys_unlink(path, context=context)
 
                 results[path] = {"success": True}
             except Exception as e:
@@ -4297,7 +4299,7 @@ class NexusFS(  # type: ignore[misc]
             self.metadata.delete(path)
 
     @rpc_expose(description="Rename/move multiple files")
-    def rename_bulk(
+    async def rename_bulk(
         self,
         renames: list[tuple[str, str]],
         context: OperationContext | None = None,
@@ -4328,7 +4330,7 @@ class NexusFS(  # type: ignore[misc]
         results = {}
         for old_path, new_path in renames:
             try:
-                self.sys_rename(old_path, new_path, context=context)
+                await self.sys_rename(old_path, new_path, context=context)
                 results[old_path] = {"success": True, "new_path": new_path}
             except Exception as e:
                 results[old_path] = {"success": False, "error": str(e)}
@@ -4713,7 +4715,7 @@ class NexusFS(  # type: ignore[misc]
 
     # --- Mount Operations (→ _mount_core_service) ---
 
-    def add_mount(
+    async def add_mount(
         self,
         mount_point: str,
         backend_type: str,
@@ -4722,7 +4724,7 @@ class NexusFS(  # type: ignore[misc]
         io_profile: str = "balanced",
         context: Any = None,
     ) -> str:
-        return self._mount_core_service.add_mount(
+        return await self._mount_core_service.add_mount(
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
@@ -4740,7 +4742,7 @@ class NexusFS(  # type: ignore[misc]
     def get_mount(self, mount_point: str, context: Any = None) -> dict[str, Any] | None:
         return self._mount_core_service.get_mount(mount_point=mount_point, context=context)
 
-    def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
+    async def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
         """Grant direct_owner permission to the user who created the mount."""
         import logging as _logging
 
@@ -4749,7 +4751,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Create directory entry for the mount point
         try:
-            self.sys_mkdir(mount_point, parents=True, exist_ok=True)
+            await self.sys_mkdir(mount_point, parents=True, exist_ok=True)
         except Exception as e:
             _log.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
 
@@ -4794,7 +4796,7 @@ class NexusFS(  # type: ignore[misc]
     # --- Search (sys_readdir/glob/grep) ---
 
     @rpc_expose(description="List directory entries")
-    def sys_readdir(
+    async def sys_readdir(
         self,
         path: str = "/",
         recursive: bool = True,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Generator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, Generator
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -200,10 +200,10 @@ class _LocalWorkspaceFilesystemProxy:
         return _wrapped
 
 
-def connect_local_workspace(data_dir: str) -> NexusFilesystem:
+async def connect_local_workspace(data_dir: str) -> NexusFilesystem:
     """Connect to a self-contained local workspace without ambient env bleed."""
     with _isolated_local_workspace_env(data_dir):
-        filesystem = nexus.connect(
+        filesystem = await nexus.connect(
             config={
                 "profile": "minimal",
                 "backend": "local",
@@ -218,7 +218,7 @@ def connect_local_workspace(data_dir: str) -> NexusFilesystem:
     return cast(NexusFilesystem, _LocalWorkspaceFilesystemProxy(data_dir, filesystem))
 
 
-def get_filesystem(
+async def get_filesystem(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
     *,
@@ -265,7 +265,7 @@ def get_filesystem(
             and explicit_local_data_dir
             and remote_url_source is not ParameterSource.COMMANDLINE
         ):
-            return connect_local_workspace(explicit_local_data_dir)
+            return await connect_local_workspace(explicit_local_data_dir)
 
         resolved = resolve_connection(
             remote_url=remote_url,
@@ -279,7 +279,7 @@ def get_filesystem(
                     "NEXUS_DATA_DIR",
                     str(Path(nexus.NEXUS_STATE_DIR) / "data"),
                 )
-                return nexus.connect(config={"profile": "minimal", "data_dir": data_dir})
+                return await nexus.connect(config={"profile": "minimal", "data_dir": data_dir})
 
             console.print("[red]Error:[/red] NEXUS_URL or --remote-url is required")
             console.print(
@@ -288,7 +288,7 @@ def get_filesystem(
             )
             sys.exit(ExitCode.CONFIG_ERROR)
 
-        return nexus.connect(
+        return await nexus.connect(
             config={"profile": "remote", "url": resolved.url, "api_key": resolved.api_key}
         )
     except Exception as e:
@@ -296,7 +296,7 @@ def get_filesystem(
         sys.exit(ExitCode.UNAVAILABLE)
 
 
-def get_default_filesystem() -> NexusFilesystem:
+async def get_default_filesystem() -> NexusFilesystem:
     """Get a remote NexusFilesystem using environment variables.
 
     Used by commands that don't accept backend options (e.g., memory commands).
@@ -321,7 +321,7 @@ def get_default_filesystem() -> NexusFilesystem:
             )
             sys.exit(ExitCode.CONFIG_ERROR)
 
-        return nexus.connect(
+        return await nexus.connect(
             config={
                 "profile": "remote",
                 "url": resolved.url,
@@ -573,21 +573,21 @@ def resolve_content(content: str | None, input_file: Any) -> bytes:
     sys.exit(ExitCode.USAGE_ERROR)
 
 
-@contextmanager
-def open_filesystem(
+@asynccontextmanager
+async def open_filesystem(
     remote_url: str | None = None,
     remote_api_key: str | None = None,
     **kwargs: Any,
-) -> Generator[NexusFilesystem, None, None]:
-    """Context manager that opens and auto-closes a NexusFilesystem.
+) -> AsyncGenerator[NexusFilesystem, None]:
+    """Async context manager that opens and auto-closes a NexusFilesystem.
 
     Usage::
 
-        with open_filesystem(remote_url, remote_api_key) as nx:
-            result = nx.sys_readdir(path)
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            result = await nx.sys_readdir(path)
         # nx.close() is called automatically, even on exception.
     """
-    nx = get_filesystem(remote_url, remote_api_key, **kwargs)
+    nx = await get_filesystem(remote_url, remote_api_key, **kwargs)
     try:
         yield nx
     finally:

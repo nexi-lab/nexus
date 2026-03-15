@@ -17,8 +17,8 @@ Quick Start (Local - Verified):
     >>> from nexus.sdk import connect
     >>>
     >>> nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
-    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
-    >>> content = nx.sys_read("/workspace/file.txt")
+    >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = await nx.sys_read("/workspace/file.txt")
 
 Quick Start (Remote):
     >>> from nexus.sdk import connect
@@ -32,12 +32,12 @@ Quick Start (Remote):
     >>> nx = connect(config={"profile": "remote", "url": "http://localhost:2026"})
     >>>
     >>> # File operations
-    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
-    >>> content = nx.sys_read("/workspace/file.txt")
-    >>> nx.sys_unlink("/workspace/file.txt")
+    >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = await nx.sys_read("/workspace/file.txt")
+    >>> await nx.sys_unlink("/workspace/file.txt")
     >>>
     >>> # Discovery
-    >>> files = nx.sys_readdir("/workspace", recursive=True)
+    >>> files = await nx.sys_readdir("/workspace", recursive=True)
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
@@ -132,7 +132,7 @@ from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
 
 
-def connect(
+async def connect(
     config: str | Path | dict | Config | None = None,
 ) -> Filesystem:
     """
@@ -158,8 +158,8 @@ def connect(
     Examples:
         >>> # Use local backend (default)
         >>> nx = connect()
-        >>> nx.sys_write("/workspace/file.txt", b"Hello World")
-        >>> content = nx.sys_read("/workspace/file.txt")
+        >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
+        >>> content = await nx.sys_read("/workspace/file.txt")
 
         >>> # Use GCS backend
         >>> nx = connect(config={
@@ -173,4 +173,4 @@ def connect(
     # Delegate to the main connect function from nexus package
     from nexus import connect as nexus_connect
 
-    return nexus_connect(config)
+    return await nexus_connect(config)

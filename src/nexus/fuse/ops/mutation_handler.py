@@ -34,7 +34,7 @@ class MutationHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def create(self, path: str, _mode: int, _fi: Any = None) -> int:
+    async def create(self, path: str, _mode: int, _fi: Any = None) -> int:
         """Create a new file."""
         ctx = self._ctx
 
@@ -48,9 +48,9 @@ class MutationHandler:
         if view_type:
             raise FuseOSError(errno.EROFS)
 
-        check_namespace_visible(ctx, original_path)
+        await check_namespace_visible(ctx, original_path)
 
-        ctx.nexus_fs.sys_write(original_path, b"", context=ctx.context)
+        await ctx.nexus_fs.sys_write(original_path, b"", context=ctx.context)
 
         # Invalidate caches
         ctx.cache.invalidate_path(original_path)
@@ -75,7 +75,7 @@ class MutationHandler:
 
         return fd
 
-    def unlink(self, path: str) -> None:
+    async def unlink(self, path: str) -> None:
         """Delete a file."""
         ctx = self._ctx
 
@@ -83,11 +83,11 @@ class MutationHandler:
         if view_type:
             raise FuseOSError(errno.EROFS)
 
-        check_namespace_visible(ctx, original_path)
+        await check_namespace_visible(ctx, original_path)
 
         ok, _ = try_rust(ctx, "UNLINK", "sys_unlink", original_path)
         if not ok:
-            ctx.nexus_fs.sys_unlink(original_path, context=ctx.context)
+            await ctx.nexus_fs.sys_unlink(original_path, context=ctx.context)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:
@@ -97,41 +97,41 @@ class MutationHandler:
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.FILE_DELETE, original_path)
 
-    def mkdir(self, path: str, _mode: int) -> None:
+    async def mkdir(self, path: str, _mode: int) -> None:
         """Create a directory."""
         ctx = self._ctx
 
         if path.startswith("/.raw/"):
             raise FuseOSError(errno.EROFS)
 
-        check_namespace_visible(ctx, path)
+        await check_namespace_visible(ctx, path)
 
         ok, _ = try_rust(ctx, "MKDIR", "sys_mkdir", path)
         if not ok:
-            ctx.nexus_fs.sys_mkdir(path, parents=True, exist_ok=True, context=ctx.context)
+            await ctx.nexus_fs.sys_mkdir(path, parents=True, exist_ok=True, context=ctx.context)
 
         invalidate_dir_cache(ctx, path)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.DIR_CREATE, path)
 
-    def rmdir(self, path: str) -> None:
+    async def rmdir(self, path: str) -> None:
         """Remove a directory."""
         ctx = self._ctx
 
         if path == "/.raw":
             raise FuseOSError(errno.EROFS)
 
-        check_namespace_visible(ctx, path)
+        await check_namespace_visible(ctx, path)
 
-        ctx.nexus_fs.sys_rmdir(path, recursive=False, context=ctx.context)
+        await ctx.nexus_fs.sys_rmdir(path, recursive=False, context=ctx.context)
 
         invalidate_dir_cache(ctx, path)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.DIR_DELETE, path)
 
-    def rename(self, old: str, new: str) -> None:
+    async def rename(self, old: str, new: str) -> None:
         """Rename/move a file or directory."""
         ctx = self._ctx
 
@@ -144,17 +144,17 @@ class MutationHandler:
         if old.startswith("/.raw/") or new.startswith("/.raw/"):
             raise FuseOSError(errno.EROFS)
 
-        check_namespace_visible(ctx, old_path)
-        check_namespace_visible(ctx, new_path)
+        await check_namespace_visible(ctx, old_path)
+        await check_namespace_visible(ctx, new_path)
 
-        if ctx.nexus_fs.sys_access(new_path):
+        if await ctx.nexus_fs.sys_access(new_path):
             logger.error(f"Destination {new_path} already exists")
             raise FuseOSError(errno.EEXIST)
 
-        if ctx.nexus_fs.sys_is_directory(old_path, context=ctx.context):
-            self._rename_directory(old_path, new_path)
+        if await ctx.nexus_fs.sys_is_directory(old_path, context=ctx.context):
+            await self._rename_directory(old_path, new_path)
         else:
-            self._rename_file(old_path, new_path)
+            await self._rename_file(old_path, new_path)
 
         # Invalidate caches for both paths
         ctx.cache.invalidate_path(old_path)
@@ -178,26 +178,26 @@ class MutationHandler:
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.FILE_RENAME, new_path, old_path=old_path)
 
-    def _rename_file(self, old_path: str, new_path: str) -> None:
+    async def _rename_file(self, old_path: str, new_path: str) -> None:
         """Metadata-only file rename."""
         ctx = self._ctx
         logger.debug(f"Renaming file {old_path} to {new_path}")
 
         ok, _ = try_rust(ctx, "RENAME", "sys_rename", old_path, new_path)
         if not ok:
-            ctx.nexus_fs.sys_rename(old_path, new_path, context=ctx.context)
+            await ctx.nexus_fs.sys_rename(old_path, new_path, context=ctx.context)
 
-    def _rename_directory(self, old_path: str, new_path: str) -> None:
+    async def _rename_directory(self, old_path: str, new_path: str) -> None:
         """Recursive directory rename: list + move files + rmdir source."""
         ctx = self._ctx
         logger.debug(f"Renaming directory {old_path} to {new_path}")
 
         try:
-            ctx.nexus_fs.sys_mkdir(new_path, parents=True, exist_ok=True, context=ctx.context)
+            await ctx.nexus_fs.sys_mkdir(new_path, parents=True, exist_ok=True, context=ctx.context)
         except Exception as e:
             logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
 
-        files = ctx.nexus_fs.sys_readdir(
+        files = await ctx.nexus_fs.sys_readdir(
             old_path, recursive=True, details=True, context=ctx.context
         )
 
@@ -208,7 +208,7 @@ class MutationHandler:
                 src_file = file_info["path"]
                 dest_file = src_file.replace(old_path, new_path, 1)
                 logger.debug(f"  Moving file {src_file} to {dest_file}")
-                ctx.nexus_fs.sys_rename(src_file, dest_file, context=ctx.context)
+                await ctx.nexus_fs.sys_rename(src_file, dest_file, context=ctx.context)
 
         logger.debug(f"Removing source directory {old_path}")
-        ctx.nexus_fs.sys_rmdir(old_path, recursive=True, context=ctx.context)
+        await ctx.nexus_fs.sys_rmdir(old_path, recursive=True, context=ctx.context)

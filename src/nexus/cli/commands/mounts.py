@@ -11,7 +11,6 @@ For remote servers, commands call the RPC API (add_mount, remove_mount, etc.).
 For local instances, commands interact directly with the NexusFS methods.
 """
 
-import inspect
 import json
 import sys
 from typing import Any
@@ -26,18 +25,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.lib.sync_bridge import run_sync
-
-
-def _await_if_needed(result: Any) -> Any:
-    """Resolve a service call result that may be a coroutine or a plain value.
-
-    In local mode the service returns a coroutine (async def); in remote mode
-    the RemoteServiceProxy returns the value synchronously.
-    """
-    if inspect.iscoroutine(result):
-        return run_sync(result)
-    return result
 
 
 @click.group(name="mounts")
@@ -82,7 +69,7 @@ def mounts_group() -> None:
 @click.option("--owner", type=str, default=None, help="Owner user ID")
 @click.option("--zone", type=str, default=None, help="Zone ID")
 @add_backend_options
-def add_mount(
+async def add_mount(
     mount_point: str,
     backend_type: str,
     config_json: str,
@@ -123,22 +110,20 @@ def add_mount(
             sys.exit(1)
 
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Call add_mount via mount_service (async) with sync bridge
+        # Call add_mount via mount_service
         console.print("[yellow]Adding mount...[/yellow]")
 
         try:
             mount_svc = nx.service("mount")
             assert mount_svc is not None
-            mount_id = _await_if_needed(
-                mount_svc.add_mount(
-                    mount_point=mount_point,
-                    backend_type=backend_type,
-                    backend_config=config_dict,
-                    readonly=readonly,
-                    io_profile=io_profile,
-                )
+            mount_id = await mount_svc.add_mount(
+                mount_point=mount_point,
+                backend_type=backend_type,
+                backend_config=config_dict,
+                readonly=readonly,
+                io_profile=io_profile,
             )
             console.print(f"[green]\u2713[/green] Mount added successfully (ID: {mount_id})")
         except AttributeError:
@@ -168,7 +153,9 @@ def add_mount(
 @mounts_group.command(name="remove")
 @click.argument("mount_point", type=str)
 @add_backend_options
-def remove_mount(mount_point: str, remote_url: str | None, remote_api_key: str | None) -> None:
+async def remove_mount(
+    mount_point: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Remove a backend mount.
 
     Removes mount configuration from database. The mount will be unmounted
@@ -180,15 +167,15 @@ def remove_mount(mount_point: str, remote_url: str | None, remote_api_key: str |
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Call remove_mount via mount_service (async) with sync bridge
+        # Call remove_mount via mount_service
         console.print(f"[yellow]Removing mount at {mount_point}...[/yellow]")
 
         try:
             mount_svc = nx.service("mount")
             assert mount_svc is not None
-            result = _await_if_needed(mount_svc.remove_mount(mount_point=mount_point))
+            result = await mount_svc.remove_mount(mount_point=mount_point)
             if result.get("removed"):
                 console.print("[green]\u2713[/green] Mount removed successfully")
             else:
@@ -208,7 +195,7 @@ def remove_mount(mount_point: str, remote_url: str | None, remote_api_key: str |
 @click.option("--zone", type=str, default=None, help="Filter by zone ID")
 @add_output_options
 @add_backend_options
-def list_mounts(
+async def list_mounts(
     owner: str | None,
     zone: str | None,
     output_opts: OutputOptions,
@@ -236,14 +223,14 @@ def list_mounts(
     timing = CommandTiming()
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Call list_mounts via mount_service (async) with sync bridge
+        # Call list_mounts via mount_service
         with timing.phase("server"):
             try:
                 mount_svc = nx.service("mount")
                 assert mount_svc is not None
-                mounts = _await_if_needed(mount_svc.list_mounts())
+                mounts = await mount_svc.list_mounts()
             except AttributeError:
                 console.print(
                     "[red]Error:[/red] This Nexus instance doesn't support listing mounts"
@@ -297,7 +284,7 @@ def list_mounts(
     "--show-config", is_flag=True, help="Show backend configuration (may contain secrets)"
 )
 @add_backend_options
-def mount_info(
+async def mount_info(
     mount_point: str, show_config: bool, remote_url: str | None, remote_api_key: str | None
 ) -> None:
     """Show detailed information about a mount.
@@ -308,13 +295,13 @@ def mount_info(
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Call get_mount via mount_service (async) with sync bridge
+        # Call get_mount via mount_service
         try:
             mount_svc = nx.service("mount")
             assert mount_svc is not None
-            mount = _await_if_needed(mount_svc.get_mount(mount_point=mount_point))
+            mount = await mount_svc.get_mount(mount_point=mount_point)
         except AttributeError:
             console.print("[red]Error:[/red] This Nexus instance doesn't support mount info")
             console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
@@ -363,7 +350,7 @@ def mount_info(
 @click.option("--async", "run_async", is_flag=True, help="Run sync in background (returns job ID)")
 @add_output_options
 @add_backend_options
-def sync_mount(
+async def sync_mount(
     mount_point: str | None,
     path: str | None,
     no_cache: bool,
@@ -412,7 +399,7 @@ def sync_mount(
     timing = CommandTiming()
     try:
         # Get filesystem (works with both local and remote)
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
 
         # Convert tuples to lists for include/exclude
         include_patterns = list(include) if include else None
@@ -427,7 +414,7 @@ def sync_mount(
 
             with timing.phase("server"):
                 try:
-                    result = nx.service("sync_job").sync_mount_async(
+                    result = await nx.service("sync_job").sync_mount_async(
                         mount_point=mount_point,
                         path=path,
                         recursive=True,
@@ -471,7 +458,7 @@ def sync_mount(
 
         with timing.phase("server"):
             try:
-                result = nx.service("sync").sync_mount_flat(
+                result = await nx.service("sync").sync_mount_flat(
                     mount_point=mount_point,
                     path=path,
                     recursive=True,
@@ -558,7 +545,7 @@ def sync_mount(
 @click.option("--watch", is_flag=True, help="Watch progress until completion")
 @add_output_options
 @add_backend_options
-def sync_status(
+async def sync_status(
     job_id: str | None,
     watch: bool,
     output_opts: OutputOptions,
@@ -580,17 +567,17 @@ def sync_status(
         # List recent running jobs
         nexus mounts sync-status
     """
-    import time
+    import asyncio
 
     timing = CommandTiming()
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
 
         if job_id:
             # Show specific job
             with timing.phase("server"):
                 try:
-                    job = nx.service("sync_job").get_job(job_id)
+                    job = await nx.service("sync_job").get_job(job_id)
                 except AttributeError:
                     console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
                     sys.exit(1)
@@ -617,8 +604,8 @@ def sync_status(
                 console.print("[dim]Watching progress (Ctrl+C to stop)...[/dim]")
                 try:
                     while True:
-                        time.sleep(2)
-                        job = nx.service("sync_job").get_job(job_id)
+                        await asyncio.sleep(2)
+                        job = await nx.service("sync_job").get_job(job_id)
                         if not job:
                             break
                         # Clear and redisplay
@@ -632,7 +619,7 @@ def sync_status(
             # List recent running jobs
             with timing.phase("server"):
                 try:
-                    jobs = nx.service("sync_job").list_jobs(status="running", limit=10)
+                    jobs = await nx.service("sync_job").list_jobs(status="running", limit=10)
                 except AttributeError:
                     console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
                     sys.exit(1)
@@ -662,7 +649,7 @@ def sync_status(
         handle_error(e)
 
 
-def _display_job_status(job: dict) -> None:
+def _display_job_status(job: dict[str, Any]) -> None:
     """Display job status in a formatted way."""
     status_colors = {
         "pending": "yellow",
@@ -715,7 +702,7 @@ def _display_job_status(job: dict) -> None:
 @click.argument("job_id", type=str)
 @add_output_options
 @add_backend_options
-def sync_cancel(
+async def sync_cancel(
     job_id: str,
     output_opts: OutputOptions,
     remote_url: str | None,
@@ -728,11 +715,11 @@ def sync_cancel(
     """
     timing = CommandTiming()
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
 
         with timing.phase("server"):
             try:
-                result = nx.service("sync_job").cancel_sync_job(job_id)
+                result = await nx.service("sync_job").cancel_sync_job(job_id)
             except AttributeError:
                 console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
                 sys.exit(1)
@@ -767,7 +754,7 @@ def sync_cancel(
 @click.option("--limit", type=int, default=20, help="Maximum jobs to show")
 @add_output_options
 @add_backend_options
-def sync_jobs(
+async def sync_jobs(
     mount: str | None,
     status: str | None,
     limit: int,
@@ -789,11 +776,11 @@ def sync_jobs(
     """
     timing = CommandTiming()
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
 
         with timing.phase("server"):
             try:
-                jobs = nx.service("sync_job").list_jobs(
+                jobs = await nx.service("sync_job").list_jobs(
                     mount_point=mount, status=status, limit=limit
                 )
             except AttributeError:

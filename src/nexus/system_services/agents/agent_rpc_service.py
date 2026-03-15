@@ -108,7 +108,7 @@ class AgentRPCService:
             api_key=api_key,
         )
 
-    def _write_agent_config(
+    async def _write_agent_config(
         self,
         config_path: str,
         config_data: dict[str, Any],
@@ -118,13 +118,13 @@ class AgentRPCService:
 
         config_yaml = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
         ctx = parse_operation_context(context)
-        self._vfs.sys_write(config_path, config_yaml.encode("utf-8"), context=ctx)
+        await self._vfs.sys_write(config_path, config_yaml.encode("utf-8"), context=ctx)
 
     # ------------------------------------------------------------------
     # Directory & Permission Helpers
     # ------------------------------------------------------------------
 
-    def _create_agent_directory(
+    async def _create_agent_directory(
         self,
         agent_id: str,
         user_id: str,
@@ -135,8 +135,8 @@ class AgentRPCService:
     ) -> None:
         try:
             ctx = parse_operation_context(context)
-            self._vfs.sys_mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
-            self._write_agent_config(config_path, config_data, context)
+            await self._vfs.sys_mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
+            await self._write_agent_config(config_path, config_data, context)
 
             if self._rebac_manager:
                 zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
@@ -233,7 +233,7 @@ class AgentRPCService:
         finally:
             session.close()
 
-    def _provision_agent_api_key(
+    async def _provision_agent_api_key(
         self,
         agent_id: str,
         user_id: str,
@@ -259,14 +259,14 @@ class AgentRPCService:
                     metadata,
                     raw_key,
                 )
-                self._write_agent_config(config_path, updated, context)
+                await self._write_agent_config(config_path, updated, context)
             except Exception as e:
                 _logger.warning("Failed to update config with API key: %s", e)
         except Exception as e:
             _logger.error("Failed to create API key for agent: %s", e)
             raise
 
-    def _write_agent_identity_document(
+    async def _write_agent_identity_document(
         self,
         agent_id: str,
         agent_did: str,
@@ -287,8 +287,8 @@ class AgentRPCService:
             did_doc = create_did_document(agent_did, public_key)
             identity_dir = f"{agent_dir}/.identity"
             ctx = parse_operation_context(context)
-            self._vfs.sys_mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
-            self._vfs.sys_write(
+            await self._vfs.sys_mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+            await self._vfs.sys_write(
                 f"{identity_dir}/did.json", json.dumps(did_doc, indent=2), context=ctx
             )
             _logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
@@ -335,7 +335,7 @@ class AgentRPCService:
     # ------------------------------------------------------------------
 
     @rpc_expose(description="Register an AI agent")
-    def register_agent(
+    async def register_agent(
         self,
         agent_id: str,
         name: str,
@@ -380,7 +380,7 @@ class AgentRPCService:
             agent.get("created_at"),
             metadata,
         )
-        self._create_agent_directory(
+        await self._create_agent_directory(
             agent_id, user_id, agent_dir, config_path, config_data, context
         )
         agent["config_path"] = config_path
@@ -388,10 +388,12 @@ class AgentRPCService:
         self._grant_agent_self_permission(agent_id, agent_dir, zone_id, context, logger)
 
         if agent_did:
-            self._write_agent_identity_document(agent_id, agent_did, agent_dir, context, logger)
+            await self._write_agent_identity_document(
+                agent_id, agent_did, agent_dir, context, logger
+            )
 
         if generate_api_key:
-            self._provision_agent_api_key(
+            await self._provision_agent_api_key(
                 agent_id,
                 user_id,
                 name,
@@ -410,7 +412,7 @@ class AgentRPCService:
         return dict(agent)
 
     @rpc_expose(description="Update agent configuration")
-    def update_agent(
+    async def update_agent(
         self,
         agent_id: str,
         name: str | None = None,
@@ -438,7 +440,7 @@ class AgentRPCService:
             raise ValueError(f"Agent not found: {agent_id}") from e
 
         ctx = parse_operation_context(context)
-        existing_content = self._vfs.sys_read(config_path, context=ctx)
+        existing_content = await self._vfs.sys_read(config_path, context=ctx)
         if isinstance(existing_content, dict):
             existing_config = existing_content
         else:
@@ -454,7 +456,7 @@ class AgentRPCService:
             existing_config["metadata"].update(metadata)
 
         updated_yaml = yaml.dump(existing_config, default_flow_style=False, sort_keys=False)
-        self._vfs.sys_write(config_path, updated_yaml.encode("utf-8"), context=ctx)
+        await self._vfs.sys_write(config_path, updated_yaml.encode("utf-8"), context=ctx)
 
         if self._entity_registry and (name is not None or description is not None):
             entity = self._entity_registry.get_entity("agent", agent_id)
@@ -549,7 +551,7 @@ class AgentRPCService:
         return result
 
     @rpc_expose(description="Get agent information")
-    def get_agent(self, agent_id: str, _context: dict | None = None) -> dict | None:
+    async def get_agent(self, agent_id: str, _context: dict | None = None) -> dict | None:
         """Get information about a registered agent."""
         self._ensure_entity_registry()
         assert self._entity_registry is not None
@@ -597,13 +599,13 @@ class AgentRPCService:
                 )
 
             # Enrich from config.yaml
-            self._enrich_from_config(entity, info, _context, has_api_key=bool(agent_key))
+            await self._enrich_from_config(entity, info, _context, has_api_key=bool(agent_key))
         finally:
             session.close()
         return info
 
     @rpc_expose(description="Delete an agent")
-    def delete_agent(self, agent_id: str, _context: dict | None = None) -> bool:
+    async def delete_agent(self, agent_id: str, _context: dict | None = None) -> bool:
         """Delete a registered agent."""
         # Ownership check: caller must own the agent or be admin
         ctx = parse_operation_context(_context)
@@ -624,7 +626,7 @@ class AgentRPCService:
                 if self._rmdir_fn:
                     try:
                         ctx = parse_operation_context(_context)
-                        if self._vfs.sys_access(agent_dir, context=ctx):
+                        if await self._vfs.sys_access(agent_dir, context=ctx):
                             self._rmdir_fn(agent_dir, recursive=True, context=ctx, is_admin=True)
                     except Exception as e:
                         logger.warning("Failed to delete agent directory %s: %s", agent_dir, e)
@@ -783,7 +785,7 @@ class AgentRPCService:
     # Private helpers for config enrichment
     # ------------------------------------------------------------------
 
-    def _read_config_field(
+    async def _read_config_field(
         self,
         entity_id: str,
         field: str,
@@ -797,7 +799,7 @@ class AgentRPCService:
             zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
             config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
             ctx = parse_operation_context(context)
-            content = self._vfs.sys_read(config_path, context=ctx)
+            content = await self._vfs.sys_read(config_path, context=ctx)
             import yaml
 
             if isinstance(content, bytes):
@@ -809,7 +811,7 @@ class AgentRPCService:
             )
         return None
 
-    def _enrich_from_config(
+    async def _enrich_from_config(
         self,
         entity: Any,
         info: dict[str, Any],
@@ -825,7 +827,7 @@ class AgentRPCService:
             zone_id = self._extract_zone_id(context) or ROOT_ZONE_ID
             config_path = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
             ctx = parse_operation_context(context)
-            content = self._vfs.sys_read(config_path, context=ctx)
+            content = await self._vfs.sys_read(config_path, context=ctx)
             import yaml
 
             if not isinstance(content, bytes):

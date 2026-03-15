@@ -288,7 +288,7 @@ class WorkspaceRPCService:
         return results
 
     @rpc_expose()
-    def register_workspace(
+    async def register_workspace(
         self,
         path: str,
         name: str | None = None,
@@ -306,8 +306,8 @@ class WorkspaceRPCService:
         if context is None and hasattr(self, "_operation_context"):
             context = self._operation_context
 
-        if not self._vfs.sys_access(path, context=context):
-            self._vfs.sys_mkdir(path, parents=True, exist_ok=True, context=context)
+        if not await self._vfs.sys_access(path, context=context):
+            await self._vfs.sys_mkdir(path, parents=True, exist_ok=True, context=context)
 
         config = self._wr.register_workspace(
             path=path,

@@ -161,7 +161,7 @@ class ShareLinkService:
             HandlerResponse with link_id and share URL on success
         """
 
-        def _impl() -> HandlerResponse:
+        async def _impl() -> HandlerResponse:
             from nexus.storage.models import ShareLinkModel
 
             valid_levels = {"viewer", "editor", "owner"}
@@ -202,7 +202,7 @@ class ShareLinkService:
 
             # Determine resource type
             resource_type = "file"
-            if self._gw.sys_access(normalized_path):
+            if await self._gw.sys_access(normalized_path):
                 meta = self._gw.metadata_get(normalized_path)
                 if meta and getattr(meta, "is_dir", False):
                     resource_type = "directory"
@@ -257,7 +257,7 @@ class ShareLinkService:
             except Exception as e:
                 return HandlerResponse.error(f"Failed to create share link: {e}", code=500)
 
-        return await asyncio.to_thread(_impl)
+        return await _impl()
 
     @rpc_expose(description="Get details of a share link")
     async def get_share_link(

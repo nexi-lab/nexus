@@ -27,7 +27,7 @@ class FileReaderProtocol(Protocol):
     Only 6 methods (vs NexusFS's 30+) — keeps coupling surface small.
     """
 
-    def read_text(self, path: str) -> str:
+    async def read_text(self, path: str) -> str:
         """Read file content as text.
 
         Args:
@@ -53,7 +53,7 @@ class FileReaderProtocol(Protocol):
         """
         ...
 
-    def list_files(self, path: str, recursive: bool = True) -> list[Any]:
+    async def list_files(self, path: str, recursive: bool = True) -> list[Any]:
         """List files in a directory.
 
         Args:

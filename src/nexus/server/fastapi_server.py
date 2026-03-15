@@ -352,6 +352,14 @@ def create_app(
         _version_svc = getattr(nexus_fs, "version_service", None)
         if _version_svc is not None:
             _brick_sources.append(_version_svc)
+        # Issue #1520: FederationRPCService — zone lifecycle, share/join, mounts
+        _zone_mgr = getattr(nexus_fs, "_zone_mgr", None)
+        if _zone_mgr is not None:
+            from nexus.raft.federation import NexusFederation
+            from nexus.server.rpc.services.federation_rpc import FederationRPCService
+
+            _federation = NexusFederation(zone_manager=_zone_mgr)
+            _brick_sources.append(FederationRPCService(_zone_mgr, _federation))
         app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
     else:
         logger.info("create_app() started without NexusFS; service discovery disabled")

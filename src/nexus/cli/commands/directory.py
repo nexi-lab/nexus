@@ -64,7 +64,7 @@ def _format_file_entry(file: dict[str, Any] | str) -> dict[str, Any]:
 )
 @add_output_options
 @add_backend_options
-def list_files(
+async def list_files(
     path: str,
     recursive: bool,
     long: bool,
@@ -89,21 +89,20 @@ def list_files(
     timing = CommandTiming()
 
     try:
-        with contextlib.ExitStack() as stack:
+        async with open_filesystem(
+            remote_url,
+            remote_api_key,
+            allow_local_default=True,
+        ) as nx:
             with timing.phase("connect"):
-                nx = stack.enter_context(
-                    open_filesystem(
-                        remote_url,
-                        remote_api_key,
-                        allow_local_default=True,
-                    )
-                )
+                pass  # connection already established by async with
+
             if at_operation:
                 _ls_time_travel(nx, path, at_operation, recursive, long, output_opts, timing)
                 return
 
             with timing.phase("server"):
-                files_raw = nx.sys_readdir(path, recursive=recursive, details=True)
+                files_raw = await nx.sys_readdir(path, recursive=recursive, details=True)
                 files = _normalize_readdir(files_raw)
 
         if not files:
@@ -221,7 +220,7 @@ def _ls_time_travel(
 )
 @add_dry_run_option
 @add_backend_options
-def mkdir(
+async def mkdir(
     path: str,
     parents: bool,
     if_not_exists: bool,
@@ -243,17 +242,17 @@ def mkdir(
             render_dry_run(preview)
             return
 
-        with open_filesystem(
+        async with open_filesystem(
             remote_url,
             remote_api_key,
             allow_local_default=True,
         ) as nx:
             if if_not_exists:
                 with contextlib.suppress(FileExistsError):
-                    nx.sys_mkdir(path, parents=parents, exist_ok=True)
+                    await nx.sys_mkdir(path, parents=parents, exist_ok=True)
                 console.print(f"[green]✓[/green] Directory exists: [cyan]{path}[/cyan]")
             else:
-                nx.sys_mkdir(path, parents=parents, exist_ok=True)
+                await nx.sys_mkdir(path, parents=parents, exist_ok=True)
                 console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
     except Exception as e:
         handle_error(e)
@@ -265,7 +264,7 @@ def mkdir(
 @click.option("-f", "--force", is_flag=True, help="Don't ask for confirmation")
 @add_dry_run_option
 @add_backend_options
-def rmdir(
+async def rmdir(
     path: str,
     recursive: bool,
     force: bool,
@@ -290,7 +289,7 @@ def rmdir(
             render_dry_run(preview)
             return
 
-        with open_filesystem(
+        async with open_filesystem(
             remote_url,
             remote_api_key,
             allow_local_default=True,
@@ -298,7 +297,7 @@ def rmdir(
             if not force and not click.confirm(f"Remove directory {path}?"):
                 console.print("[yellow]Cancelled[/yellow]")
                 return
-            nx.sys_rmdir(path, recursive=recursive)
+            await nx.sys_rmdir(path, recursive=recursive)
         console.print(f"[green]✓[/green] Removed directory [cyan]{path}[/cyan]")
     except Exception as e:
         handle_error(e)
@@ -310,7 +309,7 @@ def rmdir(
 @click.option("--show-size", is_flag=True, help="Show file sizes")
 @add_output_options
 @add_backend_options
-def tree(
+async def tree(
     path: str,
     level: int | None,
     show_size: bool,
@@ -329,17 +328,16 @@ def tree(
     timing = CommandTiming()
 
     try:
-        with contextlib.ExitStack() as stack:
+        async with open_filesystem(
+            remote_url,
+            remote_api_key,
+            allow_local_default=True,
+        ) as nx:
             with timing.phase("connect"):
-                nx = stack.enter_context(
-                    open_filesystem(
-                        remote_url,
-                        remote_api_key,
-                        allow_local_default=True,
-                    )
-                )
+                pass  # connection already established by async with
+
             with timing.phase("server"):
-                files_raw = nx.sys_readdir(path, recursive=True, details=True)
+                files_raw = await nx.sys_readdir(path, recursive=True, details=True)
 
         files = _normalize_readdir(files_raw)
         if not files:

@@ -3,7 +3,6 @@
 Commands for viewing file information, version, and calculating sizes.
 """
 
-import contextlib
 import sys
 from typing import Any, cast
 
@@ -27,7 +26,7 @@ from nexus.cli.utils import (
 @click.argument("path", type=str)
 @add_output_options
 @add_backend_options
-def info(
+async def info(
     path: str,
     output_opts: OutputOptions,
     remote_url: str | None,
@@ -43,11 +42,12 @@ def info(
     timing = CommandTiming()
 
     try:
-        with contextlib.ExitStack() as stack:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
             with timing.phase("connect"):
-                nx = stack.enter_context(open_filesystem(remote_url, remote_api_key))
+                pass  # connection already established by async with
+
             # Check if file exists first
-            if not nx.sys_access(path):
+            if not await nx.sys_access(path):
                 render_output(
                     data=None,
                     output_opts=output_opts,
@@ -114,7 +114,7 @@ def version() -> None:
 @click.option("--human", "-h", is_flag=True, help="Human-readable output")
 @click.option("--details", is_flag=True, help="Show per-file breakdown")
 @add_backend_options
-def size(
+async def size(
     path: str,
     human: bool,
     details: bool,
@@ -131,11 +131,11 @@ def size(
         nexus size /workspace --details
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         # Get all files with details
         with console.status(f"[yellow]Calculating size of {path}...[/yellow]", spinner="dots"):
-            files_raw = nx.sys_readdir(path, recursive=True, details=True)
+            files_raw = await nx.sys_readdir(path, recursive=True, details=True)
 
         nx.close()
 

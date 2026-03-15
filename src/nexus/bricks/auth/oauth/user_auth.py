@@ -396,7 +396,7 @@ class OAuthUserAuth:
         zone_id = email.split("@")[0] if email else user_id
 
         try:
-            result = self._user_provisioner.provision_user(
+            result = await self._user_provisioner.provision_user(
                 user_id=user_id,
                 email=email,
                 display_name=display_name,

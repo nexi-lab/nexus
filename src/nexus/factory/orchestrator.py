@@ -234,7 +234,7 @@ def create_nexus_services(
     return kernel_services, system_services, brick_services
 
 
-def create_nexus_fs(
+async def create_nexus_fs(
     backend: "Backend",
     metadata_store: "MetastoreABC",
     record_store: "RecordStoreABC | None" = None,
@@ -375,12 +375,12 @@ def create_nexus_fs(
     )
     nx._link_fn = _do_link
     nx._initialize_fn = _do_initialize
-    nx.link(
+    await nx.link(
         enabled_bricks=enabled_bricks,
         parsing=parsing,
         workflow_engine=workflow_engine,
     )
-    nx.initialize()
+    await nx.initialize()
     return nx
 
 

@@ -451,7 +451,7 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     default=None,
     help="Explicit image digest (sha256:...). Overrides tag and channel.",
 )
-def init(
+async def init(
     preset: str,
     data_dir: str,
     tls: bool,
@@ -547,9 +547,9 @@ def init(
         try:
             import nexus
 
-            nx = nexus.connect(config={"data_dir": str(d_dir)})
-            nx.sys_mkdir("/workspace", exist_ok=True)
-            nx.sys_mkdir("/shared", exist_ok=True)
+            nx = await nexus.connect(config={"data_dir": str(d_dir)})
+            await nx.sys_mkdir("/workspace", exist_ok=True)
+            await nx.sys_mkdir("/shared", exist_ok=True)
             nx.close()
         except ImportError:
             logger.debug("nexus package not available for local workspace init")

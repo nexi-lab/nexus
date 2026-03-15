@@ -15,8 +15,8 @@ Example:
         def __init__(self, gateway: NexusFSGateway):
             self._gw = gateway  # Grep pattern: self._gw.
 
-        def sync_mount(self, ctx):
-            self._gw.sys_mkdir(ctx.mount_point, parents=True)
+        async def sync_mount(self, ctx):
+            await self._gw.sys_mkdir(ctx.mount_point, parents=True)
             meta = self._gw.metadata_get(path)
             self._gw.metadata_put(new_meta)
     ```
@@ -64,7 +64,7 @@ class NexusFSGateway:
     # File Operations
     # =========================================================================
 
-    def sys_mkdir(
+    async def sys_mkdir(
         self,
         path: str,
         *,
@@ -80,9 +80,9 @@ class NexusFSGateway:
             exist_ok: If True, don't raise if directory exists
             context: Operation context for permissions
         """
-        self._fs.sys_mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
+        await self._fs.sys_mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
-    def sys_write(
+    async def sys_write(
         self,
         path: str,
         buf: bytes | str,
@@ -99,9 +99,9 @@ class NexusFSGateway:
         Returns:
             Dict with path, bytes_written, and created flag.
         """
-        return self._fs.sys_write(path, buf, context=context)
+        return await self._fs.sys_write(path, buf, context=context)
 
-    def sys_read(
+    async def sys_read(
         self,
         path: str,
         *,
@@ -116,9 +116,9 @@ class NexusFSGateway:
         Returns:
             File content as bytes.
         """
-        return self._fs.sys_read(path, context=context)
+        return await self._fs.sys_read(path, context=context)
 
-    def sys_readdir(
+    async def sys_readdir(
         self,
         path: str,
         *,
@@ -133,13 +133,13 @@ class NexusFSGateway:
         Returns:
             List of paths in directory
         """
-        result = self._fs.sys_readdir(path, context=context)
+        result = await self._fs.sys_readdir(path, context=context)
         # Handle PaginatedResult vs raw list
         items = result.items if hasattr(result, "items") else result
         # Convert to list of strings
         return [str(item) for item in items]
 
-    def sys_access(
+    async def sys_access(
         self,
         path: str,
         *,
@@ -154,7 +154,7 @@ class NexusFSGateway:
         Returns:
             True if path exists, False otherwise
         """
-        return self._fs.sys_access(path, context=context)
+        return await self._fs.sys_access(path, context=context)
 
     # =========================================================================
     # Metadata Operations
@@ -537,7 +537,7 @@ class NexusFSGateway:
     # Search Operations (Issue #1287: replaces 8 Callable[..., Any] params)
     # =========================================================================
 
-    def read_file(
+    async def read_file(
         self,
         path: str,
         *,
@@ -557,7 +557,7 @@ class NexusFSGateway:
         Returns:
             File content as bytes/str, or metadata dict if return_metadata=True
         """
-        return self._fs.read(path, context=context, return_metadata=return_metadata)
+        return await self._fs.read(path, context=context, return_metadata=return_metadata)
 
     def read_bulk(
         self,

@@ -19,7 +19,7 @@ All operations pass user context for permission enforcement.
 import asyncio
 import base64
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -542,9 +542,9 @@ def create_async_files_router(
                     for i in range(0, len(data), cs):
                         yield data[i : i + cs]
 
-            def _full_generator() -> Iterator[bytes]:
+            async def _full_generator() -> AsyncIterator[bytes]:
                 """Sync generator wrapping NexusFS.read()."""
-                data = fs.sys_read(path, context=context)
+                data = await fs.sys_read(path, context=context)
                 if isinstance(data, bytes):
                     for i in range(0, len(data), chunk_size):
                         yield data[i : i + chunk_size]

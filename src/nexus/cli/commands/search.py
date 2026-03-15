@@ -1,6 +1,5 @@
 """Search and discovery commands - glob, grep, semantic search."""
 
-import contextlib
 from collections import defaultdict
 from typing import Any, cast
 
@@ -33,7 +32,7 @@ def register_commands(cli: click.Group) -> None:
 )
 @add_output_options
 @add_backend_options
-def glob(
+async def glob(
     pattern: str,
     path: str,
     long: bool,
@@ -60,9 +59,10 @@ def glob(
     timing = CommandTiming()
 
     try:
-        with contextlib.ExitStack() as stack:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
             with timing.phase("connect"):
-                nx = stack.enter_context(open_filesystem(remote_url, remote_api_key))
+                pass  # connection already established by async with
+
             with timing.phase("server"):
                 result = nx.service("search").glob(pattern, path)
                 matches = (
@@ -85,7 +85,7 @@ def glob(
                 filtered = []
                 for match in matches:
                     is_dir = (
-                        nx.sys_is_directory(match)
+                        await nx.sys_is_directory(match)
                         if hasattr(nx, "sys_is_directory")
                         else match.endswith("/")
                     )
@@ -100,7 +100,7 @@ def glob(
                 metadata_map: dict[str, dict[str, Any]] = {}
                 try:
                     parent_path = path if path != "/" else "/"
-                    all_details = nx.sys_readdir(parent_path, recursive=True, details=True)
+                    all_details = await nx.sys_readdir(parent_path, recursive=True, details=True)
                     details_list = cast(list[dict[str, Any]], all_details)
                     metadata_map = {d["path"]: d for d in details_list}
                 except Exception:
@@ -186,7 +186,7 @@ def glob(
 )
 @add_output_options
 @add_backend_options
-def grep(
+async def grep(
     pattern: str,
     path: str,
     file_pattern: str | None,
@@ -219,9 +219,10 @@ def grep(
     timing = CommandTiming()
 
     try:
-        with contextlib.ExitStack() as stack:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
             with timing.phase("connect"):
-                nx = stack.enter_context(open_filesystem(remote_url, remote_api_key))
+                pass  # connection already established by async with
+
             with timing.phase("server"):
                 result = nx.service("search").grep(
                     pattern,
@@ -330,7 +331,7 @@ def semantic_search_group() -> None:
     help="Chunking strategy",
 )
 @add_backend_options
-def search_init(
+async def search_init(
     provider: str | None,
     model: str | None,
     api_key: str | None,
@@ -363,7 +364,7 @@ def search_init(
         nexus search init --provider openai --chunk-size 2048
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
             nx.service("search").ainitialize_semantic_search(
@@ -397,7 +398,7 @@ def search_init(
 @click.argument("path", default="/")
 @click.option("--recursive/--no-recursive", default=True, help="Index directory recursively")
 @add_backend_options
-def search_index(
+async def search_index(
     path: str,
     recursive: bool,
     remote_url: str | None,
@@ -418,7 +419,7 @@ def search_index(
         nexus search index /docs/README.md
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
             search_svc = nx.service("search")
@@ -466,7 +467,7 @@ def search_index(
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
 @add_backend_options
-def search_query(
+async def search_query(
     query: str,
     path: str,
     limit: int,
@@ -491,7 +492,7 @@ def search_query(
         nexus search query "API endpoints" --json
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
             search_svc = nx.service("search")
@@ -536,14 +537,14 @@ def search_query(
 
 @semantic_search_group.command(name="stats")
 @add_backend_options
-def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
+async def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
     """Show semantic search statistics.
 
     Examples:
         nexus search stats
     """
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         stats: dict[str, Any] = nx.service("search").semantic_search_stats()
 

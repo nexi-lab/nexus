@@ -77,7 +77,7 @@ class MountCoreService:
     # Core Mount Operations
     # =========================================================================
 
-    def add_mount(
+    async def add_mount(
         self,
         mount_point: str,
         backend_type: str,
@@ -136,7 +136,7 @@ class MountCoreService:
             io_profile=io_profile,
         )
         try:
-            self._setup_mount_point(mount_point, context)
+            await self._setup_mount_point(mount_point, context)
         except Exception:
             logger.error(
                 "Mount setup failed for %s, rolling back router registration",
@@ -377,7 +377,7 @@ class MountCoreService:
 
         return BackendFactory.create(backend_type, config, record_store=self._gw.record_store)
 
-    def _setup_mount_point(
+    async def _setup_mount_point(
         self,
         mount_point: str,
         context: "OperationContext | None",
@@ -392,7 +392,7 @@ class MountCoreService:
 
         # Create directory entry
         try:
-            self._gw.sys_mkdir(mount_point, parents=True, exist_ok=True, context=context)
+            await self._gw.sys_mkdir(mount_point, parents=True, exist_ok=True, context=context)
             logger.info(f"Created directory entry for mount point: {mount_point}")
         except Exception as e:
             logger.warning(f"Failed to create directory entry: {e}")

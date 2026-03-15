@@ -298,13 +298,13 @@ class SearchService:
     # Delegation Helpers (via NexusFSGateway, Issue #1287)
     # =========================================================================
 
-    def _read(
+    async def _read(
         self, path: str, context: Any = None, return_metadata: bool = False
     ) -> bytes | dict[str, Any]:
         """Read file content via gateway."""
         if self._gw is None:
             raise NotImplementedError("gateway not provided to SearchService")
-        result = self._gw.read_file(path, context=context, return_metadata=return_metadata)
+        result = await self._gw.read_file(path, context=context, return_metadata=return_metadata)
         if isinstance(result, str):
             return result.encode("utf-8")
         return result
@@ -1618,7 +1618,7 @@ class SearchService:
     # =========================================================================
 
     @rpc_expose(description="Search file contents")
-    def grep(
+    async def grep(
         self,
         pattern: str,
         path: str = "/",
@@ -1687,7 +1687,7 @@ class SearchService:
 
         # Strategy: TRIGRAM_INDEX (Issue #954)
         if strategy == SearchStrategy.TRIGRAM_INDEX and zone_id:
-            trigram_results = self._try_grep_with_trigram(
+            trigram_results = await self._try_grep_with_trigram(
                 pattern=pattern,
                 ignore_case=ignore_case,
                 max_results=max_results,
@@ -1743,7 +1743,7 @@ class SearchService:
 
         if strategy == SearchStrategy.PARALLEL_POOL:
             results.extend(
-                self._grep_parallel(
+                await self._grep_parallel(
                     regex=regex,
                     files=files_needing_raw,
                     max_results=remaining_results,
@@ -1752,7 +1752,7 @@ class SearchService:
             )
         elif strategy in (SearchStrategy.RUST_BULK, SearchStrategy.SEQUENTIAL):
             results.extend(
-                self._grep_raw_content(
+                await self._grep_raw_content(
                     regex=regex,
                     pattern=pattern,
                     files_needing_raw=files_needing_raw,
@@ -1855,7 +1855,7 @@ class SearchService:
 
         return results
 
-    def _grep_raw_content(
+    async def _grep_raw_content(
         self,
         regex: re.Pattern[str],
         pattern: str,
@@ -1928,7 +1928,7 @@ class SearchService:
                 if len(results) >= remaining_results:
                     break
                 try:
-                    read_result = self._read(file_path, context=context)
+                    read_result = await self._read(file_path, context=context)
                     if not isinstance(read_result, bytes):
                         continue
                     try:
@@ -2024,7 +2024,7 @@ class SearchService:
             logger.warning(f"[GREP] Zoekt search failed: {e}")
             return None
 
-    def _try_grep_with_trigram(
+    async def _try_grep_with_trigram(
         self,
         pattern: str,
         ignore_case: bool,
@@ -2080,7 +2080,7 @@ class SearchService:
             if len(results) >= max_results:
                 break
             try:
-                content = self._read(file_path, context=context)
+                content = await self._read(file_path, context=context)
                 if not isinstance(content, bytes):
                     continue
                 try:
@@ -2106,7 +2106,7 @@ class SearchService:
 
         return results
 
-    def build_trigram_index_for_zone(
+    async def build_trigram_index_for_zone(
         self,
         zone_id: str,
         context: Any = None,
@@ -2138,7 +2138,7 @@ class SearchService:
         entries: builtins.list[tuple[str, bytes]] = []
         for file_path in files:
             try:
-                content = self._read(file_path, context=context)
+                content = await self._read(file_path, context=context)
                 if isinstance(content, bytes):
                     entries.append((file_path, content))
             except Exception as e:
@@ -2180,17 +2180,17 @@ class SearchService:
         if os.path.isfile(index_path):
             os.remove(index_path)
 
-    def _grep_parallel(
+    async def _grep_parallel(
         self,
         regex: re.Pattern[str],
         files: builtins.list[str],
         max_results: int,
         context: Any,
     ) -> builtins.list[dict[str, Any]]:
-        """Parallel grep using ThreadPoolExecutor (Issue #929).
+        """Parallel grep using asyncio.gather (Issue #929).
 
         Each worker searches its chunk independently. Results are merged and
-        truncated to ``max_results`` in the main thread.
+        truncated to ``max_results`` in the caller.
         """
         from nexus.utils.timing import Timer
 
@@ -2200,11 +2200,13 @@ class SearchService:
         chunk_size = max(1, len(files) // self._grep_parallel_workers)
         file_chunks = [files[i : i + chunk_size] for i in range(0, len(files), chunk_size)]
 
-        def search_chunk(chunk_files: builtins.list[str]) -> builtins.list[dict[str, Any]]:
+        async def search_chunk(
+            chunk_files: builtins.list[str],
+        ) -> builtins.list[dict[str, Any]]:
             chunk_results: builtins.list[dict[str, Any]] = []
             for file_path in chunk_files:
                 try:
-                    read_result = self._read(file_path, context=context)
+                    read_result = await self._read(file_path, context=context)
                     if not isinstance(read_result, bytes):
                         continue
                     try:
@@ -2230,16 +2232,15 @@ class SearchService:
             return chunk_results
 
         all_results: builtins.list[dict[str, Any]] = []
-        executor = self._get_thread_pool()
-        futures = [executor.submit(search_chunk, chunk) for chunk in file_chunks]
-        for future in futures:
-            try:
-                chunk_results = future.result(timeout=30)
-                all_results.extend(chunk_results)
-                if len(all_results) >= max_results:
-                    break
-            except Exception as e:
-                logger.debug(f"[GREP-PARALLEL] Chunk failed: {e}")
+        chunk_coros = [search_chunk(chunk) for chunk in file_chunks]
+        chunk_results_list = await asyncio.gather(*chunk_coros, return_exceptions=True)
+        for chunk_result in chunk_results_list:
+            if isinstance(chunk_result, BaseException):
+                logger.debug(f"[GREP-PARALLEL] Chunk failed: {chunk_result}")
+                continue
+            all_results.extend(chunk_result)
+            if len(all_results) >= max_results:
+                break
 
         timer.__exit__(None, None, None)
         logger.debug(

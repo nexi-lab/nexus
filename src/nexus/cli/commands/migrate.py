@@ -486,7 +486,7 @@ def restore(backup_path: str, dry_run: bool, data_dir: str | None) -> None:
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files")
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
 @add_backend_options
-def import_s3(
+async def import_s3(
     bucket: str,
     prefix: str,
     target: str,
@@ -515,7 +515,7 @@ def import_s3(
         console.print(f"[bold]Target:[/bold] {target}")
         console.print()
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
         migrator = DataMigrator(nx)
 
         options = ImportOptions(
@@ -527,7 +527,7 @@ def import_s3(
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
 
-        result = migrator.import_from_s3(
+        result = await migrator.import_from_s3(
             bucket=bucket,
             prefix=prefix,
             target_path=target,
@@ -552,7 +552,7 @@ def import_s3(
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
 @click.option("--credentials", default=None, help="Path to service account credentials JSON")
 @add_backend_options
-def import_gcs(
+async def import_gcs(
     bucket: str,
     prefix: str,
     target: str,
@@ -582,7 +582,7 @@ def import_gcs(
         console.print(f"[bold]Target:[/bold] {target}")
         console.print()
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
         migrator = DataMigrator(nx)
 
         options = ImportOptions(
@@ -594,7 +594,7 @@ def import_gcs(
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
 
-        result = migrator.import_from_gcs(
+        result = await migrator.import_from_gcs(
             bucket=bucket,
             prefix=prefix,
             target_path=target,
@@ -618,7 +618,7 @@ def import_gcs(
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files")
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
 @add_backend_options
-def import_fs(
+async def import_fs(
     source: str,
     target: str,
     overwrite: bool,
@@ -644,7 +644,7 @@ def import_fs(
         console.print(f"[bold]Target:[/bold] {target}")
         console.print()
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
         migrator = DataMigrator(nx)
 
         options = ImportOptions(
@@ -656,7 +656,7 @@ def import_fs(
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
 
-        result = migrator.import_from_local(
+        result = await migrator.import_from_local(
             source_path=source,
             target_path=target,
             options=options,
@@ -676,7 +676,7 @@ def import_fs(
 @click.option("--check-integrity", is_flag=True, help="Run full integrity checks")
 @click.option("--sample-size", default=100, help="Number of files to sample for content validation")
 @add_backend_options
-def validate(
+async def validate(
     check_integrity: bool,
     sample_size: int,  # noqa: ARG001 - Reserved for future use
     remote_url: str | None,
@@ -698,16 +698,16 @@ def validate(
         console.print("[bold]Running validation checks...[/bold]")
         console.print()
 
-        nx = get_filesystem(remote_url, remote_api_key)
+        nx = await get_filesystem(remote_url, remote_api_key)
         validator = IntegrityValidator(nx)
 
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
 
         if check_integrity:
-            result = validator.full_validation(progress_callback=progress_callback)
+            result = await validator.full_validation(progress_callback=progress_callback)
         else:
-            result = validator.validate_metadata_integrity()
+            result = await validator.validate_metadata_integrity()
 
         nx.close()
 

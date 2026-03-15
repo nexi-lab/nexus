@@ -12,12 +12,14 @@ Tests cover:
 import pytest
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.namespace_manager import (
     MountEntry,
     NamespaceManager,
     build_mount_entries,
 )
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -41,6 +43,7 @@ def enhanced_rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield manager
     manager.close()

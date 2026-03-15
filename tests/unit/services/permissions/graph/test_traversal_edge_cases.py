@@ -26,9 +26,11 @@ import pytest
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.domain import NamespaceConfig
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -44,7 +46,12 @@ def engine():
 @pytest.fixture
 def mgr(engine):
     """ReBACManager with max_depth=10 and 5-min cache."""
-    m = ReBACManager(engine=engine, cache_ttl_seconds=300, max_depth=10)
+    m = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=10,
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+    )
     yield m
     m.close()
 
@@ -52,7 +59,12 @@ def mgr(engine):
 @pytest.fixture
 def mgr_shallow(engine):
     """ReBACManager with max_depth=3 for depth limit testing."""
-    m = ReBACManager(engine=engine, cache_ttl_seconds=300, max_depth=3)
+    m = ReBACManager(
+        engine=engine,
+        cache_ttl_seconds=300,
+        max_depth=3,
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
+    )
     yield m
     m.close()
 

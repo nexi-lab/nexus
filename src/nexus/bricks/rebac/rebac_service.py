@@ -2121,53 +2121,15 @@ class ReBACService(ReBACShareMixin):
 
     def namespace_list_sync(self) -> list[dict[str, Any]]:
         """List all registered namespace configurations (sync)."""
-        import json as _json
-
-        from sqlalchemy import select
-
-        from nexus.storage.models.permissions import ReBACNamespaceModel as RN
-
         mgr = self._require_manager()
-
-        stmt = select(RN).order_by(RN.object_type)
-
-        with mgr.engine.connect() as conn:
-            result = conn.execute(stmt)
-            namespaces = []
-            for row in result:
-                namespaces.append(
-                    {
-                        "namespace_id": row.namespace_id,
-                        "object_type": row.object_type,
-                        "config": _json.loads(row.config),
-                        "created_at": row.created_at,
-                        "updated_at": row.updated_at,
-                    }
-                )
-            return namespaces
+        result: list[dict[str, Any]] = mgr.list_namespaces()
+        return result
 
     def namespace_delete_sync(self, object_type: str) -> bool:
         """Delete a namespace configuration (sync)."""
-        from sqlalchemy import delete, select
-
-        from nexus.storage.models.permissions import ReBACNamespaceModel as RN
-
         mgr = self._require_manager()
-
-        with mgr.engine.begin() as conn:
-            # Check if namespace exists
-            exists = conn.execute(
-                select(RN.namespace_id).where(RN.object_type == object_type)
-            ).fetchone()
-            if exists is None:
-                return False
-
-            conn.execute(delete(RN).where(RN.object_type == object_type))
-
-        cache = getattr(mgr, "_cache", None)
-        if cache is not None:
-            cache.clear()
-        return True
+        deleted: bool = mgr.delete_namespace(object_type)
+        return deleted
 
     # =========================================================================
     # Sync: Sharing, Privacy, Dynamic Viewer, Tiger Cache

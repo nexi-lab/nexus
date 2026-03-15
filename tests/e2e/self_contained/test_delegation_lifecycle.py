@@ -16,9 +16,11 @@ from nexus.bricks.delegation.errors import (
 )
 from nexus.bricks.delegation.models import DelegationMode, DelegationStatus
 from nexus.bricks.delegation.service import DelegationService
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.system_services.agents.agent_registry import AgentRegistry
+from tests.helpers.dict_metastore import DictMetastore
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
@@ -53,6 +55,7 @@ def rebac_manager(engine):
         engine=engine,
         cache_ttl_seconds=0,  # Disable caching for tests
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield manager
     manager.close()

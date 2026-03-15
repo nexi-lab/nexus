@@ -23,6 +23,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.manager import (
     EnhancedReBACManager,
 )
@@ -30,6 +31,7 @@ from nexus.contracts.rebac_types import (
     WriteResult,
 )
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 
 @pytest.fixture
@@ -73,6 +75,7 @@ def manager(engine):
         enable_graph_limits=True,
         enable_leopard=True,
         enable_tiger_cache=False,  # SQLite doesn't support Tiger
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield mgr
     mgr.close()
@@ -728,6 +731,7 @@ class TestConsistencyModuleIntegration:
             enable_graph_limits=True,
             enable_leopard=False,
             enable_tiger_cache=False,
+            namespace_store=MetastoreNamespaceStore(DictMetastore()),
         )
         try:
             # Same-zone write should succeed
@@ -766,6 +770,7 @@ class TestConsistencyModuleIntegration:
             enable_graph_limits=True,
             enable_leopard=False,
             enable_tiger_cache=False,
+            namespace_store=MetastoreNamespaceStore(DictMetastore()),
         )
         try:
             result = mgr.rebac_write(

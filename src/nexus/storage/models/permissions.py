@@ -146,27 +146,6 @@ class ReBACTupleModel(Base):
     )
 
 
-class ReBACNamespaceModel(Base):
-    """Namespace configuration for ReBAC permission expansion."""
-
-    __tablename__ = "rebac_namespaces"
-
-    namespace_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    object_type: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
-
-    config: Mapped[str] = mapped_column(Text, nullable=False)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-        nullable=False,
-    )
-
-
 class ReBACGroupClosureModel(Base):
     """Leopard-style transitive group closure for O(1) membership lookups."""
 

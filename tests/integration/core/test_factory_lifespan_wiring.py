@@ -82,7 +82,7 @@ class TestEventLogFactoryToLifespan:
         ctx = _make_boot_context()
         _boot_kernel_services(ctx)
         with patch(
-            "nexus.system_services.event_subsystem.log.create_event_log",
+            "nexus.system_services.event_log.create_event_log",
             return_value=sentinel_event_log,
         ):
             system_dict = _boot_system_services(ctx)

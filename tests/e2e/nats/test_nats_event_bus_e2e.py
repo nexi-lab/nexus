@@ -161,7 +161,7 @@ def server_app():
     assert isinstance(nexus_fs, NexusFS)
 
     # Verify event bus is NATS
-    from nexus.system_services.event_subsystem.bus.nats import NatsEventBus
+    from nexus.system_services.event_bus.nats import NatsEventBus
 
     assert nexus_fs._event_bus is not None
     assert isinstance(nexus_fs._event_bus, NatsEventBus)
@@ -217,7 +217,7 @@ class TestServerStartup:
 
     def test_event_bus_is_nats(self, client, nexus_fs):
         """Event bus should be NatsEventBus."""
-        from nexus.system_services.event_subsystem.bus.nats import NatsEventBus
+        from nexus.system_services.event_bus.nats import NatsEventBus
 
         assert isinstance(nexus_fs._event_bus, NatsEventBus)
 
@@ -252,7 +252,7 @@ class TestDirectPublish:
 
     def test_direct_publish_received(self, client, nexus_fs):
         """Events published directly to bus should appear in NATS stream."""
-        from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         unique_path = f"/e2e-nats-test/direct-{uuid.uuid4().hex[:8]}.txt"
         event = FileEvent(
@@ -374,7 +374,7 @@ class TestDurableSubscriber:
         """A durable consumer should receive events from direct NexusFS writes."""
         import nats as nats_lib
 
-        from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         unique_path = f"/e2e-nats-test/durable-{uuid.uuid4().hex[:8]}.txt"
 
@@ -525,7 +525,7 @@ class TestDeduplication:
 
     def test_duplicate_events_deduplicated(self, client, nexus_fs):
         """Publishing the same event_id twice should be deduplicated."""
-        from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         dedup_id = f"dedup-e2e-{uuid.uuid4().hex[:8]}"
         event = FileEvent(

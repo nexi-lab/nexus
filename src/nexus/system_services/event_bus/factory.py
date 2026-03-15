@@ -3,9 +3,9 @@
 import logging
 from typing import Any
 
-from nexus.system_services.event_subsystem.bus.base import EventBusBase
-from nexus.system_services.event_subsystem.bus.protocol import PubSubClientProtocol
-from nexus.system_services.event_subsystem.bus.redis import RedisEventBus
+from nexus.system_services.event_bus.base import EventBusBase
+from nexus.system_services.event_bus.protocol import PubSubClientProtocol
+from nexus.system_services.event_bus.redis import RedisEventBus
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def create_event_bus(
     if backend == "nats":
         if nats_url is None:
             raise ValueError("nats_url is required for NATS backend")
-        from nexus.system_services.event_subsystem.bus.nats import NatsEventBus
+        from nexus.system_services.event_bus.nats import NatsEventBus
 
         return NatsEventBus(nats_url=nats_url, **kwargs)
 

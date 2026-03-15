@@ -7,8 +7,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.system_services.event_subsystem.bus.protocol import AckableEvent
-from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_bus.protocol import AckableEvent
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC

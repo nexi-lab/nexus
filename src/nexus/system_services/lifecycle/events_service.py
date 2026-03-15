@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
     from nexus.core.file_events import FileEvent
     from nexus.lib.distributed_lock import LockManagerBase
-    from nexus.system_services.event_subsystem.bus.base import EventBusBase
+    from nexus.system_services.event_bus.base import EventBusBase
 
 
 @dataclasses.dataclass

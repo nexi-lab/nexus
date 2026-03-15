@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.system_services.event_subsystem.bus.base import EventBusBase
-from nexus.system_services.event_subsystem.bus.decorators import requires_started
-from nexus.system_services.event_subsystem.bus.protocol import AckableEvent, PubSubClientProtocol
-from nexus.system_services.event_subsystem.types import FileEvent
+from nexus.system_services.event_bus.base import EventBusBase
+from nexus.system_services.event_bus.decorators import requires_started
+from nexus.system_services.event_bus.protocol import AckableEvent, PubSubClientProtocol
+from nexus.system_services.event_bus.types import FileEvent
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC

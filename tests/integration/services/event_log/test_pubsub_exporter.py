@@ -11,7 +11,7 @@ import os
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.system_services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 # Skip if testcontainers or gcloud-aio-pubsub not installed
 pytest.importorskip("testcontainers")
@@ -70,8 +70,8 @@ def set_emulator_env(pubsub_host: str):
 
 @pytest.fixture
 def exporter():
-    from nexus.system_services.event_subsystem.log.exporters.config import PubSubExporterConfig
-    from nexus.system_services.event_subsystem.log.exporters.pubsub_exporter import PubSubExporter
+    from nexus.system_services.event_log.exporters.config import PubSubExporterConfig
+    from nexus.system_services.event_log.exporters.pubsub_exporter import PubSubExporter
 
     config = PubSubExporterConfig(
         project_id="test-project",

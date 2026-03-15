@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING
 from nexus.lib.circuit_breaker import CircuitBreakerBase, CircuitState
 
 if TYPE_CHECKING:
-    from nexus.system_services.event_subsystem.log.exporter_protocol import (
+    from nexus.system_services.event_bus.types import FileEvent
+    from nexus.system_services.event_log.exporter_protocol import (
         EventStreamExporterProtocol,
     )
-    from nexus.system_services.event_subsystem.types import FileEvent
 
 logger = logging.getLogger(__name__)
 

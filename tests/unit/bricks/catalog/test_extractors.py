@@ -9,9 +9,12 @@ import json
 import pytest
 
 from nexus.bricks.catalog.extractors import (
+    AvroExtractor,
     CSVExtractor,
+    DocumentExtractionResult,
     ExtractionResult,
     JSONExtractor,
+    MarkdownExtractor,
     ParquetExtractor,
 )
 
@@ -19,6 +22,15 @@ from nexus.bricks.catalog.extractors import (
 def _has_pyarrow() -> bool:
     try:
         import pyarrow  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _has_fastavro() -> bool:
+    try:
+        import fastavro  # noqa: F401
 
         return True
     except ImportError:
@@ -296,3 +308,417 @@ class TestExtractionResult:
         result = ExtractionResult(schema=None, format="csv", confidence=0.0)
         with pytest.raises(AttributeError):
             result.format = "json"
+
+
+# ============================================================================
+# Avro Extractor Tests
+# ============================================================================
+
+
+class TestAvroExtractor:
+    """Avro schema extraction."""
+
+    def test_invalid_content(self) -> None:
+        result = AvroExtractor().extract(b"not an avro file")
+        assert result.error is not None
+        assert result.format == "avro"
+
+    def test_empty_content(self) -> None:
+        result = AvroExtractor().extract(b"")
+        assert result.error is not None
+
+    @pytest.mark.skipif(not _has_fastavro(), reason="fastavro not installed")
+    def test_valid_avro(self) -> None:
+        """Test with a real Avro file."""
+        import io
+
+        import fastavro
+
+        schema = {
+            "type": "record",
+            "name": "User",
+            "fields": [
+                {"name": "id", "type": "int"},
+                {"name": "name", "type": "string"},
+                {"name": "score", "type": "double"},
+            ],
+        }
+        records = [
+            {"id": 1, "name": "Alice", "score": 3.14},
+            {"id": 2, "name": "Bob", "score": 2.72},
+        ]
+        buf = io.BytesIO()
+        fastavro.writer(buf, schema, records)
+        content = buf.getvalue()
+
+        result = AvroExtractor().extract(content)
+        assert result.error is None
+        assert result.format == "avro"
+        assert result.confidence == 1.0
+        assert result.schema is not None
+        assert len(result.schema) == 3
+        assert result.row_count is None  # O(1) header-only — no row counting
+
+        names = {c["name"] for c in result.schema}
+        assert names == {"id", "name", "score"}
+
+    @pytest.mark.skipif(not _has_fastavro(), reason="fastavro not installed")
+    def test_nullable_union_types(self) -> None:
+        """Avro union types like ["null", "string"] should be detected as nullable."""
+        import io
+
+        import fastavro
+
+        schema = {
+            "type": "record",
+            "name": "NullableTest",
+            "fields": [
+                {"name": "required_id", "type": "int"},
+                {"name": "optional_name", "type": ["null", "string"]},
+            ],
+        }
+        records = [{"required_id": 1, "optional_name": "Alice"}]
+        buf = io.BytesIO()
+        fastavro.writer(buf, schema, records)
+        content = buf.getvalue()
+
+        result = AvroExtractor().extract(content)
+        assert result.schema is not None
+        cols = {c["name"]: c for c in result.schema}
+        assert cols["required_id"]["nullable"] == "False"
+        assert cols["optional_name"]["nullable"] == "True"
+        assert cols["optional_name"]["type"] == "string"
+
+    @pytest.mark.skipif(not _has_fastavro(), reason="fastavro not installed")
+    def test_nested_record_type(self) -> None:
+        """Avro nested record fields should be typed as 'record'."""
+        import io
+
+        import fastavro
+
+        schema = {
+            "type": "record",
+            "name": "Parent",
+            "fields": [
+                {"name": "id", "type": "int"},
+                {
+                    "name": "address",
+                    "type": {
+                        "type": "record",
+                        "name": "Address",
+                        "fields": [
+                            {"name": "city", "type": "string"},
+                        ],
+                    },
+                },
+            ],
+        }
+        records = [{"id": 1, "address": {"city": "NYC"}}]
+        buf = io.BytesIO()
+        fastavro.writer(buf, schema, records)
+        content = buf.getvalue()
+
+        result = AvroExtractor().extract(content)
+        assert result.schema is not None
+        types = {c["name"]: c["type"] for c in result.schema}
+        assert types["address"] == "record"
+
+    @pytest.mark.skipif(not _has_fastavro(), reason="fastavro not installed")
+    def test_array_type(self) -> None:
+        """Avro array fields should be typed as 'array'."""
+        import io
+
+        import fastavro
+
+        schema = {
+            "type": "record",
+            "name": "ArrayTest",
+            "fields": [
+                {"name": "tags", "type": {"type": "array", "items": "string"}},
+            ],
+        }
+        records = [{"tags": ["a", "b"]}]
+        buf = io.BytesIO()
+        fastavro.writer(buf, schema, records)
+        content = buf.getvalue()
+
+        result = AvroExtractor().extract(content)
+        assert result.schema is not None
+        assert result.schema[0]["type"] == "array"
+
+    @pytest.mark.skipif(not _has_fastavro(), reason="fastavro not installed")
+    def test_enum_type(self) -> None:
+        """Avro enum fields."""
+        import io
+
+        import fastavro
+
+        schema = {
+            "type": "record",
+            "name": "EnumTest",
+            "fields": [
+                {
+                    "name": "color",
+                    "type": {
+                        "type": "enum",
+                        "name": "Color",
+                        "symbols": ["RED", "GREEN", "BLUE"],
+                    },
+                },
+            ],
+        }
+        records = [{"color": "RED"}]
+        buf = io.BytesIO()
+        fastavro.writer(buf, schema, records)
+        content = buf.getvalue()
+
+        result = AvroExtractor().extract(content)
+        assert result.schema is not None
+        assert result.schema[0]["type"] == "enum"
+
+    @pytest.mark.skipif(not _has_fastavro(), reason="fastavro not installed")
+    def test_schema_only_no_records(self) -> None:
+        """Avro file with schema but no data records."""
+        import io
+
+        import fastavro
+
+        schema = {
+            "type": "record",
+            "name": "Empty",
+            "fields": [
+                {"name": "id", "type": "int"},
+            ],
+        }
+        buf = io.BytesIO()
+        fastavro.writer(buf, schema, [])
+        content = buf.getvalue()
+
+        result = AvroExtractor().extract(content)
+        assert result.error is None
+        assert result.schema is not None
+        assert len(result.schema) == 1
+        assert result.row_count is None  # O(1) header-only — no row counting
+
+    @pytest.mark.skipif(not _has_fastavro(), reason="fastavro not installed")
+    def test_map_type(self) -> None:
+        """Avro map fields should be typed as 'map'."""
+        import io
+
+        import fastavro
+
+        schema = {
+            "type": "record",
+            "name": "MapTest",
+            "fields": [
+                {"name": "attrs", "type": {"type": "map", "values": "string"}},
+            ],
+        }
+        records = [{"attrs": {"key1": "val1"}}]
+        buf = io.BytesIO()
+        fastavro.writer(buf, schema, records)
+        content = buf.getvalue()
+
+        result = AvroExtractor().extract(content)
+        assert result.schema is not None
+        assert result.schema[0]["type"] == "map"
+
+    def test_self_registration_metadata(self) -> None:
+        """AvroExtractor declares mime_types and extensions."""
+        ext = AvroExtractor()
+        assert "application/avro" in ext.mime_types
+        assert "avro" in ext.extensions
+
+
+# ============================================================================
+# Markdown Extractor Tests
+# ============================================================================
+
+
+class TestMarkdownExtractor:
+    """Markdown document structure extraction."""
+
+    def test_simple_markdown(self) -> None:
+        content = b"# Hello World\n\nThis is a test.\n"
+        result = MarkdownExtractor().extract(content)
+
+        assert result.format == "markdown"
+        assert result.error is None
+        assert result.confidence == 1.0
+        assert result.title == "Hello World"
+        assert len(result.headings) == 1
+        assert result.headings[0]["level"] == 1
+        assert result.word_count > 0
+
+    def test_empty_markdown(self) -> None:
+        result = MarkdownExtractor().extract(b"")
+        assert result.error is not None
+        assert result.confidence == 0.0
+
+    def test_whitespace_only(self) -> None:
+        result = MarkdownExtractor().extract(b"   \n  \n  ")
+        assert result.error is not None
+
+    def test_yaml_front_matter(self) -> None:
+        content = b"---\ntitle: My Document\nauthor: Alice\ntags:\n  - python\n  - testing\n---\n\n# Content\n\nBody text here.\n"
+        result = MarkdownExtractor().extract(content)
+
+        assert result.front_matter is not None
+        assert result.front_matter["title"] == "My Document"
+        assert result.front_matter["author"] == "Alice"
+        assert result.front_matter["tags"] == ["python", "testing"]
+        # Title from front matter takes priority
+        assert result.title == "My Document"
+
+    def test_invalid_yaml_front_matter_graceful(self) -> None:
+        content = b"---\ninvalid: yaml: content: [[\n---\n\n# Heading\n"
+        result = MarkdownExtractor().extract(content)
+        # Should not crash — front matter is None, but heading is still extracted
+        assert result.error is None
+        assert len(result.headings) >= 1
+
+    def test_no_front_matter(self) -> None:
+        content = b"# Just a heading\n\nSome text.\n"
+        result = MarkdownExtractor().extract(content)
+        assert result.front_matter is None
+        assert result.title == "Just a heading"
+
+    def test_multiple_heading_levels(self) -> None:
+        content = b"# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n"
+        result = MarkdownExtractor().extract(content)
+
+        assert len(result.headings) == 6
+        for i, h in enumerate(result.headings, 1):
+            assert h["level"] == i
+            assert h["text"] == f"H{i}"
+
+    def test_setext_headings(self) -> None:
+        content = b"Heading One\n===\n\nHeading Two\n---\n"
+        result = MarkdownExtractor().extract(content)
+
+        assert len(result.headings) == 2
+        assert result.headings[0]["level"] == 1
+        assert result.headings[0]["text"] == "Heading One"
+        assert result.headings[1]["level"] == 2
+        assert result.headings[1]["text"] == "Heading Two"
+
+    def test_heading_inside_code_block_ignored(self) -> None:
+        content = b"# Real Heading\n\n```python\n# This is a comment, not a heading\ndef foo():\n    pass\n```\n"
+        result = MarkdownExtractor().extract(content)
+
+        assert len(result.headings) == 1
+        assert result.headings[0]["text"] == "Real Heading"
+
+    def test_code_block_languages(self) -> None:
+        content = b"```python\nprint('hello')\n```\n\n```rust\nfn main() {}\n```\n\n```python\nx = 1\n```\n"
+        result = MarkdownExtractor().extract(content)
+
+        assert len(result.code_languages) == 3
+        assert result.code_languages[0] == "python"
+        assert result.code_languages[1] == "rust"
+        assert result.code_languages[2] == "python"
+
+    def test_code_block_no_language(self) -> None:
+        content = b"```\nsome code\n```\n"
+        result = MarkdownExtractor().extract(content)
+        # No language annotation — should not appear in list
+        assert len(result.code_languages) == 0
+
+    def test_link_count(self) -> None:
+        content = b"[link1](http://a.com) and [link2](http://b.com)\n\nAlso [ref][1]\n\n[1]: http://c.com\n"
+        result = MarkdownExtractor().extract(content)
+        assert result.link_count >= 2
+
+    def test_word_count_excludes_code_blocks(self) -> None:
+        content = b"Hello world.\n\n```python\nthis_is_code = True\nmore_code_here = False\n```\n\nGoodbye world.\n"
+        result = MarkdownExtractor().extract(content)
+        # "Hello world." + "Goodbye world." = ~4 words, code excluded
+        assert result.word_count >= 2
+        assert result.word_count < 10  # Code words should not be counted
+
+    def test_unicode_headings(self) -> None:
+        content = "# 日本語の見出し\n\n本文テキスト。\n".encode()
+        result = MarkdownExtractor().extract(content)
+        assert result.title == "日本語の見出し"
+
+    def test_front_matter_date_sanitized(self) -> None:
+        """YAML dates should be sanitized to strings."""
+        content = b"---\ntitle: Test\ndate: 2026-01-15\n---\n\n# Content\n"
+        result = MarkdownExtractor().extract(content)
+        assert result.front_matter is not None
+        # The date should be a string (sanitized), not a datetime object
+        date_val = result.front_matter.get("date")
+        assert isinstance(date_val, str)
+
+    def test_self_registration_metadata(self) -> None:
+        """MarkdownExtractor declares mime_types and extensions."""
+        ext = MarkdownExtractor()
+        assert "text/markdown" in ext.mime_types
+        assert "md" in ext.extensions
+        assert "markdown" in ext.extensions
+
+    def test_title_from_first_h1_when_no_front_matter(self) -> None:
+        content = b"## Not a title\n\n# Actual Title\n\nBody.\n"
+        result = MarkdownExtractor().extract(content)
+        assert result.title == "Actual Title"
+
+
+# ============================================================================
+# DocumentExtractionResult Tests
+# ============================================================================
+
+
+class TestDocumentExtractionResult:
+    """DocumentExtractionResult value type tests."""
+
+    def test_success_result(self) -> None:
+        result = DocumentExtractionResult(
+            title="Test",
+            headings=[{"level": 1, "text": "Test"}],
+            front_matter=None,
+            word_count=10,
+            link_count=2,
+            code_languages=["python"],
+            format="markdown",
+            confidence=1.0,
+        )
+        assert result.error is None
+        assert result.warnings == []
+
+    def test_frozen(self) -> None:
+        result = DocumentExtractionResult(
+            title=None,
+            headings=[],
+            front_matter=None,
+            word_count=0,
+            link_count=0,
+            code_languages=[],
+            format="markdown",
+            confidence=0.0,
+        )
+        with pytest.raises(AttributeError):
+            result.format = "other"
+
+
+# ============================================================================
+# Self-Registration Metadata Tests
+# ============================================================================
+
+
+class TestExtractorSelfRegistration:
+    """Verify all extractors declare mime_types and extensions."""
+
+    def test_csv_extractor_metadata(self) -> None:
+        ext = CSVExtractor()
+        assert "text/csv" in ext.mime_types
+        assert "csv" in ext.extensions
+
+    def test_json_extractor_metadata(self) -> None:
+        ext = JSONExtractor()
+        assert "application/json" in ext.mime_types
+        assert "json" in ext.extensions
+
+    def test_parquet_extractor_metadata(self) -> None:
+        ext = ParquetExtractor()
+        assert "application/parquet" in ext.mime_types
+        assert "parquet" in ext.extensions

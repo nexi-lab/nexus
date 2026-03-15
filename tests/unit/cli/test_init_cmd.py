@@ -101,10 +101,9 @@ class TestAddonProfileMap:
 
 
 class TestResolveImageRef:
-    def test_stable_channel_pins_to_version(self) -> None:
+    def test_stable_channel_uses_stable_tag(self) -> None:
         ref = _resolve_image_ref("stable", "cpu")
-        assert ref.startswith("ghcr.io/nexi-lab/nexus:")
-        assert ref != "ghcr.io/nexi-lab/nexus:latest"  # Should use __version__
+        assert ref == "ghcr.io/nexi-lab/nexus:stable"
 
     def test_edge_channel_uses_edge_tag(self) -> None:
         ref = _resolve_image_ref("edge", "cpu")

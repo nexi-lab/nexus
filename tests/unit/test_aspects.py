@@ -9,6 +9,7 @@ from nexus.contracts.aspects import (
     AspectBase,
     AspectEnvelope,
     AspectRegistry,
+    DocumentStructureAspect,
     FileMetadataAspect,
     OwnershipAspect,
     PathAspect,
@@ -68,6 +69,7 @@ class TestAspectRegistry:
         registry.register("schema_metadata", SchemaMetadataAspect, max_versions=20)
         registry.register("file_metadata", FileMetadataAspect, max_versions=10)
         registry.register("ownership", OwnershipAspect, max_versions=5)
+        registry.register("document_structure", DocumentStructureAspect, max_versions=10)
 
     def test_singleton(self) -> None:
         r1 = AspectRegistry.get()
@@ -119,6 +121,11 @@ class TestAspectRegistry:
         # Re-registering same name+class is OK
         registry.register("path", PathAspect)
 
+    def test_document_structure_registered(self) -> None:
+        registry = AspectRegistry.get()
+        assert registry.is_registered("document_structure")
+        assert registry.max_versions_for("document_structure") == 10
+
     def test_register_duplicate_different_class_raises(self) -> None:
         registry = AspectRegistry.get()
         with pytest.raises(ValueError, match="already registered"):
@@ -161,3 +168,39 @@ class TestBuiltInAspects:
         aspect = OwnershipAspect(owner_id="alice", owner_type="user")
         d = aspect.to_dict()
         assert d["owner_id"] == "alice"
+
+    def test_document_structure_aspect(self) -> None:
+        aspect = DocumentStructureAspect(
+            title="My Doc",
+            headings=[{"level": 1, "text": "My Doc"}],
+            front_matter={"author": "Alice"},
+            word_count=100,
+            link_count=5,
+            code_languages=["python", "rust"],
+            format="markdown",
+            confidence=1.0,
+        )
+        d = aspect.to_dict()
+        assert d["title"] == "My Doc"
+        assert len(d["headings"]) == 1
+        assert d["word_count"] == 100
+        assert d["code_languages"] == ["python", "rust"]
+
+    def test_document_structure_aspect_defaults(self) -> None:
+        aspect = DocumentStructureAspect()
+        d = aspect.to_dict()
+        assert d["title"] is None
+        assert d["headings"] == []
+        assert d["front_matter"] is None
+        assert d["word_count"] == 0
+        assert d["code_languages"] == []
+
+    def test_document_structure_roundtrip(self) -> None:
+        aspect = DocumentStructureAspect(
+            title="Test",
+            headings=[{"level": 2, "text": "Section"}],
+            word_count=50,
+        )
+        d = aspect.to_dict()
+        restored = DocumentStructureAspect.from_dict(d)
+        assert restored.to_dict() == d

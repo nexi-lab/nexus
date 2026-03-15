@@ -79,24 +79,26 @@ nexus ls /workspace
 The prebuilt multi-arch image (amd64 + arm64) is published to GHCR:
 
 ```
-ghcr.io/nexi-lab/nexus:latest        # Latest stable release
-ghcr.io/nexi-lab/nexus:<version>     # Pinned to a specific release
-ghcr.io/nexi-lab/nexus:<version>-cuda # GPU-accelerated variant
-ghcr.io/nexi-lab/nexus:edge          # Pre-release (develop branch)
+ghcr.io/nexi-lab/nexus:stable        # Latest release (updated on every tag)
+ghcr.io/nexi-lab/nexus:edge          # Latest develop (updated on every push)
+ghcr.io/nexi-lab/nexus:<version>     # Pinned to a specific release (e.g. 0.9.2)
+ghcr.io/nexi-lab/nexus:<tag>-cuda    # GPU-accelerated variant (stable-cuda, edge-cuda, etc.)
 ```
 
-`nexus init` resolves and pins a full image reference (`image_ref`) into `nexus.yaml`.
-The default channel is `stable`, which queries GHCR for the latest release (falls back to the installed CLI version if offline).
-Override during init:
+`nexus init` writes an `image_ref` into `nexus.yaml` based on the selected channel.
+The default channel is `stable`. Override during init:
 
 ```bash
-nexus init --preset shared --channel edge          # pre-release channel
-nexus init --preset shared --image-tag 0.9.2       # explicit version
-nexus init --preset shared --accelerator cuda       # GPU variant
-nexus init --preset shared --image-digest sha256:...  # immutable digest
+nexus init --preset shared                           # stable channel (default)
+nexus init --preset shared --channel edge            # pre-release channel
+nexus init --preset shared --image-tag 0.9.2         # pin to exact version
+nexus init --preset shared --accelerator cuda        # GPU variant
+nexus init --preset shared --image-digest sha256:... # immutable digest
 ```
 
-To upgrade the pinned image later, use `nexus upgrade`. To build locally from source instead of pulling, pass `--build` to `nexus up`.
+`nexus up` auto-pulls the latest image for channel-following configs (`stable`/`edge`).
+To pull the latest release explicitly, run `nexus upgrade`.
+To build from local source (repo checkouts only), pass `--build` to `nexus up` or `nexus restart`.
 
 ## Optional Capabilities
 

@@ -27,7 +27,6 @@ in ``nexus.storage.piped_record_store_write_observer``.
 Issue #900: Replaced snapshot_hash/metadata_snapshot params with metadata.
 """
 
-import hashlib
 import logging
 
 from nexus.contracts.metadata import FileMetadata
@@ -55,6 +54,34 @@ class RecordStoreWriteObserver:
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
+
+        # Post-flush hooks: called after successful commit (Issue #2978)
+        # Same interface as PipedRecordStoreWriteObserver so the factory
+        # can wire extraction hooks regardless of which observer is active.
+        self._post_flush_hooks: list = []
+
+    def register_post_flush_hook(self, hook: object) -> None:
+        """Register a callback invoked after each successful write commit.
+
+        Hooks receive a list of event dicts (same shape as piped observer).
+        They run AFTER the audit trail commit, so failures do not block
+        the audit path. Used by CatalogService for on-write extraction.
+        """
+        self._post_flush_hooks.append(hook)
+
+    def _run_post_flush_hooks(self, events: list) -> None:
+        """Run post-flush hooks after a successful commit. Best-effort."""
+        if not self._post_flush_hooks:
+            return
+        for hook in self._post_flush_hooks:
+            try:
+                hook(events)
+            except Exception as hook_err:
+                logger.debug(
+                    "Post-flush hook %s failed (non-critical): %s",
+                    getattr(hook, "__name__", hook),
+                    hook_err,
+                )
 
     def _handle_error(self, operation: str, path: str, error: Exception) -> None:
         """Apply audit error policy: raise or log depending on strict_mode."""
@@ -117,6 +144,20 @@ class RecordStoreWriteObserver:
                 )
                 VersionRecorder(session).record_write(metadata, is_new=is_new)
                 session.commit()
+
+            # Post-flush hooks: extraction, etc. (Issue #2978)
+            self._run_post_flush_hooks(
+                [
+                    {
+                        "op": "write",
+                        "path": path,
+                        "is_new": is_new,
+                        "zone_id": zone_id,
+                        "agent_id": agent_id,
+                        "metadata": metadata.to_dict(),
+                    }
+                ]
+            )
         except Exception as e:
             self._handle_error("write", path, e)
 
@@ -158,6 +199,21 @@ class RecordStoreWriteObserver:
                     recorder.record_write(metadata, is_new=is_new)
 
                 session.commit()
+
+            # Post-flush hooks: extraction, etc. (Issue #2978)
+            self._run_post_flush_hooks(
+                [
+                    {
+                        "op": "write",
+                        "path": md.path,
+                        "is_new": new,
+                        "zone_id": zone_id,
+                        "agent_id": agent_id,
+                        "metadata": md.to_dict(),
+                    }
+                    for md, new in items
+                ]
+            )
         except Exception as e:
             first_path = items[0][0].path if items else "<batch>"
             self._handle_error("write_batch", first_path, e)
@@ -282,13 +338,12 @@ class RecordStoreWriteObserver:
     def _build_urn(path: str, zone_id: str | None) -> str:
         """Build a locator URN for a file from its virtual path.
 
-        URNs are locators (Issue #2929 Key Decision #3): they change on
-        rename. The identifier is a deterministic SHA-256 hash prefix of
-        the path, so any caller can compute the same URN without a
-        database lookup.
+        Delegates to NexusURN.for_file() — single source of truth for
+        URN construction (Issue #2978, Issue #2929 Key Decision #3).
         """
-        path_hash = hashlib.sha256(path.encode()).hexdigest()[:32]
-        return f"urn:nexus:file:{zone_id or 'default'}:{path_hash}"
+        from nexus.contracts.urn import NexusURN
+
+        return str(NexusURN.for_file(zone_id or "default", path))
 
     def on_rmdir(
         self,

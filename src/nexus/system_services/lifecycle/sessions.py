@@ -1,313 +1,174 @@
-"""Session management for Nexus (v0.5.0).
+"""Session management for Nexus.
 
-Manages user sessions with support for:
+Manages user sessions backed by CacheStore (Dragonfly/In-Memory) with support for:
 - Temporary sessions (with TTL)
 - Persistent sessions (no TTL, "Remember me")
-- Session-scoped resources (auto-cleanup)
+- Session-scoped resource cleanup (PathRegistration, Memory in RecordStore)
 - Background cleanup task
 
-See: docs/design/AGENT_IDENTITY_AND_SESSIONS.md
+Migrated from SQLAlchemy ORM (UserSessionModel) to CacheStoreABC per
+data-storage-matrix.md Part 6: sessions are ephemeral KV with TTL.
 """
 
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
+    from sqlalchemy.orm import Session as DBSession
 
-from nexus.storage.models import (
-    MemoryModel,
-    PathRegistrationModel,
-    UserSessionModel,
-)
+from nexus.contracts.auth_store_types import SessionDTO
+from nexus.storage.auth_stores.cache_session_store import CacheSessionStore
 
 
-def create_session(
-    session: "Session",
+async def create_session(
+    store: CacheSessionStore,
     user_id: str,
     agent_id: str | None = None,
     zone_id: str | None = None,
     ttl: timedelta | None = None,
     ip_address: str | None = None,
     user_agent: str | None = None,
-) -> UserSessionModel:
-    """Create a new session.
+) -> SessionDTO:
+    """Create a new session in CacheStore.
 
     Args:
-        session: Database session
+        store: CacheSessionStore instance
         user_id: User identifier
-        agent_id: Optional agent identifier (if agent session)
+        agent_id: Optional agent identifier
         zone_id: Organization identifier
-        ttl: Time-to-live (None = persistent session, "Remember me")
+        ttl: Time-to-live (None = persistent session)
         ip_address: Client IP
         user_agent: Client user agent
 
     Returns:
-        UserSessionModel
-
-    Examples:
-        >>> # Temporary session (8 hours)
-        >>> sess = create_session(
-        ...     db,
-        ...     user_id="alice",
-        ...     ttl=timedelta(hours=8)
-        ... )
-
-        >>> # Persistent session ("Remember me")
-        >>> sess = create_session(
-        ...     db,
-        ...     user_id="alice",
-        ...     ttl=None
-        ... )
+        SessionDTO
     """
-    expires_at = None
-    if ttl:
-        expires_at = datetime.now(UTC) + ttl
-
-    user_session = UserSessionModel(
+    ttl_seconds = int(ttl.total_seconds()) if ttl else None
+    return await store.create(
         user_id=user_id,
         agent_id=agent_id,
         zone_id=zone_id,
-        expires_at=expires_at,
+        ttl_seconds=ttl_seconds,
         ip_address=ip_address,
         user_agent=user_agent,
     )
 
-    session.add(user_session)
-    session.flush()
 
-    return user_session
+async def get_session(store: CacheSessionStore, session_id: str) -> SessionDTO | None:
+    """Get session by ID. Returns None if not found or expired."""
+    return await store.get(session_id)
 
 
-def get_session(session: "Session", session_id: str) -> UserSessionModel | None:
-    """Get session by ID.
+async def update_session_activity(store: CacheSessionStore, session_id: str) -> bool:
+    """Update last_activity timestamp. Returns False if not found."""
+    return await store.update_activity(session_id)
 
-    Args:
-        session: Database session
-        session_id: Session identifier
 
-    Returns:
-        UserSessionModel or None if not found/expired
+def delete_session_resources(db_session: "DBSession", session_id: str) -> dict[str, int]:
+    """Delete all RecordStore resources associated with a session.
+
+    PathRegistrationModel and MemoryModel stay in RecordStore — only
+    the session record itself moved to CacheStore.
     """
-    from sqlalchemy import select
-
-    user_session = (
-        session.execute(select(UserSessionModel).where(UserSessionModel.session_id == session_id))
-        .scalars()
-        .first()
-    )
-
-    if not user_session:
-        return None
-
-    # Check expiration
-    if user_session.is_expired():
-        return None
-
-    return user_session
-
-
-def update_session_activity(session: "Session", session_id: str) -> bool:
-    """Update last_activity timestamp.
-
-    Call this on every request to track session activity.
-
-    Args:
-        session: Database session
-        session_id: Session identifier
-
-    Returns:
-        True if updated, False if session not found
-    """
-    from sqlalchemy import select
-
-    user_session = (
-        session.execute(select(UserSessionModel).where(UserSessionModel.session_id == session_id))
-        .scalars()
-        .first()
-    )
-
-    if not user_session:
-        return False
-
-    user_session.last_activity = datetime.now(UTC)
-    session.flush()
-    return True
-
-
-def delete_session_resources(session: "Session", session_id: str) -> dict[str, int]:
-    """Delete all resources associated with a session.
-
-    Called when:
-    - Session expires (background task)
-    - User logs out explicitly
-
-    Args:
-        session: Database session
-        session_id: Session to clean up
-
-    Returns:
-        Dict with counts: {"workspaces": N, "memories": N}
-    """
-    from typing import Any
-
     from sqlalchemy import delete
+
+    from nexus.storage.models import MemoryModel, PathRegistrationModel
 
     counts: dict[str, int] = {}
 
-    # Delete session-scoped workspace configs
-    ws_result: Any = session.execute(
+    ws_result: Any = db_session.execute(
         delete(PathRegistrationModel).where(PathRegistrationModel.session_id == session_id)
     )
     counts["workspace_configs"] = ws_result.rowcount
 
-    # Delete session-scoped memories
-    mem_result: Any = session.execute(
+    mem_result: Any = db_session.execute(
         delete(MemoryModel).where(MemoryModel.session_id == session_id)
     )
     counts["memories"] = mem_result.rowcount
 
-    session.flush()
+    db_session.flush()
     return counts
 
 
-def delete_session(session: "Session", session_id: str) -> bool:
+async def delete_session(
+    store: CacheSessionStore,
+    db_session: "DBSession",
+    session_id: str,
+) -> bool:
     """Delete session and all session-scoped resources.
 
     Args:
-        session: Database session
+        store: CacheSessionStore instance
+        db_session: SQLAlchemy session (for resource cleanup in RecordStore)
         session_id: Session to delete
 
     Returns:
         True if deleted, False if not found
     """
-    from typing import Any
-
-    from sqlalchemy import delete
-
-    # 1. Delete session-scoped resources
-    delete_session_resources(session, session_id)
-
-    # 2. Delete session
-    del_result: Any = session.execute(
-        delete(UserSessionModel).where(UserSessionModel.session_id == session_id)
-    )
-
-    session.flush()
-    return bool(del_result.rowcount > 0)
+    delete_session_resources(db_session, session_id)
+    return await store.delete(session_id)
 
 
-def cleanup_expired_sessions(session: "Session") -> dict[str, int | dict[str, int]]:
-    """Background task: Clean up expired sessions.
+async def cleanup_expired_sessions(
+    store: CacheSessionStore,
+    db_session: "DBSession",
+) -> dict[str, int | dict[str, int]]:
+    """Clean up expired sessions and their associated resources.
 
-    Only deletes sessions with expires_at < now.
-    Sessions with expires_at=None are preserved (persistent sessions).
-
-    Args:
-        session: Database session
-
-    Returns:
-        Dict with counts: {"sessions": N, "resources": {...}}
-
-    Examples:
-        >>> # Run as background task (every hour)
-        >>> with SessionLocal() as db:
-        ...     result = cleanup_expired_sessions(db)
-        ...     db.commit()
-        ...     print(f"Cleaned up {result['sessions']} sessions")
+    Finds expired sessions in CacheStore, deletes associated
+    RecordStore resources, then removes the sessions.
     """
-    from sqlalchemy import select
+    expired = await store.find_expired()
 
-    # Find expired sessions
-    expired = list(
-        session.execute(
-            select(UserSessionModel).where(UserSessionModel.expires_at < datetime.now(UTC))
-        )
-        .scalars()
-        .all()
-    )
+    total_resources: dict[str, int] = {"workspace_configs": 0, "memories": 0}
 
-    total_resources = {"workspace_configs": 0, "memories": 0}
-
-    for user_session in expired:
-        # Delete resources
-        resource_counts = delete_session_resources(session, user_session.session_id)
+    for dto in expired:
+        resource_counts = delete_session_resources(db_session, dto.session_id)
         for key, count in resource_counts.items():
             total_resources[key] = total_resources.get(key, 0) + count
+        await store.delete(dto.session_id)
 
-        # Delete session
-        session.delete(user_session)
-
-    session.flush()
-
+    db_session.flush()
     return {"sessions": len(expired), "resources": total_resources}
 
 
-def list_user_sessions(
-    session: "Session", user_id: str, include_expired: bool = False
-) -> list[UserSessionModel]:
-    """List all sessions for a user.
-
-    Args:
-        session: Database session
-        user_id: User identifier
-        include_expired: Include expired sessions
-
-    Returns:
-        List of UserSessionModel
-    """
-    from sqlalchemy import select
-
-    stmt = select(UserSessionModel).where(UserSessionModel.user_id == user_id)
-
-    if not include_expired:
-        # Filter out expired sessions
-        stmt = stmt.where(
-            (UserSessionModel.expires_at.is_(None))
-            | (UserSessionModel.expires_at > datetime.now(UTC))
-        )
-
-    return list(session.execute(stmt).scalars().all())
+async def list_user_sessions(
+    store: CacheSessionStore,
+    user_id: str,
+    include_expired: bool = False,
+) -> list[SessionDTO]:
+    """List all sessions for a user."""
+    return await store.list_for_user(user_id, include_expired=include_expired)
 
 
-def cleanup_inactive_sessions(
-    session: "Session", inactive_threshold: timedelta = timedelta(days=30)
+async def cleanup_inactive_sessions(
+    store: CacheSessionStore,
+    db_session: "DBSession",
+    inactive_threshold: timedelta = timedelta(days=30),
 ) -> int:
     """Clean up sessions inactive for threshold period.
 
-    Optional: Clean up sessions that haven't been used in N days,
-    even if they haven't expired.
-
-    Args:
-        session: Database session
-        inactive_threshold: Inactivity period (default: 30 days)
-
-    Returns:
-        Number of sessions deleted
+    Deletes associated RecordStore resources, then removes sessions from CacheStore.
     """
-    from sqlalchemy import delete, select
+    from sqlalchemy import delete
 
-    cutoff = datetime.now(UTC) - inactive_threshold
+    from nexus.storage.models import MemoryModel, PathRegistrationModel
 
-    # Collect all inactive session IDs in a single query
-    inactive_ids = [
-        row[0]
-        for row in session.execute(
-            select(UserSessionModel.session_id).where(UserSessionModel.last_activity < cutoff)
-        ).all()
-    ]
-
-    if not inactive_ids:
+    inactive = await store.find_inactive(inactive_threshold)
+    if not inactive:
         return 0
 
-    # Bulk-delete related resources (avoids N+1 per-session queries)
-    session.execute(
+    inactive_ids = [dto.session_id for dto in inactive]
+
+    # Bulk-delete related resources in RecordStore
+    db_session.execute(
         delete(PathRegistrationModel).where(PathRegistrationModel.session_id.in_(inactive_ids))
     )
+    db_session.execute(delete(MemoryModel).where(MemoryModel.session_id.in_(inactive_ids)))
 
-    session.execute(delete(MemoryModel).where(MemoryModel.session_id.in_(inactive_ids)))
+    # Delete sessions from CacheStore
+    for sid in inactive_ids:
+        await store.delete(sid)
 
-    session.execute(delete(UserSessionModel).where(UserSessionModel.session_id.in_(inactive_ids)))
-
-    session.flush()
+    db_session.flush()
     return len(inactive_ids)

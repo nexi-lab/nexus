@@ -10,7 +10,6 @@ from typing import Any
 from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import ValidationError
 from nexus.storage.models._base import Base, TimestampMixin, uuid_pk
 
@@ -220,43 +219,3 @@ class MigrationHistoryModel(Base):
             f"{self.from_version}->{self.to_version}, "
             f"type={self.migration_type}, status={self.status})>"
         )
-
-
-class UserSessionModel(Base):
-    """User session tracking for session-scoped resources."""
-
-    __tablename__ = "user_sessions"
-
-    session_id: Mapped[str] = uuid_pk()
-
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    last_activity: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    __table_args__ = (
-        Index("idx_session_user", "user_id"),
-        Index("idx_session_agent", "agent_id"),
-        Index("idx_session_zone", "zone_id"),
-        Index("idx_session_expires", "expires_at"),
-        Index("idx_session_created", "created_at"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<UserSessionModel(session_id={self.session_id}, user_id={self.user_id}, expires_at={self.expires_at})>"
-
-    def is_expired(self) -> bool:
-        """Check if session has expired."""
-        if self.expires_at is None:
-            return False
-        return datetime.now(UTC) > self.expires_at

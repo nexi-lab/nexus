@@ -10,7 +10,7 @@ CacheStore is NOT required by the Kernel. When absent, consumers degrade gracefu
 - EventBus: disabled (distributed-only feature, single-node doesn't need it)
 - PermissionCache: direct-queries RecordStore (correct, slower)
 - TigerCache: O(n) permission checks (no pre-materialized bitmaps)
-- UserSession: stays in RecordStore (acceptable for kernel-only)
+- UserSession: session management unavailable (CacheStore required)
 
 Canonical home for CacheStoreABC (Issue #2055). Lives in contracts/ because it is
 a multi-layer type used by kernel, services, and bricks — per §3.1 Placement

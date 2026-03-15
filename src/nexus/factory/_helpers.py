@@ -32,14 +32,15 @@ def _make_gate(brick_on: Callable[[str], bool] | None) -> Callable[[str], bool]:
 # Issue #1704: Register factory-created bricks with lifecycle manager
 # ---------------------------------------------------------------------------
 
-_FACTORY_BRICKS: list[tuple[str, str]] = [
-    ("manifest_resolver", "ManifestProtocol"),
-    ("chunked_upload_service", "ChunkedUploadProtocol"),
-    ("snapshot_service", "SnapshotProtocol"),
-    ("ipc_vfs_driver", "IPCProtocol"),
-    ("wallet_provisioner", "WalletProtocol"),
-    ("delegation_service", "DelegationProtocol"),
-    ("version_service", "VersionProtocol"),  # Issue #2034: moved from kernel
+# Bricks registered with lifecycle manager.
+# Only stateful bricks (implementing start/stop/health_check) where
+# mount/unmount actually does something. Stateless bricks go to _FACTORY_SKIP.
+# (name, protocol_name, depends_on)
+_FACTORY_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
+    # Currently empty — all stateful bricks are registered separately:
+    # - workflow_engine: via _WorkflowLifecycleAdapter in _register_factory_bricks()
+    # - cache: via _register_late_bricks() in create_nexus_fs()
+    # - search: in server/lifespan/search.py
 ]
 
 # Entries intentionally NOT registered with lifecycle manager.
@@ -48,22 +49,48 @@ _FACTORY_BRICKS: list[tuple[str, str]] = [
 # to ``_FACTORY_BRICKS``.
 _FACTORY_SKIP: frozenset[str] = frozenset(
     {
-        "event_bus",  # infrastructure, not a brick
-        "lock_manager",  # infrastructure, not a brick
-        "api_key_creator",  # class reference, not instance
-        "tool_namespace_middleware",  # stateless middleware, no lifecycle
-        "manifest_metrics",  # observability helper, not a brick
-        "ipc_storage_driver",  # internal to ipc_vfs_driver
-        "ipc_provisioner",  # provisioning helper, not a brick
-        "agent_event_log",  # event log, not a lifecycle brick
-        "rebac_circuit_breaker",  # Issue #2034: passive resilience wrapper, no lifecycle
-        "governance_anomaly_service",  # governance brick, no lifecycle (Issue #2129)
-        "governance_collusion_service",  # governance brick, no lifecycle (Issue #2129)
-        "governance_graph_service",  # governance brick, no lifecycle (Issue #2129)
-        "governance_response_service",  # governance brick, no lifecycle (Issue #2129)
-        "zoekt_pipe_consumer",  # DT_PIPE consumer, no lifecycle (Issue #810)
+        # --- Not from nexus/bricks/ (services/infrastructure) ---
+        "event_bus",  # nexus/services/event_subsystem/
+        "lock_manager",  # nexus/raft/
+        "chunked_upload_service",  # nexus/services/upload/
+        "task_queue_service",  # nexus/system_services/lifecycle/
+        "wallet_provisioner",  # nexus/factory/wallet
+        "version_service",  # nexus/services/versioning/
+        "zoekt_pipe_consumer",  # nexus/factory/zoekt_pipe_consumer
+        # --- Stateless bricks (no start/stop — unmount is cosmetic) ---
+        "manifest_resolver",  # nexus/bricks/context_manifest/
+        "manifest_metrics",  # nexus/bricks/context_manifest/
+        "snapshot_service",  # nexus/bricks/snapshot/
+        "ipc_storage_driver",  # nexus/bricks/ipc/
+        "ipc_provisioner",  # nexus/bricks/ipc/
+        "delegation_service",  # nexus/bricks/delegation/
+        "reputation_service",  # nexus/bricks/reputation/
+        "api_key_creator",  # nexus/bricks/auth/
+        "tool_namespace_middleware",  # nexus/bricks/mcp/
+        "agent_event_log",  # nexus/bricks/sandbox/
+        "rebac_circuit_breaker",  # nexus/bricks/rebac/
+        "memory_permission",  # nexus/bricks/rebac/
+        "governance_anomaly_service",  # nexus/bricks/governance/
+        "governance_collusion_service",  # nexus/bricks/governance/
+        "governance_graph_service",  # nexus/bricks/governance/
+        "governance_response_service",  # nexus/bricks/governance/
+        # --- Always None at boot ---
+        "skill_service",  # wired later via NexusFS gateway adapters
+        "skill_package_service",  # wired later via NexusFS gateway adapters
     }
 )
+
+_LATE_BRICKS: list[tuple[str, str, tuple[str, ...]]] = [
+    ("cache", "CacheProtocol", ()),
+]
+
+
+def _register_late_bricks(manager: Any, brick_dict: dict[str, Any]) -> None:
+    """Register stateful bricks created in create_nexus_fs()."""
+    for name, protocol, depends_on in _LATE_BRICKS:
+        instance = brick_dict.get(name)
+        if instance is not None:
+            manager.register(name, instance, protocol_name=protocol, depends_on=depends_on)
 
 
 def _register_factory_bricks(
@@ -77,10 +104,10 @@ def _register_factory_bricks(
     """
     from nexus.factory.adapters import _WorkflowLifecycleAdapter
 
-    for name, protocol in _FACTORY_BRICKS:
+    for name, protocol, depends_on in _FACTORY_BRICKS:
         instance = brick_dict.get(name)
         if instance is not None:
-            manager.register(name, instance, protocol_name=protocol)
+            manager.register(name, instance, protocol_name=protocol, depends_on=depends_on)
 
     # WorkflowEngine needs adapter (startup() != start())
     wf = brick_dict.get("workflow_engine")

@@ -35,6 +35,9 @@ Executor = Callable[[bytes, ProgressReporter], Coroutine[Any, Any, bytes | None]
 class AsyncTaskRunner:
     """Async worker pool that claims and executes tasks from TaskEngine.
 
+    Implements PersistentService protocol (start/stop) for coordinator
+    auto-lifecycle management.
+
     Usage:
         engine = TaskEngine("/tmp/tasks-db")
         runner = AsyncTaskRunner(engine, max_workers=4)
@@ -45,7 +48,7 @@ class AsyncTaskRunner:
             await progress.update(50, "halfway")
             return b"result"
 
-        await runner.run()  # blocks until shutdown
+        await runner.start()  # spawns background task
     """
 
     engine: Any  # TaskEngine (Rust)
@@ -54,6 +57,7 @@ class AsyncTaskRunner:
     requeue_interval: float = 60.0
     _executors: dict[str, Executor] = field(default_factory=dict, init=False)
     _shutdown: bool = field(default=False, init=False)
+    _run_task: asyncio.Task | None = field(default=None, init=False)
 
     def register(self, task_type: str) -> Callable[[Executor], Executor]:
         """Decorator to register a task executor for a given task type."""
@@ -161,10 +165,21 @@ class AsyncTaskRunner:
                 logger.exception("Error in requeue loop")
             await asyncio.sleep(self.requeue_interval)
 
-    async def shutdown(self) -> None:
-        """Signal graceful shutdown. Workers will finish current tasks."""
-        logger.info("Shutdown requested")
-        self._shutdown = True
+    async def start(self) -> None:
+        """PersistentService: spawn the worker pool as a background task."""
+        if self._run_task is not None and not self._run_task.done():
+            return  # idempotent
+        self._shutdown = False
+        self._run_task = asyncio.create_task(self.run(), name="async-task-runner")
+        logger.info("AsyncTaskRunner started via PersistentService.start()")
 
-    # PersistentService protocol alias
-    stop = shutdown
+    async def stop(self) -> None:
+        """PersistentService: signal graceful shutdown and await completion."""
+        logger.info("AsyncTaskRunner stop requested")
+        self._shutdown = True
+        if self._run_task is not None and not self._run_task.done():
+            await self._run_task
+            self._run_task = None
+
+    # Legacy alias
+    shutdown = stop

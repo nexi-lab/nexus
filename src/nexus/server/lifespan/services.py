@@ -52,30 +52,14 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
 async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
     """Shutdown services in reverse order.
 
-    Note: Q3 PersistentService instances (workflow_dispatch, write_observer,
-    zoekt_pipe_consumer, search_daemon) are stopped by coordinator via
-    aclose() → stop_persistent_services().  Only non-PersistentService
-    cleanup remains here.
+    Q3 PersistentService instances are stopped by coordinator via
+    aclose() → stop_persistent_services():
+    - task_runner, scheduler_service, rlm_service (#1598-#1601)
+    - directory_grant_expander, workflow_dispatch, write_observer
+    - zoekt_pipe_consumer, search_daemon
+
+    Only non-PersistentService cleanup remains here.
     """
-    # Stop Task Queue runner (Issue #574) — not yet PersistentService (#1601)
-    task_runner = app.state.task_runner
-    if task_runner:
-        try:
-            await task_runner.shutdown()
-            logger.info("Task Queue runner stopped")
-        except Exception as e:
-            logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
-
-    # Shutdown scheduler (Issue #1212, #2360)
-    # Both SchedulerService and InMemoryScheduler implement shutdown().
-    scheduler_svc = getattr(app.state, "scheduler_service", None)
-    if scheduler_svc is not None:
-        try:
-            await scheduler_svc.shutdown()
-            logger.info("Scheduler service shut down")
-        except Exception as e:
-            logger.warning("Error shutting down scheduler: %s", e, exc_info=True)
-
     # Cancel agent background tasks and final flush (Issue #1240, #2170)
     heartbeat_task = getattr(app.state, "_heartbeat_task", None)
     stale_detection_task = getattr(app.state, "_stale_detection_task", None)
@@ -104,25 +88,8 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
             "[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)"
         )
 
-    # Shutdown RLM thread pool (Issue #1306) — not yet PersistentService (#1599)
-    rlm_service = app.state.rlm_service
-    if rlm_service is not None:
-        try:
-            rlm_service.shutdown()
-            logger.info("[RLM] Thread pool shut down")
-        except Exception as e:
-            logger.warning("[RLM] Error shutting down thread pool: %s", e, exc_info=True)
-
-    # search_daemon (Q3) — stopped by coordinator via aclose()
-    # workflow_dispatch (Q3) — stopped by coordinator via aclose()
-
-    # Stop DirectoryGrantExpander worker
-    if app.state.directory_grant_expander:
-        try:
-            app.state.directory_grant_expander.stop()
-            logger.info("DirectoryGrantExpander worker stopped")
-        except Exception as e:
-            logger.warning("Error stopping DirectoryGrantExpander: %s", e, exc_info=True)
+    # search_daemon, workflow_dispatch, directory_grant_expander (Q3)
+    # — stopped by coordinator via aclose() → stop_persistent_services()
 
     # Cancel pending event tasks in NexusFS (Issue #913)
     if svc.nexus_fs and hasattr(svc.nexus_fs, "_event_tasks"):
@@ -529,7 +496,7 @@ async def _startup_rlm_service(app: "FastAPI", svc: "LifespanServices") -> None:
             max_concurrent=max_concurrent,
         )
 
-        # Enlist with coordinator (Q3 PersistentService)
+        # Q3 PersistentService — coordinator auto-calls start()
         coord = svc.service_coordinator
         if coord is not None:
             await coord.enlist("rlm_service", app.state.rlm_service)
@@ -652,7 +619,7 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     # Always expose the scheduler on app.state (Issue #2360)
     app.state.scheduler_service = scheduler
 
-    # Enlist with coordinator (Q1 for now — needs PersistentService refactoring, #1600)
+    # Q3 PersistentService — coordinator auto-calls start() (no-op for scheduler)
     coord = svc.service_coordinator
     if coord is not None:
         await coord.enlist("scheduler_service", scheduler)

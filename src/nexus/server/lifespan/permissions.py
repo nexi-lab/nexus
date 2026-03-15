@@ -189,15 +189,12 @@ async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[
                     )
                     app.state.directory_grant_expander = expander
 
-                    # Enlist with coordinator (Q1 for now — #1598 will refactor to Q3)
+                    # Q3 PersistentService — coordinator auto-calls start()
                     coord = svc.service_coordinator
                     if coord is not None:
                         await coord.enlist("directory_grant_expander", expander)
-
-                    async def _run_grant_expander() -> None:
-                        await expander.run_worker()
-
-                    bg_tasks.append(asyncio.create_task(_run_grant_expander()))
+                    else:
+                        await expander.start()
                     logger.info("DirectoryGrantExpander worker started for large folder grants")
                 except Exception as e:
                     logger.debug("DirectoryGrantExpander startup skipped: %s", e)

@@ -38,6 +38,11 @@ async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     await _startup_writeback(app, svc, coord)
     await _startup_lock_manager(app, svc, coord)
 
+    # Enlist subscription_manager (Q1 — static, no lifecycle)
+    sub_mgr = getattr(app.state, "subscription_manager", None)
+    if sub_mgr is not None and coord is not None:
+        await coord.enlist("subscription_manager", sub_mgr)
+
     return bg_tasks
 
 
@@ -66,7 +71,7 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error closing exporter registry: %s", e, exc_info=True)
 
-    # Close subscription manager
+    # subscription_manager (Q1) — close + clear singleton
     if app.state.subscription_manager:
         await app.state.subscription_manager.close()
         from nexus.server.subscriptions import set_subscription_manager

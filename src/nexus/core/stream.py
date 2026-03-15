@@ -72,7 +72,7 @@ class StreamBuffer:
     Python provides asyncio.Event coordination for blocked writers.
     """
 
-    __slots__ = ("_core", "_not_full")
+    __slots__ = ("_core", "_not_empty", "_not_full")
 
     def __init__(self, capacity: int = 65_536) -> None:
         if StreamBufferCore is None:
@@ -83,6 +83,8 @@ class StreamBuffer:
         if capacity <= 0:
             raise ValueError(f"capacity must be > 0, got {capacity}")
         self._core = StreamBufferCore(capacity)
+        self._not_empty = asyncio.Event()
+        # _not_empty starts unset — no data yet
         self._not_full = asyncio.Event()
         self._not_full.set()  # initially not full
 
@@ -97,12 +99,15 @@ class StreamBuffer:
             ValueError: Message larger than total capacity.
         """
         try:
-            return int(self._core.push(data))
+            offset = int(self._core.push(data))
         except RuntimeError as exc:
             _translate_rust_error(exc)
             raise
         except ValueError:
             raise
+        # Wake blocked readers — new data is available
+        self._not_empty.set()
+        return offset
 
     async def write(self, data: bytes, *, blocking: bool = True) -> int:
         """Async append. If blocking=True, waits for close (only way to unblock)."""
@@ -151,11 +156,68 @@ class StreamBuffer:
             _translate_rust_error(exc)
             raise
 
+    # -- async blocking reads -----------------------------------------------
+
+    async def read(self, byte_offset: int = 0, *, blocking: bool = True) -> tuple[bytes, int]:
+        """Async read one message at byte_offset. Blocks until data is available.
+
+        If blocking=True and no data at offset, waits for a push() or close().
+        Non-destructive — same offset can be re-read.
+
+        Returns (data, next_offset).
+
+        Raises:
+            StreamEmptyError: Non-blocking and no data at offset.
+            StreamClosedError: Stream closed and no data at offset.
+        """
+        while True:
+            try:
+                return self.read_at(byte_offset)
+            except StreamEmptyError:
+                if not blocking:
+                    raise
+                if self._core.closed:
+                    raise StreamClosedError(
+                        f"stream closed, no data at offset {byte_offset}"
+                    ) from None
+                self._not_empty.clear()
+                # Re-check before sleeping (avoid lost-wakeup race)
+                try:
+                    return self.read_at(byte_offset)
+                except StreamEmptyError:
+                    pass
+                await self._not_empty.wait()
+
+    async def read_batch_blocking(
+        self, byte_offset: int = 0, count: int = 10, *, blocking: bool = True
+    ) -> tuple[list[bytes], int]:
+        """Async read up to `count` messages. Blocks until at least one available.
+
+        Returns (list_of_bytes, next_offset).
+        """
+        while True:
+            try:
+                return self.read_batch(byte_offset, count)
+            except StreamEmptyError:
+                if not blocking:
+                    raise
+                if self._core.closed:
+                    raise StreamClosedError(
+                        f"stream closed, no data at offset {byte_offset}"
+                    ) from None
+                self._not_empty.clear()
+                try:
+                    return self.read_batch(byte_offset, count)
+                except StreamEmptyError:
+                    pass
+                await self._not_empty.wait()
+
     # -- lifecycle -----------------------------------------------------------
 
     def close(self) -> None:
-        """Close the buffer. Wakes blocked writers."""
+        """Close the buffer. Wakes blocked readers and writers."""
         self._core.close()
+        self._not_empty.set()  # wake blocked readers (so they see closed)
         self._not_full.set()  # wake blocked writers (so they see closed)
 
     @property

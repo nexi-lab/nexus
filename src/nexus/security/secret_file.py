@@ -6,6 +6,7 @@ world-readable.
 """
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -26,7 +27,8 @@ def write_secret_file(path: Path, data: str | bytes, *, mode: int = 0o600) -> No
     try:
         # Enforce mode even when overwriting an existing file — os.open only
         # applies mode on create; O_TRUNC preserves old permission bits.
-        os.fchmod(fd, mode)
+        if sys.platform != "win32":
+            os.fchmod(fd, mode)
         if isinstance(data, str):
             os.write(fd, data.encode())
         else:

@@ -6,6 +6,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nexus.backends.base.backend import Backend
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.types import AuditConfig
@@ -243,6 +245,7 @@ async def create_nexus_fs(
     is_admin: bool = False,
     cache: "CacheConfig | None" = None,
     permissions: "PermissionConfig | None" = None,
+    audit: "AuditConfig | None" = None,
     distributed: "DistributedConfig | None" = None,
     memory: Any = None,
     parsing: Any = None,
@@ -335,6 +338,7 @@ async def create_nexus_fs(
             backend=backend,
             router=router,
             permissions=permissions,
+            audit=audit,
             cache=cache,
             distributed=distributed,
             zone_id=zone_id,
@@ -385,7 +389,11 @@ async def create_nexus_fs(
 
 
 def _register_vfs_hooks(
-    nx: "NexusFS", *, permission_checker: Any = None, auto_parse: bool = True
+    nx: "NexusFS",
+    *,
+    permission_checker: Any = None,
+    auto_parse: bool = True,
+    brick_on: "Callable[[str], bool] | None" = None,
 ) -> dict[str, Any]:
     """Register hooks + observers into kernel-owned dispatch (Issue #900).
 
@@ -400,6 +408,10 @@ def _register_vfs_hooks(
     construction (Issue #1452 Phase 3).
     """
     dispatch = nx._dispatch
+
+    from nexus.factory._helpers import _make_gate
+
+    _on = _make_gate(brick_on)
 
     # Hook references for retroactive HookSpec (Issue #1452 Phase 3).
     # Factory code uses raw instances (not ServiceRef) so hooks can be
@@ -532,6 +544,17 @@ def _register_vfs_hooks(
     )
     dispatch.register_resolver(_vview_resolver)
     hook_refs["vview_resolver"] = _vview_resolver
+
+    # ── TaskWriteHook (post-write: emit task lifecycle events) ─────────
+    if _on("task_manager"):
+        from nexus.bricks.task_manager.write_hook import TaskWriteHook
+
+        _task_write_hook = TaskWriteHook()
+        dispatch.register_intercept_write(_task_write_hook)
+        hook_refs["task_write_hook"] = _task_write_hook
+        nx._task_write_hook = _task_write_hook
+    else:
+        logger.debug("[BOOT:BRICK] TaskWriteHook disabled by profile")
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).

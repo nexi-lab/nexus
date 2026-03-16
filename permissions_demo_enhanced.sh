@@ -118,7 +118,7 @@ import sys, os
 sys.path.insert(0, 'src')
 import nexus
 
-nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
+import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 
@@ -376,7 +376,7 @@ python3 << 'PYTHON_PARENTS'
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
-nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
+import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 rebac.rebac_create_sync(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
@@ -476,7 +476,7 @@ python3 << 'PYTHON_LIST'
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
-nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
+import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=("user", "bob"))
 print(f"Bob has {len(tuples)} permission tuples:")
@@ -505,7 +505,7 @@ python3 << 'PYTHON_CYCLE'
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
-nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
+import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 try:
@@ -606,7 +606,7 @@ import sys, os
 sys.path.insert(0, 'src')
 import nexus
 
-nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
+import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync()
 
@@ -731,7 +731,7 @@ TUPLE_ID=$(python3 << PYTHON_TUPLE_ID
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
-nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
+import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
 print(tuples[0]['tuple_id'] if tuples else '')
@@ -785,7 +785,7 @@ import sys, os, time, statistics
 sys.path.insert(0, 'src')
 import nexus
 
-nx = nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')})
+import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 
@@ -834,11 +834,11 @@ overall_p95 = sorted(all_latencies)[int(0.95 * len(all_latencies))]
 overall_p99 = sorted(all_latencies)[int(0.99 * len(all_latencies))]
 print(f"  Overall ({len(all_latencies)} checks): median={overall_med:.2f}ms  p95={overall_p95:.2f}ms  p99={overall_p99:.2f}ms")
 
-# Assert sub-10ms median (generous for localhost RPC; actual check is sub-ms on server)
-if overall_med < 10.0:
-    print(f"\n  \033[0;32m✓\033[0m Median latency {overall_med:.2f}ms is within acceptable range (<10ms)")
+# Assert sub-15ms median (generous for Docker gRPC round-trip; actual check is sub-ms on server)
+if overall_med < 15.0:
+    print(f"\n  \033[0;32m✓\033[0m Median latency {overall_med:.2f}ms is within acceptable range (<15ms)")
 else:
-    print(f"\n  \033[0;31m✗\033[0m Median latency {overall_med:.2f}ms exceeds 10ms threshold!")
+    print(f"\n  \033[0;31m✗\033[0m Median latency {overall_med:.2f}ms exceeds 15ms threshold!")
     sys.exit(1)
 
 nx.close()

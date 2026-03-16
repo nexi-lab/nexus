@@ -4,7 +4,7 @@
 
 import React from "react";
 import type { BrickStatusResponse } from "../../stores/zones-store.js";
-import { stateIndicator } from "../../shared/brick-states.js";
+import { stateIndicator, stateColor } from "../../shared/brick-states.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface BrickListProps {
@@ -44,7 +44,9 @@ export function BrickList({
 
         return (
           <box key={brick.name} height={1} width="100%">
-            <text>{`${prefix}${indicator} ${brick.name} (${brick.protocol_name})`}</text>
+            <text>{prefix}</text>
+            <text foregroundColor={stateColor(brick.state)}>{indicator}</text>
+            <text>{` ${brick.name} (${brick.protocol_name})`}</text>
           </box>
         );
       })}

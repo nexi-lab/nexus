@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { DelegationItem } from "../../stores/agents-store.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 
 interface DelegationListProps {
   readonly delegations: readonly DelegationItem[];
@@ -38,11 +39,7 @@ export function DelegationList({
   loading,
 }: DelegationListProps): React.ReactNode {
   if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading delegations...</text>
-      </box>
-    );
+    return <LoadingIndicator message="Loading delegations..." />;
   }
 
   if (delegations.length === 0) {

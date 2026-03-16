@@ -10,6 +10,7 @@ import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { BalanceCard } from "./balance-card.js";
 import { ReservationList } from "./reservation-list.js";
 import { TransferForm } from "./transfer-form.js";
@@ -348,6 +349,7 @@ export default function PaymentsPanel(): React.ReactNode {
                   loading={transactionsLoading}
                   hasMore={transactionsHasMore}
                   hasPrev={transactionsCursorStack.length > 0}
+                  currentPage={transactionsCursorStack.length + 1}
                   integrityResult={integrityResult}
                 />
               )}

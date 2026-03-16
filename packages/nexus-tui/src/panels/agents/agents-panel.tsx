@@ -2,7 +2,7 @@
  * Agents panel: left sidebar with agent list, right pane with tabbed detail views.
  */
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useAgentsStore } from "../../stores/agents-store.js";
 import type { AgentTab } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
@@ -15,6 +15,8 @@ import { DelegationList } from "./delegation-list.js";
 import { InboxView } from "./inbox-view.js";
 import { TrajectoriesTab } from "./trajectories-tab.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { StyledText } from "../../shared/components/styled-text.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
 
@@ -85,6 +87,9 @@ export default function AgentsPanel(): React.ReactNode {
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("agents"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+
+  // Local loading state for async warmup/evict/verify operations
+  const [operationLoading, setOperationLoading] = useState<string | null>(null);
 
   // Merge fetched agents into a display list: fetched agents + any manually added knownAgents not in the fetched list
   const fetchedAgentIds = agents.map((a) => a.agent_id);
@@ -214,20 +219,35 @@ export default function AgentsPanel(): React.ReactNode {
         addKnownAgent(agent);
       }
     },
-    "shift+w": () => {
+    "shift+w": async () => {
       if (!client || !selectedAgentId) return;
-      warmupAgent(selectedAgentId, client);
+      setOperationLoading("Warming up agent...");
+      try {
+        await warmupAgent(selectedAgentId, client);
+      } finally {
+        setOperationLoading(null);
+      }
     },
-    "shift+e": () => {
+    "shift+e": async () => {
       if (!client || !selectedAgentId) return;
       // Only evict if agent is not already evicted
       const agentEntry = agents.find((a) => a.agent_id === selectedAgentId);
       if (agentEntry && agentEntry.state === "evicted") return;
-      evictAgent(selectedAgentId, client);
+      setOperationLoading("Evicting agent...");
+      try {
+        await evictAgent(selectedAgentId, client);
+      } finally {
+        setOperationLoading(null);
+      }
     },
-    "shift+v": () => {
+    "shift+v": async () => {
       if (!client || !selectedAgentId) return;
-      verifyAgent(selectedAgentId, client);
+      setOperationLoading("Verifying agent...");
+      try {
+        await verifyAgent(selectedAgentId, client);
+      } finally {
+        setOperationLoading(null);
+      }
     },
   });
 
@@ -238,7 +258,9 @@ export default function AgentsPanel(): React.ReactNode {
         {/* Left sidebar: agent list (30%) */}
         <box width="30%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
           <box height={1} width="100%">
-            <text>{agentsLoading ? "--- Agents (loading...) ---" : "--- Agents ---"}</text>
+            {agentsLoading
+              ? <LoadingIndicator message="Agents" centered={false} />
+              : <text>{"--- Agents ---"}</text>}
           </box>
 
           {/* Agents list */}
@@ -277,10 +299,17 @@ export default function AgentsPanel(): React.ReactNode {
             </text>
           </box>
 
+          {/* Operation in-progress feedback */}
+          {operationLoading && (
+            <box height={1} width="100%">
+              <LoadingIndicator message={operationLoading} centered={false} />
+            </box>
+          )}
+
           {/* Error display */}
           {error && (
             <box height={1} width="100%">
-              <text>{`Error: ${error}`}</text>
+              <StyledText>{`Error: ${error}`}</StyledText>
             </box>
           )}
 

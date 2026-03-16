@@ -64,18 +64,21 @@ export function EntryDetail({
         </box>
       ) : (
         <scrollbox flexGrow={1} width="100%">
+          {/* Column headers */}
+          <box height={1} width="100%">
+            <text>{"  OP  PATH                             OLD_HASH    NEW_HASH"}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{"  --  -------------------------------  ----------  ----------"}</text>
+          </box>
           {entries.map((entry) => {
             const badge = OPERATION_BADGE[entry.operation];
             const original = truncateHash(entry.original_hash);
             const next = truncateHash(entry.new_hash);
-            const hashStr =
-              entry.original_hash || entry.new_hash
-                ? `${original}\u2192${next}`
-                : "";
 
             return (
               <box key={entry.entry_id} height={1} width="100%">
-                <text>{`[${badge}] ${entry.path}  ${hashStr}`}</text>
+                <text>{`  [${badge}] ${entry.path}  ${original}  ${next}`}</text>
               </box>
             );
           })}

@@ -26,6 +26,8 @@ import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { statusColor } from "../../shared/theme.js";
 import { ManifestList } from "./manifest-list.js";
 import { AlertList } from "./alert-list.js";
 import { CredentialList } from "./credential-list.js";
@@ -434,9 +436,9 @@ export default function AccessPanel(): React.ReactNode {
 
       {/* Permission evaluation result */}
       {lastPermissionCheck && (
-        <box height={1} width="100%">
-          <text>
-            {`Evaluate: tool=${lastPermissionCheck.tool_name} permission=${lastPermissionCheck.permission} agent=${lastPermissionCheck.agent_id} manifest=${lastPermissionCheck.manifest_id}`}
+        <box height={3} width="100%" borderStyle="single" borderColor={lastPermissionCheck.permission === "allow" ? statusColor.healthy : statusColor.error}>
+          <text foregroundColor={lastPermissionCheck.permission === "allow" ? statusColor.healthy : statusColor.error}>
+            {`  ${lastPermissionCheck.permission === "allow" ? "[ALLOW]" : "[DENY] "} tool=${lastPermissionCheck.tool_name}  agent=${lastPermissionCheck.agent_id}  manifest=${lastPermissionCheck.manifest_id}`}
           </text>
         </box>
       )}

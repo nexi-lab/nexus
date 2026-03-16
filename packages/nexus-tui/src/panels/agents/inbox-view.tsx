@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { InboxMessage } from "../../stores/agents-store.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 
 interface InboxViewProps {
   readonly messages: readonly InboxMessage[];
@@ -13,11 +14,7 @@ interface InboxViewProps {
 
 export function InboxView({ messages, count, loading }: InboxViewProps): React.ReactNode {
   if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading inbox...</text>
-      </box>
-    );
+    return <LoadingIndicator message="Loading inbox..." />;
   }
 
   return (

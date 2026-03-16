@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { SearchResult } from "../../stores/search-store.js";
+import { statusColor } from "../../shared/theme.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface SearchResultsProps {
@@ -20,6 +21,12 @@ function truncateText(text: string, maxLen: number): string {
 
 function formatScore(score: number): string {
   return score.toFixed(2);
+}
+
+function scoreColor(score: number): string {
+  if (score > 0.7) return statusColor.healthy;
+  if (score >= 0.4) return statusColor.warning;
+  return statusColor.dim;
 }
 
 function formatLineRange(start: number, end: number): string {
@@ -75,9 +82,9 @@ export function SearchResults({
 
           return (
             <box key={`${result.path}:${result.chunk_index}`} height={1} width="100%">
-              <text>
-                {`${prefix}${score}  ${lines}  ${path}  ${chunk}`}
-              </text>
+              <text>{prefix}</text>
+              <text foregroundColor={scoreColor(result.score)}>{score}</text>
+              <text>{`  ${lines}  ${path}  ${chunk}`}</text>
             </box>
           );
         })}

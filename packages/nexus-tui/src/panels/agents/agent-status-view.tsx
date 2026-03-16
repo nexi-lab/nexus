@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { AgentStatus, AgentSpec, AgentIdentity, AgentPhase } from "../../stores/agents-store.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 
 interface AgentStatusViewProps {
   readonly status: AgentStatus | null;
@@ -48,11 +49,7 @@ export function AgentStatusView({
   reputation,
 }: AgentStatusViewProps): React.ReactNode {
   if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading agent status...</text>
-      </box>
-    );
+    return <LoadingIndicator message="Loading agent status..." />;
   }
 
   if (!status) {

@@ -5,6 +5,9 @@
 import { create } from "zustand";
 import type { SseEvent } from "@nexus/api-client";
 import { SseClient } from "@nexus/api-client";
+import { CircularBuffer } from "../shared/lib/circular-buffer.js";
+
+const EVENTS_BUFFER_CAPACITY = 10_000;
 
 export interface EventFilters {
   readonly eventType: string | null;
@@ -23,6 +26,11 @@ export interface EventsState {
   readonly reconnectCount: number;
   readonly filters: EventFilters;
   readonly filteredEvents: readonly SseEvent[];
+  readonly eventsOverflowed: boolean;
+  readonly evictedCount: number;
+
+  // Internal circular buffer (not serializable, but that's fine for Zustand)
+  readonly eventsBuffer: CircularBuffer<SseEvent>;
 
   // SSE client instance (not serializable, but that's fine for Zustand)
   readonly sseClient: SseClient | null;
@@ -40,6 +48,9 @@ export const useEventsStore = create<EventsState>((set, get) => ({
   reconnectCount: 0,
   filters: { eventType: null, search: null },
   filteredEvents: [],
+  eventsOverflowed: false,
+  evictedCount: 0,
+  eventsBuffer: new CircularBuffer<SseEvent>(EVENTS_BUFFER_CAPACITY),
   sseClient: null,
 
   connect: (baseUrl, apiKey, identity) => {
@@ -56,10 +67,16 @@ export const useEventsStore = create<EventsState>((set, get) => ({
 
     client.onEvent((newEvents) => {
       set((state) => {
-        const allEvents = [...state.events, ...newEvents];
+        const buf = state.eventsBuffer;
+        for (const event of newEvents) {
+          buf.push(event);
+        }
+        const allEvents = buf.toArray();
         return {
           events: allEvents,
           filteredEvents: applyFilters(allEvents, state.filters),
+          eventsOverflowed: buf.hasOverflowed,
+          evictedCount: buf.evictedCount,
         };
       });
     });
@@ -97,7 +114,8 @@ export const useEventsStore = create<EventsState>((set, get) => ({
 
   clearEvents: () => {
     get().sseClient?.clearBuffer();
-    set({ events: [], filteredEvents: [] });
+    get().eventsBuffer.clear();
+    set({ events: [], filteredEvents: [], eventsOverflowed: false, evictedCount: 0 });
   },
 }));
 

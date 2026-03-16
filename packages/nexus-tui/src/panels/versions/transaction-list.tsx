@@ -5,6 +5,7 @@
 import React from "react";
 import type { Transaction } from "../../stores/versions-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { transactionStatusColor } from "../../shared/theme.js";
 
 // =============================================================================
 // Status badges
@@ -72,8 +73,10 @@ export function TransactionList({
 
         return (
           <box key={txn.transaction_id} height={1} width="100%">
+            <text>{prefix}</text>
+            <text foregroundColor={transactionStatusColor[txn.status]}>{badge}</text>
             <text>
-              {`${prefix}${badge} ${id}  ${desc ? desc + "  " : ""}${entries}  ${time}`}
+              {` ${id}  ${desc ? desc + "  " : ""}${entries}  ${time}`}
             </text>
           </box>
         );

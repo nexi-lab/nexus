@@ -24,6 +24,7 @@ import { McpMountsTab } from "./mcp-mounts-tab.js";
 import { CacheTab } from "./cache-tab.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { allowedActionsForState } from "../../shared/brick-states.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
 
@@ -124,6 +125,9 @@ export default function ZonesPanel(): React.ReactNode {
       setActiveTab(visibleIds[0]!);
     }
   }, [visibleIds.join(","), activeTab, setActiveTab]);
+
+  // Track in-flight brick operations (mount, unmount, reset, etc.)
+  const [operationInProgress, setOperationInProgress] = useState(false);
 
   // Input mode state for create/register flows (multi-field forms)
   const [inputMode, setInputMode] = useState<"none" | "workspace" | "memory" | "mcpMount">("none");
@@ -405,12 +409,14 @@ export default function ZonesPanel(): React.ReactNode {
             // M (shift+m): Mount — valid for registered/unmounted
             "shift+m": () => {
               if (!client || !selectedBrick || !allowed.has("mount")) return;
-              mountBrick(selectedBrick.name, client);
+              setOperationInProgress(true);
+              mountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // U: Unmount — valid for active
             "shift+u": () => {
               if (!client || !selectedBrick || !allowed.has("unmount")) return;
-              unmountBrick(selectedBrick.name, client);
+              setOperationInProgress(true);
+              unmountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // D: Unregister — valid for unmounted (with confirmation)
             "shift+d": () => {
@@ -420,12 +426,14 @@ export default function ZonesPanel(): React.ReactNode {
             // m: Remount (existing) — valid for unmounted only
             m: () => {
               if (!client || !selectedBrick || !allowed.has("remount")) return;
-              remountBrick(selectedBrick.name, client);
+              setOperationInProgress(true);
+              remountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // x: Reset (existing) — valid for failed
             x: () => {
               if (!client || !selectedBrick || !allowed.has("reset")) return;
-              resetBrick(selectedBrick.name, client);
+              setOperationInProgress(true);
+              resetBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // d: Unregister workspace/memory or unmount MCP (with confirmation)
             d: () => {
@@ -512,6 +520,13 @@ export default function ZonesPanel(): React.ReactNode {
       {error && (
         <box height={1} width="100%">
           <text>{`Error: ${error}`}</text>
+        </box>
+      )}
+
+      {/* Brick operation in-flight indicator */}
+      {operationInProgress && (
+        <box height={1} width="100%">
+          <LoadingIndicator message="Operation in progress..." centered={false} />
         </box>
       )}
 

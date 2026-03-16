@@ -68,6 +68,9 @@ export default function EventsPanel(): React.ReactNode {
   const events = useEventsStore((s) => s.filteredEvents);
   const reconnectCount = useEventsStore((s) => s.reconnectCount);
   const filters = useEventsStore((s) => s.filters);
+  const eventsOverflowed = useEventsStore((s) => s.eventsOverflowed);
+  const evictedCount = useEventsStore((s) => s.evictedCount);
+  const eventsBuffer = useEventsStore((s) => s.eventsBuffer);
   const connect = useEventsStore((s) => s.connect);
   const disconnect = useEventsStore((s) => s.disconnect);
   const clearEvents = useEventsStore((s) => s.clearEvents);
@@ -374,6 +377,15 @@ export default function EventsPanel(): React.ReactNode {
                     : "○ Disconnected"}
               </text>
             </box>
+
+            {/* Overflow indicator */}
+            {eventsOverflowed && (
+              <box height={1} width="100%">
+                <text dimColor>
+                  {`Showing latest ${eventsBuffer.size} of ${eventsBuffer.totalAdded} events (${evictedCount} evicted)`}
+                </text>
+              </box>
+            )}
 
             {/* Event stream */}
             <scrollbox flexGrow={1} width="100%">

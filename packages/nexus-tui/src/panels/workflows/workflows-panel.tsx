@@ -10,6 +10,7 @@ import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { WorkflowList } from "./workflow-list.js";
 import { ExecutionList } from "./execution-list.js";
 import { SchedulerView } from "./scheduler-view.js";
@@ -53,6 +54,9 @@ export default function WorkflowsPanel(): React.ReactNode {
   const setActiveTab = useWorkflowsStore((s) => s.setActiveTab);
   const setSelectedWorkflowIndex = useWorkflowsStore((s) => s.setSelectedWorkflowIndex);
   const setSelectedExecutionIndex = useWorkflowsStore((s) => s.setSelectedExecutionIndex);
+
+  // Track in-flight workflow execution
+  const [executing, setExecuting] = useState(false);
 
   // Confirmation dialog state for destructive delete action
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -148,7 +152,8 @@ export default function WorkflowsPanel(): React.ReactNode {
             if (activeTab !== "workflows" || !client) return;
             const wf = workflows[selectedWorkflowIndex];
             if (wf && wf.enabled) {
-              executeWorkflow(wf.name, client);
+              setExecuting(true);
+              executeWorkflow(wf.name, client).finally(() => setExecuting(false));
             }
           },
           d: () => {
@@ -194,6 +199,13 @@ export default function WorkflowsPanel(): React.ReactNode {
         {error && (
           <box height={1} width="100%">
             <text>{`Error: ${error}`}</text>
+          </box>
+        )}
+
+        {/* Execution in-flight indicator */}
+        {executing && (
+          <box height={1} width="100%">
+            <LoadingIndicator message="Executing workflow..." centered={false} />
           </box>
         )}
 

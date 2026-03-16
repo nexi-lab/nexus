@@ -432,8 +432,11 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     await get().fetchFiles(destinationDir, client);
 
     // Clear progress after a short delay so the user sees the completion state
+    const finalCompleted = completed;
+    const finalFailed = failed;
     setTimeout(() => {
-      if (get().pasteProgress?.completed === completed) {
+      const p = get().pasteProgress;
+      if (p && p.completed === finalCompleted && p.failed === finalFailed) {
         set({ pasteProgress: null });
       }
     }, 2000);

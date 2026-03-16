@@ -60,6 +60,7 @@ export const PANEL_BINDINGS: Record<string, readonly KeyBinding[]> = {
     { key: "c", action: "Copy selected to clipboard" },
     { key: "x", action: "Cut selected to clipboard" },
     { key: "p", action: "Paste clipboard here" },
+    { key: "Shift+P", action: "Paste to specific path" },
     { key: "Esc", action: "Clear selection / exit mode" },
     { key: "x", action: "Revoke share link" },
   ],

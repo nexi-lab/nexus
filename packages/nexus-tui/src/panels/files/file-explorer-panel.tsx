@@ -63,7 +63,7 @@ const ALL_TABS: readonly TabDef<FilesTab>[] = [
 // Input mode types
 // =============================================================================
 
-type InputMode = "none" | "mkdir" | "rename" | "filter" | "search";
+type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest";
 
 // =============================================================================
 // Keybinding builders — one function per mode (Decision 6A)
@@ -123,6 +123,11 @@ interface BindingContext {
   readonly searchQuery: string;
   readonly setSearchQuery: (v: string | ((prev: string) => string)) => void;
   readonly executeSearch: (query: string) => void;
+  // Search results
+  readonly searchResults: readonly { path: string; line?: number; content?: string }[] | null;
+  readonly setSearchResults: (v: readonly { path: string; line?: number; content?: string }[] | null) => void;
+  // Paste destination input
+  readonly setInputModeWithCallback: (mode: InputMode, onSubmit: (value: string) => void) => void;
 }
 
 /** Navigation bindings for the currently active tab (Decision 5A). */
@@ -200,8 +205,16 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
       a: () => ctx.setMetadataTab("aspects"),
       s: () => ctx.setMetadataTab("schema"),
     } : {}),
-    // File operations
-    d: () => { if (ctx.selectedItem) ctx.setConfirmDelete(true); },
+    // File operations — bulk delete if selection active, otherwise single item
+    d: () => {
+      const effective = getEffectiveSelection(
+        ctx.selectedPaths, ctx.visualModeAnchor, ctx.selectedIndex,
+        ctx.cachedFiles.map((f) => f.path),
+      );
+      if (effective.size > 0 || ctx.selectedItem) {
+        ctx.setConfirmDelete(true);
+      }
+    },
     N: () => { ctx.setInputMode("mkdir"); ctx.setInputBuffer(""); },
     R: () => {
       if (ctx.selectedItem) {
@@ -250,9 +263,18 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
         ctx.pasteFiles(ctx.currentPath, ctx.client);
       }
     },
-    // Escape clears selection or exits visual mode
+    // Shift+P: paste to a specific path (prompts for destination)
+    P: () => {
+      if (ctx.clipboard && ctx.client) {
+        ctx.setInputMode("paste-dest");
+        ctx.setInputBuffer(ctx.currentPath);
+      }
+    },
+    // Escape: dismiss search results > exit visual mode > clear selection
     escape: () => {
-      if (ctx.visualModeAnchor !== null) {
+      if (ctx.searchResults !== null) {
+        ctx.setSearchResults(null);
+      } else if (ctx.visualModeAnchor !== null) {
         ctx.exitVisualMode();
       } else if (ctx.selectedPaths.size > 0) {
         ctx.clearSelection();
@@ -344,6 +366,18 @@ function getInputModeBindings(
         },
       };
 
+    case "paste-dest":
+      return {
+        ...baseBindings,
+        return: () => {
+          const dest = ctx.filterQuery.trim();
+          if (dest && ctx.client) {
+            useFilesStore.getState().pasteFiles(dest, ctx.client);
+          }
+          resetInput();
+        },
+      };
+
     default:
       return {};
   }
@@ -385,6 +419,7 @@ function getInputLabel(mode: InputMode, buffer: string): string {
     case "rename": return `Rename to: ${buffer}\u2588`;
     case "filter": return `/${buffer}\u2588`;
     case "search": return `Search (g: glob, r: grep): ${buffer}\u2588`;
+    case "paste-dest": return `Paste to: ${buffer}\u2588`;
     default: return "";
   }
 }
@@ -403,6 +438,7 @@ function getHelpText(
 ): string {
   if (inputMode === "filter") return "Type to filter, Enter:keep filter, Escape:clear";
   if (inputMode === "search") return "g:pattern=glob  r:pattern=grep  plain=deep search  Enter:search  Esc:cancel";
+  if (inputMode === "paste-dest") return "Enter path, Enter:paste, Escape:cancel";
   if (inputMode !== "none") return "Type name, Enter:confirm, Escape:cancel, Backspace:delete";
 
   if (activeTab === "explorer") {
@@ -415,7 +451,7 @@ function getHelpText(
       parts.push("/:filter", "Ctrl+F:search", "v:visual", "Space:select");
     }
     if (clipboard) {
-      parts.push(`p:paste ${clipboard.paths.length} ${clipboard.operation === "cut" ? "cut" : "copied"}`);
+      parts.push(`p:paste ${clipboard.paths.length} ${clipboard.operation === "cut" ? "cut" : "copied"}`, "P:paste to path");
     }
     parts.push("d:del", "N:mkdir", "R:rename");
     if (catalogAvailable) parts.push("m/a/s:meta");
@@ -579,6 +615,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   // to access the current value in their return handlers
   const inputBufferRef = inputMode === "filter" ? filterQuery
     : inputMode === "search" ? searchQuery
+    : inputMode === "paste-dest" ? inputBuffer
     : inputBuffer;
 
   // Handle unhandled keys for text input modes
@@ -611,6 +648,8 @@ export default function FileExplorerPanel(): React.ReactNode {
     yankToClipboard, cutToClipboard, clearClipboard, pasteFiles,
     filterQuery: inputBufferRef, setFilterQuery, searchQuery, setSearchQuery,
     executeSearch,
+    searchResults, setSearchResults,
+    setInputModeWithCallback: setInputMode as BindingContext["setInputModeWithCallback"],
   };
 
   useKeyboard(
@@ -620,7 +659,18 @@ export default function FileExplorerPanel(): React.ReactNode {
 
   const handleConfirmDelete = (): void => {
     setConfirmDelete(false);
-    if (selectedItem && client) {
+    if (!client) return;
+    // Bulk delete: delete all selected files, then fall back to single item
+    const effective = getEffectiveSelection(
+      selectedPaths, visualModeAnchor, selectedIndex,
+      cachedFiles.map((f) => f.path),
+    );
+    if (effective.size > 0) {
+      for (const path of effective) {
+        useFilesStore.getState().deleteFile(path, client);
+      }
+      clearSelection();
+    } else if (selectedItem) {
       useFilesStore.getState().deleteFile(selectedItem.path, client);
     }
   };
@@ -656,9 +706,9 @@ export default function FileExplorerPanel(): React.ReactNode {
       {pasteProgress && (
         <box height={1} width="100%">
           <text foregroundColor="cyan">
-            {pasteProgress.completed === pasteProgress.total
+            {pasteProgress.completed + pasteProgress.failed >= pasteProgress.total
               ? `Paste complete: ${pasteProgress.completed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`
-              : `Pasting... ${pasteProgress.completed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`}
+              : `Pasting... ${pasteProgress.completed + pasteProgress.failed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`}
           </text>
         </box>
       )}
@@ -773,8 +823,10 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Delete confirmation dialog */}
       <ConfirmDialog
         visible={confirmDelete}
-        title="Delete File"
-        message={`Delete "${selectedItem?.name ?? ""}"?`}
+        title={effectiveSelection.size > 1 ? "Delete Files" : "Delete File"}
+        message={effectiveSelection.size > 1
+          ? `Delete ${effectiveSelection.size} selected files?`
+          : `Delete "${selectedItem?.name ?? ""}"?`}
         onConfirm={handleConfirmDelete}
         onCancel={handleCancelDelete}
       />

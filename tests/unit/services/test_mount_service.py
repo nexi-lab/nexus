@@ -6,7 +6,7 @@ pytest-asyncio dependency.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -45,7 +45,7 @@ def mock_mount_manager():
 def mock_nexus_fs():
     """Create a mock NexusFilesystem."""
     fs = MagicMock()
-    fs.sys_mkdir = AsyncMock()
+    fs.sys_mkdir = MagicMock()
     fs.sys_write = MagicMock()
     fs.metadata = MagicMock()
     fs.metadata.delete = MagicMock()
@@ -137,9 +137,7 @@ class TestListMounts:
         assert result[0]["readonly"] is False
         assert result[0]["admin_only"] is False
 
-    def test_list_mounts_filters_by_permission(
-        self, mount_service, mock_router, mock_nexus_fs, operation_context
-    ):
+    def test_list_mounts_filters_by_permission(self, mock_router, mock_nexus_fs, operation_context):
         """Mounts without read permission are excluded."""
         mount_a = MagicMock()
         mount_a.mount_point = "/mnt/allowed"
@@ -153,13 +151,22 @@ class TestListMounts:
 
         mock_router.list_mounts.return_value = [mount_a, mount_b]
 
-        # Only allow /mnt/allowed (Issue #2033: via rebac_service.rebac_check_sync)
-        def check_permission(subject, permission, object, zone_id=None):
+        # Create a mock gateway that filters by path
+        mock_gw = MagicMock()
+
+        def rebac_check(subject, permission, object, zone_id=None):
             return object[1] == "/mnt/allowed"
 
-        mock_nexus_fs.service("rebac").rebac_check_sync.side_effect = check_permission
+        mock_gw.rebac_check.side_effect = rebac_check
 
-        result = asyncio.run(mount_service.list_mounts(context=operation_context))
+        # Create service with gateway so _check_permission uses it
+        service = MountService(
+            router=mock_router,
+            nexus_fs=mock_nexus_fs,
+            gateway=mock_gw,
+        )
+
+        result = asyncio.run(service.list_mounts(context=operation_context))
 
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/allowed"
@@ -385,44 +392,38 @@ class TestSyncMountDelegation:
 
 
 # =============================================================================
-# _grant_mount_owner_permission tests
+# _grant_owner_permission tests
 # =============================================================================
 
 
 class TestGrantMountOwnerPermission:
-    """Tests for the _grant_mount_owner_permission helper."""
+    """Tests for the _grant_owner_permission and _setup_mount_point helpers."""
 
-    @pytest.mark.asyncio
-    async def test_grants_permission_with_context(
-        self, mount_service, mock_nexus_fs, operation_context
-    ):
+    def test_grants_permission_with_context(self, mount_service, mock_nexus_fs, operation_context):
         """Owner permission is granted when context has a user."""
-        await mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
+        mount_service._grant_owner_permission("/mnt/test", operation_context)
 
-        # Issue #2033: MountService now uses rebac_service.rebac_create_sync
+        # MountService falls back to nexus_fs.service("rebac").rebac_create_sync
         mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()
         call_kwargs = mock_nexus_fs.service("rebac").rebac_create_sync.call_args
         assert call_kwargs.kwargs["relation"] == "direct_owner"
 
-    @pytest.mark.asyncio
-    async def test_skips_permission_without_context(self, mount_service, mock_nexus_fs):
+    def test_skips_permission_without_context(self, mount_service, mock_nexus_fs):
         """No permission grant when context is None."""
-        await mount_service._grant_mount_owner_permission("/mnt/test", None)
-        mock_nexus_fs.rebac_add_tuple.assert_not_called()
+        mount_service._grant_owner_permission("/mnt/test", None)
+        mock_nexus_fs.service("rebac").rebac_create_sync.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
-        """Mount point directory is created."""
-        await mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
+    def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
+        """Mount point directory is created via _setup_mount_point."""
+        mount_service._setup_mount_point("/mnt/test", operation_context)
         mock_nexus_fs.sys_mkdir.assert_called_once_with("/mnt/test", parents=True, exist_ok=True)
 
-    @pytest.mark.asyncio
-    async def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
+    def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
         """Errors creating directory do not prevent permission grant."""
         mock_nexus_fs.sys_mkdir.side_effect = RuntimeError("mkdir failed")
 
         # Should not raise
-        await mount_service._grant_mount_owner_permission("/mnt/test", operation_context)
+        mount_service._setup_mount_point("/mnt/test", operation_context)
 
-        # Permission grant should still be attempted (Issue #2033: via rebac_service)
+        # Permission grant should still be attempted via rebac_service
         mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()

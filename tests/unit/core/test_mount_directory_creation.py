@@ -65,13 +65,12 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     mnt_meta = nx.metadata.get("/mnt")
     assert mnt_meta is not None
 
-    # Verify mount point is a DT_MOUNT entry (created by PathRouter.add_mount,
-    # not overwritten by sys_mkdir which honours the existing entry) and is
-    # recognized as a directory by the kernel.
+    # Verify mount point is recognized as a directory by the kernel.
+    # PathRouter.add_mount is now purely in-memory; sys_mkdir creates the
+    # metadata entry as a regular directory.
     assert await nx.sys_is_directory("/mnt/test")
     test_meta = nx.metadata.get("/mnt/test")
     assert test_meta is not None
-    assert test_meta.is_mount, f"Expected DT_MOUNT entry, got entry_type={test_meta.entry_type}"
 
 
 @pytest.mark.asyncio
@@ -157,16 +156,13 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
     assert nx.metadata.exists("/a/b/c/mount")
 
     # Verify all paths are recognized as directories by the kernel.
-    # Parent directories are created by sys_mkdir, while the mount point
-    # itself is a DT_MOUNT created by PathRouter.add_mount.  Both are
-    # treated as directory-like by sys_is_directory.
+    # PathRouter.add_mount is now purely in-memory; sys_mkdir creates all
+    # metadata entries as regular directories.
     for p in ["/a", "/a/b", "/a/b/c", "/a/b/c/mount"]:
         assert await nx.sys_is_directory(p), f"Expected {p} to be a directory"
 
-    # The mount point should be a DT_MOUNT entry
     mount_meta = nx.metadata.get("/a/b/c/mount")
     assert mount_meta is not None
-    assert mount_meta.is_mount, f"Expected DT_MOUNT, got entry_type={mount_meta.entry_type}"
 
 
 @pytest.mark.asyncio

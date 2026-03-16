@@ -43,7 +43,7 @@ def test_add_runtime_mount_does_not_persist_metadata(
     router: PathRouter, metastore: DictMetastore, temp_backend: CASLocalBackend
 ) -> None:
     """Runtime mounts should only populate the in-memory mount table."""
-    router.add_runtime_mount("/workspace", temp_backend)
+    router.add_mount("/workspace", temp_backend)
 
     assert "/workspace" in router._backends
     assert metastore.get("/workspace") is None
@@ -157,7 +157,7 @@ def test_route_runtime_mount_without_metastore_entry(
     router: PathRouter, temp_backend: CASLocalBackend
 ) -> None:
     """Route fallback should work for ephemeral runtime mounts."""
-    router.add_runtime_mount("/", temp_backend)
+    router.add_mount("/", temp_backend)
 
     result = router.route("/anything/goes/here.txt")
 

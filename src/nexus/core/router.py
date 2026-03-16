@@ -1,8 +1,8 @@
 """Path routing for mapping virtual paths to storage backends.
 
-PathRouter = Linux VFS mount table. Routes virtual paths to storage backends
+PathRouter = Linux VFS mount table.  Routes virtual paths to storage backends
 using longest-prefix matching with mount-level access control (readonly,
-admin_only). No namespace or zone concepts — those belong in ReBAC and
+admin_only).  No namespace or zone concepts — those belong in ReBAC and
 federation layers respectively.
 
 PathRouter is a pure in-memory routing table (like Linux VFS ``vfsmount``).

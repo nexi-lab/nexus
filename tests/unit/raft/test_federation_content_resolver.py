@@ -1,8 +1,11 @@
-"""Unit tests for FederationContentResolver (#163).
+"""Unit tests for FederationContentResolver (#163, #1665).
 
 Tests the PRE-DISPATCH resolver for remote content reads and deletes
 using mocks for metastore, backend, and gRPC stubs (no real network
 or Raft needed).
+
+After #1665: try_read/try_write/try_delete return result or None
+(single-call pattern, no matches() or match_ctx).
 """
 
 from unittest.mock import MagicMock, patch
@@ -35,8 +38,8 @@ def _make_resolver(**kwargs):
     )
 
 
-class TestMatchesLocalContent:
-    """matches() returns None for local content (not handled)."""
+class TestTryReadLocalContent:
+    """try_read returns None for local content (not handled)."""
 
     def test_local_origin_returns_none(self):
         meta = _make_meta(f"local@{SELF_ADDR}")
@@ -44,7 +47,9 @@ class TestMatchesLocalContent:
         metastore.get.return_value = meta
 
         resolver = _make_resolver(metastore=metastore)
-        assert resolver.matches("/test/file.txt") is None
+        result = resolver.try_read("/test/file.txt")
+
+        assert result is None
 
     def test_no_origin_returns_none(self):
         """Legacy backend_name without origin → treated as local."""
@@ -53,14 +58,18 @@ class TestMatchesLocalContent:
         metastore.get.return_value = meta
 
         resolver = _make_resolver(metastore=metastore)
-        assert resolver.matches("/test/file.txt") is None
+        result = resolver.try_read("/test/file.txt")
+
+        assert result is None
 
     def test_no_metadata_returns_none(self):
         metastore = MagicMock()
         metastore.get.return_value = None
 
         resolver = _make_resolver(metastore=metastore)
-        assert resolver.matches("/nonexistent.txt") is None
+        result = resolver.try_read("/nonexistent.txt")
+
+        assert result is None
 
     def test_empty_backend_name_returns_none(self):
         meta = MagicMock()
@@ -69,32 +78,23 @@ class TestMatchesLocalContent:
         metastore.get.return_value = meta
 
         resolver = _make_resolver(metastore=metastore)
-        assert resolver.matches("/test/file.txt") is None
+        result = resolver.try_read("/test/file.txt")
+
+        assert result is None
 
 
-class TestMatchesRemoteContent:
-    """matches() returns metadata (truthy) for remote content."""
+class TestTryReadRemoteContent:
+    """try_read returns content for remote content."""
 
-    def test_remote_origin_returns_metadata(self):
-        meta = _make_meta(f"local@{REMOTE_ADDR}")
+    @patch.object(FederationContentResolver, "_fetch_from_peer")
+    def test_remote_origin_fetches_content(self, mock_fetch):
+        mock_fetch.return_value = b"remote content"
+        meta = _make_meta(f"local@{REMOTE_ADDR}", size=100)
         metastore = MagicMock()
         metastore.get.return_value = meta
 
         resolver = _make_resolver(metastore=metastore)
-        result = resolver.matches("/test/file.txt")
-        assert result is meta
-
-
-class TestReadRemoteContent:
-    """read() fetches content from remote peer using match_ctx."""
-
-    @patch.object(FederationContentResolver, "_fetch_from_peer")
-    def test_remote_read_uses_match_ctx(self, mock_fetch):
-        mock_fetch.return_value = b"remote content"
-        meta = _make_meta(f"local@{REMOTE_ADDR}", size=100)
-
-        resolver = _make_resolver()
-        result = resolver.read("/test/file.txt", match_ctx=meta)
+        result = resolver.try_read("/test/file.txt")
 
         assert result == b"remote content"
         mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/file.txt")
@@ -103,9 +103,11 @@ class TestReadRemoteContent:
     def test_remote_with_metadata(self, mock_fetch):
         mock_fetch.return_value = b"data"
         meta = _make_meta(f"local@{REMOTE_ADDR}", etag="xyz789", version=3, size=4)
+        metastore = MagicMock()
+        metastore.get.return_value = meta
 
-        resolver = _make_resolver()
-        result = resolver.read("/test/file.txt", match_ctx=meta, return_metadata=True)
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_read("/test/file.txt", return_metadata=True)
 
         assert result["content"] == b"data"
         assert result["etag"] == "xyz789"
@@ -117,9 +119,11 @@ class TestReadRemoteContent:
         """Files > _STREAMING_THRESHOLD use StreamRead instead of unary Read."""
         mock_stream.return_value = b"streamed content"
         meta = _make_meta(f"local@{REMOTE_ADDR}", size=2_000_000)  # 2MB > 1MB threshold
+        metastore = MagicMock()
+        metastore.get.return_value = meta
 
-        resolver = _make_resolver()
-        result = resolver.read("/test/large.bin", match_ctx=meta)
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_read("/test/large.bin")
 
         assert result == b"streamed content"
         mock_stream.assert_called_once_with(REMOTE_ADDR, "/test/large.bin")
@@ -129,38 +133,117 @@ class TestReadRemoteContent:
         """Files <= _STREAMING_THRESHOLD use unary Read RPC."""
         mock_fetch.return_value = b"small"
         meta = _make_meta(f"local@{REMOTE_ADDR}", size=500_000)  # 500KB < 1MB threshold
+        metastore = MagicMock()
+        metastore.get.return_value = meta
 
-        resolver = _make_resolver()
-        result = resolver.read("/test/small.txt", match_ctx=meta)
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_read("/test/small.txt")
 
         assert result == b"small"
         mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/small.txt")
 
 
-class TestDeleteRemoteContent:
-    """delete() delegates to remote peer using match_ctx."""
+class TestTryWritePassthrough:
+    """try_write always returns None (content writes are local)."""
+
+    def test_try_write_returns_none(self):
+        resolver = _make_resolver()
+        result = resolver.try_write("/any/path", b"data")
+
+        assert result is None
+
+
+class TestTryDeleteLocalContent:
+    """try_delete returns None for local content (not handled)."""
+
+    def test_local_origin_returns_none(self):
+        meta = _make_meta(f"local@{SELF_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result is None
+
+    def test_no_origin_returns_none(self):
+        meta = _make_meta("local")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result is None
+
+    def test_no_metadata_returns_none(self):
+        metastore = MagicMock()
+        metastore.get.return_value = None
+
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_delete("/nonexistent.txt")
+
+        assert result is None
+
+    def test_empty_backend_name_returns_none(self):
+        meta = MagicMock()
+        meta.backend_name = ""
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result is None
+
+
+class TestTryDeleteRemoteContent:
+    """try_delete returns {} for remote content."""
 
     @patch.object(FederationContentResolver, "_delete_on_peer")
-    def test_remote_delete_delegates_to_peer(self, mock_delete):
+    def test_remote_origin_delegates_to_peer(self, mock_delete):
         meta = _make_meta(f"local@{REMOTE_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
 
-        resolver = _make_resolver()
-        resolver.delete("/test/file.txt", match_ctx=meta)
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_delete("/test/file.txt")
 
+        assert result == {}
         mock_delete.assert_called_once_with(REMOTE_ADDR, "/test/file.txt")
 
     @patch.object(FederationContentResolver, "_delete_on_peer")
     def test_remote_delete_failure_propagates(self, mock_delete):
+        """gRPC failure during remote delete propagates to caller."""
         mock_delete.side_effect = Exception("network error")
         meta = _make_meta(f"local@{REMOTE_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
 
-        resolver = _make_resolver()
+        resolver = _make_resolver(metastore=metastore)
         with pytest.raises(Exception, match="network error"):
-            resolver.delete("/test/file.txt", match_ctx=meta)
+            resolver.try_delete("/test/file.txt")
 
 
 class TestKernelDispatchIntegration:
-    """Verify FederationContentResolver works with new KernelDispatch matches() protocol."""
+    """Verify FederationContentResolver works with KernelDispatch."""
+
+    @patch.object(FederationContentResolver, "_fetch_from_peer")
+    def test_resolve_read_remote_returns_handled(self, mock_fetch):
+        from nexus.core.kernel_dispatch import KernelDispatch
+
+        mock_fetch.return_value = b"remote"
+        meta = _make_meta(f"local@{REMOTE_ADDR}", size=100)
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        dispatch = KernelDispatch()
+        dispatch.register_resolver(resolver)
+
+        handled, result = dispatch.resolve_read("/test/file.txt")
+        assert handled is True
+        assert result == b"remote"
 
     def test_resolve_read_local_passes_through(self):
         from nexus.core.kernel_dispatch import KernelDispatch
@@ -175,7 +258,7 @@ class TestKernelDispatchIntegration:
 
         handled, result = dispatch.resolve_read("/test/file.txt")
         assert handled is False
-        assert result is None  # local content: matches() returns None
+        assert result is None
 
     def test_resolve_read_no_metadata_passes_through(self):
         from nexus.core.kernel_dispatch import KernelDispatch
@@ -191,22 +274,16 @@ class TestKernelDispatchIntegration:
         assert handled is False
         assert result is None
 
-    @patch.object(FederationContentResolver, "_fetch_from_peer")
-    def test_resolve_read_remote_is_handled(self, mock_fetch):
+    def test_resolve_write_passes_through(self):
         from nexus.core.kernel_dispatch import KernelDispatch
 
-        mock_fetch.return_value = b"remote data"
-        meta = _make_meta(f"local@{REMOTE_ADDR}", size=100)
-        metastore = MagicMock()
-        metastore.get.return_value = meta
-
-        resolver = _make_resolver(metastore=metastore)
+        resolver = _make_resolver()
         dispatch = KernelDispatch()
         dispatch.register_resolver(resolver)
 
-        handled, result = dispatch.resolve_read("/test/file.txt")
-        assert handled is True
-        assert result == b"remote data"
+        handled, result = dispatch.resolve_write("/test/file.txt", b"data")
+        assert handled is False
+        assert result is None
 
     def test_resolve_delete_local_passes_through(self):
         from nexus.core.kernel_dispatch import KernelDispatch

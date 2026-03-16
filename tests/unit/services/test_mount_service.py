@@ -405,8 +405,8 @@ class TestGrantMountOwnerPermission:
         mock_nexus_fs.rebac_add_tuple.assert_not_called()
 
     def test_creates_directory_entry(self, mount_service, mock_nexus_fs, operation_context):
-        """Mount point directory is created."""
-        mount_service._grant_owner_permission("/mnt/test", operation_context)
+        """Mount point directory is created via _setup_mount_point."""
+        mount_service._setup_mount_point("/mnt/test", operation_context)
         mock_nexus_fs.sys_mkdir.assert_called_once_with("/mnt/test", parents=True, exist_ok=True)
 
     def test_handles_mkdir_error(self, mount_service, mock_nexus_fs, operation_context):
@@ -414,7 +414,7 @@ class TestGrantMountOwnerPermission:
         mock_nexus_fs.sys_mkdir.side_effect = RuntimeError("mkdir failed")
 
         # Should not raise
-        mount_service._grant_owner_permission("/mnt/test", operation_context)
+        mount_service._setup_mount_point("/mnt/test", operation_context)
 
         # Permission grant should still be attempted (Issue #2033: via rebac_service)
         mock_nexus_fs.service("rebac").rebac_create_sync.assert_called_once()

@@ -184,7 +184,7 @@ async def handle_read_async(
 # ---------------------------------------------------------------------------
 
 
-def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle write method.
 
     OCC checks (if_match, if_none_match) are done here at the RPC layer
@@ -206,7 +206,7 @@ def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if (if_match or if_none_match) and not force:
         from nexus.lib.occ import occ_write
 
-        write_result = occ_write(
+        write_result = await occ_write(
             nexus_fs,
             params.path,
             content,
@@ -215,7 +215,7 @@ def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
             if_none_match=if_none_match,
         )
     else:
-        write_result = nexus_fs.write(params.path, content, context=context)
+        write_result = await nexus_fs.write(params.path, content, context=context)
 
     # write() returns dict with metadata (etag, version, modified_at, size).
     # Merge bytes_written into the response for backward compatibility.
@@ -365,7 +365,7 @@ async def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) ->
     return {"metadata": metadata}
 
 
-def handle_set_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_set_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle set_metadata — persist metadata from RemoteMetastore.put().
 
     Reconstructs a FileMetadata from the dict sent by the client and
@@ -395,7 +395,7 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     return {"matches": matches}
 
 
-def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle grep method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
@@ -411,7 +411,7 @@ def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
 
     search = nexus_fs.service("search")
     assert search is not None, "SearchService required for grep"
-    results = search.grep(params.pattern, **kwargs)
+    results = await search.grep(params.pattern, **kwargs)
     results = [unscope_result(r) for r in results]
     return {"results": results}
 

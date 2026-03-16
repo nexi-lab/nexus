@@ -69,7 +69,7 @@ def mounts_group() -> None:
 @click.option("--owner", type=str, default=None, help="Owner user ID")
 @click.option("--zone", type=str, default=None, help="Zone ID")
 @add_backend_options
-async def add_mount(
+def add_mount(
     mount_point: str,
     backend_type: str,
     config_json: str,
@@ -101,6 +101,34 @@ async def add_mount(
         nexus mounts add /personal/alice google_drive '{"access_token":"..."}' \\
             --owner "google:alice123" --zone "acme"
     """
+    import asyncio
+
+    asyncio.run(
+        _async_add_mount(
+            mount_point,
+            backend_type,
+            config_json,
+            readonly,
+            io_profile,
+            owner,
+            zone,
+            remote_url,
+            remote_api_key,
+        )
+    )
+
+
+async def _async_add_mount(
+    mount_point: str,
+    backend_type: str,
+    config_json: str,
+    readonly: bool,
+    io_profile: str,
+    owner: str | None,
+    zone: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         # Parse backend config JSON
         try:
@@ -153,9 +181,7 @@ async def add_mount(
 @mounts_group.command(name="remove")
 @click.argument("mount_point", type=str)
 @add_backend_options
-async def remove_mount(
-    mount_point: str, remote_url: str | None, remote_api_key: str | None
-) -> None:
+def remove_mount(mount_point: str, remote_url: str | None, remote_api_key: str | None) -> None:
     """Remove a backend mount.
 
     Removes mount configuration from database. The mount will be unmounted
@@ -165,6 +191,14 @@ async def remove_mount(
         nexus mounts remove /personal/alice
         nexus mounts remove /cloud/bucket
     """
+    import asyncio
+
+    asyncio.run(_async_remove_mount(mount_point, remote_url, remote_api_key))
+
+
+async def _async_remove_mount(
+    mount_point: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     try:
         # Get filesystem (works with both local and remote)
         nx = await get_filesystem(remote_url, remote_api_key)
@@ -195,7 +229,7 @@ async def remove_mount(
 @click.option("--zone", type=str, default=None, help="Filter by zone ID")
 @add_output_options
 @add_backend_options
-async def list_mounts(
+def list_mounts(
     owner: str | None,
     zone: str | None,
     output_opts: OutputOptions,
@@ -220,6 +254,18 @@ async def list_mounts(
         # Output as JSON
         nexus mounts list --json
     """
+    import asyncio
+
+    asyncio.run(_async_list_mounts(owner, zone, output_opts, remote_url, remote_api_key))
+
+
+async def _async_list_mounts(
+    owner: str | None,
+    zone: str | None,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     timing = CommandTiming()
     try:
         # Get filesystem (works with both local and remote)
@@ -284,7 +330,7 @@ async def list_mounts(
     "--show-config", is_flag=True, help="Show backend configuration (may contain secrets)"
 )
 @add_backend_options
-async def mount_info(
+def mount_info(
     mount_point: str, show_config: bool, remote_url: str | None, remote_api_key: str | None
 ) -> None:
     """Show detailed information about a mount.
@@ -293,6 +339,14 @@ async def mount_info(
         nexus mounts info /personal/alice
         nexus mounts info /cloud/bucket --show-config
     """
+    import asyncio
+
+    asyncio.run(_async_mount_info(mount_point, show_config, remote_url, remote_api_key))
+
+
+async def _async_mount_info(
+    mount_point: str, show_config: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
     try:
         # Get filesystem (works with both local and remote)
         nx = await get_filesystem(remote_url, remote_api_key)
@@ -350,7 +404,7 @@ async def mount_info(
 @click.option("--async", "run_async", is_flag=True, help="Run sync in background (returns job ID)")
 @add_output_options
 @add_backend_options
-async def sync_mount(
+def sync_mount(
     mount_point: str | None,
     path: str | None,
     no_cache: bool,
@@ -396,6 +450,38 @@ async def sync_mount(
         # Run sync in background (async)
         nexus mounts sync /mnt/gmail --async
     """
+    import asyncio
+
+    asyncio.run(
+        _async_sync_mount(
+            mount_point,
+            path,
+            no_cache,
+            include,
+            exclude,
+            embeddings,
+            dry_run,
+            run_async,
+            output_opts,
+            remote_url,
+            remote_api_key,
+        )
+    )
+
+
+async def _async_sync_mount(
+    mount_point: str | None,
+    path: str | None,
+    no_cache: bool,
+    include: tuple[str, ...],
+    exclude: tuple[str, ...],
+    embeddings: bool,
+    dry_run: bool,
+    run_async: bool,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     timing = CommandTiming()
     try:
         # Get filesystem (works with both local and remote)
@@ -545,7 +631,7 @@ async def sync_mount(
 @click.option("--watch", is_flag=True, help="Watch progress until completion")
 @add_output_options
 @add_backend_options
-async def sync_status(
+def sync_status(
     job_id: str | None,
     watch: bool,
     output_opts: OutputOptions,
@@ -567,6 +653,18 @@ async def sync_status(
         # List recent running jobs
         nexus mounts sync-status
     """
+    import asyncio
+
+    asyncio.run(_async_sync_status(job_id, watch, output_opts, remote_url, remote_api_key))
+
+
+async def _async_sync_status(
+    job_id: str | None,
+    watch: bool,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     import asyncio
 
     timing = CommandTiming()
@@ -702,7 +800,7 @@ def _display_job_status(job: dict[str, Any]) -> None:
 @click.argument("job_id", type=str)
 @add_output_options
 @add_backend_options
-async def sync_cancel(
+def sync_cancel(
     job_id: str,
     output_opts: OutputOptions,
     remote_url: str | None,
@@ -713,6 +811,17 @@ async def sync_cancel(
     Examples:
         nexus mounts sync-cancel abc123
     """
+    import asyncio
+
+    asyncio.run(_async_sync_cancel(job_id, output_opts, remote_url, remote_api_key))
+
+
+async def _async_sync_cancel(
+    job_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     timing = CommandTiming()
     try:
         nx: Any = await get_filesystem(remote_url, remote_api_key)
@@ -754,7 +863,7 @@ async def sync_cancel(
 @click.option("--limit", type=int, default=20, help="Maximum jobs to show")
 @add_output_options
 @add_backend_options
-async def sync_jobs(
+def sync_jobs(
     mount: str | None,
     status: str | None,
     limit: int,
@@ -774,6 +883,19 @@ async def sync_jobs(
         # List only failed jobs
         nexus mounts sync-jobs --status failed
     """
+    import asyncio
+
+    asyncio.run(_async_sync_jobs(mount, status, limit, output_opts, remote_url, remote_api_key))
+
+
+async def _async_sync_jobs(
+    mount: str | None,
+    status: str | None,
+    limit: int,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     timing = CommandTiming()
     try:
         nx: Any = await get_filesystem(remote_url, remote_api_key)

@@ -26,7 +26,7 @@ from nexus.cli.utils import (
 @click.argument("path", type=str)
 @add_output_options
 @add_backend_options
-async def info(
+def info(
     path: str,
     output_opts: OutputOptions,
     remote_url: str | None,
@@ -39,6 +39,17 @@ async def info(
         nexus info /workspace/data.txt --json
         nexus info /workspace/data.txt --json --fields path,size,etag
     """
+    import asyncio
+
+    asyncio.run(_async_info(path, output_opts, remote_url, remote_api_key))
+
+
+async def _async_info(
+    path: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     timing = CommandTiming()
 
     try:
@@ -114,7 +125,7 @@ def version() -> None:
 @click.option("--human", "-h", is_flag=True, help="Human-readable output")
 @click.option("--details", is_flag=True, help="Show per-file breakdown")
 @add_backend_options
-async def size(
+def size(
     path: str,
     human: bool,
     details: bool,
@@ -130,6 +141,18 @@ async def size(
         nexus size /workspace --human
         nexus size /workspace --details
     """
+    import asyncio
+
+    asyncio.run(_async_size(path, human, details, remote_url, remote_api_key))
+
+
+async def _async_size(
+    path: str,
+    human: bool,
+    details: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
 

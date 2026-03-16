@@ -47,7 +47,7 @@ def version_group() -> None:
 @click.argument("path")
 @click.option("--limit", type=int, default=None, help="Limit number of versions shown")
 @add_backend_options
-async def version_history(
+def version_history(
     path: str, limit: int | None, remote_url: str | None, remote_api_key: str | None
 ) -> None:
     """Show version history for a file.
@@ -58,7 +58,14 @@ async def version_history(
         nexus version history /workspace/SKILL.md
         nexus version history /workspace/data.txt --limit 10
     """
+    import asyncio
 
+    asyncio.run(_async_version_history(path, limit, remote_url, remote_api_key))
+
+
+async def _async_version_history(
+    path: str, limit: int | None, remote_url: str | None, remote_api_key: str | None
+) -> None:
     def format_size(size: int) -> str:
         """Format size in human-readable format."""
         size_float = float(size)
@@ -117,7 +124,7 @@ async def version_history(
 @click.option("--version", "-v", type=int, required=True, help="Version number to retrieve")
 @click.option("--output", "-o", help="Output file path (default: stdout)")
 @add_backend_options
-async def version_get(
+def version_get(
     path: str, version: int, output: str | None, remote_url: str | None, remote_api_key: str | None
 ) -> None:
     """Get a specific version of a file.
@@ -128,6 +135,14 @@ async def version_get(
         nexus version get /workspace/file.txt --version 2
         nexus version get /workspace/file.txt -v 1 -o old_version.txt
     """
+    import asyncio
+
+    asyncio.run(_async_version_get(path, version, output, remote_url, remote_api_key))
+
+
+async def _async_version_get(
+    path: str, version: int, output: str | None, remote_url: str | None, remote_api_key: str | None
+) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
         _nx: Any = nx
@@ -159,7 +174,7 @@ async def version_get(
     "--mode", type=click.Choice(["metadata", "content"]), default="content", help="Diff mode"
 )
 @add_backend_options
-async def version_diff(
+def version_diff(
     path: str, v1: int, v2: int, mode: str, remote_url: str | None, remote_api_key: str | None
 ) -> None:
     """Compare two versions of a file.
@@ -170,7 +185,14 @@ async def version_diff(
         nexus version diff /workspace/file.txt --v1 1 --v2 3
         nexus version diff /workspace/file.txt --v1 1 --v2 2 --mode metadata
     """
+    import asyncio
 
+    asyncio.run(_async_version_diff(path, v1, v2, mode, remote_url, remote_api_key))
+
+
+async def _async_version_diff(
+    path: str, v1: int, v2: int, mode: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     def format_size(size: int) -> str:
         """Format size in human-readable format."""
         size_float = float(abs(size))
@@ -243,7 +265,7 @@ async def version_diff(
 @click.option("--version", "-v", type=int, required=True, help="Version to rollback to")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @add_backend_options
-async def version_rollback(
+def version_rollback(
     path: str, version: int, yes: bool, remote_url: str | None, remote_api_key: str | None
 ) -> None:
     """Rollback file to a previous version.
@@ -254,6 +276,14 @@ async def version_rollback(
         nexus version rollback /workspace/file.txt --version 2
         nexus version rollback /workspace/file.txt -v 1 --yes
     """
+    import asyncio
+
+    asyncio.run(_async_version_rollback(path, version, yes, remote_url, remote_api_key))
+
+
+async def _async_version_rollback(
+    path: str, version: int, yes: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
         _nx: Any = nx

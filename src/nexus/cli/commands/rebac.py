@@ -62,7 +62,7 @@ def rebac() -> None:
 )
 @add_backend_options
 @add_context_options
-async def rebac_create(
+def rebac_create(
     subject_type: str,
     subject_id: str,
     relation: str,
@@ -105,6 +105,40 @@ async def rebac_create(
         # Dynamic viewer with column-level permissions (CSV only)
         nexus rebac create agent alice dynamic_viewer file /data/users.csv --column-config '{"hidden_columns":["password"],"aggregations":{"age":"mean"},"visible_columns":["name","email"]}'
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_create(
+            subject_type,
+            subject_id,
+            relation,
+            object_type,
+            object_id,
+            expires,
+            subject_relation,
+            wildcard,
+            column_config,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_create(
+    subject_type: str,
+    subject_id: str,
+    relation: str,
+    object_type: str,
+    object_id: str,
+    expires: str | None,
+    subject_relation: str | None,
+    wildcard: bool,
+    column_config: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
 
@@ -217,7 +251,7 @@ async def rebac_create(
 )
 @click.option("--limit", type=int, help="Limit number of results")
 @add_backend_options
-async def rebac_list_cmd(
+def rebac_list_cmd(
     subject_type: str | None,
     subject_id: str | None,
     object_type: str | None,
@@ -249,6 +283,34 @@ async def rebac_list_cmd(
         # JSON output
         nexus rebac list --format json
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_list_cmd(
+            subject_type,
+            subject_id,
+            object_type,
+            object_id,
+            relation,
+            output_format,
+            limit,
+            remote_url,
+            remote_api_key,
+        )
+    )
+
+
+async def _async_rebac_list_cmd(
+    subject_type: str | None,
+    subject_id: str | None,
+    object_type: str | None,
+    object_id: str | None,
+    relation: str | None,
+    output_format: str,
+    limit: int | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
 
@@ -332,7 +394,7 @@ async def rebac_list_cmd(
 @rebac.command(name="delete")
 @click.argument("tuple_id", type=str)
 @add_backend_options
-async def rebac_delete_cmd(
+def rebac_delete_cmd(
     tuple_id: str,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -342,6 +404,16 @@ async def rebac_delete_cmd(
     Examples:
         nexus rebac delete 550e8400-e29b-41d4-a716-446655440000
     """
+    import asyncio
+
+    asyncio.run(_async_rebac_delete_cmd(tuple_id, remote_url, remote_api_key))
+
+
+async def _async_rebac_delete_cmd(
+    tuple_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
 
@@ -368,7 +440,7 @@ async def rebac_delete_cmd(
 @click.argument("object_id", type=str)
 @add_backend_options
 @add_context_options
-async def rebac_check_cmd(
+def rebac_check_cmd(
     subject_type: str,
     subject_id: str,
     permission: str,
@@ -392,6 +464,32 @@ async def rebac_check_cmd(
         # Does eng-team have owner permission on project?
         nexus rebac check group eng-team owner file project-folder
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_check_cmd(
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            object_id,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_check_cmd(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    object_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
 
@@ -430,7 +528,7 @@ async def rebac_check_cmd(
 @click.argument("object_id", type=str)
 @add_backend_options
 @add_context_options
-async def rebac_expand_cmd(
+def rebac_expand_cmd(
     permission: str,
     object_type: str,
     object_id: str,
@@ -452,6 +550,28 @@ async def rebac_expand_cmd(
         # Who owns the project folder?
         nexus rebac expand owner file project-folder
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_expand_cmd(
+            permission,
+            object_type,
+            object_id,
+            remote_url,
+            remote_api_key,
+            operation_context,
+        )
+    )
+
+
+async def _async_rebac_expand_cmd(
+    permission: str,
+    object_type: str,
+    object_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    operation_context: dict[str, Any],
+) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
 
@@ -506,7 +626,7 @@ async def rebac_expand_cmd(
     help="Zone ID for multi-zone isolation (e.g., 'org_acme'). Can also be set via NEXUS_ZONE_ID env var.",
 )
 @add_backend_options
-async def rebac_explain_cmd(
+def rebac_explain_cmd(
     subject_type: str,
     subject_id: str,
     permission: str,
@@ -535,6 +655,34 @@ async def rebac_explain_cmd(
         # Explain within a specific zone
         nexus rebac explain agent alice read file file123 --zone-id org_acme
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_explain_cmd(
+            subject_type,
+            subject_id,
+            permission,
+            object_type,
+            object_id,
+            verbose,
+            zone_id,
+            remote_url,
+            remote_api_key,
+        )
+    )
+
+
+async def _async_rebac_explain_cmd(
+    subject_type: str,
+    subject_id: str,
+    permission: str,
+    object_type: str,
+    object_id: str,
+    verbose: bool,
+    zone_id: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
         import os
@@ -743,7 +891,7 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
     help="Output format",
 )
 @add_backend_options
-async def rebac_check_batch_cmd(
+def rebac_check_batch_cmd(
     checks_file: str,
     output_format: str,
     remote_url: str | None,
@@ -776,6 +924,19 @@ async def rebac_check_batch_cmd(
         # Summary only
         nexus rebac check-batch checks.json --format summary
     """
+    import asyncio
+
+    asyncio.run(
+        _async_rebac_check_batch_cmd(checks_file, output_format, remote_url, remote_api_key)
+    )
+
+
+async def _async_rebac_check_batch_cmd(
+    checks_file: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
 
@@ -886,7 +1047,7 @@ async def rebac_check_batch_cmd(
     help="Add permission mapping (format: perm:rel1,rel2,rel3)",
 )
 @add_backend_options
-async def namespace_create(
+def namespace_create(
     object_type: str,
     config_file: str | None,
     relations: tuple[str, ...],
@@ -920,6 +1081,23 @@ async def namespace_create(
           }
         }
     """
+    import asyncio
+
+    asyncio.run(
+        _async_namespace_create(
+            object_type, config_file, relations, permission, remote_url, remote_api_key
+        )
+    )
+
+
+async def _async_namespace_create(
+    object_type: str,
+    config_file: str | None,
+    relations: tuple[str, ...],
+    permission: tuple[str, ...],
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
 
@@ -977,7 +1155,7 @@ async def namespace_create(
     help="Output format",
 )
 @add_backend_options
-async def namespace_list(
+def namespace_list(
     output_format: str,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -991,6 +1169,16 @@ async def namespace_list(
         # JSON output
         nexus rebac namespace-list --format json
     """
+    import asyncio
+
+    asyncio.run(_async_namespace_list(output_format, remote_url, remote_api_key))
+
+
+async def _async_namespace_list(
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
 
@@ -1045,7 +1233,7 @@ async def namespace_list(
     help="Output format",
 )
 @add_backend_options
-async def namespace_get(
+def namespace_get(
     object_type: str,
     output_format: str,
     remote_url: str | None,
@@ -1060,6 +1248,17 @@ async def namespace_get(
         # JSON output
         nexus rebac namespace-get group --format json
     """
+    import asyncio
+
+    asyncio.run(_async_namespace_get(object_type, output_format, remote_url, remote_api_key))
+
+
+async def _async_namespace_get(
+    object_type: str,
+    output_format: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         import json
 
@@ -1088,7 +1287,7 @@ async def namespace_get(
 @click.argument("object_type", type=str)
 @click.option("--yes", is_flag=True, help="Skip confirmation prompt")
 @add_backend_options
-async def namespace_delete(
+def namespace_delete(
     object_type: str,
     yes: bool,
     remote_url: str | None,
@@ -1105,6 +1304,17 @@ async def namespace_delete(
         # Skip confirmation
         nexus rebac namespace-delete document --yes
     """
+    import asyncio
+
+    asyncio.run(_async_namespace_delete(object_type, yes, remote_url, remote_api_key))
+
+
+async def _async_namespace_delete(
+    object_type: str,
+    yes: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         if not yes:
             confirm = input(f"Delete namespace '{object_type}'? (y/N): ")

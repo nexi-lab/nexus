@@ -1017,7 +1017,7 @@ def demo() -> None:
 @click.option(
     "--skip-semantic", is_flag=True, default=False, help="Skip semantic search corpus seeding."
 )
-async def demo_init(reset: bool, skip_semantic: bool) -> None:
+def demo_init(reset: bool, skip_semantic: bool) -> None:
     """Seed demo data into a running Nexus instance.
 
     Idempotent by default — safe to run multiple times.
@@ -1028,6 +1028,12 @@ async def demo_init(reset: bool, skip_semantic: bool) -> None:
         nexus demo init --reset        # clean slate re-seed
         nexus demo init --skip-semantic
     """
+    import asyncio
+
+    asyncio.run(_async_demo_init(reset, skip_semantic))
+
+
+async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     config = _load_project_config()
     data_dir = config.get("data_dir", "./nexus-data")
 
@@ -1182,7 +1188,7 @@ async def demo_init(reset: bool, skip_semantic: bool) -> None:
 
 
 @demo.command(name="reset")
-async def demo_reset() -> None:
+def demo_reset() -> None:
     """Remove all demo data and the manifest.
 
     This is a destructive operation — demo files, users, and agents
@@ -1191,6 +1197,12 @@ async def demo_reset() -> None:
     Example:
         nexus demo reset
     """
+    import asyncio
+
+    asyncio.run(_async_demo_reset())
+
+
+async def _async_demo_reset() -> None:
     config = _load_project_config()
     data_dir = config.get("data_dir", "./nexus-data")
 

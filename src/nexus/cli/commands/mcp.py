@@ -172,7 +172,7 @@ def mcp() -> None:
     envvar="NEXUS_API_KEY",
 )
 @add_backend_options
-async def serve(
+def serve(
     transport: str,
     host: str,
     port: int,
@@ -223,6 +223,19 @@ async def serve(
         # Or via environment:
         NEXUS_URL=http://localhost:2026 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
     """
+    import asyncio
+
+    asyncio.run(_async_serve(transport, host, port, api_key, remote_url, remote_api_key))
+
+
+async def _async_serve(
+    transport: str,
+    host: str,
+    port: int,
+    api_key: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         # Check if fastmcp is installed
         try:

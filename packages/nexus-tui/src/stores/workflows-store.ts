@@ -7,6 +7,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -59,6 +61,30 @@ export interface ExecutionResult {
   readonly error_message: string | null;
 }
 
+export interface ExecutionStep {
+  readonly step_index: number;
+  readonly action_name: string;
+  readonly status: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly inputs: Readonly<Record<string, unknown>>;
+  readonly outputs: Readonly<Record<string, unknown>>;
+  readonly error_message: string | null;
+}
+
+export interface ExecutionDetail {
+  readonly execution_id: string;
+  readonly workflow_id: string;
+  readonly trigger_type: string;
+  readonly status: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly actions_completed: number;
+  readonly actions_total: number;
+  readonly error_message: string | null;
+  readonly steps: readonly ExecutionStep[];
+}
+
 export interface SchedulerMetrics {
   readonly queued_tasks: number;
   readonly running_tasks: number;
@@ -94,6 +120,10 @@ export interface WorkflowsState {
   readonly selectedExecutionIndex: number;
   readonly executionsLoading: boolean;
 
+  // Execution detail (expanded view)
+  readonly selectedExecution: ExecutionDetail | null;
+  readonly executionDetailLoading: boolean;
+
   // Scheduler metrics
   readonly schedulerMetrics: SchedulerMetrics | null;
   readonly schedulerLoading: boolean;
@@ -112,10 +142,14 @@ export interface WorkflowsState {
   readonly deleteWorkflow: (name: string, client: FetchClient) => Promise<void>;
   readonly enableWorkflow: (name: string, client: FetchClient) => Promise<void>;
   readonly disableWorkflow: (name: string, client: FetchClient) => Promise<void>;
+  readonly fetchExecutionDetail: (executionId: string, client: FetchClient) => Promise<void>;
+  readonly clearExecutionDetail: () => void;
   readonly setActiveTab: (tab: WorkflowTab) => void;
   readonly setSelectedWorkflowIndex: (index: number) => void;
   readonly setSelectedExecutionIndex: (index: number) => void;
 }
+
+const SOURCE = "workflows";
 
 export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
   workflows: [],
@@ -129,28 +163,30 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
   selectedExecutionIndex: 0,
   executionsLoading: false,
 
+  selectedExecution: null,
+  executionDetailLoading: false,
+
   schedulerMetrics: null,
   schedulerLoading: false,
 
   activeTab: "workflows",
   error: null,
 
-  fetchWorkflows: async (client) => {
-    set({ workflowsLoading: true, error: null });
+  // =========================================================================
+  // Actions migrated to createApiAction (Decision 6A)
+  // =========================================================================
 
-    try {
+  fetchWorkflows: createApiAction<WorkflowsState, [FetchClient]>(set, {
+    loadingKey: "workflowsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch workflows",
+    action: async (client) => {
       const workflows = await client.get<readonly WorkflowSummary[]>(
         "/api/v2/workflows",
       );
-
-      set({ workflows: workflows ?? [], workflowsLoading: false });
-    } catch (err) {
-      set({
-        workflowsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch workflows",
-      });
-    }
-  },
+      return { workflows: workflows ?? [] };
+    },
+  }),
 
   fetchWorkflowDetail: async (name, client) => {
     set({ detailLoading: true, error: null });
@@ -161,13 +197,19 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       );
       set({ selectedWorkflow: workflow, detailLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch workflow detail";
       set({
         selectedWorkflow: null,
         detailLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch workflow detail",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
+
+  // =========================================================================
+  // Actions without loading keys — inline with error store integration
+  // =========================================================================
 
   executeWorkflow: async (name, client) => {
     set({ error: null });
@@ -182,9 +224,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       const { fetchExecutions } = get();
       await fetchExecutions(name, client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to execute workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to execute workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -198,11 +240,13 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
 
       set({ executions: executions ?? [], executionsLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch executions";
       set({
         executions: [],
         executionsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch executions",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -215,11 +259,13 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       );
       set({ schedulerMetrics: metrics, schedulerLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch scheduler metrics";
       set({
         schedulerMetrics: null,
         schedulerLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch scheduler metrics",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -230,9 +276,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       await client.post("/api/v2/workflows", { name, description });
       await get().fetchWorkflows(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to create workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -249,9 +295,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to delete workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to delete workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -269,9 +315,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to enable workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to enable workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -289,11 +335,33 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to disable workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to disable workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
+  },
+
+  fetchExecutionDetail: async (executionId, client) => {
+    set({ executionDetailLoading: true, error: null });
+
+    try {
+      const detail = await client.get<ExecutionDetail>(
+        `/api/v2/workflows/executions/${encodeURIComponent(executionId)}`,
+      );
+      set({ selectedExecution: detail, executionDetailLoading: false });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch execution detail";
+      set({
+        selectedExecution: null,
+        executionDetailLoading: false,
+        error: message,
+      });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  clearExecutionDetail: () => {
+    set({ selectedExecution: null });
   },
 
   setActiveTab: (tab) => {

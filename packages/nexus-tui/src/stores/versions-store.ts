@@ -7,6 +7,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -127,6 +129,8 @@ export interface VersionsState {
   readonly toggleConflicts: () => void;
 }
 
+const SOURCE = "versions";
+
 export const useVersionsStore = create<VersionsState>((set, get) => ({
   transactions: [],
   selectedTransaction: null,
@@ -144,6 +148,26 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
   conflictsLoading: false,
   showConflicts: false,
 
+  // =========================================================================
+  // Actions migrated to createApiAction
+  // =========================================================================
+
+  fetchTransactionDetail: createApiAction<VersionsState, [string, FetchClient]>(set, {
+    loadingKey: "transactionDetailLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch transaction detail",
+    action: async (txnId, client) => {
+      const detail = await client.get<Transaction>(
+        `/api/v2/snapshots/${encodeURIComponent(txnId)}`,
+      );
+      return { transactionDetail: detail };
+    },
+  }),
+
+  // =========================================================================
+  // Actions with special patterns — inline with error store integration
+  // =========================================================================
+
   fetchTransactions: async (client) => {
     set({ isLoading: true, error: null });
 
@@ -157,10 +181,12 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
       const transactions = response.transactions ?? [];
       set({ transactions, isLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch transactions";
       set({
         isLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch transactions",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -195,11 +221,13 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
       );
       set({ entries: entries ?? [], entriesLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch entries";
       set({
         entries: [],
         entriesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch entries",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -224,26 +252,13 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         diffLoading: false,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch diff";
       set({
         diffContent: null,
         diffLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch diff",
+        error: message,
       });
-    }
-  },
-
-  fetchTransactionDetail: async (txnId, client) => {
-    set({ transactionDetailLoading: true, error: null });
-    try {
-      const detail = await client.get<Transaction>(
-        `/api/v2/snapshots/${encodeURIComponent(txnId)}`,
-      );
-      set({ transactionDetail: detail, transactionDetailLoading: false });
-    } catch (err) {
-      set({
-        transactionDetailLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch transaction detail",
-      });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -258,9 +273,9 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
       await client.post<Transaction>("/api/v2/snapshots", body);
       await get().fetchTransactions(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to begin transaction",
-      });
+      const message = err instanceof Error ? err.message : "Failed to begin transaction";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -274,9 +289,9 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
       );
       await get().fetchTransactions(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to commit transaction",
-      });
+      const message = err instanceof Error ? err.message : "Failed to commit transaction";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -290,9 +305,9 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
       );
       await get().fetchTransactions(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to rollback transaction",
-      });
+      const message = err instanceof Error ? err.message : "Failed to rollback transaction";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -308,11 +323,13 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         conflictsLoading: false,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch conflicts";
       set({
         conflicts: [],
         conflictsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch conflicts",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

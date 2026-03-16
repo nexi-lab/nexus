@@ -17,6 +17,7 @@
     "@nexus/api-client": "file:../nexus-api-client",
     "@opentui/core": "latest",
     "@opentui/react": "latest",
+    "anser": "^2.3.5",
     "react": "^19.0.0",
     "zustand": "^5.0.0"
   },

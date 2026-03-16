@@ -15,6 +15,10 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
+
+const SOURCE = "files";
 
 // =============================================================================
 // Types
@@ -84,9 +88,9 @@ export const useUploadStore = create<UploadState>((set, get) => ({
       await client.delete(`/api/v2/uploads/${encodeURIComponent(sessionId)}`);
       get().removeSession(sessionId);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to terminate upload session",
-      });
+      const message = err instanceof Error ? err.message : "Failed to terminate upload session";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -115,9 +119,9 @@ export const useUploadStore = create<UploadState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to refresh session status",
-      });
+      const message = err instanceof Error ? err.message : "Failed to refresh session status";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

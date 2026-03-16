@@ -28,8 +28,59 @@ interface CacheEntry<T> {
   fetchedAt: number;
 }
 
+// =============================================================================
+// LRU cache with eviction (Decision 16A)
+// =============================================================================
+
+const MAX_CACHE_SIZE = 200;
+
+let accessCounter = 0;
+
+class LruCache {
+  private readonly _map = new Map<string, { entry: CacheEntry<unknown>; accessOrder: number }>();
+
+  get(key: string): CacheEntry<unknown> | undefined {
+    const item = this._map.get(key);
+    if (!item) return undefined;
+    // Update access order for LRU tracking (monotonic counter avoids Date.now() ties)
+    item.accessOrder = ++accessCounter;
+    return item.entry;
+  }
+
+  set(key: string, entry: CacheEntry<unknown>): void {
+    this._map.set(key, { entry, accessOrder: ++accessCounter });
+    this._evictIfNeeded();
+  }
+
+  delete(key: string): void {
+    this._map.delete(key);
+  }
+
+  clear(): void {
+    this._map.clear();
+  }
+
+  private _evictIfNeeded(): void {
+    if (this._map.size <= MAX_CACHE_SIZE) return;
+
+    // Find and remove least-recently-accessed entries
+    const entries = [...this._map.entries()].sort(
+      (a, b) => a[1].accessOrder - b[1].accessOrder,
+    );
+
+    const toRemove = this._map.size - MAX_CACHE_SIZE;
+    for (let i = 0; i < toRemove; i++) {
+      this._map.delete(entries[i]![0]);
+    }
+  }
+}
+
 // Module-level cache shared across hook instances
-const cache = new Map<string, CacheEntry<unknown>>();
+/** @internal Exported for testing LRU behavior */
+export const swrCache = new LruCache();
+
+// Keep backward-compatible local alias
+const cache = swrCache;
 
 export function useSwr<T>(
   key: string,
@@ -48,6 +99,16 @@ export function useSwr<T>(
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
+  // Track the active key so in-flight fetches for stale keys are discarded (Bug 2)
+  const activeKeyRef = useRef(key);
+  activeKeyRef.current = key;
+
+  // Reset data to cached value (or undefined) when key changes (Bug 3)
+  useEffect(() => {
+    const cached = cache.get(key) as CacheEntry<T> | undefined;
+    setData(cached?.data);
+  }, [key]);
+
   const isStale = (() => {
     const cached = cache.get(key);
     if (!cached) return true;
@@ -55,16 +116,22 @@ export function useSwr<T>(
   })();
 
   const doFetch = useCallback(async () => {
+    const fetchKey = key; // capture for closure
     setIsLoading(true);
     setError(undefined);
     try {
       const result = await fetcherRef.current();
+      // Only update if this key is still the active one
+      if (activeKeyRef.current !== fetchKey) return;
       cache.set(key, { data: result, fetchedAt: Date.now() });
       setData(result);
     } catch (err) {
+      if (activeKeyRef.current !== fetchKey) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setIsLoading(false);
+      if (activeKeyRef.current === fetchKey) {
+        setIsLoading(false);
+      }
     }
   }, [key]);
 

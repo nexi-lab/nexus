@@ -4,14 +4,20 @@
  * Lazy-loads panels on first navigation for fast startup.
  */
 
-import React, { lazy, Suspense, useState, useCallback } from "react";
+import React, { lazy, Suspense, useState, useCallback, useEffect } from "react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
+import { useUiStore } from "./stores/ui-store.js";
 import { TabBar, type Tab } from "./shared/components/tab-bar.js";
 import { StatusBar } from "./shared/components/status-bar.js";
+import { ErrorBar } from "./shared/components/error-bar.js";
 import { ErrorBoundary } from "./shared/components/error-boundary.js";
 import { Spinner } from "./shared/components/spinner.js";
 import { useKeyboard } from "./shared/hooks/use-keyboard.js";
 import { IdentitySwitcher } from "./shared/components/identity-switcher.js";
+import { AppConfirmDialog } from "./shared/components/app-confirm-dialog.js";
+import { HelpOverlay } from "./shared/components/help-overlay.js";
+import { WelcomeScreen } from "./shared/components/welcome-screen.js";
+import { useFreshServer } from "./shared/hooks/use-fresh-server.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
@@ -74,7 +80,18 @@ function PanelRouter(): React.ReactNode {
 export function App(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
+  const toggleZoom = useUiStore((s) => s.toggleZoom);
+  const zoomedPanel = useUiStore((s) => s.zoomedPanel);
   const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const { isFresh } = useFreshServer();
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const showWelcome = isFresh === true && !welcomeDismissed;
+
+  const setOverlayActive = useUiStore((s) => s.setOverlayActive);
+  useEffect(() => {
+    setOverlayActive(identitySwitcherOpen || helpOpen || showWelcome);
+  }, [identitySwitcherOpen, helpOpen, showWelcome, setOverlayActive]);
 
   const toggleIdentitySwitcher = useCallback(() => {
     setIdentitySwitcherOpen((prev) => !prev);
@@ -85,10 +102,9 @@ export function App(): React.ReactNode {
   }, []);
 
   useKeyboard(
-    identitySwitcherOpen
+    identitySwitcherOpen || helpOpen || showWelcome
       ? {
-          // When the overlay is open, only Ctrl+I closes it from the app level.
-          // All other keys are handled by IdentitySwitcher itself.
+          // When an overlay is open, only its dismiss key works from app level.
           "ctrl+i": toggleIdentitySwitcher,
         }
       : {
@@ -103,14 +119,16 @@ export function App(): React.ReactNode {
           "9": () => setActivePanel("infrastructure"),
           "0": () => setActivePanel("console"),
           "ctrl+i": toggleIdentitySwitcher,
+          "z": () => toggleZoom(activePanel),
+          "?": () => setHelpOpen(true),
           "q": () => process.exit(0),
         },
   );
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Tab bar */}
-      <TabBar tabs={TABS} activeTab={activePanel} onSelect={(id) => setActivePanel(id as PanelId)} />
+      {/* Tab bar (hidden when zoomed) */}
+      {!zoomedPanel && <TabBar tabs={TABS} activeTab={activePanel} onSelect={(id) => setActivePanel(id as PanelId)} />}
 
       {/* Main content */}
       <box flexGrow={1}>
@@ -127,10 +145,14 @@ export function App(): React.ReactNode {
         </ErrorBoundary>
       </box>
 
-      {/* Identity switcher overlay */}
+      {/* Overlays */}
+      {showWelcome && <WelcomeScreen onDismiss={() => setWelcomeDismissed(true)} />}
       <IdentitySwitcher visible={identitySwitcherOpen} onClose={closeIdentitySwitcher} />
+      <AppConfirmDialog />
+      <HelpOverlay visible={helpOpen} panel={activePanel} onDismiss={() => setHelpOpen(false)} />
 
-      {/* Status bar */}
+      {/* Error bar + Status bar */}
+      <ErrorBar />
       <StatusBar />
     </box>
   );

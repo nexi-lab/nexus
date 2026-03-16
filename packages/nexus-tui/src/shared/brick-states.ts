@@ -5,6 +5,8 @@
  * BrickState enum values exactly (see brick_lifecycle.py).
  */
 
+import { brickStateColor } from "./theme.js";
+
 // ---------------------------------------------------------------------------
 // State constants (match backend BrickState enum values)
 // ---------------------------------------------------------------------------
@@ -78,4 +80,12 @@ export function stateIndicator(state: string): string {
     default:
       return "[??]";
   }
+}
+
+/**
+ * Semantic color for a brick state indicator.
+ * Returns a color string from the theme for use with foregroundColor prop.
+ */
+export function stateColor(state: string): string {
+  return brickStateColor[state] ?? "gray";
 }

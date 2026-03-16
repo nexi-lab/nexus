@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { PolicyRecord } from "../../stores/payments-store.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 
 interface PolicyListProps {
   readonly policies: readonly PolicyRecord[];
@@ -22,11 +23,7 @@ export function PolicyList({
   loading,
 }: PolicyListProps): React.ReactNode {
   if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading policies...</text>
-      </box>
-    );
+    return <LoadingIndicator message="Loading policies..." />;
   }
 
   if (policies.length === 0) {

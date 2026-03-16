@@ -4,6 +4,10 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
+export type { DelegationItem } from "./delegation-store.js";
+import type { DelegationItem } from "./delegation-store.js";
 
 // =============================================================================
 // Types
@@ -62,20 +66,7 @@ export interface AgentIdentity {
   readonly expires_at: string | null;
 }
 
-export interface DelegationItem {
-  readonly delegation_id: string;
-  readonly agent_id: string;
-  readonly parent_agent_id: string;
-  readonly delegation_mode: "copy" | "clean" | "shared";
-  readonly status: "active" | "revoked" | "expired" | "completed";
-  readonly scope_prefix: string | null;
-  readonly lease_expires_at: string | null;
-  readonly zone_id: string | null;
-  readonly intent: string;
-  readonly depth: number;
-  readonly can_sub_delegate: boolean;
-  readonly created_at: string;
-}
+// DelegationItem re-exported from delegation-store.ts (canonical source)
 
 export interface InboxMessage {
   readonly filename: string;
@@ -170,6 +161,8 @@ export interface AgentsState {
   readonly setSelectedDelegationIndex: (index: number) => void;
 }
 
+const SOURCE = "agents";
+
 export const useAgentsStore = create<AgentsState>((set, get) => ({
   knownAgents: [],
   selectedAgentId: null,
@@ -213,23 +206,93 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     set({ knownAgents: [...knownAgents, id] });
   },
 
-  fetchAgentStatus: async (agentId, client) => {
-    set({ statusLoading: true, error: null });
-    try {
+  // =========================================================================
+  // Actions migrated to createApiAction (Decision 5A)
+  // =========================================================================
+
+  fetchAgentStatus: createApiAction<AgentsState, [string, FetchClient]>(set, {
+    loadingKey: "statusLoading",
+    source: SOURCE,
+    action: async (agentId, client) => {
       const response = await client.get<Omit<AgentStatus, "agent_id">>(
         `/api/v2/agents/${encodeURIComponent(agentId)}/status`,
       );
-      set({
-        agentStatus: { ...response, agent_id: agentId },
-        statusLoading: false,
-      });
-    } catch (err) {
-      set({
-        statusLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch agent status",
-      });
-    }
-  },
+      return { agentStatus: { ...response, agent_id: agentId } };
+    },
+  }),
+
+  fetchAgents: createApiAction<AgentsState, [string, FetchClient]>(set, {
+    loadingKey: "agentsLoading",
+    source: SOURCE,
+    action: async (zoneId, client) => {
+      const response = await client.get<{
+        readonly agents: readonly AgentListItem[];
+      }>(`/api/v2/agents?zone_id=${encodeURIComponent(zoneId)}&limit=50&offset=0`);
+      return { agents: response.agents };
+    },
+  }),
+
+  fetchDelegations: createApiAction<AgentsState, [FetchClient]>(set, {
+    loadingKey: "delegationsLoading",
+    source: SOURCE,
+    action: async (client) => {
+      const response = await client.get<{
+        readonly delegations: readonly DelegationItem[];
+        readonly total: number;
+      }>("/api/v2/agents/delegate?limit=50&offset=0");
+      return { delegations: response.delegations, selectedDelegationIndex: 0 };
+    },
+  }),
+
+  fetchInbox: createApiAction<AgentsState, [string, FetchClient]>(set, {
+    loadingKey: "inboxLoading",
+    source: SOURCE,
+    action: async (agentId, client) => {
+      const response = await client.get<{
+        readonly agent_id: string;
+        readonly messages: readonly InboxMessage[];
+        readonly total: number;
+      }>(`/api/v2/ipc/inbox/${encodeURIComponent(agentId)}`);
+      return { inboxMessages: response.messages, inboxCount: response.total };
+    },
+  }),
+
+  fetchTrajectories: createApiAction<AgentsState, [string, FetchClient]>(set, {
+    loadingKey: "trajectoriesLoading",
+    source: SOURCE,
+    action: async (agentId, client) => {
+      const response = await client.get<{
+        readonly trajectories: readonly TrajectoryItem[];
+      }>(`/api/v2/trajectories?agent_id=${encodeURIComponent(agentId)}&limit=20`);
+      return { trajectories: response.trajectories ?? [] };
+    },
+  }),
+
+  fetchTrustScore: createApiAction<AgentsState, [string, FetchClient]>(set, {
+    loadingKey: "trustScoreLoading",
+    source: SOURCE,
+    action: async (agentId, client) => {
+      const response = await client.get<{ readonly trust_score: number }>(
+        `/api/v2/agents/${encodeURIComponent(agentId)}/trust-score`,
+      );
+      return { trustScore: response.trust_score };
+    },
+  }),
+
+  fetchAgentReputation: createApiAction<AgentsState, [string, FetchClient]>(set, {
+    loadingKey: "reputationLoading",
+    source: SOURCE,
+    action: async (agentId, client) => {
+      const response = await client.get<unknown>(
+        `/api/v2/agents/${encodeURIComponent(agentId)}/reputation`,
+      );
+      return { reputation: response };
+    },
+  }),
+
+  // =========================================================================
+  // Actions without loading keys — inline but with error store integration
+  // =========================================================================
 
   fetchAgentSpec: async (agentId, client) => {
     try {
@@ -238,9 +301,9 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       );
       set({ agentSpec: response, error: null });
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to fetch agent spec",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch agent spec";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -251,75 +314,15 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
       );
       set({ agentIdentity: response, error: null });
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to fetch agent identity",
-      });
-    }
-  },
-
-  fetchDelegations: async (client) => {
-    set({ delegationsLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly delegations: readonly DelegationItem[];
-        readonly total: number;
-      }>("/api/v2/agents/delegate?limit=50&offset=0");
-      set({
-        delegations: response.delegations,
-        delegationsLoading: false,
-        selectedDelegationIndex: 0,
-      });
-    } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch delegations",
-      });
-    }
-  },
-
-  fetchInbox: async (agentId, client) => {
-    set({ inboxLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly agent_id: string;
-        readonly messages: readonly InboxMessage[];
-        readonly total: number;
-      }>(`/api/v2/ipc/inbox/${encodeURIComponent(agentId)}`);
-      set({
-        inboxMessages: response.messages,
-        inboxCount: response.total,
-        inboxLoading: false,
-      });
-    } catch (err) {
-      set({
-        inboxLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch inbox",
-      });
-    }
-  },
-
-  fetchTrajectories: async (agentId, client) => {
-    set({ trajectoriesLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly trajectories: readonly TrajectoryItem[];
-      }>(`/api/v2/trajectories?agent_id=${encodeURIComponent(agentId)}&limit=20`);
-      set({
-        trajectories: response.trajectories ?? [],
-        trajectoriesLoading: false,
-      });
-    } catch (err) {
-      set({
-        trajectoriesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch trajectories",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch agent identity";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
   revokeDelegation: async (delegationId, client) => {
     try {
       await client.delete(`/api/v2/agents/delegate/${encodeURIComponent(delegationId)}`);
-      // Remove from local list
       set((state) => ({
         delegations: state.delegations.map((d) =>
           d.delegation_id === delegationId ? { ...d, status: "revoked" as const } : d,
@@ -327,24 +330,9 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         error: null,
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to revoke delegation",
-      });
-    }
-  },
-
-  fetchAgents: async (zoneId, client) => {
-    set({ agentsLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly agents: readonly AgentListItem[];
-      }>(`/api/v2/agents?zone_id=${encodeURIComponent(zoneId)}&limit=50&offset=0`);
-      set({ agents: response.agents, agentsLoading: false });
-    } catch (err) {
-      set({
-        agentsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch agents",
-      });
+      const message = err instanceof Error ? err.message : "Failed to revoke delegation";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -353,9 +341,9 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     try {
       await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/warmup`, {});
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to warmup agent",
-      });
+      const message = err instanceof Error ? err.message : "Failed to warmup agent";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -364,9 +352,9 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     try {
       await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/evict`, {});
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to evict agent",
-      });
+      const message = err instanceof Error ? err.message : "Failed to evict agent";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -375,39 +363,9 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     try {
       await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/verify`, {});
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to verify agent",
-      });
-    }
-  },
-
-  fetchTrustScore: async (agentId, client) => {
-    set({ trustScoreLoading: true, error: null });
-    try {
-      const response = await client.get<{ readonly trust_score: number }>(
-        `/api/v2/agents/${encodeURIComponent(agentId)}/trust-score`,
-      );
-      set({ trustScore: response.trust_score, trustScoreLoading: false });
-    } catch (err) {
-      set({
-        trustScoreLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch trust score",
-      });
-    }
-  },
-
-  fetchAgentReputation: async (agentId, client) => {
-    set({ reputationLoading: true, error: null });
-    try {
-      const response = await client.get<unknown>(
-        `/api/v2/agents/${encodeURIComponent(agentId)}/reputation`,
-      );
-      set({ reputation: response, reputationLoading: false });
-    } catch (err) {
-      set({
-        reputationLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch agent reputation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to verify agent";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

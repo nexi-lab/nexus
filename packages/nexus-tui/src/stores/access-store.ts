@@ -6,6 +6,10 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
+export type { DelegationItem } from "./delegation-store.js";
+import type { DelegationItem } from "./delegation-store.js";
 
 // =============================================================================
 // Types
@@ -66,20 +70,7 @@ export interface GovernanceAlert {
 }
 
 /** Matches backend DelegationListItem from delegation.py:135-149. */
-export interface DelegationItem {
-  readonly delegation_id: string;
-  readonly agent_id: string;
-  readonly parent_agent_id: string;
-  readonly delegation_mode: string;
-  readonly status: string;
-  readonly scope_prefix: string | null;
-  readonly lease_expires_at: string | null;
-  readonly zone_id: string | null;
-  readonly intent: string;
-  readonly depth: number;
-  readonly can_sub_delegate: boolean;
-  readonly created_at: string;
-}
+// DelegationItem re-exported from delegation-store.ts (canonical source)
 
 export interface Credential {
   readonly credential_id: string;
@@ -151,6 +142,16 @@ export interface GovernanceCheckResult {
   readonly edge_id: string;
 }
 
+/** ReBAC governance constraint. */
+export interface GovernanceConstraint {
+  readonly id: string;
+  readonly from_agent_id: string;
+  readonly to_agent_id: string;
+  readonly constraint_type: string;
+  readonly zone_id: string;
+  readonly created_at: string;
+}
+
 export type AccessTab =
   | "manifests"
   | "alerts"
@@ -205,6 +206,11 @@ export interface AccessState {
   // Collusion detection
   readonly collusionRings: readonly unknown[];
   readonly collusionLoading: boolean;
+
+  // Governance constraints
+  readonly constraints: readonly GovernanceConstraint[];
+  readonly constraintsLoading: boolean;
+  readonly selectedConstraintIndex: number;
 
   // UI state
   readonly activeTab: AccessTab;
@@ -274,6 +280,12 @@ export interface AccessState {
     client: FetchClient,
   ) => Promise<void>;
 
+  // Actions — governance constraints
+  readonly fetchConstraints: (zoneId: string, client: FetchClient) => Promise<void>;
+  readonly createConstraint: (constraint: { from_agent_id: string; to_agent_id: string; constraint_type: string; zone_id: string }, client: FetchClient) => Promise<void>;
+  readonly deleteConstraint: (constraintId: string, client: FetchClient) => Promise<void>;
+  readonly setSelectedConstraintIndex: (index: number) => void;
+
   // Actions — governance deep features
   readonly fetchCollusionRings: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
   readonly suspendAgent: (agentId: string, reason: string, zoneId: string | undefined, client: FetchClient) => Promise<void>;
@@ -298,6 +310,8 @@ export interface AccessState {
   readonly setSelectedFraudIndex: (index: number) => void;
   readonly setSelectedDelegationIndex: (index: number) => void;
 }
+
+const SOURCE = "access";
 
 export const useAccessStore = create<AccessState>((set, get) => ({
   manifests: [],
@@ -325,32 +339,34 @@ export const useAccessStore = create<AccessState>((set, get) => ({
   governanceCheckLoading: false,
   collusionRings: [],
   collusionLoading: false,
+  constraints: [],
+  constraintsLoading: false,
+  selectedConstraintIndex: 0,
   activeTab: "manifests",
   error: null,
 
+  // =========================================================================
+  // Actions migrated to createApiAction (Decision 6A)
+  // =========================================================================
+
   // ── Manifests ──────────────────────────────────────────────────────────
 
-  fetchManifests: async (client) => {
-    set({ manifestsLoading: true, error: null });
-    try {
+  fetchManifests: createApiAction<AccessState, [FetchClient]>(set, {
+    loadingKey: "manifestsLoading",
+    source: SOURCE,
+    action: async (client) => {
       const response = await client.get<{
         readonly manifests: readonly AccessManifest[];
         readonly offset: number;
         readonly limit: number;
         readonly count: number;
       }>("/api/v2/access-manifests");
-      set({
+      return {
         manifests: response.manifests,
-        manifestsLoading: false,
         selectedManifestIndex: 0,
-      });
-    } catch (err) {
-      set({
-        manifestsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch manifests",
-      });
-    }
-  },
+      };
+    },
+  }),
 
   fetchManifestDetail: async (manifestId, client) => {
     try {
@@ -371,19 +387,20 @@ export const useAccessStore = create<AccessState>((set, get) => ({
     }
   },
 
-  checkPermission: async (manifestId, toolName, client) => {
-    set({ permissionCheckLoading: true, error: null });
-    try {
+  checkPermission: createApiAction<AccessState, [string, string, FetchClient]>(set, {
+    loadingKey: "permissionCheckLoading",
+    source: SOURCE,
+    action: async (manifestId, toolName, client) => {
       const response = await client.post<{
         readonly tool_name: string;
         readonly permission: string;
         readonly agent_id: string;
         readonly manifest_id: string;
         readonly trace?: EvaluationTraceResult;
-      }>(`/api/v2/access-manifests/${manifestId}/evaluate`, {
+      }>(`/api/v2/access-manifests/${encodeURIComponent(manifestId)}/evaluate`, {
         tool_name: toolName,
       });
-      set({
+      return {
         lastPermissionCheck: {
           tool_name: response.tool_name,
           permission: response.permission,
@@ -391,38 +408,26 @@ export const useAccessStore = create<AccessState>((set, get) => ({
           manifest_id: response.manifest_id,
           trace: response.trace ?? null,
         },
-        permissionCheckLoading: false,
-      });
-    } catch (err) {
-      set({
-        permissionCheckLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to evaluate permission",
-      });
-    }
-  },
+      };
+    },
+  }),
 
   // ── Alerts ─────────────────────────────────────────────────────────────
 
-  fetchAlerts: async (zoneId, client) => {
-    set({ alertsLoading: true, error: null });
-    try {
+  fetchAlerts: createApiAction<AccessState, [string | undefined, FetchClient]>(set, {
+    loadingKey: "alertsLoading",
+    source: SOURCE,
+    action: async (zoneId, client) => {
       const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
       const response = await client.get<{
         readonly alerts: readonly GovernanceAlert[];
       }>(`/api/v2/governance/alerts${params}`);
-      set({
+      return {
         alerts: response.alerts,
-        alertsLoading: false,
         selectedAlertIndex: 0,
-      });
-    } catch (err) {
-      set({
-        alertsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch alerts",
-      });
-    }
-  },
+      };
+    },
+  }),
 
   resolveAlert: async (alertId, resolvedBy, zoneId, client) => {
     set({ alertsLoading: true, error: null });
@@ -442,35 +447,26 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         alertsLoading: false,
       }));
     } catch (err) {
-      set({
-        alertsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to resolve alert",
-      });
+      const message = err instanceof Error ? err.message : "Failed to resolve alert";
+      set({ alertsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
   // ── Credentials ────────────────────────────────────────────────────────
 
-  fetchCredentials: async (agentId, client) => {
-    set({ credentialsLoading: true, error: null });
-    try {
+  fetchCredentials: createApiAction<AccessState, [string, FetchClient]>(set, {
+    loadingKey: "credentialsLoading",
+    source: SOURCE,
+    action: async (agentId, client) => {
       const response = await client.get<{
         readonly agent_id: string;
         readonly count: number;
         readonly credentials: readonly Credential[];
-      }>(`/api/v2/agents/${agentId}/credentials`);
-      set({
-        credentials: response.credentials,
-        credentialsLoading: false,
-      });
-    } catch (err) {
-      set({
-        credentialsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch credentials",
-      });
-    }
-  },
+      }>(`/api/v2/agents/${encodeURIComponent(agentId)}/credentials`);
+      return { credentials: response.credentials };
+    },
+  }),
 
   issueCredential: async (agentId, claims, client) => {
     set({ credentialsLoading: true, error: null });
@@ -478,7 +474,9 @@ export const useAccessStore = create<AccessState>((set, get) => ({
       await client.post(`/api/v2/agents/${encodeURIComponent(agentId)}/credentials`, { claims });
       await get().fetchCredentials(agentId, client);
     } catch (err) {
-      set({ credentialsLoading: false, error: err instanceof Error ? err.message : "Failed to issue credential" });
+      const message = err instanceof Error ? err.message : "Failed to issue credential";
+      set({ credentialsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -493,53 +491,45 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         credentialsLoading: false,
       }));
     } catch (err) {
-      set({ credentialsLoading: false, error: err instanceof Error ? err.message : "Failed to revoke credential" });
+      const message = err instanceof Error ? err.message : "Failed to revoke credential";
+      set({ credentialsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
   // ── Fraud scores ───────────────────────────────────────────────────────
 
-  fetchFraudScores: async (zoneId, client) => {
-    set({ fraudScoresLoading: true, error: null });
-    try {
+  fetchFraudScores: createApiAction<AccessState, [string | undefined, FetchClient]>(set, {
+    loadingKey: "fraudScoresLoading",
+    source: SOURCE,
+    action: async (zoneId, client) => {
       const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
       const response = await client.get<{
         readonly scores: readonly FraudScore[];
         readonly count: number;
       }>(`/api/v2/governance/fraud-scores${params}`);
-      set({
+      return {
         fraudScores: response.scores,
-        fraudScoresLoading: false,
         selectedFraudIndex: 0,
-      });
-    } catch (err) {
-      set({
-        fraudScoresLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch fraud scores",
-      });
-    }
-  },
+      };
+    },
+  }),
 
-  computeFraudScores: async (zoneId, client) => {
-    set({ fraudScoresLoading: true, error: null });
-    try {
+  computeFraudScores: createApiAction<AccessState, [string | undefined, FetchClient]>(set, {
+    loadingKey: "fraudScoresLoading",
+    source: SOURCE,
+    action: async (zoneId, client) => {
       const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
       const response = await client.post<{
         readonly scores: readonly FraudScore[];
         readonly count: number;
       }>(`/api/v2/governance/fraud-scores/compute${params}`, {});
-      set({
+      return {
         fraudScores: response.scores,
-        fraudScoresLoading: false,
         selectedFraudIndex: 0,
-      });
-    } catch (err) {
-      set({
-        fraudScoresLoading: false,
-        error: err instanceof Error ? err.message : "Failed to compute fraud scores",
-      });
-    }
-  },
+      };
+    },
+  }),
 
   // ── Manifests (create/revoke) ─────────────────────────────────────────
 
@@ -551,7 +541,9 @@ export const useAccessStore = create<AccessState>((set, get) => ({
       const response = await client.get<{ manifests: readonly AccessManifest[]; }>("/api/v2/access-manifests");
       set({ manifests: response.manifests, manifestsLoading: false, selectedManifestIndex: 0 });
     } catch (err) {
-      set({ manifestsLoading: false, error: err instanceof Error ? err.message : "Failed to create manifest" });
+      const message = err instanceof Error ? err.message : "Failed to create manifest";
+      set({ manifestsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -566,7 +558,9 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         manifestsLoading: false,
       }));
     } catch (err) {
-      set({ manifestsLoading: false, error: err instanceof Error ? err.message : "Failed to revoke manifest" });
+      const message = err instanceof Error ? err.message : "Failed to revoke manifest";
+      set({ manifestsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -605,10 +599,9 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         selectedDelegationIndex: 0,
       });
     } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch delegations",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch delegations";
+      set({ delegationsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -621,10 +614,9 @@ export const useAccessStore = create<AccessState>((set, get) => ({
       );
       set({ lastDelegationCreate: response, delegationsLoading: false });
     } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to create delegation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create delegation";
+      set({ delegationsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
       return;
     }
     // Re-fetch list separately — a GET failure here must not mask the successful POST
@@ -656,10 +648,9 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         delegationsLoading: false,
       }));
     } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to revoke delegation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to revoke delegation";
+      set({ delegationsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -682,58 +673,45 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         delegationsLoading: false,
       }));
     } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to complete delegation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to complete delegation";
+      set({ delegationsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
-  fetchDelegationChain: async (delegationId, client) => {
-    set({ delegationChainLoading: true, error: null });
-    try {
+  fetchDelegationChain: createApiAction<AccessState, [string, FetchClient]>(set, {
+    loadingKey: "delegationChainLoading",
+    source: SOURCE,
+    action: async (delegationId, client) => {
       const response = await client.get<DelegationChain>(
         `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/chain`,
       );
-      set({ delegationChain: response, delegationChainLoading: false });
-    } catch (err) {
-      set({
-        delegationChainLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch delegation chain",
-      });
-    }
-  },
+      return { delegationChain: response };
+    },
+  }),
 
-  fetchNamespaceDetail: async (delegationId, client) => {
-    set({ namespaceDetailLoading: true, error: null });
-    try {
+  fetchNamespaceDetail: createApiAction<AccessState, [string, FetchClient]>(set, {
+    loadingKey: "namespaceDetailLoading",
+    source: SOURCE,
+    action: async (delegationId, client) => {
       const response = await client.get<NamespaceDetail>(
         `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/namespace`,
       );
-      set({ namespaceDetail: response, namespaceDetailLoading: false });
-    } catch (err) {
-      set({
-        namespaceDetailLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch namespace detail",
-      });
-    }
-  },
+      return { namespaceDetail: response };
+    },
+  }),
 
-  updateNamespaceConfig: async (delegationId, update, client) => {
-    set({ namespaceDetailLoading: true, error: null });
-    try {
+  updateNamespaceConfig: createApiAction<AccessState, [string, { readonly scope_prefix?: string; readonly remove_grants?: readonly string[]; readonly add_grants?: readonly string[]; readonly readonly_paths?: readonly string[] }, FetchClient]>(set, {
+    loadingKey: "namespaceDetailLoading",
+    source: SOURCE,
+    action: async (delegationId, update, client) => {
       const response = await client.patch<NamespaceDetail>(
         `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/namespace`,
         update,
       );
-      set({ namespaceDetail: response, namespaceDetailLoading: false });
-    } catch (err) {
-      set({
-        namespaceDetailLoading: false,
-        error: err instanceof Error ? err.message : "Failed to update namespace config",
-      });
-    }
-  },
+      return { namespaceDetail: response };
+    },
+  }),
 
   setSelectedDelegationIndex: (index) => {
     set({ selectedDelegationIndex: index });
@@ -741,36 +719,78 @@ export const useAccessStore = create<AccessState>((set, get) => ({
 
   // ── Governance check ────────────────────────────────────────────────────
 
-  checkGovernanceEdge: async (fromAgentId, toAgentId, zoneId, client) => {
-    set({ governanceCheckLoading: true, error: null });
-    try {
+  checkGovernanceEdge: createApiAction<AccessState, [string, string, string | undefined, FetchClient]>(set, {
+    loadingKey: "governanceCheckLoading",
+    source: SOURCE,
+    action: async (fromAgentId, toAgentId, zoneId, client) => {
       const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
       const response = await client.get<GovernanceCheckResult>(
         `/api/v2/governance/check/${encodeURIComponent(fromAgentId)}/${encodeURIComponent(toAgentId)}${params}`,
       );
-      set({ governanceCheck: response, governanceCheckLoading: false });
+      return { governanceCheck: response };
+    },
+  }),
+
+  // ── Governance constraints ─────────────────────────────────────────────
+
+  fetchConstraints: createApiAction<AccessState, [string, FetchClient]>(set, {
+    loadingKey: "constraintsLoading",
+    source: SOURCE,
+    action: async (zoneId, client) => {
+      const response = await client.get<{
+        readonly constraints: readonly GovernanceConstraint[];
+      }>(`/api/v2/governance/constraints?zone_id=${encodeURIComponent(zoneId)}`);
+      return {
+        constraints: response.constraints,
+        selectedConstraintIndex: 0,
+      };
+    },
+  }),
+
+  createConstraint: async (constraint, client) => {
+    set({ constraintsLoading: true, error: null });
+    try {
+      await client.post("/api/v2/governance/constraints", constraint);
+      await get().fetchConstraints(constraint.zone_id, client);
     } catch (err) {
-      set({
-        governanceCheckLoading: false,
-        error: err instanceof Error ? err.message : "Failed to check governance edge",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create constraint";
+      set({ constraintsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
+  },
+
+  deleteConstraint: async (constraintId, client) => {
+    set({ constraintsLoading: true, error: null });
+    try {
+      await client.delete(`/api/v2/governance/constraints/${encodeURIComponent(constraintId)}`);
+      set((state) => ({
+        constraints: state.constraints.filter((c) => c.id !== constraintId),
+        constraintsLoading: false,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete constraint";
+      set({ constraintsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  setSelectedConstraintIndex: (index) => {
+    set({ selectedConstraintIndex: index });
   },
 
   // ── Governance deep features ───────────────────────────────────────────
 
-  fetchCollusionRings: async (zoneId, client) => {
-    set({ collusionLoading: true, error: null });
-    try {
+  fetchCollusionRings: createApiAction<AccessState, [string | undefined, FetchClient]>(set, {
+    loadingKey: "collusionLoading",
+    source: SOURCE,
+    action: async (zoneId, client) => {
       const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
       const response = await client.get<{ rings: readonly unknown[] }>(
         `/api/v2/governance/collusion-rings${params}`,
       );
-      set({ collusionRings: response.rings ?? [], collusionLoading: false });
-    } catch (err) {
-      set({ collusionLoading: false, error: err instanceof Error ? err.message : "Failed to fetch collusion rings" });
-    }
-  },
+      return { collusionRings: response.rings ?? [] };
+    },
+  }),
 
   suspendAgent: async (agentId, reason, zoneId, client) => {
     set({ error: null });
@@ -778,7 +798,9 @@ export const useAccessStore = create<AccessState>((set, get) => ({
       const params = zoneId ? `?zone_id=${encodeURIComponent(zoneId)}` : "";
       await client.post(`/api/v2/governance/suspend/${encodeURIComponent(agentId)}${params}`, { reason });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to suspend agent" });
+      const message = err instanceof Error ? err.message : "Failed to suspend agent";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 }));

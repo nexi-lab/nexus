@@ -20,10 +20,14 @@ import { FileSchema } from "./file-schema.js";
 import { ShareLinksTab } from "./share-links-tab.js";
 import { UploadsTab } from "./uploads-tab.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useCopy } from "../../shared/hooks/use-copy.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useBrickAvailable } from "../../shared/hooks/use-brick-available.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
+import { useUiStore } from "../../stores/ui-store.js";
+import { focusColor } from "../../shared/theme.js";
 import crypto from "node:crypto";
 
 // =============================================================================
@@ -81,6 +85,11 @@ export default function FileExplorerPanel(): React.ReactNode {
   const setSelectedSessionIndex = useUploadStore((s) => s.setSelectedSessionIndex);
   const revokeLink = useShareLinkStore((s) => s.revokeLink);
 
+  // Focus pane (ui-store)
+  const uiFocusPane = useUiStore((s) => s.getFocusPane("files"));
+  const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+  const overlayActive = useUiStore((s) => s.overlayActive);
+
   // Get selected file item for metadata display
   const cachedFiles = fileCache.get(currentPath)?.data ?? [];
   const selectedItem: FileItem | null = cachedFiles[selectedIndex] ?? null;
@@ -109,6 +118,9 @@ export default function FileExplorerPanel(): React.ReactNode {
     ? `urn:nexus:file:${selectedItem.zoneId}:${crypto.createHash("sha256").update(selectedItem.path).digest("hex").slice(0, 32)}`
     : null;
   const aspectCount = selectedUrn ? (aspectsCache.get(selectedUrn)?.length ?? 0) : 0;
+
+  // Clipboard copy
+  const { copy, copied } = useCopy();
 
   // Delete confirm dialog
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -139,7 +151,9 @@ export default function FileExplorerPanel(): React.ReactNode {
   );
 
   useKeyboard(
-    confirmDelete
+    overlayActive
+      ? {}
+      : confirmDelete
       ? {}  // ConfirmDialog handles its own keys
       : inputMode !== "none"
         ? {
@@ -176,20 +190,26 @@ export default function FileExplorerPanel(): React.ReactNode {
             // Normal mode
             "j": () => {
               if (activeTab === "explorer") {
-                setSelectedIndex(Math.min(selectedIndex + 1, visibleNodeCount - 1));
+                if (visibleNodeCount === 0) return;
+                setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, visibleNodeCount - 1)));
               } else if (activeTab === "shareLinks") {
-                setSelectedLinkIndex(Math.min(selectedLinkIndex + 1, shareLinks.length - 1));
+                if (shareLinks.length === 0) return;
+                setSelectedLinkIndex(Math.max(0, Math.min(selectedLinkIndex + 1, shareLinks.length - 1)));
               } else if (activeTab === "uploads") {
-                setSelectedSessionIndex(Math.min(selectedSessionIndex + 1, uploadSessions.length - 1));
+                if (uploadSessions.length === 0) return;
+                setSelectedSessionIndex(Math.max(0, Math.min(selectedSessionIndex + 1, uploadSessions.length - 1)));
               }
             },
             "down": () => {
               if (activeTab === "explorer") {
-                setSelectedIndex(Math.min(selectedIndex + 1, visibleNodeCount - 1));
+                if (visibleNodeCount === 0) return;
+                setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, visibleNodeCount - 1)));
               } else if (activeTab === "shareLinks") {
-                setSelectedLinkIndex(Math.min(selectedLinkIndex + 1, shareLinks.length - 1));
+                if (shareLinks.length === 0) return;
+                setSelectedLinkIndex(Math.max(0, Math.min(selectedLinkIndex + 1, shareLinks.length - 1)));
               } else if (activeTab === "uploads") {
-                setSelectedSessionIndex(Math.min(selectedSessionIndex + 1, uploadSessions.length - 1));
+                if (uploadSessions.length === 0) return;
+                setSelectedSessionIndex(Math.max(0, Math.min(selectedSessionIndex + 1, uploadSessions.length - 1)));
               }
             },
             "k": () => {
@@ -250,6 +270,7 @@ export default function FileExplorerPanel(): React.ReactNode {
                 if (next) setActiveTab(next);
               }
             },
+            "shift+tab": () => toggleFocus("files"),
             "m": () => { if (activeTab === "explorer") setMetadataTab("metadata"); },
             "a": () => { if (activeTab === "explorer" && catalogAvailable) setMetadataTab("aspects"); },
             "s": () => { if (activeTab === "explorer" && catalogAvailable) setMetadataTab("schema"); },
@@ -289,8 +310,31 @@ export default function FileExplorerPanel(): React.ReactNode {
                 }
               }
             },
+            "g": () => {
+              if (activeTab === "explorer") {
+                setSelectedIndex(jumpToStart());
+              } else if (activeTab === "shareLinks") {
+                setSelectedLinkIndex(jumpToStart());
+              } else if (activeTab === "uploads") {
+                setSelectedSessionIndex(jumpToStart());
+              }
+            },
+            "shift+g": () => {
+              if (activeTab === "explorer") {
+                setSelectedIndex(jumpToEnd(visibleNodeCount));
+              } else if (activeTab === "shareLinks") {
+                setSelectedLinkIndex(jumpToEnd(shareLinks.length));
+              } else if (activeTab === "uploads") {
+                setSelectedSessionIndex(jumpToEnd(uploadSessions.length));
+              }
+            },
+            "y": () => {
+              if (activeTab === "explorer" && selectedItem) {
+                copy(selectedItem.path);
+              }
+            },
           },
-    inputMode !== "none" ? handleUnhandledKey : undefined,
+    !overlayActive && inputMode !== "none" ? handleUnhandledKey : undefined,
   );
 
   const handleConfirmDelete = (): void => {
@@ -335,12 +379,12 @@ export default function FileExplorerPanel(): React.ReactNode {
           {/* Main content: tree + preview */}
           <box flexGrow={1} flexDirection="row">
             {/* Left pane: file tree (40%) */}
-            <box width="40%" height="100%" borderStyle="single">
+            <box width="40%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}>
               <FileTree />
             </box>
 
             {/* Right pane: preview + metadata (60%) */}
-            <box width="60%" height="100%" flexDirection="column">
+            <box width="60%" height="100%" flexDirection="column" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}>
               {/* File preview (top 70%) */}
               <box flexGrow={7} borderStyle="single">
                 <FilePreview />
@@ -388,17 +432,19 @@ export default function FileExplorerPanel(): React.ReactNode {
 
       {/* Help bar */}
       <box height={1} width="100%">
-        <text>
+        {copied
+          ? <text foregroundColor="green">Copied!</text>
+          : <text>
           {inputMode !== "none"
             ? "Type name, Enter:confirm, Escape:cancel, Backspace:delete"
             : activeTab === "explorer"
               ? catalogAvailable
-                ? "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m/a/s:meta  d:delete  N:mkdir  R:rename  q:quit"
-                : "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m:meta  d:delete  N:mkdir  R:rename  q:quit"
+                ? "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m/a/s:meta  d:delete  N:mkdir  R:rename  y:copy  q:quit"
+                : "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m:meta  d:delete  N:mkdir  R:rename  y:copy  q:quit"
               : activeTab === "shareLinks"
                 ? "j/k:navigate  x:revoke  r:refresh  Tab:switch tab  q:quit"
                 : "j/k:navigate  Tab:switch tab  q:quit"}
-        </text>
+        </text>}
       </box>
 
       {/* Delete confirmation dialog */}

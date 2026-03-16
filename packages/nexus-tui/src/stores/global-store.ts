@@ -5,6 +5,8 @@
 import { create } from "zustand";
 import type { NexusClientOptions } from "@nexus/api-client";
 import { FetchClient, resolveConfig } from "@nexus/api-client";
+import { categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -117,11 +119,13 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       const userInfo = await client.get<UserInfo>("/auth/me");
       set({ connectionStatus: "connected", connectionError: null, userInfo });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Connection test failed";
       set({
         connectionStatus: "error",
-        connectionError: err instanceof Error ? err.message : "Connection test failed",
+        connectionError: message,
         userInfo: null,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: "global" });
     }
   },
 

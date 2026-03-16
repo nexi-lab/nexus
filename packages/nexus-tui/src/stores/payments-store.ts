@@ -10,6 +10,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -106,7 +108,19 @@ export interface IntegrityResult {
   readonly record_hash: string;
 }
 
-export type PaymentsTab = "balance" | "reservations" | "transactions" | "policies";
+/** Matches backend spending approval request. */
+export interface ApprovalRequest {
+  readonly id: string;
+  readonly requester_id: string;
+  readonly amount: number;
+  readonly purpose: string;
+  readonly status: "pending" | "approved" | "rejected";
+  readonly created_at: string;
+  readonly decided_at: string | null;
+  readonly decided_by: string | null;
+}
+
+export type PaymentsTab = "balance" | "reservations" | "transactions" | "policies" | "approvals";
 
 // =============================================================================
 // Wire response shapes
@@ -156,6 +170,11 @@ export interface PaymentsState {
   // Affordability check
   readonly affordResult: { can_afford: boolean; balance: string; requested: string } | null;
 
+  // Approvals
+  readonly approvals: readonly ApprovalRequest[];
+  readonly approvalsLoading: boolean;
+  readonly selectedApprovalIndex: number;
+
   // UI state
   readonly activeTab: PaymentsTab;
   readonly error: string | null;
@@ -185,10 +204,17 @@ export interface PaymentsState {
   readonly verifyIntegrity: (recordId: string, client: FetchClient) => Promise<IntegrityResult | null>;
   readonly createPolicy: (name: string, rules: Record<string, unknown>, client: FetchClient) => Promise<void>;
   readonly checkAfford: (amount: string, client: FetchClient) => Promise<void>;
+  readonly fetchApprovals: (client: FetchClient) => Promise<void>;
+  readonly requestApproval: (amount: number, purpose: string, client: FetchClient) => Promise<void>;
+  readonly approveRequest: (approvalId: string, client: FetchClient) => Promise<void>;
+  readonly rejectRequest: (approvalId: string, client: FetchClient) => Promise<void>;
+  readonly setSelectedApprovalIndex: (index: number) => void;
   readonly setActiveTab: (tab: PaymentsTab) => void;
   readonly setSelectedReservationIndex: (index: number) => void;
   readonly setSelectedTransactionIndex: (index: number) => void;
 }
+
+const SOURCE = "payments";
 
 export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   balance: null,
@@ -209,22 +235,50 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   budget: null,
   budgetLoading: false,
   affordResult: null,
+  approvals: [],
+  approvalsLoading: false,
+  selectedApprovalIndex: 0,
   activeTab: "balance",
   error: null,
 
-  fetchBalance: async (client) => {
-    set({ balanceLoading: true, error: null });
+  // =========================================================================
+  // Actions migrated to createApiAction
+  // =========================================================================
 
-    try {
+  fetchBalance: createApiAction<PaymentsState, [FetchClient]>(set, {
+    loadingKey: "balanceLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch balance",
+    action: async (client) => {
       const balance = await client.get<BalanceInfo>("/api/v2/pay/balance");
-      set({ balance: balance ?? null, balanceLoading: false });
-    } catch (err) {
-      set({
-        balanceLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch balance",
-      });
-    }
-  },
+      return { balance: balance ?? null };
+    },
+  }),
+
+  fetchPolicies: createApiAction<PaymentsState, [FetchClient]>(set, {
+    loadingKey: "policiesLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch policies",
+    action: async (client) => {
+      // Backend returns bare list[PolicyResponse], not a wrapper object
+      const policies = await client.get<readonly PolicyRecord[]>("/api/v2/pay/policies");
+      return { policies };
+    },
+  }),
+
+  fetchBudget: createApiAction<PaymentsState, [FetchClient]>(set, {
+    loadingKey: "budgetLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch budget",
+    action: async (client) => {
+      const budget = await client.get<BudgetSummary>("/api/v2/pay/budget");
+      return { budget: budget ?? null };
+    },
+  }),
+
+  // =========================================================================
+  // Actions without loading keys or with special patterns — inline with error store
+  // =========================================================================
 
   transfer: async (to, amount, memo, client) => {
     set({ error: null });
@@ -237,9 +291,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       });
       await get().fetchBalance(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to transfer credits",
-      });
+      const message = err instanceof Error ? err.message : "Failed to transfer credits";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -256,10 +310,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         reservations: [...state.reservations, reservation],
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to create reservation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create reservation";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -276,10 +329,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to commit reservation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to commit reservation";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -296,10 +348,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to release reservation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to release reservation";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -326,11 +377,12 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         integrityResult: null,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch transactions";
       set({
         transactionsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch transactions",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -361,40 +413,6 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     await get().fetchTransactions(client, prevCursor);
   },
 
-  fetchPolicies: async (client) => {
-    set({ policiesLoading: true, error: null });
-
-    try {
-      // Backend returns bare list[PolicyResponse], not a wrapper object
-      const policies = await client.get<readonly PolicyRecord[]>("/api/v2/pay/policies");
-      set({
-        policies,
-        policiesLoading: false,
-      });
-    } catch (err) {
-      set({
-        policiesLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch policies",
-      });
-    }
-  },
-
-  fetchBudget: async (client) => {
-    set({ budgetLoading: true, error: null });
-
-    try {
-      const budget = await client.get<BudgetSummary>("/api/v2/pay/budget");
-      set({ budget: budget ?? null, budgetLoading: false });
-    } catch (err) {
-      set({
-        budgetLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch budget",
-      });
-    }
-  },
-
   deletePolicy: async (policyId, client) => {
     set({ error: null });
 
@@ -406,10 +424,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         policies: state.policies.filter((p) => p.policy_id !== policyId),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to delete policy",
-      });
+      const message = err instanceof Error ? err.message : "Failed to delete policy";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -423,10 +440,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       set({ integrityResult: result });
       return result;
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to verify integrity",
-      });
+      const message = err instanceof Error ? err.message : "Failed to verify integrity";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
       return null;
     }
   },
@@ -437,7 +453,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       await client.post("/api/v2/pay/policies", { name, rules });
       await get().fetchPolicies(client);
     } catch (err) {
-      set({ policiesLoading: false, error: err instanceof Error ? err.message : "Failed to create policy" });
+      const message = err instanceof Error ? err.message : "Failed to create policy";
+      set({ policiesLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -449,8 +467,64 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       );
       set({ affordResult: result });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to check affordability" });
+      const message = err instanceof Error ? err.message : "Failed to check affordability";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
+  },
+
+  // =========================================================================
+  // Approvals
+  // =========================================================================
+
+  fetchApprovals: createApiAction<PaymentsState, [FetchClient]>(set, {
+    loadingKey: "approvalsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch approvals",
+    action: async (client) => {
+      const approvals = await client.get<readonly ApprovalRequest[]>("/api/v2/pay/approvals");
+      return { approvals, selectedApprovalIndex: 0 };
+    },
+  }),
+
+  requestApproval: async (amount, purpose, client) => {
+    set({ approvalsLoading: true, error: null });
+    try {
+      await client.post("/api/v2/pay/approvals/request", { amount, purpose });
+      await get().fetchApprovals(client);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to request approval";
+      set({ approvalsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  approveRequest: async (approvalId, client) => {
+    set({ approvalsLoading: true, error: null });
+    try {
+      await client.post(`/api/v2/pay/approvals/${encodeURIComponent(approvalId)}/approve`, {});
+      await get().fetchApprovals(client);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to approve request";
+      set({ approvalsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  rejectRequest: async (approvalId, client) => {
+    set({ approvalsLoading: true, error: null });
+    try {
+      await client.post(`/api/v2/pay/approvals/${encodeURIComponent(approvalId)}/reject`, {});
+      await get().fetchApprovals(client);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to reject request";
+      set({ approvalsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  setSelectedApprovalIndex: (index) => {
+    set({ selectedApprovalIndex: index });
   },
 
   setActiveTab: (tab) => {

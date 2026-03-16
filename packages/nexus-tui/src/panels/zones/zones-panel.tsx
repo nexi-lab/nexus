@@ -11,6 +11,7 @@ import type { ZoneTab } from "../../stores/zones-store.js";
 import { useWorkspaceStore } from "../../stores/workspace-store.js";
 import { useMcpStore } from "../../stores/mcp-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ZoneList } from "./zone-list.js";
@@ -24,6 +25,9 @@ import { McpMountsTab } from "./mcp-mounts-tab.js";
 import { CacheTab } from "./cache-tab.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { allowedActionsForState } from "../../shared/brick-states.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { useUiStore } from "../../stores/ui-store.js";
+import { focusColor } from "../../shared/theme.js";
 
 const ALL_TABS: readonly TabDef<ZoneTab>[] = [
   { id: "zones", label: "Zones", brick: null },
@@ -111,6 +115,11 @@ export default function ZonesPanel(): React.ReactNode {
   const mountServer = useMcpStore((s) => s.mountServer);
   const setSelectedMountIndex = useMcpStore((s) => s.setSelectedMountIndex);
 
+  // Focus pane (ui-store)
+  const uiFocusPane = useUiStore((s) => s.getFocusPane("zones"));
+  const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+  const overlayActive = useUiStore((s) => s.overlayActive);
+
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
   useEffect(() => {
@@ -118,6 +127,9 @@ export default function ZonesPanel(): React.ReactNode {
       setActiveTab(visibleIds[0]!);
     }
   }, [visibleIds.join(","), activeTab, setActiveTab]);
+
+  // Track in-flight brick operations (mount, unmount, reset, etc.)
+  const [operationInProgress, setOperationInProgress] = useState(false);
 
   // Input mode state for create/register flows (multi-field forms)
   const [inputMode, setInputMode] = useState<"none" | "workspace" | "memory" | "mcpMount">("none");
@@ -297,7 +309,9 @@ export default function ZonesPanel(): React.ReactNode {
   );
 
   useKeyboard(
-    anyDialogOpen
+    overlayActive
+      ? {}
+      : anyDialogOpen
       ? {} // ConfirmDialog handles its own keys when visible
       : inputMode !== "none"
         ? {
@@ -379,6 +393,7 @@ export default function ZonesPanel(): React.ReactNode {
                 setActiveTab(nextTab);
               }
             },
+            "shift+tab": () => toggleFocus("zones"),
             // n: Register workspace/memory or mount MCP server
             n: () => {
               if (activeTab === "workspaces") {
@@ -398,12 +413,14 @@ export default function ZonesPanel(): React.ReactNode {
             // M (shift+m): Mount — valid for registered/unmounted
             "shift+m": () => {
               if (!client || !selectedBrick || !allowed.has("mount")) return;
-              mountBrick(selectedBrick.name, client);
+              setOperationInProgress(true);
+              mountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // U: Unmount — valid for active
             "shift+u": () => {
               if (!client || !selectedBrick || !allowed.has("unmount")) return;
-              unmountBrick(selectedBrick.name, client);
+              setOperationInProgress(true);
+              unmountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // D: Unregister — valid for unmounted (with confirmation)
             "shift+d": () => {
@@ -413,12 +430,14 @@ export default function ZonesPanel(): React.ReactNode {
             // m: Remount (existing) — valid for unmounted only
             m: () => {
               if (!client || !selectedBrick || !allowed.has("remount")) return;
-              remountBrick(selectedBrick.name, client);
+              setOperationInProgress(true);
+              remountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // x: Reset (existing) — valid for failed
             x: () => {
               if (!client || !selectedBrick || !allowed.has("reset")) return;
-              resetBrick(selectedBrick.name, client);
+              setOperationInProgress(true);
+              resetBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // d: Unregister workspace/memory or unmount MCP (with confirmation)
             d: () => {
@@ -456,8 +475,15 @@ export default function ZonesPanel(): React.ReactNode {
             r: () => {
               refreshActiveTab();
             },
+            g: () => {
+              setCurrentNavIndex(jumpToStart());
+            },
+            "shift+g": () => {
+              const len = currentListLength();
+              setCurrentNavIndex(jumpToEnd(len));
+            },
           },
-    inputMode !== "none" ? handleUnhandledKey : undefined,
+    !overlayActive && inputMode !== "none" ? handleUnhandledKey : undefined,
   );
 
   // Context-aware help text per tab
@@ -508,6 +534,13 @@ export default function ZonesPanel(): React.ReactNode {
         </box>
       )}
 
+      {/* Brick operation in-flight indicator */}
+      {operationInProgress && (
+        <box height={1} width="100%">
+          <LoadingIndicator message="Operation in progress..." centered={false} />
+        </box>
+      )}
+
       {/* Main content */}
       <box flexGrow={1} flexDirection="row">
         {activeTab === "zones" && (
@@ -521,7 +554,7 @@ export default function ZonesPanel(): React.ReactNode {
         {activeTab === "bricks" && (
           <>
             {/* Left sidebar: brick list (30%) */}
-            <box width="30%" height="100%" borderStyle="single" flexDirection="column">
+            <box width="30%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
               <box height={1} width="100%">
                 <text>
                   {bricksHealth
@@ -538,7 +571,7 @@ export default function ZonesPanel(): React.ReactNode {
             </box>
 
             {/* Right pane: brick detail (70%) */}
-            <box width="70%" height="100%" borderStyle="single">
+            <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}>
               <BrickDetail brick={brickDetail} loading={detailLoading} />
             </box>
           </>

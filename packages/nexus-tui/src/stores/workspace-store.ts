@@ -8,6 +8,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -67,6 +69,8 @@ export interface WorkspaceState {
   readonly setSelectedMemoryIndex: (index: number) => void;
 }
 
+const SOURCE = "workspaces";
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   workspacesLoading: false,
@@ -76,46 +80,58 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   selectedMemoryIndex: 0,
   error: null,
 
-  fetchWorkspaces: async (client) => {
-    set({ workspacesLoading: true, error: null });
+  // =========================================================================
+  // Actions with loading keys — createApiAction
+  // =========================================================================
 
-    try {
+  fetchWorkspaces: createApiAction<WorkspaceState, [FetchClient]>(set, {
+    loadingKey: "workspacesLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch workspaces",
+    action: async (client) => {
       const response = await client.get<{
         workspaces: readonly WorkspaceInfo[];
       }>("/api/v2/registry/workspaces");
-      set({
+      return {
         workspaces: response.workspaces ?? [],
-        workspacesLoading: false,
         selectedWorkspaceIndex: 0,
-      });
-    } catch (err) {
-      set({
-        workspacesLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch workspaces",
-      });
-    }
-  },
+      };
+    },
+  }),
+
+  fetchMemories: createApiAction<WorkspaceState, [FetchClient]>(set, {
+    loadingKey: "memoriesLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch memories",
+    action: async (client) => {
+      const response = await client.post<{
+        result: { memories: readonly MemoryInfo[] };
+      }>("/api/nfs/list_workspaces", { params: { type: "memory" } });
+      return {
+        memories: response.result?.memories ?? [],
+        selectedMemoryIndex: 0,
+      };
+    },
+  }),
+
+  // =========================================================================
+  // Actions without loading keys — inline with error store integration
+  // =========================================================================
 
   registerWorkspace: async (params, client) => {
     set({ error: null });
-
     try {
       await client.post("/api/v2/registry/workspaces", params);
       await get().fetchWorkspaces(client);
     } catch (err) {
-      set({
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to register workspace",
-      });
+      const message = err instanceof Error ? err.message : "Failed to register workspace";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
   unregisterWorkspace: async (path, client) => {
     set({ error: null });
-
     try {
       await client.delete(
         `/api/v2/registry/workspaces/${encodeURIComponent(path)}`,
@@ -128,53 +144,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to unregister workspace",
-      });
-    }
-  },
-
-  fetchMemories: async (client) => {
-    set({ memoriesLoading: true, error: null });
-
-    try {
-      const response = await client.post<{
-        result: { memories: readonly MemoryInfo[] };
-      }>("/api/nfs/list_workspaces", { params: { type: "memory" } });
-      set({
-        memories: response.result?.memories ?? [],
-        memoriesLoading: false,
-        selectedMemoryIndex: 0,
-      });
-    } catch (err) {
-      set({
-        memoriesLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch memories",
-      });
+      const message = err instanceof Error ? err.message : "Failed to unregister workspace";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
   registerMemory: async (params, client) => {
     set({ error: null });
-
     try {
       await client.post("/api/nfs/register_workspace", { params: { ...params, type: "memory" } });
       await get().fetchMemories(client);
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to register memory",
-      });
+      const message = err instanceof Error ? err.message : "Failed to register memory";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
   unregisterMemory: async (path, client) => {
     set({ error: null });
-
     try {
       await client.post("/api/nfs/unregister_workspace", { params: { path } });
       set((state) => ({
@@ -185,12 +174,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to unregister memory",
-      });
+      const message = err instanceof Error ? err.message : "Failed to unregister memory";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

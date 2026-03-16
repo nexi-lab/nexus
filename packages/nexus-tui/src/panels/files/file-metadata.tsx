@@ -5,6 +5,7 @@
 import React from "react";
 import * as crypto from "node:crypto";
 import type { FileItem } from "../../stores/files-store.js";
+import { formatTimestamp } from "../../shared/utils/format-time.js";
 
 interface FileMetadataProps {
   readonly item: FileItem | null;
@@ -59,7 +60,7 @@ export function FileMetadata({ item }: FileMetadataProps): React.ReactNode {
     lines.push(`URN: urn:nexus:file:${item.zoneId}:${pathHash}`);
   }
 
-  lines.push(`Modified: ${display(item.modifiedAt)}`);
+  lines.push(`Modified: ${item.modifiedAt ? formatTimestamp(item.modifiedAt) : "n/a"}`);
 
   return (
     <box height="100%" width="100%" flexDirection="column">

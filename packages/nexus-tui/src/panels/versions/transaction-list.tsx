@@ -4,6 +4,9 @@
 
 import React from "react";
 import type { Transaction } from "../../stores/versions-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
+import { transactionStatusColor } from "../../shared/theme.js";
+import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
 // =============================================================================
 // Status badges
@@ -51,31 +54,36 @@ export function TransactionList({
 }: TransactionListProps): React.ReactNode {
   if (transactions.length === 0) {
     return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No transactions found</text>
-      </box>
+      <EmptyState
+        message="No transactions yet."
+        hint="Press n to begin one, or write a file to create an auto-transaction."
+      />
     );
   }
 
   return (
-    <scrollbox flexGrow={1} width="100%">
-      {transactions.map((txn, index) => {
-        const selected = index === selectedIndex;
-        const prefix = selected ? "\u25B8 " : "  ";
-        const badge = statusBadge(txn.status);
-        const desc = txn.description ?? "";
-        const id = truncateId(txn.transaction_id);
-        const time = formatTime(txn.created_at);
-        const entries = `${txn.entry_count} entries`;
+    <ScrollIndicator selectedIndex={selectedIndex} totalItems={transactions.length} visibleItems={20}>
+      <scrollbox flexGrow={1} width="100%">
+        {transactions.map((txn, index) => {
+          const selected = index === selectedIndex;
+          const prefix = selected ? "\u25B8 " : "  ";
+          const badge = statusBadge(txn.status);
+          const desc = txn.description ?? "";
+          const id = truncateId(txn.transaction_id);
+          const time = formatTime(txn.created_at);
+          const entries = `${txn.entry_count} entries`;
 
-        return (
-          <box key={txn.transaction_id} height={1} width="100%">
-            <text>
-              {`${prefix}${badge} ${id}  ${desc ? desc + "  " : ""}${entries}  ${time}`}
-            </text>
-          </box>
-        );
-      })}
-    </scrollbox>
+          return (
+            <box key={txn.transaction_id} height={1} width="100%">
+              <text>{prefix}</text>
+              <text foregroundColor={transactionStatusColor[txn.status]}>{badge}</text>
+              <text>
+                {` ${id}  ${desc ? desc + "  " : ""}${entries}  ${time}`}
+              </text>
+            </box>
+          );
+        })}
+      </scrollbox>
+    </ScrollIndicator>
   );
 }

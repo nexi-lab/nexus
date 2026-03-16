@@ -4,6 +4,8 @@
 
 import React from "react";
 import type { WorkflowSummary } from "../../stores/workflows-store.js";
+import { statusColor } from "../../shared/theme.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface WorkflowListProps {
   readonly workflows: readonly WorkflowSummary[];
@@ -31,9 +33,10 @@ export function WorkflowList({
 
   if (workflows.length === 0) {
     return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No workflows found</text>
-      </box>
+      <EmptyState
+        message="No workflows defined."
+        hint="Create one via the API: POST /api/v2/workflows"
+      />
     );
   }
 
@@ -58,9 +61,9 @@ export function WorkflowList({
 
         return (
           <box key={w.name} height={1} width="100%">
-            <text>
-              {`${prefix}${enabledBadge.padEnd(3)}  ${name.padEnd(19)}  ${version.padEnd(8)}  ${String(w.triggers).padEnd(4)}  ${String(w.actions).padEnd(3)}  ${desc}`}
-            </text>
+            <text>{prefix}</text>
+            <text foregroundColor={w.enabled ? statusColor.healthy : statusColor.dim}>{enabledBadge.padEnd(3)}</text>
+            <text>{`  ${name.padEnd(19)}  ${version.padEnd(8)}  ${String(w.triggers).padEnd(4)}  ${String(w.actions).padEnd(3)}  ${desc}`}</text>
           </box>
         );
       })}

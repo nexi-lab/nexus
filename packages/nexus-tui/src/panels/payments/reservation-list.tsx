@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { Reservation } from "../../stores/payments-store.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 
 interface ReservationListProps {
   readonly reservations: readonly Reservation[];
@@ -37,11 +38,7 @@ export function ReservationList({
   loading,
 }: ReservationListProps): React.ReactNode {
   if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading reservations...</text>
-      </box>
-    );
+    return <LoadingIndicator message="Loading reservations..." />;
   }
 
   if (reservations.length === 0) {

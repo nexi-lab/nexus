@@ -5,6 +5,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types
@@ -38,6 +40,16 @@ export interface ReplayEntry {
   readonly timestamp: string;
 }
 
+/** Event from the historical event replay endpoint. */
+export interface EventReplayEntry {
+  readonly event_id: string;
+  readonly event_type: string;
+  readonly agent_id: string | null;
+  readonly path: string | null;
+  readonly timestamp: string;
+  readonly payload: Record<string, unknown>;
+}
+
 // =============================================================================
 // Store
 // =============================================================================
@@ -47,16 +59,23 @@ export interface KnowledgeState {
   readonly aspectsCache: ReadonlyMap<string, readonly string[]>;
   readonly aspectDetailCache: ReadonlyMap<string, AspectEntry>;
   readonly aspectsLoading: boolean;
+  readonly aspectDetailLoading: boolean;
 
   // Schema cache (keyed by URN)
   readonly schemaCache: ReadonlyMap<string, SchemaInfo | null>;
   readonly schemaLoading: boolean;
 
-  // MCL replay
+  // MCL replay (bounded by fetch limit parameter, typically 50 per page)
   readonly replayEntries: readonly ReplayEntry[];
   readonly replayLoading: boolean;
   readonly replayHasMore: boolean;
   readonly replayNextCursor: number;
+
+  // Historical event replay
+  readonly eventReplayEntries: readonly EventReplayEntry[];
+  readonly eventReplayLoading: boolean;
+  readonly eventReplayHasMore: boolean;
+  readonly eventReplayNextCursor: string | null;
 
   // Column search
   readonly columnSearchResults: readonly {
@@ -83,26 +102,47 @@ export interface KnowledgeState {
     entityUrn?: string,
     aspectName?: string,
   ) => Promise<void>;
+  readonly fetchEventReplay: (
+    filters: {
+      event_types?: string;
+      path_pattern?: string;
+      agent_id?: string;
+      since?: string;
+    },
+    client: FetchClient,
+  ) => Promise<void>;
   readonly searchByColumn: (
     column: string,
     client: FetchClient,
   ) => Promise<void>;
   readonly clearReplay: () => void;
+  readonly clearEventReplay: () => void;
 }
+
+const SOURCE = "knowledge";
 
 export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   aspectsCache: new Map(),
   aspectDetailCache: new Map(),
   aspectsLoading: false,
+  aspectDetailLoading: false,
   schemaCache: new Map(),
   schemaLoading: false,
   replayEntries: [],
   replayLoading: false,
   replayHasMore: false,
   replayNextCursor: 0,
+  eventReplayEntries: [],
+  eventReplayLoading: false,
+  eventReplayHasMore: false,
+  eventReplayNextCursor: null,
   columnSearchResults: [],
   columnSearchLoading: false,
   error: null,
+
+  // =========================================================================
+  // Actions — inline with error store integration (use get() for cache)
+  // =========================================================================
 
   fetchAspects: async (urn, client) => {
     // Check cache
@@ -115,13 +155,16 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       );
       const newCache = new Map(get().aspectsCache);
       newCache.set(urn, result.aspects ?? []);
+      // Evict oldest entry if cache exceeds 100 URNs
+      if (newCache.size > 100) {
+        const oldest = newCache.keys().next().value;
+        if (oldest !== undefined) newCache.delete(oldest);
+      }
       set({ aspectsCache: newCache, aspectsLoading: false });
     } catch (err) {
-      set({
-        aspectsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch aspects",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch aspects";
+      set({ aspectsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -129,7 +172,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const key = `${urn}::${name}`;
     if (get().aspectDetailCache.has(key)) return;
 
-    set({ aspectsLoading: true, error: null });
+    set({ aspectDetailLoading: true, error: null });
     try {
       const result = await client.get<{
         aspectName: string;
@@ -147,13 +190,16 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       };
       const newCache = new Map(get().aspectDetailCache);
       newCache.set(key, entry);
-      set({ aspectDetailCache: newCache, aspectsLoading: false });
+      // Evict oldest entry if cache exceeds 50 aspect details
+      if (newCache.size > 50) {
+        const oldest = newCache.keys().next().value;
+        if (oldest !== undefined) newCache.delete(oldest);
+      }
+      set({ aspectDetailCache: newCache, aspectDetailLoading: false });
     } catch (err) {
-      set({
-        aspectsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch aspect",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch aspect";
+      set({ aspectDetailLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -185,11 +231,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       newCache.set(cacheKey, schema);
       set({ schemaCache: newCache, schemaLoading: false });
     } catch (err) {
-      set({
-        schemaLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch schema",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch schema";
+      set({ schemaLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -228,17 +272,57 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         replayNextCursor: result.nextCursor ?? 0,
       });
     } catch (err) {
-      set({
-        replayLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch replay",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch replay";
+      set({ replayLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
-  searchByColumn: async (column, client) => {
-    set({ columnSearchLoading: true, error: null });
+  fetchEventReplay: async (filters, client) => {
+    set({ eventReplayLoading: true, error: null });
     try {
+      const params = new URLSearchParams();
+      if (filters.event_types) params.set("event_types", filters.event_types);
+      if (filters.path_pattern) params.set("path_pattern", filters.path_pattern);
+      if (filters.agent_id) params.set("agent_id", filters.agent_id);
+      if (filters.since) params.set("since", filters.since);
+      const cursor = get().eventReplayNextCursor;
+      if (cursor) params.set("cursor", cursor);
+      const qs = params.toString();
+      const url = `/api/v2/events/replay${qs ? `?${qs}` : ""}`;
+      const result = await client.get<{
+        events: EventReplayEntry[];
+        has_more: boolean;
+        next_cursor: string | null;
+      }>(url);
+      const events: EventReplayEntry[] = (result.events ?? []).map((e) => ({
+        event_id: e.event_id ?? "",
+        event_type: e.event_type ?? "",
+        agent_id: e.agent_id ?? null,
+        path: e.path ?? null,
+        timestamp: e.timestamp ?? "",
+        payload: e.payload ?? {},
+      }));
+      set((state) => ({
+        eventReplayEntries: cursor
+          ? [...state.eventReplayEntries, ...events]
+          : events,
+        eventReplayLoading: false,
+        eventReplayHasMore: result.has_more ?? false,
+        eventReplayNextCursor: result.next_cursor ?? null,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch event replay";
+      set({ eventReplayLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  searchByColumn: createApiAction<KnowledgeState, [string, FetchClient]>(set, {
+    loadingKey: "columnSearchLoading",
+    source: SOURCE,
+    errorMessage: "Failed to search",
+    action: async (column, client) => {
       const result = await client.get<{
         results: {
           entityUrn: string;
@@ -248,19 +332,13 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       }>(
         `/api/v2/catalog/search?column=${encodeURIComponent(column)}`,
       );
-      set({
-        columnSearchResults: result.results ?? [],
-        columnSearchLoading: false,
-      });
-    } catch (err) {
-      set({
-        columnSearchLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to search",
-      });
-    }
-  },
+      return { columnSearchResults: result.results ?? [] };
+    },
+  }),
 
   clearReplay: () =>
     set({ replayEntries: [], replayNextCursor: 0, replayHasMore: false }),
+
+  clearEventReplay: () =>
+    set({ eventReplayEntries: [], eventReplayHasMore: false, eventReplayNextCursor: null }),
 }));

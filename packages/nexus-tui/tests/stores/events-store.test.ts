@@ -4,12 +4,15 @@ import { useEventsStore } from "../../src/stores/events-store.js";
 describe("EventsStore", () => {
   beforeEach(() => {
     useEventsStore.getState().disconnect();
+    useEventsStore.getState().eventsBuffer.clear();
     useEventsStore.setState({
       events: [],
       connected: false,
       reconnectCount: 0,
       filters: { eventType: null, search: null },
       filteredEvents: [],
+      eventsOverflowed: false,
+      evictedCount: 0,
       sseClient: null,
     });
   });

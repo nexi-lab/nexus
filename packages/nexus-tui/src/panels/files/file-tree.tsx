@@ -8,6 +8,7 @@ import { useFilesStore, type TreeNode } from "../../stores/files-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { FileTreeNode } from "./file-tree-node.js";
 import { Spinner } from "../../shared/components/spinner.js";
+import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
 export function FileTree(): React.ReactNode {
   const client = useApi();
@@ -41,15 +42,17 @@ export function FileTree(): React.ReactNode {
   }
 
   return (
-    <scrollbox height="100%" width="100%">
-      {visibleNodes.map((node, index) => (
-        <FileTreeNode
-          key={node.path}
-          node={node}
-          selected={index === selectedIndex}
-        />
-      ))}
-    </scrollbox>
+    <ScrollIndicator selectedIndex={selectedIndex} totalItems={visibleNodes.length} visibleItems={20}>
+      <scrollbox height="100%" width="100%">
+        {visibleNodes.map((node, index) => (
+          <FileTreeNode
+            key={node.path}
+            node={node}
+            selected={index === selectedIndex}
+          />
+        ))}
+      </scrollbox>
+    </ScrollIndicator>
   );
 }
 

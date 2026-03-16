@@ -10,7 +10,10 @@ import { useSearchStore } from "../../stores/search-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import type { SearchTab, SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
+import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SearchResults } from "./search-results.js";
 import { KnowledgeView } from "./knowledge-view.js";
@@ -19,6 +22,7 @@ import { PlaybookList } from "./playbook-list.js";
 import { RlmAnswerView } from "./rlm-answer-view.js";
 import { ColumnSearch } from "./column-search.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
+import { Tooltip } from "../../shared/components/tooltip.js";
 
 const ALL_TABS: readonly TabDef<SearchTab>[] = [
   { id: "search", label: "Search", brick: "search" },
@@ -45,14 +49,17 @@ const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
 
 export default function SearchPanel(): React.ReactNode {
   const client = useApi();
+  const confirm = useConfirmStore((s) => s.confirm);
+  const overlayActive = useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(ALL_TABS);
   // Effective zone: explicit config > server-discovered zone (matches status-bar fallback)
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
   const serverZoneId = useGlobalStore((s) => s.zoneId);
   const effectiveZoneId = configZoneId ?? serverZoneId ?? undefined;
   const [inputMode, setInputMode] = useState(false);
-  const [inputBuffer, setInputBuffer] = useState("");
 
+  const inputBuffer = useSearchStore((s) => s.inputBuffer);
+  const setInputBuffer = useSearchStore((s) => s.setInputBuffer);
   const searchQuery = useSearchStore((s) => s.searchQuery);
   const searchResults = useSearchStore((s) => s.searchResults);
   const searchTotal = useSearchStore((s) => s.searchTotal);
@@ -164,16 +171,18 @@ export default function SearchPanel(): React.ReactNode {
       if (!inputMode) return;
       // Single printable character (letter, digit, symbol, space)
       if (keyName.length === 1) {
-        setInputBuffer((b) => b + keyName);
+        setInputBuffer(inputBuffer + keyName);
       } else if (keyName === "space") {
-        setInputBuffer((b) => b + " ");
+        setInputBuffer(inputBuffer + " ");
       }
     },
-    [inputMode],
+    [inputMode, inputBuffer, setInputBuffer],
   );
 
   useKeyboard(
-    inputMode
+    overlayActive
+      ? {}
+      : inputMode
       ? {
           // Input mode: capture keystrokes for the search query
           return: () => {
@@ -185,38 +194,44 @@ export default function SearchPanel(): React.ReactNode {
             setInputBuffer("");
           },
           backspace: () => {
-            setInputBuffer((b) => b.slice(0, -1));
+            setInputBuffer(inputBuffer.slice(0, -1));
           },
         }
       : {
           // Normal mode: navigation
           j: () => {
             if (activeTab === "search") {
+              if (searchResults.length === 0) return;
               setSelectedResultIndex(
-                Math.min(selectedResultIndex + 1, searchResults.length - 1),
+                Math.max(0, Math.min(selectedResultIndex + 1, searchResults.length - 1)),
               );
             } else if (activeTab === "memories") {
+              if (memories.length === 0) return;
               setSelectedMemoryIndex(
-                Math.min(selectedMemoryIndex + 1, memories.length - 1),
+                Math.max(0, Math.min(selectedMemoryIndex + 1, memories.length - 1)),
               );
             } else if (activeTab === "playbooks") {
+              if (playbooks.length === 0) return;
               setSelectedPlaybookIndex(
-                Math.min(selectedPlaybookIndex + 1, playbooks.length - 1),
+                Math.max(0, Math.min(selectedPlaybookIndex + 1, playbooks.length - 1)),
               );
             }
           },
           down: () => {
             if (activeTab === "search") {
+              if (searchResults.length === 0) return;
               setSelectedResultIndex(
-                Math.min(selectedResultIndex + 1, searchResults.length - 1),
+                Math.max(0, Math.min(selectedResultIndex + 1, searchResults.length - 1)),
               );
             } else if (activeTab === "memories") {
+              if (memories.length === 0) return;
               setSelectedMemoryIndex(
-                Math.min(selectedMemoryIndex + 1, memories.length - 1),
+                Math.max(0, Math.min(selectedMemoryIndex + 1, memories.length - 1)),
               );
             } else if (activeTab === "playbooks") {
+              if (playbooks.length === 0) return;
               setSelectedPlaybookIndex(
-                Math.min(selectedPlaybookIndex + 1, playbooks.length - 1),
+                Math.max(0, Math.min(selectedPlaybookIndex + 1, playbooks.length - 1)),
               );
             }
           },
@@ -312,18 +327,24 @@ export default function SearchPanel(): React.ReactNode {
               );
             }
           },
-          d: () => {
+          d: async () => {
             if (!client) return;
             if (activeTab === "playbooks") {
               const playbook = playbooks[selectedPlaybookIndex];
               if (playbook) {
+                const ok = await confirm("Delete playbook?", "This cannot be undone.");
+                if (!ok) return;
                 deletePlaybook(playbook.playbook_id, client);
               }
             } else if (activeTab === "memories") {
               const memory = memories[selectedMemoryIndex];
               if (memory) {
                 const memId = String((memory as Record<string, unknown>).memory_id ?? "");
-                if (memId) deleteMemory(memId, client);
+                if (memId) {
+                  const ok = await confirm("Delete memory?", "This cannot be undone.");
+                  if (!ok) return;
+                  deleteMemory(memId, client);
+                }
               }
             }
           },
@@ -362,12 +383,31 @@ export default function SearchPanel(): React.ReactNode {
               clearMemoryDiff();
             }
           },
+          g: () => {
+            if (activeTab === "search") {
+              setSelectedResultIndex(jumpToStart());
+            } else if (activeTab === "memories") {
+              setSelectedMemoryIndex(jumpToStart());
+            } else if (activeTab === "playbooks") {
+              setSelectedPlaybookIndex(jumpToStart());
+            }
+          },
+          "shift+g": () => {
+            if (activeTab === "search") {
+              setSelectedResultIndex(jumpToEnd(searchResults.length));
+            } else if (activeTab === "memories") {
+              setSelectedMemoryIndex(jumpToEnd(memories.length));
+            } else if (activeTab === "playbooks") {
+              setSelectedPlaybookIndex(jumpToEnd(playbooks.length));
+            }
+          },
         },
-    handleUnhandledKey,
+    overlayActive ? undefined : handleUnhandledKey,
   );
 
   return (
     <box height="100%" width="100%" flexDirection="column">
+      <Tooltip tooltipKey="search-panel" message="Tip: Press ? for keybinding help" />
       {/* Search input bar */}
       <box height={1} width="100%">
         <text>

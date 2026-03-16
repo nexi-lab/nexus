@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { BalanceInfo } from "../../stores/payments-store.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 
 interface BalanceCardProps {
   readonly balance: BalanceInfo | null;
@@ -12,11 +13,7 @@ interface BalanceCardProps {
 
 export function BalanceCard({ balance, loading }: BalanceCardProps): React.ReactNode {
   if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading balance...</text>
-      </box>
-    );
+    return <LoadingIndicator message="Loading balance..." />;
   }
 
   if (!balance) {

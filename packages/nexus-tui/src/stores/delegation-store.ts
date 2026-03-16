@@ -7,14 +7,16 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
-// Types (consolidated from access-store.ts)
+// Canonical DelegationItem type — other stores re-export this.
 export interface DelegationItem {
   readonly delegation_id: string;
   readonly agent_id: string;
   readonly parent_agent_id: string;
-  readonly delegation_mode: string;
-  readonly status: string;
+  readonly delegation_mode: "copy" | "clean" | "shared";
+  readonly status: "active" | "revoked" | "expired" | "completed";
   readonly scope_prefix: string | null;
   readonly lease_expires_at: string | null;
   readonly zone_id: string | null;
@@ -129,6 +131,8 @@ export interface DelegationState {
   readonly setStatusFilter: (status: string | null) => void;
 }
 
+const SOURCE = "delegation";
+
 export const useDelegationStore = create<DelegationState>((set, get) => ({
   delegations: [],
   delegationsLoading: false,
@@ -143,6 +147,10 @@ export const useDelegationStore = create<DelegationState>((set, get) => ({
   delegationsLimit: 50,
   delegationsOffset: 0,
   delegationsStatusFilter: null,
+
+  // =========================================================================
+  // Actions — inline with error store integration (complex logic/get())
+  // =========================================================================
 
   fetchDelegations: async (client, options) => {
     const limit = options?.limit ?? get().delegationsLimit;
@@ -170,10 +178,9 @@ export const useDelegationStore = create<DelegationState>((set, get) => ({
         delegationsStatusFilter: status,
       });
     } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch delegations",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch delegations";
+      set({ delegationsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -186,10 +193,9 @@ export const useDelegationStore = create<DelegationState>((set, get) => ({
       );
       set({ lastDelegationCreate: response, delegationsLoading: false });
     } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to create delegation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create delegation";
+      set({ delegationsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
       return;
     }
     // Re-fetch list
@@ -218,10 +224,9 @@ export const useDelegationStore = create<DelegationState>((set, get) => ({
         delegationsLoading: false,
       }));
     } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to revoke delegation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to revoke delegation";
+      set({ delegationsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -241,58 +246,49 @@ export const useDelegationStore = create<DelegationState>((set, get) => ({
         delegationsLoading: false,
       }));
     } catch (err) {
-      set({
-        delegationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to complete delegation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to complete delegation";
+      set({ delegationsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
-  fetchDelegationChain: async (delegationId, client) => {
-    set({ delegationChainLoading: true, error: null });
-    try {
+  // =========================================================================
+  // Actions migrated to createApiAction (Decision 6A)
+  // =========================================================================
+
+  fetchDelegationChain: createApiAction<DelegationState, [string, FetchClient]>(set, {
+    loadingKey: "delegationChainLoading",
+    source: SOURCE,
+    action: async (delegationId, client) => {
       const response = await client.get<DelegationChain>(
         `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/chain`,
       );
-      set({ delegationChain: response, delegationChainLoading: false });
-    } catch (err) {
-      set({
-        delegationChainLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch delegation chain",
-      });
-    }
-  },
+      return { delegationChain: response };
+    },
+  }),
 
-  fetchNamespaceDetail: async (delegationId, client) => {
-    set({ namespaceDetailLoading: true, error: null });
-    try {
+  fetchNamespaceDetail: createApiAction<DelegationState, [string, FetchClient]>(set, {
+    loadingKey: "namespaceDetailLoading",
+    source: SOURCE,
+    action: async (delegationId, client) => {
       const response = await client.get<NamespaceDetail>(
         `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/namespace`,
       );
-      set({ namespaceDetail: response, namespaceDetailLoading: false });
-    } catch (err) {
-      set({
-        namespaceDetailLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch namespace detail",
-      });
-    }
-  },
+      return { namespaceDetail: response };
+    },
+  }),
 
-  updateNamespaceConfig: async (delegationId, update, client) => {
-    set({ namespaceDetailLoading: true, error: null });
-    try {
+  updateNamespaceConfig: createApiAction<DelegationState, [string, { readonly scope_prefix?: string; readonly remove_grants?: readonly string[]; readonly add_grants?: readonly string[]; readonly readonly_paths?: readonly string[] }, FetchClient]>(set, {
+    loadingKey: "namespaceDetailLoading",
+    source: SOURCE,
+    action: async (delegationId, update, client) => {
       const response = await client.patch<NamespaceDetail>(
         `/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/namespace`,
         update,
       );
-      set({ namespaceDetail: response, namespaceDetailLoading: false });
-    } catch (err) {
-      set({
-        namespaceDetailLoading: false,
-        error: err instanceof Error ? err.message : "Failed to update namespace config",
-      });
-    }
-  },
+      return { namespaceDetail: response };
+    },
+  }),
 
   setSelectedDelegationIndex: (index) => {
     set({ selectedDelegationIndex: index });

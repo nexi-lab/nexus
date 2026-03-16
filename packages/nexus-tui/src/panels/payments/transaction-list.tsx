@@ -5,6 +5,7 @@
 
 import React from "react";
 import type { TransactionRecord, IntegrityResult } from "../../stores/payments-store.js";
+import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 
 interface TransactionListProps {
   readonly transactions: readonly TransactionRecord[];
@@ -12,6 +13,7 @@ interface TransactionListProps {
   readonly loading: boolean;
   readonly hasMore: boolean;
   readonly hasPrev: boolean;
+  readonly currentPage: number;
   readonly integrityResult: IntegrityResult | null;
 }
 
@@ -38,14 +40,11 @@ export function TransactionList({
   loading,
   hasMore,
   hasPrev,
+  currentPage,
   integrityResult,
 }: TransactionListProps): React.ReactNode {
   if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading transactions...</text>
-      </box>
-    );
+    return <LoadingIndicator message="Loading transactions..." />;
   }
 
   if (transactions.length === 0) {
@@ -99,7 +98,7 @@ export function TransactionList({
       {/* Pagination status */}
       <box height={1} width="100%">
         <text>
-          {`  ${hasPrev ? "[p:prev]" : ""}  ${hasMore ? "[n:next]" : "(end)"}  ${transactions.length} shown`}
+          {`  Page ${currentPage}${hasMore ? "+" : ""}  ${hasPrev ? "[p:prev]" : ""}  ${hasMore ? "[n:next]" : "(end)"}  ${transactions.length} shown`}
         </text>
       </box>
     </box>

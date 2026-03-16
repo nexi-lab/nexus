@@ -1,6 +1,6 @@
 """Shared permission checking utilities for Nexus services.
 
-Centralizes permission check logic used by MountCoreService and SyncService
+Centralizes permission check logic used by MountService and SyncService
 to prevent code duplication and ensure consistent error handling.
 """
 

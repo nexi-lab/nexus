@@ -125,17 +125,6 @@ async def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] MCPService disabled by profile")
 
-    # --- MountCoreService: Internal mount operations (gateway-dependent) ---
-    mount_core_service: Any = None
-    if gateway is not None:
-        try:
-            from nexus.bricks.mount.mount_core_service import MountCoreService
-
-            mount_core_service = MountCoreService(gateway)
-            logger.debug("[BOOT:WIRED] MountCoreService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] MountCoreService unavailable: %s", exc)
-
     # --- SyncService: Sync operations (gateway-dependent) ---
     sync_service: Any = None
     if gateway is not None:
@@ -159,17 +148,18 @@ async def _boot_wired_services(
             logger.debug("[BOOT:WIRED] SyncJobService unavailable: %s", exc)
 
     # --- MountPersistService: Mount persistence ---
+    # Created with mount_service=None initially; wired after MountService creation below.
     mount_persist_service: Any = None
-    if mount_core_service is not None:
+    if gateway is not None:
         try:
             from nexus.bricks.mount.mount_persist_service import MountPersistService
 
             mount_persist_service = MountPersistService(
                 mount_manager=system_services.mount_manager,
-                mount_service=mount_core_service,
+                mount_service=None,  # wired after MountService creation below
                 sync_service=sync_service,
             )
-            logger.debug("[BOOT:WIRED] MountPersistService created")
+            logger.debug("[BOOT:WIRED] MountPersistService created (mount_service pending)")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] MountPersistService unavailable: %s", exc)
 
@@ -183,15 +173,19 @@ async def _boot_wired_services(
             router=kernel_services.router,
             mount_manager=system_services.mount_manager,
             nexus_fs=nx,
+            gateway=gateway,
             sync_service=sync_service,
             sync_job_service=sync_job_service,
-            mount_core_service=mount_core_service,
             mount_persist_service=mount_persist_service,
             oauth_service=oauth_service,
         )
         logger.debug("[BOOT:WIRED] MountService created")
     except Exception as exc:
         logger.warning("[BOOT:WIRED] MountService unavailable: %s", exc)
+
+    # Wire MountPersistService -> MountService (break circular dep)
+    if mount_persist_service is not None and mount_service is not None:
+        mount_persist_service._mounts = mount_service
 
     # --- SearchService: list/glob/grep are kernel-level VFS operations (Issue #2194) ---
     # Always create SearchService regardless of "search" brick — basic directory
@@ -404,7 +398,6 @@ async def _boot_wired_services(
         rebac_service=rebac_service,
         mount_service=mount_service,
         gateway=gateway,
-        mount_core_service=mount_core_service,
         sync_service=sync_service,
         sync_job_service=sync_job_service,
         mount_persist_service=mount_persist_service,

@@ -68,7 +68,7 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend"
         backend_dir.mkdir()
-        nx_with_hierarchy.service("mount_core").add_mount(
+        nx_with_hierarchy.service("mount").add_mount_sync(
             "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
@@ -102,7 +102,7 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend2"
         backend_dir.mkdir()
-        nx_with_hierarchy.service("mount_core").add_mount(
+        nx_with_hierarchy.service("mount").add_mount_sync(
             "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
@@ -149,7 +149,7 @@ class TestMountSyncOptimization:
         # Add mount
         backend_dir = temp_dir / "mock_backend3"
         backend_dir.mkdir()
-        nx_with_hierarchy.service("mount_core").add_mount(
+        nx_with_hierarchy.service("mount").add_mount_sync(
             "/mnt/test", "cas_local", {"data_dir": str(backend_dir)}
         )
 
@@ -209,7 +209,7 @@ class TestMountDatabaseVsConfig:
         # Create a mount
         backend1_dir = temp_dir / "backend1"
         backend1_dir.mkdir()
-        nx.service("mount_core").add_mount(
+        nx.service("mount").add_mount_sync(
             "/mnt/test", "cas_local", {"data_dir": str(backend1_dir)}
         )
 

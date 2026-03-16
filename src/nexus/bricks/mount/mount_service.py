@@ -1,7 +1,11 @@
-"""Mount Service — owns all mount management operations.
+"""Mount Service — unified mount management operations.
+
+Owns both the sync core logic (add/remove/list/get/has mount) and
+async RPC wrappers.  Replaces the former MountCoreService + MountService
+split.
 
 Operations:
-- Dynamic backend mounting/unmounting
+- Dynamic backend mounting/unmounting (with metastore persistence)
 - Mount configuration persistence
 - Connector discovery and listing
 - Metadata synchronization (via SyncService / SyncJobService DI)
@@ -14,6 +18,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.lib.context_utils import get_database_url, get_user_identity, get_zone_id
+from nexus.lib.permission_utils import PermissionCheckError, check_permission
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -32,6 +37,12 @@ def _needs_token_manager_db(backend_type: str, config: dict[str, Any]) -> bool:
     return info.user_scoped and "token_manager_db" in info.connection_args
 
 
+def _record_error(result: dict, msg: str) -> None:
+    """Append an error message to result["errors"] and log a warning."""
+    result["errors"].append(msg)
+    logger.warning(msg)
+
+
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
 ProgressCallback = Callable[[int, str], None]
 
@@ -42,19 +53,19 @@ if TYPE_CHECKING:
 
 
 class MountService:
-    """Independent mount service extracted from NexusFS.
+    """Unified mount service — sync core logic + async RPC wrappers.
 
     Handles all mount management operations:
-    - Add/remove dynamic backend mounts
+    - Add/remove dynamic backend mounts (sync core + async wrappers)
     - List available connectors and active mounts
     - Save/load/delete mount configurations
     - Sync metadata from connector backends
 
     Architecture:
-        - Delegates to PathRouter for mount routing
+        - Uses NexusFSGateway for all NexusFS access (filesystem, metadata,
+          permissions, router)
         - Uses MountManager for persistence
         - Uses sub-services (SyncService, SyncJobService, etc.) for sync ops
-        - Requires NexusFS reference only for kernel ops (mkdir, rmdir, rebac)
         - Uses OperationContext for permissions
     """
 
@@ -64,11 +75,14 @@ class MountService:
         mount_manager: "MountManager | None" = None,
         nexus_fs: Any = None,
         *,
+        gateway: Any = None,
         sync_service: Any = None,
         sync_job_service: Any = None,
-        mount_core_service: Any = None,
         mount_persist_service: Any = None,
         oauth_service: Any = None,
+        persist_service: Any = None,
+        rmdir_fn: Any = None,
+        token_manager_fn: Any = None,
     ):
         """Initialize mount service.
 
@@ -76,25 +90,619 @@ class MountService:
             router: Path router for backend resolution
             mount_manager: Optional mount manager for persistence
             nexus_fs: Optional NexusFS instance (for kernel ops: mkdir, rmdir, rebac)
+            gateway: NexusFSGateway for NexusFS access (preferred over nexus_fs)
             sync_service: SyncService for metadata sync operations
             sync_job_service: SyncJobService for async sync job management
-            mount_core_service: MountCoreService for internal mount operations
             mount_persist_service: MountPersistService for config persistence
             oauth_service: OAuthCredentialService for credential revocation
+            persist_service: MountPersistService (alias, used by delete_connector)
+            rmdir_fn: Callback to delete directories (NexusFS.rmdir)
+            token_manager_fn: Callback to get token manager for OAuth revocation
         """
         self.router = router
         self.mount_manager = mount_manager
         self.nexus_fs = nexus_fs
+        self._gw = gateway
         self._sync_service = sync_service
         self._sync_job_service = sync_job_service
-        self._mount_core_service = mount_core_service
         self._mount_persist_service = mount_persist_service
         self._oauth_service = oauth_service
+        self._persist_service = persist_service
+        self._rmdir_fn = rmdir_fn
+        self._token_manager_fn = token_manager_fn
 
         logger.info("[MountService] Initialized")
 
     # =========================================================================
-    # Public API: Core Mount Management
+    # Sync Core Logic (inlined from MountCoreService)
+    # =========================================================================
+
+    def _create_backend(self, backend_type: str, config: dict[str, Any]) -> Any:
+        """Create backend instance from type and config.
+
+        Uses BackendFactory with ConnectorRegistry for all registered backends.
+
+        Args:
+            backend_type: Backend type identifier
+            config: Backend configuration
+
+        Returns:
+            Backend instance
+
+        Raises:
+            KeyError: If backend type is not registered
+        """
+        from nexus.backends.base.factory import BackendFactory
+
+        record_store = None
+        if self._gw is not None:
+            record_store = self._gw.record_store
+        elif self.nexus_fs and hasattr(self.nexus_fs, "_record_store"):
+            record_store = self.nexus_fs._record_store
+        return BackendFactory.create(backend_type, config, record_store=record_store)
+
+    def _setup_mount_point(
+        self,
+        mount_point: str,
+        context: "OperationContext | None",
+    ) -> None:
+        """Setup mount point with directory and permissions.
+
+        Args:
+            mount_point: Virtual path
+            context: Operation context
+        """
+        logger.info(f"Setting up mount point: {mount_point}")
+
+        # Create directory entry
+        if self._gw is not None:
+            try:
+                self._gw.sys_mkdir(mount_point, parents=True, exist_ok=True, context=context)
+                logger.info(f"Created directory entry for mount point: {mount_point}")
+            except Exception as e:
+                logger.warning(f"Failed to create directory entry: {e}")
+        elif self.nexus_fs and hasattr(self.nexus_fs, "sys_mkdir"):
+            try:
+                self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
+                logger.info(f"Created directory entry for mount point: {mount_point}")
+            except Exception as e:
+                logger.warning(f"Failed to create directory entry: {e}")
+
+        # Grant owner permission
+        self._grant_owner_permission(mount_point, context)
+
+    def _grant_owner_permission(
+        self,
+        mount_point: str,
+        context: "OperationContext | None",
+    ) -> None:
+        """Grant direct_owner permission to mount creator.
+
+        Raises on genuine ReBAC failures so that ``add_mount`` can roll
+        back the router registration -- a mount must never be active
+        without permissions (Issue #2754).
+
+        If ReBAC is not configured (record_store missing), logs a warning
+        and returns gracefully -- this allows mounts to work in minimal
+        deployments without permission enforcement.
+
+        Args:
+            mount_point: Virtual path
+            context: Operation context
+        """
+        if not context:
+            logger.warning("[MOUNT-PERM] No context, skipping permission grant")
+            return
+
+        zone_id = get_zone_id(context)
+        subject_type, subject_id = get_user_identity(context)
+
+        if not subject_id:
+            logger.warning("[MOUNT-PERM] No subject_id, skipping permission grant")
+            return
+
+        if self._gw is not None:
+            try:
+                tuple_id = self._gw.rebac_create(
+                    subject=(subject_type, subject_id),
+                    relation="direct_owner",
+                    object=("file", mount_point),
+                    zone_id=zone_id,
+                )
+            except RuntimeError as exc:
+                if "not available" in str(exc):
+                    logger.warning(
+                        "[MOUNT-PERM] ReBAC not available, skipping permission grant: %s",
+                        exc,
+                    )
+                    return
+                raise
+
+            logger.info(
+                "Granted direct_owner to %s:%s for %s (tuple_id=%s)",
+                subject_type,
+                subject_id,
+                mount_point,
+                tuple_id,
+            )
+        elif self.nexus_fs and self.nexus_fs.service("rebac"):
+            try:
+                self.nexus_fs.service("rebac").rebac_create_sync(
+                    subject=(subject_type, subject_id),
+                    relation="direct_owner",
+                    object=("file", mount_point),
+                    zone_id=zone_id,
+                )
+                logger.info(
+                    "Granted direct_owner to %s:%s for %s",
+                    subject_type,
+                    subject_id,
+                    mount_point,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to grant direct_owner for %s: %s: %s",
+                    mount_point,
+                    type(e).__name__,
+                    e,
+                )
+        else:
+            logger.warning(
+                "[MOUNT-PERM] No gateway or rebac service available, skipping permission grant"
+            )
+
+    def _check_permission(
+        self,
+        path: str,
+        permission: str,
+        context: "OperationContext | None",
+    ) -> bool:
+        """Check if user has permission on path.
+
+        Delegates to shared permission_utils.check_permission when gateway
+        is available, otherwise returns True (permissive fallback).
+        Raises PermissionCheckError on infrastructure failures.
+        """
+        if self._gw is not None:
+            return bool(check_permission(self._gw, path, permission, context))
+        # No gateway — permissive fallback
+        return True
+
+    def _check_mount_permission(
+        self,
+        mount_point: str,
+        context: "OperationContext | None",
+    ) -> bool:
+        """Check if user has read permission on mount.
+
+        Args:
+            mount_point: Virtual path
+            context: Operation context
+
+        Returns:
+            True if user has permission
+        """
+        return self._check_permission(mount_point, "read", context)
+
+    # =========================================================================
+    # Public Sync Accessors (for NexusFS facade and MountPersistService)
+    # =========================================================================
+
+    def add_mount_sync(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        readonly: bool = False,
+        io_profile: str = "balanced",
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """Add a dynamic backend mount (synchronous).
+
+        This is the core sync implementation used by both the async RPC
+        wrapper and NexusFS facade methods.
+
+        Args:
+            mount_point: Virtual path where backend is mounted
+            backend_type: Backend type identifier
+            backend_config: Backend-specific configuration
+            readonly: Whether mount is read-only
+            io_profile: I/O tuning profile (Issue #1413)
+            context: Operation context for permissions
+
+        Returns:
+            Mount ID (mount_point)
+
+        Raises:
+            PermissionError: If user lacks write permission on parent path
+            RuntimeError: If backend type is not supported
+        """
+        import os.path as osp
+
+        # Check permission: user must have write access to parent directory
+        parent_path = osp.dirname(mount_point.rstrip("/")) or "/"
+        if not self._check_permission(parent_path, "write", context):
+            raise PermissionError(
+                f"Cannot create mount at {mount_point}: no write permission on {parent_path}"
+            )
+
+        # Make a mutable copy of config
+        config = backend_config.copy()
+
+        # Auto-inject token_manager_db for OAuth backends
+        if _needs_token_manager_db(backend_type, config):
+            if self._gw is not None:
+                try:
+                    database_url = self._gw.get_database_url()
+                    config["token_manager_db"] = database_url
+                except RuntimeError as e:
+                    raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
+            elif self.nexus_fs:
+                try:
+                    database_url = get_database_url(self.nexus_fs)
+                    config = {**config, "token_manager_db": database_url}
+                except RuntimeError as e:
+                    raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
+            else:
+                raise RuntimeError(
+                    f"Cannot create {backend_type} mount: no gateway or nexus_fs configured"
+                )
+
+        # Create backend instance
+        backend = self._create_backend(backend_type, config)
+
+        # Add to router, then setup -- rollback on failure (Issue #2754).
+        # If _setup_mount_point fails after the mount is active in the router,
+        # the mount would be accessible without proper permissions configured.
+        self.router.add_mount(
+            mount_point=mount_point,
+            backend=backend,
+            readonly=readonly,
+            io_profile=io_profile,
+        )
+        try:
+            self._setup_mount_point(mount_point, context)
+        except Exception:
+            logger.error(
+                "Mount setup failed for %s, rolling back router registration",
+                mount_point,
+            )
+            self.router.remove_mount(mount_point)
+            raise
+
+        return mount_point
+
+    def remove_mount_sync(
+        self,
+        mount_point: str,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Remove a backend mount (synchronous).
+
+        Args:
+            mount_point: Virtual path of mount to remove
+            context: Operation context
+
+        Returns:
+            Dictionary with removal details
+
+        Raises:
+            PermissionError: If user lacks write permission on mount
+        """
+        # Check permission: user must have write access to mount point
+        if not self._check_permission(mount_point, "write", context):
+            raise PermissionError(f"Cannot remove mount {mount_point}: no write permission")
+
+        result: dict[str, Any] = {
+            "removed": False,
+            "directory_deleted": False,
+            "permissions_cleaned": 0,
+            "errors": [],
+        }
+
+        # Remove from router
+        if not self.router.remove_mount(mount_point):
+            result["errors"].append(f"Mount not found: {mount_point}")
+            return result
+
+        result["removed"] = True
+        logger.info(f"Removed mount from router: {mount_point}")
+
+        # Extract zone_id once for all cleanup operations
+        zone_id = get_zone_id(context)
+
+        # --- Gateway-based cleanup (preferred) ---
+        if self._gw is not None:
+            # Delete all metadata entries (mount point + children)
+            try:
+                dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
+                child_entries = self._gw.metadata_list(dir_prefix)
+                paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
+                paths_to_delete.append(mount_point)  # Include mount point itself
+                self._gw.metadata_delete_batch(paths_to_delete)
+                result["files_deleted"] = len(paths_to_delete)
+                logger.info(f"Deleted {len(paths_to_delete)} metadata entries for {mount_point}")
+            except Exception as e:
+                _record_error(result, f"Failed to delete metadata entries for {mount_point}: {e}")
+
+            # Clean up sparse directory index entries
+            try:
+                dir_entries_deleted = self._gw.delete_directory_entries_recursive(
+                    mount_point, zone_id
+                )
+                result["directory_entries_deleted"] = dir_entries_deleted
+                logger.info(
+                    f"Deleted {dir_entries_deleted} directory index entries under {mount_point}"
+                )
+            except Exception as e:
+                _record_error(result, f"Failed to clean up directory index: {e}")
+
+            # Clean up hierarchy tuples
+            try:
+                removed = self._gw.remove_parent_tuples(mount_point, zone_id)
+                result["permissions_cleaned"] += removed
+                logger.info(f"Removed {removed} parent tuples for {mount_point}")
+            except Exception as e:
+                _record_error(result, f"Failed to clean up parent tuples: {e}")
+
+            # Remove permission tuples
+            try:
+                deleted = self._gw.rebac_delete_object_tuples(
+                    object=("file", mount_point),
+                    zone_id=zone_id,
+                )
+                result["permissions_cleaned"] += deleted
+                logger.info(f"Removed {deleted} permission tuples for {mount_point}")
+            except Exception as e:
+                _record_error(result, f"Failed to delete permission tuples: {e}")
+        else:
+            # --- Fallback: NexusFS-based cleanup ---
+            # Delete the mount point directory
+            if self.nexus_fs and hasattr(self.nexus_fs, "metadata"):
+                try:
+                    if hasattr(self.nexus_fs.metadata, "delete"):
+                        self.nexus_fs.metadata.delete(mount_point)
+                        result["directory_deleted"] = True
+                        logger.info(f"Deleted mount point directory: {mount_point}")
+                except Exception as e:
+                    error_msg = f"Failed to delete mount point directory {mount_point}: {e}"
+                    result["errors"].append(error_msg)
+                    logger.warning(error_msg)
+
+            # Clean up ReBAC permissions
+            if self.nexus_fs and hasattr(self.nexus_fs, "hierarchy_manager"):
+                try:
+                    if hasattr(self.nexus_fs.hierarchy_manager, "remove_parent_tuples"):
+                        tuples_removed = self.nexus_fs.hierarchy_manager.remove_parent_tuples(
+                            mount_point, zone_id
+                        )
+                        result["permissions_cleaned"] += tuples_removed
+                        logger.info(f"Removed {tuples_removed} parent tuples for {mount_point}")
+                except Exception as e:
+                    error_msg = f"Failed to clean up parent tuples: {e}"
+                    result["errors"].append(error_msg)
+                    logger.warning(error_msg)
+
+            # Remove direct_owner permission tuple
+            if self.nexus_fs and self.nexus_fs.service("rebac"):
+                try:
+                    svc = self.nexus_fs.service("rebac")
+                    tuples = svc.rebac_list_tuples_sync(object=("file", mount_point))
+                    deleted = 0
+                    for t in tuples:
+                        tid = t.get("tuple_id")
+                        if tid and svc.rebac_delete_sync(tid):
+                            deleted += 1
+                    result["permissions_cleaned"] += deleted
+                    logger.info(f"Removed {deleted} permission tuples for {mount_point}")
+                except Exception as e:
+                    error_msg = f"Failed to delete permission tuples: {e}"
+                    result["errors"].append(error_msg)
+                    logger.warning(error_msg)
+
+        if result["errors"]:
+            logger.warning(f"Mount removed with {len(result['errors'])} errors: {result['errors']}")
+        else:
+            logger.info(
+                f"Successfully removed mount {mount_point} "
+                f"(directory_deleted={result['directory_deleted']}, "
+                f"permissions_cleaned={result['permissions_cleaned']})"
+            )
+
+        return result
+
+    def list_mounts_sync(
+        self,
+        context: "OperationContext | None" = None,
+    ) -> list[dict[str, Any]]:
+        """List all active mounts with permission filtering (synchronous).
+
+        Args:
+            context: Operation context for permission checks
+
+        Returns:
+            List of mount info dictionaries
+        """
+        mounts = []
+
+        router_mounts = list(self.router.list_mounts())
+        logger.info(f"[LIST_MOUNTS] Total mounts in router: {len(router_mounts)}")
+
+        for mount_info in router_mounts:
+            mount_point = mount_info.mount_point
+
+            # Check permission -- exclude on infrastructure failure (fail-safe)
+            try:
+                has_permission = self._check_mount_permission(mount_point, context)
+            except PermissionCheckError:
+                logger.warning("Permission check failed for mount %s, excluding", mount_point)
+                continue
+
+            if has_permission:
+                mounts.append(
+                    {
+                        "mount_point": mount_info.mount_point,
+                        "readonly": mount_info.readonly,
+                        "admin_only": mount_info.admin_only,
+                    }
+                )
+
+        return mounts
+
+    def get_mount_sync(
+        self,
+        mount_point: str,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any] | None:
+        """Get details about a specific mount (synchronous).
+
+        Args:
+            mount_point: Virtual path of mount
+            context: Operation context for permissions
+
+        Returns:
+            Mount info dict or None if not found or no permission
+        """
+        # Check permission: user must have read access
+        if not self._check_permission(mount_point, "read", context):
+            return None
+
+        mount_info = self.router.get_mount(mount_point)
+        if mount_info:
+            return {
+                "mount_point": mount_info.mount_point,
+                "readonly": mount_info.readonly,
+                "admin_only": mount_info.admin_only,
+            }
+        return None
+
+    def has_mount_sync(self, mount_point: str) -> bool:
+        """Check if mount exists (synchronous).
+
+        Args:
+            mount_point: Virtual path to check
+
+        Returns:
+            True if mount exists
+        """
+        return bool(self.router.has_mount(mount_point))
+
+    def list_connectors_sync(self, category: str | None = None) -> list[dict[str, Any]]:
+        """List available connector types (synchronous).
+
+        Args:
+            category: Optional filter by category
+
+        Returns:
+            List of connector info dictionaries
+        """
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        if category:
+            connectors = ConnectorRegistry.list_by_category(category)
+        else:
+            connectors = ConnectorRegistry.list_all()
+
+        return [
+            {
+                "name": c.name,
+                "description": c.description,
+                "category": c.category,
+                "requires": c.requires,
+                "user_scoped": c.user_scoped,
+            }
+            for c in connectors
+        ]
+
+    def delete_connector_sync(
+        self,
+        mount_point: str,
+        revoke_oauth: bool = False,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Delete a connector completely with bundled operations (synchronous).
+
+        Combines: deactivate, delete config, optional OAuth revocation, directory cleanup.
+        """
+        result: dict[str, Any] = {
+            "removed": False,
+            "directory_deleted": False,
+            "config_deleted": False,
+            "oauth_revoked": False,
+            "errors": [],
+            "warnings": [],
+        }
+
+        # Step 1: Try to deactivate connector if active (non-fatal)
+        try:
+            remove_result = self.remove_mount_sync(mount_point, context)
+            result["removed"] = remove_result.get("removed", False)
+            result["directory_deleted"] = remove_result.get("removed", False)
+            if remove_result.get("errors"):
+                result["warnings"].extend(remove_result["errors"])
+        except PermissionError:
+            raise
+        except Exception as e:
+            result["warnings"].append(f"Failed to deactivate connector (continuing): {e}")
+
+        # Step 2: Delete saved configuration (FATAL - must succeed)
+        persist_svc = self._mount_persist_service or self._persist_service
+        if persist_svc is None:
+            raise RuntimeError("MountPersistService not available for delete_connector")
+        try:
+            config_deleted = persist_svc.delete_saved_mount(mount_point)
+            result["config_deleted"] = config_deleted
+        except Exception as e:
+            error_msg = f"Failed to delete connector configuration: {e}"
+            result["errors"].append(error_msg)
+            raise RuntimeError(error_msg) from e
+
+        # Step 3: Optionally revoke OAuth credentials
+        if revoke_oauth:
+            if not provider or not user_email:
+                result["warnings"].append(
+                    "OAuth revocation requested but provider or user_email not provided"
+                )
+            elif self._token_manager_fn is not None:
+                try:
+                    from nexus.lib.sync_bridge import run_sync
+
+                    zone_id = get_zone_id(context)
+                    token_manager = self._token_manager_fn()
+                    revoked = run_sync(
+                        token_manager.revoke_credential(
+                            provider=provider,
+                            user_email=user_email,
+                            zone_id=zone_id,
+                        )
+                    )
+                    result["oauth_revoked"] = revoked
+                except Exception as e:
+                    result["warnings"].append(
+                        f"Failed to revoke OAuth credentials (non-fatal): {e}"
+                    )
+
+        # Step 4: Delete mount point directory
+        rmdir_fn = self._rmdir_fn
+        if rmdir_fn is None and self.nexus_fs and hasattr(self.nexus_fs, "sys_rmdir"):
+            rmdir_fn = self.nexus_fs.sys_rmdir
+        if rmdir_fn is not None:
+            try:
+                rmdir_fn(mount_point, recursive=True, context=context)
+                result["directory_deleted"] = True
+                logger.info(f"Deleted mount point directory: {mount_point}")
+            except Exception as e:
+                result["warnings"].append(
+                    f"Failed to delete mount point directory (non-fatal): {e}"
+                )
+                logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
+
+        return result
+
+    # =========================================================================
+    # Public API: Async RPC Wrappers
     # =========================================================================
 
     @rpc_expose(description="Add dynamic backend mount")
@@ -119,84 +727,25 @@ class MountService:
             backend_type: Backend type - "cas_local", "cas_gcs", "path_gcs", "google_drive", etc.
             backend_config: Backend-specific configuration dict
             readonly: Whether mount is read-only (default: False)
+            io_profile: I/O tuning profile
             context: Operation context (automatically provided by RPC server)
 
         Returns:
             Mount ID (unique identifier for this mount)
 
         Raises:
-            ValueError: If mount_point already exists or configuration is invalid
+            PermissionError: If user lacks write permission on parent path
             RuntimeError: If backend type is not supported
-
-        Examples:
-            # Add personal GCS mount (CAS-based)
-            mount_id = await service.add_mount(
-                mount_point="/personal/alice",
-                backend_type="cas_gcs",
-                backend_config={
-                    "bucket": "alice-personal-bucket",
-                    "project_id": "my-project"
-                },
-            )
-
-            # Add GCS connector mount (direct path mapping for external buckets)
-            mount_id = await service.add_mount(
-                mount_point="/workspace/gdrive",
-                backend_type="path_gcs",
-                backend_config={
-                    "bucket": "my-external-bucket",
-                    "project_id": "my-project",
-                    "prefix": "workspace"  # Optional prefix in bucket
-                }
-            )
         """
-
-        # Run backend instantiation in thread pool to avoid blocking
-        def _add_mount_sync() -> str:
-            # Make a mutable copy of backend_config to avoid modifying the original
-            config = backend_config.copy()
-
-            # Auto-inject token_manager_db for OAuth-backed connectors
-            if _needs_token_manager_db(backend_type, config):
-                # Use centralized database URL resolution
-                if self.nexus_fs:
-                    try:
-                        database_url = get_database_url(self.nexus_fs)
-                        config = {**config, "token_manager_db": database_url}
-                    except RuntimeError as e:
-                        raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
-                else:
-                    raise RuntimeError(
-                        f"Cannot create {backend_type} mount: nexus_fs not configured"
-                    )
-
-            # Create backend via centralized factory
-            from nexus.backends.base.factory import BackendFactory
-
-            # Get record store for caching support if available
-            record_store = None
-            if self.nexus_fs and hasattr(self.nexus_fs, "_record_store"):
-                record_store = self.nexus_fs._record_store
-
-            backend = BackendFactory.create(backend_type, config, record_store=record_store)
-
-            # Add mount to router
-            self.router.add_mount(
-                mount_point=mount_point,
-                backend=backend,
-                readonly=readonly,
-                io_profile=io_profile,
-            )
-
-            return mount_point  # Return mount_point as the mount ID
-
-        # Run in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(_add_mount_sync)
-
-        # Grant direct_owner permission to the user who created the mount
-        await self._grant_mount_owner_permission(mount_point, context)
-
-        return result
+        return await asyncio.to_thread(
+            self.add_mount_sync,
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            readonly=readonly,
+            io_profile=io_profile,
+            context=context,
+        )
 
     @rpc_expose(description="Remove backend mount")
     async def remove_mount(
@@ -206,9 +755,8 @@ class MountService:
     ) -> dict[str, Any]:
         """Remove a backend mount from the filesystem.
 
-        This removes the mount from the router and deletes the mount point directory.
-        Files inside the mount are NOT deleted - only the directory entry and permissions
-        for the mount point itself are cleaned up.
+        This removes the mount from the router and cleans up metadata,
+        directory entries, hierarchy tuples, and permission tuples.
 
         Args:
             mount_point: Virtual path of mount to remove (e.g., "/personal/alice")
@@ -220,89 +768,12 @@ class MountService:
             - directory_deleted: bool - Whether mount point directory was deleted
             - permissions_cleaned: int - Number of permission tuples removed
             - errors: list[str] - Any errors encountered
-
-        Examples:
-            # Remove mount and clean up directory
-            result = await service.remove_mount("/personal/alice")
-            print(f"Removed: {result['removed']}, Dir deleted: {result['directory_deleted']}")
         """
-
-        def _remove_mount_sync() -> dict[str, Any]:
-            result: dict[str, Any] = {
-                "removed": False,
-                "directory_deleted": False,
-                "permissions_cleaned": 0,
-                "errors": [],
-            }
-
-            # Check if mount exists and remove it
-            if not self.router.remove_mount(mount_point):
-                result["errors"].append(f"Mount not found: {mount_point}")
-                return result
-
-            result["removed"] = True
-            logger.info(f"Removed mount from router: {mount_point}")
-
-            # Delete the mount point directory (but not the files inside)
-            if self.nexus_fs and hasattr(self.nexus_fs, "metadata"):
-                try:
-                    if hasattr(self.nexus_fs.metadata, "delete"):
-                        # Soft delete the directory entry from metadata
-                        self.nexus_fs.metadata.delete(mount_point)
-                        result["directory_deleted"] = True
-                        logger.info(f"Deleted mount point directory: {mount_point}")
-                except Exception as e:
-                    error_msg = f"Failed to delete mount point directory {mount_point}: {e}"
-                    result["errors"].append(error_msg)
-                    logger.warning(error_msg)
-
-            # Clean up ReBAC permissions for the mount point
-            if self.nexus_fs and hasattr(self.nexus_fs, "hierarchy_manager"):
-                try:
-                    if hasattr(self.nexus_fs.hierarchy_manager, "remove_parent_tuples"):
-                        zone_id = get_zone_id(context)
-                        tuples_removed = self.nexus_fs.hierarchy_manager.remove_parent_tuples(
-                            mount_point, zone_id
-                        )
-                        result["permissions_cleaned"] += tuples_removed
-                        logger.info(f"Removed {tuples_removed} parent tuples for {mount_point}")
-                except Exception as e:
-                    error_msg = f"Failed to clean up parent tuples: {e}"
-                    result["errors"].append(error_msg)
-                    logger.warning(error_msg)
-
-            # Remove direct_owner permission tuple for the mount point
-            if self.nexus_fs and self.nexus_fs.service("rebac"):
-                try:
-                    zone_id = get_zone_id(context)
-                    svc = self.nexus_fs.service("rebac")
-                    tuples = svc.rebac_list_tuples_sync(object=("file", mount_point))
-                    deleted = 0
-                    for t in tuples:
-                        tid = t.get("tuple_id")
-                        if tid and svc.rebac_delete_sync(tid):
-                            deleted += 1
-                    result["permissions_cleaned"] += deleted
-                    logger.info(f"Removed {deleted} permission tuples for {mount_point}")
-                except Exception as e:
-                    error_msg = f"Failed to delete permission tuples: {e}"
-                    result["errors"].append(error_msg)
-                    logger.warning(error_msg)
-
-            if result["errors"]:
-                logger.warning(
-                    f"Mount removed with {len(result['errors'])} errors: {result['errors']}"
-                )
-            else:
-                logger.info(
-                    f"Successfully removed mount {mount_point} "
-                    f"(directory_deleted={result['directory_deleted']}, "
-                    f"permissions_cleaned={result['permissions_cleaned']})"
-                )
-
-            return result
-
-        return await asyncio.to_thread(_remove_mount_sync)
+        return await asyncio.to_thread(
+            self.remove_mount_sync,
+            mount_point=mount_point,
+            context=context,
+        )
 
     @rpc_expose(description="Delete connector with bundled cleanup")
     async def delete_connector(
@@ -330,74 +801,24 @@ class MountService:
             oauth_revoked, errors, and warnings lists.
 
         Raises:
-            RuntimeError: If mount_core_service or mount_persist_service not configured
+            RuntimeError: If mount_persist_service not configured
         """
+        result = await asyncio.to_thread(
+            self.delete_connector_sync,
+            mount_point=mount_point,
+            revoke_oauth=revoke_oauth if not self._oauth_service else False,
+            provider=provider,
+            user_email=user_email,
+            context=context,
+        )
 
-        async def _delete_connector_sync() -> dict[str, Any]:
-            result: dict[str, Any] = {
-                "removed": False,
-                "directory_deleted": False,
-                "config_deleted": False,
-                "oauth_revoked": False,
-                "errors": [],
-                "warnings": [],
-            }
-
-            # Step 1: Try to deactivate connector if active (non-fatal)
-            if self._mount_core_service is not None:
-                try:
-                    remove_result = self._mount_core_service.remove_mount(mount_point, context)
-                    result["removed"] = remove_result.get("removed", False)
-                    result["directory_deleted"] = remove_result.get("removed", False)
-                    if remove_result.get("errors"):
-                        result["warnings"].extend(remove_result["errors"])
-                except PermissionError:
-                    raise
-                except Exception as e:
-                    result["warnings"].append(f"Failed to deactivate connector (continuing): {e}")
-            else:
-                result["warnings"].append("mount_core_service not available, skipping deactivation")
-
-            # Step 2: Delete saved configuration (FATAL - must succeed)
-            if self._mount_persist_service is not None:
-                try:
-                    config_deleted = self._mount_persist_service.delete_saved_mount(mount_point)
-                    result["config_deleted"] = config_deleted
-                except Exception as e:
-                    error_msg = f"Failed to delete connector configuration: {e}"
-                    result["errors"].append(error_msg)
-                    raise RuntimeError(error_msg) from e
-            else:
-                error_msg = "mount_persist_service not available, cannot delete configuration"
-                result["errors"].append(error_msg)
-                raise RuntimeError(error_msg)
-
-            # Step 3: Optionally revoke OAuth credentials (handled async below)
-
-            # Step 4: Delete mount point directory
-            if self.nexus_fs and hasattr(self.nexus_fs, "rmdir"):
-                try:
-                    _nx: Any = self.nexus_fs
-                    await _nx.sys_rmdir(mount_point, recursive=True, context=context)
-                    result["directory_deleted"] = True
-                    logger.info(f"Deleted mount point directory: {mount_point}")
-                except Exception as e:
-                    result["warnings"].append(
-                        f"Failed to delete mount point directory (non-fatal): {e}"
-                    )
-                    logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
-
-            return result
-
-        result = await _delete_connector_sync()
-
-        # Step 3: Optionally revoke OAuth credentials (async)
-        if revoke_oauth:
+        # Handle async OAuth revocation via oauth_service if available
+        if revoke_oauth and self._oauth_service is not None:
             if not provider or not user_email:
                 result["warnings"].append(
                     "OAuth revocation requested but provider or user_email not provided"
                 )
-            elif self._oauth_service is not None:
+            else:
                 try:
                     revoke_result = await self._oauth_service.revoke_credential(
                         provider=provider,
@@ -409,10 +830,6 @@ class MountService:
                     result["warnings"].append(
                         f"Failed to revoke OAuth credentials (non-fatal): {e}"
                     )
-            else:
-                result["warnings"].append(
-                    "OAuth revocation requested but oauth_service not available"
-                )
 
         return result
 
@@ -431,26 +848,7 @@ class MountService:
                 - requires: List of optional dependencies (list[str])
                 - user_scoped: Whether connector requires per-user OAuth (bool)
         """
-        from nexus.backends.base.registry import ConnectorRegistry
-
-        def _list_connectors_sync() -> list[dict[str, Any]]:
-            if category:
-                connectors = ConnectorRegistry.list_by_category(category)
-            else:
-                connectors = ConnectorRegistry.list_all()
-
-            return [
-                {
-                    "name": c.name,
-                    "description": c.description,
-                    "category": c.category,
-                    "requires": c.requires,
-                    "user_scoped": c.user_scoped,
-                }
-                for c in connectors
-            ]
-
-        return await asyncio.to_thread(_list_connectors_sync)
+        return await asyncio.to_thread(self.list_connectors_sync, category)
 
     @rpc_expose(description="List all backend mounts")
     async def list_mounts(self, context: "OperationContext | None" = None) -> list[dict[str, Any]]:
@@ -467,104 +865,14 @@ class MountService:
                 - mount_point: Virtual path (str)
                 - readonly: Read-only flag (bool)
                 - admin_only: Admin-only flag (bool)
-
-        Examples:
-            # List all mounts I have access to
-            for mount in await service.list_mounts():
-                print(f"{mount['mount_point']} (readonly={mount['readonly']})")
         """
-
-        def _list_mounts_sync() -> list[dict[str, Any]]:
-            mounts = []
-
-            # Log context details for debugging
-            logger.info(f"[LIST_MOUNTS] Called with context: {context}")
-            if context:
-                logger.info(f"[LIST_MOUNTS] Context type: {type(context)}")
-                subject_type, subject_id = get_user_identity(context)
-                zone_id = get_zone_id(context)
-                logger.info(
-                    f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, zone={zone_id}"
-                )
-
-            router_mounts = list(self.router.list_mounts())
-            logger.info(f"[LIST_MOUNTS] Total mounts in router: {len(router_mounts)}")
-
-            for mount_info in router_mounts:
-                # Filter by permission - only include mounts the user can access
-                mount_point = mount_info.mount_point
-                logger.info(f"[LIST_MOUNTS] Checking mount: {mount_point}")
-
-                # Check if user has permission to access this mount
-                has_permission = False
-                if context and self.nexus_fs and hasattr(self.nexus_fs, "rebac_check"):
-                    try:
-                        subject_type, subject_id = get_user_identity(context)
-                        zone_id = get_zone_id(context)
-
-                        logger.info(
-                            f"[LIST_MOUNTS] Checking permission for {subject_type}:{subject_id} "
-                            f"on {mount_point} (zone={zone_id})"
-                        )
-
-                        # Admin users can see all mounts
-                        is_admin = getattr(context, "is_admin", False)
-                        if is_admin:
-                            has_permission = True
-                            logger.info(
-                                f"[LIST_MOUNTS] Admin user {subject_type}:{subject_id} - "
-                                f"granting access to {mount_point}"
-                            )
-                        elif subject_id:
-                            # Check if user has read permission (includes owner, editor, viewer)
-                            has_permission = self.nexus_fs.service("rebac").rebac_check_sync(
-                                subject=(subject_type, subject_id),
-                                permission="read",
-                                object=("file", mount_point),
-                                zone_id=zone_id,
-                            )
-                            logger.info(
-                                f"[LIST_MOUNTS] Permission check result for "
-                                f"{subject_type}:{subject_id} on {mount_point}: {has_permission}"
-                            )
-                        else:
-                            logger.warning(
-                                f"[LIST_MOUNTS] No subject_id in context for {mount_point}"
-                            )
-                    except Exception as e:
-                        # If permission check fails, exclude this mount for safety
-                        logger.error(
-                            f"[LIST_MOUNTS] Permission check failed for {mount_point}: {e}",
-                            exc_info=True,
-                        )
-                        has_permission = False
-                else:
-                    # No context or no ReBAC configured — include all mounts
-                    logger.info(
-                        f"[LIST_MOUNTS] No context or no rebac_check - allowing {mount_point}"
-                    )
-                    has_permission = True
-
-                # Only include mounts the user has permission to access
-                if has_permission:
-                    mounts.append(
-                        {
-                            "mount_point": mount_info.mount_point,
-                            "readonly": mount_info.readonly,
-                            "admin_only": mount_info.admin_only,
-                            "status": mount_info.status,
-                        }
-                    )
-
-            return mounts
-
-        return await asyncio.to_thread(_list_mounts_sync)
+        return await asyncio.to_thread(self.list_mounts_sync, context)
 
     @rpc_expose(description="Get mount details")
     async def get_mount(
         self,
         mount_point: str,
-        context: "OperationContext | None" = None,  # noqa: ARG002 - Protocol compliance
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Get details about a specific mount.
 
@@ -576,24 +884,8 @@ class MountService:
                 - mount_point: Virtual path (str)
                 - readonly: Read-only flag (bool)
                 - admin_only: Admin-only flag (bool)
-
-        Examples:
-            mount = await service.get_mount("/personal/alice")
-            if mount:
-                print(f"Readonly: {mount['readonly']}")
         """
-
-        def _get_mount_sync() -> dict[str, Any] | None:
-            mount_info = self.router.get_mount(mount_point)
-            if mount_info:
-                return {
-                    "mount_point": mount_info.mount_point,
-                    "readonly": mount_info.readonly,
-                    "admin_only": mount_info.admin_only,
-                }
-            return None
-
-        return await asyncio.to_thread(_get_mount_sync)
+        return await asyncio.to_thread(self.get_mount_sync, mount_point, context)
 
     @rpc_expose(description="Check if mount exists")
     async def has_mount(self, mount_point: str) -> bool:
@@ -604,12 +896,8 @@ class MountService:
 
         Returns:
             True if mount exists, False otherwise
-
-        Examples:
-            if await service.has_mount("/personal/alice"):
-                print("Alice's mount is active")
         """
-        return await asyncio.to_thread(self.router.has_mount, mount_point)
+        return await asyncio.to_thread(self.has_mount_sync, mount_point)
 
     # =========================================================================
     # Public API: Persisted Mount Configuration
@@ -640,6 +928,7 @@ class MountService:
             backend_type: Backend type - "cas_local", "cas_gcs", etc.
             backend_config: Backend-specific configuration dict
             readonly: Whether mount is read-only (default: False)
+            io_profile: I/O tuning profile
             owner_user_id: User who owns this mount (optional)
             zone_id: Zone ID for multi-zone isolation (optional)
             description: Human-readable description (optional)
@@ -651,17 +940,6 @@ class MountService:
         Raises:
             ValueError: If mount already exists at mount_point
             RuntimeError: If mount manager is not available
-
-        Examples:
-            # Save personal Google Drive mount configuration
-            mount_id = await service.save_mount(
-                mount_point="/personal/alice",
-                backend_type="google_drive",
-                backend_config={"access_token": "ya29.xxx"},
-                owner_user_id="google:alice123",
-                zone_id="acme",
-                description="Alice's personal Google Drive"
-            )
         """
         if not self.mount_manager:
             raise RuntimeError(
@@ -695,14 +973,12 @@ class MountService:
                 description=description,
             )
 
+            # Grant direct_owner permission to the user who saved the mount
+            self._grant_owner_permission(mount_point, context)
+
             return mount_id
 
-        result = await asyncio.to_thread(_save_mount_sync)
-
-        # Grant direct_owner permission to the user who saved the mount
-        await self._grant_mount_owner_permission(mount_point, context)
-
-        return result
+        return await asyncio.to_thread(_save_mount_sync)
 
     @rpc_expose(description="List saved mount configurations")
     async def list_saved_mounts(
@@ -714,8 +990,7 @@ class MountService:
         """List mount configurations saved in the database.
 
         Automatically filters by the current user's context (subject_id and zone_id)
-        unless explicit filter parameters are provided. This ensures users can only
-        see their own mounts and mounts from their zone.
+        unless explicit filter parameters are provided.
 
         Args:
             owner_user_id: Filter by owner user ID (optional, defaults to current user)
@@ -727,13 +1002,6 @@ class MountService:
 
         Raises:
             RuntimeError: If mount manager is not available
-
-        Examples:
-            # List my saved mounts (automatically filtered)
-            mounts = await service.list_saved_mounts()
-
-            # List all mounts in my zone
-            zone_mounts = await service.list_saved_mounts(owner_user_id=None)
         """
         if not self.mount_manager:
             raise RuntimeError(
@@ -764,9 +1032,6 @@ class MountService:
     async def load_mount(self, mount_point: str) -> str:
         """Load a saved mount configuration and activate it.
 
-        This retrieves the mount configuration from the database and activates it
-        by calling add_mount() internally.
-
         Args:
             mount_point: Virtual path of saved mount to load
 
@@ -776,10 +1041,6 @@ class MountService:
         Raises:
             ValueError: If mount not found in database
             RuntimeError: If mount manager is not available
-
-        Examples:
-            # Load Alice's saved mount
-            await service.load_mount("/personal/alice")
         """
         if not self.mount_manager:
             raise RuntimeError(
@@ -799,7 +1060,13 @@ class MountService:
         # Normalize token_manager_db for OAuth-backed mounts
         backend_type = mount_config["backend_type"]
         if _needs_token_manager_db(backend_type, backend_config):
-            if self.nexus_fs:
+            if self._gw is not None:
+                try:
+                    database_url = self._gw.get_database_url()
+                    backend_config["token_manager_db"] = database_url
+                except RuntimeError as e:
+                    raise RuntimeError(f"Cannot load {backend_type} mount: {e}") from e
+            elif self.nexus_fs:
                 try:
                     database_url = get_database_url(self.nexus_fs)
                     backend_config["token_manager_db"] = database_url
@@ -831,12 +1098,6 @@ class MountService:
 
         Raises:
             RuntimeError: If mount manager is not available
-
-        Examples:
-            # Remove from database
-            await service.delete_saved_mount("/personal/alice")
-            # Also deactivate if currently mounted
-            await service.remove_mount("/personal/alice")
         """
         if not self.mount_manager:
             raise RuntimeError(
@@ -847,7 +1108,6 @@ class MountService:
 
     # =========================================================================
     # Public API: Metadata Synchronization
-    # (These methods delegate to NexusFS for full implementation)
     # =========================================================================
 
     @rpc_expose(description="Sync metadata from connector backend")
@@ -866,10 +1126,6 @@ class MountService:
         full_sync: bool = False,
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s) to Nexus database.
-
-        For connector backends (like path_gcs), this scans the external storage
-        and updates Nexus's metadata database with any files that were added externally
-        or existed before Nexus was configured.
 
         Args:
             mount_point: Virtual path of mount to sync (None = sync all mounts)
@@ -931,8 +1187,6 @@ class MountService:
         context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Start an async sync job for a mount point.
-
-        Creates a background sync job and starts it immediately.
 
         Args:
             mount_point: Virtual path of mount to sync
@@ -1075,60 +1329,3 @@ class MountService:
             status=status,
             limit=limit,
         )
-
-    # =========================================================================
-    # Helper Methods
-    # =========================================================================
-
-    async def _grant_mount_owner_permission(
-        self, mount_point: str, context: "OperationContext | None"
-    ) -> None:
-        """Grant direct_owner permission to the user who created the mount.
-
-        This helper function is called after successfully creating a mount to
-        automatically grant the creator full access to the mounted backend.
-        It also creates a directory entry for the mount point.
-
-        Args:
-            mount_point: The virtual path of the mount
-            context: Operation context containing user/subject information
-        """
-        logger.info(f"Setting up mount point: {mount_point}")
-
-        # Create directory entry for the mount point
-        if self.nexus_fs and hasattr(self.nexus_fs, "sys_mkdir"):
-            try:
-                await self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
-                logger.info(f"✓ Created directory entry for mount point: {mount_point}")
-            except Exception as e:
-                logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
-
-        # Grant direct_owner permission to the creating user
-        if context:
-            subject_type, subject_id = get_user_identity(context)
-            zone_id = get_zone_id(context)
-
-            if subject_id and self.nexus_fs and self.nexus_fs.service("rebac"):
-                try:
-                    self.nexus_fs.service("rebac").rebac_create_sync(
-                        subject=(subject_type, subject_id),
-                        relation="direct_owner",
-                        object=("file", mount_point),
-                        zone_id=zone_id,
-                    )
-                    logger.info(
-                        f"✓ Granted direct_owner to {subject_type}:{subject_id} for {mount_point}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to grant direct_owner for {mount_point}: {type(e).__name__}: {e}"
-                    )
-            else:
-                logger.warning(
-                    "[MOUNT-PERMISSION] No subject_id in context or rebac_add_tuple not available, "
-                    "skipping permission grant"
-                )
-        else:
-            logger.warning(
-                "[MOUNT-PERMISSION] No context provided, skipping permission grant for mount point"
-            )

@@ -8,6 +8,15 @@ session/prompt → disconnect.
 Incoming requests from the agent (permission requests, file reads/writes)
 are auto-handled.  Session update notifications are accumulated for
 metadata extraction.
+
+File I/O routing (``everything is a file``):
+    When *fs_read* / *fs_write* callables are provided (backed by
+    ``NexusFS.sys_read`` / ``sys_write``), all ``fs/read_text_file``
+    and ``fs/write_text_file`` requests from the agent are routed
+    through the VFS syscall layer, enabling ReBAC enforcement, audit
+    logging, and federation-aware reads.  When no callables are
+    supplied, the connection falls back to host-native ``open()``
+    for backward compatibility.
 """
 
 from __future__ import annotations
@@ -17,10 +26,15 @@ import contextlib
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Type aliases for VFS-backed file I/O callables.
+FsReadFn = Callable[[str], Awaitable[str]]
+FsWriteFn = Callable[[str, str], Awaitable[None]]
 
 
 @dataclass
@@ -44,7 +58,12 @@ class AcpConnection:
         Matching: auto-incrementing int IDs + ``dict[int, asyncio.Future]``
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        fs_read: FsReadFn | None = None,
+        fs_write: FsWriteFn | None = None,
+    ) -> None:
         self._proc: asyncio.subprocess.Process | None = None
         self._next_id: int = 1
         self._pending: dict[int, asyncio.Future[Any]] = {}
@@ -59,6 +78,10 @@ class AcpConnection:
         self._model_name: str | None = None
         self._load_session: bool = False
         self._prompt_active: bool = False
+
+        # VFS-backed file I/O callables (``everything is a file``).
+        self._fs_read = fs_read
+        self._fs_write = fs_write
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -103,6 +126,11 @@ class AcpConnection:
         self._load_session = bool(caps.get("loadSession"))
         return dict(result)
 
+    @property
+    def supports_load_session(self) -> bool:
+        """Whether the agent advertised ``loadSession`` capability."""
+        return self._load_session
+
     async def session_new(self, cwd: str | None = None, timeout: float = 30.0) -> str:
         """Send ``session/new`` and store the returned sessionId."""
         resolved_cwd = os.path.abspath(cwd or self._cwd or os.getcwd())
@@ -117,20 +145,7 @@ class AcpConnection:
         self._session_id = result.get("sessionId")
 
         # Extract model name from session/new response
-        models = result.get("models", {})
-        current_id = models.get("currentModelId")
-        if current_id:
-            for m in models.get("availableModels", []):
-                if m.get("modelId") == current_id:
-                    # Use description (e.g. "Opus 4.6 · Most capable...") or name
-                    desc = m.get("description", "")
-                    # Extract model name before " · "
-                    self._model_name = (
-                        desc.split(" · ")[0] if " · " in desc else m.get("name", current_id)
-                    )
-                    break
-            else:
-                self._model_name = current_id
+        self._extract_model(result)
         return self._session_id or ""
 
     async def session_load(
@@ -156,18 +171,7 @@ class AcpConnection:
 
         # Extract model name (same logic as session_new)
         if isinstance(result, dict):
-            models = result.get("models", {})
-            current_id = models.get("currentModelId")
-            if current_id:
-                for m in models.get("availableModels", []):
-                    if m.get("modelId") == current_id:
-                        desc = m.get("description", "")
-                        self._model_name = (
-                            desc.split(" · ")[0] if " · " in desc else m.get("name", current_id)
-                        )
-                        break
-                else:
-                    self._model_name = current_id
+            self._extract_model(result)
 
         # Drain buffered replay notifications: session/load may return its
         # JSON-RPC result before all replay notifications have been read from
@@ -318,6 +322,21 @@ class AcpConnection:
         ):
             asyncio.ensure_future(self._proc.stdin.drain())
 
+    def _respond_error(self, msg_id: int | str, message: str, code: int = -32000) -> None:
+        """Send a JSON-RPC error response."""
+        error_msg = {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {"code": code, "message": message},
+        }
+        self._write(error_msg)
+        if (
+            self._proc is not None
+            and self._proc.stdin is not None
+            and not self._proc.stdin.is_closing()
+        ):
+            asyncio.ensure_future(self._proc.stdin.drain())
+
     # ------------------------------------------------------------------
     # Reader loop
     # ------------------------------------------------------------------
@@ -419,74 +438,65 @@ class AcpConnection:
                     "outcome": {"outcome": "selected", "optionId": "allow_once"},
                 },
             )
-        elif method == "fs/read_text_file":
-            self._handle_fs_read(msg_id, params)
-        elif method == "fs/write_text_file":
-            self._handle_fs_write(msg_id, params)
+        elif method in ("fs/read_text_file", "fs/write_text_file"):
+            # File I/O may involve async VFS syscalls — dispatch as task.
+            asyncio.create_task(
+                self._handle_fs_request(method, msg_id, params),
+                name=f"acp-fs-{method}",
+            )
         else:
             logger.debug("ACP: unhandled agent request: %s", method)
-            # Respond with method-not-found
-            error_msg = {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {"code": -32601, "message": f"Method not found: {method}"},
-            }
-            self._write(error_msg)
-            if (
-                self._proc is not None
-                and self._proc.stdin is not None
-                and not self._proc.stdin.is_closing()
-            ):
-                asyncio.ensure_future(self._proc.stdin.drain())
+            self._respond_error(msg_id, f"Method not found: {method}", code=-32601)
 
-    def _handle_fs_read(self, msg_id: int | str, params: dict[str, Any]) -> None:
-        """Handle fs/read_text_file: read file from cwd and respond."""
-        file_path = params.get("path", "")
-        try:
-            # Resolve relative to cwd
-            if not os.path.isabs(file_path) and self._cwd:
-                file_path = os.path.join(self._cwd, file_path)
-            with open(file_path, encoding="utf-8", errors="replace") as f:
-                content = f.read()
-            self._respond(msg_id, {"content": content})
-        except Exception as exc:
-            error_msg = {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {"code": -32000, "message": str(exc)},
-            }
-            self._write(error_msg)
-            if (
-                self._proc is not None
-                and self._proc.stdin is not None
-                and not self._proc.stdin.is_closing()
-            ):
-                asyncio.ensure_future(self._proc.stdin.drain())
+    # ------------------------------------------------------------------
+    # File I/O — routes through VFS when callables are available
+    # ------------------------------------------------------------------
 
-    def _handle_fs_write(self, msg_id: int | str, params: dict[str, Any]) -> None:
-        """Handle fs/write_text_file: write file and respond with null."""
-        file_path = params.get("path", "")
-        content = params.get("content", "")
+    def _resolve_path(self, file_path: str) -> str:
+        """Resolve a file path relative to cwd."""
+        if not os.path.isabs(file_path) and self._cwd:
+            file_path = os.path.join(self._cwd, file_path)
+        return file_path
+
+    async def _handle_fs_request(
+        self,
+        method: str,
+        msg_id: int | str,
+        params: dict[str, Any],
+    ) -> None:
+        """Handle fs/read_text_file and fs/write_text_file.
+
+        Routes through VFS syscalls when ``fs_read`` / ``fs_write``
+        callables are provided; falls back to host-native ``open()``
+        otherwise.
+        """
         try:
-            if not os.path.isabs(file_path) and self._cwd:
-                file_path = os.path.join(self._cwd, file_path)
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            self._respond(msg_id, None)
+            if method == "fs/read_text_file":
+                path = self._resolve_path(params.get("path", ""))
+                if self._fs_read is not None:
+                    content = await self._fs_read(path)
+                else:
+                    with open(path, encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                self._respond(msg_id, {"content": content})
+
+            elif method == "fs/write_text_file":
+                path = self._resolve_path(params.get("path", ""))
+                content = params.get("content", "")
+                if self._fs_write is not None:
+                    await self._fs_write(path, content)
+                else:
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(content)
+                self._respond(msg_id, None)
+
         except Exception as exc:
-            error_msg = {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {"code": -32000, "message": str(exc)},
-            }
-            self._write(error_msg)
-            if (
-                self._proc is not None
-                and self._proc.stdin is not None
-                and not self._proc.stdin.is_closing()
-            ):
-                asyncio.ensure_future(self._proc.stdin.drain())
+            self._respond_error(msg_id, str(exc))
+
+    # ------------------------------------------------------------------
+    # Notifications
+    # ------------------------------------------------------------------
 
     def _handle_notification(self, msg: dict[str, Any]) -> None:
         """Handle incoming notifications (no response needed)."""
@@ -530,6 +540,25 @@ class AcpConnection:
 
         else:
             logger.debug("ACP: unhandled notification: %s", method)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _extract_model(self, result: dict[str, Any]) -> None:
+        """Extract model name from session/new or session/load response."""
+        models = result.get("models", {})
+        current_id = models.get("currentModelId")
+        if current_id:
+            for m in models.get("availableModels", []):
+                if m.get("modelId") == current_id:
+                    desc = m.get("description", "")
+                    self._model_name = (
+                        desc.split(" · ")[0] if " · " in desc else m.get("name", current_id)
+                    )
+                    break
+            else:
+                self._model_name = current_id
 
 
 class AcpRpcError(Exception):

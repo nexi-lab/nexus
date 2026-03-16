@@ -27,7 +27,7 @@ class AcpRPCService:
     # ------------------------------------------------------------------
 
     def _zone_id(self, context: Any | None) -> str:
-        fallback: str = self._acp._default_zone_id
+        fallback: str = self._acp.default_zone_id
         if context is None:
             return fallback
         zid = (
@@ -77,7 +77,7 @@ class AcpRPCService:
     @rpc_expose(description="List available ACP agent configurations")
     def acp_list_agents(self, context: dict | None = None) -> list[dict]:  # noqa: ARG002
         """List built-in and registered agent configs."""
-        agents = self._acp._agents
+        agents = self._acp.agent_configs
         return [
             {
                 "agent_id": cfg.agent_id,
@@ -146,10 +146,7 @@ class AcpRPCService:
         skills: list[dict],
         context: dict | None = None,
     ) -> dict:
-        """Set the enabled skills for a coding agent.
-
-        Each skill dict has keys: name, description, path.
-        """
+        """Set the enabled skills for a coding agent."""
         zone_id = self._zone_id(context)
         self._acp.set_enabled_skills(agent_id, skills, zone_id=zone_id)
         return {"agent_id": agent_id, "skills": skills}

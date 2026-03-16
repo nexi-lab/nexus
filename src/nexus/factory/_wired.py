@@ -313,6 +313,9 @@ async def _boot_wired_services(
         except Exception as exc:
             logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
     if _acp_service is not None:
+        # Late-bind NexusFS for VFS-routed file I/O (``everything is a file``).
+        if hasattr(_acp_service, "bind_fs"):
+            _acp_service.bind_fs(nx)
         try:
             from nexus.system_services.acp.acp_rpc_service import AcpRPCService
 

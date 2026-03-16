@@ -4,36 +4,36 @@ Calls coding agent CLIs (Claude Code, Gemini CLI, Codex, etc.) over the
 ACP JSON-RPC 2.0 protocol (stdin/stdout).  Each call is a one-shot
 session: spawn → initialize → session/new → session/prompt → disconnect.
 
-Results are persisted to the VFS at ``/{zone}/proc/{pid}/result`` for audit.
+Results are persisted to the VFS at ``/{zone}/proc/{pid}/result`` via
+``sys_write`` (when NexusFS is available) or direct metastore fallback.
 
 Bidirectional communication (file reads, permission requests) is handled
-automatically by ``AcpConnection``.
+automatically by ``AcpConnection``.  File I/O from the agent is routed
+through VFS syscalls when ``NexusFS`` is bound (``everything is a file``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import DT_REG, FileMetadata
 from nexus.contracts.process_types import ProcessDescriptor, ProcessKind, ProcessState
 
 from .agents import BUILTIN_AGENTS, AgentConfig
-from .connection import AcpConnection, AcpPromptResult, AcpRpcError
+from .connection import AcpConnection, AcpPromptResult, AcpRpcError, FsReadFn, FsWriteFn
+
+if TYPE_CHECKING:
+    from nexus.contracts.types import VFSOperations
 
 logger = logging.getLogger(__name__)
-
-# Custom metadata keys for VFS storage
-ACP_RESULT_KEY = "__acp_result__"
-ACP_SYSTEM_PROMPT_KEY = "__acp_system_prompt__"
-ACP_ENABLED_SKILLS_KEY = "__acp_enabled_skills__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,11 +73,37 @@ class AcpService:
         self._process_table = process_table
         self._metastore = metastore
         self._zone_id = zone_id
-        self._default_zone_id = zone_id  # expose for RPC layer
+        self._nexus_fs: VFSOperations | None = None
         self._agents: dict[str, AgentConfig] = {
             k: v for k, v in BUILTIN_AGENTS.items() if v.enabled
         }
         self._connections: dict[str, AcpConnection] = {}
+
+    # ------------------------------------------------------------------
+    # Public properties (used by AcpRPCService — no private access)
+    # ------------------------------------------------------------------
+
+    @property
+    def default_zone_id(self) -> str:
+        """The default zone ID for this service instance."""
+        return self._zone_id
+
+    @property
+    def agent_configs(self) -> dict[str, AgentConfig]:
+        """Registered agent configurations (agent_id → config)."""
+        return dict(self._agents)
+
+    # ------------------------------------------------------------------
+    # Late-binding NexusFS (``everything is a file``)
+    # ------------------------------------------------------------------
+
+    def bind_fs(self, nexus_fs: VFSOperations) -> None:
+        """Bind NexusFS for VFS-routed file I/O and result persistence.
+
+        Called after NexusFS construction (factory ``_wired.py`` phase).
+        """
+        self._nexus_fs = nexus_fs
+        logger.debug("AcpService: NexusFS bound for VFS-backed file I/O")
 
     # ------------------------------------------------------------------
     # Public API
@@ -154,8 +180,15 @@ class AcpService:
         )
         pid = desc.pid
 
-        # Transition CREATED → RUNNING (direct _transition — kernel-level)
+        # Transition CREATED → RUNNING.
+        # TODO(#1510): ProcessTableProtocol lacks a public start() method.
+        # Add ``start(pid) → RUNNING`` to the protocol and use it here
+        # instead of reaching into the private ``_transition`` method.
         self._process_table._transition(desc, ProcessState.RUNNING)
+
+        # Build VFS-backed file I/O callables when NexusFS is available.
+        host_cwd = os.path.abspath(cwd)
+        fs_read, fs_write = self._make_fs_callables(host_cwd, zone_id)
 
         # Run ACP session
         timed_out = False
@@ -163,7 +196,7 @@ class AcpService:
         response_text = ""
         stderr_text = ""
         metadata: dict[str, Any] = {}
-        conn = AcpConnection()
+        conn = AcpConnection(fs_read=fs_read, fs_write=fs_write)
 
         try:
             await conn.spawn(cmd, cwd=cwd, env=env)
@@ -172,7 +205,7 @@ class AcpService:
             try:
                 await conn.initialize(timeout=30.0)
                 if session_id:
-                    if not conn._load_session:
+                    if not conn.supports_load_session:
                         raise ValueError(
                             f"Agent {agent_id!r} does not support session resume "
                             f"(loadSession capability not advertised)"
@@ -234,7 +267,7 @@ class AcpService:
         )
 
         # Persist to VFS (include original prompt for history)
-        self._persist_result(result, zone_id, prompt=user_prompt)
+        await self._persist_result(result, zone_id, prompt=user_prompt)
 
         return result
 
@@ -256,7 +289,7 @@ class AcpService:
     ) -> list[ProcessDescriptor]:
         """List ACP-managed processes from the ProcessTable."""
         procs = self._process_table.list_processes(
-            kind=ProcessKind.EXTERNAL,
+            kind=ProcessKind.UNMANAGED,
             zone_id=zone_id,
             owner_id=owner_id,
         )
@@ -268,8 +301,12 @@ class AcpService:
         logger.debug("ACP agent registered: %s (%s)", config.agent_id, config.command)
 
     # ------------------------------------------------------------------
-    # System prompt management (VFS-backed)
+    # System prompt management (VFS-backed via metastore xattr)
     # ------------------------------------------------------------------
+
+    _ACP_SYSTEM_PROMPT_KEY = "__acp_system_prompt__"
+    _ACP_ENABLED_SKILLS_KEY = "__acp_enabled_skills__"
+    _ACP_RESULT_KEY = "__acp_result__"
 
     def _system_prompt_path(self, agent_id: str, zone_id: str) -> str:
         return f"/{zone_id}/acp/{agent_id}/SYSTEM.md"
@@ -283,21 +320,8 @@ class AcpService:
         """Write a system prompt for *agent_id* to the VFS."""
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
-
-        existing = self._metastore.get(path)
-        if existing is None:
-            meta = FileMetadata(
-                path=path,
-                backend_name="acp",
-                physical_path=f"acp://{agent_id}/SYSTEM.md",
-                size=len(content.encode()),
-                entry_type=DT_REG,
-                zone_id=zone_id,
-                owner_id="system",
-            )
-            self._metastore.put(meta)
-
-        self._metastore.set_file_metadata(path, ACP_SYSTEM_PROMPT_KEY, content)
+        self._ensure_vfs_entry(path, zone_id, backend="acp")
+        self._metastore.set_file_metadata(path, self._ACP_SYSTEM_PROMPT_KEY, content)
         logger.debug("ACP system prompt set for %s (%d chars)", agent_id, len(content))
 
     def get_system_prompt(
@@ -308,7 +332,7 @@ class AcpService:
         """Read the system prompt for *agent_id* from the VFS."""
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
-        result: str | None = self._metastore.get_file_metadata(path, ACP_SYSTEM_PROMPT_KEY)
+        result: str | None = self._metastore.get_file_metadata(path, self._ACP_SYSTEM_PROMPT_KEY)
         return result
 
     def delete_system_prompt(
@@ -323,7 +347,7 @@ class AcpService:
             self._metastore.delete(path)
 
     # ------------------------------------------------------------------
-    # Enabled skills management (VFS-backed)
+    # Enabled skills management (VFS-backed via metastore xattr)
     # ------------------------------------------------------------------
 
     def _config_path(self, agent_id: str, zone_id: str) -> str:
@@ -335,27 +359,11 @@ class AcpService:
         skills: list[dict],
         zone_id: str | None = None,
     ) -> None:
-        """Store the enabled skills list for *agent_id* in the VFS.
-
-        Each skill is a dict with keys: name, description, path.
-        """
+        """Store the enabled skills list for *agent_id* in the VFS."""
         zone_id = zone_id or self._zone_id
         path = self._config_path(agent_id, zone_id)
-
-        existing = self._metastore.get(path)
-        if existing is None:
-            meta = FileMetadata(
-                path=path,
-                backend_name="acp",
-                physical_path=f"acp://{agent_id}/config",
-                size=0,
-                entry_type=DT_REG,
-                zone_id=zone_id,
-                owner_id="system",
-            )
-            self._metastore.put(meta)
-
-        self._metastore.set_file_metadata(path, ACP_ENABLED_SKILLS_KEY, skills)
+        self._ensure_vfs_entry(path, zone_id, backend="acp")
+        self._metastore.set_file_metadata(path, self._ACP_ENABLED_SKILLS_KEY, skills)
         logger.debug("ACP enabled_skills set for %s: %s", agent_id, skills)
 
     def get_enabled_skills(
@@ -366,7 +374,9 @@ class AcpService:
         """Read the enabled skills list for *agent_id* from the VFS."""
         zone_id = zone_id or self._zone_id
         path = self._config_path(agent_id, zone_id)
-        result: list[dict] | None = self._metastore.get_file_metadata(path, ACP_ENABLED_SKILLS_KEY)
+        result: list[dict] | None = self._metastore.get_file_metadata(
+            path, self._ACP_ENABLED_SKILLS_KEY
+        )
         return result
 
     def get_call_history(
@@ -384,7 +394,7 @@ class AcpService:
             for entry in entries:
                 if not entry.path.endswith("/result"):
                     continue
-                payload = self._metastore.get_file_metadata(entry.path, ACP_RESULT_KEY)
+                payload = self._metastore.get_file_metadata(entry.path, self._ACP_RESULT_KEY)
                 if payload and isinstance(payload, dict):
                     results.append(payload)
         except Exception as exc:
@@ -401,22 +411,47 @@ class AcpService:
         self._connections.clear()
 
     # ------------------------------------------------------------------
+    # VFS file I/O callables for AcpConnection
+    # ------------------------------------------------------------------
+
+    def _make_fs_callables(
+        self,
+        host_cwd: str,
+        zone_id: str,
+    ) -> tuple[FsReadFn | None, FsWriteFn | None]:
+        """Create VFS-backed read/write callables for ``AcpConnection``.
+
+        When NexusFS is bound, file paths from the agent (host paths)
+        are mapped to VFS paths relative to the zone root and routed
+        through ``sys_read`` / ``sys_write``.
+
+        Returns ``(None, None)`` when no NexusFS is available — the
+        connection will fall back to host-native ``open()``.
+        """
+        nx = self._nexus_fs
+        if nx is None:
+            return None, None
+
+        vfs_root = f"/{zone_id}"
+
+        async def vfs_read(host_path: str) -> str:
+            vfs_path = _host_to_vfs(host_path, host_cwd, vfs_root)
+            data: bytes = await nx.sys_read(vfs_path)
+            return data.decode("utf-8", errors="replace")
+
+        async def vfs_write(host_path: str, content: str) -> None:
+            vfs_path = _host_to_vfs(host_path, host_cwd, vfs_root)
+            await nx.sys_write(vfs_path, content.encode("utf-8"))
+
+        return vfs_read, vfs_write
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
     @staticmethod
     def _build_acp_command(config: AgentConfig) -> list[str]:
-        """Build the subprocess command for ACP JSON-RPC mode.
-
-        No prompt in argv — the prompt is sent via JSON-RPC ``session/prompt``.
-        When ``npx_package`` is configured, always use npx — the package is
-        typically an ACP wrapper that differs from the local binary.
-        Falls back to the local binary only when no npx_package is set.
-        """
-        binary = config.command
-        # Prefer npx when npx_package is configured — the npx package is
-        # typically an ACP wrapper (e.g. @zed-industries/claude-agent-acp)
-        # that differs from the local binary which may not support ACP.
+        """Build the subprocess command for ACP JSON-RPC mode."""
         if config.npx_package is not None:
             return [
                 "npx",
@@ -425,43 +460,100 @@ class AcpService:
                 config.npx_package,
                 *config.acp_args,
             ]
+        return [config.command, *config.acp_args]
 
-        return [binary, *config.acp_args]
+    def _ensure_vfs_entry(self, path: str, zone_id: str, backend: str = "acp") -> None:
+        """Ensure a metastore entry exists at *path* (idempotent)."""
+        from nexus.contracts.metadata import DT_REG, FileMetadata
 
-    def _persist_result(self, result: AcpResult, zone_id: str, *, prompt: str = "") -> None:
-        """Write result JSON to metastore at /{zone}/proc/{pid}/result."""
+        existing = self._metastore.get(path)
+        if existing is None:
+            meta = FileMetadata(
+                path=path,
+                backend_name=backend,
+                physical_path=f"{backend}://{path.lstrip('/')}",
+                size=0,
+                entry_type=DT_REG,
+                zone_id=zone_id,
+                owner_id="system",
+            )
+            self._metastore.put(meta)
+
+    async def _persist_result(self, result: AcpResult, zone_id: str, *, prompt: str = "") -> None:
+        """Persist result to VFS at ``/{zone}/proc/{pid}/result``.
+
+        Uses ``sys_write`` when NexusFS is available (``everything is a
+        file`` — the result is readable via ``sys_read``).  Falls back
+        to direct metastore xattr storage otherwise.
+        """
         path = f"/{zone_id}/proc/{result.pid}/result"
+        payload = {
+            "pid": result.pid,
+            "agent_id": result.agent_id,
+            "prompt": prompt,
+            "created_at": time.time(),
+            "exit_code": result.exit_code,
+            "response": result.response,
+            "raw_stdout": result.raw_stdout,
+            "stderr": result.stderr,
+            "timed_out": result.timed_out,
+            "metadata": result.metadata,
+            "session_id": result.metadata.get("session_id"),
+        }
 
         try:
-            existing = self._metastore.get(path)
-            if existing is None:
-                meta = FileMetadata(
-                    path=path,
-                    backend_name="proc",
-                    physical_path=f"proc://{result.pid}/result",
-                    size=0,
-                    entry_type=DT_REG,
-                    zone_id=zone_id,
-                    owner_id="system",
-                )
-                self._metastore.put(meta)
-
-            payload = {
-                "pid": result.pid,
-                "agent_id": result.agent_id,
-                "prompt": prompt,
-                "created_at": time.time(),
-                "exit_code": result.exit_code,
-                "response": result.response,
-                "raw_stdout": result.raw_stdout,
-                "stderr": result.stderr,
-                "timed_out": result.timed_out,
-                "metadata": result.metadata,
-                "session_id": result.metadata.get("session_id"),
-            }
-            self._metastore.set_file_metadata(path, ACP_RESULT_KEY, payload)
+            if self._nexus_fs is not None:
+                # Route through VFS — result is readable via sys_read.
+                content = json.dumps(payload, ensure_ascii=False, indent=2)
+                await self._nexus_fs.sys_write(path, content.encode("utf-8"))
+            else:
+                # Fallback: direct metastore xattr (legacy path).
+                self._ensure_vfs_entry(path, zone_id, backend="proc")
+                self._metastore.set_file_metadata(path, self._ACP_RESULT_KEY, payload)
         except Exception as exc:
             logger.warning("ACP result persistence failed for pid=%s: %s", result.pid, exc)
+
+
+# ---------------------------------------------------------------------------
+# Path mapping — host path → VFS path
+# ---------------------------------------------------------------------------
+
+
+def _host_to_vfs(host_path: str, host_cwd: str, vfs_root: str) -> str:
+    """Map a host filesystem path to a VFS path.
+
+    Relative paths are resolved against *host_cwd*, then the host_cwd
+    prefix is replaced with *vfs_root*.
+
+    Examples::
+
+        _host_to_vfs("/home/user/project/src/main.py",
+                      "/home/user/project", "/root/workspace")
+        → "/root/workspace/src/main.py"
+
+        _host_to_vfs("src/main.py",
+                      "/home/user/project", "/root/workspace")
+        → "/root/workspace/src/main.py"
+
+    Paths outside *host_cwd* are placed under ``{vfs_root}/__external__/``
+    as a containment boundary (prevents arbitrary VFS traversal).
+    """
+    # Resolve to absolute
+    if not os.path.isabs(host_path):
+        host_path = os.path.join(host_cwd, host_path)
+    host_path = os.path.normpath(host_path)
+
+    try:
+        rel = os.path.relpath(host_path, host_cwd)
+    except ValueError:
+        # Windows cross-drive or other edge case
+        rel = None
+
+    if rel is not None and not rel.startswith(".."):
+        return f"{vfs_root}/{rel}"
+
+    # Outside workspace — contain under __external__ with full host path
+    return f"{vfs_root}/__external__{host_path}"
 
 
 # ---------------------------------------------------------------------------
@@ -503,15 +595,7 @@ def _build_metadata(
     prompt_result: AcpPromptResult,
     num_turns: int = 0,
 ) -> dict[str, Any]:
-    """Extract standardised metadata from an ACP prompt result.
-
-    Combines data from the prompt response itself and accumulated
-    session/update notifications into a unified metadata dict.
-
-    Standardised keys:
-        model, cost_usd, input_tokens, output_tokens,
-        duration_api_ms, num_turns, session_id
-    """
+    """Extract standardised metadata from an ACP prompt result."""
     meta: dict[str, Any] = {}
 
     if prompt_result.model:

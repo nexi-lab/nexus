@@ -12,6 +12,7 @@ import {
   nextStatusFilter,
 } from "../../stores/versions-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
@@ -53,6 +54,9 @@ export default function VersionsPanel(): React.ReactNode {
   const rollbackTransaction = useVersionsStore((s) => s.rollbackTransaction);
   const fetchConflicts = useVersionsStore((s) => s.fetchConflicts);
   const toggleConflicts = useVersionsStore((s) => s.toggleConflicts);
+
+  // Clipboard copy
+  const { copy, copied } = useCopy();
 
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("versions"));
@@ -117,6 +121,11 @@ export default function VersionsPanel(): React.ReactNode {
     "tab": () => toggleFocus("versions"),
     "g": () => setSelectedIndex(jumpToStart()),
     "shift+g": () => setSelectedIndex(jumpToEnd(transactions.length)),
+    "y": () => {
+      if (selectedTransaction) {
+        copy(selectedTransaction.transaction_id);
+      }
+    },
   });
 
   const filterLabel = statusFilter ? ` [${statusFilter}]` : " [all]";
@@ -183,9 +192,11 @@ export default function VersionsPanel(): React.ReactNode {
 
         {/* Help bar */}
         <box height={1} width="100%">
-          <text>
-            {"j/k:navigate  n:new txn  Enter:commit  Backspace:rollback  f:filter  d:diff  c:conflicts  q:quit"}
-          </text>
+          {copied
+            ? <text foregroundColor="green">Copied!</text>
+            : <text>
+            {"j/k:navigate  n:new txn  Enter:commit  Backspace:rollback  f:filter  d:diff  c:conflicts  y:copy  q:quit"}
+          </text>}
         </box>
       </box>
     </BrickGate>

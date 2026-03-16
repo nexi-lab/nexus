@@ -16,6 +16,8 @@ import { useKeyboard } from "./shared/hooks/use-keyboard.js";
 import { IdentitySwitcher } from "./shared/components/identity-switcher.js";
 import { AppConfirmDialog } from "./shared/components/app-confirm-dialog.js";
 import { HelpOverlay } from "./shared/components/help-overlay.js";
+import { WelcomeScreen } from "./shared/components/welcome-screen.js";
+import { useFreshServer } from "./shared/hooks/use-fresh-server.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
@@ -82,6 +84,9 @@ export function App(): React.ReactNode {
   const zoomedPanel = useUiStore((s) => s.zoomedPanel);
   const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const { isFresh } = useFreshServer();
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const showWelcome = isFresh === true && !welcomeDismissed;
 
   const toggleIdentitySwitcher = useCallback(() => {
     setIdentitySwitcherOpen((prev) => !prev);
@@ -92,7 +97,7 @@ export function App(): React.ReactNode {
   }, []);
 
   useKeyboard(
-    identitySwitcherOpen || helpOpen
+    identitySwitcherOpen || helpOpen || showWelcome
       ? {
           // When an overlay is open, only its dismiss key works from app level.
           "ctrl+i": toggleIdentitySwitcher,
@@ -136,6 +141,7 @@ export function App(): React.ReactNode {
       </box>
 
       {/* Overlays */}
+      {showWelcome && <WelcomeScreen onDismiss={() => setWelcomeDismissed(true)} />}
       <IdentitySwitcher visible={identitySwitcherOpen} onClose={closeIdentitySwitcher} />
       <AppConfirmDialog />
       <HelpOverlay visible={helpOpen} panel={activePanel} onDismiss={() => setHelpOpen(false)} />

@@ -23,6 +23,7 @@ import { useAccessStore } from "../../stores/access-store.js";
 import type { AccessTab } from "../../stores/access-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useCopy } from "../../shared/hooks/use-copy.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
@@ -68,6 +69,7 @@ export default function AccessPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const visibleTabs = useVisibleTabs(ALL_TABS);
+  const { copy, copied } = useCopy();
   const [overlay, setOverlay] = useState<OverlayMode>("none");
 
   // Zone for fraud score queries
@@ -324,6 +326,15 @@ export default function AccessPanel(): React.ReactNode {
         }
       }
     },
+    y: () => {
+      if (activeTab === "manifests") {
+        const selected = manifests[selectedManifestIndex];
+        if (selected) copy(selected.manifest_id);
+      } else if (activeTab === "delegations") {
+        const selected = delegations[selectedDelegationIndex];
+        if (selected) copy(selected.delegation_id);
+      }
+    },
     g: () => {
       // Fetch collusion rings (fraud tab)
       if (activeTab === "fraud" && client) {
@@ -416,11 +427,11 @@ export default function AccessPanel(): React.ReactNode {
   // Tab-specific help text
   const delegationFilterLabel = delegationFilter ? ` [${delegationFilter}]` : "";
   const HELP: Readonly<Record<AccessTab, string>> = {
-    manifests: "j/k:navigate  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  Tab:tab  r:refresh  q:quit",
+    manifests: "j/k:navigate  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  y:copy  Tab:tab  r:refresh  q:quit",
     alerts: "j/k:navigate  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
     credentials: "j/k:navigate  i:issue  x:revoke  Tab:tab  r:refresh  q:quit",
     fraud: "j/k:navigate  c:compute  g:collusion  s:suspend agent  Tab:tab  r:refresh  q:quit",
-    delegations: `j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  f:filter${delegationFilterLabel}  Tab:tab  r:refresh  q:quit`,
+    delegations: `j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  y:copy  f:filter${delegationFilterLabel}  Tab:tab  r:refresh  q:quit`,
   };
 
   return (
@@ -490,7 +501,9 @@ export default function AccessPanel(): React.ReactNode {
 
       {/* Help bar */}
       <box height={1} width="100%">
-        <text>{HELP[activeTab]}</text>
+        {copied
+          ? <text foregroundColor="green">Copied!</text>
+          : <text>{HELP[activeTab]}</text>}
       </box>
     </box>
   );

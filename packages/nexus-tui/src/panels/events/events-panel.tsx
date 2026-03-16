@@ -25,6 +25,7 @@ import { MclReplay } from "./mcl-replay.js";
 import { OperationsTab } from "./operations-tab.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
 type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect";
 
@@ -395,20 +396,22 @@ export default function EventsPanel(): React.ReactNode {
             )}
 
             {/* Event stream */}
-            <scrollbox flexGrow={1} width="100%">
-              {events.length === 0 ? (
-                <EmptyState
-                  message="Listening for events..."
-                  hint="Waiting for activity on the server."
-                />
-              ) : (
-                events.map((event, index) => (
-                  <box key={event.id ?? index} height={1} width="100%" flexDirection="row">
-                    <text>{`[${event.event}] ${truncate(event.data, 120)}`}</text>
-                  </box>
-                ))
-              )}
-            </scrollbox>
+            <ScrollIndicator selectedIndex={events.length - 1} totalItems={events.length} visibleItems={20}>
+              <scrollbox flexGrow={1} width="100%">
+                {events.length === 0 ? (
+                  <EmptyState
+                    message="Listening for events..."
+                    hint="Waiting for activity on the server."
+                  />
+                ) : (
+                  events.map((event, index) => (
+                    <box key={event.id ?? index} height={1} width="100%" flexDirection="row">
+                      <text>{`[${event.event}] ${truncate(event.data, 120)}`}</text>
+                    </box>
+                  ))
+                )}
+              </scrollbox>
+            </ScrollIndicator>
           </box>
         )}
 

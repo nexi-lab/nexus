@@ -7,6 +7,7 @@ import { useAgentsStore } from "../../stores/agents-store.js";
 import type { AgentTab } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -20,6 +21,7 @@ import { StyledText } from "../../shared/components/styled-text.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
+import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
 const ALL_TABS: readonly TabDef<AgentTab>[] = [
   { id: "status", label: "Status", brick: "agent_registry" },
@@ -88,6 +90,9 @@ export default function AgentsPanel(): React.ReactNode {
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("agents"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+
+  // Clipboard copy
+  const { copy, copied } = useCopy();
 
   // Local loading state for async warmup/evict/verify operations
   const [operationLoading, setOperationLoading] = useState<string | null>(null);
@@ -273,6 +278,11 @@ export default function AgentsPanel(): React.ReactNode {
         }
       }
     },
+    y: () => {
+      if (selectedAgentId) {
+        copy(selectedAgentId);
+      }
+    },
   });
 
   return (
@@ -294,21 +304,23 @@ export default function AgentsPanel(): React.ReactNode {
               hint="Start an agent with 'nexus agent spawn' or add one with the API."
             />
           ) : (
-            <scrollbox flexGrow={1} width="100%">
-              {displayAgentIds.map((agentId, i) => {
-                const isSelected = i === selectedAgentIndex;
-                const isActive = agentId === selectedAgentId;
-                const prefix = isSelected ? "> " : "  ";
-                const suffix = isActive ? " *" : "";
-                const agentEntry = agents.find((a) => a.agent_id === agentId);
-                const stateLabel = agentEntry ? ` [${agentEntry.state}]` : "";
-                return (
-                  <box key={agentId} height={1} width="100%">
-                    <text>{`${prefix}${agentId}${stateLabel}${suffix}`}</text>
-                  </box>
-                );
-              })}
-            </scrollbox>
+            <ScrollIndicator selectedIndex={selectedAgentIndex} totalItems={displayAgentIds.length} visibleItems={20}>
+              <scrollbox flexGrow={1} width="100%">
+                {displayAgentIds.map((agentId, i) => {
+                  const isSelected = i === selectedAgentIndex;
+                  const isActive = agentId === selectedAgentId;
+                  const prefix = isSelected ? "> " : "  ";
+                  const suffix = isActive ? " *" : "";
+                  const agentEntry = agents.find((a) => a.agent_id === agentId);
+                  const stateLabel = agentEntry ? ` [${agentEntry.state}]` : "";
+                  return (
+                    <box key={agentId} height={1} width="100%">
+                      <text>{`${prefix}${agentId}${stateLabel}${suffix}`}</text>
+                    </box>
+                  );
+                })}
+              </scrollbox>
+            </ScrollIndicator>
           )}
         </box>
 
@@ -375,9 +387,11 @@ export default function AgentsPanel(): React.ReactNode {
 
       {/* Help bar */}
       <box height={1} width="100%">
-        <text>
-          {"j/k:navigate  Tab:switch tab  r:refresh  d:revoke  Shift+W:warmup  Shift+E:evict  Shift+V:verify  Enter:select  q:quit"}
-        </text>
+        {copied
+          ? <text foregroundColor="green">Copied!</text>
+          : <text>
+          {"j/k:navigate  Tab:switch tab  r:refresh  d:revoke  Shift+W:warmup  Shift+E:evict  Shift+V:verify  y:copy  Enter:select  q:quit"}
+        </text>}
       </box>
     </box>
   );

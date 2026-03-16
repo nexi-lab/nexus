@@ -7,6 +7,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import { usePaymentsStore } from "../../stores/payments-store.js";
 import type { PaymentsTab } from "../../stores/payments-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -35,6 +36,7 @@ const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
+  const { copy, copied } = useCopy();
   const [showTransfer, setShowTransfer] = useState(false);
   const [affordInputMode, setAffordInputMode] = useState(false);
   const [affordBuffer, setAffordBuffer] = useState("");

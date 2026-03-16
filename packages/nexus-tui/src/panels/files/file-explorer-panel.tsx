@@ -20,6 +20,7 @@ import { FileSchema } from "./file-schema.js";
 import { ShareLinksTab } from "./share-links-tab.js";
 import { UploadsTab } from "./uploads-tab.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useBrickAvailable } from "../../shared/hooks/use-brick-available.js";
@@ -116,6 +117,9 @@ export default function FileExplorerPanel(): React.ReactNode {
     ? `urn:nexus:file:${selectedItem.zoneId}:${crypto.createHash("sha256").update(selectedItem.path).digest("hex").slice(0, 32)}`
     : null;
   const aspectCount = selectedUrn ? (aspectsCache.get(selectedUrn)?.length ?? 0) : 0;
+
+  // Clipboard copy
+  const { copy, copied } = useCopy();
 
   // Delete confirm dialog
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -315,6 +319,11 @@ export default function FileExplorerPanel(): React.ReactNode {
                 setSelectedSessionIndex(jumpToEnd(uploadSessions.length));
               }
             },
+            "y": () => {
+              if (activeTab === "explorer" && selectedItem) {
+                copy(selectedItem.path);
+              }
+            },
           },
     inputMode !== "none" ? handleUnhandledKey : undefined,
   );
@@ -414,17 +423,19 @@ export default function FileExplorerPanel(): React.ReactNode {
 
       {/* Help bar */}
       <box height={1} width="100%">
-        <text>
+        {copied
+          ? <text foregroundColor="green">Copied!</text>
+          : <text>
           {inputMode !== "none"
             ? "Type name, Enter:confirm, Escape:cancel, Backspace:delete"
             : activeTab === "explorer"
               ? catalogAvailable
-                ? "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m/a/s:meta  d:delete  N:mkdir  R:rename  q:quit"
-                : "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m:meta  d:delete  N:mkdir  R:rename  q:quit"
+                ? "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m/a/s:meta  d:delete  N:mkdir  R:rename  y:copy  q:quit"
+                : "j/k:nav  l/Enter:expand  h:collapse  Tab:tab  m:meta  d:delete  N:mkdir  R:rename  y:copy  q:quit"
               : activeTab === "shareLinks"
                 ? "j/k:navigate  x:revoke  r:refresh  Tab:switch tab  q:quit"
                 : "j/k:navigate  Tab:switch tab  q:quit"}
-        </text>
+        </text>}
       </box>
 
       {/* Delete confirmation dialog */}

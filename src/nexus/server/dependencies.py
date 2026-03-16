@@ -195,7 +195,7 @@ async def resolve_auth(
         # Check cache first (15 min TTL) via CacheStoreABC
         _auth_cache: CacheStoreABC | None = getattr(_state, "auth_cache_store", None)
         cached_result = await _get_cached_auth(_auth_cache, token)
-        if cached_result:
+        if cached_result and cached_result.get("authenticated"):
             # Update per-request fields (zone header, agent ID, timing)
             # Safe: cached_result is already a copy from _get_cached_auth
             if x_nexus_zone_id:
@@ -209,15 +209,15 @@ async def resolve_auth(
         _flight_key = _auth_cache_key(token)
         if _flight_key in _auth_inflight:
             base = await _auth_inflight[_flight_key]
-            if base is None:
-                return None
-            coalesced = dict(base)
-            if x_nexus_zone_id:
-                coalesced["zone_id"] = x_nexus_zone_id
-            coalesced["x_agent_id"] = x_agent_id
-            coalesced["_auth_time_ms"] = 0.0
-            coalesced["_auth_cached"] = True
-            return coalesced
+            if base is not None:
+                coalesced = dict(base)
+                if x_nexus_zone_id:
+                    coalesced["zone_id"] = x_nexus_zone_id
+                coalesced["x_agent_id"] = x_agent_id
+                coalesced["_auth_time_ms"] = 0.0
+                coalesced["_auth_cached"] = True
+                return coalesced
+            # Provider rejected — fall through to static key check
 
         _fut: asyncio.Future[dict[str, Any] | None] = asyncio.get_running_loop().create_future()
         _fut.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
@@ -228,36 +228,39 @@ async def resolve_auth(
             _auth_elapsed = (_time.time() - _auth_start) * 1000
             if _auth_elapsed > 10:  # Log if auth takes >10ms
                 logger.info(f"[AUTH-TIMING] provider auth took {_auth_elapsed:.1f}ms (cache miss)")
-            if result is None:
-                # Issue #16: random delay on auth failure to mitigate timing side-channel.
-                # Delay BEFORE set_result so singleflight waiters also experience it.
+            if result is None or not result.authenticated:
+                # Provider didn't recognize this token (None) or explicitly
+                # rejected it (authenticated=False).  Don't return yet —
+                # fall through to the static API key check below, matching
+                # the gRPC servicer's check order (static key first).
                 await asyncio.sleep(random.uniform(0.001, 0.005))
                 _fut.set_result(None)
-                return None
-            auth_result = {
-                "authenticated": result.authenticated,
-                "is_admin": result.is_admin,
-                "subject_type": result.subject_type,
-                "subject_id": result.subject_id,
-                "zone_id": x_nexus_zone_id or result.zone_id,
-                "inherit_permissions": result.inherit_permissions
-                if hasattr(result, "inherit_permissions")
-                else True,
-                "metadata": result.metadata if hasattr(result, "metadata") else {},
-                "agent_generation": getattr(result, "agent_generation", None),
-                "x_agent_id": x_agent_id,
-                "_auth_time_ms": _auth_elapsed,
-                "_auth_cached": False,
-            }
-            # Cache a copy without per-request fields (x_agent_id, timing)
-            cache_entry = {
-                k: v
-                for k, v in auth_result.items()
-                if k not in ("x_agent_id", "_auth_time_ms", "_auth_cached")
-            }
-            await _set_cached_auth(_auth_cache, token, cache_entry)
-            _fut.set_result(cache_entry)
-            return auth_result
+                # break out of the auth_provider block; continue to static key
+            else:
+                auth_result = {
+                    "authenticated": result.authenticated,
+                    "is_admin": result.is_admin,
+                    "subject_type": result.subject_type,
+                    "subject_id": result.subject_id,
+                    "zone_id": x_nexus_zone_id or result.zone_id,
+                    "inherit_permissions": result.inherit_permissions
+                    if hasattr(result, "inherit_permissions")
+                    else True,
+                    "metadata": result.metadata if hasattr(result, "metadata") else {},
+                    "agent_generation": getattr(result, "agent_generation", None),
+                    "x_agent_id": x_agent_id,
+                    "_auth_time_ms": _auth_elapsed,
+                    "_auth_cached": False,
+                }
+                # Cache a copy without per-request fields (x_agent_id, timing)
+                cache_entry = {
+                    k: v
+                    for k, v in auth_result.items()
+                    if k not in ("x_agent_id", "_auth_time_ms", "_auth_cached")
+                }
+                await _set_cached_auth(_auth_cache, token, cache_entry)
+                _fut.set_result(cache_entry)
+                return auth_result
         except BaseException as exc:
             _fut.set_exception(exc)
             raise

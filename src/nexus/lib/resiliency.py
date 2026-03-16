@@ -271,7 +271,11 @@ class AsyncCircuitBreaker:
             self._record_failure()
         elif exc_type is None:
             self._record_success()
-        # Non-infra exceptions pass through without affecting CB state
+        else:
+            # Non-infra exceptions: release the half-open lock so future
+            # probes are not permanently blocked, but don't change CB state.
+            if self._state is CircuitState.HALF_OPEN:
+                self._release_half_open_lock()
         return False  # never suppress exceptions
 
     # -- internal helpers ----------------------------------------------------
@@ -297,7 +301,8 @@ class AsyncCircuitBreaker:
             self._success_count += 1
             if self._success_count >= self._policy.success_threshold:
                 self._transition_to_closed()
-                self._release_half_open_lock()
+            # Always release the lock so the next probe can proceed
+            self._release_half_open_lock()
 
     def _record_failure(self) -> None:
         self._failure_count += 1

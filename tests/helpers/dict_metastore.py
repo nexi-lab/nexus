@@ -11,7 +11,7 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.metastore import CasResult, MetastoreABC, PaginatedResult
+from nexus.core.metastore import MetastoreABC
 
 
 class DictMetastore(MetastoreABC):
@@ -34,21 +34,6 @@ class DictMetastore(MetastoreABC):
         del consistency
         self._store[metadata.path] = metadata
         return None
-
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        del consistency
-        current = self._store.get(metadata.path)
-        current_ver = current.version if current else 0
-        if current_ver != expected_version:
-            return CasResult(success=False, current_version=current_ver)
-        self._store[metadata.path] = metadata
-        return CasResult(success=True, current_version=metadata.version)
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         del consistency
@@ -79,27 +64,6 @@ class DictMetastore(MetastoreABC):
     ) -> Iterator[FileMetadata]:
         yield from self.list(prefix, recursive)
 
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        _zone_id: str | None = None,
-    ) -> PaginatedResult:
-        del _zone_id
-        all_items = self.list(prefix, recursive)
-        start = int(cursor) if cursor else 0
-        page = all_items[start : start + limit]
-        has_more = start + limit < len(all_items)
-        next_cursor = page[-1].path if has_more and page else None
-        return PaginatedResult(
-            items=page,
-            next_cursor=next_cursor,
-            has_more=has_more,
-            total_count=len(all_items),
-        )
-
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         return {p: self._store.get(p) for p in paths}
 
@@ -116,13 +80,26 @@ class DictMetastore(MetastoreABC):
         return {p: (m.etag if (m := self._store.get(p)) else None) for p in paths}
 
     def rename_path(self, old_path: str, new_path: str) -> None:
+        """Atomically rename a path (and its children) in metadata."""
+        from dataclasses import replace
+
+        # 1. Rename the item itself
         meta = self._store.pop(old_path, None)
         if meta is not None:
-            from dataclasses import replace
-
             self._store[new_path] = replace(meta, path=new_path)
             if old_path in self._file_metadata:
                 self._file_metadata[new_path] = self._file_metadata.pop(old_path)
+
+        # 2. Rename all children recursively
+        # (This is a simplified mock implementation for tests)
+        prefix = old_path + "/"
+        child_paths = [p for p in self._store if p.startswith(prefix)]
+        for p in sorted(child_paths):  # Sorted to handle depths correctly if needed
+            child_meta = self._store.pop(p)
+            new_child_path = new_path + p[len(old_path) :]
+            self._store[new_child_path] = replace(child_meta, path=new_child_path)
+            if p in self._file_metadata:
+                self._file_metadata[new_child_path] = self._file_metadata.pop(p)
 
     def set_file_metadata(self, path: str, key: str, value: Any) -> None:
         if path not in self._file_metadata:
@@ -131,6 +108,15 @@ class DictMetastore(MetastoreABC):
 
     def get_file_metadata(self, path: str, key: str) -> Any:
         return self._file_metadata.get(path, {}).get(key)
+
+    def get_file_metadata_bulk(self, paths: Sequence[str], key: str) -> dict[str, Any]:
+        """Get custom metadata value for multiple files."""
+        return {path: self._file_metadata.get(path, {}).get(key) for path in paths}
+
+    def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:
+        """Get cached searchable text for multiple files."""
+        bulk = self.get_file_metadata_bulk(paths, "parsed_text")
+        return {path: text for path, text in bulk.items() if text is not None}
 
     def is_implicit_directory(self, path: str) -> bool:
         prefix = path.rstrip("/") + "/"

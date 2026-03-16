@@ -8,83 +8,95 @@ Tests cover batch optimization methods:
 - batch_read_content() native implementations for GCS and S3 (#1626)
 """
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from nexus.backends.backend import Backend
-from nexus.backends.base_blob_connector import BaseBlobStorageConnector
-from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
 from nexus.core.object_store import WriteResult
 
 
-class MockBlobConnector(BaseBlobStorageConnector, CacheConnectorMixin):
+class InMemoryBlobTransport:
+    """Minimal in-memory BlobTransport for tests."""
+
+    transport_name = "memory"
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self.download_count: int = 0
+
+    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+        self.files[key] = data
+        return None
+
+    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+        self.download_count += 1
+        if key not in self.files:
+            raise FileNotFoundError(f"Blob not found: {key}")
+        return self.files[key], version_id
+
+    def delete_blob(self, key: str) -> None:
+        self.files.pop(key, None)
+
+    def blob_exists(self, key: str) -> bool:
+        return key in self.files
+
+    def get_blob_size(self, key: str) -> int:
+        return len(self.files.get(key, b""))
+
+    def list_blobs(self, prefix: str = "", delimiter: str = "/") -> tuple[list[str], list[str]]:
+        keys = [k for k in self.files if k.startswith(prefix)]
+        return keys, []
+
+    def copy_blob(self, src_key: str, dst_key: str) -> None:
+        if src_key in self.files:
+            self.files[dst_key] = self.files[src_key]
+
+    def create_directory_marker(self, key: str) -> None:
+        self.files[key] = b""
+
+    def stream_blob(
+        self, key: str, chunk_size: int = 8192, version_id: str | None = None
+    ) -> Iterator[bytes]:
+        data, _ = self.get_blob(key, version_id)
+        for i in range(0, len(data), chunk_size):
+            yield data[i : i + chunk_size]
+
+
+class MockBlobConnector(PathBackend, CacheConnectorMixin):
     """Mock blob connector for testing batch operations."""
 
-    name = "test_blob_backend"  # Class attribute for abstract property
-
     def __init__(self, session_factory):
+        transport = InMemoryBlobTransport()
+        super().__init__(transport, backend_name="test_blob_backend")
         self.session_factory = session_factory
-        self.prefix = ""
-        self.files = {}  # blob_path -> content
-        self.versions = {}  # blob_path -> version_id
-        self.download_count = 0  # Track individual download calls
+        self.versions: dict[str, str] = {}
 
-    def _get_blob_path(self, backend_path: str) -> str:
-        """Convert backend path to blob path."""
-        return backend_path
+    @property
+    def files(self) -> dict[str, bytes]:
+        """Proxy to transport.files for test manipulation."""
+        return self._transport.files
 
-    def _download_blob(
-        self, blob_path: str, version_id: str | None = None
-    ) -> tuple[bytes, str | None]:
-        """Download single blob."""
-        self.download_count += 1
-        if blob_path not in self.files:
-            raise FileNotFoundError(f"Blob not found: {blob_path}")
-        # Return content and version (use provided version_id or generate one)
-        file_version = version_id or self.versions.get(blob_path, "v1")
-        return self.files[blob_path], file_version
+    @files.setter
+    def files(self, value: dict[str, bytes]) -> None:
+        self._transport.files = value
 
-    def _delete_blob(self, blob_path: str) -> None:
-        """Delete blob."""
-        if blob_path in self.files:
-            del self.files[blob_path]
+    @property
+    def download_count(self) -> int:
+        """Proxy to transport.download_count for test assertions."""
+        return self._transport.download_count
 
-    def _upload_blob(self, blob_path: str, content: bytes, content_type: str = None) -> None:
-        """Upload blob."""
-        self.files[blob_path] = content
+    @download_count.setter
+    def download_count(self, value: int) -> None:
+        self._transport.download_count = value
 
     def get_version(self, path: str, context: OperationContext | None = None) -> str | None:
         """Get version for a file."""
         return self.versions.get(path)
-
-    def _list_files_recursive(
-        self, path: str, context: OperationContext | None = None
-    ) -> list[str]:
-        """List files recursively."""
-        return list(self.files.keys())
-
-    def _blob_exists(self, blob_path: str) -> bool:
-        """Check if blob exists."""
-        return blob_path in self.files
-
-    def _get_blob_size(self, blob_path: str) -> int:
-        """Get blob size."""
-        return len(self.files.get(blob_path, b""))
-
-    def _list_blobs(self, prefix: str = "") -> list[str]:
-        """List all blobs with prefix."""
-        return [path for path in self.files if path.startswith(prefix)]
-
-    def _copy_blob(self, source_blob_path: str, dest_blob_path: str) -> None:
-        """Copy blob."""
-        if source_blob_path in self.files:
-            self.files[dest_blob_path] = self.files[source_blob_path]
-
-    def _create_directory_marker(self, blob_path: str) -> None:
-        """Create directory marker."""
-        pass  # Not needed for tests
 
 
 class TestBatchGetVersions:
@@ -565,7 +577,7 @@ class TestGCSBatchReadContent:
 # === S3 batch_read_content tests (#1626) ===
 
 
-class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
+class MockS3ConnectorForBatch(PathBackend, CacheConnectorMixin):
     """Mock S3-like connector for testing batch_read_content with per-file contexts.
 
     Simulates path-based access where each file needs its own OperationContext.
@@ -574,45 +586,19 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
     batch_read_workers: int = 4  # Low for tests
 
     def __init__(self) -> None:
-        self.bucket_name = "test-bucket"
-        self.prefix = ""
-        self.versioning_enabled = False
-        self.files: dict[str, bytes] = {}  # blob_path -> content
+        transport = InMemoryBlobTransport()
+        super().__init__(transport, backend_name="s3_connector", bucket_name="test-bucket")
         self.read_count: int = 0
         self.session_factory = None
 
     @property
-    def name(self) -> str:
-        return "s3_connector"
+    def files(self) -> dict[str, bytes]:
+        """Proxy to transport.files for test manipulation."""
+        return self._transport.files
 
-    def _upload_blob(self, blob_path, content, content_type="") -> str:
-        self.files[blob_path] = content
-        return "mock-version"
-
-    def _download_blob(self, blob_path, version_id=None) -> tuple[bytes, str | None]:
-        if blob_path not in self.files:
-            raise NexusFileNotFoundError(blob_path)
-        return self.files[blob_path], "v1"
-
-    def _delete_blob(self, blob_path) -> None:
-        self.files.pop(blob_path, None)
-
-    def _blob_exists(self, blob_path) -> bool:
-        return blob_path in self.files
-
-    def _get_blob_size(self, blob_path) -> int:
-        return len(self.files.get(blob_path, b""))
-
-    def _list_blobs(self, prefix="", delimiter="/") -> tuple[list[str], list[str]]:
-        keys = [k for k in self.files if k.startswith(prefix)]
-        return keys, []
-
-    def _create_directory_marker(self, blob_path) -> None:
-        pass
-
-    def _copy_blob(self, source_path, dest_path) -> None:
-        if source_path in self.files:
-            self.files[dest_path] = self.files[source_path]
+    @files.setter
+    def files(self, value: dict[str, bytes]) -> None:
+        self._transport.files = value
 
     def read_content(self, content_hash, context=None) -> bytes:
         """S3-style read that requires context.backend_path."""
@@ -623,9 +609,9 @@ class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
                 backend=self.name,
             )
         blob_path = self._get_blob_path(context.backend_path)
-        if blob_path not in self.files:
+        if blob_path not in self._transport.files:
             raise NexusFileNotFoundError(blob_path)
-        return self.files[blob_path]
+        return self._transport.files[blob_path]
 
     def batch_read_content(
         self, content_hashes, context=None, *, contexts=None

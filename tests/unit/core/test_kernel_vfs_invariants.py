@@ -12,7 +12,7 @@ import tempfile
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.router import (
     AccessDeniedError,
     InvalidPathError,
@@ -32,10 +32,10 @@ from tests.strategies.kernel import (
 # ---------------------------------------------------------------------------
 
 
-def _make_router_with_mounts() -> tuple[PathRouter, LocalBackend]:
+def _make_router_with_mounts() -> tuple[PathRouter, CASLocalBackend]:
     """Create a PathRouter with standard mounts for testing."""
     tmpdir = tempfile.mkdtemp()
-    backend = LocalBackend(tmpdir)
+    backend = CASLocalBackend(tmpdir)
     metastore = DictMetastore()
     router = PathRouter(metastore)
     router.add_mount("/workspace", backend)
@@ -182,8 +182,8 @@ class TestLongestPrefixMatchInvariants:
         query_path = deeper_path + "/file.txt"
 
         tmpdir = tempfile.mkdtemp()
-        backend_shallow = LocalBackend(tmpdir)
-        backend_deep = LocalBackend(tmpdir)
+        backend_shallow = CASLocalBackend(tmpdir)
+        backend_deep = CASLocalBackend(tmpdir)
 
         metastore = DictMetastore()
         router = PathRouter(metastore)

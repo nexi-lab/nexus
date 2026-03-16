@@ -1,0 +1,73 @@
+name: Build Rust Extensions
+description: Build nexus_fast, nexus_raft, and nexus_tasks Python wheels from Rust source
+
+inputs:
+  profile:
+    description: 'Cargo build profile (dev or release)'
+    required: false
+    default: 'dev'
+  rust-cache-shared-key:
+    description: 'Shared key for Swatinem/rust-cache'
+    required: false
+    default: 'rust-build'
+  output-dir:
+    description: 'Directory to output built wheels'
+    required: false
+    default: 'dist'
+  github-token:
+    description: 'GitHub token for authenticated API calls (avoids rate limits)'
+    required: false
+    default: ''
+
+outputs:
+  wheels-dir:
+    description: 'Path to directory containing built wheels'
+    value: ${{ inputs.output-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "${{ inputs.rust-cache-shared-key }}-${{ runner.os }}"
+        workspaces: |
+          rust/nexus_pyo3
+          rust/nexus_raft
+          rust/nexus_tasks
+
+    - name: Install protoc
+      run: |
+        # raft-proto's protobuf-build requires protoc >= 3.1.0 (semver 3.x).
+        # Modern protoc (28.x+) uses a different version scheme that fails the check.
+        # Ubuntu's apt provides 3.12.x; macOS needs a manual 3.x install.
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        elif [ "$RUNNER_OS" = "macOS" ]; then
+          PROTOC_VERSION="3.20.3"
+          PROTOC_ARCH="osx-x86_64"
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${PROTOC_ARCH}.zip" -o /tmp/protoc.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
+          protoc --version
+        fi
+      shell: bash
+
+    - name: Install maturin
+      run: pip install maturin
+      shell: bash
+
+    - name: Build Rust extensions
+      run: |
+        PROFILE_FLAG=""
+        if [ "${{ inputs.profile }}" = "release" ]; then
+          PROFILE_FLAG="--release"
+        fi
+
+        mkdir -p ${{ inputs.output-dir }}
+        cd rust/nexus_pyo3 && maturin build $PROFILE_FLAG --out ../../${{ inputs.output-dir }} && cd ../..
+        cd rust/nexus_raft && maturin build $PROFILE_FLAG --features full --out ../../${{ inputs.output-dir }} && cd ../..
+        cd rust/nexus_tasks && maturin build $PROFILE_FLAG --features mimalloc --out ../../${{ inputs.output-dir }} && cd ../..
+      shell: bash

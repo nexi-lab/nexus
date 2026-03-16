@@ -60,8 +60,14 @@ def initialize_oauth_provider(nexus_fs: "NexusFS", auth_provider: Any) -> None:
         from nexus.server.auth.auth_routes import set_oauth_provider
 
         _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
-        _oauth_record_store = getattr(nexus_fs, "_record_store", None)
-        oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, record_store=_oauth_record_store)
+        _settings_store = None
+        try:
+            from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+
+            _settings_store = MetastoreSettingsStore(nexus_fs.metadata)
+        except Exception:
+            pass
+        oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, settings_store=_settings_store)
 
         # Build provider-agnostic providers dict
         google_provider = GoogleOAuthProvider(

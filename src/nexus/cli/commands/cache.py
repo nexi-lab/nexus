@@ -5,8 +5,9 @@ from typing import Any
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -44,6 +45,7 @@ def cache_group() -> None:
     "--hours", type=int, default=24, help="Look back N hours for history-based warmup (default: 24)"
 )
 @click.option("-z", "--zone-id", type=str, default=ROOT_ZONE_ID, help="Zone ID")
+@add_output_options
 @add_backend_options
 def warmup(
     path: str,
@@ -54,7 +56,9 @@ def warmup(
     user: str | None,
     hours: int,
     zone_id: str,
-    backend_config: BackendConfig,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Pre-populate cache for faster access.
 
@@ -77,8 +81,9 @@ def warmup(
         # Warm up for FUSE mount (metadata only, many files)
         nexus cache warmup /workspace --metadata-only --max-files 10000
     """
+    timing = CommandTiming()
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
         # Import here to avoid circular imports
         from nexus.server.cache_warmer import (
@@ -108,8 +113,9 @@ def warmup(
         async def run_warmup() -> dict[str, Any]:
             if user:
                 # History-based warmup
-                console.print(f"[blue]Warming cache based on {user}'s access history...[/blue]")
-                stats = await warmer.warmup_from_history(
+                if not output_opts.quiet and not output_opts.json_output:
+                    console.print(f"[blue]Warming cache based on {user}'s access history...[/blue]")
+                warmup_stats = await warmer.warmup_from_history(
                     user=user,
                     hours=hours,
                     max_files=max_files,
@@ -117,29 +123,38 @@ def warmup(
                 )
             else:
                 # Directory-based warmup
-                console.print(f"[blue]Warming cache for {path}...[/blue]")
-                stats = await warmer.warmup_directory(
+                if not output_opts.quiet and not output_opts.json_output:
+                    console.print(f"[blue]Warming cache for {path}...[/blue]")
+                warmup_stats = await warmer.warmup_directory(
                     path=path,
                     depth=depth,
                     include_content=include_content and not metadata_only,
                     max_files=max_files,
                     zone_id=zone_id,
                 )
-            return stats.to_dict()
+            return warmup_stats.to_dict()
 
-        stats = asyncio.run(run_warmup())
+        with timing.phase("server"):
+            warmup_data = asyncio.run(run_warmup())
 
-        # Display results
-        console.print("\n[green]Cache warmup complete![/green]")
-        console.print(f"  Files warmed: {stats['files_warmed']}")
-        console.print(f"  Metadata warmed: {stats['metadata_warmed']}")
-        console.print(f"  Content warmed: {stats['content_warmed']}")
-        console.print(f"  Bytes warmed: {stats['bytes_warmed_mb']} MB")
-        console.print(f"  Duration: {stats['duration_seconds']}s")
-        if stats["errors"] > 0:
-            console.print(f"  [yellow]Errors: {stats['errors']}[/yellow]")
-        if stats["skipped"] > 0:
-            console.print(f"  Skipped: {stats['skipped']}")
+        def _render(data: dict[str, Any]) -> None:
+            console.print("\n[green]Cache warmup complete![/green]")
+            console.print(f"  Files warmed: {data['files_warmed']}")
+            console.print(f"  Metadata warmed: {data['metadata_warmed']}")
+            console.print(f"  Content warmed: {data['content_warmed']}")
+            console.print(f"  Bytes warmed: {data['bytes_warmed_mb']} MB")
+            console.print(f"  Duration: {data['duration_seconds']}s")
+            if data["errors"] > 0:
+                console.print(f"  [yellow]Errors: {data['errors']}[/yellow]")
+            if data["skipped"] > 0:
+                console.print(f"  Skipped: {data['skipped']}")
+
+        render_output(
+            data=warmup_data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
         nx.close()
 
@@ -148,11 +163,12 @@ def warmup(
 
 
 @cache_group.command(name="stats")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@add_output_options
 @add_backend_options
 def stats(
-    as_json: bool,
-    backend_config: BackendConfig,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show cache statistics.
 
@@ -162,53 +178,51 @@ def stats(
         nexus cache stats
         nexus cache stats --json
     """
+    timing = CommandTiming()
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
 
-        # Collect stats from various cache layers
-        cache_stats: dict[str, Any] = {}
+        with timing.phase("server"):
+            # Collect stats from various cache layers
+            cache_stats: dict[str, Any] = {}
 
-        # Content cache stats
-        if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
-            cc = nx.backend.content_cache
-            if cc and hasattr(cc, "get_stats"):
-                cache_stats["content_cache"] = cc.get_stats()
+            # Content cache stats
+            if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
+                cc = nx.backend.content_cache
+                if cc and hasattr(cc, "get_stats"):
+                    cache_stats["content_cache"] = cc.get_stats()
 
-        # Permission cache stats
-        if hasattr(nx, "_rebac_manager"):
-            rm = nx._rebac_manager
-            if hasattr(rm, "_permission_cache") and rm._permission_cache:
-                pc = rm._permission_cache
-                if hasattr(pc, "get_stats"):
-                    cache_stats["permission_cache"] = pc.get_stats()
+            # Permission cache stats
+            if hasattr(nx, "_rebac_manager"):
+                rm = nx._rebac_manager
+                if hasattr(rm, "_permission_cache") and rm._permission_cache:
+                    pc = rm._permission_cache
+                    if hasattr(pc, "get_stats"):
+                        cache_stats["permission_cache"] = pc.get_stats()
 
-            # Tiger cache stats
-            if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
-                tc = rm._tiger_cache
-                if hasattr(tc, "get_stats"):
-                    cache_stats["tiger_cache"] = tc.get_stats()
+                # Tiger cache stats
+                if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
+                    tc = rm._tiger_cache
+                    if hasattr(tc, "get_stats"):
+                        cache_stats["tiger_cache"] = tc.get_stats()
 
-        # Directory visibility cache
-        if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
-            dvc = nx._dir_visibility_cache
-            if hasattr(dvc, "get_metrics"):
-                cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+            # Directory visibility cache
+            if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
+                dvc = nx._dir_visibility_cache
+                if hasattr(dvc, "get_metrics"):
+                    cache_stats["dir_visibility_cache"] = dvc.get_metrics()
 
-        # File access tracker stats
-        from nexus.server.cache_warmer import get_file_access_tracker
+            # File access tracker stats
+            from nexus.server.cache_warmer import get_file_access_tracker
 
-        tracker = get_file_access_tracker()
-        cache_stats["file_access_tracker"] = tracker.get_stats()
+            tracker = get_file_access_tracker()
+            cache_stats["file_access_tracker"] = tracker.get_stats()
 
-        if as_json:
-            import json
-
-            console.print(json.dumps(cache_stats, indent=2, default=str))
-        else:
+        def _render(data: dict[str, Any]) -> None:
             console.print("\n[bold]Cache Statistics[/bold]")
             console.print("=" * 40)
 
-            for cache_name, stats_data in cache_stats.items():
+            for cache_name, stats_data in data.items():
                 console.print(f"\n[cyan]{cache_name}:[/cyan]")
                 if isinstance(stats_data, dict):
                     for key, value in stats_data.items():
@@ -218,6 +232,13 @@ def stats(
                             console.print(f"  {key}: {value}")
                 else:
                     console.print(f"  {stats_data}")
+
+        render_output(
+            data=cache_stats,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
         nx.close()
 
@@ -238,7 +259,8 @@ def clear(
     permissions: bool,
     clear_all: bool,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Clear cache entries.
 
@@ -273,7 +295,7 @@ def clear(
             return
 
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         cleared: list[str] = []
 
         # Clear content cache
@@ -334,10 +356,12 @@ def clear(
 @click.option("-n", "--limit", type=int, default=20, help="Number of hot files to show")
 @click.option("-z", "--zone-id", type=str, default=ROOT_ZONE_ID, help="Zone ID")
 @click.option("-u", "--user", type=str, help="Filter by user")
+@add_output_options
 def hot(
     limit: int,
     zone_id: str,
     user: str | None,
+    output_opts: OutputOptions,
 ) -> None:
     """Show hot (frequently accessed) files.
 
@@ -348,27 +372,42 @@ def hot(
         nexus cache hot
         nexus cache hot --limit 50
         nexus cache hot --user alice
+        nexus cache hot --json
     """
+    timing = CommandTiming()
     try:
         from nexus.server.cache_warmer import get_file_access_tracker
 
-        tracker = get_file_access_tracker()
-        hot_files = tracker.get_hot_files(
-            zone_id=zone_id,
-            user_id=user,
-            limit=limit,
+        with timing.phase("collect"):
+            tracker = get_file_access_tracker()
+            hot_files = tracker.get_hot_files(
+                zone_id=zone_id,
+                user_id=user,
+                limit=limit,
+            )
+
+        hot_data = [{"path": entry.path, "access_count": entry.access_count} for entry in hot_files]
+
+        def _render(data: list[dict[str, Any]]) -> None:
+            if not data:
+                console.print("[yellow]No hot files detected yet.[/yellow]")
+                console.print("Hot files are tracked as the filesystem is used.")
+                return
+
+            console.print(f"\n[bold]Hot Files (top {limit})[/bold]")
+            console.print("=" * 60)
+
+            for i, entry in enumerate(data, 1):
+                console.print(
+                    f"{i:3}. [cyan]{entry['path']}[/cyan] ({entry['access_count']} accesses)"
+                )
+
+        render_output(
+            data=hot_data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
         )
-
-        if not hot_files:
-            console.print("[yellow]No hot files detected yet.[/yellow]")
-            console.print("Hot files are tracked as the filesystem is used.")
-            return
-
-        console.print(f"\n[bold]Hot Files (top {limit})[/bold]")
-        console.print("=" * 60)
-
-        for i, entry in enumerate(hot_files, 1):
-            console.print(f"{i:3}. [cyan]{entry.path}[/cyan] ({entry.access_count} accesses)")
 
     except Exception as e:
         handle_error(e)

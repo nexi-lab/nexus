@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 
-def safe_operation(
+async def safe_operation(
     operation_name: str,
     operation_fn: Callable[..., Any],
     *args: Any,
@@ -36,7 +36,7 @@ def safe_operation(
 
     Examples:
         >>> def create_folder(path):
-        ...     nx.sys_mkdir(path)
+        ...     await nx.sys_mkdir(path)
         ...     return {"path": path}
         >>>
         >>> result = safe_operation(

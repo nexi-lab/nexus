@@ -4,7 +4,7 @@ Tier-0 data contract for L3 persistent namespace views.
 Used by storage layer (PostgresPersistentViewStore) and service layer
 (PersistentViewStore protocol).
 
-Split from nexus.services.protocols.persistent_view to allow storage
+Split from nexus.contracts.protocols.persistent_view to allow storage
 tier to import without a services→storage tier violation.
 """
 

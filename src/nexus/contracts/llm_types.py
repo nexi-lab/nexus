@@ -1,8 +1,7 @@
 """Tier-neutral LLM message types for cross-brick use (Issue #2190).
 
 Canonical home for ``Message``, ``MessageRole``, and related types used by
-LLM document reader, ACE reflection/consolidation, and any future brick
-that constructs LLM prompts.
+LLM document reader and any future brick that constructs LLM prompts.
 
 This module has **zero** runtime imports from ``nexus.*`` --- only pydantic
 and stdlib --- so bricks, services, and backends can depend on it without

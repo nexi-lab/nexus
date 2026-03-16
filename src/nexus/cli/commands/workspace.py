@@ -8,7 +8,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
+from nexus.cli.utils import add_backend_options, get_filesystem, handle_error
 
 console = Console()
 
@@ -64,7 +64,8 @@ def register_cmd(
     created_by: str | None,
     session_id: str | None,
     ttl: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Register a directory as a workspace.
 
@@ -81,14 +82,14 @@ def register_cmd(
         nexus workspace register /tmp/build-$BUILD_ID --session-id $BUILD_ID --ttl 2h
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # v0.5.0: Parse TTL string to timedelta
         ttl_delta = None
         if ttl:
             ttl_delta = _parse_ttl(ttl)
 
-        result = nx.register_workspace(
+        result = nx.service("workspace_rpc").register_workspace(
             path=path,
             name=name,
             description=description,
@@ -119,7 +120,8 @@ def register_cmd(
 @workspace_group.command(name="list")
 @add_backend_options
 def list_cmd(
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all registered workspaces.
 
@@ -127,9 +129,9 @@ def list_cmd(
         nexus workspace list
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        workspaces = nx.list_workspaces()
+        workspaces = nx.service("workspace_rpc").list_workspaces()
 
         if not workspaces:
             console.print("[yellow]No workspaces registered[/yellow]")
@@ -167,7 +169,8 @@ def list_cmd(
 def unregister_cmd(
     path: str,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Unregister a workspace (does NOT delete files).
 
@@ -178,10 +181,10 @@ def unregister_cmd(
         nexus workspace unregister /my-workspace --yes
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Get workspace info first
-        info = nx.get_workspace_info(path)
+        info = nx.service("workspace_rpc").get_workspace_info(path)
         if not info:
             console.print(f"[red]✗[/red] Workspace not registered: {path}")
             nx.close()
@@ -204,7 +207,7 @@ def unregister_cmd(
                 return
 
         # Unregister
-        result = nx.unregister_workspace(path)
+        result = nx.service("workspace_rpc").unregister_workspace(path)
 
         if result:
             console.print(f"[green]✓[/green] Unregistered workspace: {path}")
@@ -222,7 +225,8 @@ def unregister_cmd(
 @add_backend_options
 def info_cmd(
     path: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show information about a registered workspace.
 
@@ -230,9 +234,9 @@ def info_cmd(
         nexus workspace info /my-workspace
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        info = nx.get_workspace_info(path)
+        info = nx.service("workspace_rpc").get_workspace_info(path)
 
         if not info:
             console.print(f"[red]✗[/red] Workspace not registered: {path}")
@@ -264,7 +268,8 @@ def snapshot_cmd(
     path: str,
     description: str | None,
     tag: tuple[str, ...],
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Create a snapshot of a workspace.
 
@@ -275,11 +280,11 @@ def snapshot_cmd(
         nexus workspace snapshot /my-workspace --tag experiment --tag v1.0
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
         tags = list(tag) if tag else None
 
         with console.status(f"[bold cyan]Creating snapshot for workspace '{path}'..."):
-            result = nx.workspace_snapshot(
+            result = nx.service("workspace_rpc").workspace_snapshot(
                 workspace_path=path,
                 description=description,
                 tags=tags,
@@ -309,7 +314,8 @@ def snapshot_cmd(
 def log_cmd(
     path: str,
     limit: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show snapshot history for a workspace.
 
@@ -320,9 +326,9 @@ def log_cmd(
         nexus workspace log /my-workspace --limit 50
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        snapshots = nx.workspace_log(workspace_path=path, limit=limit)
+        snapshots = nx.service("workspace_rpc").workspace_log(workspace_path=path, limit=limit)
 
         if not snapshots:
             console.print(f"[yellow]No snapshots found for workspace '{path}'[/yellow]")
@@ -369,7 +375,8 @@ def restore_cmd(
     path: str,
     snapshot: int,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Restore workspace to a previous snapshot.
 
@@ -380,15 +387,23 @@ def restore_cmd(
         nexus workspace restore /my-workspace --snapshot 10 --yes
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        # Get snapshot info
-        snapshots = nx.workspace_log(workspace_path=path, limit=1000)
+        # Get snapshot info — fetch by snapshot number directly if the API supports it,
+        # otherwise scan all snapshots without an arbitrary limit
         snap_info = None
-        for s in snapshots:
-            if s["snapshot_number"] == snapshot:
-                snap_info = s
-                break
+        try:
+            # Try direct lookup first (avoids scanning)
+            snap_info = nx.service("workspace_rpc").workspace_get_snapshot(
+                workspace_path=path, snapshot_number=snapshot
+            )
+        except (AttributeError, TypeError):
+            # Fallback: scan log without a hard limit so older snapshots are found
+            snapshots = nx.service("workspace_rpc").workspace_log(workspace_path=path, limit=0)
+            for s in snapshots:
+                if s["snapshot_number"] == snapshot:
+                    snap_info = s
+                    break
 
         if not snap_info:
             console.print(f"[red]✗[/red] Snapshot #{snapshot} not found")
@@ -411,7 +426,9 @@ def restore_cmd(
 
         # Perform restore
         with console.status(f"[bold cyan]Restoring snapshot #{snapshot}..."):
-            result = nx.workspace_restore(snapshot_number=snapshot, workspace_path=path)
+            result = nx.service("workspace_rpc").workspace_restore(
+                snapshot_number=snapshot, workspace_path=path
+            )
 
         console.print(
             f"[green]✓[/green] Restored snapshot #{snapshot} "
@@ -434,7 +451,8 @@ def diff_cmd(
     path: str,
     snapshot1: int,
     snapshot2: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Compare two workspace snapshots.
 
@@ -444,10 +462,10 @@ def diff_cmd(
         nexus workspace diff /my-workspace --snapshot1 5 --snapshot2 10
     """
     try:
-        nx: Any = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         with console.status("[bold cyan]Computing diff between snapshots..."):
-            diff = nx.workspace_diff(
+            diff = nx.service("workspace_rpc").workspace_diff(
                 snapshot_1=snapshot1, snapshot_2=snapshot2, workspace_path=path
             )
 

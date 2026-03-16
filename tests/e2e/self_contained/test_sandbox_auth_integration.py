@@ -14,7 +14,7 @@ import pytest
 from nexus.bricks.sandbox.auth_service import SandboxAuthService
 from nexus.bricks.sandbox.events import AgentEventLog
 from nexus.contracts.agent_types import AgentState
-from nexus.services.agents.agent_registry import AgentRegistry, InvalidTransitionError
+from nexus.system_services.agents.agent_registry import AgentRegistry, InvalidTransitionError
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

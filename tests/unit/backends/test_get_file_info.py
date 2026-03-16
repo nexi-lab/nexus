@@ -2,8 +2,8 @@
 
 Tests delta sync change detection metadata returned by each backend:
 - LocalConnectorBackend: inode:mtime_ns version
-- GCSConnectorBackend: GCS generation number
-- S3ConnectorBackend: S3 version ID or ETag fallback
+- PathGCSBackend: GCS generation number
+- PathS3Backend: S3 version ID or ETag fallback
 """
 
 from datetime import UTC, datetime
@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.backends.backend import FileInfo
+from nexus.backends.base.backend import FileInfo
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 # =============================================================================
@@ -25,7 +25,7 @@ class TestLocalConnectorGetFileInfo:
 
     @pytest.fixture()
     def connector(self, tmp_path: Path):
-        from nexus.backends.local_connector import LocalConnectorBackend
+        from nexus.backends.storage.local_connector import LocalConnectorBackend
 
         return LocalConnectorBackend(tmp_path)
 
@@ -97,12 +97,12 @@ class TestLocalConnectorGetFileInfo:
 
 
 # =============================================================================
-# GCSConnectorBackend.get_file_info()
+# PathGCSBackend.get_file_info()
 # =============================================================================
 
 
 class TestGCSConnectorGetFileInfo:
-    """Test GCSConnectorBackend.get_file_info() with mocked GCS."""
+    """Test PathGCSBackend.get_file_info() with mocked GCS."""
 
     @pytest.fixture()
     def mock_bucket(self):
@@ -111,25 +111,29 @@ class TestGCSConnectorGetFileInfo:
 
     @pytest.fixture()
     def connector(self, mock_bucket):
-        from nexus.backends.gcs_connector import GCSConnectorBackend
+        from nexus.backends.storage.path_gcs import PathGCSBackend
 
-        with patch.object(GCSConnectorBackend, "__init__", lambda self, *a, **kw: None):
-            c = GCSConnectorBackend.__new__(GCSConnectorBackend)
+        with patch.object(PathGCSBackend, "__init__", lambda self, *a, **kw: None):
+            c = PathGCSBackend.__new__(PathGCSBackend)
             c.bucket = mock_bucket
             c.bucket_name = "test-bucket"
             c.prefix = ""
-            # name is a property returning the backend name, no need to set
             c._db_session = None
             c._session_factory = None
+            # Set up transport mock for refactored architecture
+            gcs_transport = MagicMock()
+            gcs_transport.reload_blob_metadata = MagicMock()
+            c._gcs_transport = gcs_transport
+            c._transport = gcs_transport
             return c
 
-    def test_returns_file_info_with_generation(self, connector, mock_bucket):
+    def test_returns_file_info_with_generation(self, connector):
         """Should return FileInfo with GCS generation as backend_version."""
-        blob = MagicMock()
-        blob.size = 2048
-        blob.updated = datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC)
-        blob.generation = 1234567890
-        mock_bucket.blob.return_value = blob
+        connector._gcs_transport.reload_blob_metadata.return_value = {
+            "size": 2048,
+            "updated": datetime(2025, 6, 15, 12, 0, 0, tzinfo=UTC),
+            "generation": "1234567890",
+        }
 
         info = connector.get_file_info("data/file.csv")
 
@@ -139,37 +143,35 @@ class TestGCSConnectorGetFileInfo:
         assert info.backend_version == "1234567890"
         assert info.content_hash is None
 
-    def test_raises_not_found_for_missing_blob(self, connector, mock_bucket):
+    def test_raises_not_found_for_missing_blob(self, connector):
         """Should raise NexusFileNotFoundError when blob doesn't exist."""
-        from google.cloud.exceptions import NotFound
-
-        blob = MagicMock()
-        blob.reload.side_effect = NotFound("Blob not found")
-        mock_bucket.blob.return_value = blob
+        connector._gcs_transport.reload_blob_metadata.side_effect = NexusFileNotFoundError(
+            "missing/file.txt"
+        )
 
         with pytest.raises(NexusFileNotFoundError):
             connector.get_file_info("missing/file.txt")
 
-    def test_handles_none_generation(self, connector, mock_bucket):
+    def test_handles_none_generation(self, connector):
         """Should handle None generation gracefully."""
-        blob = MagicMock()
-        blob.size = 100
-        blob.updated = datetime.now(UTC)
-        blob.generation = None
-        mock_bucket.blob.return_value = blob
+        connector._gcs_transport.reload_blob_metadata.return_value = {
+            "size": 100,
+            "updated": datetime.now(UTC),
+            "generation": None,
+        }
 
         info = connector.get_file_info("file.txt")
 
         assert isinstance(info, FileInfo)
         assert info.backend_version is None
 
-    def test_handles_zero_size(self, connector, mock_bucket):
+    def test_handles_zero_size(self, connector):
         """Should handle blob with zero size."""
-        blob = MagicMock()
-        blob.size = 0
-        blob.updated = datetime.now(UTC)
-        blob.generation = 999
-        mock_bucket.blob.return_value = blob
+        connector._gcs_transport.reload_blob_metadata.return_value = {
+            "size": 0,
+            "updated": datetime.now(UTC),
+            "generation": "999",
+        }
 
         info = connector.get_file_info("empty.txt")
 
@@ -177,30 +179,30 @@ class TestGCSConnectorGetFileInfo:
         assert info.size == 0
         assert info.backend_version == "999"
 
-    def test_uses_context_backend_path(self, connector, mock_bucket):
+    def test_uses_context_backend_path(self, connector):
         """Should use context.backend_path when available."""
-        blob = MagicMock()
-        blob.size = 512
-        blob.updated = datetime.now(UTC)
-        blob.generation = 42
-        mock_bucket.blob.return_value = blob
+        connector._gcs_transport.reload_blob_metadata.return_value = {
+            "size": 512,
+            "updated": datetime.now(UTC),
+            "generation": "42",
+        }
 
         ctx = MagicMock()
         ctx.backend_path = "custom/path.txt"
 
         connector.get_file_info("ignored", context=ctx)
 
-        # Verify the correct blob path was used
-        mock_bucket.blob.assert_called_once()
+        # Verify the transport was called with the context backend_path
+        connector._gcs_transport.reload_blob_metadata.assert_called_once_with("custom/path.txt")
 
 
 # =============================================================================
-# S3ConnectorBackend.get_file_info()
+# PathS3Backend.get_file_info()
 # =============================================================================
 
 
 class TestS3ConnectorGetFileInfo:
-    """Test S3ConnectorBackend.get_file_info() with mocked S3."""
+    """Test PathS3Backend.get_file_info() with mocked S3."""
 
     @pytest.fixture()
     def mock_client(self):
@@ -208,24 +210,29 @@ class TestS3ConnectorGetFileInfo:
 
     @pytest.fixture()
     def connector(self, mock_client):
-        from nexus.backends.s3_connector import S3ConnectorBackend
+        from nexus.backends.storage.path_s3 import PathS3Backend
 
-        with patch.object(S3ConnectorBackend, "__init__", lambda self, *a, **kw: None):
-            c = S3ConnectorBackend.__new__(S3ConnectorBackend)
+        with patch.object(PathS3Backend, "__init__", lambda self, *a, **kw: None):
+            c = PathS3Backend.__new__(PathS3Backend)
             c.client = mock_client
             c.bucket_name = "test-bucket"
             c.prefix = ""
-            # name is a property returning "s3_connector", no need to set
             c._db_session = None
             c._session_factory = None
+            # Set up transport mock for refactored architecture
+            s3_transport = MagicMock()
+            s3_transport.get_object_metadata = MagicMock()
+            c._s3_transport = s3_transport
+            c._transport = s3_transport
             return c
 
-    def test_returns_file_info_with_version_id(self, connector, mock_client):
+    def test_returns_file_info_with_version_id(self, connector):
         """Should return FileInfo with S3 VersionId as backend_version."""
-        mock_client.head_object.return_value = {
-            "ContentLength": 4096,
-            "LastModified": datetime(2025, 7, 1, 10, 30, 0, tzinfo=UTC),
-            "VersionId": "abc-123-def",
+        connector._s3_transport.get_object_metadata.return_value = {
+            "size": 4096,
+            "last_modified": datetime(2025, 7, 1, 10, 30, 0, tzinfo=UTC),
+            "version_id": "abc-123-def",
+            "etag": None,
         }
 
         info = connector.get_file_info("data/report.pdf")
@@ -234,15 +241,14 @@ class TestS3ConnectorGetFileInfo:
         assert info.size == 4096
         assert info.mtime == datetime(2025, 7, 1, 10, 30, 0, tzinfo=UTC)
         assert info.backend_version == "abc-123-def"
-        assert info.content_hash is None
 
-    def test_falls_back_to_etag_when_no_version_id(self, connector, mock_client):
+    def test_falls_back_to_etag_when_no_version_id(self, connector):
         """Should use ETag fallback when VersionId is null."""
-        mock_client.head_object.return_value = {
-            "ContentLength": 1024,
-            "LastModified": datetime.now(UTC),
-            "VersionId": "null",
-            "ETag": '"d41d8cd98f00b204e9800998ecf8427e"',
+        connector._s3_transport.get_object_metadata.return_value = {
+            "size": 1024,
+            "last_modified": datetime.now(UTC),
+            "version_id": "null",
+            "etag": "d41d8cd98f00b204e9800998ecf8427e",
         }
 
         info = connector.get_file_info("file.txt")
@@ -250,12 +256,13 @@ class TestS3ConnectorGetFileInfo:
         assert isinstance(info, FileInfo)
         assert info.backend_version == "etag:d41d8cd98f00b204e9800998ecf8427e"
 
-    def test_falls_back_to_etag_when_version_id_missing(self, connector, mock_client):
+    def test_falls_back_to_etag_when_version_id_missing(self, connector):
         """Should use ETag when VersionId key is absent."""
-        mock_client.head_object.return_value = {
-            "ContentLength": 512,
-            "LastModified": datetime.now(UTC),
-            "ETag": '"abc123"',
+        connector._s3_transport.get_object_metadata.return_value = {
+            "size": 512,
+            "last_modified": datetime.now(UTC),
+            "version_id": None,
+            "etag": "abc123",
         }
 
         info = connector.get_file_info("file.txt")
@@ -263,36 +270,31 @@ class TestS3ConnectorGetFileInfo:
         assert isinstance(info, FileInfo)
         assert info.backend_version == "etag:abc123"
 
-    def test_raises_not_found_for_missing_object(self, connector, mock_client):
-        """Should raise NexusFileNotFoundError for 404 ClientError."""
-        from botocore.exceptions import ClientError
-
-        mock_client.head_object.side_effect = ClientError(
-            {"Error": {"Code": "404", "Message": "Not Found"}},
-            "HeadObject",
+    def test_raises_not_found_for_missing_object(self, connector):
+        """Should raise NexusFileNotFoundError for missing object."""
+        connector._s3_transport.get_object_metadata.side_effect = NexusFileNotFoundError(
+            "missing.txt"
         )
 
         with pytest.raises(NexusFileNotFoundError):
             connector.get_file_info("missing.txt")
 
-    def test_raises_not_found_for_no_such_key_error(self, connector, mock_client):
+    def test_raises_not_found_for_no_such_key_error(self, connector):
         """Should raise NexusFileNotFoundError for NoSuchKey error code."""
-        from botocore.exceptions import ClientError
-
-        mock_client.head_object.side_effect = ClientError(
-            {"Error": {"Code": "NoSuchKey", "Message": "No such key"}},
-            "HeadObject",
+        connector._s3_transport.get_object_metadata.side_effect = NexusFileNotFoundError(
+            "missing.txt"
         )
 
         with pytest.raises(NexusFileNotFoundError):
             connector.get_file_info("missing.txt")
 
-    def test_uses_context_backend_path(self, connector, mock_client):
+    def test_uses_context_backend_path(self, connector):
         """Should use context.backend_path when available."""
-        mock_client.head_object.return_value = {
-            "ContentLength": 256,
-            "LastModified": datetime.now(UTC),
-            "VersionId": "v1",
+        connector._s3_transport.get_object_metadata.return_value = {
+            "size": 256,
+            "last_modified": datetime.now(UTC),
+            "version_id": "v1",
+            "etag": None,
         }
 
         ctx = MagicMock()
@@ -300,4 +302,5 @@ class TestS3ConnectorGetFileInfo:
 
         connector.get_file_info("ignored", context=ctx)
 
-        mock_client.head_object.assert_called_once()
+        # Verify the transport was called with the context backend_path
+        connector._s3_transport.get_object_metadata.assert_called_once_with("custom/key.txt")

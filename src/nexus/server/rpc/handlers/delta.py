@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_read method for rsync-style incremental updates.
 
     If client provides a content hash matching their cached version,
@@ -35,13 +35,10 @@ def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
 
     from nexus.core.hash_fast import hash_content
 
-    # Read current file content
-    content = nexus_fs.sys_read(params.path, context=context)
-    if isinstance(content, dict):
-        content = content.get("content", b"")
+    # Read current file content — sys_read (Tier 1) always returns bytes
+    content = await nexus_fs.sys_read(params.path, context=context)
     if isinstance(content, str):
         content = content.encode("utf-8")
-    assert isinstance(content, bytes)
 
     server_hash = hash_content(content)
 
@@ -109,7 +106,7 @@ def handle_delta_read(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[st
     }
 
 
-def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_write method for rsync-style incremental updates.
 
     Client sends a binary delta patch instead of full file content.
@@ -139,12 +136,10 @@ def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
         raise ValueError("base_hash is required for delta_write")
 
     try:
-        current_content = nexus_fs.sys_read(params.path, context=context)
-        if isinstance(current_content, dict):
-            current_content = current_content.get("content", b"")
+        # sys_read (Tier 1) always returns bytes
+        current_content = await nexus_fs.sys_read(params.path, context=context)
         if isinstance(current_content, str):
             current_content = current_content.encode("utf-8")
-        assert isinstance(current_content, bytes)
     except Exception as e:
         raise ValueError("Cannot apply delta to non-existent file. Use write() instead.") from e
 
@@ -159,15 +154,23 @@ def handle_delta_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
 
     new_content = bsdiff4.patch(current_content, delta)
 
-    kwargs: dict[str, Any] = {"context": context}
-    if hasattr(params, "if_match") and params.if_match:
-        kwargs["if_match"] = params.if_match
+    # OCC: use lib/occ helper if CAS params present (Issue #1323)
+    if_match = getattr(params, "if_match", None) or None
+    if if_match:
+        from nexus.lib.occ import occ_write
 
-    bytes_written = nexus_fs.sys_write(params.path, new_content, **kwargs)
+        write_result = occ_write(
+            nexus_fs, params.path, new_content, context=context, if_match=if_match
+        )
+    else:
+        write_result = nexus_fs.write(params.path, new_content, context=context)
     new_hash = hash_content(new_content)
 
-    return {
-        "bytes_written": bytes_written,
+    result: dict[str, Any] = {
+        "bytes_written": len(new_content),
         "new_hash": new_hash,
         "patch_applied": True,
     }
+    if isinstance(write_result, dict):
+        result.update(write_result)
+    return result

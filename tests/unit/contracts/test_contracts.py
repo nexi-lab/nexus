@@ -4,8 +4,7 @@ Verifies:
 1. Import paths work from both nexus.contracts and nexus.core (re-exports)
 2. Object identity is preserved across import paths (same class object)
 3. contracts/ modules have zero runtime nexus imports (leaf modules)
-4. Skills duplicate exceptions were removed from individual modules
-5. enable_read_tracking standalone function works correctly
+4. enable_read_tracking standalone function works correctly
 """
 
 import ast
@@ -150,92 +149,6 @@ class TestZeroDependency:
         mod_path = Path(importlib.import_module("nexus.contracts.exceptions").__file__)
         imports = _get_runtime_nexus_imports(mod_path)
         assert imports == [], f"contracts/exceptions.py has runtime nexus imports: {imports}"
-
-
-# ---------------------------------------------------------------------------
-# 4. Skills duplicate removal tests
-# ---------------------------------------------------------------------------
-
-
-class TestSkillsDuplicateRemoval:
-    """Verify duplicate exception classes were removed from skills sub-modules."""
-
-    def test_skill_manager_error_not_defined_in_manager(self):
-        """SkillManagerError should NOT be defined in skills/manager.py."""
-        import nexus.bricks.skills.manager as mod
-
-        source = Path(mod.__file__).read_text()
-        tree = ast.parse(source)
-        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-        assert "SkillManagerError" not in class_names
-
-    def test_skill_export_error_not_defined_in_exporter(self):
-        """SkillExportError should NOT be defined in skills/exporter.py."""
-        import nexus.bricks.skills.exporter as mod
-
-        source = Path(mod.__file__).read_text()
-        tree = ast.parse(source)
-        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-        assert "SkillExportError" not in class_names
-
-    def test_skill_parse_error_not_defined_in_parser(self):
-        """SkillParseError should NOT be defined in skills/parser.py."""
-        import nexus.bricks.skills.parser as mod
-
-        source = Path(mod.__file__).read_text()
-        tree = ast.parse(source)
-        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-        assert "SkillParseError" not in class_names
-
-    def test_skill_not_found_error_not_defined_in_registry(self):
-        """SkillNotFoundError should NOT be defined in skills/registry.py."""
-        import nexus.bricks.skills.registry as mod
-
-        source = Path(mod.__file__).read_text()
-        tree = ast.parse(source)
-        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-        assert "SkillNotFoundError" not in class_names
-
-    def test_skill_dependency_error_not_defined_in_registry(self):
-        """SkillDependencyError should NOT be defined in skills/registry.py."""
-        import nexus.bricks.skills.registry as mod
-
-        source = Path(mod.__file__).read_text()
-        tree = ast.parse(source)
-        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-        assert "SkillDependencyError" not in class_names
-
-    def test_skill_import_error_not_defined_in_importer(self):
-        """SkillImportError should NOT be defined in skills/importer.py."""
-        import nexus.bricks.skills.importer as mod
-
-        source = Path(mod.__file__).read_text()
-        tree = ast.parse(source)
-        class_names = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
-        assert "SkillImportError" not in class_names
-
-    def test_all_skill_exceptions_in_exceptions_module(self):
-        """All skill exceptions should be defined in skills/exceptions.py."""
-        from nexus.bricks.skills.exceptions import (
-            SkillDependencyError,
-            SkillExportError,
-            SkillImportError,
-            SkillManagerError,
-            SkillNotFoundError,
-            SkillParseError,
-            SkillPermissionDeniedError,
-            SkillValidationError,
-        )
-
-        # Verify they're all importable
-        assert SkillValidationError is not None
-        assert SkillPermissionDeniedError is not None
-        assert SkillNotFoundError is not None
-        assert SkillDependencyError is not None
-        assert SkillManagerError is not None
-        assert SkillExportError is not None
-        assert SkillParseError is not None
-        assert SkillImportError is not None
 
 
 # ---------------------------------------------------------------------------

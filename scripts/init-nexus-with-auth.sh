@@ -182,8 +182,8 @@ echo "📊 Creating database schema..."
 # Create tables via SQLAlchemy models (simpler than migrations for fresh install)
 if ! python3 -c "
 from nexus.core.nexus_fs import NexusFS
-from nexus.backends.local import LocalBackend
-backend = LocalBackend('$NEXUS_DATA_DIR')
+from nexus.backends.storage.cas_local import CASCASLocalBackend
+backend = CASLocalBackend('$NEXUS_DATA_DIR')
 nfs = NexusFS(backend, db_path='$NEXUS_DATABASE_URL')
 nfs.close()
 " 2>/tmp/nexus-schema-error.log; then

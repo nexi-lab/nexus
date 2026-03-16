@@ -210,7 +210,7 @@ class TestShareLinkServiceE2E:
     """Share link operations through FastAPI → NexusFS → ShareLinkService."""
 
     def _extract_data(self, result: dict) -> dict:
-        """Extract inner data from HandlerResponse wrapper."""
+        """Extract inner data dict if nested, else return as-is."""
         if isinstance(result, dict) and "data" in result:
             return result["data"]
         return result

@@ -128,11 +128,22 @@ class KernelDispatch:
     ) -> tuple[bool, Any]:
         """PRE-DISPATCH: first-match resolver for read.
 
-        Returns (handled, result).  If handled is True the caller
-        must return result and skip the normal VFS pipeline.
+        Returns (handled, result):
+            handled=True,  result=content  — resolver handled the read.
+            handled=False, result=metadata — resolver passed a prefetched hint.
+            handled=False, result=None     — no resolver matched.
+
+        Resolvers implementing ``try_read()`` merge match+read into one
+        call, eliminating redundant metadata lookups.  Legacy resolvers
+        using ``matches()``+``read()`` are still supported.
         """
         for r in self._resolvers:
-            if r.matches(path):
+            try_read = getattr(r, "try_read", None)
+            if try_read is not None:
+                handled, result = try_read(path, return_metadata=return_metadata, context=context)
+                if handled or result is not None:
+                    return handled, result
+            elif r.matches(path):
                 return True, r.read(path, return_metadata=return_metadata, context=context)
         return False, None
 
@@ -144,9 +155,24 @@ class KernelDispatch:
         return False, None
 
     def resolve_delete(self, path: str, *, context: Any = None) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for delete."""
+        """PRE-DISPATCH: first-match resolver for delete.
+
+        Returns (handled, result):
+            handled=True,  result={}       — resolver handled the delete.
+            handled=False, result=metadata — resolver passed a prefetched hint.
+            handled=False, result=None     — no resolver matched.
+
+        Resolvers implementing ``try_delete()`` merge match+delete into one
+        call (symmetric with ``try_read``).  Legacy resolvers using
+        ``matches()``+``delete()`` are still supported.
+        """
         for r in self._resolvers:
-            if r.matches(path):
+            try_delete = getattr(r, "try_delete", None)
+            if try_delete is not None:
+                handled, result = try_delete(path, context=context)
+                if handled or result is not None:
+                    return handled, result
+            elif r.matches(path):
                 r.delete(path, context=context)
                 return True, {}
         return False, None
@@ -178,10 +204,76 @@ class KernelDispatch:
     def register_intercept_rmdir(self, hook: VFSRmdirHook) -> None:
         self._rmdir_hooks.append(hook)
 
+    # ── unregister_intercept: mirror methods for hook removal ────────
+
+    def unregister_resolver(self, resolver: "VFSPathResolver") -> bool:
+        """Remove a PRE-DISPATCH resolver. Returns True if found."""
+        try:
+            self._resolvers.remove(resolver)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_read(self, hook: VFSReadHook) -> bool:
+        try:
+            self._read_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_write(self, hook: VFSWriteHook) -> bool:
+        try:
+            self._write_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_write_batch(self, hook: VFSWriteBatchHook) -> bool:
+        try:
+            self._write_batch_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_delete(self, hook: VFSDeleteHook) -> bool:
+        try:
+            self._delete_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_rename(self, hook: VFSRenameHook) -> bool:
+        try:
+            self._rename_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_mkdir(self, hook: VFSMkdirHook) -> bool:
+        try:
+            self._mkdir_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_intercept_rmdir(self, hook: VFSRmdirHook) -> bool:
+        try:
+            self._rmdir_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
     # ── register_observe: generic OBSERVE observers ────────────────────
 
     def register_observe(self, obs: VFSObserver) -> None:
         self._observers.append(obs)
+
+    def unregister_observe(self, obs: VFSObserver) -> bool:
+        try:
+            self._observers.remove(obs)
+            return True
+        except ValueError:
+            return False
 
     # ── PRE-INTERCEPT dispatch (Issue #899) ───────────────────────────
     # Reuses existing hook lists — calls on_pre_* via getattr.

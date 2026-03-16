@@ -37,8 +37,6 @@ profiles:
     tools:
       - nexus_grep
       - nexus_semantic_search
-      - nexus_store_memory
-      - nexus_query_memory
 
   execution:
     extends: coding
@@ -55,8 +53,6 @@ profiles:
     description: "All tools (admin/development)"
     tools:
       - nexus_semantic_search
-      - nexus_store_memory
-      - nexus_query_memory
       - nexus_list_workflows
       - nexus_execute_workflow
       - nexus_discovery_search_tools

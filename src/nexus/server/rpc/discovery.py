@@ -9,6 +9,8 @@ boilerplate (Issue #2035, Follow-up 1).
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.service_registry import ServiceRef
+
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
@@ -32,13 +34,19 @@ def discover_exposed_methods(nexus_fs: "NexusFS", *additional_sources: Any) -> d
         if source is None:
             continue
 
-        source_name = type(source).__name__
-        for name in dir(source):
+        # Unwrap ServiceRef proxies so dir() sees the actual methods
+        # and _rpc_exposed attributes are directly accessible.
+        scan_target = source
+        if isinstance(source, ServiceRef):
+            scan_target = source._service_instance
+
+        source_name = type(scan_target).__name__
+        for name in dir(scan_target):
             if name.startswith("_"):
                 continue
 
             try:
-                attr = getattr(source, name)
+                attr = getattr(scan_target, name)
                 if callable(attr) and hasattr(attr, "_rpc_exposed"):
                     method_name = getattr(attr, "_rpc_name", name)
                     # Issue #2136: Block rpc_name bypass — skip private method names

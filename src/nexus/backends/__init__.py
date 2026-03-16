@@ -4,17 +4,11 @@ import importlib
 import logging
 import threading
 
-from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.backends.base_blob_connector import BaseBlobStorageConnector
-from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
-from nexus.backends.cache_models import IMMUTABLE_VERSION, CachedReadResult
-from nexus.backends.cache_service import CacheService
-from nexus.backends.factory import BackendFactory
-
-# Core backends (always available)
-from nexus.backends.local import LocalBackend
-from nexus.backends.passthrough import PassthroughBackend
-from nexus.backends.registry import (
+from nexus.backends.base.backend import Backend, HandlerStatusResponse
+from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.factory import BackendFactory
+from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.base.registry import (
     ArgType,
     ConnectionArg,
     ConnectorInfo,
@@ -26,22 +20,33 @@ from nexus.backends.registry import (
 from nexus.core.object_store import ObjectStoreABC, WriteResult
 
 # Optional backends — loaded on first access via __getattr__.
-# Maps attribute name → (module_path, class_name).
+# Backends whose dependencies may be unavailable in slim images (e.g. remote-only)
+# are loaded lazily to avoid ImportError on startup.
 _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
-    "GCSBackend": ("nexus.backends.gcs", "GCSBackend"),
+    # Cache layer (depends on sqlalchemy)
+    "CachedReadResult": ("nexus.backends.cache.models", "CachedReadResult"),
+    "IMMUTABLE_VERSION": ("nexus.backends.cache.models", "IMMUTABLE_VERSION"),
+    "CacheService": ("nexus.backends.cache.service", "CacheService"),
+    "CacheConnectorMixin": ("nexus.backends.wrappers.cache_mixin", "CacheConnectorMixin"),
+    "CacheEntry": ("nexus.backends.wrappers.cache_mixin", "CacheEntry"),
+    "SyncResult": ("nexus.backends.wrappers.cache_mixin", "SyncResult"),
+    # Storage backends
+    "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
+    "PathLocalBackend": ("nexus.backends.storage.path_local", "PathLocalBackend"),
+    "CASGCSBackend": ("nexus.backends.storage.cas_gcs", "CASGCSBackend"),
     "GoogleDriveConnectorBackend": (
-        "nexus.backends.gdrive_connector",
+        "nexus.backends.connectors.gdrive.connector",
         "GoogleDriveConnectorBackend",
     ),
-    "GCSConnectorBackend": ("nexus.backends.gcs_connector", "GCSConnectorBackend"),
-    "S3ConnectorBackend": ("nexus.backends.s3_connector", "S3ConnectorBackend"),
-    "XConnectorBackend": ("nexus.backends.x_connector", "XConnectorBackend"),
-    "HNConnectorBackend": ("nexus.backends.hn_connector", "HNConnectorBackend"),
-    "SlackConnectorBackend": ("nexus.backends.slack_connector", "SlackConnectorBackend"),
-    "LocalConnectorBackend": ("nexus.backends.local_connector", "LocalConnectorBackend"),
-    "GmailConnectorBackend": ("nexus.backends.gmail_connector", "GmailConnectorBackend"),
+    "PathGCSBackend": ("nexus.backends.storage.path_gcs", "PathGCSBackend"),
+    "PathS3Backend": ("nexus.backends.storage.path_s3", "PathS3Backend"),
+    "XConnectorBackend": ("nexus.backends.connectors.x.connector", "XConnectorBackend"),
+    "HNConnectorBackend": ("nexus.backends.connectors.hn.connector", "HNConnectorBackend"),
+    "SlackConnectorBackend": ("nexus.backends.connectors.slack.connector", "SlackConnectorBackend"),
+    "LocalConnectorBackend": ("nexus.backends.storage.local_connector", "LocalConnectorBackend"),
+    "GmailConnectorBackend": ("nexus.backends.connectors.gmail.connector", "GmailConnectorBackend"),
     "GoogleCalendarConnectorBackend": (
-        "nexus.backends.gcalendar_connector",
+        "nexus.backends.connectors.calendar.connector",
         "GoogleCalendarConnectorBackend",
     ),
 }
@@ -94,7 +99,8 @@ __all__ = [
     "HandlerStatusResponse",
     "ObjectStoreABC",
     "WriteResult",
-    "BaseBlobStorageConnector",
+    "CASBackend",
+    "PathBackend",
     "CacheConnectorMixin",
     "CacheEntry",
     "CacheService",
@@ -112,12 +118,12 @@ __all__ = [
     "create_connector",
     "create_connector_from_config",
     # Concrete backends
-    "LocalBackend",
-    "PassthroughBackend",
-    "GCSBackend",
+    "CASLocalBackend",
+    "PathLocalBackend",
+    "CASGCSBackend",
     "GoogleDriveConnectorBackend",
-    "GCSConnectorBackend",
-    "S3ConnectorBackend",
+    "PathGCSBackend",
+    "PathS3Backend",
     "XConnectorBackend",
     "HNConnectorBackend",
     "SlackConnectorBackend",

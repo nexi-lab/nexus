@@ -1,0 +1,76 @@
+"""Path-based local filesystem backend (no CAS overhead).
+
+Thin subclass of PathBackend that:
+- Creates a LocalBlobTransport for raw local I/O
+- Registers as "path_local" via @register_connector
+- Exposes root_path / has_root_path for orchestrator
+
+Storage structure:
+    root_path/
+    └── workspace/
+        └── file.txt          # Stored at actual path
+
+Naming convention: {addressing}_{transport} per Section 5.2 of
+docs/architecture/backend-architecture.md.
+
+References:
+    - Issue #1323: CAS x Backend orthogonal composition
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import ClassVar
+
+from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.transports.local_transport import LocalBlobTransport
+from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
+
+
+@register_connector(
+    "path_local",
+    description="Local filesystem with direct path mapping (no CAS)",
+    category="storage",
+)
+class PathLocalBackend(PathBackend):
+    """Local filesystem backend with direct path mapping.
+
+    Unlike ``CASLocalBackend`` (CAS addressing + local transport), this uses
+    path addressing + local transport.  Files are stored at their actual
+    virtual path — no hashing, no dedup, no Bloom filters.
+
+    Use cases:
+    - Minimal/dev profiles where CAS overhead isn't needed
+    - When files should be at predictable disk locations
+    - Testing with simpler storage
+
+    Opt into CAS by setting ``backend = "local"`` in config.
+    """
+
+    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = (
+        BLOB_CONNECTOR_CAPABILITIES
+        | frozenset(
+            {
+                ConnectorCapability.ROOT_PATH,
+            }
+        )
+    )
+
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "root_path": ConnectionArg(
+            type=ArgType.PATH,
+            description="Root directory for storage",
+            required=True,
+            config_key="data_dir",
+        ),
+    }
+
+    def __init__(self, root_path: str | Path, *, fsync: bool = True) -> None:
+        self.root_path = Path(root_path).resolve()
+        transport = LocalBlobTransport(root_path=self.root_path, fsync=fsync)
+        super().__init__(transport, backend_name="path_local")
+
+    @property
+    def has_root_path(self) -> bool:
+        return True

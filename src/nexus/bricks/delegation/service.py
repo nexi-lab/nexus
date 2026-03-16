@@ -35,7 +35,6 @@ from nexus.bricks.delegation.errors import (
     DelegationError,
     DelegationNotFoundError,
     DepthExceededError,
-    InsufficientTrustError,
 )
 from nexus.bricks.delegation.models import (
     DelegationMode,
@@ -50,8 +49,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.services.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.services.protocols.reputation import ReputationProtocol
+    from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -77,14 +75,12 @@ class DelegationService:
         namespace_manager: Any = None,
         entity_registry: "EntityRegistryProtocol | None" = None,
         agent_registry: Any = None,
-        reputation_service: "ReputationProtocol | None" = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._rebac_manager = rebac_manager
         self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
         self._agent_registry: Any = agent_registry
-        self._reputation_service = reputation_service
         logger.info("[DelegationService] Initialized")
 
     @contextmanager
@@ -121,7 +117,6 @@ class DelegationService:
         intent: str = "",
         can_sub_delegate: bool = False,
         scope: DelegationScope | None = None,
-        min_trust_score: float = 0.0,
     ) -> DelegationResult:
         """Create a delegated worker agent with narrowed permissions.
 
@@ -140,7 +135,6 @@ class DelegationService:
             intent: Immutable purpose description for audit trail.
             can_sub_delegate: Whether worker can create further delegations.
             scope: Fine-grained operation/resource/budget constraints.
-            min_trust_score: Minimum trust score for coordinator (0.0 = disabled).
 
         Returns:
             DelegationResult with worker agent ID, API key, and mount table.
@@ -150,21 +144,10 @@ class DelegationService:
             DepthExceededError: If chain depth exceeds max_depth.
             DelegationError: If coordinator is not registered.
             EscalationError: If grants would exceed parent's permissions.
-            InsufficientTrustError: If coordinator trust score < min_trust_score.
             TooManyGrantsError: If too many grants derived.
         """
         # 1. Validate coordinator is registered and can delegate
         parent_delegation = self._validate_coordinator(coordinator_agent_id)
-
-        # 1b. Trust gate: reject if coordinator trust score is below threshold (#1619)
-        if min_trust_score > 0.0 and self._reputation_service is not None:
-            score = self._reputation_service.get_reputation(coordinator_agent_id)
-            if score is None or score.composite_score < min_trust_score:
-                raise InsufficientTrustError(
-                    agent_id=coordinator_agent_id,
-                    score=score.composite_score if score else None,
-                    threshold=min_trust_score,
-                )
 
         # 2. Compute chain depth
         depth = 0
@@ -441,10 +424,10 @@ class DelegationService:
     def complete_delegation(
         self,
         delegation_id: str,
-        outcome: DelegationOutcome,
+        outcome: DelegationOutcome,  # noqa: ARG002 — API contract (callers pass this)
         quality_score: float | None = None,
     ) -> DelegationRecord:
-        """Complete a delegation and submit feedback to the reputation system (#1619).
+        """Complete a delegation (#1619).
 
         Args:
             delegation_id: The delegation to complete.
@@ -473,70 +456,160 @@ class DelegationService:
         # Update status to COMPLETED
         self._update_delegation_status(delegation_id, DelegationStatus.COMPLETED)
 
-        # Submit feedback to reputation service if available
-        if self._reputation_service is not None:
-            self._submit_delegation_feedback(record, outcome, quality_score)
-
         # Return updated record
         updated = self._load_delegation_record(delegation_id)
         if updated is None:
             raise DelegationNotFoundError(f"Delegation {delegation_id} not found after update")
         return updated
 
-    def _submit_delegation_feedback(
+    # Sentinel for "clear this field" vs "leave unchanged"
+    _CLEAR: str = "__CLEAR__"
+
+    def update_namespace_config(
         self,
-        record: DelegationRecord,
-        outcome: DelegationOutcome,
-        quality_score: float | None,
-    ) -> None:
-        """Submit delegation outcome as reputation feedback (#1619).
+        delegation_id: str,
+        *,
+        scope_prefix: str | None = None,
+        clear_scope_prefix: bool = False,
+        remove_grants: list[str] | None = None,
+        add_grants: list[str] | None = None,
+        readonly_paths: list[str] | None = None,
+    ) -> DelegationRecord:
+        """Update namespace config and re-materialize effective access.
 
-        Coordinator (parent) rates the worker based on delegation outcome:
-        - COMPLETED → positive reliability (1.0) + quality (quality_score or 0.8)
-        - FAILED → negative reliability (0.0)
-        - TIMEOUT → negative timeliness (0.0)
+        Updates the record, re-derives grants from the parent's current
+        permissions, replaces the worker's ReBAC tuples, and invalidates
+        the namespace cache so the mount_table reflects the new state.
+
+        Args:
+            delegation_id: The delegation to update.
+            scope_prefix: New scope prefix (None = leave unchanged).
+            clear_scope_prefix: Set True to clear scope_prefix to None.
+            remove_grants: New removed grants list (None = leave unchanged).
+            add_grants: New added grants list (None = leave unchanged).
+            readonly_paths: New readonly paths list (None = leave unchanged).
+
+        Returns:
+            Updated DelegationRecord.
+
+        Raises:
+            DelegationNotFoundError: If delegation_id not found.
+            DelegationError: If delegation is not ACTIVE.
+            InvalidPrefixError: If scope_prefix is empty or malformed.
+            EscalationError: If add_grants exceed parent's permissions.
         """
-        if self._reputation_service is None:
-            return  # Caller should have checked; defensive no-op
+        from nexus.bricks.delegation.derivation import validate_scope_prefix
 
-        zone_id = record.zone_id or ROOT_ZONE_ID
+        record = self._load_delegation_record(delegation_id)
+        if record is None:
+            raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
 
-        try:
-            if outcome == DelegationOutcome.COMPLETED:
-                self._reputation_service.submit_feedback(
-                    rater_agent_id=record.parent_agent_id,
-                    rated_agent_id=record.agent_id,
-                    exchange_id=record.delegation_id,
-                    zone_id=zone_id,
-                    outcome="positive",
-                    reliability_score=1.0,
-                    quality_score=quality_score if quality_score is not None else 0.8,
-                )
-            elif outcome == DelegationOutcome.FAILED:
-                self._reputation_service.submit_feedback(
-                    rater_agent_id=record.parent_agent_id,
-                    rated_agent_id=record.agent_id,
-                    exchange_id=record.delegation_id,
-                    zone_id=zone_id,
-                    outcome="negative",
-                    reliability_score=0.0,
-                )
-            elif outcome == DelegationOutcome.TIMEOUT:
-                self._reputation_service.submit_feedback(
-                    rater_agent_id=record.parent_agent_id,
-                    rated_agent_id=record.agent_id,
-                    exchange_id=record.delegation_id,
-                    zone_id=zone_id,
-                    outcome="negative",
-                    timeliness_score=0.0,
-                )
-        except Exception as e:
-            # Feedback is best-effort; don't fail the completion
-            logger.warning(
-                "[Delegation] Failed to submit reputation feedback for delegation=%s: %s",
-                record.delegation_id,
-                e,
+        if record.status != DelegationStatus.ACTIVE:
+            raise DelegationError(
+                f"Delegation {delegation_id} is not active (status={record.status.value})"
             )
+
+        # Compute effective new values (merge unchanged fields from record)
+        new_scope_prefix: str | None
+        if clear_scope_prefix:
+            new_scope_prefix = None
+        elif scope_prefix is not None:
+            new_scope_prefix = scope_prefix
+        else:
+            new_scope_prefix = record.scope_prefix
+
+        new_remove = (
+            list(remove_grants) if remove_grants is not None else list(record.removed_grants)
+        )
+        new_add = list(add_grants) if add_grants is not None else list(record.added_grants)
+        new_readonly = (
+            list(readonly_paths) if readonly_paths is not None else list(record.readonly_paths)
+        )
+
+        # Validate scope_prefix at system boundary
+        validate_scope_prefix(new_scope_prefix)
+
+        # 1. Re-derive grants from parent's current permissions (pure, no side effects)
+        parent_grants = self._enumerate_parent_grants(record.parent_agent_id, record.zone_id)
+        child_grants = derive_grants(
+            parent_grants=parent_grants,
+            mode=record.delegation_mode,
+            remove_grants=new_remove if new_remove else None,
+            add_grants=new_add if new_add else None,
+            readonly_paths=new_readonly if new_readonly else None,
+            scope_prefix=new_scope_prefix,
+        )
+
+        # 2. Snapshot existing tuples for compensation on failure
+        old_tuples = self._rebac_manager.list_tuples(
+            subject=("agent", record.agent_id),
+        )
+
+        # 3. Update DB record first (auto-rollback via session on exception)
+        from sqlalchemy import update as sa_update
+
+        from nexus.storage.models.agents import DelegationRecordModel
+
+        old_record_values = {
+            "scope_prefix": record.scope_prefix,
+            "removed_grants": json.dumps(list(record.removed_grants)),
+            "added_grants": json.dumps(list(record.added_grants)),
+            "readonly_paths": json.dumps(list(record.readonly_paths)),
+        }
+
+        with self._session() as session:
+            session.execute(
+                sa_update(DelegationRecordModel)
+                .where(DelegationRecordModel.delegation_id == delegation_id)
+                .values(
+                    scope_prefix=new_scope_prefix,
+                    removed_grants=json.dumps(new_remove),
+                    added_grants=json.dumps(new_add),
+                    readonly_paths=json.dumps(new_readonly),
+                )
+            )
+
+        # 4. Replace tuples with compensation on failure
+        try:
+            self._delete_worker_tuples(record.agent_id, record.zone_id)
+            self._create_grant_tuples(
+                worker_id=record.agent_id,
+                grants=child_grants,
+                zone_id=record.zone_id,
+                coordinator_agent_id=record.parent_agent_id,
+                expires_at=record.lease_expires_at,
+            )
+        except Exception:
+            logger.error(
+                "[Delegation] Tuple replacement failed for delegation=%s, "
+                "compensating: restoring DB record + old tuples",
+                delegation_id,
+            )
+            # Compensate: rollback DB record to previous values
+            with self._session() as session:
+                session.execute(
+                    sa_update(DelegationRecordModel)
+                    .where(DelegationRecordModel.delegation_id == delegation_id)
+                    .values(**old_record_values)
+                )
+            # Compensate: restore old tuples from snapshot
+            self._restore_tuples_from_snapshot(old_tuples)
+            raise
+
+        # 5. Invalidate namespace cache so mount_table reflects new state
+        if self._namespace_manager is not None:
+            self._namespace_manager.invalidate(("agent", record.agent_id))
+
+        logger.info(
+            "[Delegation] Updated namespace config for delegation=%s grants=%d",
+            delegation_id,
+            len(child_grants),
+        )
+
+        updated = self._load_delegation_record(delegation_id)
+        if updated is None:
+            raise DelegationNotFoundError(f"Delegation {delegation_id} not found after update")
+        return updated
 
     # -------------------------------------------------------------------------
     # Private helpers
@@ -764,6 +837,90 @@ class DelegationService:
             deleted,
             worker_id,
         )
+
+    @staticmethod
+    def _normalize_expires_at(raw: Any) -> datetime | None:
+        """Normalize expires_at from DB row to datetime.
+
+        list_tuples() returns the raw DB value which may be a datetime
+        object or an ISO-format string depending on the driver.
+        write_batch() calls .isoformat() unconditionally, so we must
+        ensure a datetime is returned.
+        """
+        if raw is None:
+            return None
+        if isinstance(raw, datetime):
+            return raw
+        # String-backed timestamp from SQLite/Postgres text column
+        if isinstance(raw, str):
+            return datetime.fromisoformat(raw)
+        return None
+
+    @staticmethod
+    def _normalize_conditions(raw: Any) -> Any:
+        """Normalize conditions from DB row for write_batch().
+
+        list_tuples() returns the raw DB value (a JSON string).
+        write_batch() calls json.dumps() on it, so we must parse
+        the string back to a Python object to avoid double-encoding.
+        """
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            return json.loads(raw)
+        # Already a dict/list — pass through
+        return raw
+
+    def _restore_tuples_from_snapshot(self, snapshot: list[dict[str, Any]]) -> None:
+        """Restore ReBAC tuples from a previous snapshot (compensating transaction).
+
+        Converts list_tuples() output back to write_batch() input format,
+        preserving all fields (subject_relation, conditions, zone IDs,
+        expires_at) so the restored tuples are identical to the originals.
+        Best-effort: logs errors but does not raise, since this is itself
+        a compensation path.
+        """
+        if not snapshot:
+            return
+
+        batch: list[dict[str, Any]] = []
+        for t in snapshot:
+            # Reconstruct subject tuple, including subject_relation if present
+            subject_relation = t.get("subject_relation")
+            if subject_relation:
+                subject: tuple[str, ...] = (
+                    t["subject_type"],
+                    t["subject_id"],
+                    subject_relation,
+                )
+            else:
+                subject = (t["subject_type"], t["subject_id"])
+
+            batch.append(
+                {
+                    "subject": subject,
+                    "relation": t["relation"],
+                    "object": (t["object_type"], t["object_id"]),
+                    "zone_id": t.get("zone_id"),
+                    "expires_at": self._normalize_expires_at(t.get("expires_at")),
+                    "conditions": self._normalize_conditions(t.get("conditions")),
+                    "subject_zone_id": t.get("subject_zone_id"),
+                    "object_zone_id": t.get("object_zone_id"),
+                }
+            )
+
+        try:
+            restored = self._rebac_manager.rebac_write_batch(batch)
+            logger.info(
+                "[Delegation] Compensating restore: recreated %d/%d tuples",
+                restored,
+                len(batch),
+            )
+        except Exception:
+            logger.exception(
+                "[Delegation] CRITICAL: Failed to restore %d tuples during compensation",
+                len(batch),
+            )
 
     def _revoke_worker_api_key(self, worker_id: str) -> None:
         """Revoke all API keys for the worker agent."""

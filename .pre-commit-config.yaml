@@ -31,7 +31,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: .venv/bin/python -m mypy
+        entry: bash -c 'if [ -x .venv/bin/python ]; then exec .venv/bin/python -m mypy "$@"; else exec .venv/Scripts/python -m mypy "$@"; fi' --
         language: system
         types: [python]
         exclude: ^(tests/|alembic/|examples/|benchmarks/|\.claude/|scripts/|nexus-plugin-)|_pb2(_grpc)?\.py$
@@ -81,10 +81,10 @@ repos:
       # Fast Rust format check (< 2s)
       - id: rust-fmt-fast
         name: Rust Format Check (nexus_fast)
-        entry: bash -c 'cd rust/nexus_fast && cargo fmt --check'
+        entry: bash -c 'cd rust/nexus_pyo3 && cargo fmt --check'
         language: system
         pass_filenames: false
-        files: ^rust/nexus_fast/.*\.rs$
+        files: ^rust/nexus_pyo3/.*\.rs$
 
       - id: rust-fmt-raft
         name: Rust Format Check (nexus_raft)
@@ -96,10 +96,10 @@ repos:
       # Rust clippy (requires compilation, ~10-30s per crate)
       - id: rust-clippy-fast
         name: Rust Clippy (nexus_fast)
-        entry: bash -c 'cd rust/nexus_fast && cargo clippy -- -D warnings'
+        entry: bash -c 'cd rust/nexus_pyo3 && cargo clippy -- -D warnings'
         language: system
         pass_filenames: false
-        files: ^rust/nexus_fast/.*\.rs$
+        files: ^rust/nexus_pyo3/.*\.rs$
 
       - id: rust-clippy-raft
         name: Rust Clippy (nexus_raft)

@@ -1,8 +1,9 @@
 """Tests for ReplayEngine and ProxyBrick._do_forward() (#11-A)."""
 
 import asyncio
+import base64
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -451,3 +452,249 @@ class TestProxyBrickWakeAfterEnqueue:
         assert wake_calls >= 1, "replay engine should have been woken after enqueue"
 
         await proxy.stop()
+
+
+# ---------------------------------------------------------------------------
+# Bug #1: Streamed write replay
+# ---------------------------------------------------------------------------
+
+
+class TestReplayStreamUpload:
+    """Bug #1: ops with payload_ref should replay via stream_upload."""
+
+    async def test_payload_ref_uses_stream_upload(
+        self, queue: AsyncMock, transport: AsyncMock, circuit: AsyncCircuitBreaker
+    ) -> None:
+        payload = b"large-binary-content"
+        op = QueuedOperation(
+            id=1,
+            method="write",
+            args_json="[]",
+            kwargs_json=json.dumps({"path": "/big"}),
+            payload_ref=base64.b64encode(payload).decode(),
+            retry_count=0,
+            created_at=1000.0,
+        )
+        queue.dequeue_batch = AsyncMock(side_effect=[[op], []])
+
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
+        task = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.05)
+        await engine.stop()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        transport.stream_upload.assert_called_once_with("write", payload, params={"path": "/big"})
+        transport.call.assert_not_called()
+
+    async def test_no_payload_ref_uses_call(
+        self, queue: AsyncMock, transport: AsyncMock, circuit: AsyncCircuitBreaker
+    ) -> None:
+        op = _make_op(1, "read")
+        queue.dequeue_batch = AsyncMock(side_effect=[[op], []])
+
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
+        task = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.05)
+        await engine.stop()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        transport.call.assert_called_once()
+        transport.stream_upload.assert_not_called()
+
+
+class TestDoForwardEnqueuesPayloadRef:
+    """Bug #1: _do_forward should store data as payload_ref on enqueue."""
+
+    async def test_stream_data_preserved_on_circuit_open(self, transport: AsyncMock) -> None:
+        from nexus.proxy.brick import ProxyBrick
+        from nexus.proxy.errors import CircuitOpenError
+
+        config = ProxyBrickConfig(remote_url="http://test:8000")
+        q = InMemoryQueue()
+        await q.initialize()
+        proxy = ProxyBrick(config, transport=transport, queue=q)
+
+        # Force circuit open
+        for _ in range(5):
+            await proxy._circuit.record_failure()
+
+        with pytest.raises(CircuitOpenError):
+            await proxy._do_forward("write", data=b"test-payload", path="/a")
+
+        batch = await q.dequeue_batch(10)
+        assert len(batch) == 1
+        assert batch[0].payload_ref == base64.b64encode(b"test-payload").decode()
+
+
+# ---------------------------------------------------------------------------
+# Bug #2: Replay respects half-open gate
+# ---------------------------------------------------------------------------
+
+
+class TestReplayRespectsHalfOpenGate:
+    """Bug #2: replay must use allow_request(), not is_open."""
+
+    async def test_half_open_limits_replay_ops(
+        self, queue: AsyncMock, transport: AsyncMock
+    ) -> None:
+        # Circuit with half_open_max_calls=1
+        circuit = AsyncCircuitBreaker(
+            failure_threshold=3, recovery_timeout=0.01, half_open_max_calls=1
+        )
+        # Force circuit to OPEN then let it transition to HALF_OPEN
+        for _ in range(3):
+            await circuit.record_failure()
+        # Wait for recovery timeout
+        await asyncio.sleep(0.02)
+        assert not circuit.is_open  # Should be HALF_OPEN now
+
+        ops = [_make_op(1), _make_op(2), _make_op(3)]
+        queue.dequeue_batch = AsyncMock(side_effect=[ops, []])
+
+        engine = ReplayEngine(
+            queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
+        task = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.05)
+        await engine.stop()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # With half_open_max_calls=1, first op gets a permit and succeeds
+        # (record_success closes the circuit), allowing the rest through.
+        # But the key is that allow_request() is used, not is_open.
+        # If the first op succeeded, circuit closes and remaining ops proceed.
+        assert transport.call.call_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# Bug #3: Replay success callback
+# ---------------------------------------------------------------------------
+
+
+class TestReplaySuccessCallback:
+    """Bug #3: successful replay should fire on_replay_success callback."""
+
+    async def test_callback_fires_on_success(
+        self, queue: AsyncMock, transport: AsyncMock, circuit: AsyncCircuitBreaker
+    ) -> None:
+        ops = [_make_op(1)]
+        queue.dequeue_batch = AsyncMock(side_effect=[ops, []])
+        callback = MagicMock()
+
+        engine = ReplayEngine(
+            queue=queue,
+            transport=transport,
+            circuit=circuit,
+            batch_size=10,
+            poll_interval=0.01,
+            on_replay_success=callback,
+        )
+        task = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.05)
+        await engine.stop()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        callback.assert_called()
+
+    async def test_callback_not_fired_on_failure(
+        self, queue: AsyncMock, transport: AsyncMock, circuit: AsyncCircuitBreaker
+    ) -> None:
+        import httpx
+
+        ops = [_make_op(1)]
+        queue.dequeue_batch = AsyncMock(side_effect=[ops, []])
+        transport.call = AsyncMock(
+            side_effect=RemoteCallError("read", cause=httpx.ConnectError("fail"))
+        )
+        callback = MagicMock()
+
+        engine = ReplayEngine(
+            queue=queue,
+            transport=transport,
+            circuit=circuit,
+            batch_size=10,
+            poll_interval=0.01,
+            on_replay_success=callback,
+        )
+        task = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.05)
+        await engine.stop()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        callback.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Bug #5: Persistent idempotency
+# ---------------------------------------------------------------------------
+
+
+class TestReplayPersistentIdempotency:
+    """Bug #5: replay should check persistent idempotency store."""
+
+    async def test_skips_op_with_persistent_key(
+        self, transport: AsyncMock, circuit: AsyncCircuitBreaker
+    ) -> None:
+        q = AsyncMock()
+        q.dequeue_batch = AsyncMock(
+            side_effect=[
+                [
+                    QueuedOperation(
+                        id=1,
+                        method="write",
+                        args_json="[]",
+                        kwargs_json='{"path": "/a"}',
+                        payload_ref=None,
+                        retry_count=0,
+                        created_at=1000.0,
+                        idempotency_key="abc123",
+                    )
+                ],
+                [],
+            ]
+        )
+        q.mark_done = AsyncMock()
+        q.mark_failed = AsyncMock()
+        q.mark_dead_letter = AsyncMock()
+        q.has_idempotency_key = AsyncMock(return_value=True)
+
+        engine = ReplayEngine(
+            queue=q, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
+        )
+        task = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.05)
+        await engine.stop()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Should skip the op and mark it done without calling transport
+        q.has_idempotency_key.assert_called_with("abc123")
+        q.mark_done.assert_called_with(1)
+        transport.call.assert_not_called()

@@ -81,15 +81,11 @@ from nexus.contracts.metadata import (
     DT_PIPE,
     DT_REG,
     FileMetadata,
-    PaginatedResult,
 )
 from nexus.contracts.rebac_types import (
     CROSS_ZONE_ALLOWED_RELATIONS,
     WILDCARD_SUBJECT,
     CheckResult,
-    ConsistencyLevel,
-    ConsistencyMode,
-    ConsistencyRequirement,
     Entity,
     GraphLimitExceeded,
     GraphLimits,
@@ -125,7 +121,6 @@ __all__ = [
     "DT_PIPE",
     "DT_REG",
     "FileMetadata",
-    "PaginatedResult",
     # Validators
     "EmailAddress",
     "EmailList",
@@ -185,9 +180,6 @@ __all__ = [
     "WriteObserverProtocol",
     # ReBAC types (Issue #2190)
     "CheckResult",
-    "ConsistencyLevel",
-    "ConsistencyMode",
-    "ConsistencyRequirement",
     "CROSS_ZONE_ALLOWED_RELATIONS",
     "Entity",
     "GraphLimitExceeded",

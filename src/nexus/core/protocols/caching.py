@@ -22,6 +22,7 @@ References:
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
 
+
 @runtime_checkable
 class CacheConfigContract(Protocol):
     """Contract for connectors that support caching via CacheService.

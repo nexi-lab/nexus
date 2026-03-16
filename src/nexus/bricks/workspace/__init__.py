@@ -1,8 +1,5 @@
-"""Workspace and memory registration service."""
+"""Workspace registration service."""
 
-from nexus.bricks.workspace.workspace_registry import (
-    MemoryConfig as MemoryConfig,
-)
 from nexus.bricks.workspace.workspace_registry import (
     WorkspaceConfig as WorkspaceConfig,
 )
@@ -10,4 +7,4 @@ from nexus.bricks.workspace.workspace_registry import (
     WorkspaceRegistry as WorkspaceRegistry,
 )
 
-__all__ = ["MemoryConfig", "WorkspaceConfig", "WorkspaceRegistry"]
+__all__ = ["WorkspaceConfig", "WorkspaceRegistry"]

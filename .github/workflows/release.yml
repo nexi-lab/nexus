@@ -1,5 +1,11 @@
 name: Release
 
+# Atomic release pipeline (Issue #2946).
+# The GitHub Release (the user-visible "this version exists" signal) is only
+# created AFTER both PyPI publish AND Docker publish succeed.
+# PyPI publish is irreversible, but without a GitHub Release users won't
+# discover the version via the releases page or release notifications.
+
 on:
   push:
     tags:
@@ -7,7 +13,9 @@ on:
 
 permissions:
   contents: write
+  packages: write
   id-token: write
+  attestations: write
 
 jobs:
   verify-version:
@@ -21,43 +29,22 @@ jobs:
         run: |
           TAG_VERSION=${GITHUB_REF#refs/tags/v}
           PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          RUST_PKG_VERSION=$(grep '^version = ' rust/nexus_pyo3/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          RUST_CARGO_VERSION=$(grep '^version = ' rust/nexus_pyo3/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "Tag version: $TAG_VERSION"
           echo "Package version: $PKG_VERSION"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "❌ Version mismatch! Tag is v$TAG_VERSION but pyproject.toml has $PKG_VERSION"
+          echo "Rust package version: $RUST_PKG_VERSION"
+          echo "Rust Cargo version: $RUST_CARGO_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_CARGO_VERSION" ]; then
+            echo "❌ Version mismatch! Tag is v$TAG_VERSION but package metadata is inconsistent"
             exit 1
           fi
           echo "✅ Version match confirmed"
 
-  build-wheels:
+  build-wheel:
     needs: [verify-version]
-    name: Build wheels for ${{ matrix.platform.target }}
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          # Linux builds
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            arch: x64
-          # TODO: Re-enable aarch64 Linux builds once Docker/QEMU issues are resolved
-          # - os: ubuntu-latest
-          #   target: aarch64-unknown-linux-gnu
-          #   arch: aarch64
-
-          # macOS builds
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            arch: x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            arch: arm64
-
-          # Windows builds
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            arch: x64
+    name: Build wheel
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -67,22 +54,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          architecture: ${{ matrix.platform.arch }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform.target }}
 
       - name: Build wheels
         run: |
-          pip install maturin
-          maturin build --release --target ${{ matrix.platform.target }} --out dist
+          python -m pip install build
+          python -m build --wheel --outdir dist
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.platform.target }}
+          name: wheel
           path: dist/*.whl
           if-no-files-found: error
 
@@ -104,8 +85,8 @@ jobs:
 
       - name: Build sdist
         run: |
-          pip install maturin
-          maturin sdist --out dist
+          python -m pip install build
+          python -m build --sdist --outdir dist
 
       - name: Upload sdist
         uses: actions/upload-artifact@v4
@@ -114,9 +95,120 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
-  publish:
-    name: Publish to PyPI
-    needs: [build-wheels, build-sdist]
+  build-rust-wheel:
+    needs: [verify-version]
+    name: Build nexus-fast wheel (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15-intel, macos-14, windows-latest]
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-rust-${{ matrix.os }}
+          workspaces: |
+            rust/nexus_pyo3
+
+      - name: Build nexus-fast wheel
+        run: |
+          python -m pip install maturin
+          maturin build --release --compatibility off --manifest-path rust/nexus_pyo3/Cargo.toml --interpreter python --out dist
+
+      - name: Upload nexus-fast wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-wheel-${{ matrix.os }}-${{ matrix.python-version }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build-rust-sdist:
+    needs: [verify-version]
+    name: Build nexus-fast source distribution
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-rust-sdist
+          workspaces: |
+            rust/nexus_pyo3
+
+      - name: Build nexus-fast sdist
+        run: |
+          python -m pip install maturin
+          maturin sdist --manifest-path rust/nexus_pyo3/Cargo.toml --out dist
+
+      - name: Upload nexus-fast sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish-rust:
+    name: Publish nexus-fast to PyPI
+    needs: [build-rust-wheel, build-rust-sdist]
+    runs-on: ubuntu-latest
+    env:
+      NEXUS_FAST_PYPI_API_TOKEN: ${{ secrets.NEXUS_FAST_PYPI_API_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download rust artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect nexus-fast distributions
+        run: |
+          mkdir -p dist-rust
+          cp artifacts/rust-sdist/* dist-rust/ 2>/dev/null || true
+          find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-rust/ \;
+          ls -lh dist-rust/
+
+      - name: Skip nexus-fast PyPI publish
+        if: ${{ env.NEXUS_FAST_PYPI_API_TOKEN == '' }}
+        run: echo "NEXUS_FAST_PYPI_API_TOKEN not configured; skipping nexus-fast publish."
+
+      - name: Publish nexus-fast to PyPI
+        if: ${{ env.NEXUS_FAST_PYPI_API_TOKEN != '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ env.NEXUS_FAST_PYPI_API_TOKEN }}
+          packages-dir: dist-rust
+
+  publish-pypi:
+    name: Publish nexus-ai-fs to PyPI
+    needs: [build-wheel, build-sdist, build-rust-wheel, build-rust-sdist]
     runs-on: ubuntu-latest
 
     steps:
@@ -128,38 +220,172 @@ jobs:
         with:
           path: artifacts
 
-      - name: Collect all distributions
+      - name: Collect nexus-ai-fs distributions
         run: |
-          mkdir -p dist
-          # Copy source distribution
-          cp artifacts/sdist/* dist/ 2>/dev/null || true
-          # Copy all wheels
-          find artifacts -name "*.whl" -exec cp {} dist/ \;
-          ls -lh dist/
+          mkdir -p dist-main
+          cp artifacts/sdist/* dist-main/ 2>/dev/null || true
+          cp artifacts/wheel/* dist-main/ 2>/dev/null || true
+          ls -lh dist-main/
 
-      - name: Publish to PyPI
+      - name: Publish nexus-ai-fs to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist-main
+
+  # Docker build, smoke test, and GHCR push — inline in release.yml so
+  # create-release can depend on it directly (Issue #2946 atomic release).
+  # docker-publish.yml handles branch pushes (develop/main) separately.
+  build-docker:
+    name: Build & push Docker (${{ matrix.variant }})
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        include:
+          - variant: cpu
+            suffix: ""
+          - variant: cuda
+            suffix: "-cuda"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # NOTE: The March 13, 2026 v0.9.2 "denied: write_package" failure was caused
+      # by the GHCR package not being linked to the repo. Fixed by deleting the
+      # orphaned package — next push auto-creates it with correct repo linkage.
+      # If this recurs: GitHub Settings → Packages → nexus → Manage Actions access.
+
+      - name: Extract version metadata
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          SUFFIX="${{ matrix.suffix }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tags=ghcr.io/nexi-lab/nexus:${VERSION}${SUFFIX},ghcr.io/nexi-lab/nexus:stable${SUFFIX},ghcr.io/nexi-lab/nexus:latest${SUFFIX}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image (local load for smoke tests)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ghcr.io/nexi-lab/nexus:smoke-test
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }},mode=max,ignore-error=true
+
+      - name: Smoke test — critical imports
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          import nexus_fast
+          from _nexus_raft import Metastore
+          import txtai
+          import pgvector
+          import docker
+          import fastembed
+          import psutil
+          print('All critical imports OK')
+          "
+
+      - name: Smoke test — CLI entrypoints
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            sh -c "nexus --version && nexusd --help > /dev/null 2>&1 && echo 'CLI OK'"
+
+      - name: Smoke test — env-var config (no config file)
+        run: |
+          docker run --rm --entrypoint "" \
+            ghcr.io/nexi-lab/nexus:smoke-test \
+            python3 -c "
+          from nexus.config import load_config
+          cfg = load_config()
+          assert cfg.profile == 'full', f'Expected profile=full, got {cfg.profile}'
+          print(f'Config OK: profile={cfg.profile}')
+          "
+
+      - name: Build and push to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: TORCH_VARIANT=${{ matrix.variant }}
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }},mode=max,ignore-error=true
+
+      # Zoekt sidecar — publish stable + versioned tags on release (CPU only)
+      - name: Build and push Zoekt sidecar
+        if: matrix.variant == 'cpu'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./dockerfiles
+          file: dockerfiles/Dockerfile.zoekt
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          sbom: false
+          tags: ghcr.io/nexi-lab/nexus-zoekt:${{ steps.meta.outputs.version }},ghcr.io/nexi-lab/nexus-zoekt:stable,ghcr.io/nexi-lab/nexus-zoekt:latest
+          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus-zoekt:buildcache
+          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus-zoekt:buildcache,mode=max,ignore-error=true
+
+  # GitHub Release is created ONLY after both PyPI and Docker succeed.
+  # This is the user-visible "released" signal — without it, the version
+  # doesn't appear on the releases page or trigger notifications.
+  create-release:
+    name: Create GitHub Release
+    needs: [publish-pypi, publish-rust, build-docker]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release artifacts
+        run: |
+          mkdir -p dist-release
+          cp artifacts/sdist/* dist-release/ 2>/dev/null || true
+          cp artifacts/wheel/* dist-release/ 2>/dev/null || true
+          cp artifacts/rust-sdist/* dist-release/ 2>/dev/null || true
+          find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-release/ \;
+          ls -lh dist-release/
 
       - name: Extract release notes
         id: extract-release-notes
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-          # Extract release notes from CHANGELOG.md if it exists
           if [ -f CHANGELOG.md ]; then
-            # Try to extract section for this version
             NOTES=$(sed -n "/## \[${VERSION}\]/,/## \[/p" CHANGELOG.md | sed '$ d' | tail -n +2)
-            if [ -z "$NOTES" ]; then
-              NOTES="Release version ${VERSION}"
-            fi
+            [ -z "$NOTES" ] && NOTES="Release version ${VERSION}"
           else
             NOTES="Release version ${VERSION}"
           fi
-
-          # Save to file for multiline support
           echo "$NOTES" > release_notes.txt
 
       - name: Create GitHub Release
@@ -167,7 +393,7 @@ jobs:
         with:
           body_path: release_notes.txt
           files: |
-            dist/*
+            dist-release/*
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
         env:

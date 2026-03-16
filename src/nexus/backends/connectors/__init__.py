@@ -27,7 +27,6 @@ from nexus.backends.connectors.base import (
     ValidationError,
 )
 from nexus.backends.connectors.error_formatter import SkillErrorFormatter
-from nexus.backends.connectors.mount_hooks import generate_all_skill_docs, on_mount
 from nexus.backends.connectors.schema_generator import SkillDocGenerator
 
 __all__ = [
@@ -42,6 +41,4 @@ __all__ = [
     "CheckpointMixin",
     "SkillDocGenerator",
     "SkillErrorFormatter",
-    "on_mount",
-    "generate_all_skill_docs",
 ]

@@ -12,12 +12,12 @@ from datetime import UTC, datetime, timedelta
 
 from nexus.contracts.agent_types import AgentRecord, AgentState, EvictionReason
 from nexus.contracts.qos import AgentQoS, EvictionContext, QoSClass
-from nexus.services.agents.eviction_policy import (
+from nexus.system_services.agents.eviction_policy import (
     EvictionPolicy,
     LRUEvictionPolicy,
     QoSEvictionPolicy,
 )
-from nexus.services.agents.resource_monitor import PressureLevel
+from nexus.system_services.agents.resource_monitor import PressureLevel
 
 
 def _make_agent(

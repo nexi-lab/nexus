@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.bricks.search.lifecycle_adapter import SearchBrickLifecycleAdapter
-from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
-from nexus.services.protocols.file_reader import FileReaderProtocol
-from nexus.services.protocols.search import SearchBrickProtocol
+from nexus.contracts.protocols.brick_lifecycle import BrickLifecycleProtocol
+from nexus.contracts.protocols.file_reader import FileReaderProtocol
+from nexus.contracts.protocols.search import SearchBrickProtocol
 
 
 class TestSearchDaemonSatisfiesBrickProtocol:
@@ -51,16 +51,23 @@ class TestLifecycleAdapterSatisfiesLifecycleProtocol:
     @pytest.mark.asyncio
     async def test_adapter_health_check_true(self) -> None:
         mock_daemon = MagicMock()
-        mock_daemon.get_health.return_value = {"initialized": True}
+        mock_daemon.get_health.return_value = {"daemon_initialized": True}
         adapter = SearchBrickLifecycleAdapter(mock_daemon)
         assert await adapter.health_check() is True
 
     @pytest.mark.asyncio
     async def test_adapter_health_check_false(self) -> None:
         mock_daemon = MagicMock()
-        mock_daemon.get_health.return_value = {"initialized": False}
+        mock_daemon.get_health.return_value = {"daemon_initialized": False}
         adapter = SearchBrickLifecycleAdapter(mock_daemon)
         assert await adapter.health_check() is False
+
+    @pytest.mark.asyncio
+    async def test_adapter_health_check_legacy_key_compatibility(self) -> None:
+        mock_daemon = MagicMock()
+        mock_daemon.get_health.return_value = {"initialized": True}
+        adapter = SearchBrickLifecycleAdapter(mock_daemon)
+        assert await adapter.health_check() is True
 
 
 class TestNexusFSFileReaderSatisfiesProtocol:

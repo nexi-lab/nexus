@@ -188,8 +188,8 @@ actions:
 
     for path in cleanup_paths:
         try:
-            if nx.sys_access(path):
-                nx.sys_unlink(path)
+            if await nx.sys_access(path):
+                await nx.sys_unlink(path)
                 print(f"   🗑️  Deleted: {path}")
         except Exception:
             # Ignore errors - file might not exist
@@ -200,8 +200,8 @@ actions:
     print("\n⏳ Performing file operations (workflows will auto-fire)...\n")
 
     # Create directories
-    nx.sys_mkdir("/uploads/invoices", parents=True)
-    nx.sys_mkdir("/uploads/receipts", parents=True)
+    await nx.sys_mkdir("/uploads/invoices", parents=True)
+    await nx.sys_mkdir("/uploads/receipts", parents=True)
 
     # Test 1: Upload invoice (should trigger invoice-auto-tagger)
     print("1️⃣  Uploading invoice PDF...")
@@ -212,7 +212,7 @@ actions:
     unique_id = random.randint(1000, 9999)
     invoice_filename = f"invoice-{unique_id}.pdf"
     invoice_path = f"/uploads/invoices/{invoice_filename}"
-    result = nx.sys_write(invoice_path, invoice_data)
+    result = nx.write(invoice_path, invoice_data)
     print(f"   ✅ Written: {result['etag'][:16]}... ({result['size']} bytes)")
     print("   🔄 Workflow 'invoice-auto-tagger' should have fired!")
 
@@ -222,7 +222,7 @@ actions:
     # Test 2: Upload receipt (pattern won't match, no workflow)
     print("\n2️⃣  Uploading receipt (no matching workflow)...")
     receipt_data = b"Receipt content"
-    result = nx.sys_write("/uploads/receipts/receipt-001.txt", receipt_data)
+    result = nx.write("/uploads/receipts/receipt-001.txt", receipt_data)
     print(f"   ✅ Written: {result['etag'][:16]}... ({result['size']} bytes)")
     print("   ℹ️  No workflow pattern matches this file")
 
@@ -231,7 +231,7 @@ actions:
     # Test 3: Rename/move file (should trigger file-move-tracker)
     print("\n3️⃣  Moving invoice file...")
     new_invoice_path = f"/uploads/invoices/{invoice_filename.replace('.pdf', '-processed.pdf')}"
-    nx.sys_rename(invoice_path, new_invoice_path)
+    await nx.sys_rename(invoice_path, new_invoice_path)
     print(
         f"   ✅ Renamed: {invoice_filename} → {invoice_filename.replace('.pdf', '-processed.pdf')}"
     )
@@ -241,7 +241,7 @@ actions:
 
     # Test 4: Delete file (should trigger deletion-monitor)
     print("\n4️⃣  Deleting invoice file...")
-    nx.sys_unlink(new_invoice_path)
+    await nx.sys_unlink(new_invoice_path)
     print(f"   ✅ Deleted: {invoice_filename.replace('.pdf', '-processed.pdf')}")
     print("   🔄 Workflow 'deletion-monitor' should have fired!")
 
@@ -309,9 +309,9 @@ actions:
 
     # Create test file anyway (webhook will fail but shows the concept)
     print("\n📤 Uploading test file (webhook will attempt to fire)...")
-    nx.sys_mkdir("/uploads/webhooks", parents=True)
+    await nx.sys_mkdir("/uploads/webhooks", parents=True)
     test_data = json.dumps({"test": "data", "timestamp": time.time()}).encode()
-    nx.sys_write("/uploads/webhooks/test.json", test_data)
+    await nx.sys_write("/uploads/webhooks/test.json", test_data)
     print("   ✅ File uploaded, webhook workflow triggered!")
     print("   ⚠️  Webhook delivery will fail (no valid endpoint)")
 

@@ -7,10 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.base_blob_connector import BaseBlobStorageConnector
-from nexus.backends.cas_blob_store import WriteResult
-from nexus.backends.local import LocalBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult as ObjectStoreWriteResult
@@ -83,15 +82,15 @@ class TestBackendWriteStreamDefault:
         assert result_hash == hash_content(b"Hello World!")
 
 
-class TestLocalBackendStreaming:
-    """Test LocalBackend streaming methods."""
+class TestCASLocalBackendStreaming:
+    """Test CASLocalBackend streaming methods."""
 
     @pytest.fixture
-    def local_backend(self, tmp_path: Path) -> LocalBackend:
-        """Create a LocalBackend for testing."""
-        return LocalBackend(root_path=tmp_path)
+    def local_backend(self, tmp_path: Path) -> CASLocalBackend:
+        """Create a CASLocalBackend for testing."""
+        return CASLocalBackend(root_path=tmp_path)
 
-    def test_stream_content_yields_chunks(self, local_backend: LocalBackend) -> None:
+    def test_stream_content_yields_chunks(self, local_backend: CASLocalBackend) -> None:
         """Test that stream_content yields file content in chunks."""
         # Write some content first
         content = b"A" * 1000 + b"B" * 1000 + b"C" * 1000
@@ -104,7 +103,7 @@ class TestLocalBackendStreaming:
         assert len(chunks) == 6  # 3000 bytes / 500 = 6 chunks
         assert b"".join(chunks) == content
 
-    def test_stream_content_default_chunk_size(self, local_backend: LocalBackend) -> None:
+    def test_stream_content_default_chunk_size(self, local_backend: CASLocalBackend) -> None:
         """Test stream_content with default chunk size."""
         content = b"test content"
         content_hash = local_backend.write_content(content).content_hash
@@ -113,14 +112,14 @@ class TestLocalBackendStreaming:
 
         assert b"".join(chunks) == content
 
-    def test_stream_content_not_found(self, local_backend: LocalBackend) -> None:
+    def test_stream_content_not_found(self, local_backend: CASLocalBackend) -> None:
         """Test stream_content raises error for missing content."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             list(local_backend.stream_content("nonexistent_hash"))
 
-    def test_write_stream_basic(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_basic(self, local_backend: CASLocalBackend) -> None:
         """Test basic write_stream functionality."""
 
         def chunks():
@@ -134,7 +133,7 @@ class TestLocalBackendStreaming:
         content = local_backend.read_content(content_hash)
         assert content == b"Hello World!"
 
-    def test_write_stream_hash_matches_write_content(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_hash_matches_write_content(self, local_backend: CASLocalBackend) -> None:
         """Test that write_stream produces same hash as write_content."""
         content = b"Test content for hash comparison"
 
@@ -149,7 +148,7 @@ class TestLocalBackendStreaming:
 
         assert hash1 == hash2
 
-    def test_write_stream_increments_ref_count(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_increments_ref_count(self, local_backend: CASLocalBackend) -> None:
         """Test that write_stream increments ref_count for existing content."""
         content = b"Duplicate content"
 
@@ -167,7 +166,7 @@ class TestLocalBackendStreaming:
         assert hash1 == hash2
         assert ref2 == ref1 + 1
 
-    def test_write_stream_large_content(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_large_content(self, local_backend: CASLocalBackend) -> None:
         """Test write_stream with larger content split into many chunks."""
         chunk_size = 1024
         num_chunks = 100
@@ -185,7 +184,7 @@ class TestLocalBackendStreaming:
         assert len(content) == chunk_size * num_chunks
         assert content == content_per_chunk * num_chunks
 
-    def test_write_stream_empty_chunks(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_empty_chunks(self, local_backend: CASLocalBackend) -> None:
         """Test write_stream with empty iterator."""
 
         def chunks():
@@ -199,7 +198,7 @@ class TestLocalBackendStreaming:
         content = local_backend.read_content(content_hash)
         assert content == b""
 
-    def test_write_stream_returns_size(self, local_backend: LocalBackend) -> None:
+    def test_write_stream_returns_size(self, local_backend: CASLocalBackend) -> None:
         """Test that write_stream returns file size via .size (Issue #1625)."""
         content = b"Size tracking test" * 100
 
@@ -261,76 +260,6 @@ class TestCreateHasher:
             assert hasher.hexdigest() == hash_content(content)
 
 
-class TestCASBlobStoreStreaming:
-    """Test CASBlobStore.store_streaming() (Issue #1625)."""
-
-    @pytest.fixture
-    def cas(self, tmp_path: Path):
-        from nexus.backends.cas_blob_store import CASBlobStore
-
-        cas_root = tmp_path / "cas"
-        cas_root.mkdir()
-        return CASBlobStore(cas_root)
-
-    def test_store_streaming_basic(self, cas) -> None:
-        """store_streaming returns correct WriteResult."""
-        content = b"Hello streaming world!"
-
-        def chunks():
-            yield content[:5]
-            yield content[5:]
-
-        result = cas.store_streaming(chunks())
-
-        assert isinstance(result, WriteResult)
-        assert result.content_hash == hash_content(content)
-        assert result.size == len(content)
-        assert result.is_new is True
-
-        # Verify blob on disk matches
-        assert cas.read_blob(result.content_hash) == content
-
-    def test_store_streaming_dedup(self, cas) -> None:
-        """store_streaming bumps ref_count for existing blobs."""
-        content = b"deduplicated"
-
-        # First write
-        r1 = cas.store_streaming(iter([content]))
-        assert r1.is_new is True
-
-        # Second write -- same content
-        r2 = cas.store_streaming(iter([content]))
-        assert r2.is_new is False
-        assert r2.content_hash == r1.content_hash
-
-        # ref_count should be 2
-        meta = cas.read_meta(r1.content_hash)
-        assert meta.ref_count == 2
-
-    def test_store_streaming_empty(self, cas) -> None:
-        """store_streaming handles empty iterator."""
-        result = cas.store_streaming(iter([]))
-        assert result.size == 0
-        assert result.content_hash == hash_content(b"")
-
-    def test_store_streaming_cleanup_on_failure(self, cas) -> None:
-        """Partial write cleans up staging files on exception (Issue #1625)."""
-        staging_dir = cas.cas_root / ".staging"
-
-        def failing_chunks():
-            yield b"chunk1"
-            yield b"chunk2"
-            raise OSError("simulated disk failure")
-
-        with pytest.raises(OSError, match="simulated disk failure"):
-            cas.store_streaming(failing_chunks())
-
-        # No orphaned files in staging directory
-        if staging_dir.exists():
-            orphans = list(staging_dir.iterdir())
-            assert orphans == [], f"Orphaned staging files: {orphans}"
-
-
 class TestStreamingMemoryEfficiency:
     """Verify write_stream does NOT buffer entire content in memory (Issue #1625)."""
 
@@ -343,7 +272,7 @@ class TestStreamingMemoryEfficiency:
         """
         import tracemalloc
 
-        backend = LocalBackend(root_path=tmp_path)
+        backend = CASLocalBackend(root_path=tmp_path)
 
         total_bytes = 10 * 1024 * 1024  # 10 MB (below 16 MB CDC threshold)
         chunk_size = 65536  # 64 KB chunks
@@ -383,48 +312,57 @@ class TestStreamingMemoryEfficiency:
         assert result.size == total_bytes
 
 
-class TestBaseBlobConnectorStreamContent:
-    """Test stream_content in BaseBlobStorageConnector (Issue #480)."""
+class TestPathBackendStreamContent:
+    """Test stream_content in PathBackend (Issue #480)."""
 
     def test_stream_content_default_yields_chunks(self) -> None:
-        """Test default stream_content yields chunks from _stream_blob."""
+        """Test default stream_content yields chunks from transport.stream_blob."""
+        from collections.abc import Iterator
 
-        class TestConnector(BaseBlobStorageConnector):
-            """Minimal test connector."""
+        class TestTransport:
+            """Minimal in-memory transport."""
+
+            transport_name = "memory"
 
             def __init__(self) -> None:
-                super().__init__(bucket_name="test-bucket", prefix="")
+                self.files: dict[str, bytes] = {}
 
-            @property
-            def name(self) -> str:
-                return "test_connector"
+            def put_blob(self, key, data, content_type=""):
+                self.files[key] = data
+                return None
 
-            def _upload_blob(self, blob_path, content, content_type):
-                return "test-version"
+            def get_blob(self, key, version_id=None):
+                if key not in self.files:
+                    raise FileNotFoundError(key)
+                return self.files[key], version_id
 
-            def _download_blob(self, blob_path, version_id=None):
-                # Return test content
-                return b"Hello World!", "v1"
+            def delete_blob(self, key):
+                self.files.pop(key, None)
 
-            def _delete_blob(self, blob_path):
-                pass
+            def blob_exists(self, key):
+                return key in self.files
 
-            def _blob_exists(self, blob_path):
-                return True
+            def get_blob_size(self, key):
+                return len(self.files.get(key, b""))
 
-            def _get_blob_size(self, blob_path):
-                return 12
+            def list_blobs(self, prefix="", delimiter="/"):
+                return [k for k in self.files if k.startswith(prefix)], []
 
-            def _list_blobs(self, prefix, delimiter="/"):
-                return [], []
+            def copy_blob(self, src_key, dst_key):
+                if src_key in self.files:
+                    self.files[dst_key] = self.files[src_key]
 
-            def _create_directory_marker(self, blob_path):
-                pass
+            def create_directory_marker(self, key):
+                self.files[key] = b""
 
-            def _copy_blob(self, source_path, dest_path):
-                pass
+            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
+                data, _ = self.get_blob(key, version_id)
+                for i in range(0, len(data), chunk_size):
+                    yield data[i : i + chunk_size]
 
-        connector = TestConnector()
+        transport = TestTransport()
+        transport.files["test/file.txt"] = b"Hello World!"
+        connector = PathBackend(transport, backend_name="test_connector", bucket_name="test-bucket")
 
         # Create mock context with backend_path
         context = MagicMock()
@@ -438,110 +376,115 @@ class TestBaseBlobConnectorStreamContent:
 
     def test_stream_content_requires_backend_path(self) -> None:
         """Test stream_content raises ValueError without backend_path."""
+        from collections.abc import Iterator
 
-        class TestConnector(BaseBlobStorageConnector):
-            @property
-            def name(self) -> str:
-                return "test"
+        class TestTransport:
+            transport_name = "memory"
 
             def __init__(self) -> None:
-                super().__init__(bucket_name="test", prefix="")
+                self.files: dict[str, bytes] = {}
 
-            def _upload_blob(self, blob_path, content, content_type):
-                return ""
+            def put_blob(self, key, data, content_type=""):
+                return None
 
-            def _download_blob(self, blob_path, version_id=None):
+            def get_blob(self, key, version_id=None):
                 return b"", None
 
-            def _delete_blob(self, blob_path):
+            def delete_blob(self, key):
                 pass
 
-            def _blob_exists(self, blob_path):
+            def blob_exists(self, key):
                 return False
 
-            def _get_blob_size(self, blob_path):
+            def get_blob_size(self, key):
                 return 0
 
-            def _list_blobs(self, prefix, delimiter="/"):
+            def list_blobs(self, prefix="", delimiter="/"):
                 return [], []
 
-            def _create_directory_marker(self, blob_path):
+            def copy_blob(self, src_key, dst_key):
                 pass
 
-            def _copy_blob(self, source_path, dest_path):
+            def create_directory_marker(self, key):
                 pass
 
-        connector = TestConnector()
+            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
+                return iter([])
+
+        transport = TestTransport()
+        connector = PathBackend(transport, backend_name="test", bucket_name="test")
 
         with pytest.raises(ValueError, match="requires backend_path"):
             list(connector.stream_content("hash", context=None))
 
     def test_stream_content_custom_stream_blob(self) -> None:
-        """Test that subclass can override _stream_blob for true streaming."""
+        """Test that transport can provide custom stream_blob for true streaming."""
+        from collections.abc import Iterator
 
-        class StreamingConnector(BaseBlobStorageConnector):
-            """Connector with custom _stream_blob implementation."""
+        class StreamingTransport:
+            """Transport with custom stream_blob implementation."""
+
+            transport_name = "memory"
 
             def __init__(self) -> None:
-                super().__init__(bucket_name="test", prefix="")
+                self.files: dict[str, bytes] = {}
                 self.stream_blob_called = False
 
-            @property
-            def name(self) -> str:
-                return "streaming_test"
+            def put_blob(self, key, data, content_type=""):
+                return None
 
-            def _upload_blob(self, blob_path, content, content_type):
-                return ""
-
-            def _download_blob(self, blob_path, version_id=None):
+            def get_blob(self, key, version_id=None):
                 return b"should not be called", None
 
-            def _stream_blob(self, blob_path, chunk_size=65536, version_id=None):
+            def delete_blob(self, key):
+                pass
+
+            def blob_exists(self, key):
+                return True
+
+            def get_blob_size(self, key):
+                return 18
+
+            def list_blobs(self, prefix="", delimiter="/"):
+                return [], []
+
+            def copy_blob(self, src_key, dst_key):
+                pass
+
+            def create_directory_marker(self, key):
+                pass
+
+            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
                 """Custom streaming implementation."""
                 self.stream_blob_called = True
                 yield b"chunk1"
                 yield b"chunk2"
                 yield b"chunk3"
 
-            def _delete_blob(self, blob_path):
-                pass
-
-            def _blob_exists(self, blob_path):
-                return True
-
-            def _get_blob_size(self, blob_path):
-                return 18
-
-            def _list_blobs(self, prefix, delimiter="/"):
-                return [], []
-
-            def _create_directory_marker(self, blob_path):
-                pass
-
-            def _copy_blob(self, source_path, dest_path):
-                pass
-
-        connector = StreamingConnector()
+        transport = StreamingTransport()
+        connector = PathBackend(transport, backend_name="streaming_test", bucket_name="test")
         context = MagicMock()
         context.backend_path = "test/file.txt"
 
         chunks = list(connector.stream_content("hash", context=context))
 
-        assert connector.stream_blob_called
+        assert transport.stream_blob_called
         assert chunks == [b"chunk1", b"chunk2", b"chunk3"]
 
 
 class TestReadRangeRPC:
     """Test read_range RPC endpoint (Issue #480)."""
 
-    def test_read_range_basic(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_read_range_basic(self, tmp_path: Path) -> None:
         """Test basic read_range functionality."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+        nx = await create_nexus_fs(
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -549,25 +492,28 @@ class TestReadRangeRPC:
         )
 
         try:
-            # Write a test file
-            content = b"0123456789ABCDEF"
-            nx.sys_write("/test.txt", content)
+            # Write a test file (padded above INLINE_THRESHOLD for CAS path)
+            prefix = b"0123456789ABCDEF"
+            padding = b"\x00" * (INLINE_THRESHOLD + 1)
+            content = prefix + padding
+            await nx.sys_write("/test.txt", content)
 
-            # Read ranges
+            # Read ranges from the prefix portion
             assert nx.read_range("/test.txt", 0, 5) == b"01234"
             assert nx.read_range("/test.txt", 5, 10) == b"56789"
             assert nx.read_range("/test.txt", 10, 16) == b"ABCDEF"
         finally:
             nx.close()
 
-    def test_read_range_validates_parameters(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_read_range_validates_parameters(self, tmp_path: Path) -> None:
         """Test read_range validates start/end parameters."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+        nx = await create_nexus_fs(
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -575,7 +521,7 @@ class TestReadRangeRPC:
         )
 
         try:
-            nx.sys_write("/test.txt", b"test content")
+            await nx.sys_write("/test.txt", b"test content")
 
             # Negative start should raise
             with pytest.raises(ValueError, match="non-negative"):
@@ -587,14 +533,16 @@ class TestReadRangeRPC:
         finally:
             nx.close()
 
-    def test_read_range_empty_range(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_read_range_empty_range(self, tmp_path: Path) -> None:
         """Test read_range with empty range (start == end)."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+        nx = await create_nexus_fs(
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -602,21 +550,24 @@ class TestReadRangeRPC:
         )
 
         try:
-            nx.sys_write("/test.txt", b"test content")
+            content = b"test content" + b"\x00" * (INLINE_THRESHOLD + 1)
+            await nx.sys_write("/test.txt", content)
 
             # Empty range should return empty bytes
             assert nx.read_range("/test.txt", 5, 5) == b""
         finally:
             nx.close()
 
-    def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
         """Test read_range when range extends beyond file size."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+        nx = await create_nexus_fs(
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -624,11 +575,11 @@ class TestReadRangeRPC:
         )
 
         try:
-            content = b"short"
-            nx.sys_write("/test.txt", content)
+            content = b"short" + b"\x00" * (INLINE_THRESHOLD + 1)
+            await nx.sys_write("/test.txt", content)
 
             # Range beyond file size should return available content
-            result = nx.read_range("/test.txt", 0, 100)
+            result = nx.read_range("/test.txt", 0, len(content) + 100)
             assert result == content
         finally:
             nx.close()
@@ -637,14 +588,15 @@ class TestReadRangeRPC:
 class TestStatRPC:
     """Test stat() RPC endpoint (Issue #480)."""
 
-    def test_stat_returns_metadata_without_content(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_stat_returns_metadata_without_content(self, tmp_path: Path) -> None:
         """Test stat() returns file metadata without reading file content."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+        nx = await create_nexus_fs(
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -654,7 +606,7 @@ class TestStatRPC:
         try:
             # Write a test file
             content = b"Hello, World!"
-            nx.sys_write("/test.txt", content)
+            await nx.sys_write("/test.txt", content)
 
             # stat() should return metadata
             info = nx.stat("/test.txt")
@@ -666,15 +618,16 @@ class TestStatRPC:
         finally:
             nx.close()
 
-    def test_stat_file_not_found(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_stat_file_not_found(self, tmp_path: Path) -> None:
         """Test stat() raises error for non-existent file."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+        nx = await create_nexus_fs(
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -687,14 +640,15 @@ class TestStatRPC:
         finally:
             nx.close()
 
-    def test_stat_directory(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_stat_directory(self, tmp_path: Path) -> None:
         """Test stat() on a directory."""
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = create_nexus_fs(
-            backend=LocalBackend(data_dir),
+        nx = await create_nexus_fs(
+            backend=CASLocalBackend(data_dir),
             metadata_store=DictMetastore(),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             parsing=ParseConfig(auto_parse=False),
@@ -703,7 +657,7 @@ class TestStatRPC:
 
         try:
             # Create a file in a subdirectory to make an implicit directory
-            nx.sys_write("/subdir/file.txt", b"content")
+            await nx.sys_write("/subdir/file.txt", b"content")
 
             # stat() on the directory should work
             info = nx.stat("/subdir")

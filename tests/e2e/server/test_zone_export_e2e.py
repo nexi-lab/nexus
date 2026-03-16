@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.portability import (
     BundleReader,
     ZoneExportOptions,
@@ -36,13 +36,13 @@ def temp_dir():
 
 
 @pytest.fixture
-def nexus_fs(temp_dir):
+async def nexus_fs(temp_dir):
     """Create NexusFS instance with test data."""
     data_dir = temp_dir / "data"
     data_dir.mkdir()
 
-    fs = create_nexus_fs(
-        backend=LocalBackend(data_dir),
+    fs = await create_nexus_fs(
+        backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
@@ -50,10 +50,10 @@ def nexus_fs(temp_dir):
     )
 
     # Create test files
-    fs.sys_write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
-    fs.sys_write("/workspace/src/main.py", b'print("Hello, World!")')
-    fs.sys_write("/workspace/src/utils.py", b"def helper(): pass")
-    fs.sys_write("/docs/guide.txt", b"User guide content here.")
+    await fs.sys_write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
+    await fs.sys_write("/workspace/src/main.py", b'print("Hello, World!")')
+    await fs.sys_write("/workspace/src/utils.py", b"def helper(): pass")
+    await fs.sys_write("/docs/guide.txt", b"User guide content here.")
 
     yield fs
     fs.close()

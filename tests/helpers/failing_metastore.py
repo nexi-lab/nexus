@@ -17,8 +17,8 @@ Usage:
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from nexus.contracts.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import CasResult, MetastoreABC
+from nexus.contracts.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 
 
 class MetastoreError(RuntimeError):
@@ -118,17 +118,6 @@ class FailingMetastore(MetastoreABC):
         self._maybe_fail("list_iter")
         return self._inner.list_iter(prefix, recursive, **kwargs)
 
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        zone_id: str | None = None,
-    ) -> PaginatedResult:
-        self._maybe_fail("list_paginated")
-        return self._inner.list_paginated(prefix, recursive, limit, cursor, zone_id)
-
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         self._maybe_fail("get_batch")
         return self._inner.get_batch(paths)
@@ -144,16 +133,6 @@ class FailingMetastore(MetastoreABC):
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         self._maybe_fail("batch_get_content_ids")
         return self._inner.batch_get_content_ids(paths)
-
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        self._maybe_fail("put_if_version")
-        return self._inner.put_if_version(metadata, expected_version, consistency=consistency)
 
     # === Duck-typing methods used by NexusFS kernel ===
 

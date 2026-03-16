@@ -6,6 +6,8 @@ Validates that the factory correctly creates and wires IPC services
 Issue: #1727, #1178
 """
 
+import pytest
+
 
 class TestIPCBrickWiring:
     """Verify IPC brick is correctly wired in _boot_brick_services."""
@@ -72,7 +74,8 @@ class TestIPCBrickWiring:
 class TestKernelVFSAdapter:
     """Verify KernelVFSAdapter satisfies VFSOperations protocol."""
 
-    def test_adapter_unbound_raises(self) -> None:
+    @pytest.mark.asyncio
+    async def test_adapter_unbound_raises(self) -> None:
         """Calling methods before bind() raises RuntimeError."""
         import asyncio
 
@@ -82,7 +85,7 @@ class TestKernelVFSAdapter:
         assert not adapter.is_bound
 
         with __import__("pytest").raises(RuntimeError, match="bind"):
-            asyncio.run(adapter.sys_read("/test", "test-zone"))
+            asyncio.run(await adapter.sys_read("/test", "test-zone"))
 
     def test_adapter_satisfies_vfs_operations_protocol(self) -> None:
         """KernelVFSAdapter structurally satisfies VFSOperations."""

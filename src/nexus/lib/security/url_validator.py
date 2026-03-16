@@ -42,17 +42,19 @@ BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
 ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
 
-def validate_outbound_url(url: str) -> str:
+def validate_outbound_url(url: str) -> tuple[str, list[str]]:
     """Validate that a URL is safe for outbound HTTP requests.
 
     Resolves DNS once and checks the resolved IP against blocked ranges.
-    Returns the validated URL on success.
+    Returns the validated URL and the resolved IPs so callers can pin the
+    connection to the validated addresses (prevents DNS rebinding TOCTOU).
 
     Args:
         url: The URL to validate.
 
     Returns:
-        The validated URL (unchanged).
+        Tuple of (validated_url, resolved_ips).  Callers should configure
+        their HTTP client to connect only to the returned IPs.
 
     Raises:
         ValueError: If the URL targets a blocked network, has an invalid scheme,
@@ -69,7 +71,7 @@ def validate_outbound_url(url: str) -> str:
     if not hostname:
         raise ValueError("URL has no hostname")
 
-    # 3. Resolve DNS once (prevents DNS rebinding TOCTOU)
+    # 3. Resolve DNS once and pin resolved IPs
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
         addr_infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
@@ -80,6 +82,7 @@ def validate_outbound_url(url: str) -> str:
         raise ValueError(f"No DNS records for hostname: {hostname!r}")
 
     # 4. Check every resolved IP against blocked networks
+    resolved_ips: list[str] = []
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
         ip = ipaddress.ip_address(sockaddr[0])
         for network in BLOCKED_NETWORKS:
@@ -91,5 +94,6 @@ def validate_outbound_url(url: str) -> str:
                     network,
                 )
                 raise ValueError(f"URL resolves to blocked IP range: {ip} in {network}")
+        resolved_ips.append(str(ip))
 
-    return url
+    return url, resolved_ips

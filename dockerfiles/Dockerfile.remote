@@ -1,0 +1,46 @@
+# Nexus Remote-Only Docker Image
+# Slim image for NEXUS_PROFILE=remote: SDK/CLI client that proxies to a
+# Nexus server via gRPC. No Rust extensions, no SQLAlchemy, no FastAPI.
+#
+# Build:
+#   docker build -f dockerfiles/Dockerfile.remote -t nexus-remote:latest .
+#
+# Usage:
+#   docker run --rm -e NEXUS_URL=http://host:2026 nexus-remote:latest nexus --help
+
+# ── Builder stage ────────────────────────────────────────────────────
+FROM python:3.13-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-remote.txt /tmp/requirements-remote.txt
+RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements-remote.txt
+
+# Install the nexus package itself (source-only, no compiled extensions)
+COPY pyproject.toml /build/pyproject.toml
+COPY src/ /build/src/
+RUN pip install --no-cache-dir --no-deps --prefix=/install /build
+
+# ── Runtime stage ────────────────────────────────────────────────────
+FROM python:3.13-slim
+
+LABEL org.opencontainers.image.title="Nexus Remote Client"
+LABEL org.opencontainers.image.description="Slim remote-only Nexus client (gRPC)"
+LABEL org.opencontainers.image.source="https://github.com/nexi-lab/nexus"
+
+# Copy installed Python packages from builder
+COPY --from=builder /install/lib /usr/local/lib
+COPY --from=builder /install/bin /usr/local/bin
+
+# Create non-root user
+RUN useradd -m -u 1000 nexus
+USER nexus
+WORKDIR /home/nexus
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    NEXUS_PROFILE=remote \
+    NEXUS_MODE=remote
+
+ENTRYPOINT ["nexus"]
+CMD ["--help"]

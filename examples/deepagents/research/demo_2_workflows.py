@@ -91,8 +91,8 @@ async def main_async():
 
     # Clean workspace
     with contextlib.suppress(Exception):
-        nx.sys_rmdir(workspace, recursive=True)
-    nx.sys_mkdir(workspace, parents=True)
+        await nx.sys_rmdir(workspace, recursive=True)
+    await nx.sys_mkdir(workspace, parents=True)
 
     # ===== Register Workflow =====
     print("=" * 70)
@@ -127,7 +127,7 @@ filename = file_path.split('/')[-1]
 
 # Read content to determine memory type
 try:
-    content_bytes = nx.sys_read(file_path)
+    content_bytes = await nx.sys_read(file_path)
     content = content_bytes.decode('utf-8')
 
     # Extract memory type from filename
@@ -219,9 +219,9 @@ Keep it concise (2-3 paragraphs)."""
 
     # Show files
     print("Files created by agent:")
-    files = nx.sys_readdir(workspace)
+    files = await nx.sys_readdir(workspace)
     for f in files:
-        size = len(nx.sys_read(f))
+        size = len(await nx.sys_read(f))
         print(f"  📄 {f.split('/')[-1]} ({size} bytes)")
     print()
 

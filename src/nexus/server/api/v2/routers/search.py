@@ -1,15 +1,17 @@
-"""Search API v2 router (#2056).
+"""Search API v2 router (#2056, #2663).
 
 Provides search daemon endpoints:
 - GET  /api/v2/search/health   -- daemon health check (public, no auth)
 - GET  /api/v2/search/stats    -- daemon statistics
 - GET  /api/v2/search/query    -- execute search query
+- POST /api/v2/search/index    -- explicit document indexing
 - POST /api/v2/search/refresh  -- notify daemon of file change
 - POST /api/v2/search/expand   -- LLM-based query expansion
 
-Ported from v1 with improvements:
-- Top-level imports for QueryRouter, graph_enhanced_search
-- Generic error messages (don't leak internal details)
+Rewritten for txtai backend (#2663):
+- txtai handles hybrid BM25+dense fusion internally
+- Zone-level isolation via txtai SQL WHERE (brick layer)
+- File-level ReBAC filtering in router (server layer)
 """
 
 import logging
@@ -68,6 +70,67 @@ def _get_async_read_session_factory(request: Request) -> Any:
 
 
 # =============================================================================
+# ReBAC filtering helper
+# =============================================================================
+
+
+def _normalize_path(path: str) -> str:
+    """Ensure path is absolute for ReBAC filter_list compatibility."""
+    if not path.startswith("/"):
+        return f"/{path}"
+    return path
+
+
+def _apply_rebac_filter(
+    results: list[Any],
+    permission_enforcer: Any | None,
+    auth_result: dict[str, Any],
+    zone_id: str,
+) -> tuple[list[Any], float]:
+    """Apply ReBAC file-level permission filtering to search results.
+
+    Returns (filtered_results, filter_time_ms).
+
+    Uses PermissionEnforcer.filter_search_results() which delegates to
+    rebac_list_objects() (Rust-accelerated, 1 SQL query + 1 Rust computation).
+    This bypasses the NamespaceManager pre-filter (search paths lack mount entries)
+    and avoids the stale graph cache bug in compute_permissions_bulk.
+    """
+    if permission_enforcer is None:
+        return results, 0.0
+
+    if not hasattr(permission_enforcer, "filter_search_results"):
+        return results, 0.0
+
+    user_id = auth_result.get("subject_id") or auth_result.get("user_id", "anonymous")
+    is_admin = bool(auth_result.get("is_admin", False))
+
+    # Normalize paths to absolute for ReBAC compatibility
+    path_map = {_normalize_path(r.path): r for r in results}
+    abs_paths = list(path_map.keys())
+
+    filter_start = time.perf_counter()
+    permitted_abs = permission_enforcer.filter_search_results(
+        abs_paths,
+        user_id=user_id,
+        zone_id=zone_id,
+        is_admin=is_admin,
+    )
+    filter_ms = (time.perf_counter() - filter_start) * 1000
+
+    logger.debug(
+        "[SEARCH-REBAC] permitted %d/%d paths in %.1fms",
+        len(permitted_abs),
+        len(abs_paths),
+        filter_ms,
+    )
+
+    permitted_set = set(permitted_abs)
+    filtered = [path_map[p] for p in abs_paths if p in permitted_set]
+    return filtered, filter_ms
+
+
+# =============================================================================
 # Endpoints
 # =============================================================================
 
@@ -98,13 +161,16 @@ async def search_daemon_stats(
 
 @router.get("/query")
 async def search_query(
+    request: Request,
     q: str = Query(..., description="Search query text", min_length=1),
     type: str = Query("hybrid", description="Search type: keyword, semantic, or hybrid"),
     limit: int = Query(10, description="Maximum number of results", ge=1, le=100),
     path: str | None = Query(None, description="Optional path prefix filter"),
     alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
     fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
-    adaptive_k: bool = Query(False, description="Adaptive retrieval"),
+    rerank: bool | None = Query(  # noqa: ARG001
+        None, description="Override reranker (true/false, default: use config)"
+    ),
     graph_mode: str = Query(
         "none", description="Graph enhancement mode: none, low, high, dual, auto"
     ),
@@ -141,6 +207,9 @@ async def search_query(
             detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', 'dual', or 'auto'",
         )
 
+    # ReBAC file-level permission enforcer (Decision #17)
+    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+
     routing_info: dict[str, Any] | None = None
     effective_graph_mode = graph_mode
     effective_limit = limit
@@ -158,14 +227,21 @@ async def search_query(
             effective_limit,
         )
 
+    # Over-fetch when permission filtering is active to compensate for filtered results
+    fetch_limit = effective_limit
+    if permission_enforcer is not None:
+        fetch_limit = effective_limit * 3
+
     try:
+        filter_ms = 0.0
+
         if effective_graph_mode != "none":
-            from nexus.services.search.graph_search_service import graph_enhanced_search
+            from nexus.bricks.search.graph_search_service import graph_enhanced_search
 
             results = await graph_enhanced_search(
                 query=q,
                 search_type=type,
-                limit=effective_limit,
+                limit=fetch_limit,
                 path_filter=path,
                 alpha=alpha,
                 graph_mode=effective_graph_mode,
@@ -174,6 +250,13 @@ async def search_query(
                 search_daemon=search_daemon,
                 zone_id=zone_id,
             )
+
+            # ReBAC file-level filtering (Decision #17)
+            results, filter_ms = _apply_rebac_filter(
+                results, permission_enforcer, auth_result, zone_id
+            )
+            results = results[:effective_limit]
+
             latency_ms = (time.perf_counter() - start_time) * 1000
 
             response: dict[str, Any] = {
@@ -190,13 +273,15 @@ async def search_query(
                         "line_end": r.line_end,
                         "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
                         "vector_score": round(r.vector_score, 4) if r.vector_score else None,
-                        "graph_score": round(r.graph_score, 4) if r.graph_score else None,
-                        "graph_context": r.graph_context.to_dict() if r.graph_context else None,
                     }
                     for r in results
                 ],
                 "total": len(results),
                 "latency_ms": round(latency_ms, 2),
+                "latency_breakdown": {
+                    "total_ms": round(latency_ms, 2),
+                    "permission_filter_ms": round(filter_ms, 2),
+                },
             }
             if routing_info:
                 response["routing"] = routing_info
@@ -205,13 +290,21 @@ async def search_query(
         results = await search_daemon.search(
             query=q,
             search_type=type,
-            limit=effective_limit,
+            limit=fetch_limit,
             path_filter=path,
             alpha=alpha,
             fusion_method=fusion,
-            adaptive_k=adaptive_k,
             zone_id=zone_id,
         )
+
+        # Read sub-timings from daemon
+        daemon_timing = getattr(search_daemon, "last_search_timing", {})
+        backend_ms = daemon_timing.get("backend_ms", 0.0)
+        rerank_ms = daemon_timing.get("rerank_ms", 0.0)
+
+        # ReBAC file-level filtering (Decision #17)
+        results, filter_ms = _apply_rebac_filter(results, permission_enforcer, auth_result, zone_id)
+        results = results[:effective_limit]
 
         latency_ms = (time.perf_counter() - start_time) * 1000
 
@@ -230,16 +323,22 @@ async def search_query(
                     "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
                     "vector_score": round(r.vector_score, 4) if r.vector_score else None,
                     "splade_score": round(r.splade_score, 4)
-                    if getattr(r, "splade_score", None)
+                    if r.splade_score is not None
                     else None,
                     "reranker_score": round(r.reranker_score, 4)
-                    if getattr(r, "reranker_score", None)
+                    if r.reranker_score is not None
                     else None,
                 }
                 for r in results
             ],
             "total": len(results),
             "latency_ms": round(latency_ms, 2),
+            "latency_breakdown": {
+                "total_ms": round(latency_ms, 2),
+                "backend_ms": round(backend_ms, 2),
+                "rerank_ms": round(rerank_ms, 2),
+                "permission_filter_ms": round(filter_ms, 2),
+            },
         }
         if routing_info:
             response["routing"] = routing_info
@@ -248,6 +347,28 @@ async def search_query(
     except Exception as e:
         logger.error("Search error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Search query failed") from e
+
+
+@router.post("/index")
+async def search_index_documents(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Explicitly index documents (Decision #18: call-by-call indexing).
+
+    Request body: ``{"documents": [{"id": str, "text": str, "path": str, ...}]}``
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    body = await request.json()
+    documents: list[dict[str, Any]] = body.get("documents", [])
+    if not documents:
+        raise HTTPException(status_code=400, detail="No documents provided")
+
+    count = await search_daemon.index_documents(documents, zone_id=zone_id)
+    return {"status": "indexed", "count": count, "zone_id": zone_id}
 
 
 @router.post("/refresh")
@@ -260,21 +381,6 @@ async def search_refresh_notify(
     """Notify the search daemon of a file change for index refresh."""
     await search_daemon.notify_file_change(path, change_type)
     return {"status": "accepted", "path": path, "change_type": change_type}
-
-
-@router.post("/bulk-embed")
-async def search_bulk_embed(
-    batch_size: int = Query(50, description="Batch size for embedding"),
-    _auth_result: dict[str, Any] = Depends(require_auth),
-    search_daemon: Any = Depends(_get_search_daemon),
-) -> dict[str, Any]:
-    """Trigger bulk embedding of all BM25S-indexed documents.
-
-    Uses BM25S corpus as content source, registers files in file_paths,
-    and embeds via the standard IndexingPipeline (decoupled from BM25).
-    """
-    embedded = await search_daemon.bulk_embed_from_bm25s(batch_size=batch_size)
-    return {"status": "completed", "documents_embedded": embedded}
 
 
 @router.post("/expand")

@@ -254,28 +254,6 @@ class TestOAuthCredentialModel:
             cred.validate()
 
 
-class TestUserSessionModelIsExpired:
-    """Tests for UserSessionModel.is_expired()."""
-
-    def test_persistent_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=None)
-        assert s.is_expired() is False
-
-    def test_unexpired_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=datetime.now(UTC) + timedelta(hours=1))
-        assert s.is_expired() is False
-
-    def test_expired_session(self) -> None:
-        from nexus.storage.models.infrastructure import UserSessionModel
-
-        s = UserSessionModel(user_id="u1", expires_at=datetime.now(UTC) - timedelta(hours=1))
-        assert s.is_expired() is True
-
-
 class TestSyncJobModelToDict:
     """Tests for SyncJobModel.to_dict()."""
 
@@ -412,107 +390,6 @@ class TestZoneModelParsedSettings:
         assert settings is not None
 
 
-class TestTrajectoryModelValidate:
-    """Tests for TrajectoryModel.validate()."""
-
-    def test_valid_trajectory(self) -> None:
-        from nexus.storage.models.ace import TrajectoryModel
-
-        t = TrajectoryModel(
-            user_id="u1",
-            task_description="Test task",
-            trace_hash="a" * 64,
-            status="success",
-        )
-        t.validate()
-
-    def test_missing_user_id(self) -> None:
-        from nexus.storage.models.ace import TrajectoryModel
-
-        t = TrajectoryModel(
-            user_id="",
-            task_description="Test",
-            trace_hash="a" * 64,
-            status="success",
-        )
-        with pytest.raises(Exception, match="user_id is required"):
-            t.validate()
-
-    def test_invalid_status(self) -> None:
-        from nexus.storage.models.ace import TrajectoryModel
-
-        t = TrajectoryModel(
-            user_id="u1",
-            task_description="Test",
-            trace_hash="a" * 64,
-            status="invalid",
-        )
-        with pytest.raises(Exception, match="status must be one of"):
-            t.validate()
-
-    def test_invalid_success_score(self) -> None:
-        from nexus.storage.models.ace import TrajectoryModel
-
-        t = TrajectoryModel(
-            user_id="u1",
-            task_description="Test",
-            trace_hash="a" * 64,
-            status="success",
-            success_score=2.0,
-        )
-        with pytest.raises(Exception, match="success_score must be between"):
-            t.validate()
-
-
-class TestPlaybookModelValidate:
-    """Tests for PlaybookModel.validate()."""
-
-    def test_valid_playbook(self) -> None:
-        from nexus.storage.models.ace import PlaybookModel
-
-        p = PlaybookModel(
-            user_id="u1",
-            name="Test",
-            content_hash="a" * 64,
-            scope="agent",
-            visibility="private",
-            success_rate=0.5,
-            usage_count=0,
-        )
-        p.validate()
-
-    def test_invalid_scope(self) -> None:
-        from nexus.storage.models.ace import PlaybookModel
-
-        p = PlaybookModel(
-            user_id="u1",
-            name="Test",
-            content_hash="a" * 64,
-            scope="bad",
-            visibility="private",
-            success_rate=0.5,
-            usage_count=0,
-        )
-        with pytest.raises(Exception, match="scope must be one of"):
-            p.validate()
-
-    def test_invalid_version(self) -> None:
-        from nexus.storage.models.ace import PlaybookModel
-
-        p = PlaybookModel(
-            user_id="u1",
-            name="Test",
-            content_hash="a" * 64,
-            scope="agent",
-            visibility="private",
-            success_rate=0.5,
-            usage_count=0,
-            version=0,
-        )
-        with pytest.raises(Exception, match="version must be >= 1"):
-            p.validate()
-
-
 class TestDirectoryEntryModelValidate:
     """Tests for DirectoryEntryModel.validate()."""
 
@@ -544,41 +421,6 @@ class TestDirectoryEntryModelValidate:
             e.validate()
 
 
-class TestContentChunkModelValidate:
-    """Tests for ContentChunkModel.validate()."""
-
-    def test_valid_chunk(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(
-            content_hash="a" * 64,
-            size_bytes=100,
-            storage_path="/data/chunks/a",
-        )
-        c.validate()
-
-    def test_invalid_hash_length(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="abc", size_bytes=100, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="content_hash must be 64 characters"):
-            c.validate()
-
-    def test_invalid_hash_chars(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="z" * 64, size_bytes=100, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="hexadecimal"):
-            c.validate()
-
-    def test_negative_size(self) -> None:
-        from nexus.storage.models.filesystem import ContentChunkModel
-
-        c = ContentChunkModel(content_hash="a" * 64, size_bytes=-1, storage_path="/data/chunks/a")
-        with pytest.raises(Exception, match="size_bytes cannot be negative"):
-            c.validate()
-
-
 class TestEntityRegistryModelValidate:
     """Tests for EntityRegistryModel.validate()."""
 
@@ -603,42 +445,6 @@ class TestEntityRegistryModelValidate:
         )
         with pytest.raises(Exception, match="parent_type and parent_id must both"):
             e.validate()
-
-
-class TestMountConfigModelValidate:
-    """Tests for MountConfigModel.validate()."""
-
-    def test_valid_config(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="/mnt/test",
-            backend_type="local",
-            backend_config="{}",
-        )
-        m.validate()
-
-    def test_invalid_mount_point(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="mnt/test",
-            backend_type="local",
-            backend_config="{}",
-        )
-        with pytest.raises(Exception, match="mount_point must start with '/'"):
-            m.validate()
-
-    def test_invalid_json(self) -> None:
-        from nexus.storage.models.infrastructure import MountConfigModel
-
-        m = MountConfigModel(
-            mount_point="/mnt/test",
-            backend_type="local",
-            backend_config="not json",
-        )
-        with pytest.raises(Exception, match="backend_config must be valid JSON"):
-            m.validate()
 
 
 class TestWorkflowModelValidate:

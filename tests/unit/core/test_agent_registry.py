@@ -14,7 +14,7 @@ Tests cover:
 import pytest
 
 from nexus.contracts.agent_types import AgentState
-from nexus.services.agents.agent_registry import (
+from nexus.system_services.agents.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,
     StaleAgentError,
@@ -609,14 +609,18 @@ class TestHeartbeatCapacityWarning:
             reg.transition(f"agent-{i}", AgentState.CONNECTED, expected_generation=0)
 
         # Heartbeat 7 agents (below threshold)
-        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
+        with caplog.at_level(
+            logging.WARNING, logger="nexus.system_services.agents.heartbeat_buffer"
+        ):
             caplog.clear()
             for i in range(7):
                 reg.heartbeat(f"agent-{i}")
             assert "capacity" not in caplog.text
 
         # Heartbeat the 8th agent (hits 80%)
-        with caplog.at_level(logging.WARNING, logger="nexus.services.agents.heartbeat_buffer"):
+        with caplog.at_level(
+            logging.WARNING, logger="nexus.system_services.agents.heartbeat_buffer"
+        ):
             caplog.clear()
             reg.heartbeat("agent-7")
             assert "capacity" in caplog.text

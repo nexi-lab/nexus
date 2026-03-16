@@ -28,21 +28,16 @@ class SearchBrickManifest(BrickManifest):
         }
     )
     required_modules: tuple[str, ...] = (
-        "nexus.bricks.search.query_service",
+        "nexus.bricks.search.txtai_backend",
+        "nexus.bricks.search.daemon",
         "nexus.bricks.search.indexing_service",
-        "nexus.bricks.search.fusion",
         "nexus.bricks.search.chunking",
-        "nexus.bricks.search.embeddings",
-        "nexus.bricks.search.vector_db",
         "nexus.bricks.search.config",
         "nexus.bricks.search.protocols",
         "nexus.bricks.search.result_builders",
+        "nexus.bricks.search.search_service",
     )
-    optional_modules: tuple[str, ...] = (
-        "nexus.bricks.search.bm25s_search",
-        "nexus.bricks.search.zoekt_client",
-        "nexus.bricks.search.graph_store",
-    )
+    optional_modules: tuple[str, ...] = ("nexus.bricks.search.zoekt_client",)
 
 
 def verify_imports() -> dict[str, bool]:

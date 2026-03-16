@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.backend import HandlerStatusResponse
-from nexus.backends.delegating import DelegatingBackend
+from nexus.backends.base.backend import HandlerStatusResponse
+from nexus.backends.storage.delegating import DelegatingBackend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from tests.unit.backends.wrapper_test_helpers import make_leaf, make_storage_mock

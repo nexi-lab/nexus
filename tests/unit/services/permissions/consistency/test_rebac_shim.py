@@ -1,21 +1,14 @@
-"""Verify backward-compatibility shims for consistency module (Issue #2179).
+"""Verify canonical ReBAC consistency imports (Issue #2179).
 
-After extraction to ``nexus.bricks.rebac.consistency``, both
-``nexus.bricks.rebac.consistency`` and ``nexus.services.permissions.consistency``
-should resolve to the canonical brick implementation.
+After consolidation, all imports come from ``nexus.bricks.rebac.consistency``.
 """
 
 
-class TestShimReExports:
-    """Verify all public symbols are accessible via old import paths."""
+class TestCanonicalImports:
+    """Verify all public symbols are accessible from bricks.rebac.consistency."""
 
-    def test_zone_isolation_error_resolves_from_rebac(self):
+    def test_zone_isolation_error_resolves(self):
         from nexus.bricks.rebac.consistency.zone_manager import ZoneIsolationError
-
-        assert ZoneIsolationError.__module__ == "nexus.bricks.rebac.consistency.zone_manager"
-
-    def test_zone_isolation_error_resolves_from_services(self):
-        from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
 
         assert ZoneIsolationError.__module__ == "nexus.bricks.rebac.consistency.zone_manager"
 
@@ -43,22 +36,7 @@ class TestShimReExports:
             increment_version_token,
         )
 
-        # All should be the canonical implementations from bricks
         assert ZoneIsolationError.__module__ == "nexus.bricks.rebac.consistency.zone_manager"
         assert ZoneManager.__module__ == "nexus.bricks.rebac.consistency.zone_manager"
         assert get_zone_revision_for_grant.__module__ == "nexus.bricks.rebac.consistency.revision"
         assert increment_version_token.__module__ == "nexus.bricks.rebac.consistency.revision"
-
-    def test_canonical_import_works(self):
-        """Verify direct import from canonical location."""
-        from nexus.bricks.rebac.consistency import (
-            ZoneIsolationError,
-            ZoneManager,
-            get_zone_revision_for_grant,
-            increment_version_token,
-        )
-
-        assert ZoneIsolationError is not None
-        assert ZoneManager is not None
-        assert callable(get_zone_revision_for_grant)
-        assert callable(increment_version_token)

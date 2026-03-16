@@ -60,7 +60,6 @@ EXCLUDED_METHODS: set[str] = {
     "stream",
     "stream_range",
     "write_stream",
-    "shutdown_parser_threads",
     "export_metadata",
     "import_metadata",
     "batch_get_content_ids",
@@ -84,44 +83,28 @@ EXCLUDED_METHODS: set[str] = {
     "lock",
     "extend_lock",
     "unlock",
-    "llm_read",
-    "llm_read_detailed",
-    "llm_read_stream",
-    "create_llm_reader",
-    "ace_retrieve_trajectory",
-    "ace_get_trajectory_stats",
-    "ace_export_trajectories",
-    "export",  # skill_service.export — not in METHOD_PARAMS
-    "import_skill",  # skill_service.import_skill — not in METHOD_PARAMS
-    "validate_zip",  # skill_service.validate_zip — not in METHOD_PARAMS
 }
 
 # Modules to scan for @rpc_expose methods.  We inspect each class in each
 # module and collect all methods that have ``_rpc_exposed = True``.
 MODULES_TO_SCAN: list[str] = [
     "nexus.core.nexus_fs",
-    # Search (reorganized from flat nexus.services.search_*)
-    "nexus.services.search.search_service",
-    "nexus.services.search.search_semantic",
+    # Search (moved to bricks tier, Issue #1287)
+    "nexus.bricks.search.search_service",
     # Services (reorganized into sub-packages)
-    "nexus.services.share_link.share_link_service",
-    "nexus.services.versioning.version_service",
-    "nexus.services.mount.mount_service",
+    "nexus.bricks.share_link.share_link_service",
+    "nexus.bricks.versioning.version_service",
+    "nexus.bricks.mount.mount_service",
     "nexus.services.oauth.oauth_service",
-    "nexus.services.memory_service",
-    "nexus.services.ace_rpc_service",
-    "nexus.services.workspace_rpc_service",
-    "nexus.services.user_provisioning",
-    "nexus.services.agents.agent_service",
+    "nexus.bricks.memory.memory_service",
+    "nexus.system_services.workspace.workspace_rpc_service",
+    "nexus.system_services.lifecycle.user_provisioning",
+    "nexus.system_services.agents.agent_service",
     # System services
     "nexus.system_services.lifecycle.events_service",
-    "nexus.system_services.lifecycle.task_queue_service",
     # Brick services with @rpc_expose
-    "nexus.bricks.llm.llm_service",
     "nexus.bricks.mcp.mcp_service",
     "nexus.bricks.rebac.rebac_service",
-    "nexus.bricks.skills.service",
-    "nexus.bricks.skills.package_service",
 ]
 
 # Types that signal "operation context" — parameters with these types are
@@ -241,9 +224,9 @@ def _default_repr(default: Any) -> str:
         return f'"{default}"'
     if isinstance(default, bool):
         return repr(default)
-    if isinstance(default, (int, float)):
+    if isinstance(default, int | float):
         return repr(default)
-    if isinstance(default, (list, tuple, dict)):
+    if isinstance(default, list | tuple | dict):
         return repr(default)
     return repr(default)
 

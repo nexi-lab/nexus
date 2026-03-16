@@ -1,0 +1,101 @@
+# Nexus Minimal Docker Image
+# Lightweight standalone server with storage only (no Zoekt, no ML, no cloud).
+# Includes _nexus_raft for embedded RaftMetadataStore.
+#
+# Build:
+#   docker build -f dockerfiles/Dockerfile.minimal -t nexus-minimal:latest .
+#
+# Usage:
+#   docker run --rm -p 2026:2026 -p 2126:2126 nexus-minimal:latest
+
+# ── Builder stage ────────────────────────────────────────────────────
+FROM python:3.13-slim AS builder
+
+# ---------- System dependencies ----------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc \
+        git \
+        curl \
+        build-essential \
+        ca-certificates \
+        protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------- Rust toolchain (for _nexus_raft) ----------
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# ---------- maturin ----------
+RUN pip install --no-cache-dir maturin
+
+# ---------- Install Python dependencies ----------
+COPY requirements-minimal.txt /tmp/requirements-minimal.txt
+RUN pip install --no-cache-dir --prefix=/install -r /tmp/requirements-minimal.txt
+
+# ---------- Install nexus package (source-only, no compiled extensions) ----------
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+RUN pip install --no-cache-dir --no-deps --prefix=/install .
+
+# ---------- Build nexus_raft Rust extension ----------
+COPY Cargo.toml Cargo.lock ./
+COPY proto/ ./proto/
+COPY rust/ ./rust/
+
+WORKDIR /build/rust/nexus_raft
+RUN maturin build --release --features full \
+    && pip install --no-cache-dir --prefix=/install /build/target/wheels/nexus_raft-*.whl
+
+WORKDIR /build
+
+# ── Runtime stage ────────────────────────────────────────────────────
+FROM python:3.13-slim
+
+LABEL org.opencontainers.image.title="Nexus Minimal Server"
+LABEL org.opencontainers.image.description="Lightweight standalone Nexus server (storage only)"
+LABEL org.opencontainers.image.source="https://github.com/nexi-lab/nexus"
+
+# ---------- Runtime dependencies ----------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------- Copy Python packages + Rust extension ----------
+COPY --from=builder /install/lib /usr/local/lib
+COPY --from=builder /install/bin /usr/local/bin
+
+# ---------- Verify extensions ----------
+RUN python3 -c "from _nexus_raft import Metastore; print('✓ nexus_raft Metastore available')" || echo "⚠ nexus_raft Metastore not available"
+
+# ---------- Copy application files ----------
+WORKDIR /app
+COPY src/ ./src/
+COPY alembic/ ./alembic/
+COPY alembic/alembic.ini pyproject.toml README.md ./
+COPY configs/ ./configs/
+COPY dockerfiles/docker-entrypoint-minimal.sh /usr/local/bin/docker-entrypoint-minimal.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-minimal.sh
+
+# ---------- Create non-root user ----------
+RUN useradd -r -m -u 1000 -s /bin/bash nexus \
+    && mkdir -p /app/data \
+    && chown -R nexus:nexus /app
+
+USER nexus
+
+# ---------- Environment variables ----------
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    NEXUS_PROFILE=minimal \
+    NEXUS_HOST=0.0.0.0 \
+    NEXUS_PORT=2026 \
+    NEXUS_DATA_DIR=/app/data
+
+EXPOSE 2026 2126
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${NEXUS_PORT}/healthz/ready || exit 1
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-minimal.sh"]

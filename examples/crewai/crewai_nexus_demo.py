@@ -49,7 +49,7 @@ from crewai.tools import tool
 # we'll create custom tools that call the MCP server via subprocess
 
 
-def call_nexus_mcp(tool_name: str, **kwargs) -> str:
+async def call_nexus_mcp(tool_name: str, **kwargs) -> str:
     """Call a Nexus MCP tool via stdio transport."""
     import json
 
@@ -71,16 +71,16 @@ def call_nexus_mcp(tool_name: str, **kwargs) -> str:
 
         # Map tool names to Nexus methods
         if tool_name == "nexus_read_file":
-            content = nx.sys_read(kwargs["path"])
+            content = await nx.sys_read(kwargs["path"])
             if isinstance(content, bytes):
                 content = content.decode("utf-8", errors="replace")
             return content
         elif tool_name == "nexus_write_file":
             content = kwargs["content"].encode("utf-8")
-            nx.sys_write(kwargs["path"], content)
+            await nx.sys_write(kwargs["path"], content)
             return f"Successfully wrote to {kwargs['path']}"
         elif tool_name == "nexus_list_files":
-            files = nx.sys_readdir(
+            files = await nx.sys_readdir(
                 kwargs.get("path", "/"), recursive=kwargs.get("recursive", False)
             )
             return "\n".join(files) if files else "No files found"
@@ -420,7 +420,7 @@ def demo_3_multi_agent_collaboration():
 # =========================================================================
 
 
-def check_environment():
+async def check_environment():
     """Check that required environment variables are set."""
 
     print("Checking environment...")
@@ -454,7 +454,7 @@ def check_environment():
         from nexus import connect
 
         nx = connect(config={"remote_url": nexus_url})
-        nx.sys_readdir("/")
+        await nx.sys_readdir("/")
         print("✓ Connected to Nexus server")
         nx.close()
     except Exception as e:
@@ -467,7 +467,7 @@ def check_environment():
     print("\n✓ Environment check passed!\n")
 
 
-def setup_test_data():
+async def setup_test_data():
     """Setup test data for demos."""
 
     print("Setting up test data...")
@@ -480,7 +480,7 @@ def setup_test_data():
         # Create directories
         for dir_path in ["/workspace", "/reports"]:
             with contextlib.suppress(Exception):
-                nx.sys_mkdir(dir_path)  # Directory may already exist
+                await nx.sys_mkdir(dir_path)  # Directory may already exist
 
         # Create sample Python files with async patterns
         sample_files = {
@@ -519,7 +519,7 @@ async def query_users(min_age: int) -> list:
     # TODO: Consider making this async for large datasets
     return {k: v.upper() if isinstance(v, str) else v for k, v in data.items()}
 
-def validate_input(data: dict) -> bool:
+async def validate_input(data: dict) -> bool:
     '''Validate input data.'''
     required_fields = ['id', 'name', 'email']
     return all(field in data for field in required_fields)
@@ -527,7 +527,7 @@ def validate_input(data: dict) -> bool:
         }
 
         for path, content in sample_files.items():
-            nx.sys_write(path, content.encode("utf-8"))
+            await nx.sys_write(path, content.encode("utf-8"))
 
         print(f"✓ Created {len(sample_files)} test files in /workspace")
         nx.close()

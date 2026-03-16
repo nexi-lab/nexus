@@ -22,3 +22,9 @@ class OperationType(StrEnum):
     CHOWN = "chown"
     CHGRP = "chgrp"
     SETFACL = "setfacl"
+
+    # Aspect-level mutations (Issue #2929): logged when AspectService.put_aspect()
+    # or delete_aspect() is called directly (e.g., CatalogService.extract_schema()).
+    # These carry MCL columns (entity_urn, aspect_name, change_type) for replay.
+    ASPECT_UPSERT = "aspect_upsert"
+    ASPECT_DELETE = "aspect_delete"

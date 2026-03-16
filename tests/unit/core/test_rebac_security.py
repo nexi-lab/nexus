@@ -19,14 +19,11 @@ import pytest
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.manager import (
     CheckResult,
-    ConsistencyLevel,
-    ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
     TraversalStats,
     WriteResult,
 )
-from nexus.contracts.rebac_types import ConsistencyMode
 from nexus.contracts.types import (
     OperationContext,
     Permission,
@@ -524,52 +521,6 @@ class TestGraphLimitProtection:
         """GraphLimitExceeded with no path defaults to empty list."""
         exc = GraphLimitExceeded("fan_out", 1000, 2000)
         assert exc.path == []
-
-
-# ---------------------------------------------------------------------------
-# Consistency levels and requirements
-# ---------------------------------------------------------------------------
-
-
-class TestConsistencyValidation:
-    """Verify consistency requirement validation."""
-
-    def test_at_least_as_fresh_requires_min_revision(self):
-        """AT_LEAST_AS_FRESH mode requires min_revision."""
-        with pytest.raises(ValueError, match="min_revision is required"):
-            ConsistencyRequirement(mode=ConsistencyMode.AT_LEAST_AS_FRESH)
-
-    def test_at_least_as_fresh_with_revision_ok(self):
-        """AT_LEAST_AS_FRESH with min_revision succeeds."""
-        req = ConsistencyRequirement(mode=ConsistencyMode.AT_LEAST_AS_FRESH, min_revision=42)
-        assert req.min_revision == 42
-
-    def test_minimize_latency_does_not_require_revision(self):
-        """MINIMIZE_LATENCY mode does not need min_revision."""
-        req = ConsistencyRequirement(mode=ConsistencyMode.MINIMIZE_LATENCY)
-        assert req.min_revision is None
-
-    def test_fully_consistent_does_not_require_revision(self):
-        """FULLY_CONSISTENT mode does not need min_revision."""
-        req = ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
-        assert req.min_revision is None
-
-    def test_to_legacy_level_mapping(self):
-        """ConsistencyRequirement maps to correct legacy ConsistencyLevel."""
-        assert (
-            ConsistencyRequirement(mode=ConsistencyMode.MINIMIZE_LATENCY).to_legacy_level()
-            == ConsistencyLevel.EVENTUAL
-        )
-        assert (
-            ConsistencyRequirement(
-                mode=ConsistencyMode.AT_LEAST_AS_FRESH, min_revision=1
-            ).to_legacy_level()
-            == ConsistencyLevel.BOUNDED
-        )
-        assert (
-            ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT).to_legacy_level()
-            == ConsistencyLevel.STRONG
-        )
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ from nexus.lib.sync_bridge import fire_and_forget
 
 if TYPE_CHECKING:
     from nexus.bricks.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
-    from nexus.services.protocols.payment import (
+    from nexus.contracts.protocols.payment import (
         PaymentProtocol,
         ProtocolTransferRequest,
         ProtocolTransferResult,

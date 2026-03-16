@@ -148,43 +148,45 @@ class TimeTravelReader:
             if next_write.metadata_snapshot:
                 metadata_dict = json.loads(next_write.metadata_snapshot)
         else:
-            # No next write, or next write has no snapshot (new file creation)
-            # Check if file still exists in current metadata
-            path_stmt = select(FilePathModel).where(FilePathModel.virtual_path == path)
-            if zone_id is not None:
-                path_stmt = path_stmt.where(FilePathModel.zone_id == zone_id)
+            # No next write — try snapshots from subsequent operations first,
+            # then fall back to current metadata only if no delete+recreate occurred.
+            # Look for any subsequent operation with a snapshot (delete, rename, etc.)
+            for op in ops_after_write:
+                if op.snapshot_hash:
+                    content = self.backend.read_content(op.snapshot_hash)
+                    if op.metadata_snapshot:
+                        metadata_dict = json.loads(op.metadata_snapshot)
+                    break
 
-            current_path = self.session.execute(path_stmt).scalar_one_or_none()
-
-            if current_path:
-                # File still exists with same content from last_write
-                content = self.backend.read_content(current_path.content_hash)
-                metadata_dict = {
-                    "size": current_path.size_bytes,
-                    # v0.5.0: owner/group/mode removed - use ReBAC for permissions
-                    "version": current_path.current_version,
-                    "etag": current_path.content_hash,
-                    "modified_at": current_path.updated_at.isoformat()
-                    if current_path.updated_at
-                    else None,
-                }
-            else:
-                # File was deleted after last_write but we need content at last_write
-                # Look for delete operation's snapshot
-                next_delete = None
-                for op in ops_after_write:
-                    if op.operation_type == "delete":
-                        next_delete = op
-                        break
-
-                if next_delete and next_delete.snapshot_hash:
-                    content = self.backend.read_content(next_delete.snapshot_hash)
-                    if next_delete.metadata_snapshot:
-                        metadata_dict = json.loads(next_delete.metadata_snapshot)
-                else:
-                    raise NexusFileNotFoundError(
-                        f"Cannot reconstruct content for {path} at operation {operation_id}"
+            if content is None:
+                # No subsequent operation captured a snapshot.
+                # Safe to use current metadata only if no delete occurred after
+                # last_write (i.e., the file has been continuously live).
+                has_delete_after = any(op.operation_type == "delete" for op in ops_after_write)
+                if not has_delete_after:
+                    path_stmt = select(FilePathModel).where(
+                        FilePathModel.virtual_path == path,
+                        FilePathModel.deleted_at.is_(None),
                     )
+                    if zone_id is not None:
+                        path_stmt = path_stmt.where(FilePathModel.zone_id == zone_id)
+
+                    current_path = self.session.execute(path_stmt).scalar_one_or_none()
+                    if current_path:
+                        content = self.backend.read_content(current_path.content_hash)
+                        metadata_dict = {
+                            "size": current_path.size_bytes,
+                            "version": current_path.current_version,
+                            "etag": current_path.content_hash,
+                            "modified_at": current_path.updated_at.isoformat()
+                            if current_path.updated_at
+                            else None,
+                        }
+
+            if content is None:
+                raise NexusFileNotFoundError(
+                    f"Cannot reconstruct content for {path} at operation {operation_id}"
+                )
 
         if content is None:
             raise NexusFileNotFoundError(

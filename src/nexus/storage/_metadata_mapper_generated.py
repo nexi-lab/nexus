@@ -14,10 +14,31 @@ from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
+# Known FileMetadata field names (generated from proto).
+# Used by from_json() to strip unknown keys from external dicts.
+_KNOWN_FIELDS: frozenset[str] = frozenset(
+    {
+        "path",
+        "backend_name",
+        "physical_path",
+        "size",
+        "etag",
+        "mime_type",
+        "created_at",
+        "modified_at",
+        "version",
+        "zone_id",
+        "created_by",
+        "owner_id",
+        "entry_type",
+        "target_zone_id",
+    }
+)
+
 if TYPE_CHECKING:
     from nexus.contracts.metadata import FileMetadata
-
-from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +76,6 @@ PROTO_TO_SQL: dict[str, str | None] = {
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
-    "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
 }
 
 
@@ -88,7 +108,6 @@ class MetadataMapper:
             owner_id=metadata.owner_id or "",
             entry_type=metadata_pb2.DirEntryType.Name(metadata.entry_type),
             target_zone_id=metadata.target_zone_id or "",
-            i_links_count=metadata.i_links_count,
         )
 
     @staticmethod
@@ -120,7 +139,6 @@ class MetadataMapper:
             owner_id=proto.owner_id or None,
             entry_type=proto.entry_type,
             target_zone_id=proto.target_zone_id or None,
-            i_links_count=proto.i_links_count,
         )
 
     # -- JSON serialization (GENERATED) -------------------------------------
@@ -143,7 +161,6 @@ class MetadataMapper:
             "owner_id": metadata.owner_id,
             "entry_type": metadata.entry_type,
             "target_zone_id": metadata.target_zone_id,
-            "i_links_count": metadata.i_links_count,
         }
 
     @staticmethod
@@ -156,6 +173,14 @@ class MetadataMapper:
             is_dir = obj.pop("is_directory")
             if "entry_type" not in obj:
                 obj["entry_type"] = 1 if is_dir else 0
+
+        # Strip unknown keys (forward compatibility with older/newer proto versions)
+        obj = {k: v for k, v in obj.items() if k in _KNOWN_FIELDS}
+
+        # Ensure required fields have defaults (forward compatibility)
+        obj.setdefault("backend_name", "")
+        obj.setdefault("physical_path", "")
+        obj.setdefault("size", 0)
 
         if obj.get("created_at"):
             obj["created_at"] = datetime.fromisoformat(obj["created_at"])

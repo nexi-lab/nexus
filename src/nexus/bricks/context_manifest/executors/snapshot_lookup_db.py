@@ -5,16 +5,13 @@ Provides Protocol-based DI for snapshot retrieval and manifest reading.
 SnapshotLookup: retrieve snapshot metadata by ID or latest.
 ManifestReader: read file paths from a CAS-stored workspace manifest.
 
-Concrete SQLAlchemy implementation (DatabaseSnapshotLookup) has been moved
-to ``nexus.storage.repositories.snapshot_lookup`` (Issue #2189).
-Re-exported here for backward compatibility.
+Concrete SQLAlchemy implementation lives in
+``nexus.storage.repositories.snapshot_lookup`` (Issue #2189).
 """
 
 import json
 import logging
 from typing import Any, Protocol, runtime_checkable
-
-from nexus.storage.repositories.snapshot_lookup import DatabaseSnapshotLookup
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +66,6 @@ class CASManifestReader:
 
 __all__ = [
     "CASManifestReader",
-    "DatabaseSnapshotLookup",
     "ManifestReader",
     "SnapshotLookup",
 ]

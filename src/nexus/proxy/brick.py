@@ -104,6 +104,7 @@ class ProxyBrick:
             circuit=self._circuit,
             batch_size=self._config.replay_batch_size,
             poll_interval=self._config.replay_poll_interval,
+            on_replay_success=self._on_replay_success,
         )
         self._replay_task = asyncio.create_task(self._replay_engine.run())
 
@@ -142,11 +143,13 @@ class ProxyBrick:
 
     async def _do_forward(self, method: str, *, data: bytes | None = None, **kwargs: Any) -> Any:
         """Unified forward — handles both regular and streaming calls (#6-A)."""
+        payload_ref = base64.b64encode(data).decode() if data is not None else None
+
         allowed = await self._circuit.allow_request()
         if not allowed:
             if self._edge_sync is not None:
                 self._edge_sync.notify_disconnected()
-            queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+            queue_id = await self._queue.enqueue(method, kwargs=kwargs, payload_ref=payload_ref)
             self._wake_replay()
             logger.warning("Circuit open — operation '%s' queued (id=%d)", method, queue_id)
             raise CircuitOpenError(
@@ -168,7 +171,7 @@ class ProxyBrick:
                 await self._circuit.record_failure()
                 if self._edge_sync is not None:
                     self._edge_sync.notify_disconnected()
-                queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+                queue_id = await self._queue.enqueue(method, kwargs=kwargs, payload_ref=payload_ref)
                 self._wake_replay()
                 logger.warning("Operation '%s' queued for offline replay (id=%d)", method, queue_id)
                 raise OfflineQueuedError(method, queue_id) from exc
@@ -186,6 +189,11 @@ class ProxyBrick:
         """Signal the replay engine to process the queue immediately."""
         if self._replay_engine is not None:
             self._replay_engine.wake()
+
+    def _on_replay_success(self) -> None:
+        """Called by ReplayEngine after a successful replay — advances reconnect state."""
+        if self._edge_sync is not None:
+            self._edge_sync.notify_connected()
 
     # ------------------------------------------------------------------
     # Properties
@@ -254,27 +262,6 @@ class ProxyVFSBrick(ProxyBrick):
 
     async def count_dir(self, path: str, zone_id: str) -> int:
         return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
-
-
-class ProxyEventLogBrick(ProxyBrick):
-    """Proxy for ``EventLogProtocol`` — forwards audit events to cloud."""
-
-    async def append(self, event: Any) -> Any:
-        return await self._forward("event_log.append", event=asdict(event))
-
-    async def read(
-        self,
-        *,
-        since_sequence: int = 0,
-        limit: int = 100,
-        zone_id: str | None = None,
-    ) -> list[Any]:
-        return await self._forward(  # type: ignore[no-any-return]
-            "event_log.read",
-            since_sequence=since_sequence,
-            limit=limit,
-            zone_id=zone_id,
-        )
 
 
 class ProxySchedulerBrick(ProxyBrick):

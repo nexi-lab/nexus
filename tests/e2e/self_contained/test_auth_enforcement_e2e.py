@@ -7,7 +7,6 @@ auth needed) to exercise the full auth middleware chain.
 Covers:
 - governance (require_admin) → 401 without auth
 - bricks (require_admin) → 401 without auth, health stays public
-- rlm (require_auth) → 401 without auth
 - mobile_search (require_auth) → 401 without auth
 - tus_uploads (require_auth) → 401 for PATCH/POST/DELETE, OPTIONS stays public
 - x402 topup/config (require_auth) → 401, webhook stays public
@@ -20,7 +19,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.server.api.v2.routers import bricks, governance, mobile_search, rlm
+from nexus.server.api.v2.routers import bricks, governance, mobile_search
 from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
 from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_router
@@ -39,7 +38,6 @@ def secured_app() -> FastAPI:
     app.include_router(governance.router)
     app.include_router(bricks.health_router)
     app.include_router(bricks.router)
-    app.include_router(rlm.router)
     app.include_router(mobile_search.router)
 
     tus_public, tus_auth = create_tus_uploads_router(get_upload_service=lambda: MagicMock())
@@ -55,7 +53,6 @@ def secured_app() -> FastAPI:
 
     # Stubs for endpoints that check app.state
     app.state.nexus_fs = MagicMock()
-    app.state.rlm_service = MagicMock()
     app.state.x402_client = MagicMock()
     app.state.credits_service = MagicMock()
     app.state.brick_container = MagicMock()
@@ -131,22 +128,6 @@ class TestBricksAuthEnforcement:
     def test_health_endpoint_stays_public(self, unauthed: TestClient) -> None:
         resp = unauthed.get("/api/v2/bricks/health")
         assert resp.status_code != 401, "health should not require auth"
-
-
-# ===========================================================================
-# RLM — require_auth
-# ===========================================================================
-
-
-class TestRLMAuthEnforcement:
-    """rlm endpoint must reject unauthenticated requests."""
-
-    def test_infer_returns_401(self, unauthed: TestClient) -> None:
-        resp = unauthed.post(
-            "/api/v2/rlm/infer",
-            json={"query": "test"},
-        )
-        assert resp.status_code == 401
 
 
 # ===========================================================================
@@ -232,10 +213,6 @@ class TestAuthenticatedRequestsPass:
 
     def test_bricks_with_auth_passes(self, authed: TestClient) -> None:
         resp = authed.get("/api/v2/bricks/somebrick")
-        assert resp.status_code != 401
-
-    def test_rlm_with_auth_passes(self, authed: TestClient) -> None:
-        resp = authed.post("/api/v2/rlm/infer", json={"query": "test"})
         assert resp.status_code != 401
 
     def test_x402_config_with_auth_passes(self, authed: TestClient) -> None:

@@ -79,6 +79,18 @@ pub enum Command {
         expected_version: u32,
     },
 
+    /// Atomically adjust a metadata counter by a signed delta.
+    ///
+    /// Read-modify-write happens in `apply()` — serial by Raft guarantee.
+    /// The value is stored as `i64` big-endian in the metadata tree.
+    /// Result is clamped to `>= 0`.
+    AdjustCounter {
+        /// The metadata key (e.g., `"__i_links_count__"`).
+        key: String,
+        /// Signed delta to add (positive = increment, negative = decrement).
+        delta: i64,
+    },
+
     /// No-op command (used for leader election confirmation).
     Noop,
 }
@@ -522,6 +534,23 @@ impl FullStateMachine {
         Ok(CommandResult::Success)
     }
 
+    /// Apply AdjustCounter command — atomic read-modify-write in apply().
+    ///
+    /// Reads the current i64 value (0 if absent), adds delta, clamps to >= 0,
+    /// writes back. All within the serial `apply()` — no race possible.
+    /// Returns the new value as `Value(i64 big-endian bytes)`.
+    fn apply_adjust_counter(&self, key: &str, delta: i64) -> Result<CommandResult> {
+        let current = self
+            .metadata
+            .get(key.as_bytes())?
+            .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+            .map(i64::from_be_bytes)
+            .unwrap_or(0);
+        let new_val = (current + delta).max(0);
+        self.metadata.set(key.as_bytes(), &new_val.to_be_bytes())?;
+        Ok(CommandResult::Value(new_val.to_be_bytes().to_vec()))
+    }
+
     /// Apply CasSetMetadata command — atomic compare-and-swap on version.
     ///
     /// Reads the current value, extracts its version, and only writes
@@ -886,6 +915,7 @@ impl FullStateMachine {
                 lock_id,
                 new_ttl_secs,
             } => self.apply_extend_lock(path, lock_id, *new_ttl_secs),
+            Command::AdjustCounter { key, delta } => self.apply_adjust_counter(key, *delta),
             Command::Noop => Ok(CommandResult::Success),
         }
     }
@@ -1653,6 +1683,80 @@ mod tests {
             assert_eq!(current_version, 4);
         } else {
             panic!("Expected CasResult");
+        }
+    }
+
+    #[test]
+    fn test_adjust_counter() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Increment from zero
+        let result = sm
+            .apply(
+                1,
+                &Command::AdjustCounter {
+                    key: "__i_links_count__".into(),
+                    delta: 1,
+                },
+            )
+            .unwrap();
+        if let CommandResult::Value(bytes) = result {
+            let val = i64::from_be_bytes(bytes.try_into().unwrap());
+            assert_eq!(val, 1);
+        } else {
+            panic!("Expected Value result");
+        }
+
+        // Increment again
+        let result = sm
+            .apply(
+                2,
+                &Command::AdjustCounter {
+                    key: "__i_links_count__".into(),
+                    delta: 1,
+                },
+            )
+            .unwrap();
+        if let CommandResult::Value(bytes) = result {
+            let val = i64::from_be_bytes(bytes.try_into().unwrap());
+            assert_eq!(val, 2);
+        } else {
+            panic!("Expected Value result");
+        }
+
+        // Decrement
+        let result = sm
+            .apply(
+                3,
+                &Command::AdjustCounter {
+                    key: "__i_links_count__".into(),
+                    delta: -1,
+                },
+            )
+            .unwrap();
+        if let CommandResult::Value(bytes) = result {
+            let val = i64::from_be_bytes(bytes.try_into().unwrap());
+            assert_eq!(val, 1);
+        } else {
+            panic!("Expected Value result");
+        }
+
+        // Decrement below zero should clamp to 0
+        let result = sm
+            .apply(
+                4,
+                &Command::AdjustCounter {
+                    key: "__i_links_count__".into(),
+                    delta: -100,
+                },
+            )
+            .unwrap();
+        if let CommandResult::Value(bytes) = result {
+            let val = i64::from_be_bytes(bytes.try_into().unwrap());
+            assert_eq!(val, 0);
+        } else {
+            panic!("Expected Value result");
         }
     }
 }

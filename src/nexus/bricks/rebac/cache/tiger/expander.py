@@ -378,17 +378,30 @@ class DirectoryGrantExpander:
 
         return total_expanded
 
+    async def start(self) -> None:
+        """PersistentService: start the worker loop as a background task."""
+        if self._running:
+            return  # idempotent
+        self._worker_task: asyncio.Task | None = asyncio.create_task(
+            self.run_worker(), name="directory-grant-expander"
+        )
+        logger.info("[LEOPARD-WORKER] Started via PersistentService.start()")
+
+    async def stop(self) -> None:
+        """PersistentService: stop the worker gracefully."""
+        self._running = False
+        if self._stop_event:
+            self._stop_event.set()
+        _task = getattr(self, "_worker_task", None)
+        if _task is not None and not _task.done():
+            await _task
+            self._worker_task = None
+
     async def run_worker(self) -> None:
         """Run the expansion worker continuously.
 
-        This should be started as a background task:
-            asyncio.create_task(expander.run_worker())
-
-        Stop with:
-            expander.stop()
+        Prefer ``start()`` / ``stop()`` for PersistentService lifecycle.
         """
-        import asyncio
-
         self._running = True
         self._stop_event = asyncio.Event()
 
@@ -420,9 +433,3 @@ class DirectoryGrantExpander:
                 await asyncio.sleep(self.POLL_INTERVAL * 2)
 
         logger.info("[LEOPARD-WORKER] Worker stopped")
-
-    def stop(self) -> None:
-        """Stop the worker gracefully."""
-        self._running = False
-        if self._stop_event:
-            self._stop_event.set()

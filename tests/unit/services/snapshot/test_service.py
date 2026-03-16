@@ -191,13 +191,16 @@ class TestTrackWrite:
             info1.transaction_id, "/file.txt", "hash1", {"size": 1}, "hash2"
         )
 
-        # Second transaction tries same path — should not track
+        # Second transaction tries same path — should raise conflict
         mock_cas_store.hold_reference.reset_mock()
-        snapshot_service.track_write(
-            info2.transaction_id, "/file.txt", "hash2", {"size": 2}, "hash3"
-        )
+        with pytest.raises(TransactionConflictError) as exc_info:
+            snapshot_service.track_write(
+                info2.transaction_id, "/file.txt", "hash2", {"size": 2}, "hash3"
+            )
         # CAS release should be called since tracking failed
         mock_cas_store.release.assert_called_with("hash2")
+        assert len(exc_info.value.conflicts) == 1
+        assert exc_info.value.conflicts[0].path == "/file.txt"
 
 
 class TestTrackDelete:

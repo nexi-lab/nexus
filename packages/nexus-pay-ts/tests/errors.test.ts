@@ -8,6 +8,7 @@ import {
   ReservationError,
   RateLimitError,
 } from "../src/errors.js";
+import { NexusApiError } from "@nexus/api-client";
 
 describe("NexusPayError", () => {
   it("has correct name, message, status, and code", () => {
@@ -38,9 +39,10 @@ describe("AuthenticationError", () => {
     expect(error.name).toBe("AuthenticationError");
   });
 
-  it("is an instance of NexusPayError", () => {
+  it("is an instance of NexusApiError (shared base, not NexusPayError)", () => {
     const error = new AuthenticationError("invalid key");
-    expect(error).toBeInstanceOf(NexusPayError);
+    expect(error).toBeInstanceOf(NexusApiError);
+    expect(error).not.toBeInstanceOf(NexusPayError);
     expect(error).toBeInstanceOf(Error);
   });
 });
@@ -119,8 +121,9 @@ describe("RateLimitError", () => {
     expect(error.retryAfter).toBeUndefined();
   });
 
-  it("is an instance of NexusPayError", () => {
+  it("is an instance of NexusApiError (shared base, not NexusPayError)", () => {
     const error = new RateLimitError("test");
-    expect(error).toBeInstanceOf(NexusPayError);
+    expect(error).toBeInstanceOf(NexusApiError);
+    expect(error).not.toBeInstanceOf(NexusPayError);
   });
 });

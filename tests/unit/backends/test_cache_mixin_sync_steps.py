@@ -21,13 +21,13 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.backends.cache_mixin import (
+from nexus.backends.misc.sync_pipeline import SyncPipelineService
+from nexus.backends.wrappers.cache_mixin import (
     IMMUTABLE_VERSION,
     CacheConnectorMixin,
     CacheEntry,
     SyncResult,
 )
-from nexus.backends.sync_pipeline import SyncPipelineService
 from nexus.contracts.types import OperationContext
 from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import Base, FilePathModel

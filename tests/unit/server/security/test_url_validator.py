@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus.server.security.url_validator import validate_outbound_url
+from nexus.lib.security.url_validator import validate_outbound_url
 
 
 class TestBlockedIPRanges:
@@ -88,8 +88,9 @@ class TestAllowedURLs:
             mock_dns.return_value = [
                 (2, 1, 6, "", (ip, 443)),
             ]
-            result = validate_outbound_url(url)
-            assert result == url
+            result_url, resolved_ips = validate_outbound_url(url)
+            assert result_url == url
+            assert ip in resolved_ips
 
 
 class TestSchemeValidation:

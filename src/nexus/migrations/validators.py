@@ -9,9 +9,9 @@ This module provides utilities for validating:
 Issue #165: Migration Tools & Upgrade Paths
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
@@ -92,7 +92,7 @@ class IntegrityValidator:
         """
         self.nx = nx
 
-    def full_validation(
+    async def full_validation(
         self,
         progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> "ValidationResult":
@@ -105,7 +105,7 @@ class IntegrityValidator:
             Combined ValidationResult from all checks
         """
         result = ValidationResult()
-        checks: list[tuple[str, Callable[[], ValidationResult]]] = [
+        checks: list[tuple[str, Callable[[], Coroutine[Any, Any, ValidationResult]]]] = [
             ("Metadata integrity", self.validate_metadata_integrity),
             ("Content integrity", self.validate_content_integrity),
             ("Orphaned content", self.check_orphaned_content),
@@ -116,12 +116,12 @@ class IntegrityValidator:
             if progress_callback:
                 progress_callback(f"Running {name} check", i + 1, len(checks))
 
-            check_result = check_fn()
+            check_result = await check_fn()
             result.merge(check_result)
 
         return result
 
-    def validate_metadata_integrity(self) -> "ValidationResult":
+    async def validate_metadata_integrity(self) -> "ValidationResult":
         """Validate metadata store consistency.
 
         Checks:
@@ -136,7 +136,7 @@ class IntegrityValidator:
 
         try:
             # List all files and check metadata consistency
-            files = self.nx.sys_readdir("/", recursive=True, details=True)
+            files = await self.nx.sys_readdir("/", recursive=True, details=True)
 
             seen_paths: set[str] = set()
             for file_info in files:
@@ -161,7 +161,7 @@ class IntegrityValidator:
 
         return result
 
-    def validate_content_integrity(
+    async def validate_content_integrity(
         self,
         sample_size: int = 100,
     ) -> "ValidationResult":
@@ -181,7 +181,7 @@ class IntegrityValidator:
 
         try:
             # Get list of files
-            files = self.nx.sys_readdir("/", recursive=True, details=True)
+            files = await self.nx.sys_readdir("/", recursive=True, details=True)
 
             # Sample files if needed
             files_to_check = files[:sample_size] if sample_size > 0 else files
@@ -197,7 +197,7 @@ class IntegrityValidator:
 
                 try:
                     # Read content and compute hash
-                    content = self.nx.sys_read(path)
+                    content = await self.nx.sys_read(path)
                     if content is None:
                         result.missing_content += 1
                         result.warnings.append(f"Could not read content: {path}")
@@ -237,7 +237,7 @@ class IntegrityValidator:
 
         return result
 
-    def check_orphaned_content(self) -> "ValidationResult":
+    async def check_orphaned_content(self) -> "ValidationResult":
         """Check for content blocks without metadata references.
 
         Returns:
@@ -249,7 +249,7 @@ class IntegrityValidator:
         # Implementation depends on backend type
         try:
             # Get all referenced content hashes from metadata
-            files = self.nx.sys_readdir("/", recursive=True, details=True)
+            files = await self.nx.sys_readdir("/", recursive=True, details=True)
             referenced_hashes: set[str] = set()
 
             for file_info in files:
@@ -270,7 +270,7 @@ class IntegrityValidator:
 
         return result
 
-    def check_missing_content(self) -> "ValidationResult":
+    async def check_missing_content(self) -> "ValidationResult":
         """Check for metadata entries without corresponding content.
 
         Returns:
@@ -279,7 +279,7 @@ class IntegrityValidator:
         result = ValidationResult()
 
         try:
-            files = self.nx.sys_readdir("/", recursive=True, details=True)
+            files = await self.nx.sys_readdir("/", recursive=True, details=True)
 
             for file_info in files:
                 if isinstance(file_info, dict):
@@ -293,7 +293,7 @@ class IntegrityValidator:
                         continue
 
                     # Try to read file
-                    if not self.nx.sys_access(path):
+                    if not await self.nx.sys_access(path):
                         result.missing_content += 1
                         result.errors.append(f"Missing content for: {path}")
                         result.valid = False

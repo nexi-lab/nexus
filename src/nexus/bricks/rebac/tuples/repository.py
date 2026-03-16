@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -49,11 +50,17 @@ class TupleRepository:
     """
 
     def __init__(
-        self, engine: "Engine", read_engine: "Engine | None" = None, *, is_postgresql: bool = False
+        self,
+        engine: "Engine",
+        read_engine: "Engine | None" = None,
+        *,
+        is_postgresql: bool = False,
+        version_store: MetastoreVersionStore | None = None,
     ) -> None:
         self.engine = engine
         self.read_engine = read_engine or engine
         self._is_postgresql = is_postgresql
+        self._version_store = version_store
 
         # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
         # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
@@ -214,108 +221,49 @@ class TupleRepository:
     # Zone revision tracking (Issue #909)
     # ------------------------------------------------------------------
 
-    def get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:
+    def get_zone_revision(
+        self,
+        zone_id: str | None,
+        conn: Any | None = None,  # noqa: ARG002
+    ) -> int:
         """Get current revision for a zone (read-only, no increment).
 
         Used for revision-based cache key generation (Issue #909).
-        Uses read_engine for read replica support (Issue #725).
+        Delegates to MetastoreVersionStore (Issue #191).
 
         Args:
             zone_id: Zone ID (defaults to "root")
-            conn: Optional database connection to reuse
+            conn: Unused (kept for API compatibility)
 
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
         effective_zone = zone_id or ROOT_ZONE_ID
-        if conn is not None:
-            # Reuse provided connection
-            cursor = self.create_cursor(conn)
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-            return int(row["current_version"]) if row else 0
+        if self._version_store is not None:
+            return self._version_store.get_version(effective_zone)
+        return 0
 
-        # Use read_engine for standalone reads (Issue #725)
-        with self.connection(readonly=True) as rconn:
-            cursor = self.create_cursor(rconn)
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-            return int(row["current_version"]) if row else 0
-
-    def increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
+    def increment_zone_revision(
+        self,
+        zone_id: str | None,
+        conn: Any,  # noqa: ARG002
+    ) -> int:
         """Increment and return the new revision for a zone.
 
-        Called after successful write operations. Uses atomic DB operations
-        for distributed consistency (Issue #909).
+        Called after successful write operations. Delegates to
+        MetastoreVersionStore (Issue #191).
 
         Args:
             zone_id: Zone ID (defaults to "root")
-            conn: Database connection (reuse existing transaction)
+            conn: Unused (kept for API compatibility)
 
         Returns:
             New revision number after increment
         """
         effective_zone = zone_id or ROOT_ZONE_ID
-        cursor = self.create_cursor(conn)
-
-        if self._is_postgresql:
-            cursor.execute(
-                """
-                INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                VALUES (%s, 1, NOW())
-                ON CONFLICT (zone_id)
-                DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
-                              updated_at = NOW()
-                RETURNING current_version
-                """,
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-            return int(row["current_version"]) if row else 1
-        else:
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-
-            if row:
-                new_version = row["current_version"] + 1
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        UPDATE rebac_version_sequences
-                        SET current_version = ?, updated_at = ?
-                        WHERE zone_id = ?
-                        """
-                    ),
-                    (new_version, datetime.now(UTC).isoformat(), effective_zone),
-                )
-            else:
-                new_version = 1
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                        VALUES (?, ?, ?)
-                        """
-                    ),
-                    (effective_zone, new_version, datetime.now(UTC).isoformat()),
-                )
-
-            return int(new_version)
+        if self._version_store is not None:
+            return self._version_store.increment_version(effective_zone)
+        return 1
 
     # ------------------------------------------------------------------
     # Cycle detection

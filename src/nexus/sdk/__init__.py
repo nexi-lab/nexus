@@ -1,5 +1,7 @@
 """
-Nexus SDK - Clean programmatic interface for third-party tools.
+Nexus = filesystem/context plane.
+
+Nexus SDK - clean programmatic interface for third-party tools.
 
 This module provides a clean, stable API for building custom tools and interfaces
 on top of Nexus, without any CLI dependencies. Use this SDK to build:
@@ -11,44 +13,49 @@ on top of Nexus, without any CLI dependencies. Use this SDK to build:
 
 The SDK interface is stable and semantic-versioned separately from CLI changes.
 
-Quick Start (Server Mode - Recommended):
+Quick Start (Local - Verified):
     >>> from nexus.sdk import connect
     >>>
-    >>> # Start server first: nexus serve --host 0.0.0.0 --port 2026
+    >>> nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
+    >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = await nx.sys_read("/workspace/file.txt")
+
+Quick Start (Remote):
+    >>> from nexus.sdk import connect
+    >>>
+    >>> # Start server first:
+    >>> #   export NEXUS_GRPC_PORT=2126
+    >>> #   nexusd --host 0.0.0.0 --port 2026
     >>> # Set environment: export NEXUS_URL=http://localhost:2026
     >>>
-    >>> # Connect to Nexus server (thin HTTP client)
-    >>> nx = connect()
+    >>> # Connect to Nexus server (thin remote client)
+    >>> nx = connect(config={"profile": "remote", "url": "http://localhost:2026"})
     >>>
     >>> # File operations
-    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
-    >>> content = nx.sys_read("/workspace/file.txt")
-    >>> nx.sys_unlink("/workspace/file.txt")
+    >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
+    >>> content = await nx.sys_read("/workspace/file.txt")
+    >>> await nx.sys_unlink("/workspace/file.txt")
     >>>
     >>> # Discovery
-    >>> files = nx.sys_readdir("/workspace", recursive=True)
+    >>> files = await nx.sys_readdir("/workspace", recursive=True)
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
-Quick Start (Standalone Mode - Development Only):
-    >>> # No server required, but less suitable for production
-    >>> nx = connect(config={"mode": "standalone", "data_dir": "./nexus-data"})
-    >>> nx.sys_write("/workspace/file.txt", b"Hello World")
-
 Configuration:
-    >>> # Server mode with auto-discovery (recommended)
+    >>> # Remote mode with auto-discovery
     >>> # Checks NEXUS_URL and NEXUS_API_KEY environment variables
-    >>> nx = connect()
+    >>> nx = connect(config={"profile": "remote"})
     >>>
     >>> # Server mode with explicit config
     >>> nx = connect(config={
+    ...     "profile": "remote",
     ...     "url": "http://localhost:2026",
     ...     "api_key": "your-api-key"
     ... })
     >>>
-    >>> # Standalone mode (development/testing only)
+    >>> # Local mode
     >>> nx = connect(config={
-    ...     "mode": "standalone",
+    ...     "profile": "minimal",
     ...     "data_dir": "./nexus-data"
     ... })
     >>>
@@ -67,8 +74,9 @@ __all__ = [
     "NexusFS",
     # Backends
     "Backend",
-    "LocalBackend",
-    "GCSBackend",
+    "CASLocalBackend",
+    "PathLocalBackend",
+    "CASGCSBackend",
     # Exceptions
     "NexusError",
     "FileNotFoundError",
@@ -77,18 +85,6 @@ __all__ = [
     "InvalidPathError",
     "MetadataError",
     "ValidationError",
-    # Skills System
-    "SkillRegistry",
-    "SkillExporter",
-    "SkillManager",
-    "SkillParser",
-    "Skill",
-    "SkillMetadata",
-    "SkillNotFoundError",
-    "SkillDependencyError",
-    "SkillManagerError",
-    "SkillParseError",
-    "SkillExportError",
     # Permissions
     "OperationContext",
     "PermissionEnforcer",
@@ -97,7 +93,6 @@ __all__ = [
     "ReBACTuple",
     "Entity",
     "WILDCARD_SUBJECT",
-    "ConsistencyLevel",
     "CheckResult",
     "GraphLimitExceeded",
 ]
@@ -106,25 +101,16 @@ __all__ = [
 from pathlib import Path
 from typing import Union
 
-from nexus.backends.backend import Backend
-from nexus.backends.gcs import GCSBackend
-from nexus.backends.local import LocalBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.cas_gcs import CASGCSBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.backends.storage.path_local import PathLocalBackend
 from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.bricks.rebac.manager import (
     CheckResult,
-    ConsistencyLevel,
     GraphLimitExceeded,
     ReBACManager,
-)
-from nexus.bricks.skills.exporter import SkillExporter, SkillExportError
-from nexus.bricks.skills.manager import SkillManager, SkillManagerError
-from nexus.bricks.skills.models import Skill, SkillMetadata
-from nexus.bricks.skills.parser import SkillParseError, SkillParser
-from nexus.bricks.skills.registry import (
-    SkillDependencyError,
-    SkillNotFoundError,
-    SkillRegistry,
 )
 from nexus.config import NexusConfig as Config
 from nexus.config import load_config
@@ -146,7 +132,7 @@ from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
 
 
-def connect(
+async def connect(
     config: str | Path | dict | Config | None = None,
 ) -> Filesystem:
     """
@@ -172,8 +158,8 @@ def connect(
     Examples:
         >>> # Use local backend (default)
         >>> nx = connect()
-        >>> nx.sys_write("/workspace/file.txt", b"Hello World")
-        >>> content = nx.sys_read("/workspace/file.txt")
+        >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
+        >>> content = await nx.sys_read("/workspace/file.txt")
 
         >>> # Use GCS backend
         >>> nx = connect(config={
@@ -187,4 +173,4 @@ def connect(
     # Delegate to the main connect function from nexus package
     from nexus import connect as nexus_connect
 
-    return nexus_connect(config)
+    return await nexus_connect(config)

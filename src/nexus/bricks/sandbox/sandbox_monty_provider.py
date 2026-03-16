@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from nexus.bricks.sandbox.sandbox_provider import (
     CodeExecutionResult,
@@ -513,24 +513,25 @@ class MontySandboxProvider(SandboxProvider):
                     f"{instance.sandbox_id}."
                 )
             if isinstance(progress, MontySnapshot):
-                fn_name = progress.function_name
-                fn_args = progress.args
-                fn_kwargs = progress.kwargs
+                snapshot = cast(Any, progress)
+                fn_name = snapshot.function_name
+                fn_args = snapshot.args
+                fn_kwargs = snapshot.kwargs
 
                 handler = instance.host_functions.get(fn_name)
                 if handler is None:
                     # Unknown function — resume with NameError
-                    progress = progress.resume(
+                    progress = snapshot.resume(
                         exception=NameError(f"Host function '{fn_name}' is not registered")
                     )
                     continue
 
                 try:
                     result = handler(*fn_args, **fn_kwargs)
-                    progress = progress.resume(return_value=result)
+                    progress = snapshot.resume(return_value=result)
                 except Exception as exc:
                     # Propagate host function errors back to Monty code
-                    progress = progress.resume(exception=exc)
+                    progress = snapshot.resume(exception=exc)
             else:
                 # Unexpected state — should not happen in non-async mode
                 raise SandboxProviderError(

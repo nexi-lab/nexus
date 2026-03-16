@@ -123,16 +123,9 @@ class TokenManager:
         else:
             raise ValueError("One of db_path, db_url, or session_factory must be provided")
 
-        # Pass record_store to OAuthCrypto for shared pool (Issue #1597)
-        _crypto_rs = getattr(self, "_record_store", None)
-        if _crypto_rs is None and session_factory is not None:
-            from types import SimpleNamespace
-
-            _crypto_rs = SimpleNamespace(session_factory=session_factory)
-        self.crypto = OAuthCrypto(
-            encryption_key=encryption_key,
-            record_store=_crypto_rs,
-        )
+        # OAuthCrypto: use explicit key or fall back to random (no settings_store here;
+        # callers that need persistent keys should pass encryption_key).
+        self.crypto = OAuthCrypto(encryption_key=encryption_key)
         self.providers: dict[str, Any] = {}
         self._audit_logger = audit_logger
         self._rotation_store = TokenRotationStore()
@@ -355,17 +348,10 @@ class TokenManager:
                 if credential.is_expired() and credential.refresh_token:
                     # Rate limit: skip if refreshed recently
                     if self._is_refresh_rate_limited(model):
-                        logger.debug(
-                            f"Refresh rate limited for {provider}:{user_email}, "
-                            f"returning current token"
+                        raise AuthenticationError(
+                            f"Token expired for {provider}:{user_email} and "
+                            f"refresh is rate-limited (cooldown {_REFRESH_COOLDOWN_SECONDS}s)"
                         )
-                        if self._cache_store is not None:
-                            await self._cache_store.set(
-                                cache_key_str,
-                                credential.access_token.encode(),
-                                ttl=self._cache_ttl,
-                            )
-                        return credential.access_token
 
                     logger.info(f"Token expired for {provider}:{user_email}, refreshing...")
 
@@ -515,6 +501,11 @@ class TokenManager:
                         details={"rotation_counter": audit_rotation_counter},
                         ip_address=ip_address,
                     )
+
+            if credential.is_expired():
+                raise AuthenticationError(
+                    f"Token expired for {provider}:{user_email} and no refresh token available"
+                )
 
             return credential.access_token
         finally:

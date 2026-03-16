@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     import tiktoken as tiktoken_module
 
-    from nexus.bricks.search.embeddings import EmbeddingProvider
+    # Removed: txtai handles this (Issue #2663)
+    # from nexus.bricks.search.embeddings import EmbeddingProvider
+    EmbeddingProvider = Any
 
     TIKTOKEN_AVAILABLE: bool
 else:

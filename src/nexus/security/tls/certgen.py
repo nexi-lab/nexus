@@ -21,7 +21,6 @@ from __future__ import annotations
 import base64
 import datetime
 import ipaddress
-import os
 from pathlib import Path
 
 from cryptography import x509
@@ -154,9 +153,12 @@ def save_pem(
         assert isinstance(obj, x509.Certificate)
         pem = obj.public_bytes(serialization.Encoding.PEM)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(pem)
     if is_private:
-        os.chmod(path, 0o600)
+        from nexus.security.secret_file import write_secret_file
+
+        write_secret_file(path, pem)
+    else:
+        path.write_bytes(pem)
 
 
 def load_pem_cert(path: Path) -> x509.Certificate:

@@ -29,8 +29,10 @@ from nexus.bricks.mcp.profiles import (
     revoke_tools_by_tuple_ids,
 )
 from nexus.bricks.mcp.server import create_mcp_server
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,11 @@ def rebac_engine():
 @pytest.fixture
 def rebac_manager(rebac_engine):
     """Real EnhancedReBACManager on in-memory SQLite."""
-    return EnhancedReBACManager(engine=rebac_engine, cache_ttl_seconds=1)
+    return EnhancedReBACManager(
+        engine=rebac_engine,
+        cache_ttl_seconds=1,
+        version_store=MetastoreVersionStore(DictMetastore()),
+    )
 
 
 @pytest.fixture

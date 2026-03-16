@@ -23,8 +23,8 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.remote.negative_cache import NegativeCache, create_negative_cache
-from nexus.server.protocol import RPCErrorCode
 
 logger = logging.getLogger(__name__)
 

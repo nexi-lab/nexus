@@ -19,12 +19,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.lib.sync_bridge import shutdown_sync_bridge
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
-def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
+async def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app with real NexusFS for testing.
 
     Uses the factory to wire up all services (ReBAC, audit, etc.)
@@ -41,7 +41,7 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     # Create backend and stores
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_dir))
+    backend = CASLocalBackend(root_path=str(storage_dir))
 
     # Create metadata store (Raft standalone mode — path must be a file, not directory)
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
@@ -51,7 +51,7 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
     # Create NexusFS with full service wiring
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -86,17 +86,17 @@ def _run_async(coro):
 
 
 @pytest.fixture
-def server_app(tmp_path):
+async def server_app(tmp_path):
     """Create a test FastAPI app with permissions."""
-    app, api_key = _create_test_app(tmp_path, enforce_permissions=True)
+    app, api_key = await _create_test_app(tmp_path, enforce_permissions=True)
     yield app, api_key
     shutdown_sync_bridge()
 
 
 @pytest.fixture
-def server_app_no_perms(tmp_path):
+async def server_app_no_perms(tmp_path):
     """Create a test FastAPI app without permissions."""
-    app, api_key = _create_test_app(tmp_path, enforce_permissions=False)
+    app, api_key = await _create_test_app(tmp_path, enforce_permissions=False)
     yield app, api_key
     shutdown_sync_bridge()
 

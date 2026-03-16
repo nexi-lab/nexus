@@ -22,8 +22,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.services.event_subsystem.bus.protocol import AckableEvent
-from nexus.services.event_subsystem.types import FileEvent, FileEventType
+from nexus.system_services.event_bus.protocol import AckableEvent
+from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 # ============================================================================
 # Fixtures
@@ -34,7 +34,7 @@ from nexus.services.event_subsystem.types import FileEvent, FileEventType
 def mock_nats_connect():
     """Patch nats.connect to return a mock NATS client."""
     with patch(
-        "nexus.services.event_subsystem.bus.nats.nats.connect", new_callable=AsyncMock
+        "nexus.system_services.event_bus.nats.nats.connect", new_callable=AsyncMock
     ) as mock_connect:
         nc = AsyncMock()
         nc.is_connected = True
@@ -54,7 +54,7 @@ def make_bus():
     """Create a NatsEventBus with default test settings."""
 
     def _make(**kwargs):
-        from nexus.services.event_subsystem.bus.nats import NatsEventBus
+        from nexus.system_services.event_bus.nats import NatsEventBus
 
         defaults = {"nats_url": "nats://test:4222"}
         defaults.update(kwargs)
@@ -656,39 +656,6 @@ class TestNatsEventBusWaitForEvent:
         assert result.path == "/inbox/test.txt"
 
     @pytest.mark.asyncio
-    async def test_wait_for_event_respects_since_revision(self, mock_nats_connect, make_bus):
-        _, _, js = mock_nats_connect
-        bus = make_bus()
-        await bus.start()
-
-        old_event = FileEvent(
-            type=FileEventType.FILE_WRITE,
-            path="/inbox/test.txt",
-            zone_id="z1",
-            revision=5,
-        )
-        new_event = FileEvent(
-            type=FileEventType.FILE_WRITE,
-            path="/inbox/test.txt",
-            zone_id="z1",
-            revision=10,
-        )
-
-        mock_sub = AsyncMock()
-        msg1 = MagicMock()
-        msg1.data = old_event.to_json().encode()
-        msg2 = MagicMock()
-        msg2.data = new_event.to_json().encode()
-        mock_sub.next_msg = AsyncMock(side_effect=[msg1, msg2])
-        mock_sub.unsubscribe = AsyncMock()
-        js.subscribe = AsyncMock(return_value=mock_sub)
-
-        result = await bus.wait_for_event("z1", "/inbox/", timeout=5.0, since_revision=7)
-
-        assert result is not None
-        assert result.revision == 10
-
-    @pytest.mark.asyncio
     async def test_wait_for_event_requires_start(self, make_bus):
         bus = make_bus()
         with pytest.raises(RuntimeError, match="not started"):
@@ -770,7 +737,7 @@ class TestNatsEventBusErrors:
         from nats.errors import NoServersError
 
         with patch(
-            "nexus.services.event_subsystem.bus.nats.nats.connect",
+            "nexus.system_services.event_bus.nats.nats.connect",
             new_callable=AsyncMock,
             side_effect=NoServersError,
         ):

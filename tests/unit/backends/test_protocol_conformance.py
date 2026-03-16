@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
@@ -26,7 +26,6 @@ from nexus.core.protocols.connector import (
     DirectoryListingProtocol,
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
-    PassthroughProtocol,
     StreamingProtocol,
 )
 
@@ -199,19 +198,12 @@ class TestConcreteBackendConformance:
     """Verify concrete backends satisfy ConnectorProtocol via isinstance."""
 
     def test_local_backend(self, tmp_path: Any) -> None:
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
-        backend = LocalBackend(root_path=str(tmp_path / "data"))
+        backend = CASLocalBackend(root_path=str(tmp_path / "data"))
         assert isinstance(backend, ConnectorProtocol)
         assert isinstance(backend, StreamingProtocol)
         assert isinstance(backend, BatchContentProtocol)
-
-    def test_passthrough_backend(self, tmp_path: Any) -> None:
-        from nexus.backends.passthrough import PassthroughBackend
-
-        backend = PassthroughBackend(base_path=str(tmp_path / "pt"))
-        assert isinstance(backend, ConnectorProtocol)
-        assert isinstance(backend, PassthroughProtocol)
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +284,7 @@ class TestRegistryProtocolValidation:
     @pytest.fixture(autouse=True)
     def _clear_registry(self) -> Any:
         """Clear registry before and after each test."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         saved = dict(ConnectorRegistry._base._items)
         ConnectorRegistry.clear()
@@ -301,21 +293,21 @@ class TestRegistryProtocolValidation:
 
     def test_compliant_backend_registers(self) -> None:
         """A compliant Backend subclass registers successfully."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         ConnectorRegistry.register("test_ok", _MockBackend)
         assert ConnectorRegistry.is_registered("test_ok")
 
     def test_non_compliant_class_rejected(self) -> None:
         """A class missing ConnectorProtocol methods is rejected."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         with pytest.raises(ValueError, match="does not satisfy ConnectorProtocol"):
             ConnectorRegistry.register("test_bad", _IncompleteClass)  # type: ignore[arg-type]
 
     def test_rejection_lists_missing_members(self) -> None:
         """Error message lists the specific missing members."""
-        from nexus.backends.registry import ConnectorRegistry
+        from nexus.backends.base.registry import ConnectorRegistry
 
         with pytest.raises(ValueError, match="write_content") as exc_info:
             ConnectorRegistry.register("test_bad2", _IncompleteClass)  # type: ignore[arg-type]
@@ -339,7 +331,7 @@ class TestProtocolMembersSync:
         """_CONNECTOR_PROTOCOL_MEMBERS matches ConnectorProtocol's actual members."""
         import inspect
 
-        from nexus.backends.registry import _CONNECTOR_PROTOCOL_MEMBERS
+        from nexus.backends.base.registry import _CONNECTOR_PROTOCOL_MEMBERS
 
         # Collect all public members defined in the protocol hierarchy
         protocol_members: set[str] = set()
@@ -372,21 +364,21 @@ class TestDelegatingBackendConformance:
     """
 
     def test_delegating_backend_satisfies_connector_protocol(self) -> None:
-        from nexus.backends.delegating import DelegatingBackend
+        from nexus.backends.storage.delegating import DelegatingBackend
 
         inner = _MockBackend()
         wrapper = DelegatingBackend(inner)
         assert isinstance(wrapper, ConnectorProtocol)
 
     def test_delegating_backend_satisfies_content_store_protocol(self) -> None:
-        from nexus.backends.delegating import DelegatingBackend
+        from nexus.backends.storage.delegating import DelegatingBackend
 
         inner = _MockBackend()
         wrapper = DelegatingBackend(inner)
         assert isinstance(wrapper, ContentStoreProtocol)
 
     def test_delegating_backend_satisfies_directory_ops_protocol(self) -> None:
-        from nexus.backends.delegating import DelegatingBackend
+        from nexus.backends.storage.delegating import DelegatingBackend
 
         inner = _MockBackend()
         wrapper = DelegatingBackend(inner)
@@ -451,7 +443,7 @@ class TestCachingContractConformance:
 
     def test_caching_backend_wrapper_satisfies_caching_connector_contract(self) -> None:
         """CachingBackendWrapper satisfies the new CachingConnectorContract."""
-        from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
+        from nexus.backends.wrappers.caching import CachingBackendWrapper
         from nexus.core.protocols.caching import CachingConnectorContract
 
         inner = _MockBackend()

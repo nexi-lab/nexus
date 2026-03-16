@@ -15,7 +15,7 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
@@ -66,6 +66,21 @@ _DELETE_ALL = text("""
     DELETE FROM persistent_namespace_views
 """)
 
+_CREATE_TABLE = text("""
+    CREATE TABLE IF NOT EXISTS persistent_namespace_views (
+        id              VARCHAR(36)  PRIMARY KEY NOT NULL,
+        subject_type    VARCHAR(50)  NOT NULL,
+        subject_id      VARCHAR(255) NOT NULL,
+        zone_id         VARCHAR(255) NOT NULL DEFAULT 'root',
+        mount_paths_json TEXT        NOT NULL,
+        grants_hash     VARCHAR(16)  NOT NULL,
+        revision_bucket INTEGER      NOT NULL,
+        created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (subject_type, subject_id, zone_id)
+    )
+""")
+
 
 class PostgresPersistentViewStore:
     """PostgreSQL-backed persistent namespace view store.
@@ -76,6 +91,19 @@ class PostgresPersistentViewStore:
 
     def __init__(self, record_store: "RecordStoreProtocol") -> None:
         self._engine = record_store.engine
+        self._ensure_table(self._engine)
+
+    @staticmethod
+    def _ensure_table(engine: "Any") -> None:
+        """Create the persistent_namespace_views table if it does not exist.
+
+        This replaces the former ORM model (PersistentNamespaceViewModel)
+        that was removed in the dead-ORM cleanup.  Using raw DDL keeps the
+        store fully ORM-free while guaranteeing the table exists for both
+        production (Alembic-managed) and test (in-memory SQLite) scenarios.
+        """
+        with engine.begin() as conn:
+            conn.execute(_CREATE_TABLE)
 
     def save_view(
         self,

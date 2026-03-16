@@ -171,7 +171,7 @@ def create_nexus_tools(nx):
         except Exception as e:
             return f"Error finding files: {str(e)}"
 
-    def read_file(path: str, preview_only: bool) -> str:
+    async def read_file(path: str, preview_only: bool) -> str:
         """Read file content from Nexus.
 
         Args:
@@ -186,7 +186,7 @@ def create_nexus_tools(nx):
             - read_file("/scripts/large.py", preview_only=True) → First 100 lines
         """
         try:
-            content = nx.sys_read(path)
+            content = await nx.sys_read(path)
 
             # Handle bytes
             if isinstance(content, bytes):
@@ -206,7 +206,7 @@ def create_nexus_tools(nx):
         except Exception as e:
             return f"Error reading file: {str(e)}"
 
-    def write_file(path: str, content: str) -> str:
+    async def write_file(path: str, content: str) -> str:
         """Write content to Nexus filesystem.
 
         Creates parent directories automatically. Overwrites existing files.
@@ -223,9 +223,9 @@ def create_nexus_tools(nx):
         """
         try:
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-            nx.sys_write(path, content_bytes)
+            await nx.sys_write(path, content_bytes)
 
-            if nx.sys_access(path):
+            if await nx.sys_access(path):
                 return f"Successfully wrote {len(content_bytes)} bytes to {path}"
             else:
                 return f"Error: Failed to write file {path}"
@@ -237,7 +237,7 @@ def create_nexus_tools(nx):
     return [grep_files, glob_files, read_file, write_file]
 
 
-def setup_test_data(nx):
+async def setup_test_data(nx):
     """Set up test data in Nexus for the demo."""
     print("\n" + "=" * 70)
     print("Setting Up Test Data")
@@ -299,7 +299,7 @@ def process_data(data: dict) -> dict:
 class DataProcessor:
     """Synchronous data processor."""
 
-    def process(self, item):
+    async def process(self, item):
         """Process single item."""
         return item
 ''',
@@ -307,7 +307,7 @@ class DataProcessor:
 
     print(f"Creating {len(test_files)} test Python files...")
     for path, content in test_files.items():
-        nx.sys_write(path, content.encode("utf-8"))
+        await nx.sys_write(path, content.encode("utf-8"))
         print(f"✓ Created: {path}")
 
     print("\n✓ Test data setup complete!")
@@ -316,7 +316,7 @@ class DataProcessor:
     return test_files
 
 
-def cleanup_test_data(nx, test_files):
+async def cleanup_test_data(nx, test_files):
     """Clean up test data from Nexus."""
     if os.getenv("KEEP") == "1":
         print("\n" + "=" * 70)
@@ -336,14 +336,14 @@ def cleanup_test_data(nx, test_files):
     print("=" * 70)
     for path in test_files:
         try:
-            nx.sys_unlink(path)
+            await nx.sys_unlink(path)
             print(f"✓ Deleted: {path}")
         except Exception as e:
             print(f"⚠ Could not delete {path}: {e}")
 
     # Clean up reports directory
     try:
-        nx.sys_unlink("/reports/async-patterns.md")
+        await nx.sys_unlink("/reports/async-patterns.md")
         print("✓ Deleted: /reports/async-patterns.md")
     except Exception:
         pass

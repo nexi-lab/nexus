@@ -10,9 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from nexus.lib.lock_fast import (
+from nexus.core.lock_fast import (
     PythonVFSLockManager,
-    VFSLockManagerProtocol,
     create_vfs_lock_manager,
 )
 
@@ -24,7 +23,7 @@ from nexus.lib.lock_fast import (
 def _implementations() -> list[type]:
     impls: list[type] = [PythonVFSLockManager]
     try:
-        from nexus.lib.lock_fast import RustVFSLockManager
+        from nexus.core.lock_fast import RustVFSLockManager
 
         impls.append(RustVFSLockManager)
     except (ImportError, Exception):
@@ -32,7 +31,7 @@ def _implementations() -> list[type]:
     return impls
 
 
-def _run_sequence(mgr: VFSLockManagerProtocol) -> list:
+def _run_sequence(mgr) -> list:
     """Execute a deterministic sequence of operations and return results."""
     results = []
 
@@ -122,9 +121,9 @@ class TestNexusFSIntegration:
             # Normally __init__ sets it, but we can't easily instantiate NexusFS
             # without a full backend. Instead, verify the import and class exist.
             assert NexusFS is not None
-            from nexus.lib.lock_fast import RustVFSLockManager
+            from nexus.core.lock_fast import RustVFSLockManager
 
             mgr = RustVFSLockManager()
-            assert isinstance(mgr, VFSLockManagerProtocol)
+            assert hasattr(mgr, "acquire") and hasattr(mgr, "release")
         except ImportError:
             pytest.skip("NexusFS or Rust module not available in test environment")

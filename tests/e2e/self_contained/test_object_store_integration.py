@@ -4,12 +4,12 @@ Validates that Backend (which extends ObjectStoreABC) works correctly as the
 kernel file_operations contract, matching the CacheStoreABC integration test pattern.
 
 Since BackendObjectStore adapter was removed (Backend now *is* the ObjectStoreABC),
-tests exercise LocalBackend directly through the ABC interface.
+tests exercise CASLocalBackend directly through the ABC interface.
 """
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import ObjectStoreABC
 
@@ -18,14 +18,14 @@ class TestBackendAsObjectStore:
     """Tests that Backend directly satisfies ObjectStoreABC contract."""
 
     def test_local_backend_is_object_store(self, tmp_path) -> None:
-        """LocalBackend is an ObjectStoreABC instance."""
-        backend = LocalBackend(root_path=str(tmp_path))
+        """CASLocalBackend is an ObjectStoreABC instance."""
+        backend = CASLocalBackend(root_path=str(tmp_path))
         assert isinstance(backend, ObjectStoreABC)
         assert backend.name == "local"
 
     def test_write_read_roundtrip(self, tmp_path) -> None:
-        """Full roundtrip through LocalBackend."""
-        backend = LocalBackend(root_path=str(tmp_path))
+        """Full roundtrip through CASLocalBackend."""
+        backend = CASLocalBackend(root_path=str(tmp_path))
 
         content = b"integration test data"
         result = backend.write_content(content)
@@ -33,8 +33,8 @@ class TestBackendAsObjectStore:
         assert backend.read_content(result.content_hash) == content
 
     def test_all_ops(self, tmp_path) -> None:
-        """Exercises core ObjectStoreABC methods through LocalBackend."""
-        backend = LocalBackend(root_path=str(tmp_path))
+        """Exercises core ObjectStoreABC methods through CASLocalBackend."""
+        backend = CASLocalBackend(root_path=str(tmp_path))
 
         # write_content
         r1 = backend.write_content(b"first")
@@ -63,15 +63,15 @@ class TestBackendAsObjectStore:
         assert backend.content_exists(r1.content_hash) is False
 
     def test_error_propagation(self, tmp_path) -> None:
-        """Errors from LocalBackend raise proper exceptions."""
-        backend = LocalBackend(root_path=str(tmp_path))
+        """Errors from CASLocalBackend raise proper exceptions."""
+        backend = CASLocalBackend(root_path=str(tmp_path))
 
         with pytest.raises((NexusFileNotFoundError, BackendError)):
             backend.read_content("d" * 64)
 
     def test_deduplication(self, tmp_path) -> None:
         """Deduplication works — same content produces same hash."""
-        backend = LocalBackend(root_path=str(tmp_path))
+        backend = CASLocalBackend(root_path=str(tmp_path))
 
         content = b"deduplicate me"
         r1 = backend.write_content(content)

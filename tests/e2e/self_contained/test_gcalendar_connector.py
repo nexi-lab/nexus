@@ -24,7 +24,7 @@ from nexus.backends.connectors.calendar.schemas import (
     TimeSlot,
     UpdateEventSchema,
 )
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -87,11 +87,11 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_backend(mock_calendar_service, tmp_path):
     """Create a Calendar backend with mocked Google service."""
-    from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
+    from nexus.backends.connectors.calendar.connector import GoogleCalendarConnectorBackend
 
     # Create a mock token manager
     with patch(
-        "nexus.backends.gcalendar_connector.GoogleCalendarConnectorBackend._register_oauth_provider"
+        "nexus.backends.connectors.calendar.connector.GoogleCalendarConnectorBackend._register_oauth_provider"
     ):
         backend = GoogleCalendarConnectorBackend(
             token_manager_db=str(tmp_path / "tokens.db"),
@@ -292,11 +292,12 @@ class TestSkillDocGeneration:
         assert "```yaml" in doc
         assert "# agent_intent:" in doc
 
-    def test_write_skill_docs(self, calendar_backend, isolated_db, tmp_path):
+    @pytest.mark.asyncio
+    async def test_write_skill_docs(self, calendar_backend, isolated_db, tmp_path):
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
-        backend = LocalBackend(root_path=str(tmp_path / "storage"))
-        nx = create_nexus_fs(
+        backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
@@ -311,7 +312,7 @@ class TestSkillDocGeneration:
 
             if skill_path:
                 # Read back and verify
-                content = nx.sys_read(skill_path)
+                content = await nx.sys_read(skill_path)
                 assert b"Gcalendar Connector" in content
                 assert b"agent_intent" in content
         finally:

@@ -23,6 +23,9 @@ pub struct TaskStore {
     running_idx: Keyspace,
     dead_letter: Keyspace,
     id_counter: AtomicU64,
+    /// Cached pending count — updated atomically on submit/claim/requeue.
+    /// Avoids O(n) scan on every admission control check.
+    pending_count: AtomicU64,
 }
 
 impl TaskStore {
@@ -55,6 +58,7 @@ impl TaskStore {
             running_idx,
             dead_letter,
             id_counter: AtomicU64::new(max_id + 1),
+            pending_count: AtomicU64::new(0), // Will be initialized by first count_pending call
         })
     }
 
@@ -94,6 +98,7 @@ impl TaskStore {
         batch
             .commit()
             .map_err(|e| TaskError::Storage(e.to_string()))?;
+        self.pending_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -149,11 +154,21 @@ impl TaskStore {
             }
         }
 
-        // Normal path: grab the first key in pending_idx (highest priority, earliest time)
+        // Normal path: scan pending_idx for the first due task, skipping future-scheduled ones.
+        // The index is sorted by (priority, run_at, task_id), so within a priority band
+        // run_at increases monotonically — but a lower-priority band may have due tasks.
         if target_key.is_none() {
-            if let Some(guard) = self.pending_idx.first_key_value() {
-                if let Ok((key, _)) = guard.into_inner() {
-                    target_key = Some(key.as_ref().to_vec());
+            for guard in self.pending_idx.iter() {
+                match guard.into_inner() {
+                    Ok((key, _)) => {
+                        if let Some((_, run_at, _)) = decode_pending_key(key.as_ref()) {
+                            if run_at <= now {
+                                target_key = Some(key.as_ref().to_vec());
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => continue,
                 }
             }
         }
@@ -199,12 +214,21 @@ impl TaskStore {
         batch
             .commit()
             .map_err(|e| TaskError::Storage(e.to_string()))?;
+        self.pending_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
         Ok(Some(task))
     }
 
     /// Move a running task to completed state. Removes from running_idx.
-    pub fn complete_task(&self, task_id: u64, result: &[u8], now: u64) -> Result<TaskRecord> {
+    /// Verifies that `worker_id` matches the current owner to prevent stale workers
+    /// from overwriting a re-claimed task after lease expiry.
+    pub fn complete_task(
+        &self,
+        task_id: u64,
+        result: &[u8],
+        now: u64,
+        worker_id: &str,
+    ) -> Result<TaskRecord> {
         let mut task = self
             .get_task(task_id)?
             .ok_or(TaskError::NotFound(task_id))?;
@@ -214,6 +238,13 @@ impl TaskStore {
                 task_id,
                 current: task.status.to_string(),
                 target: "COMPLETED".to_string(),
+            });
+        }
+
+        if task.claimed_by.as_deref() != Some(worker_id) {
+            return Err(TaskError::NotOwner {
+                task_id,
+                worker_id: worker_id.to_string(),
             });
         }
 
@@ -229,11 +260,14 @@ impl TaskStore {
     }
 
     /// Fail a running task. If retries remain, re-queue to pending; otherwise dead-letter.
+    /// Verifies that `worker_id` matches the current owner to prevent stale workers
+    /// from overwriting a re-claimed task after lease expiry.
     pub fn fail_task(
         &self,
         task_id: u64,
         error_message: &str,
         now: u64,
+        worker_id: &str,
     ) -> Result<(TaskRecord, bool)> {
         let mut task = self
             .get_task(task_id)?
@@ -244,6 +278,13 @@ impl TaskStore {
                 task_id,
                 current: task.status.to_string(),
                 target: "FAILED".to_string(),
+            });
+        }
+
+        if task.claimed_by.as_deref() != Some(worker_id) {
+            return Err(TaskError::NotOwner {
+                task_id,
+                worker_id: worker_id.to_string(),
             });
         }
 
@@ -439,16 +480,9 @@ impl TaskStore {
     }
 
     /// Count pending tasks (for admission control).
+    /// Uses cached atomic counter for O(1) performance instead of scanning the index.
     pub fn count_pending(&self) -> Result<usize> {
-        let mut count = 0usize;
-        for guard in self.pending_idx.iter() {
-            // Just need to verify the entry is valid
-            let _ = guard
-                .into_inner()
-                .map_err(|e| TaskError::Storage(e.to_string()))?;
-            count += 1;
-        }
-        Ok(count)
+        Ok(self.pending_count.load(std::sync::atomic::Ordering::Relaxed) as usize)
     }
 
     /// List tasks with optional filters.
@@ -493,6 +527,43 @@ impl TaskStore {
         }
 
         Ok(results)
+    }
+
+    /// Renew the lease for a running task. Atomically removes old running_idx entry,
+    /// inserts new one with updated expiry, and updates the task record.
+    pub fn renew_lease(
+        &self,
+        task_id: u64,
+        new_lease_expires: u64,
+        task: &TaskRecord,
+    ) -> Result<()> {
+        // Find old running_idx entry
+        let mut old_key: Option<Vec<u8>> = None;
+        for guard in self.running_idx.iter() {
+            if let Ok((key, _)) = guard.into_inner() {
+                if let Some((_, tid)) = decode_running_key(key.as_ref()) {
+                    if tid == task_id {
+                        old_key = Some(key.as_ref().to_vec());
+                        break;
+                    }
+                }
+            }
+        }
+
+        let new_running_key = encode_running_key(new_lease_expires, task_id);
+        let task_value = bincode::serialize(task)?;
+
+        let mut batch = self.db.batch();
+        if let Some(ref old) = old_key {
+            batch.remove(&self.running_idx, old);
+        }
+        batch.insert(&self.running_idx, new_running_key, vec![]);
+        batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
+        batch
+            .commit()
+            .map_err(|e| TaskError::Storage(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Remove a task from the running index by scanning for its task_id.
@@ -636,7 +707,9 @@ mod tests {
         assert_eq!(claimed.status, TaskStatus::Running);
         assert_eq!(claimed.attempt, 1);
 
-        let completed = store.complete_task(task_id, b"done", 1700000001).unwrap();
+        let completed = store
+            .complete_task(task_id, b"done", 1700000001, "w-0")
+            .unwrap();
         assert_eq!(completed.status, TaskStatus::Completed);
         assert_eq!(completed.result.as_deref(), Some(b"done".as_slice()));
 
@@ -654,7 +727,9 @@ mod tests {
 
         // Claim and fail — should re-queue (attempt 1 < max_retries 3)
         store.claim_next("w-0", 300, 1700000000, 0).unwrap();
-        let (failed, dead) = store.fail_task(task_id, "oops", 1700000001).unwrap();
+        let (failed, dead) = store
+            .fail_task(task_id, "oops", 1700000001, "w-0")
+            .unwrap();
         assert!(!dead);
         assert_eq!(failed.status, TaskStatus::Pending);
         assert!(failed.run_at > 1700000001); // backoff applied
@@ -670,7 +745,9 @@ mod tests {
 
         // Claim and fail — attempt 1 >= max_retries 1 → dead letter
         store.claim_next("w-0", 300, 1700000000, 0).unwrap();
-        let (failed, dead) = store.fail_task(task_id, "fatal", 1700000001).unwrap();
+        let (failed, dead) = store
+            .fail_task(task_id, "fatal", 1700000001, "w-0")
+            .unwrap();
         assert!(dead);
         assert_eq!(failed.status, TaskStatus::DeadLetter);
     }

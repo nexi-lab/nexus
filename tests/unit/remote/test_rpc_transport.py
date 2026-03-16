@@ -84,7 +84,31 @@ class TestRPCTransportCallRPC:
     """call_rpc success and error paths."""
 
     def test_success_returns_decoded_result(self, transport) -> None:
-        """Successful call returns decoded payload."""
+        """Successful call extracts 'result' key from server response."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        # Server wraps results as {"result": <actual>}
+        mock_response.payload = encode_rpc_message({"result": {"key": "value"}})
+        transport._mock_stub.Call.return_value = mock_response
+
+        result = transport.call_rpc("sys_read", {"path": "/file.txt"})
+
+        assert result == {"key": "value"}
+        transport._mock_stub.Call.assert_called_once()
+
+    def test_success_extracts_list_result(self, transport) -> None:
+        """Server response with list result is unwrapped correctly."""
+        mock_response = MagicMock()
+        mock_response.is_error = False
+        mock_response.payload = encode_rpc_message({"result": [{"path": "/a.txt", "size": 10}]})
+        transport._mock_stub.Call.return_value = mock_response
+
+        result = transport.call_rpc("list", {"path": "/"})
+
+        assert result == [{"path": "/a.txt", "size": 10}]
+
+    def test_success_fallback_when_no_result_key(self, transport) -> None:
+        """Response without 'result' key returns full dict (backwards compat)."""
         mock_response = MagicMock()
         mock_response.is_error = False
         mock_response.payload = encode_rpc_message({"key": "value"})
@@ -93,7 +117,6 @@ class TestRPCTransportCallRPC:
         result = transport.call_rpc("sys_read", {"path": "/file.txt"})
 
         assert result == {"key": "value"}
-        transport._mock_stub.Call.assert_called_once()
 
     def test_is_error_raises_nexus_error(self, transport) -> None:
         """is_error=True should raise via _handle_rpc_error."""

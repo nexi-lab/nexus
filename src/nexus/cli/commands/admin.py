@@ -9,7 +9,6 @@ All commands require:
 3. Server URL set via NEXUS_URL or --remote-url
 """
 
-import json
 import os
 import sys
 from collections.abc import Callable
@@ -20,6 +19,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
@@ -39,7 +40,7 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
 
     Admin commands are management-plane RPCs (like ioctl), not data-plane
     VFS operations (read/write/mkdir). They only need the HTTP transport
-    to call server-side admin endpoints — no full NexusFS instance needed.
+    to call server-side admin endpoints -- no full NexusFS instance needed.
 
     Args:
         url: Server URL (from --remote-url or NEXUS_URL)
@@ -64,12 +65,14 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     from urllib.parse import urlparse
 
     from nexus.remote.rpc_transport import RPCTransport
+    from nexus.security.tls.config import ZoneTlsConfig
 
     parsed = urlparse(url)
     grpc_port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
     grpc_address = f"{parsed.hostname}:{grpc_port}"
 
-    transport = RPCTransport(server_address=grpc_address, auth_token=api_key)
+    tls_config = ZoneTlsConfig.from_env()
+    transport = RPCTransport(server_address=grpc_address, auth_token=api_key, tls_config=tls_config)
     return transport.call_rpc
 
 
@@ -105,7 +108,7 @@ def admin() -> None:
 @click.option("--expires-days", type=int, help="API key expiry in days")
 @click.option("--zone-id", default=ROOT_ZONE_ID, help="Zone ID (default: root)")
 @click.option("--subject-type", default="user", help="Subject type: user or agent")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def create_user(
@@ -116,7 +119,7 @@ def create_user(
     expires_days: int | None,
     zone_id: str,
     subject_type: str,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -135,6 +138,7 @@ def create_user(
         # Create agent key
         nexus admin create-user bot1 --name "Bot Agent" --subject-type agent
     """
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
@@ -147,27 +151,38 @@ def create_user(
             "subject_type": subject_type,
         }
 
+        if email is not None:
+            params["email"] = email
+
         if expires_days is not None:
             params["expires_days"] = expires_days
 
         # Call admin API
-        result = call_rpc("admin_create_key", params)
+        with timing.phase("server"):
+            result = call_rpc("admin_create_key", params)
 
-        if json_output:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            console.print("[green]✓[/green] User created successfully")
-            console.print("\n[yellow]⚠ Save this API key - it will only be shown once![/yellow]\n")
-            console.print(f"User ID:     {result['user_id']}")
-            console.print(f"Key ID:      {result['key_id']}")
-            console.print(f"[bold]API Key:[/bold]     {result['api_key']}")
-            console.print(f"Zone:        {result['zone_id']}")
-            console.print(f"Admin:       {result['is_admin']}")
-            if result.get("expires_at"):
-                console.print(f"Expires:     {result['expires_at']}")
+        def _render(data: dict[str, Any]) -> None:
+            console.print("[green]\u2713[/green] User created successfully")
+            console.print(
+                "\n[yellow]\u26a0 Save this API key - it will only be shown once![/yellow]\n"
+            )
+            console.print(f"User ID:     {data['user_id']}")
+            console.print(f"Key ID:      {data['key_id']}")
+            console.print(f"[bold]API Key:[/bold]     {data['api_key']}")
+            console.print(f"Zone:        {data['zone_id']}")
+            console.print(f"Admin:       {data['is_admin']}")
+            if data.get("expires_at"):
+                console.print(f"Expires:     {data['expires_at']}")
 
             if email:
                 console.print(f"\n[dim]Email: {email}[/dim]")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error creating user:[/red] {e}")
@@ -181,7 +196,7 @@ def create_user(
 @click.option("--include-revoked", is_flag=True, help="Include revoked keys")
 @click.option("--include-expired", is_flag=True, help="Include expired keys")
 @click.option("--limit", type=int, default=100, help="Maximum number of results")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def list_users(
@@ -191,7 +206,7 @@ def list_users(
     include_revoked: bool,
     include_expired: bool,
     limit: int,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -211,6 +226,7 @@ def list_users(
         # Include revoked and expired keys
         nexus admin list-users --include-revoked --include-expired
     """
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
@@ -229,18 +245,17 @@ def list_users(
             params["is_admin"] = True
 
         # Call admin API
-        result = call_rpc("admin_list_keys", params)
-        keys = result.get("keys", [])
+        with timing.phase("server"):
+            result = call_rpc("admin_list_keys", params)
+            keys = result.get("keys", [])
 
-        if json_output:
-            click.echo(json.dumps(keys, indent=2))
-        else:
-            if not keys:
-                console.print("[yellow]No users found.[/yellow]")
-                return
+        if not keys:
+            console.print("[yellow]No users found.[/yellow]")
+            return
 
+        def _render(data: list[dict[str, Any]]) -> None:
             # Create table
-            table = Table(title=f"API Keys ({len(keys)} total)")
+            table = Table(title=f"API Keys ({len(data)} total)")
             table.add_column("User ID", style="cyan")
             table.add_column("Name", style="white")
             table.add_column("Key ID", style="dim")
@@ -249,7 +264,7 @@ def list_users(
             table.add_column("Expires", style="yellow")
             table.add_column("Status", style="white")
 
-            for key in keys:
+            for key in data:
                 # Determine status
                 status = "Active"
                 status_style = "green"
@@ -270,13 +285,20 @@ def list_users(
                     key.get("user_id", ""),
                     key.get("name", ""),
                     key.get("key_id", "")[:16] + "...",
-                    "✓" if key.get("is_admin") else "",
+                    "\u2713" if key.get("is_admin") else "",
                     key.get("created_at", "")[:10] if key.get("created_at") else "",
                     key.get("expires_at", "")[:10] if key.get("expires_at") else "Never",
                     f"[{status_style}]{status}[/{status_style}]",
                 )
 
             _console.print(table)
+
+        render_output(
+            data=keys,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error listing users:[/red] {e}")
@@ -285,12 +307,12 @@ def list_users(
 
 @admin.command("revoke-key")
 @click.argument("key_id")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def revoke_key(
     key_id: str,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -300,17 +322,24 @@ def revoke_key(
     Examples:
         nexus admin revoke-key d6f5e137-5fce-4e06-9432-6e30324dfad1
     """
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Call admin API
-        result = call_rpc("admin_revoke_key", {"key_id": key_id})
+        with timing.phase("server"):
+            result = call_rpc("admin_revoke_key", {"key_id": key_id})
 
-        if json_output:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            console.print("[green]✓[/green] API key revoked successfully")
+        def _render(data: dict[str, Any]) -> None:  # noqa: ARG001
+            console.print("[green]\u2713[/green] API key revoked successfully")
             console.print(f"Key ID: {key_id}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error revoking key:[/red] {e}")
@@ -321,14 +350,14 @@ def revoke_key(
 @click.argument("user_id")
 @click.option("--name", required=True, help="Human-readable name for the new key")
 @click.option("--expires-days", type=int, help="API key expiry in days")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def create_key(
     user_id: str,
     name: str,
     expires_days: int | None,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -338,6 +367,7 @@ def create_key(
     Examples:
         nexus admin create-key alice --name "Alice's new laptop" --expires-days 90
     """
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
@@ -351,18 +381,26 @@ def create_key(
             params["expires_days"] = expires_days
 
         # Call admin API
-        result = call_rpc("admin_create_key", params)
+        with timing.phase("server"):
+            result = call_rpc("admin_create_key", params)
 
-        if json_output:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            console.print("[green]✓[/green] API key created successfully")
-            console.print("\n[yellow]⚠ Save this API key - it will only be shown once![/yellow]\n")
-            console.print(f"User ID:     {result['user_id']}")
-            console.print(f"Key ID:      {result['key_id']}")
-            console.print(f"[bold]API Key:[/bold]     {result['api_key']}")
-            if result.get("expires_at"):
-                console.print(f"Expires:     {result['expires_at']}")
+        def _render(data: dict[str, Any]) -> None:
+            console.print("[green]\u2713[/green] API key created successfully")
+            console.print(
+                "\n[yellow]\u26a0 Save this API key - it will only be shown once![/yellow]\n"
+            )
+            console.print(f"User ID:     {data['user_id']}")
+            console.print(f"Key ID:      {data['key_id']}")
+            console.print(f"[bold]API Key:[/bold]     {data['api_key']}")
+            if data.get("expires_at"):
+                console.print(f"Expires:     {data['expires_at']}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error creating key:[/red] {e}")
@@ -372,13 +410,13 @@ def create_key(
 @admin.command("get-user")
 @click.option("--user-id", help="User ID to look up")
 @click.option("--key-id", help="Key ID to look up")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def get_user(
     user_id: str | None,
     key_id: str | None,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -395,48 +433,55 @@ def get_user(
         console.print("[red]Error:[/red] Must provide either --user-id or --key-id")
         sys.exit(1)
 
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
-        # If user_id provided, first get the key_id by listing keys
-        if user_id and not key_id:
-            list_result = call_rpc("admin_list_keys", {"user_id": user_id, "limit": 1})
-            keys = list_result.get("keys", [])
-            if not keys:
-                console.print(f"[red]Error:[/red] No keys found for user '{user_id}'")
-                sys.exit(1)
-            key_id = keys[0]["key_id"]
+        with timing.phase("server"):
+            # If user_id provided, first get the key_id by listing keys
+            if user_id and not key_id:
+                list_result = call_rpc("admin_list_keys", {"user_id": user_id, "limit": 1})
+                keys = list_result.get("keys", [])
+                if not keys:
+                    console.print(f"[red]Error:[/red] No keys found for user '{user_id}'")
+                    sys.exit(1)
+                key_id = keys[0]["key_id"]
 
-        # Call admin API with key_id
-        result = call_rpc("admin_get_key", {"key_id": key_id})
+            # Call admin API with key_id
+            result = call_rpc("admin_get_key", {"key_id": key_id})
 
-        if json_output:
-            click.echo(json.dumps(result, indent=2))
-        else:
+        def _render(data: dict[str, Any]) -> None:
             console.print("\n[bold]User Information[/bold]\n")
-            console.print(f"User ID:      {result['user_id']}")
-            console.print(f"Key ID:       {result['key_id']}")
-            console.print(f"Name:         {result['name']}")
-            console.print(f"Zone:         {result['zone_id']}")
-            console.print(f"Admin:        {result['is_admin']}")
-            console.print(f"Created:      {result['created_at']}")
+            console.print(f"User ID:      {data['user_id']}")
+            console.print(f"Key ID:       {data['key_id']}")
+            console.print(f"Name:         {data['name']}")
+            console.print(f"Zone:         {data['zone_id']}")
+            console.print(f"Admin:        {data['is_admin']}")
+            console.print(f"Created:      {data['created_at']}")
 
-            if result.get("expires_at"):
-                console.print(f"Expires:      {result['expires_at']}")
+            if data.get("expires_at"):
+                console.print(f"Expires:      {data['expires_at']}")
             else:
                 console.print("Expires:      Never")
 
-            if result.get("last_used_at"):
-                console.print(f"Last Used:    {result['last_used_at']}")
+            if data.get("last_used_at"):
+                console.print(f"Last Used:    {data['last_used_at']}")
             else:
                 console.print("Last Used:    Never")
 
-            console.print(f"Revoked:      {result.get('revoked', False)}")
+            console.print(f"Revoked:      {data.get('revoked', False)}")
 
-            if result.get("subject_type"):
-                console.print(f"Subject Type: {result['subject_type']}")
-            if result.get("subject_id"):
-                console.print(f"Subject ID:   {result['subject_id']}")
+            if data.get("subject_type"):
+                console.print(f"Subject Type: {data['subject_type']}")
+            if data.get("subject_id"):
+                console.print(f"Subject ID:   {data['subject_id']}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error getting user:[/red] {e}")
@@ -448,7 +493,7 @@ def get_user(
 @click.argument("agent_id")
 @click.option("--name", help="Human-readable name for the API key (default: 'Agent: <agent_id>')")
 @click.option("--expires-days", type=int, help="API key expiry in days")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def create_agent_key(
@@ -456,7 +501,7 @@ def create_agent_key(
     agent_id: str,
     name: str | None,
     expires_days: int | None,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -474,6 +519,7 @@ def create_agent_key(
         # Create API key with custom name
         nexus admin create-agent-key alice alice_agent --name "Production Agent" --expires-days 90
     """
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
@@ -493,22 +539,34 @@ def create_agent_key(
             params["expires_days"] = expires_days
 
         # Call admin API
-        result = call_rpc("admin_create_key", params)
+        with timing.phase("server"):
+            result = call_rpc("admin_create_key", params)
 
-        if json_output:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            console.print("[green]✓[/green] Agent API key created successfully")
-            console.print("\n[yellow]⚠ Save this API key - it will only be shown once![/yellow]\n")
-            console.print(f"User ID:     {result['user_id']}")
+        def _render(data: dict[str, Any]) -> None:
+            console.print("[green]\u2713[/green] Agent API key created successfully")
+            console.print(
+                "\n[yellow]\u26a0 Save this API key - it will only be shown once![/yellow]\n"
+            )
+            console.print(f"User ID:     {data['user_id']}")
             console.print(f"Agent ID:    {agent_id}")
-            console.print(f"Key ID:      {result['key_id']}")
-            console.print(f"[bold]API Key:[/bold]     {result['api_key']}")
-            if result.get("expires_at"):
-                console.print(f"Expires:     {result['expires_at']}")
+            console.print(f"Key ID:      {data['key_id']}")
+            console.print(f"[bold]API Key:[/bold]     {data['api_key']}")
+            if data.get("expires_at"):
+                console.print(f"Expires:     {data['expires_at']}")
 
-            console.print("\n[cyan]ℹ Info:[/cyan] This agent can now authenticate independently.")
-            console.print("[cyan]ℹ[/cyan] Recommended: Use user auth + X-Agent-ID header instead.")
+            console.print(
+                "\n[cyan]\u2139 Info:[/cyan] This agent can now authenticate independently."
+            )
+            console.print(
+                "[cyan]\u2139[/cyan] Recommended: Use user auth + X-Agent-ID header instead."
+            )
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error creating agent key:[/red] {e}")
@@ -519,14 +577,14 @@ def create_agent_key(
 @click.argument("key_id")
 @click.option("--expires-days", type=int, help="Extend expiry by days from now")
 @click.option("--is-admin", type=bool, help="Change admin status (true/false)")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def update_key(
     key_id: str,
     expires_days: int | None,
     is_admin: bool | None,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -547,6 +605,7 @@ def update_key(
         console.print("[red]Error:[/red] Must provide --expires-days or --is-admin")
         sys.exit(1)
 
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
@@ -559,17 +618,23 @@ def update_key(
             params["is_admin"] = is_admin
 
         # Call admin API
-        result = call_rpc("admin_update_key", params)
+        with timing.phase("server"):
+            result = call_rpc("admin_update_key", params)
 
-        if json_output:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            console.print("[green]✓[/green] API key updated successfully")
+        def _render(data: dict[str, Any]) -> None:
+            console.print("[green]\u2713[/green] API key updated successfully")
             console.print(f"Key ID: {key_id}")
             if expires_days is not None:
-                console.print(f"New expiry: {result.get('expires_at', 'N/A')}")
+                console.print(f"New expiry: {data.get('expires_at', 'N/A')}")
             if is_admin is not None:
-                console.print(f"Admin: {result.get('is_admin', 'N/A')}")
+                console.print(f"Admin: {data.get('is_admin', 'N/A')}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error updating key:[/red] {e}")
@@ -580,14 +645,14 @@ def update_key(
 @click.option("--dry-run/--execute", default=True, help="Dry run (default) or execute")
 @click.option("--retention-days", type=int, help="Override retention days")
 @click.option("--max-versions", type=int, help="Override max versions per resource")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def gc_versions(
     dry_run: bool,
     retention_days: int | None,
     max_versions: int | None,
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -610,6 +675,7 @@ def gc_versions(
         # Keep only 50 versions per file
         nexus admin gc-versions --execute --max-versions 50
     """
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
@@ -622,11 +688,10 @@ def gc_versions(
             params["max_versions"] = max_versions
 
         # Call admin API
-        result = call_rpc("admin_gc_versions", params)
+        with timing.phase("server"):
+            result = call_rpc("admin_gc_versions", params)
 
-        if json_output:
-            click.echo(json.dumps(result, indent=2))
-        else:
+        def _render(data: dict[str, Any]) -> None:
             mode = "[yellow]DRY RUN[/yellow]" if dry_run else "[green]EXECUTED[/green]"
             console.print(f"\n{mode} Version History Garbage Collection\n")
 
@@ -634,11 +699,11 @@ def gc_versions(
             table.add_column("Metric", style="cyan")
             table.add_column("Value", style="white")
 
-            table.add_row("Deleted by age:", str(result.get("deleted_by_age", 0)))
-            table.add_row("Deleted by count:", str(result.get("deleted_by_count", 0)))
-            table.add_row("Total deleted:", f"[bold]{result.get('total_deleted', 0)}[/bold]")
+            table.add_row("Deleted by age:", str(data.get("deleted_by_age", 0)))
+            table.add_row("Deleted by count:", str(data.get("deleted_by_count", 0)))
+            table.add_row("Total deleted:", f"[bold]{data.get('total_deleted', 0)}[/bold]")
 
-            bytes_reclaimed = result.get("bytes_reclaimed", 0)
+            bytes_reclaimed = data.get("bytes_reclaimed", 0)
             if bytes_reclaimed > 1024 * 1024:
                 size_str = f"{bytes_reclaimed / 1024 / 1024:.2f} MB"
             elif bytes_reclaimed > 1024:
@@ -646,12 +711,19 @@ def gc_versions(
             else:
                 size_str = f"{bytes_reclaimed} bytes"
             table.add_row("Space reclaimed:", size_str)
-            table.add_row("Duration:", f"{result.get('duration_seconds', 0):.2f}s")
+            table.add_row("Duration:", f"{data.get('duration_seconds', 0):.2f}s")
 
             _console.print(table)
 
             if dry_run:
                 console.print("\n[dim]Run with --execute to perform actual deletion[/dim]")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error running GC:[/red] {e}")
@@ -659,11 +731,11 @@ def gc_versions(
 
 
 @admin.command("gc-versions-stats")
-@click.option("--json-output", is_flag=True, help="Output as JSON")
+@add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def gc_versions_stats(
-    json_output: bool,
+    output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
@@ -675,25 +747,25 @@ def gc_versions_stats(
     Examples:
         nexus admin gc-versions-stats
     """
+    timing = CommandTiming()
     try:
         call_rpc = get_admin_rpc(remote_url, remote_api_key)
 
         # Call admin API
-        result = call_rpc("admin_gc_versions_stats", {})
+        with timing.phase("server"):
+            result = call_rpc("admin_gc_versions_stats", {})
 
-        if json_output:
-            click.echo(json.dumps(result, indent=2))
-        else:
+        def _render(data: dict[str, Any]) -> None:
             console.print("\n[bold]Version History Statistics[/bold]\n")
 
             table = Table(show_header=False, box=None)
             table.add_column("Metric", style="cyan")
             table.add_column("Value", style="white")
 
-            table.add_row("Total versions:", f"{result.get('total_versions', 0):,}")
-            table.add_row("Unique resources:", f"{result.get('unique_resources', 0):,}")
+            table.add_row("Total versions:", f"{data.get('total_versions', 0):,}")
+            table.add_row("Unique resources:", f"{data.get('unique_resources', 0):,}")
 
-            total_bytes = result.get("total_bytes", 0)
+            total_bytes = data.get("total_bytes", 0)
             if total_bytes > 1024 * 1024 * 1024:
                 size_str = f"{total_bytes / 1024 / 1024 / 1024:.2f} GB"
             elif total_bytes > 1024 * 1024:
@@ -706,17 +778,17 @@ def gc_versions_stats(
 
             table.add_row(
                 "Oldest version:",
-                result.get("oldest_version", "N/A")[:19] if result.get("oldest_version") else "N/A",
+                data.get("oldest_version", "N/A")[:19] if data.get("oldest_version") else "N/A",
             )
             table.add_row(
                 "Newest version:",
-                result.get("newest_version", "N/A")[:19] if result.get("newest_version") else "N/A",
+                data.get("newest_version", "N/A")[:19] if data.get("newest_version") else "N/A",
             )
 
             _console.print(table)
 
             # Show GC config
-            gc_config = result.get("gc_config", {})
+            gc_config = data.get("gc_config", {})
             if gc_config:
                 console.print("\n[bold]GC Configuration[/bold]\n")
 
@@ -737,6 +809,13 @@ def gc_versions_stats(
                 )
 
                 _console.print(config_table)
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         console.print(f"[red]Error getting stats:[/red] {e}")

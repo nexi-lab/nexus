@@ -1,5 +1,9 @@
 #![allow(clippy::useless_conversion)]
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod bitmap;
 mod bloom;
 mod cache;
@@ -7,7 +11,10 @@ mod glob;
 mod hash;
 mod io;
 mod lock;
+mod pipe;
 mod prefix;
+mod stream;
+mod semaphore;
 mod rebac;
 mod search;
 mod simd;
@@ -78,5 +85,8 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<bloom::BloomFilter>()?;
     m.add_class::<cache::L1MetadataCache>()?;
     m.add_class::<lock::VFSLockManager>()?;
+    m.add_class::<pipe::RingBufferCore>()?;
+    m.add_class::<stream::StreamBufferCore>()?;
+    m.add_class::<semaphore::VFSSemaphore>()?;
     Ok(())
 }

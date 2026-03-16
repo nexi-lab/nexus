@@ -69,7 +69,9 @@ class SQLAlchemyOAuthCredentialStore:
 
             if existing:
                 existing.encrypted_access_token = encrypted_access_token
-                existing.encrypted_refresh_token = encrypted_refresh_token
+                # Preserve existing refresh token if new one is not provided
+                if encrypted_refresh_token is not None:
+                    existing.encrypted_refresh_token = encrypted_refresh_token
                 existing.token_type = token_type
                 existing.expires_at = expires_at
                 existing.scopes = scopes

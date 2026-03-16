@@ -226,7 +226,7 @@ class {class_name}(NexusPlugin):
 
     # Storage backend methods — implement these for a storage plugin:
     #
-    # from nexus.backends.backend import Backend
+    # from nexus.backends.base.backend import Backend
     #
     # class MyBackend(Backend):
     #     async def write_content(self, hash_str: str, data: bytes) -> None: ...

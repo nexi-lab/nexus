@@ -19,7 +19,7 @@ def isolate_mcp_tests(monkeypatch):
         "NEXUS_DATABASE_URL",
         "NEXUS_URL",
         "NEXUS_API_KEY",
-        "NEXUS_MODE",
+        "NEXUS_PROFILE",
     ]
 
     for var in env_vars_to_clear:

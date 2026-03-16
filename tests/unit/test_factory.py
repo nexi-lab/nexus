@@ -176,7 +176,6 @@ class TestBootSystemServices:
             "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
-            "async_vfs_router",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
@@ -184,11 +183,12 @@ class TestBootSystemServices:
             "brick_lifecycle_manager",
             "brick_reconciler",
             "zone_lifecycle",
-            # DT_PIPE manager (Issue #809)
-            "pipe_manager",
-            # Issue #2195, #2360
-            "event_log",
+            # (PipeManager is kernel-internal §4.2, not in SystemServices)
+            # Process lifecycle (Issue #1509)
+            "process_table",
             "scheduler_service",
+            # Agent Runtime (AGENT-PROCESS-ARCHITECTURE)
+            "agent_runtime",
         }
         assert expected_keys == set(result.keys())
 
@@ -214,7 +214,7 @@ class TestBootSystemServices:
         with (
             caplog.at_level(logging.WARNING, logger="nexus.factory"),
             patch(
-                "nexus.services.agents.agent_registry.AgentRegistry",
+                "nexus.system_services.agents.agent_registry.AgentRegistry",
                 side_effect=RuntimeError("agent db error"),
             ),
         ):
@@ -271,16 +271,11 @@ class TestBootBrickServices:
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
-            "task_queue_service",
             "ipc_storage_driver",
             "ipc_provisioner",
-            "skill_service",
-            "skill_package_service",
             "delegation_service",
-            "reputation_service",
             "version_service",
             "rebac_circuit_breaker",
-            "memory_permission",
             "governance_anomaly_service",
             "governance_collusion_service",
             "governance_graph_service",
@@ -300,7 +295,7 @@ class TestBootBrickServices:
         with (
             caplog.at_level(logging.DEBUG, logger="nexus.factory"),
             patch(
-                "nexus.services.versioning.version_service.VersionService",
+                "nexus.bricks.versioning.version_service.VersionService",
                 side_effect=RuntimeError("version db unavailable"),
             ),
         ):

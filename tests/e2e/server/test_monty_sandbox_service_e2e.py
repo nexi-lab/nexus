@@ -35,7 +35,7 @@ from nexus.bricks.sandbox.auth_service import SandboxAuthService  # noqa: E402
 from nexus.bricks.sandbox.sandbox_manager import SandboxManager  # noqa: E402
 from nexus.bricks.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
 from nexus.contracts.agent_types import AgentState  # noqa: E402
-from nexus.services.agents.agent_registry import AgentRegistry  # noqa: E402
+from nexus.system_services.agents.agent_registry import AgentRegistry  # noqa: E402
 from tests.helpers.in_memory_record_store import InMemoryRecordStore  # noqa: E402
 
 logger = logging.getLogger(__name__)

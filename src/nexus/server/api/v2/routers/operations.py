@@ -19,13 +19,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from nexus.contracts.protocols.operation_log import OperationLogProtocol
 from nexus.server.api.v2.dependencies import get_operation_logger
 from nexus.server.api.v2.models import (
     AgentActivityResponse,
     OperationListResponse,
     OperationResponse,
 )
-from nexus.services.protocols.operation_log import OperationLogProtocol
 
 logger = logging.getLogger(__name__)
 

@@ -451,13 +451,11 @@ class TestDenialLatency:
 
 
 @pytest.mark.benchmark_permissions
-class TestConsistencyLevelImpact:
-    """Compare latency across consistency levels."""
+class TestCachedConsistencyLatency:
+    """Measure latency for cached (the only) consistency mode."""
 
-    def test_eventual_consistency_latency(self, benchmark, seeded_manager):
-        """EVENTUAL (cache-friendly) should be the fastest path."""
-        from nexus.contracts.rebac_types import ConsistencyLevel
-
+    def test_cached_consistency_latency(self, benchmark, seeded_manager):
+        """Cached path should be the fastest path."""
         m = seeded_manager
 
         # Warm cache
@@ -474,27 +472,5 @@ class TestConsistencyLevelImpact:
             permission="read",
             object=("file", "/workspace/file_cached.txt"),
             zone_id=ZONE_ID,
-            consistency=ConsistencyLevel.EVENTUAL,
         )
         assert result is True
-
-    def test_strong_consistency_latency(self, benchmark, seeded_manager):
-        """STRONG (cache-bypass) — measures raw graph traversal cost."""
-        from nexus.contracts.rebac_types import ConsistencyLevel
-
-        m = seeded_manager
-
-        result = benchmark(
-            m.rebac_check,
-            subject=SUBJECT_ALICE,
-            permission="read",
-            object=("file", "/workspace/file_cached.txt"),
-            zone_id=ZONE_ID,
-            consistency=ConsistencyLevel.STRONG,
-        )
-        assert result is True
-
-        median_ms = benchmark.stats["median"] * 1000
-        assert median_ms < 50.0, (
-            f"STRONG consistency too slow: p50={median_ms:.3f}ms (target <50ms)"
-        )

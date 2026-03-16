@@ -1,7 +1,7 @@
 """Unit tests for service map module."""
 
-from nexus.backends.registry import ConnectorRegistry
-from nexus.backends.service_map import (
+from nexus.backends.base.registry import ConnectorRegistry
+from nexus.backends.misc.service_map import (
     SERVICE_REGISTRY,
     ServiceInfo,
     ServiceMap,
@@ -160,8 +160,8 @@ class TestServiceMapGetServiceName:
         """Test connector lookup for backends with optional deps."""
         # These may not be registered if deps aren't installed
         for connector, expected_service in [
-            ("gcs_connector", "gcs"),
-            ("s3_connector", "s3"),
+            ("path_gcs", "gcs"),
+            ("path_s3", "s3"),
             ("x_connector", "x"),
             ("hn_connector", "hackernews"),
         ]:

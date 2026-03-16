@@ -109,6 +109,14 @@ class VersionRecorder:
         from nexus.storage._metadata_mapper_generated import MetadataMapper
 
         values = MetadataMapper.to_file_path_values(metadata)
+
+        # Skip version history for empty-content creates (e.g. FUSE create()
+        # writes b"" as a placeholder before the real write() populates content).
+        # Set current_version=0 so the first real write becomes version 1.
+        has_content = metadata.etag is not None and (metadata.size or 0) > 0
+        if not has_content:
+            values["current_version"] = 0
+
         file_path = FilePathModel(
             path_id=str(uuid.uuid4()),
             **values,
@@ -116,7 +124,7 @@ class VersionRecorder:
         self.session.add(file_path)
         self.session.flush()
 
-        if metadata.etag is not None:
+        if has_content:
             version_entry = VersionHistoryModel(
                 version_id=str(uuid.uuid4()),
                 resource_type="file",

@@ -185,7 +185,7 @@ async def _boot_wired_services(
 
     # Wire MountPersistService -> MountService (break circular dep)
     if mount_persist_service is not None and mount_service is not None:
-        mount_persist_service._mounts = mount_service
+        mount_persist_service._mounts_ref = mount_service
 
     # --- SearchService: list/glob/grep are kernel-level VFS operations (Issue #2194) ---
     # Always create SearchService regardless of "search" brick — basic directory

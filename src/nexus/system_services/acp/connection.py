@@ -167,6 +167,13 @@ class AcpConnection:
                         break
                 else:
                     self._model_name = current_id
+
+        # Clear text/usage accumulated from history replay notifications
+        # so send_prompt starts with a clean slate.
+        self._accumulated_text.clear()
+        self._accumulated_usage.clear()
+        self._num_turns = 0
+
         return self._session_id or ""
 
     async def send_prompt(self, prompt: str, timeout: float = 300.0) -> AcpPromptResult:

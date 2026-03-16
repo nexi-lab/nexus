@@ -22,7 +22,9 @@ roaring = { workspace = true }
 encoding_rs = "0.8.35"
 rayon = "1.11"
 bloomfilter = "3.0"
+libc = "0.2"
 memmap2 = "0.9.9"
+tempfile = "3"
 dashmap = "6.1"
 parking_lot = "0.12"
 uuid = { version = "1", features = ["v4"] }

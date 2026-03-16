@@ -1,0 +1,611 @@
+//! Cross-process append-only StreamBuffer via mmap + OS pipe notification (#1680).
+//!
+//! Same algorithms as `stream.rs` (StreamBufferCore) — push_inner/read_at_inner
+//! — but buffer lives in a MAP_SHARED mmap region.  Single OS pipe provides
+//! writer→reader(s) notification.
+//!
+//! Layout (384 bytes header + linear data):
+//!
+//! ```text
+//! [0..128)    Slot 0 — immutable config
+//!             magic: u32 = 0x4E585354 ("NXST")
+//!             version: u32 = 1
+//!             capacity: u32
+//!
+//! [128..256)  Slot 1 — writer-hot
+//!             tail: AtomicUsize
+//!             push_count: AtomicU64
+//!             msg_count: AtomicUsize
+//!
+//! [256..384)  Slot 2 — shared flags
+//!             closed: AtomicBool (stored as u8)
+//!
+//! [384..)     Linear data region (capacity bytes)
+//! ```
+//!
+//! No `head` field — DT_STREAM readers maintain independent cursors externally.
+
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PyList};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const HEADER_SIZE: usize = 4; // 4-byte u32 LE length prefix
+const MAGIC: u32 = 0x4E58_5354; // "NXST"
+const VERSION: u32 = 1;
+const SLOT_SIZE: usize = 128;
+const DATA_OFFSET: usize = SLOT_SIZE * 3; // 384 bytes header
+
+// Offsets within the mmap header
+// Slot 0: immutable config
+const OFF_MAGIC: usize = 0;
+const OFF_VERSION: usize = 4;
+const OFF_CAPACITY: usize = 8;
+// Slot 1: writer-hot
+const OFF_TAIL: usize = SLOT_SIZE;
+const OFF_PUSH_COUNT: usize = SLOT_SIZE + 8;
+const OFF_MSG_COUNT: usize = SLOT_SIZE + 16;
+// Slot 2: flags
+const OFF_CLOSED: usize = SLOT_SIZE * 2;
+
+// ---------------------------------------------------------------------------
+// Internal error type
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+enum StreamError {
+    Closed(&'static str),
+    Full(usize, usize),
+    Empty,
+    ClosedEmpty,
+    Oversized(usize, usize),
+    InvalidOffset(usize, usize),
+}
+
+// ---------------------------------------------------------------------------
+// Header accessors (same pattern as shm_pipe.rs)
+// ---------------------------------------------------------------------------
+
+#[inline]
+fn read_u32(base: *const u8, off: usize) -> u32 {
+    unsafe { (base.add(off) as *const u32).read() }
+}
+
+#[inline]
+fn write_u32(base: *mut u8, off: usize, val: u32) {
+    unsafe { (base.add(off) as *mut u32).write(val) }
+}
+
+#[inline]
+unsafe fn atomic_usize(base: *const u8, off: usize) -> &'static AtomicUsize {
+    &*(base.add(off) as *const AtomicUsize)
+}
+
+#[inline]
+unsafe fn atomic_u64(base: *const u8, off: usize) -> &'static AtomicU64 {
+    &*(base.add(off) as *const AtomicU64)
+}
+
+#[inline]
+unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
+    &*(base.add(off) as *const AtomicBool)
+}
+
+// ---------------------------------------------------------------------------
+// SharedStreamBufferCore
+// ---------------------------------------------------------------------------
+
+/// Cross-process append-only buffer backed by mmap + OS pipe notification.
+#[pyclass]
+pub struct SharedStreamBufferCore {
+    mmap: memmap2::MmapMut,
+    capacity: usize,
+    notify_data_wr: i32, // writer writes here after push
+    is_creator: bool,
+    shm_path: String,
+}
+
+unsafe impl Send for SharedStreamBufferCore {}
+unsafe impl Sync for SharedStreamBufferCore {}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+impl SharedStreamBufferCore {
+    #[inline]
+    fn base(&self) -> *const u8 {
+        self.mmap.as_ptr()
+    }
+
+    #[inline]
+    fn base_mut(&self) -> *mut u8 {
+        self.mmap.as_ptr() as *mut u8
+    }
+
+    #[inline]
+    fn data_ptr(&self) -> *mut u8 {
+        unsafe { self.base_mut().add(DATA_OFFSET) }
+    }
+
+    /// SAFETY: Single-writer design — only the creator pushes, readers
+    /// access committed (immutable) regions behind the atomic tail.
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    fn data_slice(&self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.data_ptr(), self.capacity) }
+    }
+
+    fn tail_atomic(&self) -> &AtomicUsize {
+        unsafe { atomic_usize(self.base(), OFF_TAIL) }
+    }
+
+    fn push_count(&self) -> &AtomicU64 {
+        unsafe { atomic_u64(self.base(), OFF_PUSH_COUNT) }
+    }
+
+    fn msg_count(&self) -> &AtomicUsize {
+        unsafe { atomic_usize(self.base(), OFF_MSG_COUNT) }
+    }
+
+    fn closed_flag(&self) -> &AtomicBool {
+        unsafe { atomic_bool(self.base(), OFF_CLOSED) }
+    }
+
+    fn notify_data(&self) {
+        if self.notify_data_wr >= 0 {
+            unsafe {
+                libc::write(
+                    self.notify_data_wr,
+                    [1u8].as_ptr() as *const libc::c_void,
+                    1,
+                );
+            }
+        }
+    }
+
+    /// Push raw bytes — same algorithm as StreamBufferCore::push_inner.
+    fn push_inner(&self, data: &[u8]) -> Result<usize, StreamError> {
+        if self.closed_flag().load(Ordering::Acquire) {
+            return Err(StreamError::Closed("write to closed stream"));
+        }
+        let payload_len = data.len();
+        if payload_len == 0 {
+            return Ok(self.tail_atomic().load(Ordering::Relaxed));
+        }
+        if payload_len > self.capacity {
+            return Err(StreamError::Oversized(payload_len, self.capacity));
+        }
+
+        let frame_len = HEADER_SIZE + payload_len;
+        let tail = self.tail_atomic().load(Ordering::Relaxed);
+
+        if tail + frame_len > self.capacity {
+            return Err(StreamError::Full(tail, self.capacity));
+        }
+
+        let buf = self.data_slice();
+
+        // Write frame: [4B len][payload]
+        let header = (payload_len as u32).to_le_bytes();
+        buf[tail..tail + HEADER_SIZE].copy_from_slice(&header);
+        buf[tail + HEADER_SIZE..tail + HEADER_SIZE + payload_len].copy_from_slice(data);
+
+        let msg_offset = tail;
+
+        // Update tail
+        self.tail_atomic()
+            .store(tail + frame_len, Ordering::Release);
+
+        // Update counters
+        self.msg_count().fetch_add(1, Ordering::Relaxed);
+        self.push_count().fetch_add(1, Ordering::Relaxed);
+
+        Ok(msg_offset)
+    }
+
+    /// Read one message at byte offset — same as StreamBufferCore::read_at_inner.
+    fn read_at_inner(&self, byte_offset: usize) -> Result<(usize, usize, usize), StreamError> {
+        let tail = self.tail_atomic().load(Ordering::Acquire);
+
+        if byte_offset >= tail {
+            return if self.closed_flag().load(Ordering::Acquire) {
+                Err(StreamError::ClosedEmpty)
+            } else {
+                Err(StreamError::Empty)
+            };
+        }
+
+        if byte_offset + HEADER_SIZE > tail {
+            return Err(StreamError::InvalidOffset(byte_offset, tail));
+        }
+
+        let buf = self.data_slice();
+
+        let mut hdr = [0u8; HEADER_SIZE];
+        hdr.copy_from_slice(&buf[byte_offset..byte_offset + HEADER_SIZE]);
+        let payload_len = u32::from_le_bytes(hdr) as usize;
+
+        let payload_start = byte_offset + HEADER_SIZE;
+        let next_offset = payload_start + payload_len;
+
+        if next_offset > tail {
+            return Err(StreamError::InvalidOffset(byte_offset, tail));
+        }
+
+        Ok((payload_start, payload_len, next_offset))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyO3 methods
+// ---------------------------------------------------------------------------
+
+#[pymethods]
+impl SharedStreamBufferCore {
+    /// Create a new shared stream buffer.
+    ///
+    /// Returns `(self, shm_path, data_rd_fd)`.
+    #[staticmethod]
+    fn create(capacity: usize) -> PyResult<(Self, String, i32)> {
+        if capacity == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "capacity must be > 0, got 0",
+            ));
+        }
+
+        let total_size = DATA_OFFSET + capacity;
+
+        let tmp = tempfile::NamedTempFile::new()
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("tmpfile: {e}")))?;
+        let (file, path) = tmp
+            .keep()
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("keep tmpfile: {e}")))?;
+        let shm_path = path.to_string_lossy().to_string();
+
+        file.set_len(total_size as u64)
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("ftruncate: {e}")))?;
+
+        let mut mmap = unsafe { memmap2::MmapOptions::new().len(total_size).map_mut(&file) }
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("mmap: {e}")))?;
+
+        // Initialize header
+        let base = mmap.as_mut_ptr();
+        write_u32(base, OFF_MAGIC, MAGIC);
+        write_u32(base, OFF_VERSION, VERSION);
+        write_u32(base, OFF_CAPACITY, capacity as u32);
+
+        unsafe {
+            atomic_usize(base, OFF_TAIL).store(0, Ordering::Relaxed);
+            atomic_u64(base, OFF_PUSH_COUNT).store(0, Ordering::Relaxed);
+            atomic_usize(base, OFF_MSG_COUNT).store(0, Ordering::Relaxed);
+            atomic_bool(base, OFF_CLOSED).store(false, Ordering::Relaxed);
+        }
+
+        // Create one OS pipe: data notification (writer → readers)
+        let mut data_fds = [0i32; 2];
+        unsafe {
+            if libc::pipe(data_fds.as_mut_ptr()) != 0 {
+                return Err(pyo3::exceptions::PyOSError::new_err("pipe(data) failed"));
+            }
+            libc::fcntl(data_fds[0], libc::F_SETFL, libc::O_NONBLOCK);
+            libc::fcntl(data_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
+        }
+
+        let core = SharedStreamBufferCore {
+            mmap,
+            capacity,
+            notify_data_wr: data_fds[1],
+            is_creator: true,
+            shm_path: shm_path.clone(),
+        };
+
+        Ok((core, shm_path, data_fds[0]))
+    }
+
+    /// Attach to an existing shared stream buffer.
+    #[staticmethod]
+    fn attach(shm_path: &str, notify_data_wr: i32) -> PyResult<Self> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(shm_path)
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("open: {e}")))?;
+
+        let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file) }
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("mmap: {e}")))?;
+
+        let base = mmap.as_ptr();
+        let magic = read_u32(base, OFF_MAGIC);
+        if magic != MAGIC {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "bad magic: expected 0x{MAGIC:08X}, got 0x{magic:08X}"
+            )));
+        }
+        let version = read_u32(base, OFF_VERSION);
+        if version != VERSION {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unsupported version: expected {VERSION}, got {version}"
+            )));
+        }
+
+        let capacity = read_u32(base, OFF_CAPACITY) as usize;
+
+        Ok(SharedStreamBufferCore {
+            mmap,
+            capacity,
+            notify_data_wr,
+            is_creator: false,
+            shm_path: shm_path.to_string(),
+        })
+    }
+
+    /// Push a message. Returns byte offset where the message starts.
+    fn push(&self, _py: Python<'_>, data: &[u8]) -> PyResult<usize> {
+        match self.push_inner(data) {
+            Ok(offset) => {
+                self.notify_data();
+                Ok(offset)
+            }
+            Err(StreamError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                format!("StreamClosed:{msg}"),
+            )),
+            Err(StreamError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                format!("StreamFull:buffer full ({used}/{cap} bytes)"),
+            )),
+            Err(StreamError::Oversized(msg_len, cap)) => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "message size {msg_len} exceeds buffer capacity {cap}"
+                )))
+            }
+            Err(
+                StreamError::Empty | StreamError::ClosedEmpty | StreamError::InvalidOffset(_, _),
+            ) => {
+                unreachable!()
+            }
+        }
+    }
+
+    /// Read one message at byte_offset. Returns (data, next_offset).
+    fn read_at<'py>(
+        &self,
+        py: Python<'py>,
+        byte_offset: usize,
+    ) -> PyResult<(Bound<'py, PyBytes>, usize)> {
+        match self.read_at_inner(byte_offset) {
+            Ok((start, len, next)) => {
+                let buf = self.data_slice();
+                let data = PyBytes::new(py, &buf[start..start + len]);
+                Ok((data, next))
+            }
+            Err(StreamError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "StreamClosed:read from closed empty stream",
+            )),
+            Err(StreamError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "StreamEmpty:no data at offset",
+            )),
+            Err(StreamError::InvalidOffset(off, tail)) => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "invalid offset {off} (tail={tail})"
+                )))
+            }
+            Err(
+                StreamError::Closed(_) | StreamError::Full(_, _) | StreamError::Oversized(_, _),
+            ) => {
+                unreachable!()
+            }
+        }
+    }
+
+    /// Read up to `count` messages starting at byte_offset.
+    fn read_batch<'py>(
+        &self,
+        py: Python<'py>,
+        byte_offset: usize,
+        count: usize,
+    ) -> PyResult<(Bound<'py, PyList>, usize)> {
+        let list = PyList::empty(py);
+        let buf = self.data_slice();
+        let tail = self.tail_atomic().load(Ordering::Acquire);
+        let mut pos = byte_offset;
+        let mut read = 0;
+
+        while read < count && pos < tail {
+            if pos + HEADER_SIZE > tail {
+                break;
+            }
+            let mut hdr = [0u8; HEADER_SIZE];
+            hdr.copy_from_slice(&buf[pos..pos + HEADER_SIZE]);
+            let payload_len = u32::from_le_bytes(hdr) as usize;
+            let payload_start = pos + HEADER_SIZE;
+            let next = payload_start + payload_len;
+            if next > tail {
+                break;
+            }
+            let item = PyBytes::new(py, &buf[payload_start..payload_start + payload_len]);
+            list.append(item).expect("append to list");
+            pos = next;
+            read += 1;
+        }
+
+        if read == 0 && byte_offset >= tail {
+            if self.closed_flag().load(Ordering::Acquire) {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "StreamClosed:read from closed empty stream",
+                ));
+            }
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "StreamEmpty:no data at offset",
+            ));
+        }
+
+        Ok((list, pos))
+    }
+
+    /// Close the buffer.
+    fn close(&self) {
+        self.closed_flag().store(true, Ordering::Release);
+        self.notify_data();
+    }
+
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let dict = PyDict::new(py);
+        dict.set_item("tail", self.tail_atomic().load(Ordering::Relaxed))?;
+        dict.set_item("capacity", self.capacity)?;
+        dict.set_item("msg_count", self.msg_count().load(Ordering::Relaxed))?;
+        dict.set_item("closed", self.closed_flag().load(Ordering::Acquire))?;
+        dict.set_item("push_count", self.push_count().load(Ordering::Relaxed))?;
+        Ok(dict.into())
+    }
+
+    #[getter]
+    fn closed(&self) -> bool {
+        self.closed_flag().load(Ordering::Acquire)
+    }
+
+    #[getter]
+    fn size(&self) -> usize {
+        self.tail_atomic().load(Ordering::Relaxed)
+    }
+
+    #[getter]
+    fn capacity_prop(&self) -> usize {
+        self.capacity
+    }
+
+    #[getter]
+    fn msg_count_prop(&self) -> usize {
+        self.msg_count().load(Ordering::Relaxed)
+    }
+
+    #[getter]
+    fn tail(&self) -> usize {
+        self.tail_atomic().load(Ordering::Relaxed)
+    }
+
+    fn cleanup(&self) -> PyResult<()> {
+        if self.is_creator {
+            std::fs::remove_file(&self.shm_path)
+                .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("cleanup: {e}")))?;
+        }
+        Ok(())
+    }
+
+    #[getter]
+    fn shm_path(&self) -> &str {
+        &self.shm_path
+    }
+}
+
+impl Drop for SharedStreamBufferCore {
+    fn drop(&mut self) {
+        if self.notify_data_wr >= 0 {
+            unsafe {
+                libc::close(self.notify_data_wr);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_pair(cap: usize) -> (SharedStreamBufferCore, SharedStreamBufferCore) {
+        let (creator, shm_path, data_rd_fd) = SharedStreamBufferCore::create(cap).unwrap();
+        let attacher = SharedStreamBufferCore::attach(&shm_path, -1).unwrap();
+        unsafe {
+            libc::close(data_rd_fd);
+        }
+        (creator, attacher)
+    }
+
+    fn push(core: &SharedStreamBufferCore, data: &[u8]) -> usize {
+        core.push_inner(data).expect("push failed")
+    }
+
+    fn read_at(core: &SharedStreamBufferCore, offset: usize) -> (Vec<u8>, usize) {
+        let (start, len, next) = core.read_at_inner(offset).expect("read_at failed");
+        let buf = core.data_slice();
+        (buf[start..start + len].to_vec(), next)
+    }
+
+    #[test]
+    fn test_create_returns_handles() {
+        let (creator, shm_path, data_rd_fd) = SharedStreamBufferCore::create(1024).unwrap();
+        assert!(!shm_path.is_empty());
+        assert!(data_rd_fd >= 0);
+        unsafe {
+            libc::close(data_rd_fd);
+        }
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_write_read_at_roundtrip() {
+        let (creator, attacher) = create_pair(1024);
+        let offset = push(&creator, b"hello");
+        assert_eq!(offset, 0);
+        let (data, next) = read_at(&attacher, offset);
+        assert_eq!(data, b"hello");
+        assert_eq!(next, HEADER_SIZE + 5);
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_multi_reader_independent_cursors() {
+        let (creator, attacher) = create_pair(1024);
+        push(&creator, b"msg1");
+        push(&creator, b"msg2");
+
+        // Reader A
+        let (d1, n1) = read_at(&attacher, 0);
+        let (d2, _) = read_at(&attacher, n1);
+        assert_eq!(d1, b"msg1");
+        assert_eq!(d2, b"msg2");
+
+        // Reader B (re-read from 0 — non-destructive)
+        let (d1b, _) = read_at(&attacher, 0);
+        assert_eq!(d1b, b"msg1");
+
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_tail_monotonic() {
+        let (creator, _attacher) = create_pair(1024);
+        let t0 = creator.tail_atomic().load(Ordering::Relaxed);
+        push(&creator, b"a");
+        let t1 = creator.tail_atomic().load(Ordering::Relaxed);
+        push(&creator, b"b");
+        let t2 = creator.tail_atomic().load(Ordering::Relaxed);
+        assert!(t0 < t1);
+        assert!(t1 < t2);
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_close_propagates() {
+        let (creator, attacher) = create_pair(1024);
+        assert!(!attacher.closed_flag().load(Ordering::Acquire));
+        creator.closed_flag().store(true, Ordering::Release);
+        assert!(attacher.closed_flag().load(Ordering::Acquire));
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_cleanup_removes_file() {
+        let (creator, _attacher) = create_pair(64);
+        let path = creator.shm_path.clone();
+        assert!(std::path::Path::new(&path).exists());
+        creator.cleanup().unwrap();
+        assert!(!std::path::Path::new(&path).exists());
+    }
+}

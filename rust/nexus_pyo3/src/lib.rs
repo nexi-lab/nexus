@@ -16,6 +16,8 @@ mod prefix;
 mod rebac;
 mod search;
 mod semaphore;
+mod shm_pipe;
+mod shm_stream;
 mod simd;
 mod stream;
 mod trigram;
@@ -87,6 +89,8 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<lock::VFSLockManager>()?;
     m.add_class::<pipe::RingBufferCore>()?;
     m.add_class::<stream::StreamBufferCore>()?;
+    m.add_class::<shm_pipe::SharedRingBufferCore>()?;
+    m.add_class::<shm_stream::SharedStreamBufferCore>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
     Ok(())
 }

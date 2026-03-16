@@ -1194,6 +1194,7 @@ dependencies = [
  "dashmap",
  "encoding_rs",
  "globset",
+ "libc",
  "lru",
  "memchr",
  "memmap2",

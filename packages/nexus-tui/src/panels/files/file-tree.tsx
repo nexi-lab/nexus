@@ -1,6 +1,9 @@
 /**
  * Recursive file tree with lazy-expand for directories.
  * Flattens the visible tree for virtual scrolling.
+ *
+ * Supports client-side fuzzy filtering (Decision 4A, 13A)
+ * and rendering multi-selection state (Decision 3A).
  */
 
 import React, { useEffect, useMemo } from "react";
@@ -10,7 +13,14 @@ import { FileTreeNode } from "./file-tree-node.js";
 import { Spinner } from "../../shared/components/spinner.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
-export function FileTree(): React.ReactNode {
+interface FileTreeProps {
+  /** Client-side fuzzy filter query. Empty string = no filter. */
+  readonly filterQuery?: string;
+  /** Set of currently selected file paths (for multi-select rendering). */
+  readonly effectiveSelection?: ReadonlySet<string>;
+}
+
+export function FileTree({ filterQuery = "", effectiveSelection }: FileTreeProps): React.ReactNode {
   const client = useApi();
   const treeNodes = useFilesStore((s) => s.treeNodes);
   const currentPath = useFilesStore((s) => s.currentPath);
@@ -24,10 +34,13 @@ export function FileTree(): React.ReactNode {
     }
   }, [client, currentPath, treeNodes, expandNode]);
 
-  // Flatten visible tree nodes for rendering
+  // Flatten visible tree nodes, then apply filter (Decision 13A)
   const visibleNodes = useMemo(() => {
-    return flattenVisibleNodes(currentPath, treeNodes);
-  }, [currentPath, treeNodes]);
+    const all = flattenVisibleNodes(currentPath, treeNodes);
+    if (!filterQuery) return all;
+    const lowerQuery = filterQuery.toLowerCase();
+    return all.filter((node) => fuzzyMatch(node.name.toLowerCase(), lowerQuery));
+  }, [currentPath, treeNodes, filterQuery]);
 
   if (!client) {
     return <text>No connection configured</text>;
@@ -38,7 +51,7 @@ export function FileTree(): React.ReactNode {
     if (rootNode?.loading) {
       return <Spinner label="Loading..." />;
     }
-    return <text>Empty directory</text>;
+    return <text>{filterQuery ? "No matches" : "Empty directory"}</text>;
   }
 
   return (
@@ -49,11 +62,21 @@ export function FileTree(): React.ReactNode {
             key={node.path}
             node={node}
             selected={index === selectedIndex}
+            marked={effectiveSelection?.has(node.path) ?? false}
           />
         ))}
       </scrollbox>
     </ScrollIndicator>
   );
+}
+
+/** Simple fuzzy match: all characters of query appear in order in target. */
+function fuzzyMatch(target: string, query: string): boolean {
+  let qi = 0;
+  for (let ti = 0; ti < target.length && qi < query.length; ti++) {
+    if (target[ti] === query[qi]) qi++;
+  }
+  return qi === query.length;
 }
 
 /** Flatten tree into ordered list of visible nodes (expanded directories show children). */

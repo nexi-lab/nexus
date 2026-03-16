@@ -10,6 +10,12 @@ Provides file operations using NexusFS via asyncio.to_thread():
 - GET    /metadata        - Get file metadata
 - POST   /batch-read      - Batch read multiple files
 - GET    /stream          - Stream file content
+- POST   /rename          - Rename/move file
+- POST   /copy            - Copy file
+- POST   /rename-bulk     - Bulk rename/move files
+- POST   /copy-bulk       - Bulk copy files
+- GET    /glob            - Glob pattern search across files
+- GET    /grep            - Regex pattern search within files
 
 All operations use asyncio.to_thread() to run sync NexusFS calls
 in worker threads (io_uring pattern: async scheduling, sync kernel).
@@ -26,6 +32,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
+from nexus.bricks.search.primitives.glob_fast import glob_filter
+from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -107,10 +115,131 @@ class MetadataResponse(BaseModel):
     modified_at: str | None = None
 
 
+class GlobResponse(BaseModel):
+    """Response model for glob search."""
+
+    matches: list[str]
+    total: int
+    truncated: bool
+    pattern: str
+    base_path: str
+
+
+class GrepMatch(BaseModel):
+    """A single grep match."""
+
+    file: str
+    line: int
+    content: str
+    match: str
+
+
+class GrepResponse(BaseModel):
+    """Response model for grep search."""
+
+    matches: list[GrepMatch]
+    total: int
+    truncated: bool
+    pattern: str
+    base_path: str
+
+
 class BatchReadRequest(BaseModel):
     """Request model for batch read."""
 
     paths: list[str] = Field(..., description="List of paths to read")
+
+
+class RenameRequest(BaseModel):
+    """Request model for rename/move operation."""
+
+    source: str = Field(..., description="Source path to rename from")
+    destination: str = Field(..., description="Destination path to rename to")
+
+
+class RenameResponse(BaseModel):
+    """Response model for rename operation."""
+
+    success: bool
+    source: str
+    destination: str
+
+
+class CopyRequest(BaseModel):
+    """Request model for copy operation."""
+
+    source: str = Field(..., description="Source path to copy from")
+    destination: str = Field(..., description="Destination path to copy to")
+
+
+class CopyResponse(BaseModel):
+    """Response model for copy operation."""
+
+    success: bool
+    source: str
+    destination: str
+    bytes_copied: int
+
+
+class RenameOperation(BaseModel):
+    """A single rename operation within a bulk request."""
+
+    source: str = Field(..., description="Source path to rename from")
+    destination: str = Field(..., description="Destination path to rename to")
+
+
+class RenameBulkRequest(BaseModel):
+    """Request model for bulk rename operations."""
+
+    operations: list[RenameOperation] = Field(
+        ..., description="List of rename operations (max 50)", max_length=50
+    )
+
+
+class BulkRenameResult(BaseModel):
+    """Result of a single rename within a bulk operation."""
+
+    source: str
+    destination: str
+    success: bool
+    error: str | None = None
+
+
+class RenameBulkResponse(BaseModel):
+    """Response model for bulk rename operations."""
+
+    results: list[BulkRenameResult]
+
+
+class CopyOperation(BaseModel):
+    """A single copy operation within a bulk request."""
+
+    source: str = Field(..., description="Source path to copy from")
+    destination: str = Field(..., description="Destination path to copy to")
+
+
+class CopyBulkRequest(BaseModel):
+    """Request model for bulk copy operations."""
+
+    operations: list[CopyOperation] = Field(
+        ..., description="List of copy operations (max 50)", max_length=50
+    )
+
+
+class BulkCopyResult(BaseModel):
+    """Result of a single copy within a bulk operation."""
+
+    source: str
+    destination: str
+    success: bool
+    bytes_copied: int | None = None
+    error: str | None = None
+
+
+class CopyBulkResponse(BaseModel):
+    """Response model for bulk copy operations."""
+
+    results: list[BulkCopyResult]
 
 
 # =============================================================================
@@ -574,6 +703,368 @@ def create_async_files_router(
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Stream error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Rename Endpoint
+    # =============================================================================
+
+    STREAMING_COPY_THRESHOLD = 10 * 1024 * 1024  # 10 MB
+
+    @router.post("/rename", response_model=RenameResponse)
+    async def rename_file(
+        request: RenameRequest,
+        context: Any = Depends(get_context),
+    ) -> RenameResponse:
+        """
+        Rename or move a file.
+
+        This is a metadata-only O(1) operation — file content is not copied.
+        Works instantly regardless of file size.
+        """
+        try:
+            fs = await _get_fs()
+            await fs.sys_rename(request.source, request.destination, context=context)
+            return RenameResponse(
+                success=True,
+                source=request.source,
+                destination=request.destination,
+            )
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except NexusFileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Rename error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Copy Endpoint
+    # =============================================================================
+
+    @router.post("/copy", response_model=CopyResponse)
+    async def copy_file(
+        request: CopyRequest,
+        context: Any = Depends(get_context),
+    ) -> CopyResponse:
+        """
+        Copy a file from source to destination.
+
+        Uses streaming for files >= 10 MB to avoid loading entire content
+        into memory. Smaller files are read/written in a single operation.
+        """
+        try:
+            fs = await _get_fs()
+
+            # Check source exists and get size
+            meta = await fs.sys_stat(request.source, context=context)
+            if meta is None:
+                raise NexusFileNotFoundError(path=request.source)
+
+            file_size = meta.get("size", 0) or 0
+
+            if file_size < STREAMING_COPY_THRESHOLD:
+                # Small file: read all then write all
+                content = await fs.sys_read(request.source, context=context)
+                await fs.write(request.destination, buf=content, context=context)
+                bytes_copied = len(content)
+            else:
+                # Large file: streaming copy
+                chunks = await asyncio.to_thread(fs.stream, request.source, context=context)
+                result = await asyncio.to_thread(
+                    fs.write_stream, request.destination, chunks, context=context
+                )
+                bytes_copied = result.get("size", file_size)
+
+            return CopyResponse(
+                success=True,
+                source=request.source,
+                destination=request.destination,
+                bytes_copied=bytes_copied,
+            )
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except NexusFileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Copy error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Bulk Rename Endpoint
+    # =============================================================================
+
+    @router.post("/rename-bulk", response_model=RenameBulkResponse)
+    async def rename_bulk(
+        request: RenameBulkRequest,
+        context: Any = Depends(get_context),
+    ) -> RenameBulkResponse:
+        """
+        Rename/move multiple files in a single request.
+
+        Each operation is processed independently — failures on one do not
+        affect others. Maximum 50 operations per request.
+        """
+        try:
+            fs = await _get_fs()
+            renames = [(op.source, op.destination) for op in request.operations]
+            raw_results = await fs.rename_bulk(renames, context=context)
+
+            results: list[BulkRenameResult] = []
+            for op in request.operations:
+                entry = raw_results.get(op.source, {})
+                results.append(
+                    BulkRenameResult(
+                        source=op.source,
+                        destination=op.destination,
+                        success=entry.get("success", False),
+                        error=entry.get("error"),
+                    )
+                )
+
+            return RenameBulkResponse(results=results)
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Bulk rename error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Bulk Copy Endpoint
+    # =============================================================================
+
+    @router.post("/copy-bulk", response_model=CopyBulkResponse)
+    async def copy_bulk(
+        request: CopyBulkRequest,
+        context: Any = Depends(get_context),
+    ) -> CopyBulkResponse:
+        """
+        Copy multiple files in a single request.
+
+        Each operation is processed independently — failures on one do not
+        affect others. Maximum 50 operations per request. Uses streaming
+        for files >= 10 MB.
+        """
+        try:
+            fs = await _get_fs()
+            results: list[BulkCopyResult] = []
+
+            for op in request.operations:
+                try:
+                    meta = await fs.sys_stat(op.source, context=context)
+                    if meta is None:
+                        results.append(
+                            BulkCopyResult(
+                                source=op.source,
+                                destination=op.destination,
+                                success=False,
+                                error=f"Source not found: {op.source}",
+                            )
+                        )
+                        continue
+
+                    file_size = meta.get("size", 0) or 0
+
+                    if file_size < STREAMING_COPY_THRESHOLD:
+                        content = await fs.sys_read(op.source, context=context)
+                        await fs.write(op.destination, buf=content, context=context)
+                        bytes_copied = len(content)
+                    else:
+                        chunks = await asyncio.to_thread(fs.stream, op.source, context=context)
+                        write_result = await asyncio.to_thread(
+                            fs.write_stream, op.destination, chunks, context=context
+                        )
+                        bytes_copied = write_result.get("size", file_size)
+
+                    results.append(
+                        BulkCopyResult(
+                            source=op.source,
+                            destination=op.destination,
+                            success=True,
+                            bytes_copied=bytes_copied,
+                        )
+                    )
+                except Exception as e:
+                    results.append(
+                        BulkCopyResult(
+                            source=op.source,
+                            destination=op.destination,
+                            success=False,
+                            error=str(e),
+                        )
+                    )
+
+            return CopyBulkResponse(results=results)
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Bulk copy error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Glob Search Endpoint
+    # =============================================================================
+
+    @router.get("/glob", response_model=GlobResponse)
+    async def glob_search(
+        pattern: str = Query(..., description="Glob pattern to match (e.g. '**/*.py')"),
+        path: str = Query("/", description="Base path to search under"),
+        limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
+        context: Any = Depends(get_context),
+    ) -> GlobResponse:
+        """
+        Search for files matching a glob pattern.
+
+        Uses Rust-accelerated glob matching when available, with automatic
+        fallback to Python fnmatch.
+        """
+        try:
+            fs = await _get_fs()
+
+            # List all files under the base path
+            all_paths = await asyncio.to_thread(
+                fs.sys_readdir, path, recursive=True, context=context
+            )
+
+            # Apply glob pattern filter
+            matched = await asyncio.to_thread(glob_filter, all_paths, include_patterns=[pattern])
+
+            total = len(matched)
+            truncated = total > limit
+            result_paths = matched[:limit]
+
+            return GlobResponse(
+                matches=result_paths,
+                total=total,
+                truncated=truncated,
+                pattern=pattern,
+                base_path=path,
+            )
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Glob error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Grep Search Endpoint
+    # =============================================================================
+
+    @router.get("/grep", response_model=GrepResponse)
+    async def grep_search(
+        pattern: str = Query(..., description="Regex pattern to search for"),
+        path: str = Query("/", description="Base path to search under"),
+        ignore_case: bool = Query(False, description="Case-insensitive matching"),
+        limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
+        context: Any = Depends(get_context),
+    ) -> GrepResponse:
+        """
+        Search for content matching a regex pattern within files.
+
+        Uses Rust-accelerated mmap-based grep when available, with automatic
+        fallback to Python re module.
+        """
+        import re
+
+        try:
+            fs = await _get_fs()
+
+            # List all files under the base path
+            all_paths = await asyncio.to_thread(
+                fs.sys_readdir, path, recursive=True, context=context
+            )
+
+            # Try Rust mmap grep first
+            results = await asyncio.to_thread(
+                grep_files_mmap, pattern, all_paths, ignore_case, limit
+            )
+
+            # Fallback to Python re if Rust is unavailable
+            if results is None:
+                flags = re.IGNORECASE if ignore_case else 0
+                try:
+                    compiled = re.compile(pattern, flags)
+                except re.error as e:
+                    raise HTTPException(
+                        status_code=400, detail=f"Invalid regex pattern: {e}"
+                    ) from e
+
+                results = []
+                for file_path in all_paths:
+                    if len(results) >= limit:
+                        break
+                    try:
+                        content = await asyncio.to_thread(fs.read, file_path, context=context)
+                        if isinstance(content, bytes):
+                            content = content.decode("utf-8", errors="replace")
+                        elif isinstance(content, dict):
+                            content = content.get("content", "")
+                            if isinstance(content, bytes):
+                                content = content.decode("utf-8", errors="replace")
+                        for line_num, line in enumerate(str(content).splitlines(), 1):
+                            m = compiled.search(line)
+                            if m:
+                                results.append(
+                                    {
+                                        "file": file_path,
+                                        "line": line_num,
+                                        "content": line,
+                                        "match": m.group(0),
+                                    }
+                                )
+                                if len(results) >= limit:
+                                    break
+                    except Exception:
+                        # Skip files that can't be read (binary, permissions, etc.)
+                        continue
+
+            total = len(results)
+            truncated = total >= limit
+            matches = [
+                GrepMatch(
+                    file=r["file"],
+                    line=r["line"],
+                    content=r["content"],
+                    match=r["match"],
+                )
+                for r in results[:limit]
+            ]
+
+            return GrepResponse(
+                matches=matches,
+                total=total,
+                truncated=truncated,
+                pattern=pattern,
+                base_path=path,
+            )
+
+        except HTTPException:
+            raise
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Grep error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     return router

@@ -1,5 +1,8 @@
 /**
  * Single tree node row: indent + expand/collapse icon + file/folder icon + name + size.
+ *
+ * Wrapped in React.memo to avoid unnecessary re-renders during filtering (Decision 13A).
+ * Shows selection checkmark for multi-select (Decision 3A).
  */
 
 import React from "react";
@@ -8,6 +11,8 @@ import type { TreeNode } from "../../stores/files-store.js";
 interface FileTreeNodeProps {
   readonly node: TreeNode;
   readonly selected: boolean;
+  /** Whether this node is in the current multi-selection set. */
+  readonly marked: boolean;
 }
 
 function formatSize(bytes: number): string {
@@ -16,9 +21,10 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function FileTreeNode({ node, selected }: FileTreeNodeProps): React.ReactNode {
+function FileTreeNodeInner({ node, selected, marked }: FileTreeNodeProps): React.ReactNode {
   const indent = "  ".repeat(node.depth);
-  const prefix = selected ? "▸ " : "  ";
+  const cursor = selected ? "▸ " : "  ";
+  const check = marked ? "✓ " : "  ";
 
   let expandIcon = "  ";
   if (node.isDirectory) {
@@ -36,7 +42,9 @@ export function FileTreeNode({ node, selected }: FileTreeNodeProps): React.React
 
   return (
     <box height={1} width="100%">
-      <text>{`${prefix}${indent}${expandIcon}${fileIcon} ${node.name}${sizeSuffix}`}</text>
+      <text>{`${cursor}${check}${indent}${expandIcon}${fileIcon} ${node.name}${sizeSuffix}`}</text>
     </box>
   );
 }
+
+export const FileTreeNode = React.memo(FileTreeNodeInner);

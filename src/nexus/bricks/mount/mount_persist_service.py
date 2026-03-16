@@ -35,8 +35,8 @@ from nexus.lib.context_utils import get_user_identity, get_zone_id
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
-    from .mount_core_service import MountCoreService
     from .mount_manager import MountManager
+    from .mount_service import MountService
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +50,14 @@ class MountPersistService:
     def __init__(
         self,
         mount_manager: "MountManager | None",
-        mount_service: "MountCoreService",
+        mount_service: "MountService | None",
         sync_service: Any = None,
     ):
         """Initialize persist service.
 
         Args:
             mount_manager: MountManager for database operations
-            mount_service: MountCoreService for activating mounts
+            mount_service: MountService for activating mounts
             sync_service: Optional SyncService for auto-sync
         """
         self._manager = mount_manager
@@ -129,9 +129,9 @@ class MountPersistService:
             description=description,
         )
 
-        # Also activate the mount via MountCoreService
+        # Also activate the mount via MountService
         try:
-            self._mounts.add_mount(
+            self._mounts.add_mount_sync(
                 mount_point=mount_point,
                 backend_type=backend_type,
                 backend_config=backend_config,
@@ -164,7 +164,7 @@ class MountPersistService:
         self._check_manager()
 
         # Check if mount is already active
-        if self._mounts.has_mount(mount_point):
+        if self._mounts.has_mount_sync(mount_point):
             logger.info(f"[LOAD_MOUNT] Mount already active: {mount_point}")
             # Return the mount_id from database
             assert self._manager is not None
@@ -181,7 +181,7 @@ class MountPersistService:
         if isinstance(backend_config, str):
             backend_config = json.loads(backend_config)
 
-        return self._mounts.add_mount(
+        return self._mounts.add_mount_sync(
             mount_point=config["mount_point"],
             backend_type=config["backend_type"],
             backend_config=backend_config,
@@ -231,7 +231,7 @@ class MountPersistService:
                     backend_config = json.loads(backend_config)
 
                 # Activate the mount
-                self._mounts.add_mount(
+                self._mounts.add_mount_sync(
                     mount_point=mount_point,
                     backend_type=mount["backend_type"],
                     backend_config=backend_config,

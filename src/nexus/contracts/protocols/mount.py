@@ -2,7 +2,7 @@
 
 Defines the contract for mount lifecycle, sync, and persistence operations.
 Existing implementation: ``nexus.core.nexus_fs_mounts.NexusFSMountsMixin``
-delegating to ``MountCoreService``, ``SyncService``, ``SyncJobService``,
+delegating to ``MountService``, ``SyncService``, ``SyncJobService``,
 and ``MountPersistService``.
 
 References:

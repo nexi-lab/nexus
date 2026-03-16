@@ -255,7 +255,7 @@ def connect(
         from nexus.core.router import PathRouter as _PathRouter
 
         _router = _PathRouter(remote_metastore)
-        _router.add_runtime_mount("/", remote_backend)
+        _router.add_mount("/", remote_backend)
 
         from nexus.core.config import KernelServices as _KernelServices
 

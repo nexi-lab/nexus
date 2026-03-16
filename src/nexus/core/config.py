@@ -347,7 +347,6 @@ class WiredServices:
     rebac_service: Any = None
     mount_service: Any = None
     gateway: Any = None
-    mount_core_service: Any = None
     sync_service: Any = None
     sync_job_service: Any = None
     mount_persist_service: Any = None

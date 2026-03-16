@@ -4386,13 +4386,7 @@ class NexusFS(  # type: ignore[misc]
         # MetadataExportService
         "export_metadata": "_metadata_export_service",
         "import_metadata": "_metadata_export_service",
-        # MountCoreService
-        "add_mount": "_mount_core_service",
-        "remove_mount": "_mount_core_service",
-        "list_connectors": "_mount_core_service",
-        "list_mounts": "_mount_core_service",
-        "get_mount": "_mount_core_service",
-        "has_mount": "_mount_core_service",
+        # MountService — routed via _SERVICE_ALIASES (sync suffixed methods)
         # MountPersistService
         "save_mount": "_mount_persist_service",
         "list_saved_mounts": "_mount_persist_service",
@@ -4427,6 +4421,13 @@ class NexusFS(  # type: ignore[misc]
         "get_sync_job": ("_sync_job_service", "get_job"),
         "list_sync_jobs": ("_sync_job_service", "list_jobs"),
         "load_all_saved_mounts": ("_mount_persist_service", "load_all_mounts"),
+        # MountService sync accessors (facade → mount_service.*_sync)
+        "add_mount": ("mount_service", "add_mount_sync"),
+        "remove_mount": ("mount_service", "remove_mount_sync"),
+        "list_connectors": ("mount_service", "list_connectors_sync"),
+        "list_mounts": ("mount_service", "list_mounts_sync"),
+        "get_mount": ("mount_service", "get_mount_sync"),
+        "has_mount": ("mount_service", "has_mount_sync"),
         # Dir visibility cache: NexusFS method names → cache method names
         "get_dir_visibility_cache_metrics": ("_dir_visibility_cache", "get_metrics"),
         "clear_dir_visibility_cache": ("_dir_visibility_cache", "clear"),
@@ -4711,7 +4712,7 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # --- Mount Operations (→ _mount_core_service) ---
+    # --- Mount Operations (→ mount_service sync accessors) ---
 
     def add_mount(
         self,
@@ -4722,7 +4723,7 @@ class NexusFS(  # type: ignore[misc]
         io_profile: str = "balanced",
         context: Any = None,
     ) -> str:
-        return self._mount_core_service.add_mount(
+        return self.mount_service.add_mount_sync(
             mount_point=mount_point,
             backend_type=backend_type,
             backend_config=backend_config,
@@ -4732,13 +4733,13 @@ class NexusFS(  # type: ignore[misc]
         )
 
     def remove_mount(self, mount_point: str, context: Any = None) -> dict[str, Any]:
-        return self._mount_core_service.remove_mount(mount_point=mount_point, context=context)
+        return self.mount_service.remove_mount_sync(mount_point=mount_point, context=context)
 
     def list_mounts(self, context: Any = None) -> builtins.list[dict[str, Any]]:
-        return self._mount_core_service.list_mounts(context=context)
+        return self.mount_service.list_mounts_sync(context=context)
 
     def get_mount(self, mount_point: str, context: Any = None) -> dict[str, Any] | None:
-        return self._mount_core_service.get_mount(mount_point=mount_point, context=context)
+        return self.mount_service.get_mount_sync(mount_point=mount_point, context=context)
 
     def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
         """Grant direct_owner permission to the user who created the mount."""

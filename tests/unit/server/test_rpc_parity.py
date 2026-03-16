@@ -196,11 +196,11 @@ def test_all_public_methods_are_exposed_or_excluded():
         "sandbox_status",  # ABC stub → _sandbox_rpc_service.sandbox_status()
         "sandbox_connect",  # ABC stub → _sandbox_rpc_service.sandbox_connect()
         "sandbox_disconnect",  # ABC stub → _sandbox_rpc_service.sandbox_disconnect()
-        # Mount — delegates to _mount_core_service
-        "add_mount",  # ABC stub → _mount_core_service.add_mount()
-        "remove_mount",  # ABC stub → _mount_core_service.remove_mount()
-        "list_mounts",  # ABC stub → _mount_core_service.list_mounts()
-        "get_mount",  # ABC stub → _mount_core_service.get_mount()
+        # Mount — delegates to mount_service (sync accessors)
+        "add_mount",  # ABC stub → mount_service.add_mount_sync()
+        "remove_mount",  # ABC stub → mount_service.remove_mount_sync()
+        "list_mounts",  # ABC stub → mount_service.list_mounts_sync()
+        "get_mount",  # ABC stub → mount_service.get_mount_sync()
         # Search/list — delegates to search_service
         "list",  # ABC stub → overrides NexusFS.list()
         "glob",  # ABC stub → search_service.glob()

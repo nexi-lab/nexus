@@ -6,7 +6,7 @@ through three ordered phases:
 
     PRE-DISPATCH  (first-match short-circuit)
     └── Registered VFSPathResolver chain.
-        First resolver whose ``matches(path)`` returns True handles
+        First resolver whose ``try_*(path)`` returns non-None handles
         the entire operation — normal VFS pipeline is skipped.
         Each resolver owns its own permission semantics.
 
@@ -34,7 +34,7 @@ Lifecycle:
     then ``notify()``.
     Empty lists = no-op dispatch = zero overhead when no services.
 
-Issue #900, #889.
+Issue #900, #889, #1665.
 """
 
 import logging
@@ -78,7 +78,7 @@ class KernelDispatch:
         dispatch.register_observe(some_observer)
 
     Dispatch (kernel VFS call sites):
-        dispatch.resolve_read(path)          # phase 0: PRE-DISPATCH
+        dispatch.resolve_read(path)          # phase 0: PRE-DISPATCH (try_read)
         dispatch.intercept_pre_read(ctx)     # phase 1a: INTERCEPT (pre)
         ...actual VFS operation...
         dispatch.intercept_post_read(ctx)    # phase 1b: INTERCEPT (post)
@@ -126,51 +126,43 @@ class KernelDispatch:
         return_metadata: bool = False,
         context: Any = None,
     ) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for read.
+        """PRE-DISPATCH: first-match resolver for read (#1665).
 
         Returns (handled, result):
-            handled=True,  result=content  — resolver handled the read.
-            handled=False, result=hint     — resolver passed a prefetched hint.
-            handled=False, result=None     — no resolver matched.
+            handled=True,  result=content — resolver handled the read.
+            handled=False, result=None    — no resolver matched.
 
-        Two-phase: ``matches(path)`` returns truthy match context (e.g.
-        metadata) which is passed to ``read()`` as ``match_ctx`` to avoid
-        redundant lookups.
+        Each resolver's ``try_read()`` returns the result directly, or
+        ``None`` when it does not claim the path.
         """
         for r in self._resolvers:
-            match_ctx = r.matches(path)
-            if match_ctx is not None:
-                return True, r.read(
-                    path, match_ctx=match_ctx, return_metadata=return_metadata, context=context
-                )
+            result = r.try_read(path, return_metadata=return_metadata, context=context)
+            if result is not None:
+                return True, result
         return False, None
 
     def resolve_write(self, path: str, content: bytes) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for write.
-
-        Returns (handled, result):
-            handled=True,  result=dict   — resolver handled the write.
-            handled=False, result=None   — no resolver matched.
-        """
+        """PRE-DISPATCH: first-match resolver for write (#1665)."""
         for r in self._resolvers:
-            match_ctx = r.matches(path)
-            if match_ctx is not None:
-                return True, r.write(path, content, match_ctx=match_ctx)
+            result = r.try_write(path, content)
+            if result is not None:
+                return True, result
         return False, None
 
     def resolve_delete(self, path: str, *, context: Any = None) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for delete.
+        """PRE-DISPATCH: first-match resolver for delete (#1665).
 
         Returns (handled, result):
-            handled=True,  result={}       — resolver handled the delete.
-            handled=False, result=hint     — resolver passed a prefetched hint.
-            handled=False, result=None     — no resolver matched.
+            handled=True,  result={}    — resolver handled the delete.
+            handled=False, result=None  — no resolver matched.
+
+        Each resolver's ``try_delete()`` returns the result directly, or
+        ``None`` when it does not claim the path.
         """
         for r in self._resolvers:
-            match_ctx = r.matches(path)
-            if match_ctx is not None:
-                r.delete(path, match_ctx=match_ctx, context=context)
-                return True, {}
+            result = r.try_delete(path, context=context)
+            if result is not None:
+                return True, result
         return False, None
 
     @property

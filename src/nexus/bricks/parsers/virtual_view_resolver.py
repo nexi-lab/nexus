@@ -28,11 +28,10 @@ logger = logging.getLogger(__name__)
 class VirtualViewResolver(VFSPathResolver):
     """PRE-DISPATCH resolver for virtual parsed view paths.
 
-    Implements ``VFSPathResolver`` protocol:
-    - ``matches(path)`` — routing predicate
-    - ``read(path, ...)`` — read original file + parse to markdown
-    - ``write(path, content)`` — always raises (read-only)
-    - ``delete(path, ...)`` — always raises (read-only)
+    Implements ``VFSPathResolver`` single-call ``try_*`` protocol (#1665):
+    - ``try_read(path, ...)`` — check if virtual view, read + parse to markdown
+    - ``try_write(path, content)`` — raises if virtual view, else returns None
+    - ``try_delete(path, ...)`` — raises if virtual view, else returns None
 
     Dependencies injected via constructor:
     - metadata: MetastoreABC (file existence + metadata lookup)
@@ -78,38 +77,20 @@ class VirtualViewResolver(VFSPathResolver):
         self._read_tracker_fn = read_tracker_fn
 
     # ------------------------------------------------------------------
-    # VFSPathResolver protocol
+    # VFSPathResolver single-call try_* protocol (#1665)
     # ------------------------------------------------------------------
 
-    def matches(self, path: str) -> Any:
-        """Return parsed path context if *path* is a virtual parsed view, None otherwise."""
-        from nexus.lib.virtual_views import parse_virtual_path
-
-        original_path, view_type = parse_virtual_path(path, self._metadata.exists)
-        if view_type == "md":
-            return (original_path, view_type)
-        return None
-
-    def read(
-        self,
-        path: str,
-        *,
-        match_ctx: Any = None,
-        return_metadata: bool = False,
-        context: Any = None,
-    ) -> bytes | dict[str, Any]:
-        """Read virtual parsed view."""
+    def try_read(
+        self, path: str, *, return_metadata: bool = False, context: Any = None
+    ) -> bytes | dict[str, Any] | None:
+        """Read virtual parsed view, or return None if not a virtual view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
-        if match_ctx is not None:
-            original_path, view_type = match_ctx
-        else:
-            original_path, view_type = parse_virtual_path(path, self._metadata.exists)
+        original_path, view_type = parse_virtual_path(path, self._metadata.exists)
         if view_type != "md":
-            raise NexusFileNotFoundError(f"Not a virtual view: {path}")
+            return None
 
         # Permission check — resolver owns its permission semantics.
-        # The checker resolves virtual paths to the original file internally.
         self._permission_checker.check(path, Permission.READ, context)
 
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
@@ -152,12 +133,23 @@ class VirtualViewResolver(VFSPathResolver):
             }
         return content
 
-    def write(self, path: str, content: bytes, *, match_ctx: Any = None) -> dict[str, Any]:
-        """Virtual views are read-only."""
-        _ = match_ctx  # Protocol-required; virtual views are read-only
-        raise NexusFileNotFoundError(f"Cannot write to virtual view: {path} ({len(content)} bytes)")
+    def try_write(self, path: str, content: bytes) -> dict[str, Any] | None:
+        """Virtual views are read-only — raise if virtual view, else return None."""
+        from nexus.lib.virtual_views import parse_virtual_path
 
-    def delete(self, path: str, *, match_ctx: Any = None, context: Any = None) -> None:
-        """Virtual views are read-only."""
-        _ = (match_ctx, context)  # Protocol-required; virtual views are read-only
-        raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
+        _, view_type = parse_virtual_path(path, self._metadata.exists)
+        if view_type == "md":
+            raise NexusFileNotFoundError(
+                f"Cannot write to virtual view: {path} ({len(content)} bytes)"
+            )
+        return None
+
+    def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None:
+        """Virtual views are read-only — raise if virtual view, else return None."""
+        from nexus.lib.virtual_views import parse_virtual_path
+
+        _ = context
+        _, view_type = parse_virtual_path(path, self._metadata.exists)
+        if view_type == "md":
+            raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
+        return None

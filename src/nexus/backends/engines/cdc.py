@@ -1,17 +1,17 @@
 """Content-Defined Chunking (CDC) for large files (Issue #1074).
 
-CDCEngine provides chunking for any CASBackend subclass via composition:
+CDCEngine provides chunking for any CASBackend subclass via Feature DI:
 
-    class CASLocalBackend(CASBackend):
-        def __init__(self, ...):
-            super().__init__(transport, ...)
-            self._cdc = CDCEngine(self)
+    class CASBackend(Backend):
+        def __init__(self, transport, ..., cdc_engine=None):
+            self._cdc = cdc_engine  # Optional, None-safe
 
-        def write_content(self, content, context=None):
-            if self._cdc.should_chunk(content):
-                hash = self._cdc.write_chunked(content)
-                return WriteResult(content_hash=hash, size=len(content))
-            return super().write_content(content, context)
+CDC routing is handled by CASBackend base class — subclasses do NOT
+need to override write_content/read_content for CDC.
+
+ChunkingStrategy protocol allows pluggable chunking algorithms:
+    - FastCDCStrategy (default): Rabin fingerprint content-defined chunking
+    - Custom strategies: message-boundary chunking for LLM conversations, etc.
 
 Storage structure:
     cas/
@@ -30,7 +30,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from nexus.core.hash_fast import hash_content
 
@@ -46,6 +46,57 @@ CDC_MIN_CHUNK_SIZE = 256 * 1024  # 256KB
 CDC_AVG_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB
 CDC_MAX_CHUNK_SIZE = 4 * 1024 * 1024  # 4MB
 CDC_PARALLEL_WORKERS = 8
+
+
+# =============================================================================
+# ChunkingStrategy Protocol
+# =============================================================================
+
+
+@runtime_checkable
+class ChunkingStrategy(Protocol):
+    """Pluggable chunking strategy for CAS content.
+
+    Allows custom chunking algorithms beyond fastcdc:
+    - Default: ``CDCEngine`` (Rabin fingerprint, 16MB threshold)
+    - Custom: message-boundary chunking for LLM conversations, etc.
+
+    All methods receive the parent ``CASBackend`` instance for transport access.
+    """
+
+    def should_chunk(self, content: bytes) -> bool:
+        """Return True if content should be stored as chunks."""
+        ...
+
+    def write_chunked(self, content: bytes, context: "OperationContext | None" = None) -> str:
+        """Write content as chunks + manifest. Returns manifest hash."""
+        ...
+
+    def read_chunked(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+        """Reassemble chunked content from manifest + chunks."""
+        ...
+
+    def read_chunked_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        context: "OperationContext | None" = None,
+    ) -> bytes:
+        """Read a byte range [start, end) from chunked content."""
+        ...
+
+    def is_chunked(self, content_hash: str) -> bool:
+        """Check if content_hash refers to a chunked manifest."""
+        ...
+
+    def get_size(self, content_hash: str) -> int:
+        """Get original file size from manifest metadata."""
+        ...
+
+    def delete_chunked(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+        """Delete chunked content, handling chunk reference counts."""
+        ...
 
 
 # =============================================================================

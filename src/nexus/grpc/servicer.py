@@ -296,8 +296,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
             self._scope_path_for_zone(request, op_context.zone_id)
-            result = await asyncio.to_thread(
-                self._nexus_fs.read,
+            result = await self._nexus_fs.read(
                 request.path,
                 context=op_context,
                 return_metadata=True,
@@ -447,14 +446,13 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             is_dir = meta is not None and getattr(meta, "mime_type", "") == "inode/directory"
 
             if is_dir:
-                await asyncio.to_thread(
-                    self._nexus_fs.sys_rmdir,
+                await self._nexus_fs.sys_rmdir(
                     request.path,
                     recursive=request.recursive,
                     context=op_context,
                 )
             else:
-                await asyncio.to_thread(self._nexus_fs.sys_unlink, request.path, context=op_context)
+                await self._nexus_fs.sys_unlink(request.path, context=op_context)
             return vfs_pb2.DeleteResponse(success=True)
         except ZoneScopingError as e:
             return vfs_pb2.DeleteResponse(
@@ -506,8 +504,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
             self._scope_path_for_zone(request, op_context.zone_id)
-            result = await asyncio.to_thread(
-                self._nexus_fs.sys_read,
+            result = await self._nexus_fs.sys_read(
                 request.path,
                 op_context,
                 False,  # return_metadata

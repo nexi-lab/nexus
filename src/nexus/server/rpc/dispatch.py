@@ -109,12 +109,12 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "sys_mkdir": DispatchEntry(handle_mkdir, is_async=True, event_type="dir_create"),
         "sys_rmdir": DispatchEntry(handle_rmdir, is_async=True, event_type="dir_delete"),
         "sys_stat": DispatchEntry(handle_get_metadata, is_async=True),
-        "sys_setattr": DispatchEntry(handle_set_metadata),
+        "sys_setattr": DispatchEntry(handle_set_metadata, is_async=True),
         "sys_is_directory": DispatchEntry(handle_is_directory, is_async=True),
         # Short aliases for nexus-test / remote clients
         "read": DispatchEntry(handle_read_async, is_async=True),
         "write": DispatchEntry(
-            handle_write, event_type="file_write", event_size_key="bytes_written"
+            handle_write, is_async=True, event_type="file_write", event_size_key="bytes_written"
         ),
         "exists": DispatchEntry(handle_exists, is_async=True),
         "list": DispatchEntry(handle_list, is_async=True),
@@ -131,7 +131,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "is_directory": DispatchEntry(handle_is_directory, is_async=True),
         # User-space utilities (not syscalls, but dispatched via RPC)
         "glob": DispatchEntry(handle_glob),
-        "grep": DispatchEntry(handle_grep),
+        "grep": DispatchEntry(handle_grep, is_async=True),
         "search": DispatchEntry(handle_search),
         # Delta sync
         "delta_read": DispatchEntry(handle_delta_read, is_async=True),

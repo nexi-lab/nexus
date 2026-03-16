@@ -367,8 +367,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 # OCC: compare-and-swap via lib helper (Issue #1323)
                 from nexus.lib.occ import occ_write
 
-                result = await asyncio.to_thread(
-                    occ_write,
+                result = await occ_write(
                     self._nexus_fs,
                     request.path,
                     content,
@@ -376,9 +375,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                     if_match=request.etag,
                 )
             else:
-                result = await asyncio.to_thread(
-                    self._nexus_fs.write, request.path, content, context=op_context
-                )
+                result = await self._nexus_fs.write(request.path, content, context=op_context)
 
             etag = result.get("etag", "") if isinstance(result, dict) else ""
             size = result.get("size", len(content)) if isinstance(result, dict) else len(content)

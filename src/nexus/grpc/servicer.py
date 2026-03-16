@@ -44,7 +44,6 @@ from nexus.contracts.exceptions import (
 )
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
-from nexus.lib.occ import occ_write
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
 from nexus.server.protocol import parse_method_params

@@ -103,39 +103,47 @@ describe("CommandRunner", () => {
       expect(useCommandRunnerStore.getState().spawnError).toContain("not in the allowlist");
     });
 
+    // These tests verify the allowlist does NOT reject these commands.
+    // On CI, `nexus` may not be on PATH, so Bun.spawn may fail with ENOENT.
+    // We assert the error (if any) is NOT an allowlist rejection.
     it("accepts allowed commands (init)", () => {
-      // This will actually try to spawn `nexus init` which may fail,
-      // but the point is it doesn't get rejected by the allowlist
       executeLocalCommand("init", ["--help"]);
       const state = useCommandRunnerStore.getState();
-      expect(state.spawnError).toBeNull();
-      // Status should be "running" (or "error" if nexus is not installed, but NOT allowlist error)
+      // Should not be rejected by allowlist — may fail with ENOENT on CI
+      if (state.spawnError) {
+        expect(state.spawnError).not.toContain("not in the allowlist");
+      }
       expect(state.status).not.toBe("idle");
     });
 
     it("accepts allowed commands (build)", () => {
       executeLocalCommand("build", []);
-      expect(useCommandRunnerStore.getState().spawnError).toBeNull();
+      const { spawnError } = useCommandRunnerStore.getState();
+      if (spawnError) expect(spawnError).not.toContain("not in the allowlist");
     });
 
     it("accepts allowed commands (demo)", () => {
       executeLocalCommand("demo", ["init"]);
-      expect(useCommandRunnerStore.getState().spawnError).toBeNull();
+      const { spawnError } = useCommandRunnerStore.getState();
+      if (spawnError) expect(spawnError).not.toContain("not in the allowlist");
     });
 
     it("accepts allowed commands (brick)", () => {
       executeLocalCommand("brick", ["mount", "test"]);
-      expect(useCommandRunnerStore.getState().spawnError).toBeNull();
+      const { spawnError } = useCommandRunnerStore.getState();
+      if (spawnError) expect(spawnError).not.toContain("not in the allowlist");
     });
 
     it("accepts allowed commands (agent)", () => {
       executeLocalCommand("agent", ["spawn"]);
-      expect(useCommandRunnerStore.getState().spawnError).toBeNull();
+      const { spawnError } = useCommandRunnerStore.getState();
+      if (spawnError) expect(spawnError).not.toContain("not in the allowlist");
     });
 
     it("accepts allowed commands (up)", () => {
       executeLocalCommand("up", []);
-      expect(useCommandRunnerStore.getState().spawnError).toBeNull();
+      const { spawnError } = useCommandRunnerStore.getState();
+      if (spawnError) expect(spawnError).not.toContain("not in the allowlist");
     });
   });
 

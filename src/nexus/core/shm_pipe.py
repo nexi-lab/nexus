@@ -160,8 +160,6 @@ class SharedRingBuffer:
             raise
         except ValueError:
             raise
-        # Wake up any blocked reader (e.g. PipedRecordStoreWriteObserver consumer)
-        self._not_empty.set()
         return int(n)
 
     def read_nowait(self) -> bytes:
@@ -180,16 +178,9 @@ class SharedRingBuffer:
             await self._not_full.wait()
 
     async def wait_readable(self) -> None:
-        import asyncio as _asyncio
-
         while self._core.is_empty() and not self._core.closed:
-            # Poll with short sleep instead of relying on Event.set() alone,
-            # because producers may run on a different event loop (e.g. gRPC
-            # async server vs. FastAPI/uvicorn loop). Event.set() from a
-            # different loop doesn't wake asyncio.Event.wait() reliably.
             self._not_empty.clear()
-            with contextlib.suppress(TimeoutError):
-                await _asyncio.wait_for(self._not_empty.wait(), timeout=0.1)
+            await self._not_empty.wait()
 
     # -- lifecycle ------------------------------------------------------------
 

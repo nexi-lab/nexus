@@ -7,6 +7,7 @@ Covers:
 - IntegrityError retry helper returns correct result
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -51,6 +52,10 @@ def _make_user(
     )
 
 
+def _mock_credential() -> MagicMock:
+    return MagicMock(id_token=None, metadata=None, expires_at=None)
+
+
 class TestOAuthUnverifiedEmailBlocked:
     """Issue #3062: OAuth signup must be blocked when an unverified local account exists."""
 
@@ -58,21 +63,15 @@ class TestOAuthUnverifiedEmailBlocked:
         """When provider email matches an unverified local user, signup must raise."""
         from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
 
-        # Create an unverified local account
         user = _make_user(email="victim@example.com", email_verified=0)
         db_session.add(user)
         db_session.commit()
 
-        # Create OAuthUserAuth with this session
         factory = sessionmaker(bind=db_session.bind)
-        providers = {"google": MagicMock()}
-        auth = OAuthUserAuth(factory, providers)
-
-        # Calling _get_or_create_oauth_user with the same email should raise
-        import asyncio
+        auth = OAuthUserAuth(factory, {"google": MagicMock()})
 
         with pytest.raises(ValueError, match="not verified"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 auth._get_or_create_oauth_user(
                     session=factory(),
                     provider="google",
@@ -81,7 +80,7 @@ class TestOAuthUnverifiedEmailBlocked:
                     email_verified=True,
                     name="Victim",
                     picture=None,
-                    oauth_credential=MagicMock(id_token=None, metadata=None, expires_at=None),
+                    oauth_credential=_mock_credential(),
                 )
             )
 
@@ -94,12 +93,9 @@ class TestOAuthUnverifiedEmailBlocked:
         db_session.commit()
 
         factory = sessionmaker(bind=db_session.bind)
-        providers = {"google": MagicMock()}
-        auth = OAuthUserAuth(factory, providers)
+        auth = OAuthUserAuth(factory, {"google": MagicMock()})
 
-        import asyncio
-
-        result_user, is_new = asyncio.get_event_loop().run_until_complete(
+        result_user, is_new = asyncio.run(
             auth._get_or_create_oauth_user(
                 session=factory(),
                 provider="google",
@@ -108,7 +104,7 @@ class TestOAuthUnverifiedEmailBlocked:
                 email_verified=True,
                 name="Verified",
                 picture=None,
-                oauth_credential=MagicMock(id_token=None, metadata=None, expires_at=None),
+                oauth_credential=_mock_credential(),
             )
         )
         assert result_user.user_id == user.user_id
@@ -119,13 +115,10 @@ class TestOAuthUnverifiedEmailBlocked:
         from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
 
         factory = sessionmaker(bind=db_session.bind)
-        providers = {"google": MagicMock()}
-        auth = OAuthUserAuth(factory, providers)
+        auth = OAuthUserAuth(factory, {"google": MagicMock()})
         auth._user_provisioner = None
 
-        import asyncio
-
-        result_user, is_new = asyncio.get_event_loop().run_until_complete(
+        result_user, is_new = asyncio.run(
             auth._get_or_create_oauth_user(
                 session=factory(),
                 provider="google",
@@ -134,7 +127,7 @@ class TestOAuthUnverifiedEmailBlocked:
                 email_verified=True,
                 name="New User",
                 picture=None,
-                oauth_credential=MagicMock(id_token=None, metadata=None, expires_at=None),
+                oauth_credential=_mock_credential(),
             )
         )
         assert is_new is True
@@ -145,7 +138,6 @@ class TestOAuthUnverifiedEmailBlocked:
         """When the OAuth account already exists, return the existing user."""
         from nexus.bricks.auth.oauth.user_auth import OAuthUserAuth
 
-        # Create user + OAuth account
         user = _make_user(email="existing@example.com", email_verified=1)
         db_session.add(user)
         db_session.flush()
@@ -162,12 +154,9 @@ class TestOAuthUnverifiedEmailBlocked:
         db_session.commit()
 
         factory = sessionmaker(bind=db_session.bind)
-        providers = {"google": MagicMock()}
-        auth = OAuthUserAuth(factory, providers)
+        auth = OAuthUserAuth(factory, {"google": MagicMock()})
 
-        import asyncio
-
-        result_user, is_new = asyncio.get_event_loop().run_until_complete(
+        result_user, is_new = asyncio.run(
             auth._get_or_create_oauth_user(
                 session=factory(),
                 provider="google",
@@ -176,7 +165,7 @@ class TestOAuthUnverifiedEmailBlocked:
                 email_verified=True,
                 name="Existing",
                 picture=None,
-                oauth_credential=MagicMock(id_token=None, metadata=None, expires_at=None),
+                oauth_credential=_mock_credential(),
             )
         )
         assert result_user.user_id == user.user_id

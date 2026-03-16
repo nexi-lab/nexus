@@ -779,14 +779,15 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             messages.extend(ready.take_persisted_messages());
         }
 
-        // Handle committed entries — NO lock drop needed, we own raw_node
-        let committed = ready.take_committed_entries();
-        if !committed.is_empty() {
-            tracing::debug!(count = committed.len(), "raft.apply");
-            self.apply_entries(committed).await?;
-        }
+        // Ordering invariant (per raft-rs five_mem_node example / Raft paper §3):
+        //   1. Apply snapshot first — apply_snapshot() clears log entries,
+        //      so it must run before appending new entries.
+        //   2. Persist entries and hard state — durable BEFORE side-effects.
+        //   3. Apply committed entries to state machine — safe only after
+        //      the log is durable; committed_entries were persisted in a
+        //      prior round, so re-apply on crash is idempotent via last_applied.
 
-        // Handle snapshot (received from leader during catch-up / join)
+        // 1. Handle snapshot (received from leader during catch-up / join)
         if !ready.snapshot().is_empty() {
             let snapshot = ready.snapshot();
             tracing::info!(
@@ -808,7 +809,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             }
         }
 
-        // Persist entries and hard state
+        // 2. Persist entries and hard state
         if !ready.entries().is_empty() {
             self.raw_node
                 .mut_store()
@@ -821,6 +822,13 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                 .mut_store()
                 .set_hard_state(hs)
                 .map_err(|e| RaftError::Storage(e.to_string()))?;
+        }
+
+        // 3. Apply committed entries — NO lock drop needed, we own raw_node
+        let committed = ready.take_committed_entries();
+        if !committed.is_empty() {
+            tracing::debug!(count = committed.len(), "raft.apply");
+            self.apply_entries(committed).await?;
         }
 
         // Advance the ready — NO TOCTOU: we never dropped ownership

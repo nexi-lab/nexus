@@ -309,8 +309,7 @@ impl NexusFs {
                 Ok(attr)
             }
             Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("not found") {
+                if e.is_not_found() {
                     Err(ENOENT)
                 } else {
                     error!("get_attr error for {}: {}", path, e);
@@ -507,8 +506,7 @@ impl Filesystem for NexusFs {
                         entries
                     }
                     Err(e) => {
-                        let msg = e.to_string();
-                        if msg.contains("not found") {
+                        if e.is_not_found() {
                             reply.error(ENOENT);
                         } else {
                             error!("readdir error for {}: {}", path, e);
@@ -586,8 +584,9 @@ impl Filesystem for NexusFs {
         let content = match self.read_cached(&path) {
             Ok((data, _etag)) => data,
             Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("not found") {
+                if e.downcast_ref::<crate::error::NexusClientError>()
+                    .map_or(false, |ne| ne.is_not_found())
+                {
                     reply.error(ENOENT);
                 } else {
                     error!("read error for {}: {}", path, e);
@@ -629,7 +628,11 @@ impl Filesystem for NexusFs {
             // Read existing content first (use cache if available)
             let existing = match self.read_cached(&path) {
                 Ok((data, _)) => data,
-                Err(_) => Vec::new(),
+                Err(e) => {
+                    error!("partial write: read failed for {}: {}", path, e);
+                    reply.error(EIO);
+                    return;
+                }
             };
 
             let mut new_content = existing;
@@ -748,8 +751,7 @@ impl Filesystem for NexusFs {
                 reply.ok();
             }
             Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("not found") {
+                if e.is_not_found() {
                     reply.error(ENOENT);
                 } else {
                     error!("unlink error for {}: {}", path, e);
@@ -774,8 +776,7 @@ impl Filesystem for NexusFs {
                 return;
             }
             Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("not found") {
+                if e.is_not_found() {
                     reply.error(ENOENT);
                 } else {
                     error!("rmdir list error for {}: {}", path, e);
@@ -845,8 +846,7 @@ impl Filesystem for NexusFs {
                 reply.ok();
             }
             Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("not found") {
+                if e.is_not_found() {
                     reply.error(ENOENT);
                 } else {
                     error!("rename error: {} -> {}: {}", old_path, new_path, e);

@@ -112,8 +112,7 @@ impl RingBufferCore {
         // Write frame: [4B len][payload]
         let header = (payload_len as u32).to_le_bytes();
         ring[write_idx..write_idx + HEADER_SIZE].copy_from_slice(&header);
-        ring[write_idx + HEADER_SIZE..write_idx + HEADER_SIZE + payload_len]
-            .copy_from_slice(data);
+        ring[write_idx + HEADER_SIZE..write_idx + HEADER_SIZE + payload_len].copy_from_slice(data);
 
         // Update tail
         let current_tail = self.tail.load(Ordering::Relaxed);
@@ -208,9 +207,9 @@ impl RingBufferCore {
     fn push(&self, _py: Python<'_>, data: &[u8]) -> PyResult<usize> {
         match self.push_inner(data) {
             Ok(n) => Ok(n),
-            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("PipeClosed:{msg}"),
-            )),
+            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "PipeClosed:{msg}"
+            ))),
             Err(RingError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 format!("PipeFull:buffer full ({used}/{cap} bytes)"),
             )),
@@ -248,9 +247,9 @@ impl RingBufferCore {
     fn push_u64(&self, _py: Python<'_>, val: u64) -> PyResult<()> {
         match self.push_inner(&val.to_le_bytes()) {
             Ok(_) => Ok(()),
-            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("PipeClosed:{msg}"),
-            )),
+            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "PipeClosed:{msg}"
+            ))),
             Err(RingError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 format!("PipeFull:buffer full ({used}/{cap} bytes)"),
             )),

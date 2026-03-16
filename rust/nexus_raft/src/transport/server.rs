@@ -263,6 +263,7 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
 }
 
 /// Look up a zone's ZoneConsensus from the registry, or return a gRPC error.
+#[allow(clippy::result_large_err)]
 fn get_zone_node(
     registry: &ZoneRaftRegistry,
     zone_id: &str,
@@ -329,6 +330,7 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
 /// request is allowed.  This prevents rogue nodes from injecting Raft messages
 /// for zones they don't belong to (CockroachDB/etcd pattern: zone auth at app
 /// layer, node identity at TLS layer).
+#[allow(clippy::result_large_err)]
 fn check_zone_membership(
     registry: &ZoneRaftRegistry,
     zone_id: &str,
@@ -1010,6 +1012,7 @@ impl WitnessZoneRegistry {
     ///
     /// Opens zone-specific storage at `{base_path}/{zone_id}/`, creates a
     /// `ZoneConsensus<WitnessStateMachine>`, and spawns a `TransportLoop` task.
+    #[allow(clippy::result_large_err)]
     pub fn create_zone(
         &self,
         zone_id: &str,

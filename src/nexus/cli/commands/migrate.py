@@ -486,7 +486,7 @@ def restore(backup_path: str, dry_run: bool, data_dir: str | None) -> None:
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files")
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
 @add_backend_options
-async def import_s3(
+def import_s3(
     bucket: str,
     prefix: str,
     target: str,
@@ -503,6 +503,22 @@ async def import_s3(
         nexus migrate import-s3 --bucket my-bucket --prefix /data/ --target /workspace/
         nexus migrate import-s3 --bucket my-bucket --target /imports/ --dry-run
     """
+    import asyncio
+
+    asyncio.run(
+        _async_import_s3(bucket, prefix, target, overwrite, dry_run, remote_url, remote_api_key)
+    )
+
+
+async def _async_import_s3(
+    bucket: str,
+    prefix: str,
+    target: str,
+    overwrite: bool,
+    dry_run: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         from nexus.cli.utils import get_filesystem
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
@@ -552,7 +568,7 @@ async def import_s3(
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
 @click.option("--credentials", default=None, help="Path to service account credentials JSON")
 @add_backend_options
-async def import_gcs(
+def import_gcs(
     bucket: str,
     prefix: str,
     target: str,
@@ -570,6 +586,25 @@ async def import_gcs(
         nexus migrate import-gcs --bucket my-bucket --prefix /data/ --target /workspace/
         nexus migrate import-gcs --bucket my-bucket --target /imports/ --credentials creds.json
     """
+    import asyncio
+
+    asyncio.run(
+        _async_import_gcs(
+            bucket, prefix, target, overwrite, dry_run, credentials, remote_url, remote_api_key
+        )
+    )
+
+
+async def _async_import_gcs(
+    bucket: str,
+    prefix: str,
+    target: str,
+    overwrite: bool,
+    dry_run: bool,
+    credentials: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         from nexus.cli.utils import get_filesystem
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
@@ -618,7 +653,7 @@ async def import_gcs(
 @click.option("--overwrite", is_flag=True, help="Overwrite existing files")
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
 @add_backend_options
-async def import_fs(
+def import_fs(
     source: str,
     target: str,
     overwrite: bool,
@@ -632,6 +667,19 @@ async def import_fs(
         nexus migrate import-fs --source /local/data --target /workspace/
         nexus migrate import-fs --source ./docs --target /docs/ --dry-run
     """
+    import asyncio
+
+    asyncio.run(_async_import_fs(source, target, overwrite, dry_run, remote_url, remote_api_key))
+
+
+async def _async_import_fs(
+    source: str,
+    target: str,
+    overwrite: bool,
+    dry_run: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         from nexus.cli.utils import get_filesystem
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
@@ -676,7 +724,7 @@ async def import_fs(
 @click.option("--check-integrity", is_flag=True, help="Run full integrity checks")
 @click.option("--sample-size", default=100, help="Number of files to sample for content validation")
 @add_backend_options
-async def validate(
+def validate(
     check_integrity: bool,
     sample_size: int,  # noqa: ARG001 - Reserved for future use
     remote_url: str | None,
@@ -691,6 +739,16 @@ async def validate(
         nexus migrate validate --check-integrity
         nexus migrate validate --check-integrity --sample-size 500
     """
+    import asyncio
+
+    asyncio.run(_async_validate(check_integrity, remote_url, remote_api_key))
+
+
+async def _async_validate(
+    check_integrity: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         from nexus.cli.utils import get_filesystem
         from nexus.migrations.validators import IntegrityValidator

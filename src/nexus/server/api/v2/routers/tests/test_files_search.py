@@ -23,7 +23,7 @@ def mock_fs() -> MagicMock:
     ]
 
     # For grep fallback: fs.read returns bytes
-    def _read(path: str, **_kwargs):  # noqa: ANN001, ANN003
+    def _read(path: str, **_kwargs: object) -> bytes:
         contents = {
             "/src/main.py": b"import os\ndef main():\n    print('hello')\n",
             "/src/utils.py": b"import sys\ndef helper():\n    return 42\n",

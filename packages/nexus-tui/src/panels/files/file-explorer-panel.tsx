@@ -264,7 +264,7 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
       }
     },
     // Shift+P: paste to a specific path (prompts for destination)
-    P: () => {
+    "shift+p": () => {
       if (ctx.clipboard && ctx.client) {
         ctx.setInputMode("paste-dest");
         ctx.setInputBuffer(ctx.currentPath);
@@ -823,10 +823,12 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Delete confirmation dialog */}
       <ConfirmDialog
         visible={confirmDelete}
-        title={effectiveSelection.size > 1 ? "Delete Files" : "Delete File"}
+        title={effectiveSelection.size > 0 ? "Delete Selected" : "Delete File"}
         message={effectiveSelection.size > 1
           ? `Delete ${effectiveSelection.size} selected files?`
-          : `Delete "${selectedItem?.name ?? ""}"?`}
+          : effectiveSelection.size === 1
+            ? `Delete "${[...effectiveSelection][0]!.split("/").pop()}"?`
+            : `Delete "${selectedItem?.name ?? ""}"?`}
         onConfirm={handleConfirmDelete}
         onCancel={handleCancelDelete}
       />

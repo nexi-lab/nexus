@@ -9,6 +9,7 @@ End-to-end flow:
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import time
 from collections.abc import Generator
@@ -239,7 +240,7 @@ class TestTransactionalOutboxIntegration:
             event_bus=mock_bus,
             poll_interval_ms=50,
         )
-        worker.start()
+        asyncio.run(worker.start())
 
         try:
             # Write file while worker is running
@@ -263,4 +264,4 @@ class TestTransactionalOutboxIntegration:
 
             assert delivered, "Background worker did not deliver event"
         finally:
-            worker.stop(timeout=3.0)
+            asyncio.run(worker.stop(timeout=3.0))

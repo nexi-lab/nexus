@@ -94,8 +94,24 @@ def call_agent(
         nexus acp call -a claude -p "Fix the bug" --timeout 600
         nexus acp call -a claude -p "Follow up" -s <session_id>
     """
+    import asyncio
+
+    asyncio.run(
+        _async_call_agent(agent_id, prompt, cwd, timeout, session_id, remote_url, remote_api_key)
+    )
+
+
+async def _async_call_agent(
+    agent_id: str,
+    prompt: str,
+    cwd: str,
+    timeout: float,
+    session_id: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
             console.print("[red]ACP service not available[/red]")
@@ -151,8 +167,17 @@ def list_agents(
     Examples:
         nexus acp agents
     """
+    import asyncio
+
+    asyncio.run(_async_list_agents(remote_url, remote_api_key))
+
+
+async def _async_list_agents(
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
             console.print("[red]ACP service not available[/red]")
@@ -197,8 +222,17 @@ def list_processes(
     Examples:
         nexus acp ps
     """
+    import asyncio
+
+    asyncio.run(_async_list_processes(remote_url, remote_api_key))
+
+
+async def _async_list_processes(
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
             console.print("[red]ACP service not available[/red]")
@@ -246,8 +280,18 @@ def history(
         nexus acp history
         nexus acp history -n 5
     """
+    import asyncio
+
+    asyncio.run(_async_history(limit, remote_url, remote_api_key))
+
+
+async def _async_history(
+    limit: int,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
             console.print("[red]ACP service not available[/red]")
@@ -325,8 +369,18 @@ def kill_process(
     Examples:
         nexus acp kill <pid>
     """
+    import asyncio
+
+    asyncio.run(_async_kill_process(pid, remote_url, remote_api_key))
+
+
+async def _async_kill_process(
+    pid: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
             console.print("[red]ACP service not available[/red]")
@@ -371,8 +425,20 @@ def config_agent(
         nexus acp config -a claude --skills ""
         nexus acp config -a claude --system-prompt "You are helpful"
     """
+    import asyncio
+
+    asyncio.run(_async_config_agent(agent_id, skills, system_prompt, remote_url, remote_api_key))
+
+
+async def _async_config_agent(
+    agent_id: str,
+    skills: str | None,
+    system_prompt: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
             console.print("[red]ACP service not available[/red]")
@@ -453,8 +519,18 @@ def get_system_prompt(
     Examples:
         nexus acp system-prompt get -a claude
     """
+    import asyncio
+
+    asyncio.run(_async_get_system_prompt(agent_id, remote_url, remote_api_key))
+
+
+async def _async_get_system_prompt(
+    agent_id: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
             console.print("[red]ACP service not available[/red]")
@@ -488,8 +564,19 @@ def set_system_prompt(
     Examples:
         nexus acp system-prompt set -a claude -c "You are a helpful coding assistant."
     """
+    import asyncio
+
+    asyncio.run(_async_set_system_prompt(agent_id, content, remote_url, remote_api_key))
+
+
+async def _async_set_system_prompt(
+    agent_id: str,
+    content: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
             console.print("[red]ACP service not available[/red]")

@@ -779,14 +779,29 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             messages.extend(ready.take_persisted_messages());
         }
 
-        // Handle committed entries — NO lock drop needed, we own raw_node
-        let committed = ready.take_committed_entries();
-        if !committed.is_empty() {
-            tracing::debug!(count = committed.len(), "raft.apply");
-            self.apply_entries(committed).await?;
+        // Ordering invariant (per raft-rs README / Raft paper, §3):
+        //   1. Persist entries and hard state — durable BEFORE any side-effects.
+        //   2. Apply snapshot (if any) — must see persisted term/index.
+        //   3. Apply committed entries to state machine — safe only after
+        //      the log is durable; a crash before apply can be recovered by
+        //      re-applying from the persisted log.
+
+        // 1. Persist entries and hard state
+        if !ready.entries().is_empty() {
+            self.raw_node
+                .mut_store()
+                .append(ready.entries())
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
         }
 
-        // Handle snapshot (received from leader during catch-up / join)
+        if let Some(hs) = ready.hs() {
+            self.raw_node
+                .mut_store()
+                .set_hard_state(hs)
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+        }
+
+        // 2. Handle snapshot (received from leader during catch-up / join)
         if !ready.snapshot().is_empty() {
             let snapshot = ready.snapshot();
             tracing::info!(
@@ -808,19 +823,11 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             }
         }
 
-        // Persist entries and hard state
-        if !ready.entries().is_empty() {
-            self.raw_node
-                .mut_store()
-                .append(ready.entries())
-                .map_err(|e| RaftError::Storage(e.to_string()))?;
-        }
-
-        if let Some(hs) = ready.hs() {
-            self.raw_node
-                .mut_store()
-                .set_hard_state(hs)
-                .map_err(|e| RaftError::Storage(e.to_string()))?;
+        // 3. Handle committed entries — NO lock drop needed, we own raw_node
+        let committed = ready.take_committed_entries();
+        if !committed.is_empty() {
+            tracing::debug!(count = committed.len(), "raft.apply");
+            self.apply_entries(committed).await?;
         }
 
         // Advance the ready — NO TOCTOU: we never dropped ownership

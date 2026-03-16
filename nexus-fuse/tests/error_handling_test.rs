@@ -126,6 +126,149 @@ fn test_rpc_not_found_in_body() {
     assert_eq!(err.to_errno(), libc::ENOENT);
 }
 
+// ── Issue 12B: FUSE error classification for RPC "not found" ────────────────
+
+#[test]
+fn test_rpc_not_found_case_variant_maps_to_not_found() {
+    // Issue 12B: The classification at client.rs:170 checks for both "not found"
+    // and "Not Found". Verify the capitalized variant is also classified correctly.
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("POST", "/api/nfs/read")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"Object Not Found in store"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.read("/vanished.txt");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, NexusClientError::NotFound(_)),
+        "Expected NotFound for 'Not Found' variant, got: {:?}",
+        err
+    );
+    assert!(err.is_not_found());
+    assert_eq!(err.to_errno(), libc::ENOENT);
+    assert!(!err.is_transient(), "NotFound errors must not be transient");
+}
+
+#[test]
+fn test_rpc_error_without_not_found_maps_to_invalid_response() {
+    // Issue 12B: An RPC error whose message does NOT contain "not found"
+    // must be classified as InvalidResponse, not NotFound.
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("POST", "/api/nfs/read")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32003,"message":"Permission denied: /secret.txt"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.read("/secret.txt");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, NexusClientError::InvalidResponse(_)),
+        "Expected InvalidResponse for non-not-found RPC error, got: {:?}",
+        err
+    );
+    assert!(!err.is_not_found(), "is_not_found() must be false for InvalidResponse");
+    assert_eq!(err.to_errno(), libc::EPROTO, "InvalidResponse should map to EPROTO");
+    assert!(!err.is_transient(), "InvalidResponse errors must not be transient");
+}
+
+#[test]
+fn test_rpc_not_found_via_stat_operation() {
+    // Issue 12B: Verify not-found classification works across different RPC
+    // operations, not just `read`. The `stat` endpoint goes through the same
+    // `rpc_call` path, so "not found" in the error message should still yield
+    // NexusClientError::NotFound.
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"Path not found: /no/such/dir"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/no/such/dir");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, NexusClientError::NotFound(_)),
+        "Expected NotFound from stat RPC error, got: {:?}",
+        err
+    );
+    assert!(err.is_not_found());
+    assert_eq!(err.to_errno(), libc::ENOENT);
+}
+
+#[test]
+fn test_rpc_generic_error_via_stat_is_not_not_found() {
+    // Issue 12B: Symmetric counterpart — a non-not-found RPC error via stat
+    // must NOT be classified as NotFound.
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Invalid request: malformed path"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/bad\0path");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, NexusClientError::InvalidResponse(_)),
+        "Expected InvalidResponse for generic stat RPC error, got: {:?}",
+        err
+    );
+    assert!(!err.is_not_found());
+    assert_eq!(err.to_errno(), libc::EPROTO);
+}
+
+#[test]
+fn test_rpc_not_found_embedded_in_longer_message() {
+    // Issue 12B: The substring check should match "not found" anywhere in the
+    // message, even when surrounded by other text.
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("POST", "/api/nfs/read")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"Key not found in distributed hash table for /deep/path.bin"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.read("/deep/path.bin");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, NexusClientError::NotFound(_)),
+        "Expected NotFound when 'not found' appears mid-message, got: {:?}",
+        err
+    );
+    assert!(err.is_not_found());
+    assert_eq!(err.to_errno(), libc::ENOENT);
+}
+
+// ── End Issue 12B tests ─────────────────────────────────────────────────────
+
 #[test]
 fn test_successful_stat() {
     let mut server = Server::new();

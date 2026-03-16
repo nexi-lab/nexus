@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "nexus_pyo3"
-version = "0.9.2"
+version = "0.9.6"
 dependencies = [
  "ahash",
  "blake3",

@@ -469,11 +469,9 @@ fn add_direct_subjects(
     graph: &ReBACGraph,
     subjects: &mut AHashSet<(String, String)>,
 ) {
-    for key in graph.tuple_index.iter() {
-        let (obj_type, obj_id, rel, subj_type, subj_id) = key;
-        if obj_type == &object.entity_type && obj_id == &object.entity_id && rel == relation {
-            subjects.insert((subj_type.clone(), subj_id.clone()));
-        }
+    // Use the reverse_adjacency index for O(1) lookup instead of scanning all tuples.
+    for entity in graph.find_subjects_for_object(object, relation) {
+        subjects.insert((entity.entity_type, entity.entity_id));
     }
 
     for userset in graph.get_usersets(object, relation) {

@@ -565,14 +565,16 @@ class CacheCoordinator:
     # ------------------------------------------------------------------
 
     def cleanup_expired_cache(self) -> int:
-        """Remove expired cache entries.
+        """Remove expired cache entries from L1 in-memory caches.
 
         Returns:
             Number of cache entries removed
-
-        Note: L2 SQL cache (rebac_check_cache) removed — always returns 0.
         """
-        return 0
+        removed = 0
+        if self._l1_cache:
+            removed += len(self._l1_cache._grant_cache.expire())
+            removed += len(self._l1_cache._denial_cache.expire())
+        return removed
 
     def cleanup_expired_tuples(self) -> int:
         """Remove expired relationship tuples and invalidate their caches.

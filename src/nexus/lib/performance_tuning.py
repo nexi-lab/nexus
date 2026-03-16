@@ -696,6 +696,7 @@ def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
         DeploymentProfile.LITE: _LITE_TUNING,
         DeploymentProfile.FULL: _FULL_TUNING,
         DeploymentProfile.CLOUD: _CLOUD_TUNING,
+        DeploymentProfile.INNOVATION: _CLOUD_TUNING,  # INNOVATION reuses CLOUD tuning
         DeploymentProfile.REMOTE: _MINIMAL_TUNING,  # REMOTE reuses MINIMAL tuning
     }
 

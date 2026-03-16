@@ -262,6 +262,7 @@ _PROFILE_INDEX: dict[str, int] = {
     "lite": 1,
     "full": 2,
     "cloud": 3,
+    "innovation": 4,
 }
 
 

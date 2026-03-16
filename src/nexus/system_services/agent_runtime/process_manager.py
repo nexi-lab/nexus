@@ -48,13 +48,11 @@ class ProcessManager:
         vfs: NexusFS,
         llm_provider: Any,
         *,
-        agent_registry: Any | None = None,
         sandbox: Any | None = None,
         scheduler: Any | None = None,
     ) -> None:
         self._vfs = vfs
         self._llm = llm_provider
-        self._agent_registry = agent_registry
         self._sandbox = sandbox
         self._scheduler = scheduler
         self._session_store = SessionStore(vfs)
@@ -78,8 +76,7 @@ class ProcessManager:
         1. Generate PID (UUID).
         2. Create home dir: /{zone_id}/agents/{pid}/.
         3. Write SYSTEM.md if config.system_prompt.
-        4. Register with AgentRegistry (if available).
-        5. Store in in-memory process table.
+        4. Store in in-memory process table.
         """
         pid = str(uuid.uuid4())
         cwd = config.cwd or f"/{zone_id}/agents/{pid}"
@@ -111,19 +108,6 @@ class ProcessManager:
             json.dumps(settings, indent=2).encode("utf-8"),
             context=ctx,
         )
-
-        # Register with AgentRegistry if available
-        if self._agent_registry is not None:
-            try:
-                await self._agent_registry.register(
-                    agent_id=pid,
-                    owner_id=owner_id,
-                    zone_id=zone_id,
-                    name=config.name,
-                    metadata={"agent_type": config.agent_type, "model": config.model},
-                )
-            except Exception as exc:
-                logger.warning("AgentRegistry.register failed for %s: %s", pid, exc)
 
         # Build AgentProcess
         process = AgentProcess(
@@ -173,8 +157,7 @@ class ProcessManager:
         """Terminate an agent process.
 
         1. Transition to ZOMBIE.
-        2. Unregister from AgentRegistry.
-        3. Remove from process table.
+        2. Remove from process table.
         """
         process = self._processes.get(pid)
         if process is None:
@@ -189,13 +172,6 @@ class ProcessManager:
         # Transition to ZOMBIE
         process = replace(process, state=AgentProcessState.ZOMBIE)
         self._processes[pid] = process
-
-        # Unregister from AgentRegistry
-        if self._agent_registry is not None:
-            try:
-                await self._agent_registry.unregister(pid)
-            except Exception as exc:
-                logger.warning("AgentRegistry.unregister failed for %s: %s", pid, exc)
 
         # Remove from process table + caches
         self._processes.pop(pid, None)

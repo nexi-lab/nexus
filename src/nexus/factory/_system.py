@@ -34,7 +34,6 @@ class AgentRuntimePlaceholder:
     """
 
     factory_class: type
-    agent_registry: Any
     sandbox: Any
     scheduler: Any
 
@@ -532,7 +531,7 @@ def _boot_system_services(
 
     # --- Agent Runtime (Agent Process Engine, AGENT-PROCESS-ARCHITECTURE) ---
     agent_runtime: Any = None
-    if _on("agent_runtime") and agent_registry is not None:
+    if _on("agent_runtime"):
         try:
             from nexus.system_services.agent_runtime.process_manager import (
                 ProcessManager as _AgentProcessManager,
@@ -544,7 +543,6 @@ def _boot_system_services(
             # so orchestrator.py can finish wiring after NexusFS is created.
             agent_runtime = AgentRuntimePlaceholder(
                 factory_class=_AgentProcessManager,
-                agent_registry=async_agent_registry,
                 sandbox=None,  # wired later
                 scheduler=scheduler_service,
             )

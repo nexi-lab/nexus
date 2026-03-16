@@ -1,4 +1,4 @@
-"""FederationIPCResolver — PRE-DISPATCH resolver for remote DT_PIPE/DT_STREAM (#1625).
+"""FederationIPCResolver — PRE-DISPATCH resolver for remote DT_PIPE/DT_STREAM (#1625, #1665).
 
 Registered as a VFSPathResolver in KernelDispatch.  Each ``try_*`` method
 looks up metadata once, decides local vs remote, and either handles the

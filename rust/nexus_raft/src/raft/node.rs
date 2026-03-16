@@ -779,29 +779,15 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             messages.extend(ready.take_persisted_messages());
         }
 
-        // Ordering invariant (per raft-rs README / Raft paper, §3):
-        //   1. Persist entries and hard state — durable BEFORE any side-effects.
-        //   2. Apply snapshot (if any) — must see persisted term/index.
+        // Ordering invariant (per raft-rs five_mem_node example / Raft paper §3):
+        //   1. Apply snapshot first — apply_snapshot() clears log entries,
+        //      so it must run before appending new entries.
+        //   2. Persist entries and hard state — durable BEFORE side-effects.
         //   3. Apply committed entries to state machine — safe only after
-        //      the log is durable; a crash before apply can be recovered by
-        //      re-applying from the persisted log.
+        //      the log is durable; committed_entries were persisted in a
+        //      prior round, so re-apply on crash is idempotent via last_applied.
 
-        // 1. Persist entries and hard state
-        if !ready.entries().is_empty() {
-            self.raw_node
-                .mut_store()
-                .append(ready.entries())
-                .map_err(|e| RaftError::Storage(e.to_string()))?;
-        }
-
-        if let Some(hs) = ready.hs() {
-            self.raw_node
-                .mut_store()
-                .set_hard_state(hs)
-                .map_err(|e| RaftError::Storage(e.to_string()))?;
-        }
-
-        // 2. Handle snapshot (received from leader during catch-up / join)
+        // 1. Handle snapshot (received from leader during catch-up / join)
         if !ready.snapshot().is_empty() {
             let snapshot = ready.snapshot();
             tracing::info!(
@@ -821,6 +807,21 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                 sm.restore_snapshot(&snapshot.data)
                     .map_err(|e| RaftError::Storage(format!("restore snapshot: {e}")))?;
             }
+        }
+
+        // 2. Persist entries and hard state
+        if !ready.entries().is_empty() {
+            self.raw_node
+                .mut_store()
+                .append(ready.entries())
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+        }
+
+        if let Some(hs) = ready.hs() {
+            self.raw_node
+                .mut_store()
+                .set_hard_state(hs)
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
         }
 
         // 3. Handle committed entries — NO lock drop needed, we own raw_node

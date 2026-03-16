@@ -23,8 +23,12 @@ pub struct ReBACGraph {
     pub tuple_index: AHashSet<TupleKey>,
     pub adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>>,
     /// Reverse adjacency: (object_type, object_id, relation) → [subjects].
-    /// Enables tupleToUserset resolution which needs "find subjects with relation on object".
+    /// Built from ALL tuples (direct + userset). Enables tupleToUserset resolution.
     pub reverse_adjacency: AHashMap<AdjacencyKey, Vec<Entity>>,
+    /// Direct-only reverse adjacency: (object_type, object_id, relation) → [subjects].
+    /// Built only from tuples WITHOUT subject_relation (direct relations).
+    /// Used by add_direct_subjects() to avoid conflating userset subjects with direct ones.
+    pub direct_reverse: AHashMap<AdjacencyKey, Vec<Entity>>,
     pub userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>>,
 }
 
@@ -34,6 +38,7 @@ impl ReBACGraph {
         let mut tuple_index = AHashSet::new();
         let mut adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
         let mut reverse_adjacency: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
+        let mut direct_reverse: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
         let mut userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>> = AHashMap::new();
 
         for tuple in tuples {
@@ -60,6 +65,20 @@ impl ReBACGraph {
                     tuple.subject_id.clone(),
                 );
                 tuple_index.insert(tuple_key);
+
+                // Direct-only reverse: only non-userset tuples
+                let direct_rev_key = (
+                    tuple.object_type.clone(),
+                    tuple.object_id.clone(),
+                    tuple.relation.clone(),
+                );
+                direct_reverse
+                    .entry(direct_rev_key)
+                    .or_default()
+                    .push(Entity {
+                        entity_type: tuple.subject_type.clone(),
+                        entity_id: tuple.subject_id.clone(),
+                    });
             }
 
             // Forward adjacency: subject → objects
@@ -73,7 +92,7 @@ impl ReBACGraph {
                 entity_id: tuple.object_id.clone(),
             });
 
-            // Reverse adjacency: object → subjects
+            // Reverse adjacency: object → subjects (all tuples, including userset)
             let rev_key = (
                 tuple.object_type.clone(),
                 tuple.object_id.clone(),
@@ -89,6 +108,7 @@ impl ReBACGraph {
             tuple_index,
             adjacency_list,
             reverse_adjacency,
+            direct_reverse,
             userset_index,
         }
     }
@@ -142,6 +162,19 @@ impl ReBACGraph {
             .get(&rev_key)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Find direct (non-userset) subjects that have a relation on an object.
+    /// Unlike `find_subjects_for_object()`, this excludes userset tuples
+    /// (those with `subject_relation`), preventing userset subjects from being
+    /// treated as direct subjects in permission expansion.
+    pub fn find_direct_subjects_for_object(&self, object: &Entity, relation: &str) -> Vec<Entity> {
+        let key = (
+            object.entity_type.clone(),
+            object.entity_id.clone(),
+            relation.to_string(),
+        );
+        self.direct_reverse.get(&key).cloned().unwrap_or_default()
     }
 
     /// Get usersets that grant a relation on an object.
@@ -469,8 +502,10 @@ fn add_direct_subjects(
     graph: &ReBACGraph,
     subjects: &mut AHashSet<(String, String)>,
 ) {
-    // Use the reverse_adjacency index for O(1) lookup instead of scanning all tuples.
-    for entity in graph.find_subjects_for_object(object, relation) {
+    // Use the direct_reverse index for O(1) lookup instead of scanning all tuples.
+    // This index only contains non-userset tuples, preserving the semantic distinction
+    // between direct subjects and userset subjects (which are handled separately below).
+    for entity in graph.find_direct_subjects_for_object(object, relation) {
         subjects.insert((entity.entity_type, entity.entity_id));
     }
 

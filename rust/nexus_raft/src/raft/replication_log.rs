@@ -189,6 +189,18 @@ impl ReplicationLog {
         Ok(seq)
     }
 
+    /// Remove a single WAL entry by sequence number.
+    ///
+    /// Used to compensate when `apply_local()` fails after a WAL append:
+    /// the entry must be removed so `drain_unreplicated()` does not ship
+    /// a write that the local node reported as failed.
+    pub fn remove_entry(&self, seq: u64) -> Result<()> {
+        let key = seq.to_be_bytes();
+        self.log_tree.delete(&key)?;
+        tracing::debug!(seq, "Removed WAL entry (apply compensation)");
+        Ok(())
+    }
+
     /// Check if a write token has been committed (replicated to majority).
     ///
     /// Returns:

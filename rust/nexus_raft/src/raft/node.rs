@@ -576,9 +576,12 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// Appends to the replication WAL first, then applies to the local state
     /// machine. WAL-first ordering ensures crash safety: if we crash after
     /// WAL append but before local apply, the entry is recoverable via
-    /// replication (peers will receive it, and the local state will reconcile
-    /// on the next apply). The reverse order (apply-first) would leave local
-    /// state ahead of the WAL, permanently losing the write from replication.
+    /// replication. The reverse order (apply-first) would leave local state
+    /// ahead of the WAL, permanently losing the write from replication.
+    ///
+    /// If local apply fails, the WAL entry is removed to prevent replicating
+    /// a write that the caller received as an error ("failed locally,
+    /// committed remotely" would violate caller expectations).
     ///
     /// Only metadata operations (SetMetadata, DeleteMetadata) are supported.
     /// Lock operations require linearizability and must use SC ([`propose`]).
@@ -593,14 +596,23 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let command_bytes = bincode::serialize(&command)?;
 
         // WAL-first: append to replication log before local apply.
-        // This ensures the write is durable and replicable even if we
-        // crash before applying to the local state machine.
         let seq = repl_log.append(&command_bytes)?;
 
-        // Apply to local state machine (write lock)
+        // Apply to local state machine (write lock).
+        // On failure, compensate by removing the WAL entry so that
+        // drain_unreplicated() does not ship a write the caller saw as failed.
         {
             let mut sm = self.state_machine.write().await;
-            sm.apply_local(&command)?;
+            if let Err(e) = sm.apply_local(&command) {
+                if let Err(cleanup_err) = repl_log.remove_entry(seq) {
+                    tracing::error!(
+                        seq,
+                        error = %cleanup_err,
+                        "failed to clean up WAL entry after apply_local failure"
+                    );
+                }
+                return Err(e);
+            }
         }
 
         Ok(seq)
@@ -667,10 +679,18 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     }
 
     /// Process a message from another node (sends through channel to driver).
-    pub fn step(&self, msg: Message) -> Result<()> {
+    ///
+    /// Uses `send().await` (blocking until space is available) instead of
+    /// `try_send()` because Step messages carry Raft protocol traffic
+    /// (heartbeats, votes, append entries). Dropping them under load
+    /// destabilizes elections and replication. True backpressure is the
+    /// correct behavior: the peer's gRPC call blocks until the driver
+    /// can accept the message.
+    pub async fn step(&self, msg: Message) -> Result<()> {
         self.msg_tx
-            .try_send(RaftMsg::Step { msg })
-            .map_err(channel_try_send_err)
+            .send(RaftMsg::Step { msg })
+            .await
+            .map_err(|_| RaftError::ChannelClosed)
     }
 
     /// Campaign to become leader (sends through channel to driver).
@@ -1256,7 +1276,7 @@ mod tests {
                     for msg in messages {
                         let target_idx = msg.to as usize - 1;
                         if target_idx < all_handles.len() && target_idx != my_idx {
-                            let _ = all_handles[target_idx].step(msg);
+                            let _ = all_handles[target_idx].step(msg).await;
                         }
                     }
                 }

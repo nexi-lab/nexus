@@ -406,7 +406,7 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
             msg.term,
         );
 
-        if let Err(e) = node.step(msg) {
+        if let Err(e) = node.step(msg).await {
             return Ok(Response::new(StepMessageResponse {
                 success: false,
                 error: Some(format!("Failed to step message: {}", e)),
@@ -1230,7 +1230,7 @@ impl ZoneTransportService for WitnessServiceImpl {
             msg.term,
         );
 
-        if let Err(e) = node.step(msg) {
+        if let Err(e) = node.step(msg).await {
             return Ok(Response::new(StepMessageResponse {
                 success: false,
                 error: Some(format!("Failed to step message: {}", e)),

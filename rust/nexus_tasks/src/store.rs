@@ -203,16 +203,25 @@ impl TaskStore {
         let mut target_key = None;
 
         if max_wait_secs > 0 {
-            // Check all non-Critical priority bands from lowest (BestEffort=4)
-            // to highest (High=1). Promote the oldest starving task found.
-            for priority in (1..=4u8).rev() {
-                let prefix_bytes = [priority];
-                if let Some(guard) = self.pending_idx.prefix(prefix_bytes).next() {
-                    if let Ok((key, _)) = guard.into_inner() {
-                        if let Some((_, run_at, _)) = decode_pending_key(key.as_ref()) {
-                            if crate::priority::should_promote_oldest(run_at, now, max_wait_secs) {
-                                target_key = Some(key.as_ref().to_vec());
-                                break;
+            // Only promote starved tasks if no Critical (priority 0) tasks are
+            // pending — Critical work must always be serviced first.
+            let has_critical = self.pending_idx.prefix([0u8]).next().is_some();
+            if !has_critical {
+                // Check non-Critical priority bands from lowest (BestEffort=4)
+                // to highest (High=1). Promote the oldest starving task found.
+                for priority in (1..=4u8).rev() {
+                    let prefix_bytes = [priority];
+                    if let Some(guard) = self.pending_idx.prefix(prefix_bytes).next() {
+                        if let Ok((key, _)) = guard.into_inner() {
+                            if let Some((_, run_at, _)) = decode_pending_key(key.as_ref()) {
+                                if crate::priority::should_promote_oldest(
+                                    run_at,
+                                    now,
+                                    max_wait_secs,
+                                ) {
+                                    target_key = Some(key.as_ref().to_vec());
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1254,6 +1263,39 @@ mod tests {
         // The Normal task should still be claimable
         let claimed4 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
         assert_eq!(claimed4.task_type, "fresh_normal");
+
+        verify_index_consistency(&store);
+    }
+
+    #[test]
+    fn test_anti_starvation_does_not_preempt_critical() {
+        let (store, _dir) = test_store();
+        let now = 1_700_000_100u64;
+
+        // Insert a starved BestEffort task (very old)
+        let mut starved_be = make_task(&store, "starved_be", TaskPriority::BestEffort);
+        starved_be.run_at = 0; // run_at = 0 → very old
+        let starved_id = starved_be.task_id;
+        store.insert_task(&starved_be).unwrap();
+
+        // Insert a Critical task (fresh)
+        let mut critical = make_task(&store, "fresh_critical", TaskPriority::Critical);
+        critical.run_at = now;
+        let critical_id = critical.task_id;
+        store.insert_task(&critical).unwrap();
+
+        // Claim with anti-starvation enabled — Critical must still win
+        let claimed = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(
+            claimed.task_id, critical_id,
+            "Critical task must be claimed first even with starved BestEffort pending"
+        );
+        assert_eq!(claimed.task_type, "fresh_critical");
+
+        // Now the starved BestEffort should be claimable (no more Critical)
+        let claimed2 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(claimed2.task_id, starved_id);
+        assert_eq!(claimed2.task_type, "starved_be");
 
         verify_index_consistency(&store);
     }

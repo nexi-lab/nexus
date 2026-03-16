@@ -54,9 +54,10 @@ class ProcResolver:
         path: str,
         *,
         return_metadata: bool = False,
-        _context: Any = None,
+        context: Any = None,
     ) -> bytes | dict | None:
         """Generate process status JSON from in-memory state, or None."""
+        _ = context
         pid = self._match_pid(path)
         if pid is None:
             return None
@@ -81,8 +82,9 @@ class ProcResolver:
             raise PermissionError(f"{path}: proc filesystem is read-only")
         return None
 
-    def try_delete(self, path: str, *, _context: Any = None) -> dict[str, Any] | None:
+    def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None:
         """Reject deletes on proc paths (read-only, like Linux /proc)."""
+        _ = context
         if self._match_pid(path) is not None:
             raise PermissionError(f"{path}: proc filesystem is read-only")
         return None

@@ -11,6 +11,8 @@ import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from nexus.bricks.auth.constants import get_hmac_secret
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -19,11 +21,13 @@ logger = logging.getLogger(__name__)
 # API key security constants
 API_KEY_PREFIX = "sk-"
 API_KEY_MIN_LENGTH = 32
-HMAC_SALT = "nexus-api-key-v1"
 
 
 def hash_api_key(key: str) -> str:
-    """Hash API key using HMAC-SHA256 with versioned salt.
+    """Hash API key using HMAC-SHA256 with per-install secret.
+
+    Uses get_hmac_secret() for consistent hashing across all code
+    paths (Issue #3062).
 
     Args:
         key: Raw API key string.
@@ -31,8 +35,9 @@ def hash_api_key(key: str) -> str:
     Returns:
         HMAC-SHA256 hex digest.
     """
+    secret = get_hmac_secret()
     return hmac.new(
-        HMAC_SALT.encode("utf-8"),
+        secret.encode("utf-8"),
         key.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()

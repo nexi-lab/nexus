@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.bricks.auth.constants import API_KEY_MIN_LENGTH, API_KEY_PREFIX, get_hmac_secret
+from nexus.bricks.auth.constants import (
+    _HMAC_SALT_DEFAULT,
+    API_KEY_MIN_LENGTH,
+    API_KEY_PREFIX,
+    get_hmac_secret,
+)
 from nexus.bricks.auth.providers.base import AuthProvider, AuthResult
 
 if TYPE_CHECKING:
@@ -57,6 +62,21 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 APIKeyModel.revoked == 0,
             )
             api_key = session.scalar(stmt)
+
+            # Issue #3062: Dual-read fallback — if a custom HMAC secret is
+            # configured but this key was minted with the legacy salt, retry
+            # with the legacy salt so existing keys keep working during the
+            # migration window.
+            if not api_key and get_hmac_secret() != _HMAC_SALT_DEFAULT:
+                legacy_hash = self._hash_key_with(token, _HMAC_SALT_DEFAULT)
+                if legacy_hash != token_hash:
+                    stmt_legacy = select(APIKeyModel).where(
+                        APIKeyModel.key_hash == legacy_hash,
+                        APIKeyModel.revoked == 0,
+                    )
+                    api_key = session.scalar(stmt_legacy)
+                    if api_key:
+                        token_hash = legacy_hash  # for background update
 
             if not api_key:
                 logger.debug("API key not found or revoked: %s...", token_hash[:16])
@@ -150,6 +170,11 @@ class DatabaseAPIKeyAuth(AuthProvider):
     @staticmethod
     def _hash_key(key: str) -> str:
         secret = get_hmac_secret()
+        return hmac.new(secret.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _hash_key_with(key: str, secret: str) -> str:
+        """Hash a key with a specific HMAC secret (used for legacy fallback)."""
         return hmac.new(secret.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
 
     @classmethod

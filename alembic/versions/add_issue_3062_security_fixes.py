@@ -23,37 +23,55 @@ depends_on: Union[str, ABCSequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. Partial unique index on users.email — PostgreSQL only
-    op.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_verified_active
-        ON users (email)
-        WHERE is_active = 1 AND email_verified = 1 AND deleted_at IS NULL
-        """
-    )
+    dialect = op.get_bind().dialect.name
 
-    # 2. PostgreSQL SEQUENCE for MCL sequence_number
-    op.execute("CREATE SEQUENCE IF NOT EXISTS mcl_sequence_number_seq")
-    # Set current value to MAX(sequence_number) so new rows continue from there
-    op.execute(
-        """
-        SELECT setval(
-            'mcl_sequence_number_seq',
-            COALESCE((SELECT MAX(sequence_number) FROM metadata_change_log), 0) + 1,
-            false
+    if dialect == "postgresql":
+        # 1. Partial unique index on users.email — PostgreSQL only
+        op.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_verified_active
+            ON users (email)
+            WHERE is_active = 1 AND email_verified = 1 AND deleted_at IS NULL
+            """
         )
-        """
-    )
-    # Set the column default to use the sequence
-    op.execute(
-        """
-        ALTER TABLE metadata_change_log
-        ALTER COLUMN sequence_number SET DEFAULT nextval('mcl_sequence_number_seq')
-        """
-    )
+
+        # 2. PostgreSQL SEQUENCE for MCL sequence_number
+        op.execute("CREATE SEQUENCE IF NOT EXISTS mcl_sequence_number_seq")
+        # Set current value to MAX(sequence_number) so new rows continue from there
+        op.execute(
+            """
+            SELECT setval(
+                'mcl_sequence_number_seq',
+                COALESCE((SELECT MAX(sequence_number) FROM metadata_change_log), 0) + 1,
+                false
+            )
+            """
+        )
+        # Set the column default to use the sequence
+        op.execute(
+            """
+            ALTER TABLE metadata_change_log
+            ALTER COLUMN sequence_number SET DEFAULT nextval('mcl_sequence_number_seq')
+            """
+        )
+    else:
+        # SQLite: partial indexes use a different syntax but SQLite supports them
+        op.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_verified_active
+            ON users (email)
+            WHERE is_active = 1 AND email_verified = 1 AND deleted_at IS NULL
+            """
+        )
+        # SQLite has no SEQUENCE support; MCLRecorder handles allocation
+        # via its fallback allocator with retry-on-collision.
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE metadata_change_log ALTER COLUMN sequence_number DROP DEFAULT")
-    op.execute("DROP SEQUENCE IF EXISTS mcl_sequence_number_seq")
+    dialect = op.get_bind().dialect.name
+
+    if dialect == "postgresql":
+        op.execute("ALTER TABLE metadata_change_log ALTER COLUMN sequence_number DROP DEFAULT")
+        op.execute("DROP SEQUENCE IF EXISTS mcl_sequence_number_seq")
+
     op.execute("DROP INDEX IF EXISTS uq_users_email_verified_active")

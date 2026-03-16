@@ -2301,7 +2301,10 @@ class NexusFS(  # type: ignore[misc]
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _result = self._dispatch.resolve_write(path, buf)
         if _handled:
-            return {"path": path, "bytes_written": len(buf), "created": False}
+            base = {"path": path, "bytes_written": len(buf), "created": False}
+            if isinstance(_result, dict):
+                base.update(_result)
+            return base
 
         # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
         _meta = self.metadata.get(path)
@@ -4424,35 +4427,16 @@ class NexusFS(  # type: ignore[misc]
     # DT_PIPE kernel primitives (§4.2)
     # ------------------------------------------------------------------
 
-    def _pipe_is_remote(self, path: str) -> str | None:
-        """Check if a DT_PIPE is hosted on a remote node.
-
-        Returns the remote origin address if remote, None if local.
-        Locality check: backend_name="pipe" or "pipe@<self>" → local.
-        """
-        from nexus.contracts.backend_address import BackendAddress
-
-        meta = self.metadata.get(path)
-        if meta is None or not meta.backend_name:
-            return None
-        addr = BackendAddress.parse(meta.backend_name)
-        if not addr.has_origin:
-            return None  # legacy "pipe" (no origin) → always local
-        if addr.origin == self._pipe_manager.self_address:
-            return None  # origin is self → local
-        return addr.origin
-
     async def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_PIPE — async blocking, waits until data is available."""
+        """Read from DT_PIPE — async blocking, waits until data is available.
+
+        Only handles local pipes. Remote pipes are intercepted by
+        FederationIPCResolver in the PRE-DISPATCH phase.
+        """
         from nexus.core.pipe import PipeClosedError, PipeNotFoundError
 
         if self._pipe_manager is None:
             raise NexusFileNotFoundError(path, "PipeManager not available")
-
-        # Locality check: forward to origin if pipe is on a remote node
-        remote_origin = self._pipe_is_remote(path)
-        if remote_origin is not None:
-            return self._pipe_read_remote(remote_origin, path, count=count, offset=offset)
 
         try:
             data = await self._pipe_manager.pipe_read(path, blocking=True)
@@ -4465,16 +4449,15 @@ class NexusFS(  # type: ignore[misc]
         return data
 
     def _pipe_write(self, path: str, data: bytes) -> int:
-        """Write to DT_PIPE — non-blocking, PipeFullError propagates."""
+        """Write to DT_PIPE — non-blocking, PipeFullError propagates.
+
+        Only handles local pipes. Remote pipes are intercepted by
+        FederationIPCResolver in the PRE-DISPATCH phase.
+        """
         from nexus.core.pipe import PipeClosedError, PipeNotFoundError
 
         if self._pipe_manager is None:
             raise NexusFileNotFoundError(path, "PipeManager not available")
-
-        # Locality check: forward to origin if pipe is on a remote node
-        remote_origin = self._pipe_is_remote(path)
-        if remote_origin is not None:
-            return self._pipe_write_remote(remote_origin, path, data)
 
         try:
             return self._pipe_manager.pipe_write_nowait(path, data)
@@ -4484,16 +4467,15 @@ class NexusFS(  # type: ignore[misc]
             raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
 
     def _pipe_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_PIPE — close buffer + delete inode."""
+        """Destroy DT_PIPE — close buffer + delete inode.
+
+        Only handles local pipes. Remote pipes are intercepted by
+        FederationIPCResolver in the PRE-DISPATCH phase.
+        """
         from nexus.core.pipe import PipeNotFoundError
 
         if self._pipe_manager is None:
             raise NexusFileNotFoundError(path, "PipeManager not available")
-
-        # Locality check: forward full sys_unlink to origin if remote
-        remote_origin = self._pipe_is_remote(path)
-        if remote_origin is not None:
-            return self._pipe_destroy_remote(remote_origin, path)
 
         try:
             self._pipe_manager.destroy(path)
@@ -4502,132 +4484,17 @@ class NexusFS(  # type: ignore[misc]
         return {}
 
     # ------------------------------------------------------------------
-    # DT_PIPE remote proxy — forward pipe ops to origin via Call RPC
-    # ------------------------------------------------------------------
-
-    def _pipe_read_remote(
-        self, origin: str, path: str, *, count: int | None = None, offset: int = 0
-    ) -> bytes:
-        """Read from a remote DT_PIPE via gRPC Call RPC."""
-        import grpc
-
-        from nexus.grpc.channel_factory import build_peer_channel
-        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
-        from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
-
-        params: dict[str, Any] = {"path": path}
-        if count is not None:
-            params["count"] = count
-        if offset:
-            params["offset"] = offset
-
-        channel = build_peer_channel(origin)
-        try:
-            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-            request = vfs_pb2.CallRequest(
-                method="sys_read",
-                payload=encode_rpc_message(params),
-            )
-            response = stub.Call(request, timeout=30.0)
-            if response.is_error:
-                payload = decode_rpc_message(response.payload) if response.payload else {}
-                msg = payload.get("message", "Remote pipe read failed")
-                raise NexusFileNotFoundError(path, msg)
-            result = decode_rpc_message(response.payload)
-            content = result.get("result", b"")
-            if isinstance(content, str):
-                import base64
-
-                content = base64.b64decode(content)
-            return content
-        except grpc.RpcError as exc:
-            raise NexusFileNotFoundError(
-                path, f"Remote pipe read to {origin} failed: {exc}"
-            ) from exc
-        finally:
-            channel.close()
-
-    def _pipe_write_remote(self, origin: str, path: str, data: bytes) -> int:
-        """Write to a remote DT_PIPE via gRPC Call RPC."""
-        import base64
-
-        import grpc
-
-        from nexus.grpc.channel_factory import build_peer_channel
-        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
-        from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
-
-        params = {"path": path, "buf": base64.b64encode(data).decode("ascii")}
-        channel = build_peer_channel(origin)
-        try:
-            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-            request = vfs_pb2.CallRequest(
-                method="sys_write",
-                payload=encode_rpc_message(params),
-            )
-            response = stub.Call(request, timeout=30.0)
-            if response.is_error:
-                payload = decode_rpc_message(response.payload) if response.payload else {}
-                msg = payload.get("message", "Remote pipe write failed")
-                raise NexusFileNotFoundError(path, msg)
-            result = decode_rpc_message(response.payload)
-            return result.get("result", len(data))
-        except grpc.RpcError as exc:
-            raise NexusFileNotFoundError(
-                path, f"Remote pipe write to {origin} failed: {exc}"
-            ) from exc
-        finally:
-            channel.close()
-
-    def _pipe_destroy_remote(self, origin: str, path: str) -> dict[str, Any]:
-        """Destroy a remote DT_PIPE via gRPC Delete RPC."""
-        import grpc
-
-        from nexus.grpc.channel_factory import build_peer_channel
-        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
-
-        channel = build_peer_channel(origin)
-        try:
-            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-            request = vfs_pb2.DeleteRequest(path=path, auth_token="")
-            response = stub.Delete(request, timeout=30.0)
-            if response.is_error:
-                logger.warning("Remote pipe destroy on %s failed for %s", origin, path)
-            return {}
-        except grpc.RpcError as exc:
-            logger.warning("Remote pipe destroy to %s failed: %s", origin, exc)
-            raise NexusFileNotFoundError(
-                path, f"Remote pipe destroy to {origin} failed: {exc}"
-            ) from exc
-        finally:
-            channel.close()
-
-    # ------------------------------------------------------------------
     # DT_STREAM kernel primitives (§4.2)
     # ------------------------------------------------------------------
 
-    def _stream_is_remote(self, path: str) -> str | None:
-        """Check if a DT_STREAM is hosted on a remote node.
-
-        Returns the remote origin address if remote, None if local.
-        """
-        from nexus.contracts.backend_address import BackendAddress
-
-        meta = self.metadata.get(path)
-        if meta is None or not meta.backend_name:
-            return None
-        addr = BackendAddress.parse(meta.backend_name)
-        if not addr.has_origin:
-            return None
-        if addr.origin == self._stream_manager.self_address:
-            return None
-        return addr.origin
-
     async def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_STREAM — async blocking, waits until data at offset is available."""
+        """Read from DT_STREAM — async blocking, waits until data at offset is available.
+
+        Only handles local streams. Remote streams are intercepted by
+        FederationIPCResolver in the PRE-DISPATCH phase.
+        """
         from nexus.core.stream import StreamClosedError, StreamNotFoundError
 
-        # TODO: remote proxy (like _pipe_read_remote) when federation is wired
         try:
             if count is not None and count > 1:
                 items, _ = await self._stream_manager.stream_read_batch_blocking(
@@ -4642,10 +4509,13 @@ class NexusFS(  # type: ignore[misc]
             raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
     def _stream_write(self, path: str, data: bytes) -> int:
-        """Write to DT_STREAM — non-blocking append, returns byte offset."""
+        """Write to DT_STREAM — non-blocking append, returns byte offset.
+
+        Only handles local streams. Remote streams are intercepted by
+        FederationIPCResolver in the PRE-DISPATCH phase.
+        """
         from nexus.core.stream import StreamClosedError, StreamNotFoundError
 
-        # TODO: remote proxy when federation is wired
         try:
             return self._stream_manager.stream_write_nowait(path, data)
         except StreamNotFoundError:
@@ -4654,10 +4524,13 @@ class NexusFS(  # type: ignore[misc]
             raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
     def _stream_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_STREAM — close buffer + delete inode."""
+        """Destroy DT_STREAM — close buffer + delete inode.
+
+        Only handles local streams. Remote streams are intercepted by
+        FederationIPCResolver in the PRE-DISPATCH phase.
+        """
         from nexus.core.stream import StreamNotFoundError
 
-        # TODO: remote proxy when federation is wired
         try:
             self._stream_manager.destroy(path)
         except StreamNotFoundError:

@@ -254,11 +254,27 @@ class VFSPathResolver(Protocol):
 
     Registered at boot via factory into KernelDispatch.  Empty resolver
     chain = no-op = zero overhead when no resolvers registered.
+
+    Two-phase dispatch:
+        1. ``matches(path)`` — returns truthy match context (e.g. metadata)
+           or ``None``.  The match context is passed to the subsequent
+           operation to avoid redundant lookups.
+        2. ``read/write/delete(path, match_ctx=...)`` — executes using
+           the cached match context from ``matches()``.
+
+    Note: ``matches()`` is never called standalone — always paired with
+    an operation.  Future cleanup (#1665) will merge match+op into a
+    single-call pattern.
     """
 
-    def matches(self, path: str) -> bool: ...
+    def matches(self, path: str) -> Any: ...
     def read(
-        self, path: str, *, return_metadata: bool = False, context: Any = None
+        self,
+        path: str,
+        *,
+        match_ctx: Any = None,
+        return_metadata: bool = False,
+        context: Any = None,
     ) -> bytes | dict: ...
-    def write(self, path: str, content: bytes) -> dict[str, Any]: ...
-    def delete(self, path: str, *, context: Any = None) -> None: ...
+    def write(self, path: str, content: bytes, *, match_ctx: Any = None) -> dict[str, Any]: ...
+    def delete(self, path: str, *, match_ctx: Any = None, context: Any = None) -> None: ...

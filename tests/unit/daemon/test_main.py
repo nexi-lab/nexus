@@ -290,6 +290,9 @@ class TestMainCli:
         tmp_path: Path,
         monkeypatch,
     ) -> None:
+        import sys
+        import types
+
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
 
         mock_nx = MagicMock()
@@ -297,25 +300,16 @@ class TestMainCli:
 
         mock_app = MagicMock()
         mock_create_app = MagicMock(return_value=mock_app)
-
         mock_run_server = MagicMock()
 
-        # Patch lazy imports: nexus.connect is called via ``import nexus``
-        # inside main(), and create_app / run_server via
-        # ``from nexus.server.fastapi_server import create_app, run_server``.
-        with (
-            patch("nexus.connect", mock_connect),
-            patch(
-                "nexus.server.fastapi_server.create_app",
-                mock_create_app,
-                create=True,
-            ),
-            patch(
-                "nexus.server.fastapi_server.run_server",
-                mock_run_server,
-                create=True,
-            ),
-        ):
+        # Inject a fake fastapi_server module so the lazy import inside main()
+        # resolves without requiring the real fastapi dependency.
+        fake_mod = types.ModuleType("nexus.server.fastapi_server")
+        fake_mod.create_app = mock_create_app
+        fake_mod.run_server = mock_run_server
+        monkeypatch.setitem(sys.modules, "nexus.server.fastapi_server", fake_mod)
+
+        with patch("nexus.connect", mock_connect):
             runner = CliRunner()
             result = runner.invoke(main, ["--host", "127.0.0.1", "--port", "9999"])
 

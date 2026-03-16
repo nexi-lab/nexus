@@ -81,20 +81,30 @@ class VirtualViewResolver(VFSPathResolver):
     # VFSPathResolver protocol
     # ------------------------------------------------------------------
 
-    def matches(self, path: str) -> bool:
-        """Return True if *path* is a virtual parsed view."""
+    def matches(self, path: str) -> Any:
+        """Return parsed path context if *path* is a virtual parsed view, None otherwise."""
         from nexus.lib.virtual_views import parse_virtual_path
 
-        _, view_type = parse_virtual_path(path, self._metadata.exists)
-        return view_type == "md"
+        original_path, view_type = parse_virtual_path(path, self._metadata.exists)
+        if view_type == "md":
+            return (original_path, view_type)
+        return None
 
     def read(
-        self, path: str, *, return_metadata: bool = False, context: Any = None
+        self,
+        path: str,
+        *,
+        match_ctx: Any = None,
+        return_metadata: bool = False,
+        context: Any = None,
     ) -> bytes | dict[str, Any]:
         """Read virtual parsed view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
-        original_path, view_type = parse_virtual_path(path, self._metadata.exists)
+        if match_ctx is not None:
+            original_path, view_type = match_ctx
+        else:
+            original_path, view_type = parse_virtual_path(path, self._metadata.exists)
         if view_type != "md":
             raise NexusFileNotFoundError(f"Not a virtual view: {path}")
 
@@ -142,11 +152,12 @@ class VirtualViewResolver(VFSPathResolver):
             }
         return content
 
-    def write(self, path: str, content: bytes) -> dict[str, Any]:
+    def write(self, path: str, content: bytes, *, match_ctx: Any = None) -> dict[str, Any]:
         """Virtual views are read-only."""
+        _ = match_ctx  # Protocol-required; virtual views are read-only
         raise NexusFileNotFoundError(f"Cannot write to virtual view: {path} ({len(content)} bytes)")
 
-    def delete(self, path: str, *, context: Any = None) -> None:
+    def delete(self, path: str, *, match_ctx: Any = None, context: Any = None) -> None:
         """Virtual views are read-only."""
-        _ = context  # Required by VFSPathResolver protocol
+        _ = (match_ctx, context)  # Protocol-required; virtual views are read-only
         raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")

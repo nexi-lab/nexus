@@ -1,11 +1,11 @@
 """FederationContentResolver — PRE-DISPATCH resolver for remote content (#163).
 
 Registered as a VFSPathResolver in KernelDispatch.  On every read/delete,
-looks up metadata once:
+``matches()`` looks up metadata and checks locality:
 
-    - Remote origin → resolver handles the operation (gRPC RPC to peer).
-    - Local origin  → resolver passes prefetched metadata back as hint
-                      so the kernel skips its own metastore.get().
+    - Remote origin → returns metadata as match context → read/delete handle
+      the operation via gRPC RPC to the origin peer.
+    - Local origin  → returns None → kernel handles normally.
 
 Zero kernel coupling: the kernel sees a standard VFSPathResolver.
 Federation topology, gRPC channels, and progressive replication are
@@ -21,11 +21,8 @@ Design reference:
 import logging
 from typing import TYPE_CHECKING, Any
 
-import grpc
-
 from nexus.contracts.backend_address import BackendAddress
 from nexus.contracts.exceptions import NexusFileNotFoundError
-from nexus.grpc.channel_factory import build_peer_channel
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
@@ -46,12 +43,9 @@ class FederationContentResolver:
     FederatedMetadataProxy (DI), which enriches ``backend_name`` with the
     writer node's address so future reads can locate content.
 
-    ``matches()`` always returns ``False`` so writes pass through the
-    resolver chain to the kernel's normal codepath.
-
-    Implements the ``try_read`` and ``try_delete`` protocols:
-    a single call looks up metadata, decides local vs remote, and
-    either handles the operation (remote) or passes back to the kernel (local).
+    ``matches()`` returns metadata for remote content only (truthy match
+    context), ``None`` for local or non-existent content.  Writes always
+    pass through (matches returns None) since content writes are local.
 
     Args:
         metastore: MetastoreABC for metadata lookup.
@@ -74,31 +68,44 @@ class FederationContentResolver:
         self._tls_config = tls_config
         self._timeout = timeout
 
-    def try_read(
-        self,
-        path: str,
-        *,
-        return_metadata: bool = False,
-        **_kwargs: Any,
-    ) -> tuple[bool, Any]:
-        """Single-call resolve: metadata lookup + local/remote decision.
+    # ------------------------------------------------------------------
+    # VFSPathResolver protocol
+    # ------------------------------------------------------------------
 
-        Returns:
-            (True, content_or_dict) — handled: content fetched from remote peer.
-            (False, FileMetadata)   — not handled: local content, metadata hint.
-            (False, None)           — not handled: no metadata found.
+    def matches(self, path: str) -> Any:
+        """Check if path refers to remote content.
+
+        Returns metadata (truthy) for remote content, None otherwise.
+        The metadata is passed as ``match_ctx`` to read/delete to avoid
+        redundant metastore lookups.
         """
         meta = self._metastore.get(path)
         if meta is None or not meta.backend_name:
-            return False, None
+            return None
 
         addr = BackendAddress.parse(meta.backend_name)
         if not addr.has_origin or addr.origin == self._self_address:
-            # Local content — pass metadata hint back to kernel
-            return False, meta
+            return None  # local content — kernel handles
 
-        # Remote content — fetch from origin peer
-        assert addr.origin is not None  # guaranteed by has_origin check above
+        return meta  # remote content — resolver handles
+
+    def read(
+        self,
+        path: str,
+        *,
+        match_ctx: Any = None,
+        return_metadata: bool = False,
+        context: Any = None,
+    ) -> bytes | dict[str, Any]:
+        """Fetch content from remote origin peer via gRPC.
+
+        ``match_ctx`` is the FileMetadata returned by ``matches()``.
+        """
+        _ = context  # Protocol-required; not used for federation content
+        meta = match_ctx
+        addr = BackendAddress.parse(meta.backend_name)
+        assert addr.origin is not None
+
         file_size = meta.size or 0
         use_streaming = file_size > _STREAMING_THRESHOLD
         logger.info(
@@ -111,56 +118,34 @@ class FederationContentResolver:
         )
 
         if use_streaming:
-            # Large file: stream via StreamRead RPC — ~1MB in memory at a time.
-            # Backend-agnostic: the origin's StreamRead handler decides how
-            # to serve (CAS chunks, PAS read, etc).
             content = self._fetch_from_peer_streaming(addr.origin, path)
         else:
             content = self._fetch_from_peer(addr.origin, path)
 
-        # No local persistence — per design decision (2026-03-12):
-        # cache via CacheStoreABC is explicit contract (future),
-        # replication is implicit contract (hold for now).
-
         if return_metadata:
-            return True, {
+            return {
                 "content": content,
                 "etag": meta.etag,
                 "version": meta.version,
                 "modified_at": meta.modified_at,
                 "size": len(content),
             }
-        return True, content
+        return content
 
-    def try_delete(
-        self,
-        path: str,
-        *,
-        _context: Any = None,
-        **_kwargs: Any,
-    ) -> tuple[bool, Any]:
-        """Single-call resolve: metadata lookup + local/remote decision for delete.
+    def write(self, path: str, content: bytes, *, match_ctx: Any = None) -> dict[str, Any]:
+        """Content writes are always local — this should never be called.
 
-        Symmetric with ``try_read``. If content origin is remote, delegates
-        the full ``sys_unlink`` to the origin peer via gRPC Delete RPC.
-        The remote node applies its own permissions, hooks, and observers.
-
-        Returns:
-            (True, {})           — handled: remote peer deleted file.
-            (False, FileMetadata) — not handled: local content, metadata hint.
-            (False, None)         — not handled: no metadata found.
+        matches() returns None for writes, so KernelDispatch never reaches here.
         """
-        meta = self._metastore.get(path)
-        if meta is None or not meta.backend_name:
-            return False, None
+        raise NotImplementedError("FederationContentResolver does not handle writes")
 
+    def delete(self, path: str, *, match_ctx: Any = None, context: Any = None) -> None:
+        """Delete remote content via gRPC Delete RPC to origin peer."""
+        _ = context  # Protocol-required; not used for federation content
+        meta = match_ctx
         addr = BackendAddress.parse(meta.backend_name)
-        if not addr.has_origin or addr.origin == self._self_address:
-            # Local content — kernel handles delete
-            return False, meta
-
-        # Remote content — delegate full sys_unlink to origin peer
         assert addr.origin is not None
+
         logger.info(
             "Federation delete: %s -> %s (etag=%s)",
             path,
@@ -168,12 +153,14 @@ class FederationContentResolver:
             (meta.etag or "")[:12],
         )
         self._delete_on_peer(addr.origin, path)
-        return True, {}
 
     # === gRPC Remote Operations ===
 
     def _delete_on_peer(self, address: str, virtual_path: str) -> None:
         """Dispatch sync Delete RPC to origin peer (full sys_unlink)."""
+        import grpc
+
+        from nexus.grpc.channel_factory import build_peer_channel
         from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 
         channel = build_peer_channel(address, self._tls_config)
@@ -195,6 +182,9 @@ class FederationContentResolver:
 
     def _fetch_from_peer(self, address: str, virtual_path: str) -> bytes:
         """Dispatch sync Read RPC to origin peer."""
+        import grpc
+
+        from nexus.grpc.channel_factory import build_peer_channel
         from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 
         channel = build_peer_channel(address, self._tls_config)
@@ -225,6 +215,9 @@ class FederationContentResolver:
         (CAS chunk-aware streaming, PAS read-and-chunk, etc).
         This method just collects the stream and returns assembled bytes.
         """
+        import grpc
+
+        from nexus.grpc.channel_factory import build_peer_channel
         from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 
         channel = build_peer_channel(address, self._tls_config)
@@ -250,10 +243,3 @@ class FederationContentResolver:
             ) from exc
         finally:
             channel.close()
-
-    # === VFSPathResolver compat ===
-    # resolve_write uses matches() — must return False so writes pass through.
-    # read/write/delete legacy methods removed: try_read/try_delete are used instead.
-
-    def matches(self, _path: str) -> bool:
-        return False

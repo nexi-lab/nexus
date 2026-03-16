@@ -130,28 +130,32 @@ class KernelDispatch:
 
         Returns (handled, result):
             handled=True,  result=content  — resolver handled the read.
-            handled=False, result=metadata — resolver passed a prefetched hint.
+            handled=False, result=hint     — resolver passed a prefetched hint.
             handled=False, result=None     — no resolver matched.
 
-        Resolvers implementing ``try_read()`` merge match+read into one
-        call, eliminating redundant metadata lookups.  Legacy resolvers
-        using ``matches()``+``read()`` are still supported.
+        Two-phase: ``matches(path)`` returns truthy match context (e.g.
+        metadata) which is passed to ``read()`` as ``match_ctx`` to avoid
+        redundant lookups.
         """
         for r in self._resolvers:
-            try_read = getattr(r, "try_read", None)
-            if try_read is not None:
-                handled, result = try_read(path, return_metadata=return_metadata, context=context)
-                if handled or result is not None:
-                    return handled, result
-            elif r.matches(path):
-                return True, r.read(path, return_metadata=return_metadata, context=context)
+            match_ctx = r.matches(path)
+            if match_ctx is not None:
+                return True, r.read(
+                    path, match_ctx=match_ctx, return_metadata=return_metadata, context=context
+                )
         return False, None
 
     def resolve_write(self, path: str, content: bytes) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for write."""
+        """PRE-DISPATCH: first-match resolver for write.
+
+        Returns (handled, result):
+            handled=True,  result=dict   — resolver handled the write.
+            handled=False, result=None   — no resolver matched.
+        """
         for r in self._resolvers:
-            if r.matches(path):
-                return True, r.write(path, content)
+            match_ctx = r.matches(path)
+            if match_ctx is not None:
+                return True, r.write(path, content, match_ctx=match_ctx)
         return False, None
 
     def resolve_delete(self, path: str, *, context: Any = None) -> tuple[bool, Any]:
@@ -159,21 +163,13 @@ class KernelDispatch:
 
         Returns (handled, result):
             handled=True,  result={}       — resolver handled the delete.
-            handled=False, result=metadata — resolver passed a prefetched hint.
+            handled=False, result=hint     — resolver passed a prefetched hint.
             handled=False, result=None     — no resolver matched.
-
-        Resolvers implementing ``try_delete()`` merge match+delete into one
-        call (symmetric with ``try_read``).  Legacy resolvers using
-        ``matches()``+``delete()`` are still supported.
         """
         for r in self._resolvers:
-            try_delete = getattr(r, "try_delete", None)
-            if try_delete is not None:
-                handled, result = try_delete(path, context=context)
-                if handled or result is not None:
-                    return handled, result
-            elif r.matches(path):
-                r.delete(path, context=context)
+            match_ctx = r.matches(path)
+            if match_ctx is not None:
+                r.delete(path, match_ctx=match_ctx, context=context)
                 return True, {}
         return False, None
 

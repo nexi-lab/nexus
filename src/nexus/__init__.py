@@ -556,21 +556,32 @@ async def connect(
 
 
 def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
-    """Register FederationContentResolver for remote content reads (#163).
+    """Register federation resolvers for remote IPC and content (#163, #1625).
 
-    Registered LAST in the resolver chain so that Pipe/Memory/VirtualView
-    resolvers handle their paths first.  Federation resolver is a generic
-    fallback for CAS-backed content that may live on a remote peer.
+    Registration order matters — IPC resolver is registered FIRST so remote
+    DT_PIPE/DT_STREAM are intercepted before the content resolver.  Content
+    resolver is registered LAST as a generic fallback for CAS-backed content.
     """
     from nexus.raft.federation_content_resolver import FederationContentResolver
+    from nexus.raft.federation_ipc_resolver import FederationIPCResolver
 
-    resolver = FederationContentResolver(
+    # IPC resolver — remote DT_PIPE/DT_STREAM (#1625)
+    ipc_resolver = FederationIPCResolver(
         metastore=nx_fs.metadata,
         self_address=zone_mgr.advertise_addr,
         tls_config=zone_mgr.tls_config,
     )
-    nx_fs._dispatch.register_resolver(resolver)
-    logger.info("Federation content resolver registered (self=%s)", zone_mgr.advertise_addr)
+    nx_fs._dispatch.register_resolver(ipc_resolver)
+
+    # Content resolver — remote CAS content (#163)
+    content_resolver = FederationContentResolver(
+        metastore=nx_fs.metadata,
+        self_address=zone_mgr.advertise_addr,
+        tls_config=zone_mgr.tls_config,
+    )
+    nx_fs._dispatch.register_resolver(content_resolver)
+
+    logger.info("Federation resolvers registered: IPC + Content (self=%s)", zone_mgr.advertise_addr)
 
 
 def _restore_mounts(nx_fs: "NexusFS") -> None:

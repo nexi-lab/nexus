@@ -1,6 +1,6 @@
 /**
  * Payments panel: tabbed layout for Balance, Reservations, Transactions,
- * and Policies views.
+ * Policies, and Approvals views.
  */
 
 import React, { useState, useCallback, useEffect } from "react";
@@ -19,18 +19,21 @@ import { TransferForm } from "./transfer-form.js";
 import { TransactionList } from "./transaction-list.js";
 import { PolicyList } from "./policy-list.js";
 import { BudgetCard } from "./budget-card.js";
+import { ApprovalList } from "./approval-list.js";
 
 const TAB_ORDER: readonly PaymentsTab[] = [
   "balance",
   "reservations",
   "transactions",
   "policies",
+  "approvals",
 ];
 const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
   balance: "Balance",
   reservations: "Reservations",
   transactions: "Transactions",
   policies: "Policies",
+  approvals: "Approvals",
 };
 
 export default function PaymentsPanel(): React.ReactNode {
@@ -42,6 +45,10 @@ export default function PaymentsPanel(): React.ReactNode {
   const [affordBuffer, setAffordBuffer] = useState("");
   const [policyInputMode, setPolicyInputMode] = useState(false);
   const [policyBuffer, setPolicyBuffer] = useState("");
+  const [approvalInputMode, setApprovalInputMode] = useState(false);
+  const [approvalAmountBuffer, setApprovalAmountBuffer] = useState("");
+  const [approvalPurposeBuffer, setApprovalPurposeBuffer] = useState("");
+  const [approvalField, setApprovalField] = useState<"amount" | "purpose">("amount");
 
   const balance = usePaymentsStore((s) => s.balance);
   const balanceLoading = usePaymentsStore((s) => s.balanceLoading);
@@ -75,6 +82,14 @@ export default function PaymentsPanel(): React.ReactNode {
   const checkAfford = usePaymentsStore((s) => s.checkAfford);
   const affordResult = usePaymentsStore((s) => s.affordResult);
   const createPolicy = usePaymentsStore((s) => s.createPolicy);
+  const approvals = usePaymentsStore((s) => s.approvals);
+  const approvalsLoading = usePaymentsStore((s) => s.approvalsLoading);
+  const selectedApprovalIndex = usePaymentsStore((s) => s.selectedApprovalIndex);
+  const fetchApprovals = usePaymentsStore((s) => s.fetchApprovals);
+  const requestApproval = usePaymentsStore((s) => s.requestApproval);
+  const approveRequest = usePaymentsStore((s) => s.approveRequest);
+  const rejectRequest = usePaymentsStore((s) => s.rejectRequest);
+  const setSelectedApprovalIndex = usePaymentsStore((s) => s.setSelectedApprovalIndex);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
   const setSelectedReservationIndex = usePaymentsStore(
     (s) => s.setSelectedReservationIndex,
@@ -110,6 +125,8 @@ export default function PaymentsPanel(): React.ReactNode {
       fetchTransactions(client);
     } else if (activeTab === "policies") {
       fetchPolicies(client);
+    } else if (activeTab === "approvals") {
+      fetchApprovals(client);
     }
   };
 
@@ -154,7 +171,37 @@ export default function PaymentsPanel(): React.ReactNode {
               escape: () => { setPolicyInputMode(false); setPolicyBuffer(""); },
               backspace: () => { setPolicyBuffer((b) => b.slice(0, -1)); },
             }
-          : {
+          : approvalInputMode
+            ? {
+                return: () => {
+                  const amount = parseFloat(approvalAmountBuffer.trim());
+                  const purpose = approvalPurposeBuffer.trim();
+                  if (Number.isFinite(amount) && purpose && client) {
+                    requestApproval(amount, purpose, client);
+                  }
+                  setApprovalInputMode(false);
+                  setApprovalAmountBuffer("");
+                  setApprovalPurposeBuffer("");
+                  setApprovalField("amount");
+                },
+                escape: () => {
+                  setApprovalInputMode(false);
+                  setApprovalAmountBuffer("");
+                  setApprovalPurposeBuffer("");
+                  setApprovalField("amount");
+                },
+                backspace: () => {
+                  if (approvalField === "amount") {
+                    setApprovalAmountBuffer((b) => b.slice(0, -1));
+                  } else {
+                    setApprovalPurposeBuffer((b) => b.slice(0, -1));
+                  }
+                },
+                tab: () => {
+                  setApprovalField((f) => f === "amount" ? "purpose" : "amount");
+                },
+              }
+            : {
           j: () => {
             if (activeTab === "reservations") {
               setSelectedReservationIndex(
@@ -167,6 +214,10 @@ export default function PaymentsPanel(): React.ReactNode {
             } else if (activeTab === "policies") {
               setSelectedPolicyIndex(
                 Math.min(selectedPolicyIndex + 1, policies.length - 1),
+              );
+            } else if (activeTab === "approvals") {
+              setSelectedApprovalIndex(
+                Math.min(selectedApprovalIndex + 1, approvals.length - 1),
               );
             }
           },
@@ -183,6 +234,10 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedPolicyIndex(
                 Math.min(selectedPolicyIndex + 1, policies.length - 1),
               );
+            } else if (activeTab === "approvals") {
+              setSelectedApprovalIndex(
+                Math.min(selectedApprovalIndex + 1, approvals.length - 1),
+              );
             }
           },
           k: () => {
@@ -192,6 +247,8 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedTransactionIndex(Math.max(selectedTransactionIndex - 1, 0));
             } else if (activeTab === "policies") {
               setSelectedPolicyIndex(Math.max(selectedPolicyIndex - 1, 0));
+            } else if (activeTab === "approvals") {
+              setSelectedApprovalIndex(Math.max(selectedApprovalIndex - 1, 0));
             }
           },
           up: () => {
@@ -201,6 +258,8 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedTransactionIndex(Math.max(selectedTransactionIndex - 1, 0));
             } else if (activeTab === "policies") {
               setSelectedPolicyIndex(Math.max(selectedPolicyIndex - 1, 0));
+            } else if (activeTab === "approvals") {
+              setSelectedApprovalIndex(Math.max(selectedApprovalIndex - 1, 0));
             }
           },
           tab: () => {
@@ -223,12 +282,20 @@ export default function PaymentsPanel(): React.ReactNode {
             }
           },
           x: async () => {
-            if (activeTab !== "reservations" || !client) return;
-            const selected = reservations[selectedReservationIndex];
-            if (selected && selected.status === "pending") {
-              const ok = await confirm("Release reservation?", `Release reservation ${selected.id}. Reserved funds will be returned.`);
-              if (!ok) return;
-              releaseReservation(selected.id, client);
+            if (activeTab === "reservations" && client) {
+              const selected = reservations[selectedReservationIndex];
+              if (selected && selected.status === "pending") {
+                const ok = await confirm("Release reservation?", `Release reservation ${selected.id}. Reserved funds will be returned.`);
+                if (!ok) return;
+                releaseReservation(selected.id, client);
+              }
+            } else if (activeTab === "approvals" && client) {
+              const selected = approvals[selectedApprovalIndex];
+              if (selected && selected.status === "pending") {
+                const ok = await confirm("Reject approval?", `Reject spending approval request ${selected.id}.`);
+                if (!ok) return;
+                rejectRequest(selected.id, client);
+              }
             }
           },
           d: async () => {
@@ -259,10 +326,25 @@ export default function PaymentsPanel(): React.ReactNode {
               verifyIntegrity(selected.id, client);
             }
           },
-          a: () => {
+          a: async () => {
             if (activeTab === "balance") {
               setAffordInputMode(true);
               setAffordBuffer("");
+            } else if (activeTab === "approvals" && client) {
+              const selected = approvals[selectedApprovalIndex];
+              if (selected && selected.status === "pending") {
+                const ok = await confirm("Approve request?", `Approve spending request ${selected.id} for ${selected.amount}.`);
+                if (!ok) return;
+                approveRequest(selected.id, client);
+              }
+            }
+          },
+          n: () => {
+            if (activeTab === "approvals") {
+              setApprovalInputMode(true);
+              setApprovalAmountBuffer("");
+              setApprovalPurposeBuffer("");
+              setApprovalField("amount");
             }
           },
           "shift+n": () => {
@@ -278,6 +360,8 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedTransactionIndex(jumpToStart());
             } else if (activeTab === "policies") {
               setSelectedPolicyIndex(jumpToStart());
+            } else if (activeTab === "approvals") {
+              setSelectedApprovalIndex(jumpToStart());
             }
           },
           "shift+g": () => {
@@ -287,16 +371,30 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedTransactionIndex(jumpToEnd(transactions.length));
             } else if (activeTab === "policies") {
               setSelectedPolicyIndex(jumpToEnd(policies.length));
+            } else if (activeTab === "approvals") {
+              setSelectedApprovalIndex(jumpToEnd(approvals.length));
+            }
+          },
+          y: () => {
+            if (activeTab === "transactions") {
+              const selected = transactions[selectedTransactionIndex];
+              if (selected) copy(selected.id);
             }
           },
         },
-    (affordInputMode || policyInputMode) ? (keyName: string) => {
+    (affordInputMode || policyInputMode || approvalInputMode) ? (keyName: string) => {
       if (affordInputMode && keyName.length === 1 && /[\d.]/.test(keyName)) {
         setAffordBuffer((b) => b + keyName);
       } else if (policyInputMode && keyName.length === 1) {
         setPolicyBuffer((b) => b + keyName);
       } else if (policyInputMode && keyName === "space") {
         setPolicyBuffer((b) => b + " ");
+      } else if (approvalInputMode && approvalField === "amount" && keyName.length === 1 && /[\d.]/.test(keyName)) {
+        setApprovalAmountBuffer((b) => b + keyName);
+      } else if (approvalInputMode && approvalField === "purpose" && keyName.length === 1) {
+        setApprovalPurposeBuffer((b) => b + keyName);
+      } else if (approvalInputMode && approvalField === "purpose" && keyName === "space") {
+        setApprovalPurposeBuffer((b) => b + " ");
       }
     } : undefined,
   );
@@ -325,6 +423,21 @@ export default function PaymentsPanel(): React.ReactNode {
         {policyInputMode && (
           <box height={1} width="100%">
             <text>{`New policy name: ${policyBuffer}\u2588  (Enter:create  Escape:cancel)`}</text>
+          </box>
+        )}
+
+        {/* Approval request input */}
+        {approvalInputMode && (
+          <box flexDirection="column" width="100%">
+            <box height={1} width="100%">
+              <text>{approvalField === "amount" ? `> Amount:  ${approvalAmountBuffer}\u2588` : `  Amount:  ${approvalAmountBuffer}`}</text>
+            </box>
+            <box height={1} width="100%">
+              <text>{approvalField === "purpose" ? `> Purpose: ${approvalPurposeBuffer}\u2588` : `  Purpose: ${approvalPurposeBuffer}`}</text>
+            </box>
+            <box height={1} width="100%">
+              <text>{"  Tab:next field  Enter:submit  Escape:cancel"}</text>
+            </box>
           </box>
         )}
 
@@ -384,23 +497,34 @@ export default function PaymentsPanel(): React.ReactNode {
                   />
                 </box>
               )}
+              {activeTab === "approvals" && (
+                <ApprovalList
+                  approvals={approvals}
+                  selectedIndex={selectedApprovalIndex}
+                  loading={approvalsLoading}
+                />
+              )}
             </>
           )}
         </box>
 
         {/* Help bar */}
         <box height={1} width="100%">
-          <text>
+          {copied
+            ? <text foregroundColor="green">Copied!</text>
+            : <text>
             {showTransfer
               ? "Tab:next field  Enter:submit  Escape:cancel"
               : activeTab === "transactions"
-                ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  Tab:switch tab  r:refresh"
+                ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  y:copy  Tab:switch tab  r:refresh"
                 : activeTab === "policies"
                   ? "j/k:navigate  Tab:switch tab  Shift+N:new  d:delete  b:budget  r:refresh  q:quit"
                   : activeTab === "balance"
-                  ? "Tab:switch tab  t:transfer  a:afford check  r:refresh  q:quit"
-                  : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
-          </text>
+                    ? "Tab:switch tab  t:transfer  a:afford check  r:refresh  q:quit"
+                    : activeTab === "approvals"
+                      ? "j/k:navigate  n:new request  a:approve  x:reject  Tab:switch tab  r:refresh  q:quit"
+                      : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
+          </text>}
         </box>
       </box>
     </BrickGate>

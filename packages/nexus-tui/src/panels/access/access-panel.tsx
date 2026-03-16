@@ -40,6 +40,8 @@ import { DelegationCompleter } from "./delegation-completer.js";
 import { DelegationChainView } from "./delegation-chain-view.js";
 import { NamespaceConfigView } from "./namespace-config-view.js";
 import { ManifestCreator } from "./manifest-creator.js";
+import { ConstraintList } from "./constraint-list.js";
+import { ConstraintCreator } from "./constraint-creator.js";
 
 const ALL_TABS: readonly TabDef<AccessTab>[] = [
   { id: "manifests", label: "Manifests", brick: "access_manifest" },
@@ -63,7 +65,8 @@ type OverlayMode =
   | "delegationCompleter"
   | "delegationChainView"
   | "namespaceConfigView"
-  | "manifestCreator";
+  | "manifestCreator"
+  | "constraintCreator";
 
 export default function AccessPanel(): React.ReactNode {
   const client = useApi();
@@ -105,10 +108,16 @@ export default function AccessPanel(): React.ReactNode {
   const resolveAlert = useAccessStore((s) => s.resolveAlert);
   const fetchCredentials = useAccessStore((s) => s.fetchCredentials);
   const issueCredential = useAccessStore((s) => s.issueCredential);
+  const collusionRings = useAccessStore((s) => s.collusionRings);
+  const collusionLoading = useAccessStore((s) => s.collusionLoading);
   const fetchCollusionRings = useAccessStore((s) => s.fetchCollusionRings);
   const suspendAgent = useAccessStore((s) => s.suspendAgent);
-  const fraudScores = useAccessStore((s) => s.fraudScores);
-  const selectedFraudIndex = useAccessStore((s) => s.selectedFraudIndex);
+  const constraints = useAccessStore((s) => s.constraints);
+  const constraintsLoading = useAccessStore((s) => s.constraintsLoading);
+  const selectedConstraintIndex = useAccessStore((s) => s.selectedConstraintIndex);
+  const fetchConstraints = useAccessStore((s) => s.fetchConstraints);
+  const deleteConstraint = useAccessStore((s) => s.deleteConstraint);
+  const setSelectedConstraintIndex = useAccessStore((s) => s.setSelectedConstraintIndex);
   const revokeCredential = useAccessStore((s) => s.revokeCredential);
   const fetchFraudScores = useAccessStore((s) => s.fetchFraudScores);
   const computeFraudScores = useAccessStore((s) => s.computeFraudScores);
@@ -149,6 +158,7 @@ export default function AccessPanel(): React.ReactNode {
       }
     } else if (activeTab === "fraud") {
       fetchFraudScores(effectiveZoneId, client);
+      if (effectiveZoneId) fetchConstraints(effectiveZoneId, client);
     } else if (activeTab === "delegations") {
       fetchDelegations(client, delegationFilter);
     }
@@ -170,6 +180,7 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedCredentialIndex(Math.min(selectedCredentialIndex + 1, credentials.length - 1));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.min(selectedFraudIndex + 1, fraudScores.length - 1));
+        setSelectedConstraintIndex(Math.min(selectedConstraintIndex + 1, constraints.length - 1));
       } else if (activeTab === "delegations") {
         setSelectedDelegationIndex(Math.min(selectedDelegationIndex + 1, delegations.length - 1));
       }
@@ -183,6 +194,7 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedCredentialIndex(Math.min(selectedCredentialIndex + 1, credentials.length - 1));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.min(selectedFraudIndex + 1, fraudScores.length - 1));
+        setSelectedConstraintIndex(Math.min(selectedConstraintIndex + 1, constraints.length - 1));
       } else if (activeTab === "delegations") {
         setSelectedDelegationIndex(Math.min(selectedDelegationIndex + 1, delegations.length - 1));
       }
@@ -196,6 +208,7 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedCredentialIndex(Math.max(selectedCredentialIndex - 1, 0));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
+        setSelectedConstraintIndex(Math.max(selectedConstraintIndex - 1, 0));
       } else if (activeTab === "delegations") {
         setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
       }
@@ -209,6 +222,7 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedCredentialIndex(Math.max(selectedCredentialIndex - 1, 0));
       } else if (activeTab === "fraud") {
         setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
+        setSelectedConstraintIndex(Math.max(selectedConstraintIndex - 1, 0));
       } else if (activeTab === "delegations") {
         setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
       }
@@ -240,6 +254,18 @@ export default function AccessPanel(): React.ReactNode {
     n: () => {
       if (activeTab === "delegations" && overlay === "none") {
         setOverlay("delegationCreator");
+      } else if (activeTab === "fraud" && overlay === "none") {
+        setOverlay("constraintCreator");
+      }
+    },
+    d: async () => {
+      if (activeTab === "fraud" && overlay === "none" && client) {
+        const selected = constraints[selectedConstraintIndex];
+        if (selected) {
+          const ok = await confirm("Delete constraint?", `Delete governance constraint from ${selected.from_agent_id} to ${selected.to_agent_id} [${selected.constraint_type}].`);
+          if (!ok) return;
+          deleteConstraint(selected.id, client);
+        }
       }
     },
     x: async () => {
@@ -369,6 +395,7 @@ export default function AccessPanel(): React.ReactNode {
     delegationChainView: " | Delegation Chain",
     namespaceConfigView: " | Namespace Editor",
     manifestCreator: " | New Manifest",
+    constraintCreator: " | New Constraint",
   };
   const overlayLabel = OVERLAY_LABELS[overlay];
 
@@ -419,6 +446,12 @@ export default function AccessPanel(): React.ReactNode {
           {overlay === "manifestCreator" && (
             <ManifestCreator onClose={closeOverlay} />
           )}
+          {overlay === "constraintCreator" && (
+            <ConstraintCreator
+              zoneId={effectiveZoneId ?? ""}
+              onClose={closeOverlay}
+            />
+          )}
         </box>
       </box>
     );
@@ -430,7 +463,7 @@ export default function AccessPanel(): React.ReactNode {
     manifests: "j/k:navigate  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  y:copy  Tab:tab  r:refresh  q:quit",
     alerts: "j/k:navigate  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
     credentials: "j/k:navigate  i:issue  x:revoke  Tab:tab  r:refresh  q:quit",
-    fraud: "j/k:navigate  c:compute  g:collusion  s:suspend agent  Tab:tab  r:refresh  q:quit",
+    fraud: "j/k:navigate  c:compute  g:collusion  s:suspend  n:new constraint  d:delete constraint  Tab:tab  r:refresh  q:quit",
     delegations: `j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  y:copy  f:filter${delegationFilterLabel}  Tab:tab  r:refresh  q:quit`,
   };
 
@@ -484,11 +517,56 @@ export default function AccessPanel(): React.ReactNode {
           />
         )}
         {activeTab === "fraud" && (
-          <FraudScoreView
-            scores={fraudScores}
-            selectedIndex={selectedFraudIndex}
-            loading={fraudScoresLoading}
-          />
+          <box height="100%" width="100%" flexDirection="column">
+            <box flexGrow={1} width="100%">
+              <FraudScoreView
+                scores={fraudScores}
+                selectedIndex={selectedFraudIndex}
+                loading={fraudScoresLoading}
+              />
+            </box>
+            <box flexDirection="column" width="100%">
+              <box height={1} width="100%">
+                <text>{"--- Collusion Rings ---"}</text>
+              </box>
+              {collusionLoading ? (
+                <box height={1} width="100%">
+                  <text>Loading collusion rings...</text>
+                </box>
+              ) : (collusionRings as { confidence: number; members: string[]; ring_type?: string }[]).length === 0 ? (
+                <box height={1} width="100%">
+                  <text dimColor>No collusion rings detected</text>
+                </box>
+              ) : (
+                (collusionRings as { confidence: number; members: string[]; ring_type?: string }[]).map((ring, i) => {
+                  const conf = ring.confidence;
+                  const confColor = conf > 0.7 ? "red" : conf >= 0.4 ? "yellow" : undefined;
+                  const confStr = conf.toFixed(3);
+                  const members = ring.members.join(", ");
+                  const ringType = ring.ring_type ?? "unknown";
+                  return (
+                    <box key={`ring-${i}`} height={1} width="100%">
+                      <text>
+                        {"  "}
+                        <text foregroundColor={confColor} dimColor={conf < 0.4}>{confStr}</text>
+                        {`  [${ringType}]  ${members}`}
+                      </text>
+                    </box>
+                  );
+                })
+              )}
+            </box>
+            <box flexDirection="column" width="100%">
+              <box height={1} width="100%">
+                <text>{"--- Governance Constraints ---"}</text>
+              </box>
+              <ConstraintList
+                constraints={constraints}
+                selectedIndex={selectedConstraintIndex}
+                loading={constraintsLoading}
+              />
+            </box>
+          </box>
         )}
         {activeTab === "delegations" && (
           <DelegationList

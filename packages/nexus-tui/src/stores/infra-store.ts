@@ -121,6 +121,7 @@ export interface InfraState {
   readonly deleteSubscription: (id: string, client: FetchClient) => Promise<void>;
   readonly testSubscription: (id: string, client: FetchClient) => Promise<void>;
   readonly fetchLocks: (client: FetchClient) => Promise<void>;
+  readonly acquireLock: (path: string, mode: "mutex" | "semaphore", ttlSeconds: number, client: FetchClient) => Promise<void>;
   readonly releaseLock: (path: string, lockId: string, client: FetchClient) => Promise<void>;
   readonly extendLock: (path: string, lockId: string, ttlSeconds: number, client: FetchClient) => Promise<void>;
   readonly fetchSecretAudit: (client: FetchClient) => Promise<void>;
@@ -269,6 +270,22 @@ export const useInfraStore = create<InfraState>((set, get) => ({
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to test subscription";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  acquireLock: async (path, mode, ttlSeconds, client) => {
+    set({ error: null });
+    try {
+      await client.post(`/api/v2/locks/${encodeURIComponent(path)}/acquire`, {
+        mode,
+        ttl_seconds: ttlSeconds,
+      });
+      // Refresh lock list after acquisition
+      get().fetchLocks(client);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to acquire lock";
       set({ error: message });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }

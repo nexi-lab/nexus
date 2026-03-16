@@ -108,7 +108,19 @@ export interface IntegrityResult {
   readonly record_hash: string;
 }
 
-export type PaymentsTab = "balance" | "reservations" | "transactions" | "policies";
+/** Matches backend spending approval request. */
+export interface ApprovalRequest {
+  readonly id: string;
+  readonly requester_id: string;
+  readonly amount: number;
+  readonly purpose: string;
+  readonly status: "pending" | "approved" | "rejected";
+  readonly created_at: string;
+  readonly decided_at: string | null;
+  readonly decided_by: string | null;
+}
+
+export type PaymentsTab = "balance" | "reservations" | "transactions" | "policies" | "approvals";
 
 // =============================================================================
 // Wire response shapes
@@ -158,6 +170,11 @@ export interface PaymentsState {
   // Affordability check
   readonly affordResult: { can_afford: boolean; balance: string; requested: string } | null;
 
+  // Approvals
+  readonly approvals: readonly ApprovalRequest[];
+  readonly approvalsLoading: boolean;
+  readonly selectedApprovalIndex: number;
+
   // UI state
   readonly activeTab: PaymentsTab;
   readonly error: string | null;
@@ -187,6 +204,11 @@ export interface PaymentsState {
   readonly verifyIntegrity: (recordId: string, client: FetchClient) => Promise<IntegrityResult | null>;
   readonly createPolicy: (name: string, rules: Record<string, unknown>, client: FetchClient) => Promise<void>;
   readonly checkAfford: (amount: string, client: FetchClient) => Promise<void>;
+  readonly fetchApprovals: (client: FetchClient) => Promise<void>;
+  readonly requestApproval: (amount: number, purpose: string, client: FetchClient) => Promise<void>;
+  readonly approveRequest: (approvalId: string, client: FetchClient) => Promise<void>;
+  readonly rejectRequest: (approvalId: string, client: FetchClient) => Promise<void>;
+  readonly setSelectedApprovalIndex: (index: number) => void;
   readonly setActiveTab: (tab: PaymentsTab) => void;
   readonly setSelectedReservationIndex: (index: number) => void;
   readonly setSelectedTransactionIndex: (index: number) => void;
@@ -213,6 +235,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   budget: null,
   budgetLoading: false,
   affordResult: null,
+  approvals: [],
+  approvalsLoading: false,
+  selectedApprovalIndex: 0,
   activeTab: "balance",
   error: null,
 
@@ -446,6 +471,60 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       set({ error: message });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
+  },
+
+  // =========================================================================
+  // Approvals
+  // =========================================================================
+
+  fetchApprovals: createApiAction<PaymentsState, [FetchClient]>(set, {
+    loadingKey: "approvalsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch approvals",
+    action: async (client) => {
+      const approvals = await client.get<readonly ApprovalRequest[]>("/api/v2/pay/approvals");
+      return { approvals, selectedApprovalIndex: 0 };
+    },
+  }),
+
+  requestApproval: async (amount, purpose, client) => {
+    set({ approvalsLoading: true, error: null });
+    try {
+      await client.post("/api/v2/pay/approvals/request", { amount, purpose });
+      await get().fetchApprovals(client);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to request approval";
+      set({ approvalsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  approveRequest: async (approvalId, client) => {
+    set({ approvalsLoading: true, error: null });
+    try {
+      await client.post(`/api/v2/pay/approvals/${encodeURIComponent(approvalId)}/approve`, {});
+      await get().fetchApprovals(client);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to approve request";
+      set({ approvalsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  rejectRequest: async (approvalId, client) => {
+    set({ approvalsLoading: true, error: null });
+    try {
+      await client.post(`/api/v2/pay/approvals/${encodeURIComponent(approvalId)}/reject`, {});
+      await get().fetchApprovals(client);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to reject request";
+      set({ approvalsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  setSelectedApprovalIndex: (index) => {
+    set({ selectedApprovalIndex: index });
   },
 
   setActiveTab: (tab) => {

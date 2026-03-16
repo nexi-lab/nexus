@@ -13,6 +13,7 @@ import { useInfraStore } from "../../stores/infra-store.js";
 import type { InfraTab } from "../../stores/infra-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -27,7 +28,7 @@ import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
-type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect";
+type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect" | "acquire_path" | "secrets_filter";
 
 type PanelTab = "events" | "mcl" | "operations" | InfraTab;
 
@@ -57,6 +58,9 @@ export default function EventsPanel(): React.ReactNode {
   const visibleTabs = useVisibleTabs(ALL_TABS);
   const config = useGlobalStore((s) => s.config);
 
+  // Clipboard copy
+  const { copy, copied } = useCopy();
+
   // Filter input state
   const [filterMode, setFilterMode] = useState<FilterMode>("none");
   const [filterBuffer, setFilterBuffer] = useState("");
@@ -64,6 +68,9 @@ export default function EventsPanel(): React.ReactNode {
   // MCL filter state
   const [mclUrnFilter, setMclUrnFilter] = useState("");
   const [mclAspectFilter, setMclAspectFilter] = useState("");
+
+  // Secrets filter state
+  const [secretsFilter, setSecretsFilter] = useState("");
 
   // Events store (SSE)
   const connected = useEventsStore((s) => s.connected);
@@ -101,7 +108,9 @@ export default function EventsPanel(): React.ReactNode {
   const deleteSubscription = useInfraStore((s) => s.deleteSubscription);
   const testSubscription = useInfraStore((s) => s.testSubscription);
   const fetchLocks = useInfraStore((s) => s.fetchLocks);
+  const acquireLock = useInfraStore((s) => s.acquireLock);
   const releaseLock = useInfraStore((s) => s.releaseLock);
+  const extendLock = useInfraStore((s) => s.extendLock);
   const fetchSecretAudit = useInfraStore((s) => s.fetchSecretAudit);
   const fetchOperations = useInfraStore((s) => s.fetchOperations);
   const setSelectedOperationIndex = useInfraStore((s) => s.setSelectedOperationIndex);
@@ -234,6 +243,12 @@ export default function EventsPanel(): React.ReactNode {
               setMclUrnFilter(value);
             } else if (filterMode === "mcl_aspect") {
               setMclAspectFilter(value);
+            } else if (filterMode === "acquire_path") {
+              if (value && apiClient) {
+                acquireLock(value, "mutex", 60, apiClient);
+              }
+            } else if (filterMode === "secrets_filter") {
+              setSecretsFilter(value);
             }
             setFilterMode("none");
             setFilterBuffer("");
@@ -292,6 +307,9 @@ export default function EventsPanel(): React.ReactNode {
             if (activeTab === "mcl") {
               setFilterMode("mcl_aspect");
               setFilterBuffer(mclAspectFilter);
+            } else if (activeTab === "locks") {
+              setFilterMode("acquire_path");
+              setFilterBuffer("");
             }
           },
           d: async () => {
@@ -315,6 +333,25 @@ export default function EventsPanel(): React.ReactNode {
             if (activeTab === "subscriptions" && apiClient) {
               const sub = subscriptions[selectedSubscriptionIndex];
               if (sub) testSubscription(sub.subscription_id, apiClient);
+            }
+          },
+          e: () => {
+            if (activeTab === "locks" && apiClient) {
+              const lock = locks[selectedLockIndex];
+              if (lock) extendLock(lock.resource, lock.lock_id, 60, apiClient);
+            }
+          },
+          "/": () => {
+            if (activeTab === "secrets") {
+              setFilterMode("secrets_filter");
+              setFilterBuffer(secretsFilter);
+            }
+          },
+          y: () => {
+            if (activeTab === "events") {
+              // Events are displayed in a stream; copy the selected/latest event data
+              const event = events[events.length - 1];
+              if (event) copy(event.data);
             }
           },
           g: () => {
@@ -360,6 +397,26 @@ export default function EventsPanel(): React.ReactNode {
               : filterMode === "mcl_aspect"
                 ? `Filter aspect: ${filterBuffer}\u2588`
                 : `Filter: URN=${mclUrnFilter || "*"} aspect=${mclAspectFilter || "*"}`}
+          </text>
+        </box>
+      )}
+
+      {/* Acquire lock input bar (locks tab) */}
+      {activeTab === "locks" && filterMode === "acquire_path" && (
+        <box height={1} width="100%">
+          <text>{`Acquire lock path: ${filterBuffer}\u2588`}</text>
+        </box>
+      )}
+
+      {/* Secrets filter bar */}
+      {activeTab === "secrets" && (
+        <box height={1} width="100%">
+          <text>
+            {filterMode === "secrets_filter"
+              ? `Filter: ${filterBuffer}\u2588`
+              : secretsFilter
+                ? `Filter: ${secretsFilter}`
+                : ""}
           </text>
         </box>
       )}
@@ -445,6 +502,7 @@ export default function EventsPanel(): React.ReactNode {
           <SecretsAudit
             entries={secretAuditEntries}
             loading={secretsLoading}
+            filter={secretsFilter}
           />
         )}
 
@@ -459,21 +517,27 @@ export default function EventsPanel(): React.ReactNode {
 
       {/* Help bar */}
       <box height={1} width="100%">
-        <text>
+        {copied
+          ? <text foregroundColor="green">Copied!</text>
+          : <text>
           {activeTab === "events" && filterMode !== "none"
             ? "Type filter, Enter:apply, Escape:cancel, Backspace:delete"
             : activeTab === "events"
-            ? "f:filter type  s:filter search  c:clear  r:reconnect  Tab:switch tab  q:quit"
+            ? "f:filter type  s:filter search  c:clear  r:reconnect  y:copy  Tab:switch tab  q:quit"
             : activeTab === "mcl" && filterMode !== "none"
               ? "Type filter, Enter:apply, Escape:cancel, Backspace:delete"
               : activeTab === "mcl"
               ? "u:filter URN  n:filter aspect  r:refresh  Tab:switch tab  q:quit"
-              : activeTab === "subscriptions"
-                ? "j/k:navigate  d:delete  t:test  r:refresh  Tab:switch tab"
-                : activeTab === "locks"
-                  ? "j/k:navigate  d:release  r:refresh  Tab:switch tab"
-                  : "j/k:navigate  r:refresh  Tab:switch tab"}
-        </text>
+              : filterMode !== "none"
+                ? "Type value, Enter:apply, Escape:cancel, Backspace:delete"
+                : activeTab === "subscriptions"
+                  ? "j/k:navigate  d:delete  t:test  r:refresh  Tab:switch tab"
+                  : activeTab === "locks"
+                    ? "j/k:navigate  n:acquire  d:release  e:extend  r:refresh  Tab:switch tab"
+                    : activeTab === "secrets"
+                      ? "/:filter  r:refresh  Tab:switch tab"
+                      : "j/k:navigate  r:refresh  Tab:switch tab"}
+        </text>}
       </box>
     </box>
   );

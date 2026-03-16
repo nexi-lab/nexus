@@ -153,6 +153,16 @@ export interface GovernanceCheckResult {
   readonly edge_id: string;
 }
 
+/** ReBAC governance constraint. */
+export interface GovernanceConstraint {
+  readonly id: string;
+  readonly from_agent_id: string;
+  readonly to_agent_id: string;
+  readonly constraint_type: string;
+  readonly zone_id: string;
+  readonly created_at: string;
+}
+
 export type AccessTab =
   | "manifests"
   | "alerts"
@@ -207,6 +217,11 @@ export interface AccessState {
   // Collusion detection
   readonly collusionRings: readonly unknown[];
   readonly collusionLoading: boolean;
+
+  // Governance constraints
+  readonly constraints: readonly GovernanceConstraint[];
+  readonly constraintsLoading: boolean;
+  readonly selectedConstraintIndex: number;
 
   // UI state
   readonly activeTab: AccessTab;
@@ -276,6 +291,12 @@ export interface AccessState {
     client: FetchClient,
   ) => Promise<void>;
 
+  // Actions — governance constraints
+  readonly fetchConstraints: (zoneId: string, client: FetchClient) => Promise<void>;
+  readonly createConstraint: (constraint: { from_agent_id: string; to_agent_id: string; constraint_type: string; zone_id: string }, client: FetchClient) => Promise<void>;
+  readonly deleteConstraint: (constraintId: string, client: FetchClient) => Promise<void>;
+  readonly setSelectedConstraintIndex: (index: number) => void;
+
   // Actions — governance deep features
   readonly fetchCollusionRings: (zoneId: string | undefined, client: FetchClient) => Promise<void>;
   readonly suspendAgent: (agentId: string, reason: string, zoneId: string | undefined, client: FetchClient) => Promise<void>;
@@ -329,6 +350,9 @@ export const useAccessStore = create<AccessState>((set, get) => ({
   governanceCheckLoading: false,
   collusionRings: [],
   collusionLoading: false,
+  constraints: [],
+  constraintsLoading: false,
+  selectedConstraintIndex: 0,
   activeTab: "manifests",
   error: null,
 
@@ -717,6 +741,53 @@ export const useAccessStore = create<AccessState>((set, get) => ({
       return { governanceCheck: response };
     },
   }),
+
+  // ── Governance constraints ─────────────────────────────────────────────
+
+  fetchConstraints: createApiAction<AccessState, [string, FetchClient]>(set, {
+    loadingKey: "constraintsLoading",
+    source: SOURCE,
+    action: async (zoneId, client) => {
+      const response = await client.get<{
+        readonly constraints: readonly GovernanceConstraint[];
+      }>(`/api/v2/governance/constraints?zone_id=${encodeURIComponent(zoneId)}`);
+      return {
+        constraints: response.constraints,
+        selectedConstraintIndex: 0,
+      };
+    },
+  }),
+
+  createConstraint: async (constraint, client) => {
+    set({ constraintsLoading: true, error: null });
+    try {
+      await client.post("/api/v2/governance/constraints", constraint);
+      await get().fetchConstraints(constraint.zone_id, client);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create constraint";
+      set({ constraintsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  deleteConstraint: async (constraintId, client) => {
+    set({ constraintsLoading: true, error: null });
+    try {
+      await client.delete(`/api/v2/governance/constraints/${encodeURIComponent(constraintId)}`);
+      set((state) => ({
+        constraints: state.constraints.filter((c) => c.id !== constraintId),
+        constraintsLoading: false,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete constraint";
+      set({ constraintsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  setSelectedConstraintIndex: (index) => {
+    set({ selectedConstraintIndex: index });
+  },
 
   // ── Governance deep features ───────────────────────────────────────────
 

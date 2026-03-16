@@ -60,14 +60,25 @@ const MAX_HISTORY = 50;
 const MAX_COMMAND_HISTORY = 100;
 
 // =============================================================================
-// CLI-like command parsing
+// CLI-like command parsing (Decision 8A: discriminated union)
 // =============================================================================
 
-export interface ParsedCommand {
+/** An HTTP API request (CLI shorthand or raw HTTP method). */
+export interface HttpCommand {
+  readonly type: "http";
   readonly method: string;
   readonly path: string;
   readonly body: string;
 }
+
+/** A local nexus CLI command to execute via Bun.spawn() (Decision 4A: allowlist). */
+export interface LocalCommand {
+  readonly type: "local";
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+export type ParsedCommand = HttpCommand | LocalCommand;
 
 const CLI_COMMANDS: Readonly<
   Record<string, { readonly method: string; readonly pathFn: (arg: string) => string; readonly bodyFn?: (arg: string) => string }>
@@ -86,12 +97,44 @@ const CLI_COMMANDS: Readonly<
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 
 /**
- * Parse a CLI-like command string into method, path, and optional body.
+ * Allowlist of nexus subcommands that can be run locally from the TUI (Decision 4A).
+ * Each entry is the first token after `nexus` — compound commands like `demo init`
+ * are validated by checking the first token only (the CLI handles the rest).
+ */
+const ALLOWED_LOCAL_COMMANDS = new Set(["init", "build", "demo", "brick", "agent", "up"]);
+
+/**
+ * Parse a command string into an HTTP command or local command.
+ *
+ * Input formats:
+ *   - CLI shorthand: `ls /path`, `cat /file`, `stat /file`, `rm /file`, `mkdir /dir`
+ *   - Raw HTTP: `GET /api/v2/health`, `POST /api/v2/files/write {"body": true}`
+ *   - Local command: `!init --preset shared`, `!build`, `!demo init`
+ *
  * Returns `null` if the input cannot be parsed.
  */
 export function parseCommand(input: string): ParsedCommand | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
+
+  // Local command: starts with "!" prefix (Decision 4A)
+  if (trimmed.startsWith("!")) {
+    const cmdStr = trimmed.slice(1).trim();
+    if (!cmdStr) return null;
+
+    const parts = cmdStr.split(/\s+/);
+    const subcommand = parts[0]!;
+
+    if (!ALLOWED_LOCAL_COMMANDS.has(subcommand)) {
+      return null; // Not in allowlist
+    }
+
+    return {
+      type: "local",
+      command: subcommand,
+      args: parts.slice(1),
+    };
+  }
 
   // Split on first space
   const spaceIdx = trimmed.indexOf(" ");
@@ -104,6 +147,7 @@ export function parseCommand(input: string): ParsedCommand | null {
   const cmd = CLI_COMMANDS[firstWord];
   if (cmd) {
     return {
+      type: "http",
       method: cmd.method,
       path: cmd.pathFn(rest),
       body: cmd.bodyFn ? cmd.bodyFn(rest) : "",
@@ -116,9 +160,9 @@ export function parseCommand(input: string): ParsedCommand | null {
     // Check if rest has a JSON body after the path
     const bodyMatch = rest.match(/^(\S+)\s+(\{[\s\S]*\})$/);
     if (bodyMatch) {
-      return { method, path: bodyMatch[1] ?? "", body: bodyMatch[2] ?? "" };
+      return { type: "http", method, path: bodyMatch[1] ?? "", body: bodyMatch[2] ?? "" };
     }
-    return { method, path: rest, body: "" };
+    return { type: "http", method, path: rest, body: "" };
   }
 
   return null;
@@ -338,6 +382,14 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
     const parsed = parseCommand(input);
     if (!parsed) return;
 
+    if (parsed.type === "local") {
+      // Local command — dispatch to CommandRunner (Phase 2)
+      const { executeLocalCommand } = await import("../services/command-runner.js");
+      executeLocalCommand(parsed.command, parsed.args);
+      return;
+    }
+
+    // HTTP command — existing flow
     get().updateRequest({
       method: parsed.method,
       path: parsed.path,

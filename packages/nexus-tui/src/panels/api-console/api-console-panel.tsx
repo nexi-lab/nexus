@@ -13,12 +13,16 @@ import { useApiConsoleStore } from "../../stores/api-console-store.js";
 import { EndpointList } from "./endpoint-list.js";
 import { RequestBuilder } from "./request-builder.js";
 import { ResponseViewer } from "./response-viewer.js";
+import { CommandOutput } from "../../shared/components/command-output.js";
+import { useCommandRunnerStore, executeLocalCommand } from "../../services/command-runner.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
 
 export default function ApiConsolePanel(): React.ReactNode {
   const client = useApi();
+  // Reactive subscription to command runner status (Codex finding 2)
+  const commandRunnerStatus = useCommandRunnerStore((s) => s.status);
   const endpoints = useApiConsoleStore((s) => s.endpoints);
   const filteredEndpoints = useApiConsoleStore((s) => s.filteredEndpoints);
   const selectedEndpoint = useApiConsoleStore((s) => s.selectedEndpoint);
@@ -147,6 +151,11 @@ export default function ApiConsolePanel(): React.ReactNode {
           ":": () => {
             setCommandInputMode(true);
           },
+          // Issue #3078: Shift+B to run nexus build from Console
+          "shift+b": () => {
+            useCommandRunnerStore.getState().reset();
+            executeLocalCommand("build", []);
+          },
           tab: () => toggleFocus("console"),
         },
     overlayActive ? undefined : handleUnhandledKey,
@@ -180,9 +189,16 @@ export default function ApiConsolePanel(): React.ReactNode {
           <text>
             {commandInputMode
               ? `> ${commandInputBuffer}█`
-              : `Press ":" for command input | history: ${commandHistory.length}`}
+              : `Press ":" for command input | "!" prefix for local commands | Shift+B:build | history: ${commandHistory.length}`}
           </text>
         </box>
+
+        {/* Local command output (when running via !command or Shift+B) */}
+        {commandRunnerStatus !== "idle" && (
+          <box borderStyle="single" height={8} width="100%">
+            <CommandOutput />
+          </box>
+        )}
 
         {/* Request builder (top 40%) */}
         <box flexGrow={4} borderStyle="single">

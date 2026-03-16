@@ -19,6 +19,8 @@ import { TrajectoriesTab } from "./trajectories-tab.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { StyledText } from "../../shared/components/styled-text.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { CommandOutput } from "../../shared/components/command-output.js";
+import { useCommandRunnerStore, executeLocalCommand } from "../../services/command-runner.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
@@ -40,6 +42,9 @@ export default function AgentsPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const visibleTabs = useVisibleTabs(ALL_TABS);
+
+  // Reactive subscription to command runner status (Codex finding 2)
+  const commandRunnerStatus = useCommandRunnerStore((s) => s.status);
 
   // Zone ID for fetchAgents
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
@@ -302,6 +307,11 @@ export default function AgentsPanel(): React.ReactNode {
         copy(selectedAgentId);
       }
     },
+    // Issue #3078: spawn new agent via local CLI command
+    n: () => {
+      useCommandRunnerStore.getState().reset();
+      executeLocalCommand("agent", ["spawn"]);
+    },
   });
 
   return (
@@ -405,12 +415,19 @@ export default function AgentsPanel(): React.ReactNode {
         </box>
       </box>
 
+      {/* Command runner output (when agent spawn is running) */}
+      {commandRunnerStatus !== "idle" && (
+        <box borderStyle="single" height={6} width="100%">
+          <CommandOutput />
+        </box>
+      )}
+
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
           ? <text foregroundColor="green">Copied!</text>
           : <text>
-          {"j/k:navigate  Tab:switch tab  r:refresh  Enter:detail  d:revoke  Shift+W:warmup  Shift+E:evict  Shift+V:verify  y:copy  q:quit"}
+          {"j/k:navigate  Tab:switch tab  r:refresh  n:spawn agent  Enter:detail  d:revoke  Shift+W:warmup  Shift+E:evict  y:copy  q:quit"}
         </text>}
       </box>
     </box>

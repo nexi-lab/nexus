@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { Transaction } from "../../stores/versions-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 // =============================================================================
 // Status badges
@@ -51,9 +52,10 @@ export function TransactionList({
 }: TransactionListProps): React.ReactNode {
   if (transactions.length === 0) {
     return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No transactions found</text>
-      </box>
+      <EmptyState
+        message="No transactions yet."
+        hint="Press n to begin one, or write a file to create an auto-transaction."
+      />
     );
   }
 

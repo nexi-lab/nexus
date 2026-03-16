@@ -13,6 +13,8 @@ import { useApiConsoleStore } from "../../stores/api-console-store.js";
 import { EndpointList } from "./endpoint-list.js";
 import { RequestBuilder } from "./request-builder.js";
 import { ResponseViewer } from "./response-viewer.js";
+import { useUiStore } from "../../stores/ui-store.js";
+import { focusColor } from "../../shared/theme.js";
 
 export default function ApiConsolePanel(): React.ReactNode {
   const client = useApi();
@@ -29,6 +31,10 @@ export default function ApiConsolePanel(): React.ReactNode {
   const setCommandInputMode = useApiConsoleStore((s) => s.setCommandInputMode);
   const setCommandInputBuffer = useApiConsoleStore((s) => s.setCommandInputBuffer);
   const navigateHistory = useApiConsoleStore((s) => s.navigateHistory);
+
+  // Focus pane (ui-store)
+  const uiFocusPane = useUiStore((s) => s.getFocusPane("console"));
+  const toggleFocus = useUiStore((s) => s.toggleFocusPane);
 
   // Auto-load endpoints from OpenAPI spec on mount
   useEffect(() => {
@@ -100,6 +106,7 @@ export default function ApiConsolePanel(): React.ReactNode {
           ":": () => {
             setCommandInputMode(true);
           },
+          tab: () => toggleFocus("console"),
         },
     handleUnhandledKey,
   );
@@ -107,7 +114,7 @@ export default function ApiConsolePanel(): React.ReactNode {
   return (
     <box height="100%" width="100%" flexDirection="row">
       {/* Left: Endpoint list (30%) */}
-      <box width="30%" height="100%" borderStyle="single">
+      <box width="30%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}>
         <box height={1} width="100%">
           <text>{`─── Endpoints ─── (history: ${commandHistory.length})`}</text>
         </box>
@@ -115,7 +122,7 @@ export default function ApiConsolePanel(): React.ReactNode {
       </box>
 
       {/* Right: Request + Response (70%) */}
-      <box width="70%" height="100%" flexDirection="column">
+      <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
         {/* Command input bar */}
         <box height={1} width="100%">
           <text>

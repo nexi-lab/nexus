@@ -7,6 +7,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import { usePaymentsStore } from "../../stores/payments-store.js";
 import type { PaymentsTab } from "../../stores/payments-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { BalanceCard } from "./balance-card.js";
@@ -31,6 +32,7 @@ const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
 
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
+  const confirm = useConfirmStore((s) => s.confirm);
   const [showTransfer, setShowTransfer] = useState(false);
   const [affordInputMode, setAffordInputMode] = useState(false);
   const [affordBuffer, setAffordBuffer] = useState("");
@@ -79,12 +81,14 @@ export default function PaymentsPanel(): React.ReactNode {
   const [selectedPolicyIndex, setSelectedPolicyIndex] = useState(0);
 
   const handleTransferSubmit = useCallback(
-    (to: string, amount: string, memo: string) => {
+    async (to: string, amount: string, memo: string) => {
       if (!client) return;
+      const ok = await confirm("Transfer funds?", `Transfer ${amount} credits to ${to}. This cannot be undone.`);
+      if (!ok) return;
       transfer(to, amount, memo, client);
       setShowTransfer(false);
     },
-    [client, transfer],
+    [client, transfer, confirm],
   );
 
   const handleTransferCancel = useCallback(() => {
@@ -214,17 +218,21 @@ export default function PaymentsPanel(): React.ReactNode {
               commitReservation(selected.id, client);
             }
           },
-          x: () => {
+          x: async () => {
             if (activeTab !== "reservations" || !client) return;
             const selected = reservations[selectedReservationIndex];
             if (selected && selected.status === "pending") {
+              const ok = await confirm("Release reservation?", `Release reservation ${selected.id}. Reserved funds will be returned.`);
+              if (!ok) return;
               releaseReservation(selected.id, client);
             }
           },
-          d: () => {
+          d: async () => {
             if (activeTab !== "policies" || !client) return;
             const selected = policies[selectedPolicyIndex];
             if (selected) {
+              const ok = await confirm("Delete policy?", "Delete spending policy. This cannot be undone.");
+              if (!ok) return;
               deletePolicy(selected.policy_id, client);
             }
           },

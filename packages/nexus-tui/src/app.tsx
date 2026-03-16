@@ -6,6 +6,7 @@
 
 import React, { lazy, Suspense, useState, useCallback } from "react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
+import { useUiStore } from "./stores/ui-store.js";
 import { TabBar, type Tab } from "./shared/components/tab-bar.js";
 import { StatusBar } from "./shared/components/status-bar.js";
 import { ErrorBar } from "./shared/components/error-bar.js";
@@ -76,6 +77,8 @@ function PanelRouter(): React.ReactNode {
 export function App(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
+  const toggleZoom = useUiStore((s) => s.toggleZoom);
+  const zoomedPanel = useUiStore((s) => s.zoomedPanel);
   const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
 
   const toggleIdentitySwitcher = useCallback(() => {
@@ -105,14 +108,15 @@ export function App(): React.ReactNode {
           "9": () => setActivePanel("infrastructure"),
           "0": () => setActivePanel("console"),
           "ctrl+i": toggleIdentitySwitcher,
+          "z": () => toggleZoom(activePanel),
           "q": () => process.exit(0),
         },
   );
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Tab bar */}
-      <TabBar tabs={TABS} activeTab={activePanel} onSelect={(id) => setActivePanel(id as PanelId)} />
+      {/* Tab bar (hidden when zoomed) */}
+      {!zoomedPanel && <TabBar tabs={TABS} activeTab={activePanel} onSelect={(id) => setActivePanel(id as PanelId)} />}
 
       {/* Main content */}
       <box flexGrow={1}>

@@ -24,6 +24,8 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { useBrickAvailable } from "../../shared/hooks/use-brick-available.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
+import { useUiStore } from "../../stores/ui-store.js";
+import { focusColor } from "../../shared/theme.js";
 import crypto from "node:crypto";
 
 // =============================================================================
@@ -80,6 +82,10 @@ export default function FileExplorerPanel(): React.ReactNode {
   const selectedSessionIndex = useUploadStore((s) => s.selectedSessionIndex);
   const setSelectedSessionIndex = useUploadStore((s) => s.setSelectedSessionIndex);
   const revokeLink = useShareLinkStore((s) => s.revokeLink);
+
+  // Focus pane (ui-store)
+  const uiFocusPane = useUiStore((s) => s.getFocusPane("files"));
+  const toggleFocus = useUiStore((s) => s.toggleFocusPane);
 
   // Get selected file item for metadata display
   const cachedFiles = fileCache.get(currentPath)?.data ?? [];
@@ -250,6 +256,7 @@ export default function FileExplorerPanel(): React.ReactNode {
                 if (next) setActiveTab(next);
               }
             },
+            "shift+tab": () => toggleFocus("files"),
             "m": () => { if (activeTab === "explorer") setMetadataTab("metadata"); },
             "a": () => { if (activeTab === "explorer" && catalogAvailable) setMetadataTab("aspects"); },
             "s": () => { if (activeTab === "explorer" && catalogAvailable) setMetadataTab("schema"); },
@@ -335,12 +342,12 @@ export default function FileExplorerPanel(): React.ReactNode {
           {/* Main content: tree + preview */}
           <box flexGrow={1} flexDirection="row">
             {/* Left pane: file tree (40%) */}
-            <box width="40%" height="100%" borderStyle="single">
+            <box width="40%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}>
               <FileTree />
             </box>
 
             {/* Right pane: preview + metadata (60%) */}
-            <box width="60%" height="100%" flexDirection="column">
+            <box width="60%" height="100%" flexDirection="column" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}>
               {/* File preview (top 70%) */}
               <box flexGrow={7} borderStyle="single">
                 <FilePreview />

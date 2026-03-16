@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { SearchResult } from "../../stores/search-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface SearchResultsProps {
   readonly results: readonly SearchResult[];
@@ -42,9 +43,10 @@ export function SearchResults({
 
   if (results.length === 0) {
     return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No results found</text>
-      </box>
+      <EmptyState
+        message="No results."
+        hint="Try a different query or search mode (m to cycle: KW → SEM → HYB)."
+      />
     );
   }
 

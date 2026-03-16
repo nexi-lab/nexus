@@ -17,6 +17,8 @@ import { BrickGate } from "../../shared/components/brick-gate.js";
 import { TransactionList } from "./transaction-list.js";
 import { EntryDetail } from "./entry-detail.js";
 import { ConflictsView } from "./conflicts-tab.js";
+import { useUiStore } from "../../stores/ui-store.js";
+import { focusColor } from "../../shared/theme.js";
 
 export default function VersionsPanel(): React.ReactNode {
   const client = useApi();
@@ -50,6 +52,10 @@ export default function VersionsPanel(): React.ReactNode {
   const rollbackTransaction = useVersionsStore((s) => s.rollbackTransaction);
   const fetchConflicts = useVersionsStore((s) => s.fetchConflicts);
   const toggleConflicts = useVersionsStore((s) => s.toggleConflicts);
+
+  // Focus pane (ui-store)
+  const uiFocusPane = useUiStore((s) => s.getFocusPane("versions"));
+  const toggleFocus = useUiStore((s) => s.toggleFocusPane);
 
   // Fetch transactions on mount and when filter changes
   useEffect(() => {
@@ -107,6 +113,7 @@ export default function VersionsPanel(): React.ReactNode {
         fetchConflicts(client);
       }
     },
+    "tab": () => toggleFocus("versions"),
   });
 
   const filterLabel = statusFilter ? ` [${statusFilter}]` : " [all]";
@@ -128,7 +135,7 @@ export default function VersionsPanel(): React.ReactNode {
         {/* Main content: transaction list + entry detail */}
         <box flexGrow={1} flexDirection="row">
           {/* Left pane: transaction list (40%) */}
-          <box width="40%" height="100%" borderStyle="single">
+          <box width="40%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}>
             <TransactionList
               transactions={transactions}
               selectedIndex={selectedIndex}
@@ -136,7 +143,7 @@ export default function VersionsPanel(): React.ReactNode {
           </box>
 
           {/* Right pane: entry detail (60%) */}
-          <box width="60%" height="100%" borderStyle="single">
+          <box width="60%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}>
             <EntryDetail
               transaction={selectedTransaction}
               entries={entries}

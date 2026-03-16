@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { WorkflowSummary } from "../../stores/workflows-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface WorkflowListProps {
   readonly workflows: readonly WorkflowSummary[];
@@ -31,9 +32,10 @@ export function WorkflowList({
 
   if (workflows.length === 0) {
     return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No workflows found</text>
-      </box>
+      <EmptyState
+        message="No workflows defined."
+        hint="Create one via the API: POST /api/v2/workflows"
+      />
     );
   }
 

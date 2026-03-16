@@ -1,9 +1,12 @@
 /**
  * Bottom status bar showing connection state, active identity, and path.
+ *
+ * Enhanced with semantic colors from theme.ts (Phase A1).
  */
 
 import React from "react";
 import { useGlobalStore } from "../../stores/global-store.js";
+import { connectionColor, statusColor } from "../theme.js";
 
 const STATUS_ICONS: Record<string, string> = {
   connected: "●",
@@ -23,37 +26,51 @@ export function StatusBar(): React.ReactNode {
   const icon = STATUS_ICONS[status] ?? "?";
   const baseUrl = config.baseUrl ?? "localhost:2026";
 
-  const parts: string[] = [
-    `${icon} ${status}`,
-    baseUrl,
-  ];
-
-  // Identity: prefer userInfo from /auth/me, fall back to config headers
+  // Build identity segment
+  const identityParts: string[] = [];
   if (userInfo?.display_name ?? userInfo?.username) {
-    parts.push(userInfo.display_name ?? userInfo.username!);
+    identityParts.push(userInfo!.display_name ?? userInfo!.username!);
   } else if (config.agentId) {
-    parts.push(`agent:${config.agentId}`);
+    identityParts.push(`agent:${config.agentId}`);
   }
   if (config.subject && config.subject !== config.agentId) {
-    parts.push(`sub:${config.subject}`);
+    identityParts.push(`sub:${config.subject}`);
   }
 
-  if (serverVersion) parts.push(`v${serverVersion}`);
-  if (config.zoneId) {
-    parts.push(`zone:${config.zoneId}`);
-  } else if (zoneId) {
-    parts.push(`zone:${zoneId}`);
-  }
-  parts.push(`[${activePanel}]`);
+  // Build zone segment
+  const zone = config.zoneId ?? zoneId;
 
   return (
     <box
       height={1}
       width="100%"
       flexDirection="row"
-      justifyContent="space-between"
     >
-      <text>{parts.join(" │ ")}</text>
+      <text>
+        <text foregroundColor={connectionColor[status]}>{icon}</text>
+        <text dimColor>{` ${status} │ `}</text>
+        <text>{baseUrl}</text>
+        {identityParts.length > 0 && (
+          <text>
+            <text dimColor>{" │ "}</text>
+            <text foregroundColor={statusColor.identity}>{identityParts.join(", ")}</text>
+          </text>
+        )}
+        {serverVersion && (
+          <text>
+            <text dimColor>{" │ "}</text>
+            <text dimColor>{`v${serverVersion}`}</text>
+          </text>
+        )}
+        {zone && (
+          <text>
+            <text dimColor>{" │ "}</text>
+            <text foregroundColor={statusColor.reference}>{`zone:${zone}`}</text>
+          </text>
+        )}
+        <text dimColor>{" │ "}</text>
+        <text foregroundColor={statusColor.info}>{`[${activePanel}]`}</text>
+      </text>
     </box>
   );
 }

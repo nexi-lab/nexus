@@ -7,12 +7,16 @@ import { useAgentsStore } from "../../stores/agents-store.js";
 import type { AgentTab } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { AgentStatusView } from "./agent-status-view.js";
 import { DelegationList } from "./delegation-list.js";
 import { InboxView } from "./inbox-view.js";
 import { TrajectoriesTab } from "./trajectories-tab.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
+import { useUiStore } from "../../stores/ui-store.js";
+import { focusColor } from "../../shared/theme.js";
 
 const ALL_TABS: readonly TabDef<AgentTab>[] = [
   { id: "status", label: "Status", brick: "agent_registry" },
@@ -29,6 +33,7 @@ const TAB_LABELS: Readonly<Record<AgentTab, string>> = {
 
 export default function AgentsPanel(): React.ReactNode {
   const client = useApi();
+  const confirm = useConfirmStore((s) => s.confirm);
   const visibleTabs = useVisibleTabs(ALL_TABS);
 
   // Zone ID for fetchAgents
@@ -76,6 +81,10 @@ export default function AgentsPanel(): React.ReactNode {
   const evictAgent = useAgentsStore((s) => s.evictAgent);
   const verifyAgent = useAgentsStore((s) => s.verifyAgent);
   const setSelectedDelegationIndex = useAgentsStore((s) => s.setSelectedDelegationIndex);
+
+  // Focus pane (ui-store)
+  const uiFocusPane = useUiStore((s) => s.getFocusPane("agents"));
+  const toggleFocus = useUiStore((s) => s.toggleFocusPane);
 
   // Merge fetched agents into a display list: fetched agents + any manually added knownAgents not in the fetched list
   const fetchedAgentIds = agents.map((a) => a.agent_id);
@@ -186,11 +195,14 @@ export default function AgentsPanel(): React.ReactNode {
         setActiveTab(nextTab);
       }
     },
+    "shift+tab": () => toggleFocus("agents"),
     r: () => refreshCurrentView(),
-    d: () => {
+    d: async () => {
       if (activeTab !== "delegations" || !client) return;
       const selected = delegations[selectedDelegationIndex];
       if (selected && selected.status === "active") {
+        const ok = await confirm("Revoke delegation?", `Revoke delegation ${selected.delegation_id}. The agent will lose delegated access.`);
+        if (!ok) return;
         revokeDelegation(selected.delegation_id, client);
       }
     },
@@ -224,16 +236,17 @@ export default function AgentsPanel(): React.ReactNode {
       {/* Main content */}
       <box flexGrow={1} flexDirection="row">
         {/* Left sidebar: agent list (30%) */}
-        <box width="30%" height="100%" borderStyle="single" flexDirection="column">
+        <box width="30%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
           <box height={1} width="100%">
             <text>{agentsLoading ? "--- Agents (loading...) ---" : "--- Agents ---"}</text>
           </box>
 
           {/* Agents list */}
           {displayAgentIds.length === 0 ? (
-            <box flexGrow={1} justifyContent="center" alignItems="center">
-              <text>No agents tracked</text>
-            </box>
+            <EmptyState
+              message="No agents registered."
+              hint="Start an agent with 'nexus agent spawn' or add one with the API."
+            />
           ) : (
             <scrollbox flexGrow={1} width="100%">
               {displayAgentIds.map((agentId, i) => {
@@ -254,7 +267,7 @@ export default function AgentsPanel(): React.ReactNode {
         </box>
 
         {/* Right pane: detail views (70%) */}
-        <box width="70%" height="100%" flexDirection="column">
+        <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
           {/* Tab bar */}
           <box height={1} width="100%">
             <text>

@@ -5,6 +5,7 @@
 import React from "react";
 import type { BrickStatusResponse } from "../../stores/zones-store.js";
 import { stateIndicator } from "../../shared/brick-states.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface BrickListProps {
   readonly bricks: readonly BrickStatusResponse[];
@@ -27,9 +28,10 @@ export function BrickList({
 
   if (bricks.length === 0) {
     return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No bricks found</text>
-      </box>
+      <EmptyState
+        message="No bricks registered."
+        hint="Run 'nexus brick mount <name>' to add one."
+      />
     );
   }
 

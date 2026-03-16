@@ -24,6 +24,8 @@ import { McpMountsTab } from "./mcp-mounts-tab.js";
 import { CacheTab } from "./cache-tab.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { allowedActionsForState } from "../../shared/brick-states.js";
+import { useUiStore } from "../../stores/ui-store.js";
+import { focusColor } from "../../shared/theme.js";
 
 const ALL_TABS: readonly TabDef<ZoneTab>[] = [
   { id: "zones", label: "Zones", brick: null },
@@ -110,6 +112,10 @@ export default function ZonesPanel(): React.ReactNode {
   const fetchTools = useMcpStore((s) => s.fetchTools);
   const mountServer = useMcpStore((s) => s.mountServer);
   const setSelectedMountIndex = useMcpStore((s) => s.setSelectedMountIndex);
+
+  // Focus pane (ui-store)
+  const uiFocusPane = useUiStore((s) => s.getFocusPane("zones"));
+  const toggleFocus = useUiStore((s) => s.toggleFocusPane);
 
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
@@ -379,6 +385,7 @@ export default function ZonesPanel(): React.ReactNode {
                 setActiveTab(nextTab);
               }
             },
+            "shift+tab": () => toggleFocus("zones"),
             // n: Register workspace/memory or mount MCP server
             n: () => {
               if (activeTab === "workspaces") {
@@ -521,7 +528,7 @@ export default function ZonesPanel(): React.ReactNode {
         {activeTab === "bricks" && (
           <>
             {/* Left sidebar: brick list (30%) */}
-            <box width="30%" height="100%" borderStyle="single" flexDirection="column">
+            <box width="30%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
               <box height={1} width="100%">
                 <text>
                   {bricksHealth
@@ -538,7 +545,7 @@ export default function ZonesPanel(): React.ReactNode {
             </box>
 
             {/* Right pane: brick detail (70%) */}
-            <box width="70%" height="100%" borderStyle="single">
+            <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}>
               <BrickDetail brick={brickDetail} loading={detailLoading} />
             </box>
           </>

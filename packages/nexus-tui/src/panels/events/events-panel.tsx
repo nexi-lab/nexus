@@ -13,6 +13,7 @@ import { useInfraStore } from "../../stores/infra-store.js";
 import type { InfraTab } from "../../stores/infra-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ConnectorList } from "./connector-list.js";
@@ -22,6 +23,7 @@ import { SecretsAudit } from "./secrets-audit.js";
 import { MclReplay } from "./mcl-replay.js";
 import { OperationsTab } from "./operations-tab.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect";
 
@@ -49,6 +51,7 @@ const TAB_LABELS: Readonly<Record<PanelTab, string>> = {
 
 export default function EventsPanel(): React.ReactNode {
   const apiClient = useApi();
+  const confirm = useConfirmStore((s) => s.confirm);
   const visibleTabs = useVisibleTabs(ALL_TABS);
   const config = useGlobalStore((s) => s.config);
 
@@ -286,13 +289,21 @@ export default function EventsPanel(): React.ReactNode {
               setFilterBuffer(mclAspectFilter);
             }
           },
-          d: () => {
+          d: async () => {
             if (activeTab === "subscriptions" && apiClient) {
               const sub = subscriptions[selectedSubscriptionIndex];
-              if (sub) deleteSubscription(sub.subscription_id, apiClient);
+              if (sub) {
+                const ok = await confirm("Delete subscription?", "Delete this event subscription.");
+                if (!ok) return;
+                deleteSubscription(sub.subscription_id, apiClient);
+              }
             } else if (activeTab === "locks" && apiClient) {
               const lock = locks[selectedLockIndex];
-              if (lock) releaseLock(lock.resource, lock.lock_id, apiClient);
+              if (lock) {
+                const ok = await confirm("Release lock?", "Release this lock. Other waiters may acquire it.");
+                if (!ok) return;
+                releaseLock(lock.resource, lock.lock_id, apiClient);
+              }
             }
           },
           t: () => {
@@ -367,7 +378,10 @@ export default function EventsPanel(): React.ReactNode {
             {/* Event stream */}
             <scrollbox flexGrow={1} width="100%">
               {events.length === 0 ? (
-                <text>Waiting for events...</text>
+                <EmptyState
+                  message="Listening for events..."
+                  hint="Waiting for activity on the server."
+                />
               ) : (
                 events.map((event, index) => (
                   <box key={event.id ?? index} height={1} width="100%" flexDirection="row">

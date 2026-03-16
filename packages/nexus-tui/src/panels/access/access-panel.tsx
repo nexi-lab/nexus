@@ -23,6 +23,7 @@ import { useAccessStore } from "../../stores/access-store.js";
 import type { AccessTab } from "../../stores/access-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ManifestList } from "./manifest-list.js";
@@ -63,6 +64,7 @@ type OverlayMode =
 
 export default function AccessPanel(): React.ReactNode {
   const client = useApi();
+  const confirm = useConfirmStore((s) => s.confirm);
   const visibleTabs = useVisibleTabs(ALL_TABS);
   const [overlay, setOverlay] = useState<OverlayMode>("none");
 
@@ -236,7 +238,7 @@ export default function AccessPanel(): React.ReactNode {
         setOverlay("delegationCreator");
       }
     },
-    x: () => {
+    x: async () => {
       if (activeTab === "delegations" && overlay === "none" && client) {
         const selected = delegations[selectedDelegationIndex];
         if (selected && selected.status === "active") {
@@ -245,6 +247,8 @@ export default function AccessPanel(): React.ReactNode {
       } else if (activeTab === "credentials" && overlay === "none" && client) {
         const selected = credentials[selectedCredentialIndex];
         if (selected && selected.is_active) {
+          const ok = await confirm("Revoke credential?", "Revoke this credential. The holder will lose access.");
+          if (!ok) return;
           revokeCredential(selected.credential_id, selected.subject_agent_id, client);
         }
       }
@@ -281,10 +285,12 @@ export default function AccessPanel(): React.ReactNode {
         computeFraudScores(effectiveZoneId, client);
       }
     },
-    "shift+x": () => {
+    "shift+x": async () => {
       if (activeTab === "manifests" && overlay === "none" && client) {
         const selected = manifests[selectedManifestIndex];
         if (selected && selected.status === "active") {
+          const ok = await confirm("Revoke manifest?", "Revoke this access manifest. Active sessions may be terminated.");
+          if (!ok) return;
           revokeManifest(selected.manifest_id, client);
         }
       }
@@ -322,11 +328,13 @@ export default function AccessPanel(): React.ReactNode {
         fetchCollusionRings(effectiveZoneId, client);
       }
     },
-    s: () => {
+    s: async () => {
       // Suspend selected agent (fraud tab — selected by fraud score index)
       if (activeTab === "fraud" && client) {
         const selected = fraudScores[selectedFraudIndex];
         if (selected) {
+          const ok = await confirm("Suspend agent?", "Suspend this agent. It will be unable to act until unsuspended.");
+          if (!ok) return;
           suspendAgent(selected.agent_id, "Suspended via TUI", effectiveZoneId, client);
         }
       }

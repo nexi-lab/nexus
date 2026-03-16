@@ -27,7 +27,14 @@ from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 
 @pytest.fixture
 def mock_nexus_fs() -> MagicMock:
-    return MagicMock()
+    fs = MagicMock()
+    # Default async methods to AsyncMock so they can be awaited
+    fs.read = AsyncMock(return_value=b"")
+    fs.write = AsyncMock(return_value={})
+    fs.sys_stat = AsyncMock(return_value=None)
+    fs.sys_unlink = AsyncMock(return_value=None)
+    fs.sys_rmdir = AsyncMock(return_value=None)
+    return fs
 
 
 @pytest.fixture
@@ -393,6 +400,7 @@ class TestVFSServicerTypedRPCs:
 
         assert response.is_error is False
         assert response.success is True
+        mock_nexus_fs.sys_unlink.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_delete_recursive(self, servicer, mock_nexus_fs) -> None:
@@ -411,13 +419,21 @@ class TestVFSServicerTypedRPCs:
 
     @pytest.mark.anyio
     async def test_stream_read_chunks(self, servicer, mock_nexus_fs) -> None:
-        """StreamRead yields chunks for large content."""
-        mock_nexus_fs.sys_read = AsyncMock(return_value=b"hello world!")  # 12 bytes
+        """StreamRead yields chunks via read_range pread loop (Issue #1614)."""
         request = _make_typed_request(
             "StreamReadRequest", path="/big.bin", auth_token="", chunk_size=5
         )
         context = MagicMock()
         context.cancelled.return_value = False
+
+        # sys_stat returns file size (async)
+        mock_nexus_fs.sys_stat.return_value = {"size": 12}
+
+        # read_range is sync (called via asyncio.to_thread)
+        content = b"hello world!"
+        mock_nexus_fs.read_range = MagicMock(
+            side_effect=lambda path, start, end, ctx: content[start:end]
+        )
 
         chunks = []
         async for chunk in servicer.StreamRead(request, context):
@@ -435,12 +451,14 @@ class TestVFSServicerTypedRPCs:
     @pytest.mark.anyio
     async def test_stream_read_empty_file(self, servicer, mock_nexus_fs) -> None:
         """StreamRead yields single empty chunk for empty file."""
-        mock_nexus_fs.sys_read = AsyncMock(return_value=b"")
         request = _make_typed_request(
             "StreamReadRequest", path="/empty.txt", auth_token="", chunk_size=0
         )
         context = MagicMock()
         context.cancelled.return_value = False
+
+        # sys_stat returns size=0
+        mock_nexus_fs.sys_stat.return_value = {"size": 0}
 
         chunks = []
         async for chunk in servicer.StreamRead(request, context):
@@ -453,11 +471,13 @@ class TestVFSServicerTypedRPCs:
     @pytest.mark.anyio
     async def test_stream_read_error(self, servicer, mock_nexus_fs) -> None:
         """StreamRead yields error chunk on file not found."""
-        mock_nexus_fs.sys_read = AsyncMock(side_effect=NexusFileNotFoundError("/missing.bin"))
         request = _make_typed_request(
             "StreamReadRequest", path="/missing.bin", auth_token="", chunk_size=0
         )
         context = MagicMock()
+
+        # sys_stat raises NexusFileNotFoundError
+        mock_nexus_fs.sys_stat.side_effect = NexusFileNotFoundError("/missing.bin")
 
         chunks = []
         async for chunk in servicer.StreamRead(request, context):

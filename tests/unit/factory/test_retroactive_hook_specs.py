@@ -1,212 +1,310 @@
-"""Unit tests for _build_retroactive_hook_specs() (Issue #1452 Phase 4).
+"""Unit tests for VFS hook HotSwappable conformance (Issue #1610/#1612/#1613/#1616).
 
-Verifies that all retroactive hook groups from _register_vfs_hooks() are
-captured as HookSpecs so swap_service() can cleanly unregister them during
-hot-swap.  Services that implement HotSwappable.hook_spec() (e.g. EventsService)
-are NOT in this table — they self-register at bootstrap time.
+All VFS hooks now implement HotSwappable — they self-describe via hook_spec().
+_build_retroactive_hook_specs() has been deleted.  These tests verify that
+every hook class satisfies the HotSwappable structural protocol and returns
+the correct HookSpec.
 """
 
 from __future__ import annotations
 
-from unittest.mock import sentinel
+from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.contracts.protocols.service_hooks import HookSpec
-from nexus.factory.orchestrator import _build_retroactive_hook_specs
-
-
-class _FakeCoordinator:
-    """Minimal coordinator stub — just stores set_hook_spec calls."""
-
-    def __init__(self) -> None:
-        self.specs: dict[str, HookSpec] = {}
-
-    def set_hook_spec(self, name: str, spec: HookSpec) -> None:
-        self.specs[name] = spec
-
-
-def _full_hook_refs() -> dict[str, object]:
-    """Return hook_refs dict with all retroactive hook objects present.
-
-    EventsService is excluded — it implements HotSwappable.hook_spec()
-    and self-registers at bootstrap time (Issue #1611).
-    """
-    return {
-        "perm_hook": sentinel.perm_hook,
-        "audit": sentinel.audit,
-        "viewer_hook": sentinel.viewer_hook,
-        "auto_parse_hook": sentinel.auto_parse_hook,
-        "tiger_rename_hook": sentinel.tiger_rename,
-        "tiger_write_hook": sentinel.tiger_write,
-        "vview_resolver": sentinel.vview_resolver,
-        "bus_observer": sentinel.bus_observer,
-        "rev_observer": sentinel.rev_observer,
-    }
-
+from nexus.contracts.protocols.service_lifecycle import HotSwappable
 
 # ---------------------------------------------------------------------------
-# All hooks captured
+# HotSwappable conformance — isinstance checks
 # ---------------------------------------------------------------------------
 
 
-class TestBuildRetroactiveHookSpecs:
-    def test_all_hooks_captured(self) -> None:
-        """Full boot — all retroactive hook groups result in specs."""
-        coord = _FakeCoordinator()
-        _build_retroactive_hook_specs(coord, _full_hook_refs())
+class TestHotSwappableConformance:
+    """Every VFS hook class satisfies HotSwappable protocol."""
 
-        expected_names = {
-            "permission",
-            "audit",
-            "viewer",
-            "auto_parse",
-            "tiger_cache",
-            "virtual_view",
-            "event_bus",
-            "revision_tracking",
-        }
-        assert set(coord.specs.keys()) == expected_names
+    def test_permission_hook(self) -> None:
+        from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
-    def test_partial_hooks_captured(self) -> None:
-        """Minimal boot — only bus_observer provided."""
-        coord = _FakeCoordinator()
-        hook_refs = dict.fromkeys(_full_hook_refs())
-        hook_refs["bus_observer"] = sentinel.bus_observer
+        hook = PermissionCheckHook(
+            checker=MagicMock(),
+            metadata_store=MagicMock(),
+            default_context=MagicMock(),
+        )
+        assert isinstance(hook, HotSwappable)
 
-        _build_retroactive_hook_specs(coord, hook_refs)
+    def test_audit_interceptor(self) -> None:
+        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
-        assert set(coord.specs.keys()) == {"event_bus"}
+        hook = AuditWriteInterceptor(observer=MagicMock())
+        assert isinstance(hook, HotSwappable)
 
-    def test_none_hooks_skipped(self) -> None:
-        """All None — no specs set at all."""
-        coord = _FakeCoordinator()
-        hook_refs = dict.fromkeys(_full_hook_refs())
-        _build_retroactive_hook_specs(coord, hook_refs)
+    def test_dynamic_viewer_hook(self) -> None:
+        from nexus.bricks.rebac.dynamic_viewer_hook import DynamicViewerReadHook
 
-        assert coord.specs == {}
+        hook = DynamicViewerReadHook(
+            get_subject=MagicMock(),
+            get_viewer_config=MagicMock(),
+            apply_filter=MagicMock(),
+        )
+        assert isinstance(hook, HotSwappable)
 
-    def test_empty_hook_refs(self) -> None:
-        """Empty dict — no specs, no errors."""
-        coord = _FakeCoordinator()
-        _build_retroactive_hook_specs(coord, {})
-        assert coord.specs == {}
+    def test_tiger_rename_hook(self) -> None:
+        from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
+
+        hook = TigerCacheRenameHook(tiger_cache=MagicMock())
+        assert isinstance(hook, HotSwappable)
+
+    def test_tiger_write_hook(self) -> None:
+        from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
+
+        hook = TigerCacheWriteHook(tiger_cache=MagicMock())
+        assert isinstance(hook, HotSwappable)
+
+    def test_virtual_view_resolver(self) -> None:
+        from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
+
+        hook = VirtualViewResolver(
+            metadata=MagicMock(),
+            path_router=MagicMock(),
+            permission_checker=MagicMock(),
+        )
+        assert isinstance(hook, HotSwappable)
+
+    def test_auto_parse_hook(self) -> None:
+        from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
+
+        hook = AutoParseWriteHook(
+            get_parser=MagicMock(),
+            parse_fn=MagicMock(),
+        )
+        assert isinstance(hook, HotSwappable)
+
+    def test_event_bus_observer(self) -> None:
+        from nexus.system_services.event_bus.observer import EventBusObserver
+
+        hook = EventBusObserver()
+        assert isinstance(hook, HotSwappable)
+
+    def test_revision_tracking_observer(self) -> None:
+        from nexus.system_services.lifecycle.revision_tracking_observer import (
+            RevisionTrackingObserver,
+        )
+
+        hook = RevisionTrackingObserver(revision_notifier=MagicMock())
+        assert isinstance(hook, HotSwappable)
+
+    def test_task_write_hook(self) -> None:
+        from nexus.bricks.task_manager.write_hook import TaskWriteHook
+
+        hook = TaskWriteHook()
+        assert isinstance(hook, HotSwappable)
 
 
 # ---------------------------------------------------------------------------
-# Permission hook — 6 channels
+# hook_spec() — correct channels declared
 # ---------------------------------------------------------------------------
 
 
-class TestPermissionHookSpec:
-    def test_permission_has_6_channels(self) -> None:
-        coord = _FakeCoordinator()
-        hook_refs = dict.fromkeys(_full_hook_refs())
-        hook_refs["perm_hook"] = sentinel.perm_hook
+class TestHookSpecDeclarations:
+    """Each hook declares the correct HookSpec channels."""
 
-        _build_retroactive_hook_specs(coord, hook_refs)
+    def test_permission_6_channels(self) -> None:
+        from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
-        spec = coord.specs["permission"]
-        assert spec.read_hooks == (sentinel.perm_hook,)
-        assert spec.write_hooks == (sentinel.perm_hook,)
-        assert spec.delete_hooks == (sentinel.perm_hook,)
-        assert spec.rename_hooks == (sentinel.perm_hook,)
-        assert spec.mkdir_hooks == (sentinel.perm_hook,)
-        assert spec.rmdir_hooks == (sentinel.perm_hook,)
+        hook = PermissionCheckHook(
+            checker=MagicMock(),
+            metadata_store=MagicMock(),
+            default_context=MagicMock(),
+        )
+        spec = hook.hook_spec()
+        assert spec.read_hooks == (hook,)
+        assert spec.write_hooks == (hook,)
+        assert spec.delete_hooks == (hook,)
+        assert spec.rename_hooks == (hook,)
+        assert spec.mkdir_hooks == (hook,)
+        assert spec.rmdir_hooks == (hook,)
         assert spec.total_hooks == 6
 
+    def test_audit_6_channels(self) -> None:
+        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
-# ---------------------------------------------------------------------------
-# Audit hook — 6 channels
-# ---------------------------------------------------------------------------
-
-
-class TestAuditHookSpec:
-    def test_audit_has_6_channels(self) -> None:
-        coord = _FakeCoordinator()
-        hook_refs = dict.fromkeys(_full_hook_refs())
-        hook_refs["audit"] = sentinel.audit
-
-        _build_retroactive_hook_specs(coord, hook_refs)
-
-        spec = coord.specs["audit"]
-        assert spec.write_hooks == (sentinel.audit,)
-        assert spec.write_batch_hooks == (sentinel.audit,)
-        assert spec.delete_hooks == (sentinel.audit,)
-        assert spec.rename_hooks == (sentinel.audit,)
-        assert spec.mkdir_hooks == (sentinel.audit,)
-        assert spec.rmdir_hooks == (sentinel.audit,)
+        hook = AuditWriteInterceptor(observer=MagicMock())
+        spec = hook.hook_spec()
+        assert spec.write_hooks == (hook,)
+        assert spec.write_batch_hooks == (hook,)
+        assert spec.delete_hooks == (hook,)
+        assert spec.rename_hooks == (hook,)
+        assert spec.mkdir_hooks == (hook,)
+        assert spec.rmdir_hooks == (hook,)
         assert spec.total_hooks == 6
 
+    def test_viewer_1_channel(self) -> None:
+        from nexus.bricks.rebac.dynamic_viewer_hook import DynamicViewerReadHook
+
+        hook = DynamicViewerReadHook(
+            get_subject=MagicMock(),
+            get_viewer_config=MagicMock(),
+            apply_filter=MagicMock(),
+        )
+        spec = hook.hook_spec()
+        assert spec.read_hooks == (hook,)
+        assert spec.total_hooks == 1
+
+    def test_tiger_rename_1_channel(self) -> None:
+        from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
+
+        hook = TigerCacheRenameHook(tiger_cache=MagicMock())
+        spec = hook.hook_spec()
+        assert spec.rename_hooks == (hook,)
+        assert spec.total_hooks == 1
+
+    def test_tiger_write_1_channel(self) -> None:
+        from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
+
+        hook = TigerCacheWriteHook(tiger_cache=MagicMock())
+        spec = hook.hook_spec()
+        assert spec.write_hooks == (hook,)
+        assert spec.total_hooks == 1
+
+    def test_virtual_view_1_resolver(self) -> None:
+        from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
+
+        hook = VirtualViewResolver(
+            metadata=MagicMock(),
+            path_router=MagicMock(),
+            permission_checker=MagicMock(),
+        )
+        spec = hook.hook_spec()
+        assert spec.resolvers == (hook,)
+        assert spec.total_hooks == 1
+
+    def test_auto_parse_1_channel(self) -> None:
+        from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
+
+        hook = AutoParseWriteHook(
+            get_parser=MagicMock(),
+            parse_fn=MagicMock(),
+        )
+        spec = hook.hook_spec()
+        assert spec.write_hooks == (hook,)
+        assert spec.total_hooks == 1
+
+    def test_event_bus_observer_1_channel(self) -> None:
+        from nexus.system_services.event_bus.observer import EventBusObserver
+
+        hook = EventBusObserver()
+        spec = hook.hook_spec()
+        assert spec.observers == (hook,)
+        assert spec.total_hooks == 1
+
+    def test_revision_observer_1_channel(self) -> None:
+        from nexus.system_services.lifecycle.revision_tracking_observer import (
+            RevisionTrackingObserver,
+        )
+
+        hook = RevisionTrackingObserver(revision_notifier=MagicMock())
+        spec = hook.hook_spec()
+        assert spec.observers == (hook,)
+        assert spec.total_hooks == 1
+
+    def test_task_write_1_channel(self) -> None:
+        from nexus.bricks.task_manager.write_hook import TaskWriteHook
+
+        hook = TaskWriteHook()
+        spec = hook.hook_spec()
+        assert spec.write_hooks == (hook,)
+        assert spec.total_hooks == 1
+
 
 # ---------------------------------------------------------------------------
-# Tiger cache — combined rename + write
+# drain() / activate() — lifecycle methods
 # ---------------------------------------------------------------------------
 
 
-class TestTigerCacheHookSpec:
-    def test_tiger_cache_combined(self) -> None:
-        """Both rename + write hooks present → combined into one spec."""
-        coord = _FakeCoordinator()
-        hook_refs = dict.fromkeys(_full_hook_refs())
-        hook_refs["tiger_rename_hook"] = sentinel.tiger_rename
-        hook_refs["tiger_write_hook"] = sentinel.tiger_write
+class TestDrainActivate:
+    """drain() and activate() are callable and don't raise."""
 
-        _build_retroactive_hook_specs(coord, hook_refs)
+    @pytest.mark.asyncio
+    async def test_permission_hook_lifecycle(self) -> None:
+        from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
-        spec = coord.specs["tiger_cache"]
-        assert spec.rename_hooks == (sentinel.tiger_rename,)
-        assert spec.write_hooks == (sentinel.tiger_write,)
-        assert spec.total_hooks == 2
+        hook = PermissionCheckHook(
+            checker=MagicMock(),
+            metadata_store=MagicMock(),
+            default_context=MagicMock(),
+        )
+        await hook.drain()
+        await hook.activate()
 
-    def test_tiger_rename_only(self) -> None:
-        """Only rename hook → write_hooks is empty tuple."""
-        coord = _FakeCoordinator()
-        hook_refs = dict.fromkeys(_full_hook_refs())
-        hook_refs["tiger_rename_hook"] = sentinel.tiger_rename
+    @pytest.mark.asyncio
+    async def test_audit_interceptor_lifecycle(self) -> None:
+        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
-        _build_retroactive_hook_specs(coord, hook_refs)
+        hook = AuditWriteInterceptor(observer=MagicMock())
+        await hook.drain()
+        await hook.activate()
 
-        spec = coord.specs["tiger_cache"]
-        assert spec.rename_hooks == (sentinel.tiger_rename,)
-        assert spec.write_hooks == ()
+    @pytest.mark.asyncio
+    async def test_auto_parse_drain_calls_shutdown(self) -> None:
+        from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
 
-    def test_tiger_write_only(self) -> None:
-        """Only write hook → rename_hooks is empty tuple."""
-        coord = _FakeCoordinator()
-        hook_refs = dict.fromkeys(_full_hook_refs())
-        hook_refs["tiger_write_hook"] = sentinel.tiger_write
+        hook = AutoParseWriteHook(
+            get_parser=MagicMock(),
+            parse_fn=MagicMock(),
+        )
+        # drain() calls shutdown() which drains threads
+        await hook.drain()
+        await hook.activate()
 
-        _build_retroactive_hook_specs(coord, hook_refs)
+    @pytest.mark.asyncio
+    async def test_virtual_view_resolver_lifecycle(self) -> None:
+        from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
 
-        spec = coord.specs["tiger_cache"]
-        assert spec.rename_hooks == ()
-        assert spec.write_hooks == (sentinel.tiger_write,)
+        hook = VirtualViewResolver(
+            metadata=MagicMock(),
+            path_router=MagicMock(),
+            permission_checker=MagicMock(),
+        )
+        await hook.drain()
+        await hook.activate()
+
+    @pytest.mark.asyncio
+    async def test_event_bus_observer_lifecycle(self) -> None:
+        from nexus.system_services.event_bus.observer import EventBusObserver
+
+        hook = EventBusObserver()
+        await hook.drain()
+        await hook.activate()
+
+    @pytest.mark.asyncio
+    async def test_revision_observer_lifecycle(self) -> None:
+        from nexus.system_services.lifecycle.revision_tracking_observer import (
+            RevisionTrackingObserver,
+        )
+
+        hook = RevisionTrackingObserver(revision_notifier=MagicMock())
+        await hook.drain()
+        await hook.activate()
+
+    @pytest.mark.asyncio
+    async def test_task_write_hook_lifecycle(self) -> None:
+        from nexus.bricks.task_manager.write_hook import TaskWriteHook
+
+        hook = TaskWriteHook()
+        await hook.drain()
+        await hook.activate()
 
 
 # ---------------------------------------------------------------------------
-# Single-channel hook groups
+# _build_retroactive_hook_specs deleted — verify import removed
 # ---------------------------------------------------------------------------
 
 
-class TestSingleChannelHookSpecs:
-    @pytest.mark.parametrize(
-        ("ref_key", "spec_name", "field"),
-        [
-            ("viewer_hook", "viewer", "read_hooks"),
-            ("auto_parse_hook", "auto_parse", "write_hooks"),
-            ("vview_resolver", "virtual_view", "resolvers"),
-            ("bus_observer", "event_bus", "observers"),
-            ("rev_observer", "revision_tracking", "observers"),
-        ],
-    )
-    def test_single_channel(self, ref_key: str, spec_name: str, field: str) -> None:
-        coord = _FakeCoordinator()
-        hook_refs = dict.fromkeys(_full_hook_refs())
-        hook_refs[ref_key] = sentinel.hook_obj
+class TestRetroactiveHookSpecsDeleted:
+    """_build_retroactive_hook_specs() has been deleted (Issue #1616)."""
 
-        _build_retroactive_hook_specs(coord, hook_refs)
+    def test_function_no_longer_importable(self) -> None:
+        """The retroactive function should not exist in orchestrator."""
+        from nexus.factory import orchestrator
 
-        spec = coord.specs[spec_name]
-        assert getattr(spec, field) == (sentinel.hook_obj,)
-        assert not spec.is_empty
+        assert not hasattr(orchestrator, "_build_retroactive_hook_specs")

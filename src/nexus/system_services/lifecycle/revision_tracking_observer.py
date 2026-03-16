@@ -16,6 +16,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.file_events import FileEvent
     from nexus.lib.revision_notifier import RevisionNotifierBase
 
@@ -33,6 +34,19 @@ class RevisionTrackingObserver:
     """
 
     __slots__ = ("_notifier",)
+
+    # ── HotSwappable protocol (Issue #1616) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(observers=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(self, revision_notifier: RevisionNotifierBase) -> None:
         self._notifier = revision_notifier

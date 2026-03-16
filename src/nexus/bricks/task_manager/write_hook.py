@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.bricks.task_manager.events import TaskSignalHandler
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.vfs_hooks import WriteHookContext
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,19 @@ class TaskWriteHook:
     to registered :class:`TaskSignalHandler` implementations.  No in-memory
     cache — all state comes from the written content and ``ctx.is_new_file``.
     """
+
+    # ── HotSwappable protocol (Issue #1616) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(write_hooks=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(self) -> None:
         self._handlers: list[TaskSignalHandler] = []

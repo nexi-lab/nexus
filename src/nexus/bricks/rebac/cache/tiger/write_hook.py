@@ -12,11 +12,16 @@ Same architectural pattern as TigerCacheRenameHook:
 Issue #2133: Leopard-style directory grants.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.vfs_hooks import WriteHookContext
+
+if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,19 @@ class TigerCacheWriteHook:
     Dependencies injected at construction:
       - tiger_cache: The TigerCache instance (bitmap_cache)
     """
+
+    # ── HotSwappable protocol (Issue #1610) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(write_hooks=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(self, tiger_cache: Any) -> None:
         self._tiger_cache = tiger_cache

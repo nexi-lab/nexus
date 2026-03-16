@@ -137,7 +137,7 @@ class ToolDefinition:
 
 @dataclass(frozen=True, slots=True)
 class AgentContext:
-    """Execution context built by ProcessManager.resume().
+    """Execution context for an agent process.
 
     Contains everything the agent loop needs to run:
     system prompt, conversation history, and tool schemas.

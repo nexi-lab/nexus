@@ -49,7 +49,7 @@ class TestSpawn:
         assert desc.name == "agent-1"
         assert desc.owner_id == OWNER
         assert desc.zone_id == ZONE
-        assert desc.state == ProcessState.CREATED
+        assert desc.state == ProcessState.RUNNING
         assert desc.kind == ProcessKind.MANAGED
         assert len(desc.pid) == 12
 
@@ -120,10 +120,10 @@ class TestSpawn:
         pt = _make_table()
         pt.spawn("a1", OWNER, ZONE)
         desc = pt.spawn("a2", OWNER, ZONE)
-        # Transition a2 to RUNNING
-        pt._transition(desc, ProcessState.RUNNING)
-        assert len(pt.list_processes(state=ProcessState.CREATED)) == 1
+        # Transition a2 to SLEEPING
+        pt._transition(desc, ProcessState.SLEEPING)
         assert len(pt.list_processes(state=ProcessState.RUNNING)) == 1
+        assert len(pt.list_processes(state=ProcessState.SLEEPING)) == 1
 
     def test_spawn_persists_to_metastore(self) -> None:
         ms = DictMetastore()

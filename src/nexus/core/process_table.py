@@ -169,7 +169,7 @@ class ProcessTable:
             owner_id=owner_id,
             zone_id=zone_id,
             kind=kind,
-            state=ProcessState.CREATED,
+            state=ProcessState.RUNNING,
             cwd=cwd,
             external_info=external_info,
             labels=labels or {},

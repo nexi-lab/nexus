@@ -1,6 +1,6 @@
 """ProcessManager protocol — agent process lifecycle contract.
 
-Defines the kernel contract for agent process creation, resumption,
+Defines the kernel contract for agent process creation,
 signaling, and termination. Modeled after Linux kernel/fork.c,
 kernel/exit.c, and kernel/signal.c.
 
@@ -9,13 +9,10 @@ Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §5.2.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.contracts.llm_types import Message
     from nexus.system_services.agent_runtime.types import (
-        AgentEvent,
         AgentProcess,
         AgentProcessConfig,
         AgentSignal,
@@ -28,8 +25,8 @@ class ProcessManagerProtocol(Protocol):
 
     Linux analogue: kernel/fork.c + kernel/exit.c + kernel/signal.c.
 
-    Manages agent processes: creation (fork/exec), message handling
-    (resume), termination (exit), and signaling (steering messages).
+    Manages agent processes: creation (fork/exec), termination (exit),
+    and signaling (steering messages).
     """
 
     async def spawn(
@@ -43,21 +40,8 @@ class ProcessManagerProtocol(Protocol):
         """Create a new agent process (fork+exec).
 
         Allocates PID, creates home directory in NexusFS, writes
-        SYSTEM.md and settings.json, registers with AgentRegistry,
-        and stores process in the in-memory process table.
-        """
-        ...
-
-    async def resume(
-        self,
-        pid: str,
-        message: Message,
-    ) -> AsyncIterator[AgentEvent]:
-        """Send a message to an agent process and run the agent loop.
-
-        Loads process state, builds AgentContext (system prompt +
-        memory + conversation history), runs the agent loop, saves
-        checkpoint, and yields AgentEvents as they arrive.
+        SYSTEM.md and settings.json, and stores process in the
+        in-memory process table.
         """
         ...
 
@@ -88,7 +72,7 @@ class ProcessManagerProtocol(Protocol):
         """Send a signal to an agent process.
 
         SIGSTOP -> suspend (transition to STOPPED)
-        SIGCONT -> resume (transition to SLEEPING)
+        SIGCONT -> continue (transition to SLEEPING)
         SIGTERM -> graceful shutdown
         SIGKILL -> immediate termination
         SIGUSR1 -> steering message injection

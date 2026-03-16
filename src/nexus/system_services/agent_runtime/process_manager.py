@@ -1,6 +1,6 @@
 """ProcessManager — agent process lifecycle orchestrator.
 
-Manages agent processes: spawn, resume, terminate, signal.
+Manages agent processes: spawn, terminate, signal, list.
 In-memory process table for Phase 1 (single-node).
 
 Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §5.2, §10.
@@ -9,26 +9,18 @@ Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §5.2, §10.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.llm_types import Message
-from nexus.system_services.agent_runtime.loop import agent_loop
 from nexus.system_services.agent_runtime.session_store import SessionStore
-from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
 from nexus.system_services.agent_runtime.types import (
-    AgentContext,
-    AgentEvent,
     AgentProcess,
     AgentProcessConfig,
     AgentProcessState,
     AgentSignal,
-    Error,
 )
 
 if TYPE_CHECKING:
@@ -46,7 +38,7 @@ _DEFAULT_SYSTEM_PROMPT = (
 
 
 class ProcessManager:
-    """Manages agent process lifecycle: spawn, resume, terminate.
+    """Manages agent process lifecycle: spawn, terminate, signal.
 
     In-memory process table (single-node Phase 1).
     """
@@ -67,7 +59,6 @@ class ProcessManager:
         self._scheduler = scheduler
         self._session_store = SessionStore(vfs)
         self._processes: dict[str, AgentProcess] = {}
-        self._dispatchers: dict[str, ToolDispatcher] = {}  # cached per process
         self._tasks: dict[str, asyncio.Task[None]] = {}  # running loop tasks per PID
 
     # ------------------------------------------------------------------
@@ -162,156 +153,6 @@ class ProcessManager:
         return process
 
     # ------------------------------------------------------------------
-    # resume
-    # ------------------------------------------------------------------
-
-    async def resume(
-        self,
-        pid: str,
-        message: Message,
-    ) -> AsyncIterator[AgentEvent]:
-        """Send a message to an agent process and run the agent loop.
-
-        1. Load AgentProcess from table.
-        2. Build OperationContext.
-        3. Read SYSTEM.md + MEMORY.md from VFS.
-        4. Load checkpoint (conversation history) from CAS.
-        5. Build AgentContext.
-        6. Transition SLEEPING->RUNNING.
-        7. Run agent_loop() with event callback.
-        8. Save checkpoint to CAS.
-        9. Transition RUNNING->SLEEPING.
-        10. Yield AgentEvents.
-        """
-        process = self._processes.get(pid)
-        if process is None:
-            yield Error(error=f"Process not found: {pid}")
-            return
-
-        if process.state == AgentProcessState.RUNNING:
-            yield Error(error=f"Process {pid} is already running")
-            return
-
-        config = process.config
-        if config is None:
-            yield Error(error=f"Process {pid} has no config")
-            return
-
-        ctx = _make_system_context(process.owner_id, process.zone_id)
-
-        # Transition to RUNNING
-        process = replace(
-            process,
-            state=AgentProcessState.RUNNING,
-            last_scheduled=datetime.now(UTC),
-        )
-        self._processes[pid] = process
-
-        # Load system prompt from VFS
-        system_prompt = _DEFAULT_SYSTEM_PROMPT
-        if process.system_prompt_path:
-            try:
-                raw = await self._vfs.sys_read(process.system_prompt_path, context=ctx)
-                if isinstance(raw, dict):
-                    raw = raw.get("content", b"")
-                if isinstance(raw, bytes):
-                    system_prompt = raw.decode("utf-8", errors="replace")
-            except Exception as exc:
-                logger.warning("Failed to read SYSTEM.md for %s: %s", pid, exc)
-
-        # Load MEMORY.md if it exists
-        memory_path = f"{process.cwd}/MEMORY.md"
-        memory_content = ""
-        try:
-            if await self._vfs.sys_access(memory_path, context=ctx):
-                raw = await self._vfs.sys_read(memory_path, context=ctx)
-                if isinstance(raw, dict):
-                    raw = raw.get("content", b"")
-                if isinstance(raw, bytes):
-                    memory_content = raw.decode("utf-8", errors="replace")
-        except Exception:
-            pass  # MEMORY.md is optional
-
-        if memory_content:
-            system_prompt += f"\n\n## Working Memory\n\n{memory_content}"
-
-        # Load checkpoint (previous conversation)
-        prev_messages = await self._session_store.load(pid, ctx, cwd=process.cwd)
-
-        # Build message list: previous + new user message
-        messages = list(prev_messages)
-        messages.append(message)
-
-        # Get or create cached ToolDispatcher for this process
-        dispatcher = self._dispatchers.get(pid)
-        if dispatcher is None:
-            dispatcher = ToolDispatcher(
-                self._vfs,
-                self._sandbox,
-                default_cwd=process.cwd,
-            )
-            self._dispatchers[pid] = dispatcher
-        tools = dispatcher.get_tool_definitions(config.tools)
-
-        # Build context
-        agent_context = AgentContext(
-            system_prompt=system_prompt,
-            messages=tuple(messages),
-            tools=tuple(tools),
-        )
-
-        # Queue-based streaming: events arrive as they happen
-        queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue(maxsize=256)
-        agent_cwd = process.cwd  # capture before closure
-
-        async def _on_event(event: AgentEvent) -> None:
-            await queue.put(event)
-
-        async def _on_checkpoint(messages: list[Message]) -> None:
-            await self._session_store.save(pid, messages, ctx, cwd=agent_cwd)
-
-        async def _run_loop() -> None:
-            try:
-                result_messages = await agent_loop(
-                    llm=self._llm,
-                    dispatcher=dispatcher,
-                    context=agent_context,
-                    config=config,
-                    ctx=ctx,
-                    on_event=_on_event,
-                    on_checkpoint=_on_checkpoint,
-                    cwd=agent_cwd,
-                    sandbox_id=config.sandbox_id,
-                )
-                # Final save (captures the last assistant message / Completed)
-                await self._session_store.save(pid, result_messages, ctx, cwd=agent_cwd)
-            except Exception as exc:
-                error_msg = f"Agent loop failed for {pid}: {exc}"
-                logger.error(error_msg)
-                await queue.put(Error(error=error_msg))
-            finally:
-                self._tasks.pop(pid, None)
-                await queue.put(None)  # sentinel
-
-        task = asyncio.create_task(_run_loop())
-        self._tasks[pid] = task
-        try:
-            while True:
-                event = await queue.get()
-                if event is None:
-                    break
-                yield event
-        finally:
-            if not task.done():
-                task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-            self._tasks.pop(pid, None)
-            # Transition to SLEEPING
-            process = replace(process, state=AgentProcessState.SLEEPING)
-            self._processes[pid] = process
-
-    # ------------------------------------------------------------------
     # get_process
     # ------------------------------------------------------------------
 
@@ -358,7 +199,6 @@ class ProcessManager:
 
         # Remove from process table + caches
         self._processes.pop(pid, None)
-        self._dispatchers.pop(pid, None)
         self._session_store.clear_cache(pid)
 
         logger.info(

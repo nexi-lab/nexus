@@ -1,0 +1,791 @@
+//! Cross-process SPSC RingBuffer via mmap + OS pipe notification (#1680).
+//!
+//! Same algorithms as `pipe.rs` (RingBufferCore) — push_inner/pop_position/
+//! commit_pop — but buffer lives in a MAP_SHARED mmap region instead of
+//! heap `Vec<u8>`.  OS pipes provide cross-process wakeup.
+//!
+//! Layout (512 bytes header + ring data):
+//!
+//! ```text
+//! [0..128)    Slot 0 — immutable config (cache-line aligned)
+//!             magic: u32 = 0x4E585049 ("NXPI")
+//!             version: u32 = 1
+//!             ring_cap: u32
+//!             user_capacity: u32
+//!
+//! [128..256)  Slot 1 — writer-hot (separate cache line from reader)
+//!             tail: AtomicUsize
+//!             push_count: AtomicU64
+//!             msg_count: AtomicUsize
+//!             used_bytes: AtomicUsize
+//!
+//! [256..384)  Slot 2 — reader-hot
+//!             head: AtomicUsize
+//!             pop_count: AtomicU64
+//!
+//! [384..512)  Slot 3 — shared flags
+//!             closed: AtomicBool (stored as u8)
+//!
+//! [512..)     Ring data region (ring_cap bytes)
+//! ```
+//!
+//! 128-byte slot alignment covers x86 (64B) and Apple M-series (128B).
+
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const HEADER_SIZE: usize = 4; // 4-byte u32 LE length prefix
+const MAGIC: u32 = 0x4E58_5049; // "NXPI"
+const VERSION: u32 = 1;
+const SLOT_SIZE: usize = 128; // cache-line aligned slot
+const DATA_OFFSET: usize = SLOT_SIZE * 4; // 512 bytes header
+
+// Offsets within the mmap header (byte offsets from start)
+// Slot 0: immutable config
+const OFF_MAGIC: usize = 0;
+const OFF_VERSION: usize = 4;
+const OFF_RING_CAP: usize = 8;
+const OFF_USER_CAP: usize = 12;
+// Slot 1: writer-hot
+const OFF_TAIL: usize = SLOT_SIZE;
+const OFF_PUSH_COUNT: usize = SLOT_SIZE + 8;
+const OFF_MSG_COUNT: usize = SLOT_SIZE + 16;
+const OFF_USED_BYTES: usize = SLOT_SIZE + 24;
+// Slot 2: reader-hot
+const OFF_HEAD: usize = SLOT_SIZE * 2;
+const OFF_POP_COUNT: usize = SLOT_SIZE * 2 + 8;
+// Slot 3: flags
+const OFF_CLOSED: usize = SLOT_SIZE * 3;
+
+// ---------------------------------------------------------------------------
+// Internal error type
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+enum RingError {
+    Closed(&'static str),
+    Full(usize, usize),
+    Empty,
+    ClosedEmpty,
+    Oversized(usize, usize),
+}
+
+// ---------------------------------------------------------------------------
+// Shared-memory header accessors (safe wrappers over raw mmap)
+// ---------------------------------------------------------------------------
+
+/// Read a u32 from mmap at the given offset.
+#[inline]
+fn read_u32(base: *const u8, off: usize) -> u32 {
+    unsafe {
+        let ptr = base.add(off) as *const u32;
+        ptr.read()
+    }
+}
+
+/// Write a u32 to mmap at the given offset.
+#[inline]
+fn write_u32(base: *mut u8, off: usize, val: u32) {
+    unsafe {
+        let ptr = base.add(off) as *mut u32;
+        ptr.write(val);
+    }
+}
+
+/// Get an AtomicUsize reference from mmap at the given offset.
+///
+/// SAFETY: The caller must ensure the pointer is valid and 8-byte aligned,
+/// and lives for the duration of the returned reference.
+#[inline]
+unsafe fn atomic_usize(base: *const u8, off: usize) -> &'static AtomicUsize {
+    &*(base.add(off) as *const AtomicUsize)
+}
+
+/// Get an AtomicU64 reference from mmap at the given offset.
+#[inline]
+unsafe fn atomic_u64(base: *const u8, off: usize) -> &'static AtomicU64 {
+    &*(base.add(off) as *const AtomicU64)
+}
+
+/// Get an AtomicBool reference from mmap at the given offset.
+#[inline]
+unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
+    &*(base.add(off) as *const AtomicBool)
+}
+
+// ---------------------------------------------------------------------------
+// SharedRingBufferCore
+// ---------------------------------------------------------------------------
+
+/// Cross-process SPSC ring buffer backed by mmap + OS pipe notification.
+///
+/// `create()` allocates a temp file + mmap + two OS pipes.
+/// `attach()` opens the same file + mmap from another process.
+///
+/// Python side uses `loop.add_reader(fd, callback)` on the notification
+/// pipe fds for zero-cost asyncio integration.
+#[pyclass]
+pub struct SharedRingBufferCore {
+    mmap: memmap2::MmapMut,
+    ring_cap: usize,
+    user_capacity: usize,
+    // Notification pipe write-ends (creator holds both, attacher holds neither —
+    // they are inherited as readable fds)
+    notify_data_wr: i32,  // writer writes here after push (wakes reader)
+    notify_space_wr: i32, // reader writes here after pop (wakes writer)
+    is_creator: bool,
+    shm_path: String,
+}
+
+// SAFETY: SPSC by design — single producer + single consumer across processes.
+unsafe impl Send for SharedRingBufferCore {}
+unsafe impl Sync for SharedRingBufferCore {}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+impl SharedRingBufferCore {
+    /// Pointer to the start of the mmap region.
+    #[inline]
+    fn base(&self) -> *const u8 {
+        self.mmap.as_ptr()
+    }
+
+    /// Mutable pointer to the start of the mmap region.
+    #[inline]
+    fn base_mut(&self) -> *mut u8 {
+        self.mmap.as_ptr() as *mut u8
+    }
+
+    /// Pointer to the ring data region.
+    #[inline]
+    fn ring_ptr(&self) -> *mut u8 {
+        unsafe { self.base_mut().add(DATA_OFFSET) }
+    }
+
+    /// Ring data as a mutable slice.
+    ///
+    /// SAFETY: SPSC design — writer and reader access disjoint regions
+    /// of the mmap'd ring buffer, guarded by atomic head/tail.
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    fn ring_slice(&self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ring_ptr(), self.ring_cap) }
+    }
+
+    fn head(&self) -> &AtomicUsize {
+        unsafe { atomic_usize(self.base(), OFF_HEAD) }
+    }
+
+    fn tail(&self) -> &AtomicUsize {
+        unsafe { atomic_usize(self.base(), OFF_TAIL) }
+    }
+
+    fn push_count(&self) -> &AtomicU64 {
+        unsafe { atomic_u64(self.base(), OFF_PUSH_COUNT) }
+    }
+
+    fn pop_count(&self) -> &AtomicU64 {
+        unsafe { atomic_u64(self.base(), OFF_POP_COUNT) }
+    }
+
+    fn msg_count(&self) -> &AtomicUsize {
+        unsafe { atomic_usize(self.base(), OFF_MSG_COUNT) }
+    }
+
+    fn used_bytes(&self) -> &AtomicUsize {
+        unsafe { atomic_usize(self.base(), OFF_USED_BYTES) }
+    }
+
+    fn closed_flag(&self) -> &AtomicBool {
+        unsafe { atomic_bool(self.base(), OFF_CLOSED) }
+    }
+
+    /// Notify the reader that new data is available.
+    fn notify_data(&self) {
+        if self.notify_data_wr >= 0 {
+            unsafe {
+                libc::write(
+                    self.notify_data_wr,
+                    [1u8].as_ptr() as *const libc::c_void,
+                    1,
+                );
+            }
+        }
+    }
+
+    /// Notify the writer that space has been freed.
+    fn notify_space(&self) {
+        if self.notify_space_wr >= 0 {
+            unsafe {
+                libc::write(
+                    self.notify_space_wr,
+                    [1u8].as_ptr() as *const libc::c_void,
+                    1,
+                );
+            }
+        }
+    }
+
+    /// Push raw bytes — same algorithm as RingBufferCore::push_inner.
+    fn push_inner(&self, data: &[u8]) -> Result<usize, RingError> {
+        if self.closed_flag().load(Ordering::Acquire) {
+            return Err(RingError::Closed("write to closed pipe"));
+        }
+        let payload_len = data.len();
+        if payload_len == 0 {
+            return Ok(0);
+        }
+        if payload_len > self.user_capacity {
+            return Err(RingError::Oversized(payload_len, self.user_capacity));
+        }
+
+        let used = self.used_bytes().load(Ordering::Relaxed);
+        if used + payload_len > self.user_capacity {
+            return Err(RingError::Full(used, self.user_capacity));
+        }
+
+        let frame_len = HEADER_SIZE + payload_len;
+        let tail_val = self.tail().load(Ordering::Relaxed);
+        let tail_idx = tail_val % self.ring_cap;
+        let contiguous = self.ring_cap - tail_idx;
+
+        let ring = self.ring_slice();
+
+        // Sentinel + wrap if frame doesn't fit contiguously
+        let write_idx = if frame_len > contiguous {
+            let sentinel = 0u32.to_le_bytes();
+            ring[tail_idx..tail_idx + HEADER_SIZE].copy_from_slice(&sentinel);
+            let new_tail = tail_val + contiguous;
+            self.tail().store(new_tail, Ordering::Release);
+            0
+        } else {
+            tail_idx
+        };
+
+        // Write frame: [4B len][payload]
+        let header = (payload_len as u32).to_le_bytes();
+        ring[write_idx..write_idx + HEADER_SIZE].copy_from_slice(&header);
+        ring[write_idx + HEADER_SIZE..write_idx + HEADER_SIZE + payload_len].copy_from_slice(data);
+
+        // Update tail
+        let current_tail = self.tail().load(Ordering::Relaxed);
+        self.tail()
+            .store(current_tail + frame_len, Ordering::Release);
+
+        // Update counters
+        self.msg_count().fetch_add(1, Ordering::Relaxed);
+        self.used_bytes().fetch_add(payload_len, Ordering::Relaxed);
+        self.push_count().fetch_add(1, Ordering::Relaxed);
+
+        Ok(payload_len)
+    }
+
+    /// Find the next message position — same algorithm as RingBufferCore::pop_position.
+    fn pop_position(&self) -> Result<(usize, usize, usize), RingError> {
+        let mut head_val = self.head().load(Ordering::Acquire);
+        let tail_val = self.tail().load(Ordering::Acquire);
+
+        loop {
+            if head_val == tail_val {
+                return if self.closed_flag().load(Ordering::Acquire) {
+                    Err(RingError::ClosedEmpty)
+                } else {
+                    Err(RingError::Empty)
+                };
+            }
+
+            let head_idx = head_val % self.ring_cap;
+            let ring = self.ring_slice();
+
+            let mut hdr = [0u8; HEADER_SIZE];
+            hdr.copy_from_slice(&ring[head_idx..head_idx + HEADER_SIZE]);
+            let payload_len = u32::from_le_bytes(hdr) as usize;
+
+            if payload_len == 0 {
+                // Sentinel — skip waste to ring start
+                let waste = self.ring_cap - head_idx;
+                head_val += waste;
+                self.head().store(head_val, Ordering::Release);
+                continue;
+            }
+
+            let payload_start = head_idx + HEADER_SIZE;
+            let total_advance = HEADER_SIZE + payload_len;
+            return Ok((payload_start, payload_len, total_advance));
+        }
+    }
+
+    /// Advance head after data has been copied out.
+    fn commit_pop(&self, total_advance: usize, payload_len: usize) {
+        let head_val = self.head().load(Ordering::Relaxed);
+        self.head()
+            .store(head_val + total_advance, Ordering::Release);
+        self.msg_count().fetch_sub(1, Ordering::Relaxed);
+        self.used_bytes().fetch_sub(payload_len, Ordering::Relaxed);
+        self.pop_count().fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyO3 methods
+// ---------------------------------------------------------------------------
+
+#[pymethods]
+impl SharedRingBufferCore {
+    /// Create a new shared ring buffer.
+    ///
+    /// Returns `(self, shm_path, data_rd_fd, space_rd_fd)`.
+    /// The caller should pass `data_rd_fd` to the reader process and
+    /// `space_rd_fd` to the writer (self) for wake-up.
+    #[staticmethod]
+    fn create(capacity: usize) -> PyResult<(Self, String, i32, i32)> {
+        if capacity == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "capacity must be > 0, got 0",
+            ));
+        }
+
+        let ring_cap = capacity * 2;
+        let total_size = DATA_OFFSET + ring_cap;
+
+        // Create temp file — keep() preserves the path for attach()
+        let tmp = tempfile::NamedTempFile::new()
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("tmpfile: {e}")))?;
+        let (file, path) = tmp
+            .keep()
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("keep tmpfile: {e}")))?;
+        let shm_path = path.to_string_lossy().to_string();
+
+        // Resize
+        file.set_len(total_size as u64)
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("ftruncate: {e}")))?;
+
+        // mmap MAP_SHARED
+        let mut mmap = unsafe { memmap2::MmapOptions::new().len(total_size).map_mut(&file) }
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("mmap: {e}")))?;
+
+        // Initialize header
+        let base = mmap.as_mut_ptr();
+        write_u32(base, OFF_MAGIC, MAGIC);
+        write_u32(base, OFF_VERSION, VERSION);
+        write_u32(base, OFF_RING_CAP, ring_cap as u32);
+        write_u32(base, OFF_USER_CAP, capacity as u32);
+
+        // Zero out atomics (already zeroed by ftruncate, but be explicit)
+        unsafe {
+            atomic_usize(base, OFF_TAIL).store(0, Ordering::Relaxed);
+            atomic_usize(base, OFF_HEAD).store(0, Ordering::Relaxed);
+            atomic_u64(base, OFF_PUSH_COUNT).store(0, Ordering::Relaxed);
+            atomic_u64(base, OFF_POP_COUNT).store(0, Ordering::Relaxed);
+            atomic_usize(base, OFF_MSG_COUNT).store(0, Ordering::Relaxed);
+            atomic_usize(base, OFF_USED_BYTES).store(0, Ordering::Relaxed);
+            atomic_bool(base, OFF_CLOSED).store(false, Ordering::Relaxed);
+        }
+
+        // Create two OS pipes: data notification + space notification
+        let mut data_fds = [0i32; 2];
+        let mut space_fds = [0i32; 2];
+        unsafe {
+            if libc::pipe(data_fds.as_mut_ptr()) != 0 {
+                return Err(pyo3::exceptions::PyOSError::new_err("pipe(data) failed"));
+            }
+            if libc::pipe(space_fds.as_mut_ptr()) != 0 {
+                libc::close(data_fds[0]);
+                libc::close(data_fds[1]);
+                return Err(pyo3::exceptions::PyOSError::new_err("pipe(space) failed"));
+            }
+            // Set non-blocking on read ends
+            libc::fcntl(data_fds[0], libc::F_SETFL, libc::O_NONBLOCK);
+            libc::fcntl(space_fds[0], libc::F_SETFL, libc::O_NONBLOCK);
+            // Set non-blocking on write ends too (avoid blocking on full pipe)
+            libc::fcntl(data_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
+            libc::fcntl(space_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
+        }
+
+        let core = SharedRingBufferCore {
+            mmap,
+            ring_cap,
+            user_capacity: capacity,
+            notify_data_wr: data_fds[1], // creator is the writer, writes data notification
+            notify_space_wr: space_fds[1], // attacher (reader) will write space notification
+            is_creator: true,
+            shm_path: shm_path.clone(),
+        };
+
+        // data_rd_fd: reader listens for data availability
+        // space_rd_fd: writer (creator) listens for space freed
+        Ok((core, shm_path, data_fds[0], space_fds[0]))
+    }
+
+    /// Attach to an existing shared ring buffer from another process.
+    ///
+    /// Args:
+    ///     shm_path: Path to the shared memory file.
+    ///     data_wr_fd: Write-end of the data notification pipe (reader notifies writer — unused here,
+    ///                 actually this is the data_rd_fd the reader uses to receive data notifications).
+    ///     space_wr_fd: Write-end of the space notification pipe (reader writes here after pop).
+    #[staticmethod]
+    fn attach(shm_path: &str, notify_data_wr: i32, notify_space_wr: i32) -> PyResult<Self> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(shm_path)
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("open: {e}")))?;
+
+        let mmap = unsafe { memmap2::MmapOptions::new().map_mut(&file) }
+            .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("mmap: {e}")))?;
+
+        // Validate magic + version
+        let base = mmap.as_ptr();
+        let magic = read_u32(base, OFF_MAGIC);
+        if magic != MAGIC {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "bad magic: expected 0x{MAGIC:08X}, got 0x{magic:08X}"
+            )));
+        }
+        let version = read_u32(base, OFF_VERSION);
+        if version != VERSION {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unsupported version: expected {VERSION}, got {version}"
+            )));
+        }
+
+        let ring_cap = read_u32(base, OFF_RING_CAP) as usize;
+        let user_capacity = read_u32(base, OFF_USER_CAP) as usize;
+
+        Ok(SharedRingBufferCore {
+            mmap,
+            ring_cap,
+            user_capacity,
+            notify_data_wr,
+            notify_space_wr,
+            is_creator: false,
+            shm_path: shm_path.to_string(),
+        })
+    }
+
+    /// Push a message into the buffer. Returns bytes written.
+    /// Sends a 1-byte notification on the data pipe after successful push.
+    fn push(&self, _py: Python<'_>, data: &[u8]) -> PyResult<usize> {
+        match self.push_inner(data) {
+            Ok(n) => {
+                self.notify_data();
+                Ok(n)
+            }
+            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "PipeClosed:{msg}"
+            ))),
+            Err(RingError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                format!("PipeFull:buffer full ({used}/{cap} bytes)"),
+            )),
+            Err(RingError::Oversized(msg_len, cap)) => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "message size {msg_len} exceeds buffer capacity {cap}"
+                )))
+            }
+            Err(RingError::Empty | RingError::ClosedEmpty) => unreachable!(),
+        }
+    }
+
+    /// Pop the next message. Returns PyBytes.
+    /// Sends a 1-byte notification on the space pipe after successful pop.
+    fn pop<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        match self.pop_position() {
+            Ok((start, len, advance)) => {
+                let ring = self.ring_slice();
+                let result = PyBytes::new(py, &ring[start..start + len]);
+                self.commit_pop(advance, len);
+                self.notify_space();
+                Ok(result)
+            }
+            Err(RingError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "PipeClosed:read from closed empty pipe",
+            )),
+            Err(RingError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "PipeEmpty:buffer empty",
+            )),
+            Err(RingError::Closed(_) | RingError::Full(_, _) | RingError::Oversized(_, _)) => {
+                unreachable!()
+            }
+        }
+    }
+
+    /// Push a u64 value (12-byte frame).
+    fn push_u64(&self, _py: Python<'_>, val: u64) -> PyResult<()> {
+        match self.push_inner(&val.to_le_bytes()) {
+            Ok(_) => {
+                self.notify_data();
+                Ok(())
+            }
+            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "PipeClosed:{msg}"
+            ))),
+            Err(RingError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                format!("PipeFull:buffer full ({used}/{cap} bytes)"),
+            )),
+            Err(RingError::Oversized(msg_len, cap)) => {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "message size {msg_len} exceeds buffer capacity {cap}"
+                )))
+            }
+            Err(RingError::Empty | RingError::ClosedEmpty) => unreachable!(),
+        }
+    }
+
+    /// Pop a u64 value.
+    fn pop_u64(&self, _py: Python<'_>) -> PyResult<u64> {
+        match self.pop_position() {
+            Ok((start, len, advance)) => {
+                if len != 8 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "pop_u64 expects 8-byte payload, got {len}"
+                    )));
+                }
+                let ring = self.ring_slice();
+                let mut buf = [0u8; 8];
+                buf.copy_from_slice(&ring[start..start + 8]);
+                let val = u64::from_le_bytes(buf);
+                self.commit_pop(advance, len);
+                self.notify_space();
+                Ok(val)
+            }
+            Err(RingError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "PipeClosed:read from closed empty pipe",
+            )),
+            Err(RingError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "PipeEmpty:buffer empty",
+            )),
+            Err(RingError::Closed(_) | RingError::Full(_, _) | RingError::Oversized(_, _)) => {
+                unreachable!()
+            }
+        }
+    }
+
+    /// Close the buffer. Sends notification on both pipes.
+    fn close(&self) {
+        self.closed_flag().store(true, Ordering::Release);
+        self.notify_data();
+        self.notify_space();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.msg_count().load(Ordering::Relaxed) == 0
+    }
+
+    fn is_full(&self) -> bool {
+        self.used_bytes().load(Ordering::Relaxed) >= self.user_capacity
+    }
+
+    #[getter]
+    fn closed(&self) -> bool {
+        self.closed_flag().load(Ordering::Acquire)
+    }
+
+    #[getter]
+    fn size(&self) -> usize {
+        self.used_bytes().load(Ordering::Relaxed)
+    }
+
+    #[getter]
+    fn capacity(&self) -> usize {
+        self.user_capacity
+    }
+
+    #[getter]
+    fn msg_count_prop(&self) -> usize {
+        self.msg_count().load(Ordering::Relaxed)
+    }
+
+    /// Buffer statistics as a dict.
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let dict = PyDict::new(py);
+        dict.set_item("size", self.used_bytes().load(Ordering::Relaxed))?;
+        dict.set_item("capacity", self.user_capacity)?;
+        dict.set_item("msg_count", self.msg_count().load(Ordering::Relaxed))?;
+        dict.set_item("closed", self.closed_flag().load(Ordering::Acquire))?;
+        dict.set_item("push_count", self.push_count().load(Ordering::Relaxed))?;
+        dict.set_item("pop_count", self.pop_count().load(Ordering::Relaxed))?;
+        Ok(dict.into())
+    }
+
+    /// Remove the shared memory file. Only the creator should call this.
+    fn cleanup(&self) -> PyResult<()> {
+        if self.is_creator {
+            std::fs::remove_file(&self.shm_path)
+                .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("cleanup: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// Return the shared memory file path.
+    #[getter]
+    fn shm_path(&self) -> &str {
+        &self.shm_path
+    }
+}
+
+impl Drop for SharedRingBufferCore {
+    fn drop(&mut self) {
+        // Close notification pipe write-ends
+        if self.notify_data_wr >= 0 {
+            unsafe {
+                libc::close(self.notify_data_wr);
+            }
+        }
+        if self.notify_space_wr >= 0 {
+            unsafe {
+                libc::close(self.notify_space_wr);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same-process create + attach test (valid because MAP_SHARED).
+    fn create_pair(cap: usize) -> (SharedRingBufferCore, SharedRingBufferCore) {
+        let (creator, shm_path, data_rd_fd, space_rd_fd) =
+            SharedRingBufferCore::create(cap).unwrap();
+        // For same-process testing: attacher gets the write-ends for notifications
+        // In real cross-process: fds would be inherited via subprocess
+        // Here we pass notify_data_wr=-1, notify_space_wr=-1 since we don't need
+        // cross-process notification in same-process tests.
+        let attacher = SharedRingBufferCore::attach(
+            &shm_path, -1, // attacher doesn't need to notify data (it's the reader)
+            -1, // attacher doesn't need to notify space in these tests
+        )
+        .unwrap();
+        // Close unused read fds
+        unsafe {
+            libc::close(data_rd_fd);
+            libc::close(space_rd_fd);
+        }
+        (creator, attacher)
+    }
+
+    /// Helper: push raw bytes via push_inner (bypass PyO3).
+    fn push(core: &SharedRingBufferCore, data: &[u8]) -> usize {
+        core.push_inner(data).expect("push failed")
+    }
+
+    /// Helper: pop raw bytes via pop_position + commit_pop (bypass PyO3).
+    fn pop(core: &SharedRingBufferCore) -> Vec<u8> {
+        let (start, len, advance) = core.pop_position().expect("pop failed");
+        let ring = core.ring_slice();
+        let data = ring[start..start + len].to_vec();
+        core.commit_pop(advance, len);
+        data
+    }
+
+    #[test]
+    fn test_create_returns_valid_handles() {
+        let (creator, shm_path, data_rd_fd, space_rd_fd) =
+            SharedRingBufferCore::create(1024).unwrap();
+        assert!(!shm_path.is_empty());
+        assert!(data_rd_fd >= 0);
+        assert!(space_rd_fd >= 0);
+        assert!(creator.is_creator);
+        unsafe {
+            libc::close(data_rd_fd);
+            libc::close(space_rd_fd);
+        }
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_magic_version_validated() {
+        let (creator, shm_path, dfd, sfd) = SharedRingBufferCore::create(64).unwrap();
+        let attacher = SharedRingBufferCore::attach(&shm_path, -1, -1);
+        assert!(attacher.is_ok());
+        unsafe {
+            libc::close(dfd);
+            libc::close(sfd);
+        }
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_write_read_roundtrip() {
+        let (creator, attacher) = create_pair(1024);
+        push(&creator, b"hello");
+        let out = pop(&attacher);
+        assert_eq!(out, b"hello");
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_fifo_ordering() {
+        let (creator, attacher) = create_pair(1024);
+        push(&creator, b"first");
+        push(&creator, b"second");
+        assert_eq!(pop(&attacher), b"first");
+        assert_eq!(pop(&attacher), b"second");
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_close_propagates() {
+        let (creator, attacher) = create_pair(1024);
+        assert!(!attacher.closed_flag().load(Ordering::Acquire));
+        creator.closed_flag().store(true, Ordering::Release);
+        assert!(attacher.closed_flag().load(Ordering::Acquire));
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_wrap_around() {
+        let (creator, attacher) = create_pair(64);
+        for i in 0u8..20 {
+            push(&creator, &[i; 50]);
+            let out = pop(&attacher);
+            assert_eq!(out, vec![i; 50]);
+        }
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_size_tracking() {
+        let (creator, attacher) = create_pair(100);
+        push(&creator, b"abcde");
+        assert_eq!(creator.used_bytes().load(Ordering::Relaxed), 5);
+        pop(&attacher);
+        assert_eq!(attacher.used_bytes().load(Ordering::Relaxed), 0);
+        creator.cleanup().unwrap();
+    }
+
+    #[test]
+    fn test_cleanup_removes_file() {
+        let (creator, _attacher) = create_pair(64);
+        let path = creator.shm_path.clone();
+        assert!(std::path::Path::new(&path).exists());
+        creator.cleanup().unwrap();
+        assert!(!std::path::Path::new(&path).exists());
+    }
+
+    #[test]
+    fn test_u64_roundtrip() {
+        let (creator, attacher) = create_pair(1024);
+        creator.push_inner(&42u64.to_le_bytes()).unwrap();
+        let (start, len, advance) = attacher.pop_position().unwrap();
+        assert_eq!(len, 8);
+        let ring = attacher.ring_slice();
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&ring[start..start + 8]);
+        assert_eq!(u64::from_le_bytes(buf), 42);
+        attacher.commit_pop(advance, len);
+        creator.cleanup().unwrap();
+    }
+}

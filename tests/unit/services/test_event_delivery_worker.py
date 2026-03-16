@@ -367,41 +367,41 @@ class TestBackoff:
 class TestLifecycle:
     """Test start() and stop() lifecycle."""
 
-    def test_start_creates_daemon_thread(self, record_store: SQLAlchemyRecordStore) -> None:
+    async def test_start_creates_daemon_thread(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
-        worker.start()
+        await worker.start()
 
         try:
             assert worker._thread is not None
             assert worker._thread.is_alive()
             assert worker._thread.daemon is True
         finally:
-            worker.stop(timeout=2.0)
+            await worker.stop(timeout=2.0)
 
-    def test_stop_joins_thread(self, record_store: SQLAlchemyRecordStore) -> None:
+    async def test_stop_joins_thread(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
-        worker.start()
-        worker.stop(timeout=2.0)
+        await worker.start()
+        await worker.stop(timeout=2.0)
 
         assert worker._thread is None
 
-    def test_double_start_is_noop(self, record_store: SQLAlchemyRecordStore) -> None:
+    async def test_double_start_is_noop(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
         worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
-        worker.start()
+        await worker.start()
         thread1 = worker._thread
 
-        worker.start()  # Should not create a new thread
+        await worker.start()  # Should not create a new thread
         assert worker._thread is thread1
 
-        worker.stop(timeout=2.0)
+        await worker.stop(timeout=2.0)
 
-    def test_worker_processes_during_run(self, record_store: SQLAlchemyRecordStore) -> None:
+    async def test_worker_processes_during_run(self, record_store: SQLAlchemyRecordStore) -> None:
         """Worker should process events while running."""
         from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
@@ -415,7 +415,7 @@ class TestLifecycle:
             event_bus=mock_bus,
             poll_interval_ms=50,
         )
-        worker.start()
+        await worker.start()
 
         # Wait for worker to pick up the event
         deadline = time.monotonic() + 5.0
@@ -428,7 +428,7 @@ class TestLifecycle:
                     break
             time.sleep(0.1)
 
-        worker.stop(timeout=2.0)
+        await worker.stop(timeout=2.0)
         assert delivered, "Worker did not deliver event within timeout"
 
 

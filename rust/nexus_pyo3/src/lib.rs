@@ -13,11 +13,11 @@ mod io;
 mod lock;
 mod pipe;
 mod prefix;
-mod stream;
-mod semaphore;
 mod rebac;
 mod search;
+mod semaphore;
 mod simd;
+mod stream;
 mod trigram;
 
 use pyo3::prelude::*;

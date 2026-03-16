@@ -108,10 +108,7 @@ fn top_k_by_similarity<T: Sync>(
         }
     }
 
-    let mut result: Vec<(usize, f64)> = heap
-        .into_iter()
-        .map(|e| (e.index, e.score.0))
-        .collect();
+    let mut result: Vec<(usize, f64)> = heap.into_iter().map(|e| (e.index, e.score.0)).collect();
     result.sort_by(|a, b| TotalF64(b.1).cmp(&TotalF64(a.1)));
     result
 }
@@ -183,8 +180,14 @@ pub fn euclidean_sq_f32(a: Vec<f32>, b: Vec<f32>) -> PyResult<f64> {
 }
 
 /// Batch cosine similarity: compute similarity of query vs all vectors.
+///
+/// Releases the GIL during computation so other Python threads can run.
 #[pyfunction]
-pub fn batch_cosine_similarity_f32(query: Vec<f32>, vectors: Vec<Vec<f32>>) -> PyResult<Vec<f64>> {
+pub fn batch_cosine_similarity_f32(
+    py: Python<'_>,
+    query: Vec<f32>,
+    vectors: Vec<Vec<f32>>,
+) -> PyResult<Vec<f64>> {
     if vectors.is_empty() {
         return Ok(vec![]);
     }
@@ -201,34 +204,37 @@ pub fn batch_cosine_similarity_f32(query: Vec<f32>, vectors: Vec<Vec<f32>>) -> P
         }
     }
 
-    const PARALLEL_THRESHOLD: usize = 100;
+    Ok(py.detach(|| {
+        const PARALLEL_THRESHOLD: usize = 100;
 
-    let similarities: Vec<f64> = if vectors.len() > PARALLEL_THRESHOLD {
-        vectors
-            .par_iter()
-            .map(|v| {
-                <f32 as SpatialSimilarity>::cos(&query, v)
-                    .map(|dist| 1.0 - dist)
-                    .unwrap_or(0.0)
-            })
-            .collect()
-    } else {
-        vectors
-            .iter()
-            .map(|v| {
-                <f32 as SpatialSimilarity>::cos(&query, v)
-                    .map(|dist| 1.0 - dist)
-                    .unwrap_or(0.0)
-            })
-            .collect()
-    };
-
-    Ok(similarities)
+        if vectors.len() > PARALLEL_THRESHOLD {
+            vectors
+                .par_iter()
+                .map(|v| {
+                    <f32 as SpatialSimilarity>::cos(&query, v)
+                        .map(|dist| 1.0 - dist)
+                        .unwrap_or(0.0)
+                })
+                .collect()
+        } else {
+            vectors
+                .iter()
+                .map(|v| {
+                    <f32 as SpatialSimilarity>::cos(&query, v)
+                        .map(|dist| 1.0 - dist)
+                        .unwrap_or(0.0)
+                })
+                .collect()
+        }
+    }))
 }
 
 /// Top-K similarity search using SIMD (f32).
+///
+/// Releases the GIL during computation so other Python threads can run.
 #[pyfunction]
 pub fn top_k_similar_f32(
+    py: Python<'_>,
     query: Vec<f32>,
     vectors: Vec<Vec<f32>>,
     k: usize,
@@ -249,7 +255,7 @@ pub fn top_k_similar_f32(
         }
     }
 
-    Ok(top_k_by_similarity(&query, &vectors, k, cosine_sim_f32))
+    Ok(py.detach(|| top_k_by_similarity(&query, &vectors, k, cosine_sim_f32)))
 }
 
 // ---------------------------------------------------------------------------
@@ -273,8 +279,14 @@ pub fn cosine_similarity_i8(a: Vec<i8>, b: Vec<i8>) -> PyResult<f64> {
 }
 
 /// Batch cosine similarity for int8 quantized vectors.
+///
+/// Releases the GIL during computation so other Python threads can run.
 #[pyfunction]
-pub fn batch_cosine_similarity_i8(query: Vec<i8>, vectors: Vec<Vec<i8>>) -> PyResult<Vec<f64>> {
+pub fn batch_cosine_similarity_i8(
+    py: Python<'_>,
+    query: Vec<i8>,
+    vectors: Vec<Vec<i8>>,
+) -> PyResult<Vec<f64>> {
     if vectors.is_empty() {
         return Ok(vec![]);
     }
@@ -291,34 +303,37 @@ pub fn batch_cosine_similarity_i8(query: Vec<i8>, vectors: Vec<Vec<i8>>) -> PyRe
         }
     }
 
-    const PARALLEL_THRESHOLD: usize = 100;
+    Ok(py.detach(|| {
+        const PARALLEL_THRESHOLD: usize = 100;
 
-    let similarities: Vec<f64> = if vectors.len() > PARALLEL_THRESHOLD {
-        vectors
-            .par_iter()
-            .map(|v| {
-                <i8 as SpatialSimilarity>::cos(&query, v)
-                    .map(|dist| 1.0 - dist)
-                    .unwrap_or(0.0)
-            })
-            .collect()
-    } else {
-        vectors
-            .iter()
-            .map(|v| {
-                <i8 as SpatialSimilarity>::cos(&query, v)
-                    .map(|dist| 1.0 - dist)
-                    .unwrap_or(0.0)
-            })
-            .collect()
-    };
-
-    Ok(similarities)
+        if vectors.len() > PARALLEL_THRESHOLD {
+            vectors
+                .par_iter()
+                .map(|v| {
+                    <i8 as SpatialSimilarity>::cos(&query, v)
+                        .map(|dist| 1.0 - dist)
+                        .unwrap_or(0.0)
+                })
+                .collect()
+        } else {
+            vectors
+                .iter()
+                .map(|v| {
+                    <i8 as SpatialSimilarity>::cos(&query, v)
+                        .map(|dist| 1.0 - dist)
+                        .unwrap_or(0.0)
+                })
+                .collect()
+        }
+    }))
 }
 
 /// Top-K similarity search for int8 quantized vectors.
+///
+/// Releases the GIL during computation so other Python threads can run.
 #[pyfunction]
 pub fn top_k_similar_i8(
+    py: Python<'_>,
     query: Vec<i8>,
     vectors: Vec<Vec<i8>>,
     k: usize,
@@ -339,7 +354,7 @@ pub fn top_k_similar_i8(
         }
     }
 
-    Ok(top_k_by_similarity(&query, &vectors, k, cosine_sim_i8))
+    Ok(py.detach(|| top_k_by_similarity(&query, &vectors, k, cosine_sim_i8)))
 }
 
 // ---------------------------------------------------------------------------
@@ -415,13 +430,7 @@ mod tests {
     #[test]
     fn test_top_k_returns_descending_order() {
         let query = vec![1.0f32];
-        let vectors = vec![
-            vec![3.0],
-            vec![1.0],
-            vec![5.0],
-            vec![2.0],
-            vec![4.0],
-        ];
+        let vectors = vec![vec![3.0], vec![1.0], vec![5.0], vec![2.0], vec![4.0]];
         let result = top_k_by_similarity(&query, &vectors, 5, dummy_sim);
         for i in 1..result.len() {
             assert!(
@@ -545,8 +554,8 @@ mod tests {
         // Normalized vectors for meaningful cosine similarity.
         let query = vec![1.0f32, 0.0, 0.0];
         let vectors = vec![
-            vec![1.0, 0.0, 0.0],  // identical → similarity ≈ 1.0
-            vec![0.0, 1.0, 0.0],  // orthogonal → similarity ≈ 0.0
+            vec![1.0, 0.0, 0.0],       // identical → similarity ≈ 1.0
+            vec![0.0, 1.0, 0.0],       // orthogonal → similarity ≈ 0.0
             vec![0.7071, 0.7071, 0.0], // 45 degrees → similarity ≈ 0.7071
         ];
         let result = top_k_similar_f32(query, vectors, 2).unwrap();
@@ -562,9 +571,9 @@ mod tests {
     fn test_top_k_similar_i8_basic() {
         let query = vec![100i8, 0, 0];
         let vectors = vec![
-            vec![100, 0, 0],  // identical
-            vec![0, 100, 0],  // orthogonal
-            vec![70, 70, 0],  // ~45 degrees
+            vec![100, 0, 0], // identical
+            vec![0, 100, 0], // orthogonal
+            vec![70, 70, 0], // ~45 degrees
         ];
         let result = top_k_similar_i8(query, vectors, 2).unwrap();
         assert_eq!(result.len(), 2);

@@ -169,7 +169,11 @@ impl VFSLockManager {
     /// where `upper` replaces the trailing '/' (0x2F) with '0' (0x30, the next
     /// ASCII codepoint). Since '/' and '0' are adjacent in ASCII, no valid path
     /// character falls between them.
-    fn descendant_conflict(locks: &BTreeMap<String, LockEntry>, path: &str, mode: LockMode) -> bool {
+    fn descendant_conflict(
+        locks: &BTreeMap<String, LockEntry>,
+        path: &str,
+        mode: LockMode,
+    ) -> bool {
         let prefix = if path.ends_with('/') {
             path.to_string()
         } else {
@@ -847,7 +851,7 @@ mod tests {
         let mgr = make();
         let _w1 = acquire(&mgr, "/a/bc", LockMode::Write).unwrap(); // sibling
         let _w2 = acquire(&mgr, "/a/b/child", LockMode::Write).unwrap(); // descendant
-        // "/a/b" should fail due to descendant "/a/b/child".
+                                                                         // "/a/b" should fail due to descendant "/a/b/child".
         assert!(acquire(&mgr, "/a/b", LockMode::Write).is_none());
     }
 }

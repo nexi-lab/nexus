@@ -172,7 +172,7 @@ pub fn grep_bulk<'py>(
         }
     } else {
         let regex = get_or_compile_regex(pattern, ignore_case)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            .map_err(pyo3::exceptions::PyValueError::new_err)?;
         SearchMode::Regex(regex)
     };
 
@@ -274,7 +274,7 @@ pub fn grep_files_mmap<'py>(
     let regex_opt: Option<regex::bytes::Regex> = if !is_literal {
         Some(
             get_or_compile_regex(pattern, ignore_case)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?,
+                .map_err(pyo3::exceptions::PyValueError::new_err)?,
         )
     } else {
         None
@@ -555,7 +555,10 @@ mod tests {
         // Should hit cache.
         let re2 = get_or_compile_regex("test_pattern_123", false).unwrap();
         // Both should produce the same match results.
-        assert_eq!(re1.is_match(b"test_pattern_123"), re2.is_match(b"test_pattern_123"));
+        assert_eq!(
+            re1.is_match(b"test_pattern_123"),
+            re2.is_match(b"test_pattern_123")
+        );
     }
 
     #[test]
@@ -628,8 +631,7 @@ mod tests {
     #[test]
     fn test_grep_mmap_literal_case_sensitive() {
         let (_f, path) = write_temp_file("Hello World\nhello world\nHELLO WORLD\n");
-        let results =
-            grep_single_file_mmap(&path, "hello", "", true, false, None, 100).unwrap();
+        let results = grep_single_file_mmap(&path, "hello", "", true, false, None, 100).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].line, 2);
         assert_eq!(results[0].match_text, "hello");
@@ -649,12 +651,9 @@ mod tests {
     #[test]
     fn test_grep_mmap_regex() {
         let (_f, path) = write_temp_file("fn main() {}\nlet x = 42;\nfn helper() {}\n");
-        let regex = RegexBuilder::new(r"fn \w+")
-            .build()
-            .unwrap();
+        let regex = RegexBuilder::new(r"fn \w+").build().unwrap();
         let results =
-            grep_single_file_mmap(&path, r"fn \w+", "", false, false, Some(&regex), 100)
-                .unwrap();
+            grep_single_file_mmap(&path, r"fn \w+", "", false, false, Some(&regex), 100).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].match_text, "fn main");
         assert_eq!(results[1].match_text, "fn helper");
@@ -663,24 +662,21 @@ mod tests {
     #[test]
     fn test_grep_mmap_max_results() {
         let (_f, path) = write_temp_file("aaa\naaa\naaa\naaa\naaa\n");
-        let results =
-            grep_single_file_mmap(&path, "aaa", "", true, false, None, 2).unwrap();
+        let results = grep_single_file_mmap(&path, "aaa", "", true, false, None, 2).unwrap();
         assert_eq!(results.len(), 2);
     }
 
     #[test]
     fn test_grep_mmap_empty_file() {
         let (_f, path) = write_temp_file("");
-        let results =
-            grep_single_file_mmap(&path, "test", "", true, false, None, 100).unwrap();
+        let results = grep_single_file_mmap(&path, "test", "", true, false, None, 100).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_grep_mmap_no_match() {
         let (_f, path) = write_temp_file("Hello World\n");
-        let results =
-            grep_single_file_mmap(&path, "xyz", "", true, false, None, 100).unwrap();
+        let results = grep_single_file_mmap(&path, "xyz", "", true, false, None, 100).unwrap();
         assert!(results.is_empty());
     }
 

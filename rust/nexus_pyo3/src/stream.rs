@@ -178,7 +178,9 @@ impl StreamBufferCore {
                     "message size {msg_len} exceeds buffer capacity {cap}"
                 )))
             }
-            Err(StreamError::Empty | StreamError::ClosedEmpty | StreamError::InvalidOffset(_, _)) => {
+            Err(
+                StreamError::Empty | StreamError::ClosedEmpty | StreamError::InvalidOffset(_, _),
+            ) => {
                 unreachable!()
             }
         }
@@ -207,7 +209,9 @@ impl StreamBufferCore {
                     "invalid offset {off} (tail={tail})"
                 )))
             }
-            Err(StreamError::Closed(_) | StreamError::Full(_, _) | StreamError::Oversized(_, _)) => {
+            Err(
+                StreamError::Closed(_) | StreamError::Full(_, _) | StreamError::Oversized(_, _),
+            ) => {
                 unreachable!()
             }
         }
@@ -274,7 +278,9 @@ impl StreamBufferCore {
                     "message size {msg_len} exceeds buffer capacity {cap}"
                 )))
             }
-            Err(StreamError::Empty | StreamError::ClosedEmpty | StreamError::InvalidOffset(_, _)) => {
+            Err(
+                StreamError::Empty | StreamError::ClosedEmpty | StreamError::InvalidOffset(_, _),
+            ) => {
                 unreachable!()
             }
         }

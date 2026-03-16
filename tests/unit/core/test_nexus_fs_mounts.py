@@ -907,9 +907,8 @@ class TestMountContextUtilsIntegration:
         # Patch _needs_token_manager_db to return True (gdrive_connector not in registry)
         # and patch get_database_url at the source module
         with (
-            patch.object(
-                type(nx.service("mount")._service_instance),
-                "_needs_token_manager_db",
+            patch(
+                "nexus.bricks.mount.mount_service._needs_token_manager_db",
                 return_value=True,
             ),
             patch("nexus.lib.context_utils.get_database_url") as mock_get_db_url,

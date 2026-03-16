@@ -37,8 +37,8 @@ class TestWiredServicesDataclass:
         assert ws2.rebac_service == "b"
 
     def test_field_count(self) -> None:
-        """WiredServices should have 20 service fields."""
-        assert len(dataclasses.fields(WiredServices)) == 20
+        """WiredServices should have 19 service fields."""
+        assert len(dataclasses.fields(WiredServices)) == 19
 
 
 class TestPopulateServiceRegistryFromWired:

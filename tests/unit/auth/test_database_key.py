@@ -259,3 +259,53 @@ class TestUpdateLastUsedBackground:
             assert key.last_used_at is not None
             # Should be recent (within last 5 seconds)
             assert (datetime.now(UTC) - key.last_used_at.replace(tzinfo=UTC)).total_seconds() < 5
+
+
+# ── Issue #3062: Per-install HMAC secret ─────────────────────
+
+
+class TestHMACSecretConfiguration:
+    """Tests for per-install HMAC secret from environment (Issue #3062)."""
+
+    def test_default_salt_used_when_no_env(self) -> None:
+        """Without NEXUS_API_KEY_SECRET, the legacy default is used."""
+        import os
+
+        env = os.environ.copy()
+        env.pop("NEXUS_API_KEY_SECRET", None)
+        with patch.dict(os.environ, env, clear=True):
+            from nexus.bricks.auth.constants import get_hmac_secret
+
+            secret = get_hmac_secret()
+            assert secret == "nexus-api-key-v1"
+
+    def test_env_overrides_default(self) -> None:
+        """NEXUS_API_KEY_SECRET env var overrides the default."""
+        with patch.dict("os.environ", {"NEXUS_API_KEY_SECRET": "my-install-secret"}):
+            from nexus.bricks.auth.constants import get_hmac_secret
+
+            secret = get_hmac_secret()
+            assert secret == "my-install-secret"
+
+    def test_hash_changes_with_different_secret(self, session_factory) -> None:
+        """Different HMAC secrets produce different hashes for the same key."""
+        raw_key = "sk-test-key-for-hashing-12345678901234567890"
+
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("NEXUS_API_KEY_SECRET", None)
+            hash_default = DatabaseAPIKeyAuth._hash_key(raw_key)
+
+        with patch.dict("os.environ", {"NEXUS_API_KEY_SECRET": "custom-secret-v2"}):
+            hash_custom = DatabaseAPIKeyAuth._hash_key(raw_key)
+
+        assert hash_default != hash_custom
+
+    def test_hash_consistent_with_same_secret(self) -> None:
+        """Same secret + same key = same hash (consistency)."""
+        raw_key = "sk-consistency-test-key-1234567890"
+        with patch.dict("os.environ", {"NEXUS_API_KEY_SECRET": "stable-secret"}):
+            hash1 = DatabaseAPIKeyAuth._hash_key(raw_key)
+            hash2 = DatabaseAPIKeyAuth._hash_key(raw_key)
+        assert hash1 == hash2

@@ -2,6 +2,9 @@
 
 Drains the offline queue and replays operations through the transport
 when the circuit breaker allows requests.
+
+Issue #3062: Vector-clock causal ordering added.  Batches dequeued
+FIFO are re-sorted by causal order before replay.
 """
 
 import asyncio
@@ -14,6 +17,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from nexus.proxy.errors import RemoteCallError, is_connection_error
+from nexus.proxy.queue_protocol import QueuedOperation
 
 if TYPE_CHECKING:
     from nexus.proxy.circuit_breaker import AsyncCircuitBreaker
@@ -21,6 +25,101 @@ if TYPE_CHECKING:
     from nexus.proxy.transport import HttpTransport
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Vector-clock utilities (Issue #3062)
+# ---------------------------------------------------------------------------
+
+
+def _parse_vector_clock(vc_json: str | None) -> dict[str, int]:
+    """Parse a JSON-encoded vector clock into a dict.
+
+    Returns an empty dict for None or invalid input (defensive).
+    """
+    if not vc_json:
+        return {}
+    try:
+        parsed = json.loads(vc_json)
+        if isinstance(parsed, dict):
+            return {str(k): int(v) for k, v in parsed.items()}
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return {}
+
+
+def _vc_happens_before(a: dict[str, int], b: dict[str, int]) -> bool:
+    """Return True if vector clock *a* causally happens-before *b*.
+
+    a < b iff: for all keys, a[k] <= b[k], AND at least one a[k] < b[k].
+    """
+    if not a or not b:
+        return False
+    all_keys = set(a) | set(b)
+    at_least_one_less = False
+    for k in all_keys:
+        ak = a.get(k, 0)
+        bk = b.get(k, 0)
+        if ak > bk:
+            return False
+        if ak < bk:
+            at_least_one_less = True
+    return at_least_one_less
+
+
+def _sort_by_causal_order(ops: list[QueuedOperation]) -> list[QueuedOperation]:
+    """Sort operations by vector-clock causal order.
+
+    Uses a topological sort based on the happens-before relation.
+    Concurrent (incomparable) operations are ordered by their original
+    queue id as a deterministic tiebreaker.
+    """
+    if not ops or len(ops) <= 1:
+        return list(ops)
+
+    # Parse clocks once
+    clocks = [_parse_vector_clock(op.vector_clock) for op in ops]
+
+    # If no operations have vector clocks, skip sorting (pure FIFO)
+    if all(not vc for vc in clocks):
+        return list(ops)
+
+    # Kahn's algorithm for topological sort
+    n = len(ops)
+    # Build adjacency: edge i->j means ops[i] happens-before ops[j]
+    in_degree = [0] * n
+    adj: list[list[int]] = [[] for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            if i != j and _vc_happens_before(clocks[i], clocks[j]):
+                adj[i].append(j)
+                in_degree[j] += 1
+
+    # BFS with tie-breaking by op.id (deterministic for concurrent ops)
+    import heapq
+
+    queue: list[tuple[int, int]] = []  # (op.id, index) for stable ordering
+    for i in range(n):
+        if in_degree[i] == 0:
+            heapq.heappush(queue, (ops[i].id, i))
+
+    result: list[QueuedOperation] = []
+    while queue:
+        _, idx = heapq.heappop(queue)
+        result.append(ops[idx])
+        for j in adj[idx]:
+            in_degree[j] -= 1
+            if in_degree[j] == 0:
+                heapq.heappush(queue, (ops[j].id, j))
+
+    # If graph has a cycle (shouldn't happen with valid VCs), append remaining
+    if len(result) < n:
+        seen = {id(op) for op in result}
+        for op in ops:
+            if id(op) not in seen:
+                result.append(op)
+
+    return result
 
 
 class ReplayEngine:
@@ -82,6 +181,10 @@ class ReplayEngine:
                 # Re-check after dequeue — circuit may have opened during the async call
                 if self._circuit.is_open:
                     continue
+
+                # Issue #3062: Sort by vector-clock causal order before replay.
+                # Concurrent (incomparable) ops use queue id as tiebreaker.
+                batch = _sort_by_causal_order(batch)
 
                 logger.info("Replaying %d queued operations", len(batch))
                 for op in batch:

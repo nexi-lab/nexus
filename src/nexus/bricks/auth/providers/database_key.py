@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.bricks.auth.constants import API_KEY_MIN_LENGTH, API_KEY_PREFIX, HMAC_SALT
+from nexus.bricks.auth.constants import API_KEY_MIN_LENGTH, API_KEY_PREFIX, get_hmac_secret
 from nexus.bricks.auth.providers.base import AuthProvider, AuthResult
 
 if TYPE_CHECKING:
@@ -149,7 +149,8 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
     @staticmethod
     def _hash_key(key: str) -> str:
-        return hmac.new(HMAC_SALT.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
+        secret = get_hmac_secret()
+        return hmac.new(secret.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
 
     @classmethod
     def create_key(

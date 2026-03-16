@@ -111,6 +111,74 @@ class TestMCLRecorder:
         )
 
 
+class TestMCLSequenceAllocation:
+    """Issue #3062: Sequence allocation should produce unique, monotonic values."""
+
+    def test_multiple_writes_get_unique_sequences(self, db_session) -> None:
+        """Concurrent-style writes should each get a unique sequence number."""
+        recorder = MCLRecorder(db_session)
+        for i in range(20):
+            recorder.record_file_write(
+                entity_urn=f"urn:nexus:file:z1:id{i}",
+                metadata_dict={"path": f"/file{i}"},
+            )
+        db_session.commit()
+
+        records = db_session.execute(select(MetadataChangeLogModel)).scalars().all()
+        sequences = [r.sequence_number for r in records]
+        assert len(sequences) == 20
+        assert len(set(sequences)) == 20, "All sequence numbers must be unique"
+
+    def test_sequence_numbers_increase(self, db_session) -> None:
+        """Sequence numbers should monotonically increase."""
+        recorder = MCLRecorder(db_session)
+        for i in range(10):
+            recorder.record_file_write(
+                entity_urn=f"urn:nexus:file:z1:id{i}",
+                metadata_dict={"path": f"/file{i}"},
+            )
+        db_session.commit()
+
+        records = (
+            db_session.execute(
+                select(MetadataChangeLogModel).order_by(MetadataChangeLogModel.sequence_number)
+            )
+            .scalars()
+            .all()
+        )
+        sequences = [r.sequence_number for r in records]
+        for i in range(1, len(sequences)):
+            assert sequences[i] > sequences[i - 1]
+
+    def test_replay_handles_gaps(self, db_session) -> None:
+        """replay_changes() should work even if there are gaps in sequence numbers."""
+        recorder = MCLRecorder(db_session)
+        recorder.record_file_write(
+            entity_urn="urn:nexus:file:z1:id1",
+            metadata_dict={"path": "/a"},
+        )
+        recorder.record_file_write(
+            entity_urn="urn:nexus:file:z1:id2",
+            metadata_dict={"path": "/b"},
+        )
+        db_session.commit()
+
+        # Delete the first record to create a gap
+        first = (
+            db_session.execute(
+                select(MetadataChangeLogModel).order_by(MetadataChangeLogModel.sequence_number)
+            )
+            .scalars()
+            .first()
+        )
+        db_session.delete(first)
+        db_session.commit()
+
+        # Replay should still work with the remaining record
+        replayed = list(recorder.replay_changes())
+        assert len(replayed) == 1
+
+
 class TestMCLIdempotency:
     """MCL replay idempotency tests (Issue #2929, Test Review #9)."""
 

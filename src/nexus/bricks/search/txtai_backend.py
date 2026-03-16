@@ -86,6 +86,17 @@ def _escape_sql_string(value: str) -> str:
     return sanitised.replace("'", "''")
 
 
+def _escape_like_string(value: str) -> str:
+    """Escape a value for use in a SQL LIKE clause.
+
+    Extends ``_escape_sql_string`` by also escaping the LIKE wildcard
+    characters ``%`` and ``_`` so that the value is matched literally
+    (Issue #3062).
+    """
+    escaped = _escape_sql_string(value)
+    return escaped.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class TxtaiBackend:
     """Search backend wrapping txtai ``Embeddings`` for hybrid BM25+dense search.
 
@@ -484,7 +495,7 @@ def _build_search_sql(
         f"zone_id = '{_escape_sql_string(zone_id)}'",
     ]
     if path_filter:
-        clauses.append(f"path LIKE '{_escape_sql_string(path_filter)}%'")
+        clauses.append(f"path LIKE '{_escape_like_string(path_filter)}%' ESCAPE '\\'")
 
     where = " AND ".join(clauses)
     safe_limit = max(1, min(int(limit), 1000))

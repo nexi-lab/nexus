@@ -31,6 +31,27 @@ async def _do_link(
     from nexus.factory._wired import _boot_wired_services
     from nexus.factory.service_routing import populate_service_registry
 
+    # --- Wire non-hot-path facade attrs from containers (Issue #1570) ---
+    # These 13 attrs are only accessed outside kernel (CLI, services, API).
+    # Kernel-referenced attrs (zone_lifecycle, snapshot_service, lock_manager,
+    # process_table, audit_store, deferred_permission_buffer) use container
+    # access — getattr(self._system_services/brick_services, ...).
+    _sys = nx._system_services
+    _brk = nx._brick_services
+    nx._entity_registry = _sys.entity_registry
+    nx._workspace_registry = _sys.workspace_registry
+    nx.mount_manager = _sys.mount_manager
+    nx._workspace_manager = _sys.workspace_manager
+    nx._agent_registry = _sys.agent_registry
+    nx._namespace_manager = _sys.namespace_manager
+    nx._async_agent_registry = _sys.async_agent_registry
+    nx._async_namespace_manager = _sys.async_namespace_manager
+    nx._context_branch_service = _sys.context_branch_service
+    nx._event_bus = _brk.event_bus
+    nx._wallet_provisioner = _brk.wallet_provisioner
+    nx._api_key_creator = _brk.api_key_creator
+    nx.version_service = _brk.version_service
+
     _parsing = parsing if parsing is not None else nx._parse_config
 
     # --- ParsersBrick (owns both registries — Issue #1523) ---
@@ -111,7 +132,7 @@ async def _do_link(
 
         # Issue #1666: Register system-tier PersistentService instances so
         # start_persistent_services() auto-discovers them at bootstrap.
-        _dpb = getattr(nx, "_deferred_permission_buffer", None)
+        _dpb = getattr(nx._system_services, "deferred_permission_buffer", None)
         if _dpb is not None:
             coordinator.register_service("deferred_permission_buffer", _dpb, exports=())
         _dw = getattr(nx._system_services, "delivery_worker", None)
@@ -181,7 +202,7 @@ def _do_initialize(nx: Any) -> None:
     # implement PersistentService and are auto-started by the coordinator's
     # start_persistent_services() at bootstrap.  Manual callbacks deleted.
 
-    _zl = nx._zone_lifecycle
+    _zl = getattr(nx._system_services, "zone_lifecycle", None) if nx._system_services else None
     if _zl is not None and hasattr(_zl, "load_terminating_zones"):
 
         async def _load_zones() -> None:

@@ -17,23 +17,23 @@ class _FakeNexusOps:
     async def remove_tag(self, path: str, tag: str) -> None:
         pass
 
-    def rename(self, old_path: str, new_path: str) -> None:
+    async def rename(self, old_path: str, new_path: str) -> None:
         pass
 
-    def mkdir(self, path: str, *, parents: bool = False) -> None:
+    async def mkdir(self, path: str, *, parents: bool = False) -> None:
         pass
 
-    def read(self, path: str) -> bytes:
+    async def read(self, path: str) -> bytes:
         return b""
 
 
 class _FakeMetadataStore:
     """Minimal duck-typed implementation for conformance check."""
 
-    def get_path(self, path: str) -> Any:
+    async def get_path(self, path: str) -> Any:
         return None
 
-    def set_file_metadata(self, path_id: Any, key: str, value: str) -> None:
+    async def set_file_metadata(self, path_id: Any, key: str, value: str) -> None:
         pass
 
 

@@ -21,6 +21,7 @@ from nexus.contracts.exceptions import (
 )
 from nexus.core.hash_fast import hash_content
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
 from nexus.server.dependencies import require_auth
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -33,47 +34,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Path attributes on RPC param dataclasses that must be zone-scoped.
-_ZONE_PATH_ATTRS = ("path", "old_path", "new_path")
-# Bulk/list path attributes that also need zone-scoping.
-_ZONE_PATH_LIST_ATTRS = ("paths", "patterns")
-
-
-def _scope_single_path(path: str, prefix: str) -> str:
-    """Scope a single path string with zone prefix."""
-    if path.startswith(("/zone/", "/tenant:")):
-        return path
-    if path.startswith("/"):
-        return f"{prefix}{path}"
-    return f"{prefix}/{path}"
-
-
-def _scope_params_for_zone(params: Any, zone_id: str) -> None:
-    """Prefix path attributes with ``/zone/{zone_id}/`` for zone isolation.
-
-    Mutates the params dataclass in place.  Only applies when *zone_id*
-    differs from ROOT_ZONE_ID — the root zone sees the full tree.
-    The reverse operation (stripping the prefix from results) is handled
-    by ``unscope_internal_path`` in ``path_utils.py``.
-    """
-    from nexus.contracts.constants import ROOT_ZONE_ID
-
-    if zone_id == ROOT_ZONE_ID:
-        return
-
-    prefix = f"/zone/{zone_id}"
-    for attr in _ZONE_PATH_ATTRS:
-        value = getattr(params, attr, None)
-        if not isinstance(value, str):
-            continue
-        setattr(params, attr, _scope_single_path(value, prefix))
-
-    # Also scope list[str] path attributes (e.g. bulk operations)
-    for attr in _ZONE_PATH_LIST_ATTRS:
-        value = getattr(params, attr, None)
-        if not isinstance(value, list):
-            continue
-        setattr(params, attr, [_scope_single_path(p, prefix) for p in value if isinstance(p, str)])
+# Zone-scoping logic is in nexus.lib.zone_scoping (shared with gRPC servicer).
+# The reverse operation (stripping the prefix from results) is handled
+# by ``unscope_internal_path`` in ``path_utils.py``.
 
 
 @router.post("/api/nfs/{method}")
@@ -129,7 +92,7 @@ async def rpc_endpoint(
         context = get_operation_context(auth_result)
 
         # Scope paths for zone isolation (prefix with /zone/{zone_id}/)
-        _scope_params_for_zone(params, context.zone_id)
+        scope_params_for_zone(params, context.zone_id)
 
         _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 
@@ -206,6 +169,8 @@ async def rpc_endpoint(
 
         return Response(content=encoded, media_type="application/json", headers=headers)
 
+    except ZoneScopingError as e:
+        return _error_response(None, RPCErrorCode.PERMISSION_ERROR, str(e))
     except ValueError as e:
         return _error_response(None, RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {e}")
     except NexusFileNotFoundError as e:

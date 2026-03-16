@@ -217,12 +217,12 @@ class NexusConfig(BaseModel):
         description="Enable permission enforcement on file operations (P0-6: default True for security)",
     )
 
-    # Admin bypass setting (P0-4)
-    # Default: True for better developer experience - admin keys bypass permission checks
-    # Set to False explicitly for stricter production security
+    # Admin bypass setting (P0-4, Issue #3063)
+    # Default: False for secure-by-default production deployments.
+    # Set to True explicitly in dev/test configs that need admin bypass.
     allow_admin_bypass: bool = Field(
-        default=True,
-        description="Allow admin keys to bypass permission checks (default True for dev experience)",
+        default=False,
+        description="Allow admin keys to bypass permission checks (default False for security)",
     )
 
     # Zone isolation setting (P0-2)

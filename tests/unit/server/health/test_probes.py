@@ -131,8 +131,8 @@ class TestReadinessProbe:
         assert resp.status_code == 503
         assert "DB pool exhausted" in resp.json()["reason"]
 
-    def test_fail_open_on_exception(self) -> None:
-        """Any unexpected error should still return 200 (fail-open)."""
+    def test_fail_open_on_db_check_exception(self) -> None:
+        """DB pool check fails open (individual helper, not the probe itself)."""
         tracker = StartupTracker()
         for phase in _REQUIRED_FOR_READY:
             tracker.complete(phase)
@@ -145,5 +145,52 @@ class TestReadinessProbe:
         app.state.nexus_fs = mock_fs
         client = TestClient(app)
         resp = client.get("/healthz/ready")
-        # The db check fails open, so we still get 200
+        # The db check helper fails open, so readiness still succeeds
         assert resp.status_code == 200
+
+    def test_503_on_unexpected_exception(self) -> None:
+        """Issue #3063 §7: readiness probe fails closed on unexpected errors."""
+        app = _make_app()
+        # Force startup_tracker to raise when accessed
+        app.state.startup_tracker = MagicMock()
+        app.state.startup_tracker.is_ready = property(
+            lambda s: (_ for _ in ()).throw(RuntimeError("probe bug"))
+        )
+        type(app.state.startup_tracker).is_ready = property(
+            lambda s: (_ for _ in ()).throw(RuntimeError("probe bug"))
+        )
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/healthz/ready")
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "error"
+
+
+class TestStartupProbeFailClosed:
+    """Issue #3063 §7: startup probe exception behavior."""
+
+    def test_503_on_unexpected_exception(self) -> None:
+        """Startup probe should return 503 on unexpected error."""
+        app = _make_app()
+        # Force tracker to raise on attribute access
+        bad_tracker = MagicMock()
+        type(bad_tracker).is_complete = property(
+            lambda s: (_ for _ in ()).throw(RuntimeError("probe bug"))
+        )
+        app.state.startup_tracker = bad_tracker
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/healthz/startup")
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "error"
+
+
+class TestLivenessProbeFailOpen:
+    """Verify liveness probe stays fail-open (no change from Issue #3063)."""
+
+    def test_always_200_regardless(self) -> None:
+        """Liveness should never return non-200 to avoid restart loops."""
+        client = TestClient(_make_app())
+        resp = client.get("/healthz/live")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "alive"

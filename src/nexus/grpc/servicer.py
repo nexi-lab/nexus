@@ -45,6 +45,7 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
 from nexus.server.protocol import parse_method_params
 
 logger = logging.getLogger(__name__)
@@ -144,7 +145,6 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         _context: grpc.aio.ServicerContext,
     ) -> "vfs_pb2.CallResponse":
         """Handle a generic VFS RPC call."""
-        from nexus.server.api.core.rpc import _scope_params_for_zone
         from nexus.server.dependencies import get_operation_context
         from nexus.server.rpc.dispatch import dispatch_method
 
@@ -175,7 +175,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             op_context = get_operation_context(auth_result)
 
             # 5. Zone scoping
-            _scope_params_for_zone(params, op_context.zone_id)
+            scope_params_for_zone(params, op_context.zone_id)
 
             # 6. Dispatch
             result = await dispatch_method(
@@ -194,6 +194,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 is_error=False,
             )
 
+        except ZoneScopingError as e:
+            return vfs_pb2.CallResponse(
+                payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+                is_error=True,
+            )
         except ValueError as e:
             return vfs_pb2.CallResponse(
                 payload=_error_payload(RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {e}"),
@@ -276,23 +281,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
 
     @staticmethod
     def _scope_path_for_zone(request: Any, zone_id: str) -> None:
-        """Apply zone-scoping to typed gRPC request paths (mirrors rpc.py)."""
-        from nexus.contracts.constants import ROOT_ZONE_ID
+        """Apply zone-scoping to typed gRPC request paths.
 
-        if zone_id == ROOT_ZONE_ID:
-            return
-
-        prefix = f"/zone/{zone_id}"
-        for attr in ("path", "old_path", "new_path"):
-            value = getattr(request, attr, None)
-            if not isinstance(value, str):
-                continue
-            if value.startswith(("/zone/", "/tenant:")):
-                continue
-            if value.startswith("/"):
-                setattr(request, attr, f"{prefix}{value}")
-            else:
-                setattr(request, attr, f"{prefix}/{value}")
+        Delegates to the shared zone_scoping module (Issue #3063).
+        """
+        scope_params_for_zone(request, zone_id)
 
     async def Read(
         self,
@@ -320,6 +313,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 etag = ""
                 size = len(content)
             return vfs_pb2.ReadResponse(content=content, etag=etag, size=size)
+        except ZoneScopingError as e:
+            return vfs_pb2.ReadResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
         except NexusPermissionError as e:
             return vfs_pb2.ReadResponse(
                 is_error=True,
@@ -385,6 +383,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             etag = result.get("etag", "") if isinstance(result, dict) else ""
             size = result.get("size", len(content)) if isinstance(result, dict) else len(content)
             return vfs_pb2.WriteResponse(etag=etag, size=size)
+        except ZoneScopingError as e:
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
         except NexusPermissionError as e:
             return vfs_pb2.WriteResponse(
                 is_error=True,
@@ -456,6 +459,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             else:
                 await asyncio.to_thread(self._nexus_fs.sys_unlink, request.path, context=op_context)
             return vfs_pb2.DeleteResponse(success=True)
+        except ZoneScopingError as e:
+            return vfs_pb2.DeleteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
         except NexusPermissionError as e:
             return vfs_pb2.DeleteResponse(
                 is_error=True,
@@ -489,8 +497,14 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         request: "vfs_pb2.StreamReadRequest",
         context: grpc.aio.ServicerContext,
     ) -> AsyncIterator["vfs_pb2.ReadChunk"]:
-        """Server-side streaming read — chunked delivery for large files."""
+        """Server-side streaming read — chunked delivery for large files.
+
+        Note: Currently buffers the full file in memory before chunking.
+        A future iteration will stream directly from the storage layer
+        (see Issue #3063 follow-up).
+        """
         _DEFAULT_CHUNK_SIZE = 1_048_576  # 1 MB
+        _LARGE_FILE_WARNING = 256 * 1_048_576  # 256 MB
 
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
@@ -503,6 +517,19 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 False,  # parsed
             )
             content = result if isinstance(result, bytes) else b""
+            if len(content) > _LARGE_FILE_WARNING:
+                logger.warning(
+                    "StreamRead buffering large file: %s (%d bytes). "
+                    "Consider true streaming in a future iteration.",
+                    request.path,
+                    len(content),
+                )
+        except ZoneScopingError as e:
+            yield vfs_pb2.ReadChunk(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
+            return
         except NexusPermissionError as e:
             yield vfs_pb2.ReadChunk(
                 is_error=True,

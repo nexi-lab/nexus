@@ -13,6 +13,7 @@ Security hardening (Issues #1756, #1596):
 - All actions use generic error messages with structured logging.
 """
 
+import contextlib
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -160,11 +161,12 @@ class MoveAction(BaseAction):
             create_parents = self.config.get("create_parents", False)
 
             if create_parents:
-                dest_path = Path(destination)
-                if not dest_path.parent.exists():
-                    context.services.nexus_ops.mkdir(str(dest_path.parent), parents=True)
+                parent_dir = str(Path(destination).parent)
+                # Use VFS mkdir (not local Path.exists) — idempotent to avoid TOCTOU
+                with contextlib.suppress(Exception):
+                    await context.services.nexus_ops.mkdir(parent_dir, parents=True)
 
-            context.services.nexus_ops.rename(source, destination)
+            await context.services.nexus_ops.rename(source, destination)
 
             return ActionResult(
                 action_name=self.name,
@@ -197,10 +199,13 @@ class MetadataAction(BaseAction):
                 key: self.safe_interpolate(str(value), context) for key, value in metadata.items()
             }
 
-            for key, value in interpolated_metadata.items():
-                path_rec = context.services.metadata_store.get_path(file_path)
-                if path_rec:
-                    context.services.metadata_store.set_file_metadata(path_rec.path_id, key, value)
+            # Hoist path lookup outside loop to avoid N+1 queries (Issue #3063)
+            path_rec = await context.services.metadata_store.get_path(file_path)
+            if path_rec:
+                for key, value in interpolated_metadata.items():
+                    await context.services.metadata_store.set_file_metadata(
+                        path_rec.path_id, key, value
+                    )
 
             return ActionResult(
                 action_name=self.name,

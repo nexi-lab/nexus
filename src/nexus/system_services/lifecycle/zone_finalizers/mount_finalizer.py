@@ -1,7 +1,7 @@
 """Mount zone finalizer — removes all mount points for a zone (Issue #2061).
 
 Iterates mounts for the zone and delegates cleanup to
-``MountCoreService.remove_mount()`` which handles metadata,
+``MountService.remove_mount_sync()`` which handles metadata,
 directory index, hierarchy tuples, and permission tuples.
 """
 
@@ -24,7 +24,7 @@ class MountZoneFinalizer:
     async def finalize_zone(self, zone_id: str) -> None:
         """Remove all mounts for *zone_id*.
 
-        .. todo:: Issue #2070: push zone_id filter to MountCoreService.list_mounts()
+        .. todo:: Issue #2070: push zone_id filter to MountService.list_mounts_sync()
            to avoid O(total) scan.  Current approach is acceptable because mount
            counts are typically small (tens, not thousands).
         """

@@ -21,11 +21,21 @@ RUN apt-get update && \
 
 WORKDIR /build
 
+# Copy workspace root manifests — nexus_raft uses `workspace = true` deps
+# so Cargo needs the workspace Cargo.toml to resolve them.
+COPY Cargo.toml Cargo.lock ./
+
 # Copy proto files (build.rs expects ../../proto relative to rust/nexus_raft/)
 COPY proto/ ./proto/
 
-# Copy Rust source
+# Copy Rust source — nexus_raft is the build target; stub other workspace
+# members so Cargo can resolve the workspace without copying their full source.
 COPY rust/nexus_raft/ ./rust/nexus_raft/
+RUN for d in nexus_core nexus_pyo3 nexus_tasks; do \
+        mkdir -p rust/$d/src && \
+        printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
+        echo '' > rust/$d/src/lib.rs; \
+    done
 
 # Build the witness binary
 WORKDIR /build/rust/nexus_raft
@@ -38,7 +48,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/rust/nexus_raft/target/release/nexus-witness /usr/local/bin/
+COPY --from=builder /build/target/release/nexus-witness /usr/local/bin/
 
 # Create non-root user
 RUN useradd -r -m -u 1000 -s /bin/bash nexus && \

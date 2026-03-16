@@ -1,20 +1,21 @@
 """Path routing for mapping virtual paths to storage backends.
 
-PathRouter = Linux VFS mount table. Routes virtual paths to storage backends
+PathRouter = Linux VFS mount table.  Routes virtual paths to storage backends
 using longest-prefix matching with mount-level access control (readonly,
-admin_only). No namespace or zone concepts — those belong in ReBAC and
+admin_only).  No namespace or zone concepts — those belong in ReBAC and
 federation layers respectively.
 
-Mount table is persisted in MetastoreABC as DT_MOUNT entries (source of truth).
-The only in-memory state is ``_backends`` — a registry of runtime backend
-instances that cannot be serialized to metastore.
+PathRouter is a pure in-memory routing table (like Linux VFS ``vfsmount``).
+DT_MOUNT persistence in the metastore is a separate concern owned by the
+mount subsystem (``MountService``, ``ZoneManager.mount``,
+``ensure_topology``).
 
 route() performs LPM by walking path components from deepest to shallowest,
-checking metastore for DT_MOUNT at each level. Metastore's Rust-level
+checking metastore for DT_MOUNT at each level.  Metastore's Rust-level
 in-memory cache (redb) provides ~5 μs reads — no Python cache needed.
 
 Architecture:
-    global_path → ZonePathResolver → (zone_id, local_path) → PathRouter.route() → (backend, backend_path)
+    path → PathRouter.route() → (backend, backend_path)
 """
 
 import posixpath
@@ -22,7 +23,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
-from nexus.contracts.metadata import DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
@@ -115,10 +115,12 @@ class PathRouter:
         admin_only: bool = False,
         io_profile: str = "balanced",
     ) -> None:
-        """Add a mount to the router.
+        """Register a backend at *mount_point* for path routing.
 
-        Writes a DT_MOUNT entry to metastore and registers the backend.
-        If a mount already exists at the same path, it is replaced.
+        Pure in-memory operation (like Linux VFS ``vfsmount`` insertion).
+        DT_MOUNT persistence in the metastore is a separate concern owned
+        by the mount subsystem (``MountService``, ``ZoneManager.mount``,
+        ``ensure_topology``).
 
         Args:
             mount_point: Virtual path prefix (must start with /).
@@ -129,39 +131,6 @@ class PathRouter:
 
         Raises:
             ValueError: If mount_point is invalid.
-        """
-        mount_point = self._normalize_path(mount_point)
-
-        # Persist DT_MOUNT entry in metastore (source of truth)
-        meta = FileMetadata(
-            path=mount_point,
-            backend_name=backend.name,
-            physical_path=mount_point,
-            size=0,
-            entry_type=DT_MOUNT,
-        )
-        self._metastore.put(meta)
-        self._register_mount_entry(
-            mount_point,
-            backend,
-            readonly=readonly,
-            admin_only=admin_only,
-            io_profile=io_profile,
-        )
-
-    def add_runtime_mount(
-        self,
-        mount_point: str,
-        backend: "ObjectStoreABC",
-        *,
-        readonly: bool = False,
-        admin_only: bool = False,
-        io_profile: str = "balanced",
-    ) -> None:
-        """Register an in-memory mount without persisting metadata.
-
-        Used for ephemeral runtime mounts where the metastore is not the
-        source of truth, such as the REMOTE client-side root mount.
         """
         mount_point = self._normalize_path(mount_point)
         self._register_mount_entry(
@@ -310,9 +279,10 @@ class PathRouter:
             return None
 
     def remove_mount(self, mount_point: str) -> bool:
-        """Remove a mount by its mount point.
+        """Remove a mount from the in-memory routing table.
 
-        Deletes the DT_MOUNT entry from metastore and unregisters the backend.
+        Pure in-memory operation.  DT_MOUNT cleanup in the metastore is
+        the caller's responsibility (MountService, ZoneManager, etc.).
 
         Returns:
             True if mount was removed, False if not found.
@@ -321,38 +291,27 @@ class PathRouter:
             normalized = self._normalize_path(mount_point)
             if normalized in self._backends:
                 del self._backends[normalized]
-                self._metastore.delete(normalized)
-                return True
-            # Fallback: stale DT_MOUNT in metastore without a loaded backend
-            meta = self._metastore.get(normalized)
-            if meta is not None and meta.is_mount:
-                self._metastore.delete(normalized)
                 return True
             return False
         except ValueError:
             return False
 
     def list_mounts(self) -> "list[MountInfo]":
-        """List all mounts, including stale DT_MOUNT entries without loaded backends."""
+        """List all active mounts."""
         from nexus.core.protocols.vfs_router import MountInfo
 
-        active_mps: set[str] = set(self._backends.keys())
-        result: list[MountInfo] = [
-            MountInfo(
-                mount_point=mp,
-                readonly=entry.readonly,
-                admin_only=entry.admin_only,
-                backend=entry.backend,
-            )
-            for mp, entry in sorted(self._backends.items())
-        ]
-
-        # Stale: DT_MOUNT in metastore but no loaded backend
-        for meta in self._metastore.list("/"):
-            if meta.is_mount and meta.path not in active_mps:
-                result.append(MountInfo(mount_point=meta.path, readonly=False, status="stale"))
-
-        return sorted(result, key=lambda m: m.mount_point)
+        return sorted(
+            [
+                MountInfo(
+                    mount_point=mp,
+                    readonly=entry.readonly,
+                    admin_only=entry.admin_only,
+                    backend=entry.backend,
+                )
+                for mp, entry in self._backends.items()
+            ],
+            key=lambda m: m.mount_point,
+        )
 
     def get_backend_by_name(self, name: str) -> "ObjectStoreABC | None":
         """Look up backend by name.

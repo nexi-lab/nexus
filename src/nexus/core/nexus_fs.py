@@ -4344,6 +4344,408 @@ class NexusFS(  # type: ignore[misc]
         """Register a mutation observer (OBSERVE phase, Issue #900)."""
         self._dispatch.register_observe(observer)
 
+    # ------------------------------------------------------------------
+    # ReBAC delegation stubs (Issue #2033)
+    # Previously on NexusFSReBACMixin, now forwarded to rebac_service.
+    # Generated dynamically below via _rebac_delegate().
+    # ------------------------------------------------------------------
+
+    # Service forwarding: __getattr__ routes method calls to services (Issue #2033)
+
+    _SERVICE_METHODS: dict[str, str] = {
+        # WorkspaceRPCService
+        "workspace_snapshot": "_workspace_rpc_service",
+        "workspace_restore": "_workspace_rpc_service",
+        "workspace_log": "_workspace_rpc_service",
+        "workspace_diff": "_workspace_rpc_service",
+        "snapshot_begin": "_workspace_rpc_service",
+        "snapshot_commit": "_workspace_rpc_service",
+        "snapshot_rollback": "_workspace_rpc_service",
+        "load_workspace_config": "_workspace_rpc_service",
+        "register_workspace": "_workspace_rpc_service",
+        "unregister_workspace": "_workspace_rpc_service",
+        "update_workspace": "_workspace_rpc_service",
+        "list_workspaces": "_workspace_rpc_service",
+        "get_workspace_info": "_workspace_rpc_service",
+        # AgentRPCService
+        "register_agent": "_agent_rpc_service",
+        "update_agent": "_agent_rpc_service",
+        "list_agents": "_agent_rpc_service",
+        "get_agent": "_agent_rpc_service",
+        "delete_agent": "_agent_rpc_service",
+        # UserProvisioningService
+        "provision_user": "_user_provisioning_service",
+        "deprovision_user": "_user_provisioning_service",
+        # SandboxRPCService
+        "sandbox_create": "_sandbox_rpc_service",
+        "sandbox_run": "_sandbox_rpc_service",
+        "sandbox_validate": "_sandbox_rpc_service",
+        "sandbox_pause": "_sandbox_rpc_service",
+        "sandbox_resume": "_sandbox_rpc_service",
+        "sandbox_stop": "_sandbox_rpc_service",
+        "sandbox_list": "_sandbox_rpc_service",
+        "sandbox_status": "_sandbox_rpc_service",
+        "sandbox_get_or_create": "_sandbox_rpc_service",
+        "sandbox_connect": "_sandbox_rpc_service",
+        "sandbox_disconnect": "_sandbox_rpc_service",
+        # MetadataExportService
+        "export_metadata": "_metadata_export_service",
+        "import_metadata": "_metadata_export_service",
+        # MountService — routed via _SERVICE_ALIASES (sync suffixed methods)
+        # MountPersistService
+        "save_mount": "_mount_persist_service",
+        "list_saved_mounts": "_mount_persist_service",
+        "load_mount": "_mount_persist_service",
+        "delete_saved_mount": "_mount_persist_service",
+        # SearchService (list/glob/grep are thin forwarders, not __getattr__)
+        # asemantic_search* are in _SERVICE_ALIASES (name transformation: a-prefix removed)
+        "glob_batch": "search_service",
+        # TaskQueueService
+        "get_task": "task_queue_service",
+        "cancel_task": "task_queue_service",
+        # MCPService
+        "mcp_list_mounts": "mcp_service",
+        # OAuthService
+        "oauth_list_providers": "oauth_service",
+        # LLMService
+        "create_llm_reader": "llm_service",
+        # ReBACService direct methods (no _sync suffix)
+        "set_rebac_option": "rebac_service",
+        "get_rebac_option": "rebac_service",
+        "register_namespace": "rebac_service",
+        # EventsService (Issue #1166)
+        "wait_for_changes": "events_service",
+        "lock": "events_service",
+        "extend_lock": "events_service",
+        "unlock": "events_service",
+    }
+
+    # Special aliases where service method name differs
+    _SERVICE_ALIASES: dict[str, tuple[str, str]] = {
+        "sandbox_available": ("_sandbox_rpc_service", "sandbox_available"),
+        "get_sync_job": ("_sync_job_service", "get_job"),
+        "list_sync_jobs": ("_sync_job_service", "list_jobs"),
+        "load_all_saved_mounts": ("_mount_persist_service", "load_all_mounts"),
+        # MountService sync accessors (facade → mount_service.*_sync)
+        "add_mount": ("mount_service", "add_mount_sync"),
+        "remove_mount": ("mount_service", "remove_mount_sync"),
+        "list_connectors": ("mount_service", "list_connectors_sync"),
+        "list_mounts": ("mount_service", "list_mounts_sync"),
+        "get_mount": ("mount_service", "get_mount_sync"),
+        "has_mount": ("mount_service", "has_mount_sync"),
+        # Dir visibility cache: NexusFS method names → cache method names
+        "get_dir_visibility_cache_metrics": ("_dir_visibility_cache", "get_metrics"),
+        "clear_dir_visibility_cache": ("_dir_visibility_cache", "clear"),
+        # SearchService async methods: a-prefix removed when calling service
+        "asemantic_search": ("search_service", "semantic_search"),
+        "asemantic_search_index": ("search_service", "semantic_search_index"),
+        "asemantic_search_stats": ("search_service", "semantic_search_stats"),
+        # SyncService / SyncJobService (Issue #2033)
+        "sync_mount": ("_sync_service", "sync_mount_flat"),
+        "sync_mount_async": ("_sync_job_service", "sync_mount_async"),
+        "cancel_sync_job": ("_sync_job_service", "cancel_sync_job"),
+        # VersionService async methods (Issue #2033)
+        "aget_version": ("version_service", "get_version"),
+        "alist_versions": ("version_service", "list_versions"),
+        "arollback": ("version_service", "rollback"),
+        "adiff_versions": ("version_service", "diff_versions"),
+        # ReBACService async methods (Issue #2033)
+        "arebac_create": ("rebac_service", "rebac_create"),
+        "arebac_delete": ("rebac_service", "rebac_delete"),
+        "arebac_check": ("rebac_service", "rebac_check"),
+        "arebac_check_batch": ("rebac_service", "rebac_check_batch"),
+        "arebac_expand": ("rebac_service", "rebac_expand"),
+        "arebac_explain": ("rebac_service", "rebac_explain"),
+        "arebac_list_tuples": ("rebac_service", "rebac_list_tuples"),
+        "aget_namespace": ("rebac_service", "get_namespace"),
+        # ReBACService sync methods with _sync suffix (Issue #2033)
+        "rebac_expand": ("rebac_service", "rebac_expand_sync"),
+        "rebac_explain": ("rebac_service", "rebac_explain_sync"),
+        "share_with_user": ("rebac_service", "share_with_user_sync"),
+        "share_with_group": ("rebac_service", "share_with_group_sync"),
+        "grant_consent": ("rebac_service", "grant_consent_sync"),
+        "revoke_consent": ("rebac_service", "revoke_consent_sync"),
+        "make_public": ("rebac_service", "make_public_sync"),
+        "make_private": ("rebac_service", "make_private_sync"),
+        "apply_dynamic_viewer_filter": ("rebac_service", "apply_dynamic_viewer_filter_sync"),
+        "list_outgoing_shares": ("rebac_service", "list_outgoing_shares_sync"),
+        "list_incoming_shares": ("rebac_service", "list_incoming_shares_sync"),
+        "get_dynamic_viewer_config": ("rebac_service", "get_dynamic_viewer_config_sync"),
+        "namespace_create": ("rebac_service", "namespace_create_sync"),
+        "namespace_delete": ("rebac_service", "namespace_delete_sync"),
+        "namespace_list": ("rebac_service", "namespace_list_sync"),
+        "get_namespace": ("rebac_service", "get_namespace_sync"),
+        # ReBACService direct methods (no _sync suffix)
+        "rebac_expand_with_privacy": ("rebac_service", "rebac_expand_with_privacy_sync"),
+        # SkillService (Issue #2035): NexusFS facade → skill_service RPC methods
+        "skills_share": ("skill_service", "rpc_share"),
+        "skills_discover": ("skill_service", "rpc_discover"),
+        "skills_get_prompt_context": ("skill_service", "rpc_get_prompt_context"),
+        # SkillPackageService (Issue #2035): NexusFS facade → skill_package_service
+        "skills_import": ("skill_package_service", "import_skill"),
+        "skills_validate_zip": ("skill_package_service", "validate_zip"),
+    }
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward extracted facade methods to their service objects.
+
+        This enables callers to continue using nx.method_name() after
+        facade methods were removed from NexusFS (Issue #2033).
+        """
+        # Check aliases first (method name differs on service)
+        alias = NexusFS._SERVICE_ALIASES.get(name)
+        if alias is not None:
+            svc_attr, svc_method = alias
+            svc = self.__dict__.get(svc_attr)
+            if svc is not None:
+                return getattr(svc, svc_method)
+
+        # Standard forwarding (same method name on service)
+        svc_attr_std = NexusFS._SERVICE_METHODS.get(name)
+        if svc_attr_std is not None:
+            svc = self.__dict__.get(svc_attr_std)
+            if svc is not None:
+                return getattr(svc, name)
+
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    # ------------------------------------------------------------------
+    # Abstract method forwarders (ABCMeta requires real definitions)
+    # These satisfy the NexusFilesystemABC while delegating to services.
+    # ------------------------------------------------------------------
+
+    # --- Workspace Versioning (→ _workspace_rpc_service) ---
+
+    def workspace_snapshot(
+        self,
+        workspace_path: str | None = None,
+        description: str | None = None,
+        tags: builtins.list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.workspace_snapshot(
+            workspace_path=workspace_path,
+            description=description,
+            tags=tags,
+        )
+
+    def workspace_restore(
+        self,
+        snapshot_number: int,
+        workspace_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.workspace_restore(
+            snapshot_number=snapshot_number,
+            workspace_path=workspace_path,
+        )
+
+    def workspace_log(
+        self,
+        workspace_path: str | None = None,
+        limit: int = 100,
+    ) -> builtins.list[dict[str, Any]]:
+        return self._workspace_rpc_service.workspace_log(
+            workspace_path=workspace_path,
+            limit=limit,
+        )
+
+    def workspace_diff(
+        self,
+        snapshot_1: int,
+        snapshot_2: int,
+        workspace_path: str | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.workspace_diff(
+            snapshot_1=snapshot_1,
+            snapshot_2=snapshot_2,
+            workspace_path=workspace_path,
+        )
+
+    # --- Workspace Registry (→ _workspace_rpc_service) ---
+
+    def register_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        created_by: str | None = None,
+        tags: builtins.list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        ttl: Any | None = None,
+    ) -> dict[str, Any]:
+        return self._workspace_rpc_service.register_workspace(
+            path=path,
+            name=name,
+            description=description,
+            created_by=created_by,
+            tags=tags,
+            metadata=metadata,
+            session_id=session_id,
+            ttl=ttl,
+        )
+
+    def unregister_workspace(self, path: str) -> bool:
+        return self._workspace_rpc_service.unregister_workspace(path=path)
+
+    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
+        return self._workspace_rpc_service.list_workspaces(context=context)
+
+    def get_workspace_info(self, path: str) -> dict | None:
+        return self._workspace_rpc_service.get_workspace_info(path=path)
+
+    # --- Sandbox Operations (→ _sandbox_rpc_service) ---
+
+    def sandbox_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = "e2b",
+        template_id: str | None = None,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_create(
+            name=name,
+            ttl_minutes=ttl_minutes,
+            provider=provider,
+            template_id=template_id,
+            context=context,
+        )
+
+    def sandbox_get_or_create(
+        self,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = None,
+        template_id: str | None = None,
+        verify_status: bool = True,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_get_or_create(
+            name=name,
+            ttl_minutes=ttl_minutes,
+            provider=provider,
+            template_id=template_id,
+            verify_status=verify_status,
+            context=context,
+        )
+
+    def sandbox_run(
+        self,
+        sandbox_id: str,
+        language: str,
+        code: str,
+        timeout: int = 300,
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
+        context: dict | None = None,
+        as_script: bool = False,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_run(
+            sandbox_id=sandbox_id,
+            language=language,
+            code=code,
+            timeout=timeout,
+            nexus_url=nexus_url,
+            nexus_api_key=nexus_api_key,
+            context=context,
+            as_script=as_script,
+        )
+
+    def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_pause(sandbox_id=sandbox_id, context=context)
+
+    def sandbox_resume(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_resume(sandbox_id=sandbox_id, context=context)
+
+    def sandbox_stop(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_stop(sandbox_id=sandbox_id, context=context)
+
+    def sandbox_list(
+        self,
+        context: dict | None = None,
+        verify_status: bool = False,
+        user_id: str | None = None,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        status: str | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_list(
+            context=context,
+            verify_status=verify_status,
+            user_id=user_id,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            status=status,
+        )
+
+    def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_status(sandbox_id=sandbox_id, context=context)
+
+    def sandbox_connect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        mount_path: str = "/mnt/nexus",
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
+        agent_id: str | None = None,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_connect(
+            sandbox_id=sandbox_id,
+            provider=provider,
+            sandbox_api_key=sandbox_api_key,
+            mount_path=mount_path,
+            nexus_url=nexus_url,
+            nexus_api_key=nexus_api_key,
+            agent_id=agent_id,
+            context=context,
+        )
+
+    def sandbox_disconnect(
+        self,
+        sandbox_id: str,
+        provider: str = "e2b",
+        sandbox_api_key: str | None = None,
+        context: dict | None = None,
+    ) -> dict[Any, Any]:
+        return self._sandbox_rpc_service.sandbox_disconnect(
+            sandbox_id=sandbox_id,
+            provider=provider,
+            sandbox_api_key=sandbox_api_key,
+            context=context,
+        )
+
+    # --- Mount Operations (→ mount_service sync accessors) ---
+
+    def add_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        readonly: bool = False,
+        io_profile: str = "balanced",
+        context: Any = None,
+    ) -> str:
+        return self.mount_service.add_mount_sync(
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            readonly=readonly,
+            io_profile=io_profile,
+            context=context,
+        )
+
+    def remove_mount(self, mount_point: str, context: Any = None) -> dict[str, Any]:
+        return self.mount_service.remove_mount_sync(mount_point=mount_point, context=context)
+
+    def list_mounts(self, context: Any = None) -> builtins.list[dict[str, Any]]:
+        return self.mount_service.list_mounts_sync(context=context)
+
+    def get_mount(self, mount_point: str, context: Any = None) -> dict[str, Any] | None:
+        return self.mount_service.get_mount_sync(mount_point=mount_point, context=context)
+
     def _matches_patterns(
         self,
         file_path: str,

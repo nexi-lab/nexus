@@ -71,14 +71,14 @@ class TestListMountsPermissionFiltering:
         mount_data_dir = temp_dir / "mount_data"
         mount_data_dir.mkdir()
 
-        await nx_without_permissions.service("mount_core").add_mount(
+        nx_without_permissions.service("mount").add_mount_sync(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
         # Call without context - should return all mounts
-        mounts = nx_without_permissions.service("mount_core").list_mounts()
+        mounts = nx_without_permissions.service("mount").list_mounts_sync()
         mount_points = [m["mount_point"] for m in mounts]
 
         # Should include both root and test mount
@@ -115,7 +115,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Add first mount as Alice (she'll be granted direct_owner)
-        await nx_with_permissions.service("mount_core").add_mount(
+        nx_with_permissions.service("mount").add_mount_sync(
             mount_point="/mnt/alice",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir1)},
@@ -142,7 +142,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Add second mount as Bob (he'll be granted direct_owner)
-        await nx_with_permissions.service("mount_core").add_mount(
+        nx_with_permissions.service("mount").add_mount_sync(
             mount_point="/mnt/bob",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir2)},
@@ -150,7 +150,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # When Alice calls list_mounts, she should only see her mount
-        alice_mounts = nx_with_permissions.service("mount_core").list_mounts(context=context_alice)
+        alice_mounts = nx_with_permissions.service("mount").list_mounts_sync(context=context_alice)
         alice_mount_points = [m["mount_point"] for m in alice_mounts]
 
         # Alice should see her mount
@@ -159,7 +159,7 @@ class TestListMountsPermissionFiltering:
         assert "/mnt/bob" not in alice_mount_points
 
         # When Bob calls list_mounts, he should only see his mount
-        bob_mounts = nx_with_permissions.service("mount_core").list_mounts(context=context_bob)
+        bob_mounts = nx_with_permissions.service("mount").list_mounts_sync(context=context_bob)
         bob_mount_points = [m["mount_point"] for m in bob_mounts]
 
         # Bob should see his mount
@@ -186,7 +186,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Alice creates a shared mount (using admin to bypass parent permission check)
-        await nx_with_permissions.service("mount_core").add_mount(
+        nx_with_permissions.service("mount").add_mount_sync(
             mount_point="/mnt/shared",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
@@ -210,7 +210,7 @@ class TestListMountsPermissionFiltering:
         )
 
         # Bob should now see the shared mount
-        bob_mounts = nx_with_permissions.service("mount_core").list_mounts(context=context_bob)
+        bob_mounts = nx_with_permissions.service("mount").list_mounts_sync(context=context_bob)
         bob_mount_points = [m["mount_point"] for m in bob_mounts]
         assert "/mnt/shared" in bob_mount_points
 
@@ -240,18 +240,18 @@ class TestListMountsPermissionFiltering:
             subject_id="alice@example.com",
         )
 
-        await nx_with_permissions.service("mount_core").add_mount(
+        nx_with_permissions.service("mount").add_mount_sync(
             mount_point="/mnt/test",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_data_dir)},
             context=context_alice_admin,
         )
 
-        # Mock rebac_check on the gateway (mount_core_service delegates to gw.rebac_check)
-        gw = nx_with_permissions.service("mount_core")._gw
+        # Mock rebac_check on the gateway (mount_service delegates to gw.rebac_check)
+        gw = nx_with_permissions.service("mount")._gw
         with patch.object(gw, "rebac_check", side_effect=Exception("DB error")):
             # Should exclude the mount for safety
-            mounts = nx_with_permissions.service("mount_core").list_mounts(context=context_alice)
+            mounts = nx_with_permissions.service("mount").list_mounts_sync(context=context_alice)
             mount_points = [m["mount_point"] for m in mounts]
             # The mount should be excluded due to permission check failure
             assert "/mnt/test" not in mount_points
@@ -481,7 +481,7 @@ class TestCrossZoneIsolation:
             subject_id="alice@example.com",
         )
 
-        await nx_with_permissions.service("mount_core").add_mount(
+        nx_with_permissions.service("mount").add_mount_sync(
             mount_point="/mnt/zone1",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir1)},
@@ -520,7 +520,7 @@ class TestCrossZoneIsolation:
             subject_id="bob@example.com",
         )
 
-        await nx_with_permissions.service("mount_core").add_mount(
+        nx_with_permissions.service("mount").add_mount_sync(
             mount_point="/mnt/zone2",
             backend_type="cas_local",
             backend_config={"data_dir": str(mount_dir2)},
@@ -537,7 +537,7 @@ class TestCrossZoneIsolation:
         )
 
         # Zone1 user should only see zone1 active mounts
-        zone1_active_mounts = nx_with_permissions.service("mount_core").list_mounts(
+        zone1_active_mounts = nx_with_permissions.service("mount").list_mounts_sync(
             context=context_zone1
         )
         zone1_active_mount_points = [m["mount_point"] for m in zone1_active_mounts]
@@ -553,7 +553,7 @@ class TestCrossZoneIsolation:
         assert "/mnt/zone2_saved" not in zone1_saved_mount_points
 
         # Zone2 user should only see zone2 active mounts
-        zone2_active_mounts = nx_with_permissions.service("mount_core").list_mounts(
+        zone2_active_mounts = nx_with_permissions.service("mount").list_mounts_sync(
             context=context_zone2
         )
         zone2_active_mount_points = [m["mount_point"] for m in zone2_active_mounts]

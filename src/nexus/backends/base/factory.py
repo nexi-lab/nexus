@@ -1,6 +1,6 @@
 """Centralized backend factory (Issue #1601, #2362).
 
-Replaces duplicated if/elif chains in mount_core_service, mount_service,
+Replaces duplicated if/elif chains in mount_service
 and cli/utils with a single factory that uses ConnectorRegistry.
 
 All registered connectors (including ``local``, ``passthrough``, and

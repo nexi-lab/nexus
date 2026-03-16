@@ -58,6 +58,7 @@ class AcpConnection:
         self._stderr_lines: list[str] = []
         self._model_name: str | None = None
         self._load_session: bool = False
+        self._prompt_active: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -168,6 +169,13 @@ class AcpConnection:
                 else:
                     self._model_name = current_id
 
+        # Drain buffered replay notifications: session/load may return its
+        # JSON-RPC result before all replay notifications have been read from
+        # stdout.  Yielding to the event loop lets the reader task process
+        # any lines already buffered, plus a brief sleep allows the subprocess
+        # to flush remaining replay output.
+        await asyncio.sleep(0.2)
+
         # Clear text/usage accumulated from history replay notifications
         # so send_prompt starts with a clean slate.
         self._accumulated_text.clear()
@@ -183,17 +191,24 @@ class AcpConnection:
         notifications that arrive *during* the prompt (the prompt response
         itself only contains ``stopReason`` and ``usage``).
         """
-        # Reset per-prompt accumulators
+        # Reset per-prompt accumulators and enable chunk accumulation.
+        # The _prompt_active gate ensures only chunks from this prompt
+        # are collected — late replay notifications from session/load
+        # are silently discarded.
         self._accumulated_text.clear()
+        self._prompt_active = True
 
-        result = await self._request(
-            "session/prompt",
-            {
-                "sessionId": self._session_id,
-                "prompt": [{"type": "text", "text": prompt}],
-            },
-            timeout=timeout,
-        )
+        try:
+            result = await self._request(
+                "session/prompt",
+                {
+                    "sessionId": self._session_id,
+                    "prompt": [{"type": "text", "text": prompt}],
+                },
+                timeout=timeout,
+            )
+        finally:
+            self._prompt_active = False
 
         # Text comes from agent_message_chunk notifications
         text = "".join(self._accumulated_text)
@@ -494,11 +509,21 @@ class AcpConnection:
             elif update_type == "tool_call":
                 self._num_turns += 1
 
+            elif update_type == "user_message_chunk":
+                # A user_message_chunk during an active prompt means history
+                # replay is still in progress (the agent is echoing prior
+                # conversation turns).  Clear accumulators so only text
+                # from the actual model response survives.
+                if self._prompt_active:
+                    self._accumulated_text.clear()
+
             elif update_type == "agent_message_chunk":
-                # Accumulate text chunks — final text comes from here
-                content = update.get("content", {})
-                if content.get("type") == "text":
-                    self._accumulated_text.append(content.get("text", ""))
+                # Only accumulate chunks during an active prompt — discard
+                # replay notifications from session/load.
+                if self._prompt_active:
+                    content = update.get("content", {})
+                    if content.get("type") == "text":
+                        self._accumulated_text.append(content.get("text", ""))
 
             else:
                 logger.debug("ACP: session/update type=%s (ignored)", update_type)

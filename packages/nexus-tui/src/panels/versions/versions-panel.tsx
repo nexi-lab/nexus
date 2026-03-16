@@ -12,6 +12,7 @@ import {
   nextStatusFilter,
 } from "../../stores/versions-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { TransactionList } from "./transaction-list.js";
@@ -98,8 +99,8 @@ export default function VersionsPanel(): React.ReactNode {
       const next = nextStatusFilter(statusFilter);
       setStatusFilter(next);
     },
-    "d": () => {
-      // Show diff for the first entry of the selected transaction
+    "v": () => {
+      // View diff for the first entry of the selected transaction
       if (!client || !selectedTransaction || entries.length === 0) return;
       const entry = entries[0];
       if (entry && entry.original_hash && entry.new_hash) {
@@ -114,6 +115,8 @@ export default function VersionsPanel(): React.ReactNode {
       }
     },
     "tab": () => toggleFocus("versions"),
+    "g": () => setSelectedIndex(jumpToStart()),
+    "shift+g": () => setSelectedIndex(jumpToEnd(transactions.length)),
   });
 
   const filterLabel = statusFilter ? ` [${statusFilter}]` : " [all]";

@@ -7,6 +7,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useWorkflowsStore } from "../../stores/workflows-store.js";
 import type { WorkflowTab } from "../../stores/workflows-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
@@ -178,6 +179,12 @@ export default function WorkflowsPanel(): React.ReactNode {
                 fetchWorkflowDetail(wf.name, client);
               }
             }
+          },
+          g: () => {
+            setCurrentIndex(jumpToStart());
+          },
+          "shift+g": () => {
+            setCurrentIndex(jumpToEnd(currentListLength()));
           },
         },
   );

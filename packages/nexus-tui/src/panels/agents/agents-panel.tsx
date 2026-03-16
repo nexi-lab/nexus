@@ -7,6 +7,7 @@ import { useAgentsStore } from "../../stores/agents-store.js";
 import type { AgentTab } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
@@ -247,6 +248,29 @@ export default function AgentsPanel(): React.ReactNode {
         await verifyAgent(selectedAgentId, client);
       } finally {
         setOperationLoading(null);
+      }
+    },
+    g: () => {
+      if (activeTab === "delegations") {
+        setSelectedDelegationIndex(jumpToStart());
+      } else {
+        setSelectedAgentIndex(jumpToStart());
+        const firstAgent = displayAgentIds[0];
+        if (firstAgent) {
+          setSelectedAgentId(firstAgent);
+        }
+      }
+    },
+    "shift+g": () => {
+      if (activeTab === "delegations") {
+        setSelectedDelegationIndex(jumpToEnd(delegations.length));
+      } else {
+        const lastIdx = jumpToEnd(displayAgentIds.length);
+        setSelectedAgentIndex(lastIdx);
+        const lastAgent = displayAgentIds[lastIdx];
+        if (lastAgent) {
+          setSelectedAgentId(lastAgent);
+        }
       }
     },
   });

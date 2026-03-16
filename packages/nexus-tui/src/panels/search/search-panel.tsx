@@ -10,6 +10,7 @@ import { useSearchStore } from "../../stores/search-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import type { SearchTab, SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SearchResults } from "./search-results.js";
@@ -360,6 +361,24 @@ export default function SearchPanel(): React.ReactNode {
             if (activeTab === "memories" && (memoryHistory || memoryDiff)) {
               clearMemoryHistory();
               clearMemoryDiff();
+            }
+          },
+          g: () => {
+            if (activeTab === "search") {
+              setSelectedResultIndex(jumpToStart());
+            } else if (activeTab === "memories") {
+              setSelectedMemoryIndex(jumpToStart());
+            } else if (activeTab === "playbooks") {
+              setSelectedPlaybookIndex(jumpToStart());
+            }
+          },
+          "shift+g": () => {
+            if (activeTab === "search") {
+              setSelectedResultIndex(jumpToEnd(searchResults.length));
+            } else if (activeTab === "memories") {
+              setSelectedMemoryIndex(jumpToEnd(memories.length));
+            } else if (activeTab === "playbooks") {
+              setSelectedPlaybookIndex(jumpToEnd(playbooks.length));
             }
           },
         },

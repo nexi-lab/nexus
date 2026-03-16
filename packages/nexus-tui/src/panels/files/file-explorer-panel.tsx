@@ -20,6 +20,7 @@ import { FileSchema } from "./file-schema.js";
 import { ShareLinksTab } from "./share-links-tab.js";
 import { UploadsTab } from "./uploads-tab.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useBrickAvailable } from "../../shared/hooks/use-brick-available.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
@@ -294,6 +295,24 @@ export default function FileExplorerPanel(): React.ReactNode {
                 if (link && link.status === "active") {
                   revokeLink(link.link_id, client);
                 }
+              }
+            },
+            "g": () => {
+              if (activeTab === "explorer") {
+                setSelectedIndex(jumpToStart());
+              } else if (activeTab === "shareLinks") {
+                setSelectedLinkIndex(jumpToStart());
+              } else if (activeTab === "uploads") {
+                setSelectedSessionIndex(jumpToStart());
+              }
+            },
+            "shift+g": () => {
+              if (activeTab === "explorer") {
+                setSelectedIndex(jumpToEnd(visibleNodeCount));
+              } else if (activeTab === "shareLinks") {
+                setSelectedLinkIndex(jumpToEnd(shareLinks.length));
+              } else if (activeTab === "uploads") {
+                setSelectedSessionIndex(jumpToEnd(uploadSessions.length));
               }
             },
           },

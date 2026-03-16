@@ -7,6 +7,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import { usePaymentsStore } from "../../stores/payments-store.js";
 import type { PaymentsTab } from "../../stores/payments-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
@@ -241,11 +242,11 @@ export default function PaymentsPanel(): React.ReactNode {
             if (activeTab !== "policies" || !client) return;
             fetchBudget(client);
           },
-          n: () => {
+          "]": () => {
             if (activeTab !== "transactions" || !client) return;
             fetchNextTransactions(client);
           },
-          p: () => {
+          "[": () => {
             if (activeTab !== "transactions" || !client) return;
             fetchPrevTransactions(client);
           },
@@ -266,6 +267,24 @@ export default function PaymentsPanel(): React.ReactNode {
             if (activeTab === "policies") {
               setPolicyInputMode(true);
               setPolicyBuffer("");
+            }
+          },
+          g: () => {
+            if (activeTab === "reservations") {
+              setSelectedReservationIndex(jumpToStart());
+            } else if (activeTab === "transactions") {
+              setSelectedTransactionIndex(jumpToStart());
+            } else if (activeTab === "policies") {
+              setSelectedPolicyIndex(jumpToStart());
+            }
+          },
+          "shift+g": () => {
+            if (activeTab === "reservations") {
+              setSelectedReservationIndex(jumpToEnd(reservations.length));
+            } else if (activeTab === "transactions") {
+              setSelectedTransactionIndex(jumpToEnd(transactions.length));
+            } else if (activeTab === "policies") {
+              setSelectedPolicyIndex(jumpToEnd(policies.length));
             }
           },
         },

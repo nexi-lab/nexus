@@ -15,6 +15,7 @@ import { Spinner } from "./shared/components/spinner.js";
 import { useKeyboard } from "./shared/hooks/use-keyboard.js";
 import { IdentitySwitcher } from "./shared/components/identity-switcher.js";
 import { AppConfirmDialog } from "./shared/components/app-confirm-dialog.js";
+import { HelpOverlay } from "./shared/components/help-overlay.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
@@ -80,6 +81,7 @@ export function App(): React.ReactNode {
   const toggleZoom = useUiStore((s) => s.toggleZoom);
   const zoomedPanel = useUiStore((s) => s.zoomedPanel);
   const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const toggleIdentitySwitcher = useCallback(() => {
     setIdentitySwitcherOpen((prev) => !prev);
@@ -90,10 +92,9 @@ export function App(): React.ReactNode {
   }, []);
 
   useKeyboard(
-    identitySwitcherOpen
+    identitySwitcherOpen || helpOpen
       ? {
-          // When the overlay is open, only Ctrl+I closes it from the app level.
-          // All other keys are handled by IdentitySwitcher itself.
+          // When an overlay is open, only its dismiss key works from app level.
           "ctrl+i": toggleIdentitySwitcher,
         }
       : {
@@ -109,6 +110,7 @@ export function App(): React.ReactNode {
           "0": () => setActivePanel("console"),
           "ctrl+i": toggleIdentitySwitcher,
           "z": () => toggleZoom(activePanel),
+          "?": () => setHelpOpen(true),
           "q": () => process.exit(0),
         },
   );
@@ -136,6 +138,7 @@ export function App(): React.ReactNode {
       {/* Overlays */}
       <IdentitySwitcher visible={identitySwitcherOpen} onClose={closeIdentitySwitcher} />
       <AppConfirmDialog />
+      <HelpOverlay visible={helpOpen} panel={activePanel} onDismiss={() => setHelpOpen(false)} />
 
       {/* Error bar + Status bar */}
       <ErrorBar />

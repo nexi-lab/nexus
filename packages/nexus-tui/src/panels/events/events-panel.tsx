@@ -13,6 +13,7 @@ import { useInfraStore } from "../../stores/infra-store.js";
 import type { InfraTab } from "../../stores/infra-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
@@ -314,6 +315,12 @@ export default function EventsPanel(): React.ReactNode {
               const sub = subscriptions[selectedSubscriptionIndex];
               if (sub) testSubscription(sub.subscription_id, apiClient);
             }
+          },
+          g: () => {
+            setCurrentSelectedIndex(jumpToStart());
+          },
+          "shift+g": () => {
+            setCurrentSelectedIndex(jumpToEnd(currentItemCount()));
           },
         },
     handleUnhandledKey,

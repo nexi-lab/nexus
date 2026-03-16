@@ -11,6 +11,7 @@ import type { ZoneTab } from "../../stores/zones-store.js";
 import { useWorkspaceStore } from "../../stores/workspace-store.js";
 import { useMcpStore } from "../../stores/mcp-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ZoneList } from "./zone-list.js";
@@ -470,6 +471,13 @@ export default function ZonesPanel(): React.ReactNode {
             },
             r: () => {
               refreshActiveTab();
+            },
+            g: () => {
+              setCurrentNavIndex(jumpToStart());
+            },
+            "shift+g": () => {
+              const len = currentListLength();
+              setCurrentNavIndex(jumpToEnd(len));
             },
           },
     inputMode !== "none" ? handleUnhandledKey : undefined,

@@ -360,16 +360,31 @@ pub struct WitnessStateMachine {
 
 impl WitnessStateMachine {
     /// Create a new witness state machine with storage.
+    ///
+    /// Handles endianness migration: existing deployments stored `last_index`
+    /// as little-endian, but the rest of the codebase uses big-endian. On load,
+    /// we detect the format by checking which interpretation yields a valid
+    /// Raft index (small positive number) and migrate to big-endian on next write.
     pub fn new(store: &RedbStore) -> Result<Self> {
         let log_tree = store.tree(TREE_WITNESS_LOG)?;
 
-        // Load last index from storage
+        // Load last index, auto-detecting LE vs BE encoding
         let last_index = log_tree
             .get(KEY_WITNESS_LAST_INDEX)?
             .map(|v| {
                 if v.len() == 8 {
                     let bytes: [u8; 8] = [v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]];
-                    u64::from_le_bytes(bytes)
+                    let be_val = u64::from_be_bytes(bytes);
+                    let le_val = u64::from_le_bytes(bytes);
+
+                    // Heuristic: valid Raft indices are small positive numbers.
+                    // If BE gives a huge number but LE gives a reasonable one,
+                    // the data is in the old LE format.
+                    if be_val > 1_000_000_000 && le_val <= 1_000_000_000 {
+                        le_val // old LE format — will be re-written as BE on next store
+                    } else {
+                        be_val // new BE format (or both are reasonable — BE is preferred)
+                    }
                 } else {
                     0
                 }
@@ -392,8 +407,9 @@ impl WitnessStateMachine {
 
         if index > self.last_index {
             self.last_index = index;
+            // Always write big-endian (consistent with rest of codebase)
             self.log_tree
-                .set(KEY_WITNESS_LAST_INDEX, &index.to_le_bytes())?;
+                .set(KEY_WITNESS_LAST_INDEX, &index.to_be_bytes())?;
         }
         Ok(())
     }
@@ -564,38 +580,59 @@ impl FullStateMachine {
 
     /// Apply CasSetMetadata command — atomic compare-and-swap on version.
     ///
-    /// Reads the current value, extracts its version, and only writes
-    /// if the version matches `expected_version`. All within a single
-    /// redb transaction (via RedbTree's internal write txn).
+    /// Reads the current value and conditionally writes within a **single
+    /// redb WriteTransaction**. This prevents TOCTOU races: no concurrent
+    /// writer can observe the same version and succeed.
     fn apply_cas_set_metadata(
         &self,
         key: &str,
         value: &[u8],
         expected_version: u32,
     ) -> Result<CommandResult> {
-        let current = self.metadata.get(key.as_bytes())?;
-        let current_version = match &current {
-            Some(bytes) => Self::extract_version(bytes),
-            None => 0,
-        };
+        let db = self.metadata.raw_db();
+        let table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
+        let write_txn = db
+            .begin_write()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
 
-        if current_version != expected_version {
-            return Ok(CommandResult::CasResult {
-                success: false,
-                current_version,
-            });
+        let result;
+        {
+            let mut table = write_txn
+                .open_table(table_def)
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+
+            let current_version = match table
+                .get(key.as_bytes())
+                .map_err(|e: redb::StorageError| super::RaftError::Storage(e.to_string()))?
+            {
+                Some(guard) => Self::extract_version(guard.value()),
+                None => 0,
+            };
+
+            if current_version != expected_version {
+                result = CommandResult::CasResult {
+                    success: false,
+                    current_version,
+                };
+            } else {
+                table
+                    .insert(key.as_bytes(), value)
+                    .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+
+                // The new version is embedded in `value` (serialized by Python).
+                // Return expected_version + 1 as a hint, but the authoritative
+                // version is in the serialized bytes.
+                result = CommandResult::CasResult {
+                    success: true,
+                    current_version: expected_version + 1,
+                };
+            }
         }
 
-        // Version matches — write the new value
-        self.metadata.set(key.as_bytes(), value)?;
-
-        // The new version is embedded in `value` (serialized by Python).
-        // Return expected_version + 1 as a hint, but the authoritative
-        // version is in the serialized bytes.
-        Ok(CommandResult::CasResult {
-            success: true,
-            current_version: expected_version + 1,
-        })
+        write_txn
+            .commit()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        Ok(result)
     }
 
     /// Extract the version field from serialized FileMetadata.

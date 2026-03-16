@@ -26,12 +26,21 @@
 //! ```
 
 use serde::{de::DeserializeOwned, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
 
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+
+/// Global deduplication map for leaked table name strings.
+///
+/// redb requires `&'static str` for TableDefinition. Rather than leaking a
+/// new allocation every time `tree()` is called with the same name, this map
+/// ensures each unique name is leaked exactly once.
+static LEAKED_TABLE_NAMES: LazyLock<Mutex<HashMap<String, &'static str>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The default table name for SledStore-compatible get/set/delete on the store itself.
 const DEFAULT_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("__default__");
@@ -135,13 +144,17 @@ impl RedbStore {
     ///
     /// # Memory
     ///
-    /// Uses `Box::leak` to satisfy redb's `&'static str` requirement for
-    /// table names. Each unique tree name leaks ~50-100 bytes for the process
-    /// lifetime. Acceptable because tree names are finite and known (typically
-    /// 5-10 per database). Do not call with dynamic/unbounded tree names.
+    /// Uses a global dedup map + `Box::leak` to satisfy redb's `&'static str`
+    /// requirement for table names. Each unique name is leaked exactly once
+    /// (~50-100 bytes). Repeated calls with the same name reuse the existing
+    /// allocation. Do not call with dynamic/unbounded tree names.
     pub fn tree(&self, name: &str) -> Result<RedbTree> {
-        // Ensure the table exists by opening a write transaction
-        let table_name = Box::leak(name.to_owned().into_boxed_str());
+        // Deduplicate: only leak each unique name once
+        let table_name = {
+            let mut map = LEAKED_TABLE_NAMES.lock().unwrap();
+            *map.entry(name.to_owned())
+                .or_insert_with(|| Box::leak(name.to_owned().into_boxed_str()))
+        };
         let table_def = TableDefinition::<&[u8], &[u8]>::new(table_name);
         let write_txn = self.db.begin_write()?;
         // Opening the table in a write transaction creates it if it doesn't exist

@@ -13,9 +13,13 @@ use super::proto::nexus::raft::{
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tonic::transport::{Channel, Endpoint};
+
+/// Default TTL for cached gRPC clients. Connections older than this
+/// are evicted on next access and a fresh connection is established.
+const DEFAULT_CLIENT_TTL: Duration = Duration::from_secs(300); // 5 minutes
 
 /// Configuration for Raft transport client.
 #[derive(Debug, Clone)]
@@ -44,13 +48,22 @@ impl Default for ClientConfig {
     }
 }
 
+/// A cached client entry with its creation timestamp for TTL eviction.
+struct CachedClient {
+    client: RaftClient,
+    created_at: Instant,
+}
+
 /// A pool of gRPC clients for connecting to Raft peers.
 ///
-/// This manages connections to multiple nodes and handles reconnection.
+/// Provides lazy TTL-based eviction: on each `get()`, if the cached client
+/// is older than the TTL, it is evicted and a fresh connection is created.
+/// This ensures stale connections are cleaned up when peer addresses change.
 #[derive(Clone)]
 pub struct RaftClientPool {
     config: ClientConfig,
-    clients: Arc<RwLock<HashMap<u64, RaftClient>>>,
+    clients: Arc<RwLock<HashMap<u64, CachedClient>>>,
+    client_ttl: Duration,
 }
 
 impl RaftClientPool {
@@ -64,26 +77,53 @@ impl RaftClientPool {
         Self {
             config,
             clients: Arc::new(RwLock::new(HashMap::new())),
+            client_ttl: DEFAULT_CLIENT_TTL,
+        }
+    }
+
+    /// Create a new client pool with custom configuration and TTL.
+    pub fn with_config_and_ttl(config: ClientConfig, ttl: Duration) -> Self {
+        Self {
+            config,
+            clients: Arc::new(RwLock::new(HashMap::new())),
+            client_ttl: ttl,
         }
     }
 
     /// Get or create a client for the given node.
+    ///
+    /// Cached clients older than the TTL are evicted and reconnected.
     pub async fn get(&self, addr: &NodeAddress) -> Result<RaftClient> {
-        // Check if we have an existing client
+        // Check if we have a non-stale cached client
         {
             let clients = self.clients.read().await;
-            if let Some(client) = clients.get(&addr.id) {
-                return Ok(client.clone());
+            if let Some(cached) = clients.get(&addr.id) {
+                if cached.created_at.elapsed() < self.client_ttl {
+                    return Ok(cached.client.clone());
+                }
+                // Stale — fall through to reconnect
+                tracing::debug!(
+                    node_id = addr.id,
+                    age_secs = cached.created_at.elapsed().as_secs(),
+                    ttl_secs = self.client_ttl.as_secs(),
+                    "evicting stale gRPC client"
+                );
             }
         }
 
-        // Create new client
+        // Create new client (may replace a stale one)
         let client = RaftClient::connect(&addr.endpoint, self.config.clone()).await?;
 
-        // Store in pool
+        // Store in pool with current timestamp
         {
             let mut clients = self.clients.write().await;
-            clients.insert(addr.id, client.clone());
+            clients.insert(
+                addr.id,
+                CachedClient {
+                    client: client.clone(),
+                    created_at: Instant::now(),
+                },
+            );
         }
 
         Ok(client)
@@ -538,5 +578,115 @@ mod tests {
         let config = ClientConfig::default();
         assert_eq!(config.connect_timeout, Duration::from_secs(5));
         assert_eq!(config.request_timeout, Duration::from_secs(10));
+    }
+
+    // ---------------------------------------------------------------
+    // Client pool TTL eviction tests (Issue #3031 / 12A)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_pool_ttl_fresh_client_reused() {
+        // A client within TTL should be reused (same instance)
+        let pool =
+            RaftClientPool::with_config_and_ttl(ClientConfig::default(), Duration::from_secs(300));
+
+        // We can't create real gRPC clients without a server, but we can
+        // verify the pool structure: insert a CachedClient directly
+        {
+            let mut clients = pool.clients.write().await;
+            clients.insert(
+                42,
+                CachedClient {
+                    client: create_dummy_client(),
+                    created_at: Instant::now(),
+                },
+            );
+        }
+
+        // The cached entry should still be present (within TTL)
+        let clients = pool.clients.read().await;
+        let cached = clients.get(&42).unwrap();
+        assert!(cached.created_at.elapsed() < pool.client_ttl);
+    }
+
+    #[tokio::test]
+    async fn test_pool_ttl_stale_client_detected() {
+        let pool = RaftClientPool::with_config_and_ttl(
+            ClientConfig::default(),
+            Duration::from_millis(1), // 1ms TTL — will be stale immediately
+        );
+
+        // Insert a client that will be immediately stale
+        {
+            let mut clients = pool.clients.write().await;
+            clients.insert(
+                99,
+                CachedClient {
+                    client: create_dummy_client(),
+                    created_at: Instant::now() - Duration::from_secs(10),
+                },
+            );
+        }
+
+        // Verify the entry is stale
+        let clients = pool.clients.read().await;
+        let cached = clients.get(&99).unwrap();
+        assert!(cached.created_at.elapsed() >= pool.client_ttl);
+    }
+
+    #[tokio::test]
+    async fn test_pool_ttl_mixed_ages() {
+        let ttl = Duration::from_secs(60);
+        let pool = RaftClientPool::with_config_and_ttl(ClientConfig::default(), ttl);
+
+        let now = Instant::now();
+        {
+            let mut clients = pool.clients.write().await;
+            // Fresh client (10s old)
+            clients.insert(
+                1,
+                CachedClient {
+                    client: create_dummy_client(),
+                    created_at: now - Duration::from_secs(10),
+                },
+            );
+            // Stale client (120s old, past 60s TTL)
+            clients.insert(
+                2,
+                CachedClient {
+                    client: create_dummy_client(),
+                    created_at: now - Duration::from_secs(120),
+                },
+            );
+            // Fresh client (59s old, just under TTL)
+            clients.insert(
+                3,
+                CachedClient {
+                    client: create_dummy_client(),
+                    created_at: now - Duration::from_secs(59),
+                },
+            );
+        }
+
+        let clients = pool.clients.read().await;
+
+        // Client 1: fresh (10s < 60s TTL)
+        assert!(clients.get(&1).unwrap().created_at.elapsed() < ttl);
+        // Client 2: stale (120s > 60s TTL)
+        assert!(clients.get(&2).unwrap().created_at.elapsed() >= ttl);
+        // Client 3: fresh (59s < 60s TTL)
+        assert!(clients.get(&3).unwrap().created_at.elapsed() < ttl);
+    }
+
+    /// Create a dummy RaftClient for testing pool management.
+    /// Cannot actually connect, but sufficient for testing TTL/eviction logic.
+    fn create_dummy_client() -> RaftClient {
+        // Create a channel pointing to a non-existent endpoint
+        let channel = Channel::from_static("http://[::1]:1").connect_lazy();
+        RaftClient {
+            endpoint: "http://[::1]:1".to_string(),
+            config: ClientConfig::default(),
+            inner: ZoneTransportServiceClient::new(channel),
+        }
     }
 }

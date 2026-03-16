@@ -189,6 +189,18 @@ impl ReplicationLog {
         Ok(seq)
     }
 
+    /// Remove a single WAL entry by sequence number.
+    ///
+    /// Used to compensate when `apply_local()` fails after a WAL append:
+    /// the entry must be removed so `drain_unreplicated()` does not ship
+    /// a write that the local node reported as failed.
+    pub fn remove_entry(&self, seq: u64) -> Result<()> {
+        let key = seq.to_be_bytes();
+        self.log_tree.delete(&key)?;
+        tracing::debug!(seq, "Removed WAL entry (apply compensation)");
+        Ok(())
+    }
+
     /// Check if a write token has been committed (replicated to majority).
     ///
     /// Returns:
@@ -236,19 +248,38 @@ impl ReplicationLog {
 
     /// Get all unreplicated entries (seq > watermark).
     ///
-    /// Used by the background replication task (Phase C) to send pending
-    /// writes to peers.
+    /// Uses a single redb range scan (O(log n + k)) instead of individual
+    /// point lookups (O(k log n)) for better performance with large backlogs.
     pub fn drain_unreplicated(&self) -> Result<Vec<(u64, ReplicationEntry)>> {
         let watermark = self.replicated_watermark.load(Ordering::Acquire);
         let max = self.next_seq.load(Ordering::Acquire);
 
+        if watermark + 1 >= max {
+            return Ok(Vec::new());
+        }
+
+        let start_key = (watermark + 1).to_be_bytes();
+        // max is exclusive (next_seq), so the last valid entry is max - 1
+        let end_key = (max - 1).to_be_bytes();
+
+        let table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.log_tree.name());
+        let db = self.log_tree.raw_db();
+        let read_txn = db
+            .begin_read()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        let table = read_txn
+            .open_table(table_def)
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+
         let mut entries = Vec::new();
-        for seq in (watermark + 1)..max {
-            let key = seq.to_be_bytes();
-            if let Some(data) = self.log_tree.get(&key)? {
-                let entry: ReplicationEntry = bincode::deserialize(&data)?;
-                entries.push((seq, entry));
-            }
+        for item in table
+            .range(start_key.as_slice()..=end_key.as_slice())
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?
+        {
+            let (k, v) = item.map_err(|e| super::RaftError::Storage(e.to_string()))?;
+            let seq = u64::from_be_bytes(k.value().try_into().unwrap_or([0; 8]));
+            let entry: ReplicationEntry = bincode::deserialize(v.value())?;
+            entries.push((seq, entry));
         }
 
         Ok(entries)

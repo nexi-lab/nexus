@@ -54,7 +54,8 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
     populate_service_registry(nfs._service_registry, wired_dict, is_remote=True)
 
     # BrickServices field not covered by WiredServices
-    nfs.version_service = proxy
+    # Issue #1570: version_service is a facade attr wired by _do_link()
+    setattr(nfs, "version_service", proxy)  # noqa: B010
 
     logger.info(
         "REMOTE profile: wired %d service slots with RPC forwarders (kernel runs naturally)",

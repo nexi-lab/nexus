@@ -49,7 +49,7 @@ class TestSpawn:
         assert desc.name == "agent-1"
         assert desc.owner_id == OWNER
         assert desc.zone_id == ZONE
-        assert desc.state == ProcessState.CREATED
+        assert desc.state == ProcessState.RUNNING
         assert desc.kind == ProcessKind.MANAGED
         assert len(desc.pid) == 12
 
@@ -120,10 +120,10 @@ class TestSpawn:
         pt = _make_table()
         pt.spawn("a1", OWNER, ZONE)
         desc = pt.spawn("a2", OWNER, ZONE)
-        # Transition a2 to RUNNING
-        pt._transition(desc, ProcessState.RUNNING)
-        assert len(pt.list_processes(state=ProcessState.CREATED)) == 1
+        # Transition a2 to SLEEPING
+        pt._transition(desc, ProcessState.SLEEPING)
         assert len(pt.list_processes(state=ProcessState.RUNNING)) == 1
+        assert len(pt.list_processes(state=ProcessState.SLEEPING)) == 1
 
     def test_spawn_persists_to_metastore(self) -> None:
         ms = DictMetastore()
@@ -138,35 +138,32 @@ class TestSpawn:
 
 
 # ---------------------------------------------------------------------------
-# State Transitions
+# State Transitions (spawn creates processes in RUNNING state)
 # ---------------------------------------------------------------------------
 
 
 class TestTransitions:
-    def test_created_to_running(self) -> None:
+    def test_spawn_starts_running(self) -> None:
+        """spawn() creates processes directly in RUNNING state."""
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        updated = pt._transition(desc, ProcessState.RUNNING)
-        assert updated.state == ProcessState.RUNNING
+        assert desc.state == ProcessState.RUNNING
 
     def test_running_to_sleeping(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         updated = pt._transition(desc, ProcessState.SLEEPING)
         assert updated.state == ProcessState.SLEEPING
 
     def test_running_to_stopped(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         updated = pt._transition(desc, ProcessState.STOPPED)
         assert updated.state == ProcessState.STOPPED
 
     def test_stopped_to_sleeping(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         desc = pt._transition(desc, ProcessState.STOPPED)
         updated = pt._transition(desc, ProcessState.SLEEPING)
         assert updated.state == ProcessState.SLEEPING
@@ -174,13 +171,13 @@ class TestTransitions:
     def test_invalid_transition_raises(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
+        # RUNNING→CREATED is invalid
         with pytest.raises(InvalidTransitionError):
-            pt._transition(desc, ProcessState.SLEEPING)  # CREATED→SLEEPING invalid
+            pt._transition(desc, ProcessState.CREATED)
 
     def test_zombie_is_terminal(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         desc = pt._transition(desc, ProcessState.ZOMBIE)
         with pytest.raises(InvalidTransitionError):
             pt._transition(desc, ProcessState.RUNNING)
@@ -192,7 +189,7 @@ class TestTransitions:
 
 
 # ---------------------------------------------------------------------------
-# Signals
+# Signals (spawn creates in RUNNING — no extra transition needed)
 # ---------------------------------------------------------------------------
 
 
@@ -200,14 +197,12 @@ class TestSignals:
     def test_sigstop(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         updated = pt.signal(desc.pid, ProcessSignal.SIGSTOP)
         assert updated.state == ProcessState.STOPPED
 
     def test_sigcont(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         desc = pt.signal(desc.pid, ProcessSignal.SIGSTOP)
         updated = pt.signal(desc.pid, ProcessSignal.SIGCONT)
         assert updated.state == ProcessState.SLEEPING
@@ -215,14 +210,12 @@ class TestSignals:
     def test_sigterm(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         updated = pt.signal(desc.pid, ProcessSignal.SIGTERM)
         assert updated.state == ProcessState.ZOMBIE
 
     def test_sigkill(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         pt.signal(desc.pid, ProcessSignal.SIGKILL)
         # SIGKILL reaps immediately
         assert pt.get(desc.pid) is None
@@ -249,7 +242,6 @@ class TestKillReap:
     def test_kill_orphan_auto_reaps(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.RUNNING)
         pt.kill(desc.pid)
         assert pt.get(desc.pid) is None  # reaped
 
@@ -257,7 +249,6 @@ class TestKillReap:
         pt = _make_table()
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt._transition(pt.get(child.pid), ProcessState.RUNNING)
         pt.kill(child.pid)
         # Not reaped — parent can wait()
         zombie = pt.get(child.pid)
@@ -273,7 +264,6 @@ class TestKillReap:
         pt = _make_table()
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt._transition(pt.get(child.pid), ProcessState.RUNNING)
         pt.kill(child.pid)
         # Kill again — should be idempotent
         result = pt.kill(child.pid)
@@ -283,7 +273,6 @@ class TestKillReap:
         pt = _make_table()
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt._transition(pt.get(child.pid), ProcessState.RUNNING)
         # SIGKILL forces immediate reap
         pt.signal(child.pid, ProcessSignal.SIGKILL)
         updated_parent = pt.get(parent.pid)
@@ -302,7 +291,6 @@ class TestWait:
         pt = _make_table()
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt._transition(pt.get(child.pid), ProcessState.RUNNING)
         pt.kill(child.pid)  # ZOMBIE (not reaped — has parent)
         result = await pt.wait(child.pid)
         assert result is not None
@@ -313,7 +301,6 @@ class TestWait:
         pt = _make_table()
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt._transition(pt.get(child.pid), ProcessState.RUNNING)
 
         async def _killer() -> None:
             await asyncio.sleep(0.05)
@@ -342,7 +329,6 @@ class TestWait:
     async def test_wait_custom_target_states(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        pt._transition(desc, ProcessState.RUNNING)
 
         async def _stopper() -> None:
             await asyncio.sleep(0.05)
@@ -363,7 +349,6 @@ class TestWait:
         pt = _make_table()
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt._transition(pt.get(child.pid), ProcessState.RUNNING)
 
         results: list[ProcessDescriptor | None] = []
 
@@ -418,7 +403,6 @@ class TestExternalProcesses:
     def test_unregister_external(self) -> None:
         pt = _make_table()
         desc = pt.register_external("agent", OWNER, ZONE, connection_id="c1")
-        pt._transition(pt.get(desc.pid), ProcessState.RUNNING)
         pt.unregister_external(desc.pid)
         assert pt.get(desc.pid) is None  # reaped
 
@@ -432,16 +416,16 @@ class TestRecovery:
     def test_recover_running_becomes_zombie(self) -> None:
         ms = DictMetastore()
         pt = ProcessTable(ms, zone_id=ZONE)
-        desc = pt.spawn("a", OWNER, ZONE)
-        pt._transition(desc, ProcessState.RUNNING)
+        pt.spawn("a", OWNER, ZONE)  # RUNNING
 
         # New ProcessTable on same metastore
         pt2 = ProcessTable(ms, zone_id=ZONE)
         recovered = pt2.recover()
         assert recovered == 1
-        result = pt2.get(desc.pid)
-        assert result is not None
-        assert result.state == ProcessState.ZOMBIE
+        # Find the recovered process
+        procs = pt2.list_processes()
+        assert len(procs) == 1
+        assert procs[0].state == ProcessState.ZOMBIE
 
     def test_recover_external_deleted(self) -> None:
         ms = DictMetastore()
@@ -458,7 +442,6 @@ class TestRecovery:
         pt = ProcessTable(ms, zone_id=ZONE)
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt._transition(pt.get(child.pid), ProcessState.RUNNING)
         pt.kill(child.pid)  # ZOMBIE
 
         pt2 = ProcessTable(ms, zone_id=ZONE)
@@ -469,8 +452,7 @@ class TestRecovery:
     def test_close_all(self) -> None:
         pt = _make_table()
         pt.spawn("a", OWNER, ZONE)
-        desc = pt.spawn("b", OWNER, ZONE)
-        pt._transition(desc, ProcessState.RUNNING)
+        pt.spawn("b", OWNER, ZONE)
         pt.close_all()
         assert len(pt.list_processes()) == 0
 

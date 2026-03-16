@@ -549,9 +549,9 @@ def test_cleanup_expired_cache(rebac_manager_fast_cache):
         # Advance time by 2 seconds to expire the cache (TTL is 1 second)
         frozen_time.tick(delta=timedelta(seconds=2))
 
-        # Cleanup expired cache
+        # Cleanup expired cache (L2 SQL cache removed — always returns 0)
         removed = rebac_manager_fast_cache.cleanup_expired_cache()
-        assert removed > 0
+        assert removed == 0
 
 
 def test_delete_nonexistent_tuple(rebac_manager):

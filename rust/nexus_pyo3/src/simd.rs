@@ -475,7 +475,7 @@ mod tests {
             vec![1.0, 0.0, 0.0], // valid
             vec![0.5, 0.5, 0.0], // valid
         ];
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = top_k_similar_f32(py, query, vectors, 5).unwrap();
             // Should always return all vectors (2), not fewer.
             assert_eq!(result.len(), 2);
@@ -548,11 +548,15 @@ mod tests {
         // Normalized vectors for meaningful cosine similarity.
         let query = vec![1.0f32, 0.0, 0.0];
         let vectors = vec![
-            vec![1.0, 0.0, 0.0],       // identical → similarity ≈ 1.0
-            vec![0.0, 1.0, 0.0],       // orthogonal → similarity ≈ 0.0
-            vec![0.7071, 0.7071, 0.0], // 45 degrees → similarity ≈ 0.7071
+            vec![1.0, 0.0, 0.0], // identical → similarity ≈ 1.0
+            vec![0.0, 1.0, 0.0], // orthogonal → similarity ≈ 0.0
+            vec![
+                std::f32::consts::FRAC_1_SQRT_2,
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.0,
+            ], // 45 degrees
         ];
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = top_k_similar_f32(py, query, vectors, 2).unwrap();
             assert_eq!(result.len(), 2);
             // First result should be the identical vector.
@@ -571,7 +575,7 @@ mod tests {
             vec![0, 100, 0], // orthogonal
             vec![70, 70, 0], // ~45 degrees
         ];
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let result = top_k_similar_i8(py, query, vectors, 2).unwrap();
             assert_eq!(result.len(), 2);
             assert_eq!(result[0].0, 0);

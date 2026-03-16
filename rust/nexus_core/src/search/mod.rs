@@ -134,8 +134,7 @@ pub fn search_lines(
                 let line_lower = line.to_lowercase();
                 if let Some(start) = finder.find(line_lower.as_bytes()) {
                     let end = start + pattern_lower.len();
-                    let match_text =
-                        extract_original_match(line, &line_lower, start, end);
+                    let match_text = extract_original_match(line, &line_lower, start, end);
                     results.push(GrepMatch {
                         file: file_path.to_string(),
                         line: line_num + 1,

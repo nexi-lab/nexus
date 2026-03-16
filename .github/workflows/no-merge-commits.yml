@@ -17,14 +17,24 @@ jobs:
 
       - name: Reject merge commits in PR branch
         run: |
-          # For merge_group events, skip (queue handles rebase)
+          # For merge_group events, skip (queue handles merge)
           if [ "${{ github.event_name }}" = "merge_group" ]; then
             echo "✅ Merge queue event — skipping merge commit check"
             exit 0
           fi
 
-          HEAD_SHA=${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_REF="${{ github.head_ref }}"
+          HEAD_REPO="${{ github.event.pull_request.head.repo.full_name }}"
           BASE_REF=${{ github.event.pull_request.base.ref }}
+
+          # develop→main merges naturally contain merge commits from merged PRs.
+          # Only skip for the canonical repo — not forks with a branch also named "develop".
+          if [ "$HEAD_REF" = "develop" ] && [ "$BASE_REF" = "main" ] && [ "$HEAD_REPO" = "${{ github.repository }}" ]; then
+            echo "✅ develop → main merge (same repo) — skipping merge commit check"
+            exit 0
+          fi
+
+          HEAD_SHA=${{ github.event.pull_request.head.sha || github.sha }}
 
           # Compute merge-base dynamically from the base branch ref.
           # Using base.sha is unreliable — it's a frozen snapshot that doesn't

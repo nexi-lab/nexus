@@ -241,6 +241,31 @@ class TestRecordCreate:
 
         assert fp.zone_id == ROOT_ZONE_ID
 
+    def test_zero_byte_create_still_gets_version_history(self, session: Session) -> None:
+        """A legitimate empty-file create (size=0, etag present) must still
+        get current_version=1 and a VersionHistoryModel entry so it is tracked
+        in version history.  Regression guard: the FUSE phantom-version fix
+        must not suppress version history for all size-0 creates."""
+        metadata = _make_metadata(size=0, etag="blake3-empty")
+        recorder = VersionRecorder(session)
+        recorder.record_write(metadata, is_new=True)
+        session.commit()
+
+        fp = session.execute(
+            select(FilePathModel).where(FilePathModel.virtual_path == "/test/file.txt")
+        ).scalar_one()
+
+        assert fp.current_version == 1
+        assert fp.size_bytes == 0
+
+        vh = session.execute(
+            select(VersionHistoryModel).where(VersionHistoryModel.resource_id == fp.path_id)
+        ).scalar_one()
+
+        assert vh.version_number == 1
+        assert vh.content_hash == "blake3-empty"
+        assert vh.size_bytes == 0
+
 
 # ---------------------------------------------------------------------------
 # TestRecordUpdate

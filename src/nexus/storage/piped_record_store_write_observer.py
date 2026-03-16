@@ -400,7 +400,15 @@ class PipedRecordStoreWriteObserver:
         session: Any,
         event: dict[str, Any],
     ) -> None:
-        """Record MCL entry for a single event. Non-critical, uses savepoint."""
+        """Record MCL entry for a single event. Non-critical, uses savepoint.
+
+        MCL failures must NEVER corrupt the outer session transaction.
+        The begin_nested() savepoint isolates MCL errors, but internal
+        retry logic (e.g. MCLRecorder._next_sequence_fallback) can issue
+        queries after savepoint rollback, causing "closed transaction"
+        errors that escape the context manager.  The outer try/except
+        catches these to protect file_paths + version_history writes.
+        """
         try:
             from nexus.storage.mcl_recorder import MCLRecorder
 
@@ -560,26 +568,46 @@ class PipedRecordStoreWriteObserver:
                     status="success",
                 )
 
-            # MCL recording (Issue #2929) — non-critical per event
-            if op in ("write", "delete", "rename"):
-                self._record_mcl_for_event(session, event)
+            # MCL recording moved to _flush_batch_sync Phase 2 (separate session)
+            # to prevent MCL failures from corrupting critical writes.
 
     def _flush_batch_sync(self, events: list[dict[str, Any]]) -> None:
-        """Synchronous flush using explicit engine connection.
+        """Synchronous flush: critical writes first, MCL second.
 
-        Uses engine.begin() instead of session context manager to ensure
-        commits persist even when called from an asyncio consumer task
-        running on a different event loop than where the session_factory
-        was created.
+        Phase 1 commits operation_log + file_paths + version_history.
+        Phase 2 records MCL entries in a separate session so failures
+        (e.g. sequence_number issues) cannot corrupt the critical writes.
         """
-        engine = self._session_factory.kw["bind"]
-        with engine.begin() as conn:
-            session = self._session_factory(bind=conn)
-            try:
-                self._process_events_in_session(session, events)
-                session.flush()
-            finally:
-                session.close()
+        # Phase 1: Critical writes (operation_log + version_history)
+        session = self._session_factory()
+        try:
+            self._process_events_in_session(session, events)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+        # Phase 2: MCL recording (non-critical, separate session)
+        # Session creation is inside the try so that a factory failure
+        # is caught here (non-critical) instead of propagating to
+        # _flush_batch, which would retry the whole batch after Phase 1
+        # already committed — duplicating operation_log / version-history rows.
+        mcl_session = None
+        try:
+            mcl_session = self._session_factory()
+            for event in events:
+                if event.get("op") in ("write", "delete", "rename"):
+                    self._record_mcl_for_event(mcl_session, event)
+            mcl_session.commit()
+        except Exception as mcl_err:
+            if mcl_session is not None:
+                mcl_session.rollback()
+            logger.debug("MCL batch recording failed (non-critical): %s", mcl_err)
+        finally:
+            if mcl_session is not None:
+                mcl_session.close()
 
     async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
         """Flush a batch of events to RecordStore in a single transaction."""

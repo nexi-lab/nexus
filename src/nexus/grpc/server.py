@@ -32,6 +32,7 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
     """
     # 0. Allow explicit insecure mode for demo/dev (Issue #2961)
     if os.environ.get("NEXUS_GRPC_INSECURE", "").lower() in ("true", "1", "yes"):
+        logger.debug("NEXUS_GRPC_INSECURE set — skipping TLS for gRPC")
         return None
 
     from nexus.security.tls.config import ZoneTlsConfig

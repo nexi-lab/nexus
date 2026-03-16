@@ -27,8 +27,10 @@ export function ConnectorDetail({
     return <text>{`No capabilities data for ${connectorName}`}</text>;
   }
 
-  // Render capabilities as formatted JSON lines
-  const lines = JSON.stringify(capabilities, null, 2).split("\n");
+  // Render capabilities as formatted JSON lines (truncated to prevent huge renders)
+  const json = JSON.stringify(capabilities, null, 2);
+  const display = json.length > 5000 ? json.slice(0, 5000) + "\n... (truncated)" : json;
+  const lines = display.split("\n");
 
   return (
     <box flexDirection="column" height="100%" width="100%">

@@ -88,24 +88,23 @@ export const useEventsStore = create<EventsState>((set, get) => ({
           eventsOverflowed: buf.hasOverflowed,
           evictedCount: buf.evictedCount,
           connected: true, // confirmed connected on first event
+          reconnectCount: 0,
           reconnectExhausted: false,
         };
       });
     });
 
-    client.onError(() => {
-      const { reconnectCount } = get();
-      if (reconnectCount >= MAX_RECONNECT_ATTEMPTS) {
-        // Stop reconnecting — disconnect and mark exhausted
+    client.onReconnect((attempt) => {
+      if (attempt >= MAX_RECONNECT_ATTEMPTS) {
         client.disconnect();
-        set({ connected: false, reconnectExhausted: true, sseClient: null });
+        set({ connected: false, reconnectExhausted: true, sseClient: null, reconnectCount: attempt });
       } else {
-        set({ connected: false });
+        set({ reconnectCount: attempt });
       }
     });
 
-    client.onReconnect((attempt) => {
-      set({ reconnectCount: attempt });
+    client.onError(() => {
+      set({ connected: false });
     });
 
     set({

@@ -291,14 +291,17 @@ export const useInfraStore = create<InfraState>((set, get) => ({
         status: t.status ?? "",
         details: t.details ?? null,
       }));
-      set((state) => ({
-        auditTransactions: filters.cursor
+      set((state) => {
+        const combined = filters.cursor
           ? [...state.auditTransactions, ...incoming]
-          : incoming,
-        auditLoading: false,
-        auditHasMore: response.has_more ?? false,
-        auditNextCursor: response.next_cursor ?? null,
-      }));
+          : incoming;
+        return {
+          auditTransactions: combined.slice(-1000), // keep latest 1000
+          auditLoading: false,
+          auditHasMore: response.has_more ?? false,
+          auditNextCursor: response.next_cursor ?? null,
+        };
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch audit transactions";
       set({ auditLoading: false, error: message });

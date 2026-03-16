@@ -65,7 +65,7 @@ export interface KnowledgeState {
   readonly schemaCache: ReadonlyMap<string, SchemaInfo | null>;
   readonly schemaLoading: boolean;
 
-  // MCL replay
+  // MCL replay (bounded by fetch limit parameter, typically 50 per page)
   readonly replayEntries: readonly ReplayEntry[];
   readonly replayLoading: boolean;
   readonly replayHasMore: boolean;
@@ -75,6 +75,7 @@ export interface KnowledgeState {
   readonly eventReplayEntries: readonly EventReplayEntry[];
   readonly eventReplayLoading: boolean;
   readonly eventReplayHasMore: boolean;
+  readonly eventReplayNextCursor: string | null;
 
   // Column search
   readonly columnSearchResults: readonly {
@@ -134,6 +135,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   eventReplayEntries: [],
   eventReplayLoading: false,
   eventReplayHasMore: false,
+  eventReplayNextCursor: null,
   columnSearchResults: [],
   columnSearchLoading: false,
   error: null,
@@ -153,6 +155,11 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       );
       const newCache = new Map(get().aspectsCache);
       newCache.set(urn, result.aspects ?? []);
+      // Evict oldest entry if cache exceeds 100 URNs
+      if (newCache.size > 100) {
+        const oldest = newCache.keys().next().value;
+        if (oldest !== undefined) newCache.delete(oldest);
+      }
       set({ aspectsCache: newCache, aspectsLoading: false });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch aspects";
@@ -183,6 +190,11 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       };
       const newCache = new Map(get().aspectDetailCache);
       newCache.set(key, entry);
+      // Evict oldest entry if cache exceeds 50 aspect details
+      if (newCache.size > 50) {
+        const oldest = newCache.keys().next().value;
+        if (oldest !== undefined) newCache.delete(oldest);
+      }
       set({ aspectDetailCache: newCache, aspectDetailLoading: false });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch aspect";
@@ -274,6 +286,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       if (filters.path_pattern) params.set("path_pattern", filters.path_pattern);
       if (filters.agent_id) params.set("agent_id", filters.agent_id);
       if (filters.since) params.set("since", filters.since);
+      const cursor = get().eventReplayNextCursor;
+      if (cursor) params.set("cursor", cursor);
       const qs = params.toString();
       const url = `/api/v2/events/replay${qs ? `?${qs}` : ""}`;
       const result = await client.get<{
@@ -289,11 +303,14 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         timestamp: e.timestamp ?? "",
         payload: e.payload ?? {},
       }));
-      set({
-        eventReplayEntries: events,
+      set((state) => ({
+        eventReplayEntries: cursor
+          ? [...state.eventReplayEntries, ...events]
+          : events,
         eventReplayLoading: false,
         eventReplayHasMore: result.has_more ?? false,
-      });
+        eventReplayNextCursor: result.next_cursor ?? null,
+      }));
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch event replay";
       set({ eventReplayLoading: false, error: message });
@@ -323,5 +340,5 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     set({ replayEntries: [], replayNextCursor: 0, replayHasMore: false }),
 
   clearEventReplay: () =>
-    set({ eventReplayEntries: [], eventReplayHasMore: false }),
+    set({ eventReplayEntries: [], eventReplayHasMore: false, eventReplayNextCursor: null }),
 }));

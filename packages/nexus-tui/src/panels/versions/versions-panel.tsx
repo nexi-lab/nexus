@@ -26,7 +26,6 @@ export default function VersionsPanel(): React.ReactNode {
   const client = useApi();
 
   const transactions = useVersionsStore((s) => s.transactions);
-  const selectedTransaction = useVersionsStore((s) => s.selectedTransaction);
   const selectedIndex = useVersionsStore((s) => s.selectedIndex);
   const statusFilter = useVersionsStore((s) => s.statusFilter);
   const isLoading = useVersionsStore((s) => s.isLoading);
@@ -76,6 +75,9 @@ export default function VersionsPanel(): React.ReactNode {
         (t.description ?? "").toLowerCase().includes(lower),
     );
   }, [transactions, txnFilter]);
+
+  // Derive selectedTransaction from filtered list so the index always maps correctly
+  const selectedTransaction = filteredTransactions[selectedIndex] ?? null;
 
   const handleFilterKey = useCallback(
     (keyName: string) => {

@@ -11,6 +11,7 @@ import { useGlobalStore } from "../../stores/global-store.js";
 import type { SearchTab, SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
+import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
@@ -48,6 +49,7 @@ const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
 
 export default function SearchPanel(): React.ReactNode {
   const client = useApi();
+  const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(ALL_TABS);
   // Effective zone: explicit config > server-discovered zone (matches status-bar fallback)
@@ -325,18 +327,24 @@ export default function SearchPanel(): React.ReactNode {
               );
             }
           },
-          d: () => {
+          d: async () => {
             if (!client) return;
             if (activeTab === "playbooks") {
               const playbook = playbooks[selectedPlaybookIndex];
               if (playbook) {
+                const ok = await confirm("Delete playbook?", "This cannot be undone.");
+                if (!ok) return;
                 deletePlaybook(playbook.playbook_id, client);
               }
             } else if (activeTab === "memories") {
               const memory = memories[selectedMemoryIndex];
               if (memory) {
                 const memId = String((memory as Record<string, unknown>).memory_id ?? "");
-                if (memId) deleteMemory(memId, client);
+                if (memId) {
+                  const ok = await confirm("Delete memory?", "This cannot be undone.");
+                  if (!ok) return;
+                  deleteMemory(memId, client);
+                }
               }
             }
           },

@@ -126,11 +126,13 @@ export default function ApiConsolePanel(): React.ReactNode {
             if (ep) selectEndpoint(ep);
           },
           k: () => {
+            if (selectedIdx < 0) return;
             const prev = Math.max(selectedIdx - 1, 0);
             const ep = filteredEndpoints[prev];
             if (ep) selectEndpoint(ep);
           },
           up: () => {
+            if (selectedIdx < 0) return;
             const prev = Math.max(selectedIdx - 1, 0);
             const ep = filteredEndpoints[prev];
             if (ep) selectEndpoint(ep);

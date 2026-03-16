@@ -239,6 +239,8 @@ export interface SearchState {
 
 const SOURCE = "search";
 
+let activeAskController: AbortController | null = null;
+
 export const useSearchStore = create<SearchState>((set, get) => ({
   searchQuery: "",
   searchResults: [],
@@ -571,6 +573,11 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   // =========================================================================
 
   askRlm: async (query, client, zoneId) => {
+    // Cancel previous request
+    activeAskController?.abort();
+    activeAskController = new AbortController();
+    const signal = activeAskController.signal;
+
     const initial: RlmAnswer = {
       status: "streaming",
       answer: null,
@@ -618,6 +625,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       let buffer = "";
 
       for (;;) {
+        if (signal.aborted) break;
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -626,6 +634,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         buffer = parts.pop() ?? "";
 
         for (const part of parts) {
+          if (signal.aborted) break;
           let eventName = "";
           let dataStr = "";
           for (const line of part.split("\n")) {
@@ -639,6 +648,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
           try {
             const data = JSON.parse(dataStr) as Record<string, unknown>;
+            if (signal.aborted) break;
             const current = get().rlmAnswer ?? initial;
 
             if (eventName === "rlm.started") {
@@ -701,10 +711,11 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       }
 
       // If stream ended without a terminal event, mark complete
-      if (get().rlmLoading) {
+      if (!signal.aborted && get().rlmLoading) {
         set({ rlmLoading: false });
       }
     } catch (err) {
+      if (signal.aborted) return; // Request was cancelled; ignore error
       const message = err instanceof Error ? err.message : "Failed to query RLM";
       set({ rlmLoading: false, error: message });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });

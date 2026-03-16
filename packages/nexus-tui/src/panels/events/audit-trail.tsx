@@ -37,16 +37,23 @@ export function AuditTrail({
     );
   }
 
+  const displayTransactions = transactions.slice(0, 200);
+  const isTruncated = transactions.length > 200;
+
   return (
     <box flexDirection="column" height="100%" width="100%">
       {/* Header */}
       <box height={1} width="100%">
-        <text>{"  Action           Actor              Resource                       Status    Time"}</text>
+        <text>
+          {isTruncated
+            ? `  Showing first 200 of ${transactions.length} — Action           Actor              Resource                       Status    Time`
+            : "  Action           Actor              Resource                       Status    Time"}
+        </text>
       </box>
 
       {/* Rows */}
       <scrollbox flexGrow={1} width="100%">
-        {transactions.map((tx, i) => {
+        {displayTransactions.map((tx, i) => {
           const prefix = i === selectedIndex ? "> " : "  ";
           const action = tx.action.padEnd(16).slice(0, 16);
           const actor = tx.actor_id.padEnd(18).slice(0, 18);

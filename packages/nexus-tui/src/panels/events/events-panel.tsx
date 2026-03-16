@@ -163,6 +163,12 @@ export default function EventsPanel(): React.ReactNode {
     }
   }, [visibleIds.join(","), activeTab]);
 
+  // Reset expanded event when events change (index may become stale after SSE adds/evicts)
+  const eventsLength = events.length;
+  useEffect(() => {
+    setExpandedEventIndex(null);
+  }, [eventsLength]);
+
   // Auto-connect SSE on mount, reconnect when identity changes
   useEffect(() => {
     if (config.apiKey && config.baseUrl) {
@@ -204,6 +210,7 @@ export default function EventsPanel(): React.ReactNode {
 
   const currentItemCount = (): number => {
     switch (activeTab) {
+      case "events": return events.length;
       case "connectors": return connectors.length;
       case "subscriptions": return subscriptions.length;
       case "locks": return locks.length;
@@ -226,6 +233,7 @@ export default function EventsPanel(): React.ReactNode {
 
   const setCurrentSelectedIndex = (index: number): void => {
     switch (activeTab) {
+      case "events": setSelectedEventIndex(index); break;
       case "connectors": setSelectedConnectorIndex(index); break;
       case "subscriptions": setSelectedSubscriptionIndex(index); break;
       case "locks": setSelectedLockIndex(index); break;
@@ -440,8 +448,9 @@ export default function EventsPanel(): React.ReactNode {
           },
           y: () => {
             if (activeTab === "events") {
-              // Events are displayed in a stream; copy the selected/latest event data
-              const event = events[events.length - 1];
+              // Copy the currently selected event (or latest if none selected)
+              const idx = selectedEventIndex >= 0 ? selectedEventIndex : events.length - 1;
+              const event = events[idx];
               if (event) copy(event.data);
             }
           },

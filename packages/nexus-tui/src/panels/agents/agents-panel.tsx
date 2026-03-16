@@ -161,11 +161,10 @@ export default function AgentsPanel(): React.ReactNode {
         );
       } else {
         if (displayAgentIds.length === 0) return;
-        setSelectedAgentIndex(Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1)));
-        const nextAgent = displayAgentIds[selectedAgentIndex + 1];
-        if (nextAgent) {
-          setSelectedAgentId(nextAgent);
-        }
+        const newIdx = Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1));
+        setSelectedAgentIndex(newIdx);
+        const agentId = displayAgentIds[newIdx];
+        if (agentId) setSelectedAgentId(agentId);
       }
     },
     down: () => {
@@ -176,33 +175,30 @@ export default function AgentsPanel(): React.ReactNode {
         );
       } else {
         if (displayAgentIds.length === 0) return;
-        setSelectedAgentIndex(Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1)));
-        const nextAgent = displayAgentIds[selectedAgentIndex + 1];
-        if (nextAgent) {
-          setSelectedAgentId(nextAgent);
-        }
+        const newIdx = Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1));
+        setSelectedAgentIndex(newIdx);
+        const agentId = displayAgentIds[newIdx];
+        if (agentId) setSelectedAgentId(agentId);
       }
     },
     k: () => {
       if (activeTab === "delegations") {
         setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
       } else {
-        setSelectedAgentIndex(Math.max(selectedAgentIndex - 1, 0));
-        const prevAgent = displayAgentIds[selectedAgentIndex - 1];
-        if (prevAgent) {
-          setSelectedAgentId(prevAgent);
-        }
+        const newIdx = Math.max(0, selectedAgentIndex - 1);
+        setSelectedAgentIndex(newIdx);
+        const agentId = displayAgentIds[newIdx];
+        if (agentId) setSelectedAgentId(agentId);
       }
     },
     up: () => {
       if (activeTab === "delegations") {
         setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
       } else {
-        setSelectedAgentIndex(Math.max(selectedAgentIndex - 1, 0));
-        const prevAgent = displayAgentIds[selectedAgentIndex - 1];
-        if (prevAgent) {
-          setSelectedAgentId(prevAgent);
-        }
+        const newIdx = Math.max(0, selectedAgentIndex - 1);
+        setSelectedAgentIndex(newIdx);
+        const agentId = displayAgentIds[newIdx];
+        if (agentId) setSelectedAgentId(agentId);
       }
     },
     tab: () => {

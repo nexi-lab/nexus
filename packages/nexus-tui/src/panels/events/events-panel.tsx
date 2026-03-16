@@ -17,6 +17,7 @@ import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ConnectorList } from "./connector-list.js";
 import { SubscriptionList } from "./subscription-list.js";
@@ -55,6 +56,7 @@ const TAB_LABELS: Readonly<Record<PanelTab, string>> = {
 export default function EventsPanel(): React.ReactNode {
   const apiClient = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
+  const overlayActive = useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(ALL_TABS);
   const config = useGlobalStore((s) => s.config);
 
@@ -230,7 +232,9 @@ export default function EventsPanel(): React.ReactNode {
   );
 
   useKeyboard(
-    filterMode !== "none"
+    overlayActive
+      ? {}
+      : filterMode !== "none"
       ? {
           // Filter input mode: capture keystrokes
           return: () => {
@@ -361,7 +365,7 @@ export default function EventsPanel(): React.ReactNode {
             setCurrentSelectedIndex(jumpToEnd(currentItemCount()));
           },
         },
-    handleUnhandledKey,
+    overlayActive ? undefined : handleUnhandledKey,
   );
 
   return (

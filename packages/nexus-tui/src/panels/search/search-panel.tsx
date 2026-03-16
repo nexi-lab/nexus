@@ -12,6 +12,7 @@ import type { SearchTab, SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SearchResults } from "./search-results.js";
 import { KnowledgeView } from "./knowledge-view.js";
@@ -46,6 +47,7 @@ const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
 
 export default function SearchPanel(): React.ReactNode {
   const client = useApi();
+  const overlayActive = useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(ALL_TABS);
   // Effective zone: explicit config > server-discovered zone (matches status-bar fallback)
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
@@ -174,7 +176,9 @@ export default function SearchPanel(): React.ReactNode {
   );
 
   useKeyboard(
-    inputMode
+    overlayActive
+      ? {}
+      : inputMode
       ? {
           // Input mode: capture keystrokes for the search query
           return: () => {
@@ -193,31 +197,37 @@ export default function SearchPanel(): React.ReactNode {
           // Normal mode: navigation
           j: () => {
             if (activeTab === "search") {
+              if (searchResults.length === 0) return;
               setSelectedResultIndex(
-                Math.min(selectedResultIndex + 1, searchResults.length - 1),
+                Math.max(0, Math.min(selectedResultIndex + 1, searchResults.length - 1)),
               );
             } else if (activeTab === "memories") {
+              if (memories.length === 0) return;
               setSelectedMemoryIndex(
-                Math.min(selectedMemoryIndex + 1, memories.length - 1),
+                Math.max(0, Math.min(selectedMemoryIndex + 1, memories.length - 1)),
               );
             } else if (activeTab === "playbooks") {
+              if (playbooks.length === 0) return;
               setSelectedPlaybookIndex(
-                Math.min(selectedPlaybookIndex + 1, playbooks.length - 1),
+                Math.max(0, Math.min(selectedPlaybookIndex + 1, playbooks.length - 1)),
               );
             }
           },
           down: () => {
             if (activeTab === "search") {
+              if (searchResults.length === 0) return;
               setSelectedResultIndex(
-                Math.min(selectedResultIndex + 1, searchResults.length - 1),
+                Math.max(0, Math.min(selectedResultIndex + 1, searchResults.length - 1)),
               );
             } else if (activeTab === "memories") {
+              if (memories.length === 0) return;
               setSelectedMemoryIndex(
-                Math.min(selectedMemoryIndex + 1, memories.length - 1),
+                Math.max(0, Math.min(selectedMemoryIndex + 1, memories.length - 1)),
               );
             } else if (activeTab === "playbooks") {
+              if (playbooks.length === 0) return;
               setSelectedPlaybookIndex(
-                Math.min(selectedPlaybookIndex + 1, playbooks.length - 1),
+                Math.max(0, Math.min(selectedPlaybookIndex + 1, playbooks.length - 1)),
               );
             }
           },
@@ -382,7 +392,7 @@ export default function SearchPanel(): React.ReactNode {
             }
           },
         },
-    handleUnhandledKey,
+    overlayActive ? undefined : handleUnhandledKey,
   );
 
   return (

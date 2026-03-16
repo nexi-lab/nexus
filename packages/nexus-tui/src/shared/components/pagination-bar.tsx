@@ -26,6 +26,13 @@ interface PaginationBarProps {
   readonly loading?: boolean;
 }
 
+/** Pure function for page display text — exported for testing. */
+export function formatPageDisplay(currentPage: number, hasMore: boolean, totalPages?: number): string {
+  return totalPages
+    ? `Page ${currentPage} of ${totalPages}`
+    : `Page ${currentPage}${hasMore ? "+" : ""}`;
+}
+
 export function PaginationBar({
   hasMore,
   hasPrev,
@@ -35,9 +42,7 @@ export function PaginationBar({
   prevKey = "[",
   loading = false,
 }: PaginationBarProps): React.ReactNode {
-  const pageDisplay = totalPages
-    ? `Page ${currentPage} of ${totalPages}`
-    : `Page ${currentPage}${hasMore ? "+" : ""}`;
+  const pageDisplay = formatPageDisplay(currentPage, hasMore, totalPages);
 
   return (
     <box height={1} width="100%" flexDirection="row">

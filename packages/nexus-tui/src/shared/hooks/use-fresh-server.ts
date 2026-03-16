@@ -5,6 +5,28 @@
 import { useState, useEffect } from "react";
 import { useGlobalStore } from "../../stores/global-store.js";
 
+interface FreshCheckClient {
+  get<T>(url: string): Promise<T>;
+}
+
+/**
+ * Pure detection logic — exported for testing without React hooks.
+ * Returns true if the server has no files and no agents.
+ */
+export async function detectFreshServer(client: FreshCheckClient): Promise<boolean> {
+  try {
+    const [files, agents] = await Promise.all([
+      client.get<{ entries: unknown[] }>("/api/v2/files?path=/&limit=5"),
+      client.get<{ agents: unknown[] }>("/api/v2/agents?limit=1&offset=0"),
+    ]);
+    const hasFiles = (files.entries?.length ?? 0) > 0;
+    const hasAgents = (agents.agents?.length ?? 0) > 0;
+    return !hasFiles && !hasAgents;
+  } catch {
+    return false; // Assume not fresh on error
+  }
+}
+
 export function useFreshServer(): { isFresh: boolean | null; loading: boolean } {
   const client = useGlobalStore((s) => s.client);
   const connectionStatus = useGlobalStore((s) => s.connectionStatus);
@@ -24,18 +46,10 @@ export function useFreshServer(): { isFresh: boolean | null; loading: boolean } 
     // A "fresh" server has no files beyond defaults and no agents
     (async () => {
       try {
-        const [files, agents] = await Promise.all([
-          client.get<{ entries: unknown[] }>("/api/v2/files?path=/&limit=5"),
-          client.get<{ agents: unknown[] }>("/api/v2/agents?limit=1&offset=0"),
-        ]);
-        if (!cancelled) {
-          // Fresh if no files and no agents
-          const hasFiles = (files.entries?.length ?? 0) > 0;
-          const hasAgents = (agents.agents?.length ?? 0) > 0;
-          setIsFresh(!hasFiles && !hasAgents);
-        }
+        const result = await detectFreshServer(client);
+        if (!cancelled) setIsFresh(result);
       } catch {
-        if (!cancelled) setIsFresh(false); // Assume not fresh on error
+        if (!cancelled) setIsFresh(false);
       } finally {
         if (!cancelled) setLoading(false);
       }

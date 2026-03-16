@@ -23,8 +23,9 @@ export function ScrollIndicator({
   visibleItems,
   children,
 }: ScrollIndicatorProps): React.ReactNode {
-  const showTop = selectedIndex > 0;
-  const showBottom = selectedIndex < totalItems - 1 && totalItems > visibleItems;
+  const isScrollable = totalItems > visibleItems;
+  const showTop = isScrollable && selectedIndex > 0;
+  const showBottom = isScrollable && selectedIndex < totalItems - 1;
 
   return (
     <box flexDirection="column" height="100%" width="100%">

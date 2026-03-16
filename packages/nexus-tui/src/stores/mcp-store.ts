@@ -56,7 +56,7 @@ export interface McpState {
   readonly setSelectedMountIndex: (index: number) => void;
 }
 
-const SOURCE = "zones";
+const SOURCE = "mcp";
 
 export const useMcpStore = create<McpState>((set, get) => ({
   mounts: [],

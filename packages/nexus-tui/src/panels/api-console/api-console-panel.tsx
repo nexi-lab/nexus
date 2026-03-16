@@ -35,6 +35,7 @@ export default function ApiConsolePanel(): React.ReactNode {
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("console"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+  const overlayActive = useUiStore((s) => s.overlayActive);
 
   // Auto-load endpoints from OpenAPI spec on mount
   useEffect(() => {
@@ -62,7 +63,9 @@ export default function ApiConsolePanel(): React.ReactNode {
   );
 
   useKeyboard(
-    commandInputMode
+    overlayActive
+      ? {}
+      : commandInputMode
       ? {
           return: () => {
             setCommandInputMode(false);
@@ -81,12 +84,14 @@ export default function ApiConsolePanel(): React.ReactNode {
         }
       : {
           j: () => {
-            const next = Math.min(selectedIdx + 1, filteredEndpoints.length - 1);
+            if (filteredEndpoints.length === 0) return;
+            const next = Math.max(0, Math.min(selectedIdx + 1, filteredEndpoints.length - 1));
             const ep = filteredEndpoints[next];
             if (ep) selectEndpoint(ep);
           },
           down: () => {
-            const next = Math.min(selectedIdx + 1, filteredEndpoints.length - 1);
+            if (filteredEndpoints.length === 0) return;
+            const next = Math.max(0, Math.min(selectedIdx + 1, filteredEndpoints.length - 1));
             const ep = filteredEndpoints[next];
             if (ep) selectEndpoint(ep);
           },
@@ -108,7 +113,7 @@ export default function ApiConsolePanel(): React.ReactNode {
           },
           tab: () => toggleFocus("console"),
         },
-    handleUnhandledKey,
+    overlayActive ? undefined : handleUnhandledKey,
   );
 
   return (

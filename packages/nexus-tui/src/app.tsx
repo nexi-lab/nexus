@@ -4,7 +4,7 @@
  * Lazy-loads panels on first navigation for fast startup.
  */
 
-import React, { lazy, Suspense, useState, useCallback } from "react";
+import React, { lazy, Suspense, useState, useCallback, useEffect } from "react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
 import { TabBar, type Tab } from "./shared/components/tab-bar.js";
@@ -87,6 +87,11 @@ export function App(): React.ReactNode {
   const { isFresh } = useFreshServer();
   const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   const showWelcome = isFresh === true && !welcomeDismissed;
+
+  const setOverlayActive = useUiStore((s) => s.setOverlayActive);
+  useEffect(() => {
+    setOverlayActive(identitySwitcherOpen || helpOpen || showWelcome);
+  }, [identitySwitcherOpen, helpOpen, showWelcome, setOverlayActive]);
 
   const toggleIdentitySwitcher = useCallback(() => {
     setIdentitySwitcherOpen((prev) => !prev);

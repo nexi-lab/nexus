@@ -283,7 +283,7 @@ export const useInfraStore = create<InfraState>((set, get) => ({
         ttl_seconds: ttlSeconds,
       });
       // Refresh lock list after acquisition
-      get().fetchLocks(client);
+      await get().fetchLocks(client);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to acquire lock";
       set({ error: message });

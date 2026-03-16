@@ -61,6 +61,7 @@ export default function VersionsPanel(): React.ReactNode {
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("versions"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+  const overlayActive = useUiStore((s) => s.overlayActive);
 
   // Fetch transactions on mount and when filter changes
   useEffect(() => {
@@ -78,10 +79,15 @@ export default function VersionsPanel(): React.ReactNode {
   }, [client, selectedTransaction, fetchEntries, fetchTransactionDetail]);
 
   // Keyboard navigation
-  useKeyboard({
-    "j": () => setSelectedIndex(Math.min(selectedIndex + 1, transactions.length - 1)),
-    "down": () =>
-      setSelectedIndex(Math.min(selectedIndex + 1, transactions.length - 1)),
+  useKeyboard(overlayActive ? {} : {
+    "j": () => {
+      if (transactions.length === 0) return;
+      setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, transactions.length - 1)));
+    },
+    "down": () => {
+      if (transactions.length === 0) return;
+      setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, transactions.length - 1)));
+    },
     "k": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
     "up": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
     "return": () => {

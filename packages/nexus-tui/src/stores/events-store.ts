@@ -77,6 +77,7 @@ export const useEventsStore = create<EventsState>((set, get) => ({
           filteredEvents: applyFilters(allEvents, state.filters),
           eventsOverflowed: buf.hasOverflowed,
           evictedCount: buf.evictedCount,
+          connected: true, // confirmed connected on first event
         };
       });
     });
@@ -89,7 +90,7 @@ export const useEventsStore = create<EventsState>((set, get) => ({
       set({ reconnectCount: attempt });
     });
 
-    set({ sseClient: client, connected: true, reconnectCount: 0 });
+    set({ sseClient: client, connected: false, reconnectCount: 0 });
 
     // Connect async — don't await (fire and forget)
     client.connect("/api/v2/events/stream").catch(() => {

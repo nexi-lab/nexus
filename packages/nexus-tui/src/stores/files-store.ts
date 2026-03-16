@@ -281,6 +281,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   },
 
   renameFile: async (oldPath, newPath, client) => {
+    // Note: rename is write+delete — not atomic. If delete fails, file exists at both paths.
     set({ error: null });
     try {
       await client.post("/api/v2/files/write", { path: newPath, source_path: oldPath });

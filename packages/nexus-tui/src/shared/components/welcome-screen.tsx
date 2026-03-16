@@ -17,17 +17,20 @@ export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNod
   const config = useGlobalStore((s) => s.config);
   const serverVersion = useGlobalStore((s) => s.serverVersion);
   const [seeding, setSeeding] = useState(false);
+  const [seedError, setSeedError] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
 
   useKeyboard(seeding ? {} : {
     "y": async () => {
       if (!client) return;
       setSeeding(true);
+      setSeedError(null);
       try {
         await client.post("/api/v2/admin/demo/seed", {});
         onDismiss();
       } catch {
         setSeeding(false);
+        setSeedError("Seeding failed. Press Y to retry or N to skip.");
       }
     },
     "n": onDismiss,
@@ -76,6 +79,12 @@ export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNod
               <text foregroundColor={statusColor.dim}>{"  [?]"}</text>
               <text>{" What's in the demo data?"}</text>
             </text>
+          </>
+        )}
+        {seedError && (
+          <>
+            <text>{""}</text>
+            <text foregroundColor={statusColor.error}>{"  "}{seedError}</text>
           </>
         )}
         {showDetails && (

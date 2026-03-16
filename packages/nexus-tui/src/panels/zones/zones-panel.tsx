@@ -118,6 +118,7 @@ export default function ZonesPanel(): React.ReactNode {
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("zones"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+  const overlayActive = useUiStore((s) => s.overlayActive);
 
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
@@ -308,7 +309,9 @@ export default function ZonesPanel(): React.ReactNode {
   );
 
   useKeyboard(
-    anyDialogOpen
+    overlayActive
+      ? {}
+      : anyDialogOpen
       ? {} // ConfirmDialog handles its own keys when visible
       : inputMode !== "none"
         ? {
@@ -480,7 +483,7 @@ export default function ZonesPanel(): React.ReactNode {
               setCurrentNavIndex(jumpToEnd(len));
             },
           },
-    inputMode !== "none" ? handleUnhandledKey : undefined,
+    !overlayActive && inputMode !== "none" ? handleUnhandledKey : undefined,
   );
 
   // Context-aware help text per tab

@@ -88,6 +88,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("files"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+  const overlayActive = useUiStore((s) => s.overlayActive);
 
   // Get selected file item for metadata display
   const cachedFiles = fileCache.get(currentPath)?.data ?? [];
@@ -150,7 +151,9 @@ export default function FileExplorerPanel(): React.ReactNode {
   );
 
   useKeyboard(
-    confirmDelete
+    overlayActive
+      ? {}
+      : confirmDelete
       ? {}  // ConfirmDialog handles its own keys
       : inputMode !== "none"
         ? {
@@ -187,20 +190,26 @@ export default function FileExplorerPanel(): React.ReactNode {
             // Normal mode
             "j": () => {
               if (activeTab === "explorer") {
-                setSelectedIndex(Math.min(selectedIndex + 1, visibleNodeCount - 1));
+                if (visibleNodeCount === 0) return;
+                setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, visibleNodeCount - 1)));
               } else if (activeTab === "shareLinks") {
-                setSelectedLinkIndex(Math.min(selectedLinkIndex + 1, shareLinks.length - 1));
+                if (shareLinks.length === 0) return;
+                setSelectedLinkIndex(Math.max(0, Math.min(selectedLinkIndex + 1, shareLinks.length - 1)));
               } else if (activeTab === "uploads") {
-                setSelectedSessionIndex(Math.min(selectedSessionIndex + 1, uploadSessions.length - 1));
+                if (uploadSessions.length === 0) return;
+                setSelectedSessionIndex(Math.max(0, Math.min(selectedSessionIndex + 1, uploadSessions.length - 1)));
               }
             },
             "down": () => {
               if (activeTab === "explorer") {
-                setSelectedIndex(Math.min(selectedIndex + 1, visibleNodeCount - 1));
+                if (visibleNodeCount === 0) return;
+                setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, visibleNodeCount - 1)));
               } else if (activeTab === "shareLinks") {
-                setSelectedLinkIndex(Math.min(selectedLinkIndex + 1, shareLinks.length - 1));
+                if (shareLinks.length === 0) return;
+                setSelectedLinkIndex(Math.max(0, Math.min(selectedLinkIndex + 1, shareLinks.length - 1)));
               } else if (activeTab === "uploads") {
-                setSelectedSessionIndex(Math.min(selectedSessionIndex + 1, uploadSessions.length - 1));
+                if (uploadSessions.length === 0) return;
+                setSelectedSessionIndex(Math.max(0, Math.min(selectedSessionIndex + 1, uploadSessions.length - 1)));
               }
             },
             "k": () => {
@@ -325,7 +334,7 @@ export default function FileExplorerPanel(): React.ReactNode {
               }
             },
           },
-    inputMode !== "none" ? handleUnhandledKey : undefined,
+    !overlayActive && inputMode !== "none" ? handleUnhandledKey : undefined,
   );
 
   const handleConfirmDelete = (): void => {

@@ -1,127 +1,64 @@
 /**
  * Tests for fresh server detection logic.
  *
- * Validates that useFreshServer correctly identifies empty servers
- * (no files, no agents) to trigger the welcome screen on first run.
+ * Tests the exported detectFreshServer function (real production code)
+ * rather than a local reimplementation.
  */
 
-import { describe, it, expect, beforeEach, mock } from "bun:test";
-import { useGlobalStore } from "../../src/stores/global-store.js";
-import type { FetchClient } from "@nexus/api-client";
+import { describe, it, expect, mock } from "bun:test";
+import { detectFreshServer } from "../../src/shared/hooks/use-fresh-server.js";
 
-// ---------------------------------------------------------------------------
-// Helper: simulate the fresh-server detection logic without React hooks.
-// This mirrors the core async check inside useFreshServer.
-// ---------------------------------------------------------------------------
-
-async function detectFreshServer(client: FetchClient): Promise<boolean> {
-  const [files, agents] = await Promise.all([
-    client.get<{ entries: unknown[] }>("/api/v2/files?path=/&limit=5"),
-    client.get<{ agents: unknown[] }>("/api/v2/agents?limit=1&offset=0"),
-  ]);
-  const hasFiles = (files.entries?.length ?? 0) > 0;
-  const hasAgents = (agents.agents?.length ?? 0) > 0;
-  return !hasFiles && !hasAgents;
+function mockClient(responses: Record<string, unknown>) {
+  return {
+    get: mock(async (url: string) => {
+      for (const [pattern, response] of Object.entries(responses)) {
+        if (url.includes(pattern)) return response;
+      }
+      throw new Error(`Unmocked: ${url}`);
+    }),
+  };
 }
 
-describe("fresh server detection", () => {
-  beforeEach(() => {
-    useGlobalStore.setState({
-      connectionStatus: "disconnected",
-      connectionError: null,
-      client: null,
+describe("detectFreshServer", () => {
+  it("returns true when API returns empty lists", async () => {
+    const client = mockClient({
+      "/api/v2/files": { entries: [] },
+      "/api/v2/agents": { agents: [] },
     });
+    expect(await detectFreshServer(client)).toBe(true);
   });
 
-  it("returns isFresh=true when API returns empty lists", async () => {
-    const mockClient = {
-      get: mock(async (url: string) => {
-        if (url.includes("/api/v2/files")) {
-          return { entries: [] };
-        }
-        if (url.includes("/api/v2/agents")) {
-          return { agents: [] };
-        }
-        return {};
-      }),
-    } as unknown as FetchClient;
-
-    const result = await detectFreshServer(mockClient);
-    expect(result).toBe(true);
+  it("returns false when API returns files", async () => {
+    const client = mockClient({
+      "/api/v2/files": { entries: [{ name: "readme.md" }] },
+      "/api/v2/agents": { agents: [] },
+    });
+    expect(await detectFreshServer(client)).toBe(false);
   });
 
-  it("returns isFresh=false when API returns files", async () => {
-    const mockClient = {
-      get: mock(async (url: string) => {
-        if (url.includes("/api/v2/files")) {
-          return { entries: [{ name: "readme.md" }] };
-        }
-        if (url.includes("/api/v2/agents")) {
-          return { agents: [] };
-        }
-        return {};
-      }),
-    } as unknown as FetchClient;
-
-    const result = await detectFreshServer(mockClient);
-    expect(result).toBe(false);
+  it("returns false when API returns agents", async () => {
+    const client = mockClient({
+      "/api/v2/files": { entries: [] },
+      "/api/v2/agents": { agents: [{ agent_id: "bot-1" }] },
+    });
+    expect(await detectFreshServer(client)).toBe(false);
   });
 
-  it("returns isFresh=false when API returns agents", async () => {
-    const mockClient = {
-      get: mock(async (url: string) => {
-        if (url.includes("/api/v2/files")) {
-          return { entries: [] };
-        }
-        if (url.includes("/api/v2/agents")) {
-          return { agents: [{ agent_id: "bot-1" }] };
-        }
-        return {};
-      }),
-    } as unknown as FetchClient;
-
-    const result = await detectFreshServer(mockClient);
-    expect(result).toBe(false);
+  it("returns false when API returns both", async () => {
+    const client = mockClient({
+      "/api/v2/files": { entries: [{ name: "data.json" }] },
+      "/api/v2/agents": { agents: [{ agent_id: "bot-1" }] },
+    });
+    expect(await detectFreshServer(client)).toBe(false);
   });
 
-  it("returns isFresh=false when API returns both files and agents", async () => {
-    const mockClient = {
-      get: mock(async (url: string) => {
-        if (url.includes("/api/v2/files")) {
-          return { entries: [{ name: "data.json" }] };
-        }
-        if (url.includes("/api/v2/agents")) {
-          return { agents: [{ agent_id: "bot-1" }] };
-        }
-        return {};
-      }),
-    } as unknown as FetchClient;
-
-    const result = await detectFreshServer(mockClient);
-    expect(result).toBe(false);
-  });
-
-  it("handles missing entries/agents fields gracefully (treats as fresh)", async () => {
-    const mockClient = {
-      get: mock(async () => ({})),
-    } as unknown as FetchClient;
-
-    const result = await detectFreshServer(mockClient);
-    expect(result).toBe(true);
+  it("treats missing fields as fresh", async () => {
+    const client = { get: mock(async () => ({})) };
+    expect(await detectFreshServer(client)).toBe(true);
   });
 
   it("treats API errors as not fresh", async () => {
-    const mockClient = {
-      get: mock(async () => { throw new Error("Network error"); }),
-    } as unknown as FetchClient;
-
-    let isFresh: boolean;
-    try {
-      isFresh = await detectFreshServer(mockClient);
-    } catch {
-      // On error, the hook sets isFresh = false
-      isFresh = false;
-    }
-    expect(isFresh).toBe(false);
+    const client = { get: mock(async () => { throw new Error("Network error"); }) };
+    expect(await detectFreshServer(client)).toBe(false);
   });
 });

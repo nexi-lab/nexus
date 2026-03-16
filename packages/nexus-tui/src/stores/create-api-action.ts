@@ -25,12 +25,25 @@ const NETWORK_PATTERNS = [
   /DNS/i,
 ] as const;
 
+const VALIDATION_PATTERNS = [
+  /invalid/i,
+  /validation/i,
+  /bad request/i,
+  /422/i,
+  /400/i,
+  /missing required/i,
+  /must be/i,
+] as const;
+
 /**
  * Categorize an error message into network, validation, or server.
  */
 export function categorizeError(message: string): ErrorCategory {
   for (const pattern of NETWORK_PATTERNS) {
     if (pattern.test(message)) return "network";
+  }
+  for (const pattern of VALIDATION_PATTERNS) {
+    if (pattern.test(message)) return "validation";
   }
   return "server";
 }
@@ -76,7 +89,7 @@ export function createApiAction<
     readonly loadingKey: keyof S & string;
     /** Async function that calls the API and returns partial state to merge. */
     readonly action: (...args: Args) => Promise<Partial<S>>;
-    /** Error message prefix if the action fails. */
+    /** Fallback error message used when the thrown value is not an Error instance. */
     readonly errorMessage?: string;
     /** Called after successful action (after state is merged). */
     readonly onSuccess?: () => void;

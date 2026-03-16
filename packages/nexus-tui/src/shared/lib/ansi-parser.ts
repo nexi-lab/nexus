@@ -74,8 +74,13 @@ function hex(n: number): string {
 
 // Matches CSI (Control Sequence Introducer) sequences: ESC [ ... final_byte
 // Also matches OSC (ESC ]) and other escape sequences for stripping
-const CSI_REGEX = /\x1b\[([0-9;]*)([A-Za-z])/g;
-const OTHER_ESCAPE_REGEX = /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)?|[^[].?)/g;
+// Factory functions return fresh RegExp instances to avoid shared /g lastIndex state.
+function createCsiRegex(): RegExp {
+  return /\x1b\[([0-9;]*)([A-Za-z])/g;
+}
+function createOtherEscapeRegex(): RegExp {
+  return /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)?|[^[].?)/g;
+}
 
 // =============================================================================
 // Parser
@@ -97,13 +102,11 @@ export function parseAnsi(input: string): StyledSpan[] {
   let lastIndex = 0;
 
   // Strip non-CSI escape sequences first (OSC, etc.)
-  const cleaned = input.replace(OTHER_ESCAPE_REGEX, "");
+  const cleaned = input.replace(createOtherEscapeRegex(), "");
 
-  // Reset regex state
-  CSI_REGEX.lastIndex = 0;
-
+  const csiRegex = createCsiRegex();
   let match: RegExpExecArray | null;
-  while ((match = CSI_REGEX.exec(cleaned)) !== null) {
+  while ((match = csiRegex.exec(cleaned)) !== null) {
     // Text before this escape sequence
     if (match.index > lastIndex) {
       const text = cleaned.slice(lastIndex, match.index);
@@ -258,6 +261,6 @@ function applySgr(current: AnsiStyle, params: string): AnsiStyle {
  */
 export function stripAnsi(input: string): string {
   return input
-    .replace(CSI_REGEX, "")
-    .replace(OTHER_ESCAPE_REGEX, "");
+    .replace(createCsiRegex(), "")
+    .replace(createOtherEscapeRegex(), "");
 }

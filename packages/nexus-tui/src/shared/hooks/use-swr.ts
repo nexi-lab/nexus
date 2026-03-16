@@ -99,6 +99,16 @@ export function useSwr<T>(
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
+  // Track the active key so in-flight fetches for stale keys are discarded (Bug 2)
+  const activeKeyRef = useRef(key);
+  activeKeyRef.current = key;
+
+  // Reset data to cached value (or undefined) when key changes (Bug 3)
+  useEffect(() => {
+    const cached = cache.get(key) as CacheEntry<T> | undefined;
+    setData(cached?.data);
+  }, [key]);
+
   const isStale = (() => {
     const cached = cache.get(key);
     if (!cached) return true;
@@ -106,16 +116,22 @@ export function useSwr<T>(
   })();
 
   const doFetch = useCallback(async () => {
+    const fetchKey = key; // capture for closure
     setIsLoading(true);
     setError(undefined);
     try {
       const result = await fetcherRef.current();
+      // Only update if this key is still the active one
+      if (activeKeyRef.current !== fetchKey) return;
       cache.set(key, { data: result, fetchedAt: Date.now() });
       setData(result);
     } catch (err) {
+      if (activeKeyRef.current !== fetchKey) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
-      setIsLoading(false);
+      if (activeKeyRef.current === fetchKey) {
+        setIsLoading(false);
+      }
     }
   }, [key]);
 

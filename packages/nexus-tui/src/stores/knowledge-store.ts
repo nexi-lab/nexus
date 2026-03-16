@@ -49,6 +49,7 @@ export interface KnowledgeState {
   readonly aspectsCache: ReadonlyMap<string, readonly string[]>;
   readonly aspectDetailCache: ReadonlyMap<string, AspectEntry>;
   readonly aspectsLoading: boolean;
+  readonly aspectDetailLoading: boolean;
 
   // Schema cache (keyed by URN)
   readonly schemaCache: ReadonlyMap<string, SchemaInfo | null>;
@@ -98,6 +99,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   aspectsCache: new Map(),
   aspectDetailCache: new Map(),
   aspectsLoading: false,
+  aspectDetailLoading: false,
   schemaCache: new Map(),
   schemaLoading: false,
   replayEntries: [],
@@ -135,7 +137,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const key = `${urn}::${name}`;
     if (get().aspectDetailCache.has(key)) return;
 
-    set({ aspectsLoading: true, error: null });
+    set({ aspectDetailLoading: true, error: null });
     try {
       const result = await client.get<{
         aspectName: string;
@@ -153,10 +155,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       };
       const newCache = new Map(get().aspectDetailCache);
       newCache.set(key, entry);
-      set({ aspectDetailCache: newCache, aspectsLoading: false });
+      set({ aspectDetailCache: newCache, aspectDetailLoading: false });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch aspect";
-      set({ aspectsLoading: false, error: message });
+      set({ aspectDetailLoading: false, error: message });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },

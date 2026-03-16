@@ -69,7 +69,7 @@ export interface WorkspaceState {
   readonly setSelectedMemoryIndex: (index: number) => void;
 }
 
-const SOURCE = "zones";
+const SOURCE = "workspaces";
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],

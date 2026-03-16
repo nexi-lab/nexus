@@ -38,7 +38,7 @@ const GLOBAL_BINDINGS: readonly KeyBinding[] = [
 const NAV_BINDINGS: readonly KeyBinding[] = [
   { key: "j/↓", action: "Move down" },
   { key: "k/↑", action: "Move up" },
-  { key: "gg", action: "Jump to top" },
+  { key: "g", action: "Jump to top" },
   { key: "G", action: "Jump to bottom" },
   { key: "Enter", action: "Select/expand" },
   { key: "Tab", action: "Switch pane/tab" },

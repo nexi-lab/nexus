@@ -9,6 +9,7 @@ import type { WorkflowTab } from "../../stores/workflows-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useUiStore } from "../../stores/ui-store.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
@@ -55,6 +56,8 @@ export default function WorkflowsPanel(): React.ReactNode {
   const setActiveTab = useWorkflowsStore((s) => s.setActiveTab);
   const setSelectedWorkflowIndex = useWorkflowsStore((s) => s.setSelectedWorkflowIndex);
   const setSelectedExecutionIndex = useWorkflowsStore((s) => s.setSelectedExecutionIndex);
+
+  const overlayActive = useUiStore((s) => s.overlayActive);
 
   // Track in-flight workflow execution
   const [executing, setExecuting] = useState(false);
@@ -119,7 +122,9 @@ export default function WorkflowsPanel(): React.ReactNode {
   };
 
   useKeyboard(
-    confirmDelete
+    overlayActive
+      ? {}
+      : confirmDelete
       ? {} // ConfirmDialog handles its own keys when visible
       : {
           j: () => {

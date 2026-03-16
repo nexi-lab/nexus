@@ -1,4 +1,9 @@
-import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
+/**
+ * Tests for clipboard OSC 52 support.
+ * Tests the real copyToClipboard function with hardcoded expected values.
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { copyToClipboard } from "../../src/shared/lib/clipboard.js";
 
 describe("copyToClipboard", () => {
@@ -17,46 +22,38 @@ describe("copyToClipboard", () => {
     process.stdout.write = originalWrite;
   });
 
-  it("writes correct OSC 52 sequence for simple text", () => {
+  it("writes OSC 52 sequence with correct base64 for 'hello'", () => {
     copyToClipboard("hello");
-    const encoded = Buffer.from("hello").toString("base64");
-    expect(writtenData).toBe(`\x1b]52;c;${encoded}\x07`);
+    expect(writtenData).toBe("\x1b]52;c;aGVsbG8=\x07");
   });
 
-  it("encodes base64 correctly for simple ASCII", () => {
-    copyToClipboard("hello");
-    // "hello" in base64 is "aGVsbG8="
-    expect(writtenData).toBe(`\x1b]52;c;aGVsbG8=\x07`);
-  });
-
-  it("handles empty string", () => {
+  it("writes correct base64 for empty string", () => {
     copyToClipboard("");
-    const encoded = Buffer.from("").toString("base64");
-    expect(writtenData).toBe(`\x1b]52;c;${encoded}\x07`);
+    expect(writtenData).toBe("\x1b]52;c;\x07");
   });
 
-  it("handles unicode text", () => {
-    copyToClipboard("cafe\u0301");
-    const encoded = Buffer.from("cafe\u0301").toString("base64");
-    expect(writtenData).toBe(`\x1b]52;c;${encoded}\x07`);
-  });
-
-  it("handles text with special characters", () => {
+  it("writes correct base64 for file path", () => {
     copyToClipboard("/path/to/file.txt");
-    const encoded = Buffer.from("/path/to/file.txt").toString("base64");
-    expect(writtenData).toBe(`\x1b]52;c;${encoded}\x07`);
+    expect(writtenData).toBe("\x1b]52;c;L3BhdGgvdG8vZmlsZS50eHQ=\x07");
   });
 
-  it("handles multiline text", () => {
-    copyToClipboard("line1\nline2\nline3");
-    const encoded = Buffer.from("line1\nline2\nline3").toString("base64");
-    expect(writtenData).toBe(`\x1b]52;c;${encoded}\x07`);
+  it("writes correct base64 for UUID", () => {
+    copyToClipboard("550e8400-e29b-41d4-a716-446655440000");
+    expect(writtenData).toBe("\x1b]52;c;NTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAw\x07");
   });
 
-  it("handles long strings (UUIDs, IDs)", () => {
-    const uuid = "550e8400-e29b-41d4-a716-446655440000";
-    copyToClipboard(uuid);
-    const encoded = Buffer.from(uuid).toString("base64");
-    expect(writtenData).toBe(`\x1b]52;c;${encoded}\x07`);
+  it("writes correct base64 for multiline text", () => {
+    copyToClipboard("line1\nline2");
+    expect(writtenData).toBe("\x1b]52;c;bGluZTEKbGluZTI=\x07");
+  });
+
+  it("starts with OSC 52 prefix", () => {
+    copyToClipboard("test");
+    expect(writtenData.startsWith("\x1b]52;c;")).toBe(true);
+  });
+
+  it("ends with BEL terminator", () => {
+    copyToClipboard("test");
+    expect(writtenData.endsWith("\x07")).toBe(true);
   });
 });

@@ -408,7 +408,7 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         readonly agent_id: string;
         readonly manifest_id: string;
         readonly trace?: EvaluationTraceResult;
-      }>(`/api/v2/access-manifests/${manifestId}/evaluate`, {
+      }>(`/api/v2/access-manifests/${encodeURIComponent(manifestId)}/evaluate`, {
         tool_name: toolName,
       });
       return {
@@ -474,7 +474,7 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         readonly agent_id: string;
         readonly count: number;
         readonly credentials: readonly Credential[];
-      }>(`/api/v2/agents/${agentId}/credentials`);
+      }>(`/api/v2/agents/${encodeURIComponent(agentId)}/credentials`);
       return { credentials: response.credentials };
     },
   }),

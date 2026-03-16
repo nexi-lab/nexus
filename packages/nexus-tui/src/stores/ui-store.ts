@@ -26,6 +26,9 @@ export interface UiState {
   /** Persisted scroll positions keyed by "panel:list" identifier. */
   readonly scrollPositions: Readonly<Record<string, number>>;
 
+  /** True when a global overlay (welcome, help, identity switcher) is active. */
+  readonly overlayActive: boolean;
+
   // Actions
   readonly setFocusPane: (panel: string, pane: FocusPane) => void;
   readonly toggleFocusPane: (panel: string) => void;
@@ -34,6 +37,7 @@ export interface UiState {
   readonly clearZoom: () => void;
   readonly setScrollPosition: (key: string, position: number) => void;
   readonly getScrollPosition: (key: string) => number;
+  readonly setOverlayActive: (active: boolean) => void;
 }
 
 // =============================================================================
@@ -44,6 +48,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   focusPane: {},
   zoomedPanel: null,
   scrollPositions: {},
+  overlayActive: false,
 
   setFocusPane: (panel, pane) => {
     set((state) => ({
@@ -81,5 +86,9 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   getScrollPosition: (key) => {
     return get().scrollPositions[key] ?? 0;
+  },
+
+  setOverlayActive: (active) => {
+    set({ overlayActive: active });
   },
 }));

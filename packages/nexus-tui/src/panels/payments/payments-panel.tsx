@@ -11,6 +11,7 @@ import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { useUiStore } from "../../stores/ui-store.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { BalanceCard } from "./balance-card.js";
@@ -39,6 +40,7 @@ const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
+  const overlayActive = useUiStore((s) => s.overlayActive);
   const { copy, copied } = useCopy();
   const [showTransfer, setShowTransfer] = useState(false);
   const [affordInputMode, setAffordInputMode] = useState(false);
@@ -99,6 +101,13 @@ export default function PaymentsPanel(): React.ReactNode {
   );
   const [selectedPolicyIndex, setSelectedPolicyIndex] = useState(0);
 
+  // Clamp selectedPolicyIndex when policies list shrinks (e.g. after delete)
+  useEffect(() => {
+    if (policies.length > 0 && selectedPolicyIndex >= policies.length) {
+      setSelectedPolicyIndex(Math.max(0, policies.length - 1));
+    }
+  }, [policies.length, selectedPolicyIndex]);
+
   const handleTransferSubmit = useCallback(
     async (to: string, amount: string, memo: string) => {
       if (!client) return;
@@ -136,18 +145,10 @@ export default function PaymentsPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, client]);
 
-  const handleAffordUnhandled = useCallback(
-    (keyName: string) => {
-      if (!affordInputMode) return;
-      if (keyName.length === 1 && /[\d.]/.test(keyName)) {
-        setAffordBuffer((b) => b + keyName);
-      }
-    },
-    [affordInputMode],
-  );
-
   useKeyboard(
-    showTransfer
+    overlayActive
+      ? {}
+      : showTransfer
       ? {}
       : affordInputMode
         ? {
@@ -204,39 +205,47 @@ export default function PaymentsPanel(): React.ReactNode {
             : {
           j: () => {
             if (activeTab === "reservations") {
+              if (reservations.length === 0) return;
               setSelectedReservationIndex(
-                Math.min(selectedReservationIndex + 1, reservations.length - 1),
+                Math.max(0, Math.min(selectedReservationIndex + 1, reservations.length - 1)),
               );
             } else if (activeTab === "transactions") {
+              if (transactions.length === 0) return;
               setSelectedTransactionIndex(
-                Math.min(selectedTransactionIndex + 1, transactions.length - 1),
+                Math.max(0, Math.min(selectedTransactionIndex + 1, transactions.length - 1)),
               );
             } else if (activeTab === "policies") {
+              if (policies.length === 0) return;
               setSelectedPolicyIndex(
-                Math.min(selectedPolicyIndex + 1, policies.length - 1),
+                Math.max(0, Math.min(selectedPolicyIndex + 1, policies.length - 1)),
               );
             } else if (activeTab === "approvals") {
+              if (approvals.length === 0) return;
               setSelectedApprovalIndex(
-                Math.min(selectedApprovalIndex + 1, approvals.length - 1),
+                Math.max(0, Math.min(selectedApprovalIndex + 1, approvals.length - 1)),
               );
             }
           },
           down: () => {
             if (activeTab === "reservations") {
+              if (reservations.length === 0) return;
               setSelectedReservationIndex(
-                Math.min(selectedReservationIndex + 1, reservations.length - 1),
+                Math.max(0, Math.min(selectedReservationIndex + 1, reservations.length - 1)),
               );
             } else if (activeTab === "transactions") {
+              if (transactions.length === 0) return;
               setSelectedTransactionIndex(
-                Math.min(selectedTransactionIndex + 1, transactions.length - 1),
+                Math.max(0, Math.min(selectedTransactionIndex + 1, transactions.length - 1)),
               );
             } else if (activeTab === "policies") {
+              if (policies.length === 0) return;
               setSelectedPolicyIndex(
-                Math.min(selectedPolicyIndex + 1, policies.length - 1),
+                Math.max(0, Math.min(selectedPolicyIndex + 1, policies.length - 1)),
               );
             } else if (activeTab === "approvals") {
+              if (approvals.length === 0) return;
               setSelectedApprovalIndex(
-                Math.min(selectedApprovalIndex + 1, approvals.length - 1),
+                Math.max(0, Math.min(selectedApprovalIndex + 1, approvals.length - 1)),
               );
             }
           },
@@ -382,7 +391,7 @@ export default function PaymentsPanel(): React.ReactNode {
             }
           },
         },
-    (affordInputMode || policyInputMode || approvalInputMode) ? (keyName: string) => {
+    (!overlayActive && (affordInputMode || policyInputMode || approvalInputMode)) ? (keyName: string) => {
       if (affordInputMode && keyName.length === 1 && /[\d.]/.test(keyName)) {
         setAffordBuffer((b) => b + keyName);
       } else if (policyInputMode && keyName.length === 1) {
@@ -516,7 +525,7 @@ export default function PaymentsPanel(): React.ReactNode {
             {showTransfer
               ? "Tab:next field  Enter:submit  Escape:cancel"
               : activeTab === "transactions"
-                ? "j/k:navigate  n:next page  p:prev page  i:verify integrity  y:copy  Tab:switch tab  r:refresh"
+                ? "j/k:navigate  ]:next  [:prev  i:verify integrity  y:copy  Tab:switch tab  r:refresh"
                 : activeTab === "policies"
                   ? "j/k:navigate  Tab:switch tab  Shift+N:new  d:delete  b:budget  r:refresh  q:quit"
                   : activeTab === "balance"

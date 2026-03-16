@@ -90,6 +90,7 @@ export default function AgentsPanel(): React.ReactNode {
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("agents"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+  const overlayActive = useUiStore((s) => s.overlayActive);
 
   // Clipboard copy
   const { copy, copied } = useCopy();
@@ -148,14 +149,16 @@ export default function AgentsPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAgentId, activeTab, client]);
 
-  useKeyboard({
+  useKeyboard(overlayActive ? {} : {
     j: () => {
       if (activeTab === "delegations") {
+        if (delegations.length === 0) return;
         setSelectedDelegationIndex(
-          Math.min(selectedDelegationIndex + 1, delegations.length - 1),
+          Math.max(0, Math.min(selectedDelegationIndex + 1, delegations.length - 1)),
         );
       } else {
-        setSelectedAgentIndex(Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1));
+        if (displayAgentIds.length === 0) return;
+        setSelectedAgentIndex(Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1)));
         const nextAgent = displayAgentIds[selectedAgentIndex + 1];
         if (nextAgent) {
           setSelectedAgentId(nextAgent);
@@ -164,11 +167,13 @@ export default function AgentsPanel(): React.ReactNode {
     },
     down: () => {
       if (activeTab === "delegations") {
+        if (delegations.length === 0) return;
         setSelectedDelegationIndex(
-          Math.min(selectedDelegationIndex + 1, delegations.length - 1),
+          Math.max(0, Math.min(selectedDelegationIndex + 1, delegations.length - 1)),
         );
       } else {
-        setSelectedAgentIndex(Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1));
+        if (displayAgentIds.length === 0) return;
+        setSelectedAgentIndex(Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1)));
         const nextAgent = displayAgentIds[selectedAgentIndex + 1];
         if (nextAgent) {
           setSelectedAgentId(nextAgent);

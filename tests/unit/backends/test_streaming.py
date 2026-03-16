@@ -479,7 +479,6 @@ class TestReadRangeRPC:
     async def test_read_range_basic(self, tmp_path: Path) -> None:
         """Test basic read_range functionality."""
         from nexus.backends.storage.cas_local import CASLocalBackend
-        from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
@@ -492,13 +491,11 @@ class TestReadRangeRPC:
         )
 
         try:
-            # Write a test file (padded above INLINE_THRESHOLD for CAS path)
-            prefix = b"0123456789ABCDEF"
-            padding = b"\x00" * (INLINE_THRESHOLD + 1)
-            content = prefix + padding
+            # Write a test file
+            content = b"0123456789ABCDEF"
             await nx.sys_write("/test.txt", content)
 
-            # Read ranges from the prefix portion
+            # Read ranges
             assert nx.read_range("/test.txt", 0, 5) == b"01234"
             assert nx.read_range("/test.txt", 5, 10) == b"56789"
             assert nx.read_range("/test.txt", 10, 16) == b"ABCDEF"
@@ -537,7 +534,6 @@ class TestReadRangeRPC:
     async def test_read_range_empty_range(self, tmp_path: Path) -> None:
         """Test read_range with empty range (start == end)."""
         from nexus.backends.storage.cas_local import CASLocalBackend
-        from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
@@ -550,7 +546,7 @@ class TestReadRangeRPC:
         )
 
         try:
-            content = b"test content" + b"\x00" * (INLINE_THRESHOLD + 1)
+            content = b"test content"
             await nx.sys_write("/test.txt", content)
 
             # Empty range should return empty bytes
@@ -562,7 +558,6 @@ class TestReadRangeRPC:
     async def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
         """Test read_range when range extends beyond file size."""
         from nexus.backends.storage.cas_local import CASLocalBackend
-        from nexus.contracts.constants import INLINE_THRESHOLD
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
@@ -575,7 +570,7 @@ class TestReadRangeRPC:
         )
 
         try:
-            content = b"short" + b"\x00" * (INLINE_THRESHOLD + 1)
+            content = b"short"
             await nx.sys_write("/test.txt", content)
 
             # Range beyond file size should return available content

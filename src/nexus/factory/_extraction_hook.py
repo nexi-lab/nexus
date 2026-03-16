@@ -25,36 +25,8 @@ logger = logging.getLogger(__name__)
 def _read_content(
     metadata: dict[str, Any],
     backend: Any,
-    metastore: Any,
-    path: str,
 ) -> bytes | None:
-    """Read file content from inline storage or CAS backend."""
-    from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
-
-    physical_path = metadata.get("physical_path", "")
-    if physical_path.startswith(INLINE_PREFIX):
-        # Inline: content stored base64-encoded in metastore.
-        # NexusFS stores: set_file_metadata(path, key, b64encode(content).decode("ascii"))
-        # NexusFS reads:  b64decode(get_file_metadata(path, key))
-        import base64
-
-        raw = metastore.get_file_metadata(path, INLINE_CONTENT_KEY)
-        if raw is None:
-            return None
-        # NexusFS stores base64(content) in the metastore.  The Raft
-        # metastore may add another base64 layer when storing string
-        # values, producing base64(base64(content)).  Use the known
-        # file size from metadata to detect whether a second decode
-        # is needed: base64 always changes the length, so if the
-        # first decode already matches the file size, it produced
-        # the original content.  If not, decode again.
-        expected_size = metadata.get("size", 0)
-        content = base64.b64decode(raw)
-        if expected_size and len(content) != expected_size:
-            content = base64.b64decode(content)
-        return content
-
-    # CAS: content stored in backend by hash
+    """Read file content from CAS backend."""
     content_hash = metadata.get("etag")
     if not content_hash:
         return None
@@ -66,7 +38,7 @@ def make_extraction_hook(
     *,
     session_factory: Callable[..., Any],
     backend: Any,
-    metastore: Any,
+    metastore: Any = None,  # noqa: ARG001 — kept for caller compatibility
     max_extract_bytes: int = 100 * 1024 * 1024,
 ) -> Callable[[list[dict[str, Any]]], None]:
     """Create a post-flush hook for async-on-write extraction.
@@ -74,7 +46,7 @@ def make_extraction_hook(
     Args:
         session_factory: RecordStore session factory for AspectService.
         backend: Storage backend with read_content(content_hash).
-        metastore: Metastore for reading inline content.
+        metastore: Metastore (unused, kept for API compatibility).
         max_extract_bytes: Max file size for auto-extraction (100MB).
 
     Returns:
@@ -119,9 +91,8 @@ def make_extraction_hook(
                         if size and size > max_extract_bytes:
                             continue
 
-                        # Read content: inline files are stored in the metastore,
-                        # CAS files are stored in the backend.
-                        content = _read_content(metadata, backend, metastore, path)
+                        # Read content from CAS backend
+                        content = _read_content(metadata, backend)
                         if content is None:
                             continue
 

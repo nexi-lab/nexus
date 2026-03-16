@@ -7,20 +7,11 @@ from pathlib import Path
 import pytest
 
 from nexus import CASLocalBackend, NexusFS
-from nexus.contracts.constants import INLINE_THRESHOLD
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-
-# Undo tests read content directly from CAS backend; content must exceed
-# INLINE_THRESHOLD to avoid the inline data path (Issue #1508).
-_CAS_PAD = b"\x00" * (INLINE_THRESHOLD + 1)
-
-
-def _cas(payload: bytes) -> bytes:
-    return payload + _CAS_PAD
 
 
 @pytest.fixture
@@ -304,8 +295,8 @@ async def test_undo_write_update(
 ) -> None:
     """Test undoing a write operation that updated an existing file."""
     path = "/test.txt"
-    content1 = _cas(b"Version 1")
-    content2 = _cas(b"Version 2")
+    content1 = b"Version 1"
+    content2 = b"Version 2"
 
     # Write initial version (use write() to get metadata dict with etag)
     result1 = await nx.write(path, content1)

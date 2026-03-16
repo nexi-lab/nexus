@@ -3,12 +3,10 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.storage.path_local import PathLocalBackend
-from nexus.contracts.constants import INLINE_THRESHOLD
 from nexus.factory.orchestrator import create_nexus_fs
 from tests.helpers.dict_metastore import DictMetastore
 
-# Content must exceed INLINE_THRESHOLD to go through the backend (Issue #1508).
-_LARGE_CONTENT = b"x" * (INLINE_THRESHOLD + 1)
+_LARGE_CONTENT = b"x" * 100
 
 
 @pytest.mark.asyncio

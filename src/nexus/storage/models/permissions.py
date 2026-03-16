@@ -233,6 +233,7 @@ class ReBACVersionSequenceModel(Base):
 
     __table_args__: tuple = ()
 
+
 class TigerResourceMapModel(Base):
     """Maps resource UUIDs to int64 IDs for Roaring Bitmap compatibility."""
 

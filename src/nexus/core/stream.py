@@ -21,8 +21,11 @@ Storage model (KERNEL-ARCHITECTURE.md):
 Data plane backed by Rust ``nexus_fast.StreamBufferCore``.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
+from typing import Protocol, runtime_checkable
 
 try:
     from nexus_fast import StreamBufferCore
@@ -54,6 +57,44 @@ class StreamClosedError(StreamError):
 
 class StreamNotFoundError(StreamError):
     """No stream registered at the given path."""
+
+
+# ---------------------------------------------------------------------------
+# StreamBackend protocol — pluggable transport tier
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class StreamBackend(Protocol):
+    """Protocol for stream data transport backends.
+
+    Pluggable transport tier for DT_STREAM (KERNEL-ARCHITECTURE.md §4.2).
+    StreamManager stores ``dict[str, StreamBackend]`` — all backends share
+    this interface so StreamManager is transport-agnostic.
+
+    Implementations:
+        StreamBuffer            — in-process append-only buffer (Rust, ~0.5μs)
+        [Future] SharedMemoryStreamBackend — mmap'd linear buffer (~1–5μs)
+    """
+
+    async def write(self, data: bytes, *, blocking: bool = True) -> int: ...
+    def write_nowait(self, data: bytes) -> int: ...
+    def read_at(self, byte_offset: int = 0) -> tuple[bytes, int]: ...
+    async def read(self, byte_offset: int = 0, *, blocking: bool = True) -> tuple[bytes, int]: ...
+    def read_batch(self, byte_offset: int = 0, count: int = 10) -> tuple[list[bytes], int]: ...
+    async def read_batch_blocking(
+        self, byte_offset: int = 0, count: int = 10, *, blocking: bool = True
+    ) -> tuple[list[bytes], int]: ...
+    def close(self) -> None: ...
+
+    @property
+    def closed(self) -> bool: ...
+
+    @property
+    def stats(self) -> dict: ...
+
+    @property
+    def tail(self) -> int: ...
 
 
 # ---------------------------------------------------------------------------

@@ -4,12 +4,6 @@
 //! `ZoneRaftRegistry`. There is no separate "single-zone" code path —
 //! a single-zone deployment is simply a registry with one zone.
 
-// TransportError contains tonic types that are large; will Box in future refactor.
-#![expect(
-    clippy::result_large_err,
-    reason = "TransportError contains tonic types; will Box large variants in transport refactor"
-)]
-
 use super::proto::nexus::raft::{
     raft_command::Command as ProtoCommandVariant,
     raft_query::Query as ProtoQueryVariant,
@@ -253,6 +247,7 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
             max_holders: 1, // Default to mutex
             ttl_secs: (al.ttl_ms / 1000) as u32,
             holder_info: al.holder_id,
+            now_secs: crate::prelude::FullStateMachine::now(),
         }),
         ProtoCommandVariant::ReleaseLock(rl) => Some(Command::ReleaseLock {
             path: rl.lock_id.clone(),
@@ -262,6 +257,7 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
             path: el.lock_id.clone(),
             lock_id: el.holder_id,
             new_ttl_secs: (el.ttl_ms / 1000) as u32,
+            now_secs: crate::prelude::FullStateMachine::now(),
         }),
     }
 }

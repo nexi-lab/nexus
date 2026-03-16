@@ -1,13 +1,15 @@
 """CAS + Local transport backend — full-featured local storage.
 
 Composes CASBackend (addressing) + LocalBlobTransport (I/O) +
-CDCEngine (chunking) + MultipartUpload (resumable uploads)
-using Feature DI for Bloom filter, content cache, and stripe lock.
+MultipartUpload (resumable uploads) using Feature DI for Bloom filter,
+content cache, stripe lock, and CDCEngine (chunking).
 
     CASLocalBackend = CASBackend(LocalBlobTransport)
-                    + CDCEngine           (CDC for large files, composed)
                     + MultipartUpload     (resumable uploads, ABC)
-                    + Feature DI          (Bloom, cache, stripe lock)
+                    + Feature DI          (Bloom, cache, stripe lock, CDC)
+
+CDC routing is handled by CASBackend base class via Feature DI —
+CASLocalBackend only instantiates and passes CDCEngine.
 
 Naming convention: {addressing}_{transport} per Section 5.2 of
 docs/architecture/backend-architecture.md.
@@ -33,11 +35,8 @@ from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -80,7 +79,8 @@ def _init_bloom(cas_root: Path, capacity: int, fp_rate: float) -> Any:
 class CASLocalBackend(CASBackend, MultipartUpload):
     """CAS addressing + local filesystem transport.
 
-    Uses CDCEngine via composition (not inheritance) for large file chunking.
+    CDCEngine is injected via CASBackend Feature DI (``self._cdc``).
+    CDC routing (write/read/delete) is handled by CASBackend base class.
     """
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
@@ -133,7 +133,9 @@ class CASLocalBackend(CASBackend, MultipartUpload):
 
         meta_cache: Any = cachetools.LRUCache(maxsize=10_000)
 
-        # Initialize CASBackend with Feature DI
+        # Initialize CASBackend with Feature DI (including CDC)
+        # CDCEngine requires a reference to the backend, so we create a
+        # temporary instance and wire it after super().__init__().
         super().__init__(
             transport,
             backend_name="local",
@@ -144,7 +146,7 @@ class CASLocalBackend(CASBackend, MultipartUpload):
             on_write_callback=on_write_callback,
         )
 
-        # CDCEngine via composition — accesses CASBackend internals
+        # CDCEngine needs self (CASBackend internals) — wire after init
         self._cdc = CDCEngine(self)
 
     @property
@@ -165,136 +167,13 @@ class CASLocalBackend(CASBackend, MultipartUpload):
 
     def _is_chunked_content(self, content_hash: str) -> bool:
         """Check if content was stored as CDC chunks."""
-        return self._cdc.is_chunked(content_hash)
+        if self._cdc is None:
+            return False
+        return bool(self._cdc.is_chunked(content_hash))
 
-    # === Content Operations (override CASBackend for CDC routing) ===
-
-    def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
-    ) -> WriteResult:
-        # Route large files to CDCEngine
-        if self._cdc.should_chunk(content):
-            content_hash = self._cdc.write_chunked(content, context)
-
-            # Feature DI: Bloom, cache, callback
-            if self._bloom is not None:
-                self._bloom.add(content_hash)
-            if self._cache is not None:
-                self._cache.put(content_hash, content)
-
-            return WriteResult(content_hash=content_hash, size=len(content))
-
-        # Small files: delegate to CASBackend (has Feature DI wiring)
-        return super().write_content(content, context=context)
-
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
-        # Check cache first
-        if self._cache is not None:
-            cached: bytes | None = self._cache.get(content_hash)
-            if cached is not None:
-                return cached
-
-        # Check if chunked
-        if self._cdc.is_chunked(content_hash):
-            try:
-                content = self._cdc.read_chunked(content_hash, context)
-                if self._cache is not None:
-                    self._cache.put(content_hash, content)
-                return content
-            except FileNotFoundError:
-                raise NexusFileNotFoundError(
-                    path=content_hash,
-                    message=f"Chunked content not found: {content_hash}",
-                ) from None
-
-        # Single blob: delegate to CASBackend (has cache wiring)
-        return super().read_content(content_hash, context=context)
-
-    def read_content_range(
-        self,
-        content_hash: str,
-        start: int,
-        end: int,
-        context: "OperationContext | None" = None,
-    ) -> bytes:
-        """Read a byte range [start, end) without loading the full file.
-
-        Optimised path for CASLocalBackend:
-        - Content cache hit: slice cached content.
-        - Chunked content: delegate to CDCEngine.read_chunked_range().
-        - Single blob: read full content, verify hash, then slice.
-        """
-        # Feature DI: content cache hit → slice
-        if self._cache is not None:
-            cached: bytes | None = self._cache.get(content_hash)
-            if cached is not None:
-                return cached[start:end]
-
-        # Chunked content → range-aware chunk read
-        if self._cdc.is_chunked(content_hash):
-            return self._cdc.read_chunked_range(content_hash, start, end)
-
-        # Single blob: read, verify integrity, then slice
-        key = self._blob_key(content_hash)
-        try:
-            data, _ = self._transport.get_blob(key)
-
-            actual_hash = hash_content(data)
-            if actual_hash != content_hash:
-                raise BackendError(
-                    f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                    backend=self.name,
-                    path=content_hash,
-                )
-
-            content = bytes(data)
-
-            # Populate content cache on miss
-            if self._cache is not None:
-                self._cache.put(content_hash, content)
-
-            return content[start:end]
-
-        except NexusFileNotFoundError:
-            raise
-        except BackendError:
-            raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to read content range: {e}",
-                backend=self.name,
-                path=content_hash,
-            ) from e
-
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
-        # Check if chunked
-        if self._cdc.is_chunked(content_hash):
-            self._cdc.delete_chunked(content_hash, context)
-            return
-
-        # Single blob: delegate to CASBackend
-        super().delete_content(content_hash, context=context)
-
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
-        key = self._blob_key(content_hash)
-        if not self._transport.blob_exists(key):
-            raise NexusFileNotFoundError(
-                path=content_hash,
-                message=f"CAS content not found: {content_hash}",
-            )
-        if self._cdc.is_chunked(content_hash):
-            return self._cdc.get_size(content_hash)
-        return self._transport.get_blob_size(key)
-
-    def write_stream(
-        self,
-        chunks: "Iterator[bytes]",
-        context: "OperationContext | None" = None,
-    ) -> WriteResult:
-        # Delegate to CASBackend's streaming write (temp file + incremental hash).
-        # CDC routing is not applied here — CDC is triggered by write_content
-        # only for large payloads already in memory.
-        return super().write_stream(chunks, context=context)
+    # Content operations (write_content, read_content, delete_content,
+    # get_content_size, read_content_range) — all inherited from CASBackend
+    # which handles CDC routing via Feature DI (self._cdc).
 
     # === Directory Operations (local FS native, not blob markers) ===
 

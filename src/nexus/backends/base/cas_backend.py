@@ -13,12 +13,13 @@ The transport is INTERNAL — callers never see BlobTransport.  They see Backend
 Thin subclasses exist for: registration, CONNECTION_ARGS, connector-specific
 features (batch reads, signed URLs, versioning).
 
-Feature DI (optional, local-only optimizations):
+Feature DI (optional optimizations):
     bloom_filter  — Bloom pre-check for fast content_exists() miss
     content_cache — In-memory cache for read_content() hot path
     meta_cache    — LRU cache for _read_meta() hot path (e.g. cachetools.LRUCache)
     stripe_lock   — Per-hash threading.Lock for metadata read-modify-write
     on_write_callback — Write notification (e.g. Zoekt reindex)
+    cdc_engine    — ChunkingStrategy for large file chunking (CDC)
 
 Storage layout (in transport key-space):
     cas/<hash[0:2]>/<hash[2:4]>/<hash>       # Content blob
@@ -46,6 +47,7 @@ from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
+    from nexus.backends.engines.cdc import ChunkingStrategy
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -80,12 +82,13 @@ class CASBackend(Backend):
         transport: BlobTransport,
         *,
         backend_name: str | None = None,
-        # Feature DI — local-only optimizations, all None-safe
+        # Feature DI — optional optimizations, all None-safe
         bloom_filter: Any | None = None,
         content_cache: Any | None = None,
         meta_cache: Any | None = None,
         stripe_lock: Any | None = None,
         on_write_callback: Any | None = None,
+        cdc_engine: "ChunkingStrategy | None" = None,
     ) -> None:
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
@@ -97,6 +100,7 @@ class CASBackend(Backend):
         self._meta_cache_misses = 0
         self._stripe_lock = stripe_lock  # stripe_lock._StripeLock
         self._on_write_callback = on_write_callback
+        self._cdc: ChunkingStrategy | None = cdc_engine
 
     @property
     def name(self) -> str:
@@ -212,6 +216,18 @@ class CASBackend(Backend):
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
     ) -> WriteResult:
+        # Feature DI: CDC routing for large files
+        if self._cdc is not None and self._cdc.should_chunk(content):
+            content_hash = self._cdc.write_chunked(content, context)
+
+            # Feature DI: Bloom filter + content cache
+            if self._bloom is not None:
+                self._bloom.add(content_hash)
+            if self._cache is not None:
+                self._cache.put(content_hash, content)
+
+            return WriteResult(content_hash=content_hash, size=len(content))
+
         content_hash = hash_content(content)
         key = self._blob_key(content_hash)
 
@@ -259,6 +275,13 @@ class CASBackend(Backend):
             if cached is not None:
                 return cached
 
+        # Feature DI: CDC chunked content
+        if self._cdc is not None and self._cdc.is_chunked(content_hash):
+            chunked_content: bytes = self._cdc.read_chunked(content_hash, context)
+            if self._cache is not None:
+                self._cache.put(content_hash, chunked_content)
+            return chunked_content
+
         key = self._blob_key(content_hash)
 
         try:
@@ -293,6 +316,11 @@ class CASBackend(Backend):
             ) from e
 
     def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+        # Feature DI: CDC chunked content
+        if self._cdc is not None and self._cdc.is_chunked(content_hash):
+            self._cdc.delete_chunked(content_hash, context)
+            return
+
         key = self._blob_key(content_hash)
 
         try:
@@ -345,6 +373,11 @@ class CASBackend(Backend):
             return False
 
     def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        # Feature DI: CDC chunked content
+        if self._cdc is not None and self._cdc.is_chunked(content_hash):
+            size: int = self._cdc.get_size(content_hash)
+            return size
+
         key = self._blob_key(content_hash)
 
         try:
@@ -357,6 +390,35 @@ class CASBackend(Backend):
                 backend=self.name,
                 path=content_hash,
             ) from e
+
+    def read_content_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        context: "OperationContext | None" = None,
+    ) -> bytes:
+        """Read a byte range [start, end) from stored content.
+
+        Optimised path when CDC is enabled:
+        - Content cache hit: slice cached content.
+        - Chunked content: delegate to CDCEngine.read_chunked_range().
+        - Single blob: read full content, verify hash, then slice.
+        """
+        # Feature DI: content cache hit → slice
+        if self._cache is not None:
+            cached: bytes | None = self._cache.get(content_hash)
+            if cached is not None:
+                return cached[start:end]
+
+        # Feature DI: CDC chunked content → range-aware chunk read
+        if self._cdc is not None and self._cdc.is_chunked(content_hash):
+            range_data: bytes = self._cdc.read_chunked_range(content_hash, start, end, context)
+            return range_data
+
+        # Single blob: read, verify integrity, then slice
+        content = self.read_content(content_hash, context=context)
+        return content[start:end]
 
     def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         if not self.content_exists(content_hash, context=context):

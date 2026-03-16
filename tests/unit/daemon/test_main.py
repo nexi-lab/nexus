@@ -22,6 +22,8 @@ from nexus.daemon.main import (
     _is_nexusd_process,
     _JsonLogFormatter,
     _manage_pid_file,
+    _print_lifecycle_detail,
+    _print_lifecycle_summary,
     _redact_url,
     main,
 )
@@ -389,3 +391,124 @@ class TestMainCli:
         call_args = mock_connect.call_args
         config = call_args.kwargs.get("config") or call_args.args[0]
         assert config["profile"] == "full"
+
+    def test_main_lifecycle_summary_shown(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Lifecycle summary line appears for non-innovation profiles (Issue #1578)."""
+        import sys
+        import types
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        # Build mock with lifecycle coordinator
+        mock_q = MagicMock(is_persistent=True, is_hot_swappable=False)
+        mock_q2 = MagicMock(is_persistent=False, is_hot_swappable=True)
+        mock_coordinator = MagicMock()
+        mock_coordinator.classify_all.return_value = {"svc_a": mock_q, "svc_b": mock_q2}
+
+        mock_nx = MagicMock()
+        mock_nx._lifecycle_coordinator = mock_coordinator
+        mock_connect = AsyncMock(return_value=mock_nx)
+
+        mock_app = MagicMock()
+        mock_create_app = MagicMock(return_value=mock_app)
+        mock_run_server = MagicMock()
+
+        fake_mod = types.ModuleType("nexus.server.fastapi_server")
+        fake_mod.create_app = mock_create_app
+        fake_mod.run_server = mock_run_server
+        monkeypatch.setitem(sys.modules, "nexus.server.fastapi_server", fake_mod)
+
+        with patch("nexus.connect", mock_connect):
+            runner = CliRunner()
+            result = runner.invoke(main, ["--profile", "full"])
+
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+        assert "Lifecycle:" in result.output
+        assert "2 services" in result.output
+        assert "distro=persistent" in result.output
+        # Not innovation — no quadrant detail
+        assert "[validation]" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# _print_lifecycle_summary / _print_lifecycle_detail (Issue #1578)
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleReport:
+    """Unit tests for lifecycle summary and detail functions."""
+
+    def test_summary_with_coordinator(self, capsys) -> None:
+        mock_q1 = MagicMock(is_persistent=True, is_hot_swappable=True)
+        mock_q2 = MagicMock(is_persistent=False, is_hot_swappable=True)
+        mock_q3 = MagicMock(is_persistent=True, is_hot_swappable=False)
+        coordinator = MagicMock()
+        coordinator.classify_all.return_value = {
+            "a": mock_q1,
+            "b": mock_q2,
+            "c": mock_q3,
+        }
+        nx = MagicMock()
+        nx._lifecycle_coordinator = coordinator
+
+        _print_lifecycle_summary(nx)
+        out = capsys.readouterr().out
+
+        assert "Lifecycle:" in out
+        assert "3 services" in out
+        assert "2 hot-swappable" in out
+        assert "2 persistent" in out
+        assert "distro=persistent" in out
+
+    def test_summary_invocation_only(self, capsys) -> None:
+        mock_q = MagicMock(is_persistent=False, is_hot_swappable=False)
+        coordinator = MagicMock()
+        coordinator.classify_all.return_value = {"svc": mock_q}
+        nx = MagicMock()
+        nx._lifecycle_coordinator = coordinator
+
+        _print_lifecycle_summary(nx)
+        out = capsys.readouterr().out
+
+        assert "distro=invocation-only" in out
+
+    def test_summary_no_coordinator(self, capsys) -> None:
+        nx = MagicMock(spec=[])  # no attributes at all
+        _print_lifecycle_summary(nx)
+        out = capsys.readouterr().out
+        assert out == ""
+
+    def test_summary_exception_swallowed(self, capsys) -> None:
+        coordinator = MagicMock()
+        coordinator.classify_all.side_effect = RuntimeError("boom")
+        nx = MagicMock()
+        nx._lifecycle_coordinator = coordinator
+
+        _print_lifecycle_summary(nx)  # should not raise
+        out = capsys.readouterr().out
+        assert out == ""
+
+    def test_detail_shows_quadrants(self, capsys) -> None:
+        mock_q = MagicMock(label="Q1 (static)")
+        mock_q2 = MagicMock(label="Q3 (persistent)")
+        coordinator = MagicMock()
+        coordinator.classify_all.return_value = {"svc_a": mock_q, "svc_b": mock_q2}
+        nx = MagicMock()
+        nx._lifecycle_coordinator = coordinator
+
+        _print_lifecycle_detail(nx)
+        out = capsys.readouterr().out
+
+        assert "[validation] Service quadrant report:" in out
+        assert "Q1 (static): svc_a" in out
+        assert "Q3 (persistent): svc_b" in out
+
+    def test_detail_no_coordinator(self, capsys) -> None:
+        nx = MagicMock(spec=[])
+        _print_lifecycle_detail(nx)
+        out = capsys.readouterr().out
+        assert "not available" in out

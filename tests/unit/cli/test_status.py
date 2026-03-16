@@ -175,4 +175,4 @@ class TestStatusCommand:
         }
         result = cli_runner.invoke(status, ["--url", "http://remote:3000"])
         assert result.exit_code == 0
-        mock_collect.assert_called_once_with("http://remote:3000", None)
+        mock_collect.assert_called_once_with("http://remote:3000", None, None)

@@ -166,23 +166,55 @@ impl RaftStorage {
     }
 
     /// Apply a snapshot (receiver side — clears log and updates state).
+    ///
+    /// All four operations (update first_index, clear entries, save snapshot,
+    /// update conf state) are performed in a **single redb WriteTransaction**
+    /// so a crash cannot leave storage internally inconsistent.
     pub fn apply_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
         let meta = snapshot.get_metadata();
 
-        // Update first_index to snapshot index + 1
-        let new_first = meta.index + 1;
-        self.state.set(KEY_FIRST_INDEX, &new_first.to_be_bytes())?;
-
-        // Clear old entries
-        self.entries.clear()?;
-
-        // Save snapshot
-        let value = protobuf::Message::write_to_bytes(snapshot)
+        // Serialize before opening the transaction
+        let snapshot_bytes = protobuf::Message::write_to_bytes(snapshot)
             .map_err(|e| RaftError::Serialization(e.to_string()))?;
-        self.state.set(KEY_SNAPSHOT, &value)?;
+        let conf_state_bytes = protobuf::Message::write_to_bytes(meta.get_conf_state())
+            .map_err(|e| RaftError::Serialization(e.to_string()))?;
+        let new_first = meta.index + 1;
 
-        // Update conf state from snapshot
-        self.set_conf_state(meta.get_conf_state())?;
+        // Single atomic transaction across both tables
+        let db = self.state.raw_db();
+        let state_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.state.name());
+        let entries_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.entries.name());
+
+        let write_txn = db
+            .begin_write()
+            .map_err(|e| RaftError::Storage(e.to_string()))?;
+        {
+            // Update first_index and save snapshot + conf state
+            let mut state_table = write_txn
+                .open_table(state_def)
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+            state_table
+                .insert(KEY_FIRST_INDEX, new_first.to_be_bytes().as_slice())
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+            state_table
+                .insert(KEY_SNAPSHOT, snapshot_bytes.as_slice())
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+            state_table
+                .insert(KEY_CONF_STATE, conf_state_bytes.as_slice())
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+
+            // Clear old entries: delete and recreate the entries table
+            drop(state_table);
+            write_txn
+                .delete_table(entries_def)
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+            write_txn
+                .open_table(entries_def)
+                .map_err(|e| RaftError::Storage(e.to_string()))?;
+        }
+        write_txn
+            .commit()
+            .map_err(|e| RaftError::Storage(e.to_string()))?;
 
         Ok(())
     }
@@ -441,5 +473,113 @@ mod tests {
             .entries(5, 11, None, raft::GetEntriesContext::empty(false))
             .unwrap();
         assert_eq!(entries.len(), 6);
+    }
+
+    // ---------------------------------------------------------------
+    // Snapshot apply tests (Issue #3031 / 9A)
+    // ---------------------------------------------------------------
+
+    fn make_snapshot(index: u64, term: u64, voters: &[u64]) -> Snapshot {
+        let mut snap = Snapshot::default();
+        let meta = snap.mut_metadata();
+        meta.index = index;
+        meta.term = term;
+        let cs = meta.mut_conf_state();
+        cs.voters = voters.to_vec();
+        snap.data = format!("snapshot-at-{}", index).into_bytes().into();
+        snap
+    }
+
+    #[test]
+    fn test_apply_snapshot_basic() {
+        let (storage, _dir) = create_test_storage();
+
+        let snap = make_snapshot(10, 2, &[1, 2, 3]);
+        storage.apply_snapshot(&snap).unwrap();
+
+        // Verify first_index updated
+        assert_eq!(storage.first_index().unwrap(), 11);
+
+        // Verify snapshot is readable
+        let stored = storage.snapshot(0, 0).unwrap();
+        assert_eq!(stored.get_metadata().index, 10);
+        assert_eq!(stored.get_metadata().term, 2);
+
+        // Verify conf state updated
+        let state = storage.initial_state().unwrap();
+        assert_eq!(state.conf_state.voters, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_apply_snapshot_clears_existing_entries() {
+        let (storage, _dir) = create_test_storage();
+
+        // Append some entries first
+        let mut entries = vec![];
+        for i in 1..=5 {
+            let mut entry = Entry::default();
+            entry.index = i;
+            entry.term = 1;
+            entry.data = format!("data-{}", i).into_bytes().into();
+            entries.push(entry);
+        }
+        storage.append(&entries).unwrap();
+        assert_eq!(storage.last_index().unwrap(), 5);
+
+        // Apply snapshot at index 10 — should clear all entries
+        let snap = make_snapshot(10, 2, &[1, 2]);
+        storage.apply_snapshot(&snap).unwrap();
+
+        // Old entries should be gone (first_index = 11, last_index = 10 i.e. empty)
+        assert_eq!(storage.first_index().unwrap(), 11);
+        let result = storage.entries(1, 6, None, raft::GetEntriesContext::empty(false));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_apply_snapshot_overwrites_previous_snapshot() {
+        let (storage, _dir) = create_test_storage();
+
+        // Apply first snapshot
+        let snap1 = make_snapshot(5, 1, &[1, 2]);
+        storage.apply_snapshot(&snap1).unwrap();
+        assert_eq!(storage.first_index().unwrap(), 6);
+
+        // Apply second snapshot at higher index
+        let snap2 = make_snapshot(15, 3, &[1, 2, 3, 4]);
+        storage.apply_snapshot(&snap2).unwrap();
+
+        // Verify second snapshot overwrites first
+        assert_eq!(storage.first_index().unwrap(), 16);
+        let stored = storage.snapshot(0, 0).unwrap();
+        assert_eq!(stored.get_metadata().index, 15);
+        assert_eq!(stored.get_metadata().term, 3);
+        let state = storage.initial_state().unwrap();
+        assert_eq!(state.conf_state.voters, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_apply_snapshot_persists_across_reopen() {
+        let dir = TempDir::new().unwrap();
+
+        // Apply snapshot and drop storage
+        {
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            let snap = make_snapshot(20, 5, &[1, 2, 3]);
+            storage.apply_snapshot(&snap).unwrap();
+        }
+
+        // Reopen and verify all fields persisted atomically
+        {
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            assert_eq!(storage.first_index().unwrap(), 21);
+
+            let stored = storage.snapshot(0, 0).unwrap();
+            assert_eq!(stored.get_metadata().index, 20);
+            assert_eq!(stored.get_metadata().term, 5);
+
+            let state = storage.initial_state().unwrap();
+            assert_eq!(state.conf_state.voters, vec![1, 2, 3]);
+        }
     }
 }

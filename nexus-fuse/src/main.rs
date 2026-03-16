@@ -30,9 +30,13 @@ enum Commands {
         #[arg(long, env = "NEXUS_URL")]
         url: String,
 
-        /// Nexus API key
+        /// Nexus API key (DEPRECATED: use --api-key-file instead)
         #[arg(long, env = "NEXUS_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
+
+        /// Path to a file containing the Nexus API key
+        #[arg(long)]
+        api_key_file: Option<PathBuf>,
 
         /// Allow other users to access the mount
         #[arg(long, default_value = "false")]
@@ -52,9 +56,13 @@ enum Commands {
         #[arg(long, env = "NEXUS_URL")]
         url: String,
 
-        /// Nexus API key
+        /// Nexus API key (DEPRECATED: use --api-key-file instead)
         #[arg(long, env = "NEXUS_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
+
+        /// Path to a file containing the Nexus API key
+        #[arg(long)]
+        api_key_file: Option<PathBuf>,
 
         /// Unix socket path (default: /tmp/nexus-fuse-{pid}.sock)
         #[arg(long)]
@@ -68,6 +76,31 @@ enum Commands {
     Version,
 }
 
+/// Resolve the API key from --api-key-file or --api-key (Issue 17A).
+///
+/// Resolution order: --api-key-file > --api-key / NEXUS_API_KEY.
+/// Using --api-key prints a deprecation warning to stderr.
+fn resolve_api_key(api_key: Option<String>, api_key_file: Option<PathBuf>) -> anyhow::Result<String> {
+    if let Some(path) = api_key_file {
+        let key = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read API key file {}: {}", path.display(), e))?;
+        return Ok(key.trim().to_string());
+    }
+
+    if let Some(key) = api_key {
+        eprintln!(
+            "WARNING: --api-key / NEXUS_API_KEY is deprecated and will be removed in a future release. \
+             Use --api-key-file instead to avoid leaking secrets via process arguments."
+        );
+        return Ok(key);
+    }
+
+    Err(anyhow::anyhow!(
+        "No API key provided. Use --api-key-file <path> to supply a key, \
+         or set NEXUS_API_KEY (deprecated)."
+    ))
+}
+
 fn main() -> anyhow::Result<()> {
     // Initialize logging
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -79,10 +112,13 @@ fn main() -> anyhow::Result<()> {
             mount_point,
             url,
             api_key,
+            api_key_file,
             allow_other,
             foreground,
             agent_id,
         } => {
+            let api_key = resolve_api_key(api_key, api_key_file)?;
+
             info!("Nexus FUSE client starting...");
             info!("Server URL: {}", url);
             info!("Mount point: {}", mount_point.display());
@@ -149,9 +185,12 @@ fn main() -> anyhow::Result<()> {
         Commands::Daemon {
             url,
             api_key,
+            api_key_file,
             socket,
             agent_id,
         } => {
+            let api_key = resolve_api_key(api_key, api_key_file)?;
+
             // Determine socket path
             let socket_path = socket.unwrap_or_else(|| {
                 let pid = std::process::id();

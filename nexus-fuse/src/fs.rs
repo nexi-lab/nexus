@@ -524,35 +524,58 @@ impl Filesystem for NexusFs {
             (ino, FileType::Directory, "..".to_string()),
         ];
 
-        for entry in &entries {
-            let child_path = Self::join_path(&path, &entry.name);
-            let child_inode = self.inodes.lock().unwrap().get_or_create(&child_path);
-            let kind = if entry.entry_type == "directory" {
-                FileType::Directory
-            } else {
-                FileType::RegularFile
-            };
+        // Phase 1: Acquire inodes lock once, resolve all child inodes, release.
+        // This maintains lock ordering (inodes before attr_cache) and avoids
+        // re-acquiring per entry (Issue 15A).
+        let child_info: Vec<(u64, FileType, String)> = {
+            let mut inodes = self.inodes.lock().unwrap();
+            entries
+                .iter()
+                .map(|entry| {
+                    let child_path = Self::join_path(&path, &entry.name);
+                    let child_inode = inodes.get_or_create(&child_path);
+                    let kind = if entry.entry_type == "directory" {
+                        FileType::Directory
+                    } else {
+                        FileType::RegularFile
+                    };
+                    (child_inode, kind, entry.name.clone())
+                })
+                .collect()
+        }; // inodes lock released here
 
-            // Pre-populate attr_cache from list() response to avoid N stat() calls
-            // when kernel calls lookup()/getattr() for each entry
-            let entry_type = if entry.entry_type == "directory" {
-                "directory"
-            } else {
-                "file"
-            };
-            let attr = self.make_attr(
-                child_inode,
-                entry_type,
-                entry.size,
-                entry.created_at.as_ref(),
-                entry.updated_at.as_ref(),
-            );
-            self.attr_cache
-                .lock()
-                .unwrap()
-                .put(child_inode, (attr, SystemTime::now()));
+        // Build attrs outside any lock (pure computation)
+        let attrs: Vec<(u64, FileAttr)> = entries
+            .iter()
+            .zip(child_info.iter())
+            .map(|(entry, (child_inode, _, _))| {
+                let entry_type = if entry.entry_type == "directory" {
+                    "directory"
+                } else {
+                    "file"
+                };
+                let attr = self.make_attr(
+                    *child_inode,
+                    entry_type,
+                    entry.size,
+                    entry.created_at.as_ref(),
+                    entry.updated_at.as_ref(),
+                );
+                (*child_inode, attr)
+            })
+            .collect();
 
-            all_entries.push((child_inode, kind, entry.name.clone()));
+        // Phase 2: Acquire attr_cache lock once, populate all entries, release.
+        {
+            let now = SystemTime::now();
+            let mut cache = self.attr_cache.lock().unwrap();
+            for (child_inode, attr) in &attrs {
+                cache.put(*child_inode, (*attr, now));
+            }
+        } // attr_cache lock released here
+
+        for (child_inode, kind, name) in child_info {
+            all_entries.push((child_inode, kind, name));
         }
 
         // Return entries starting from offset

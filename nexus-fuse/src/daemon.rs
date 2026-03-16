@@ -101,6 +101,19 @@ impl Daemon {
 
         // Create Unix socket listener
         let listener = UnixListener::bind(&self.config.socket_path)?;
+
+        // Restrict socket permissions to owner-only (Issue 18A).
+        // Prevents other users on the same host from connecting to the daemon
+        // and issuing API calls with the owner's credentials.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                &self.config.socket_path,
+                std::fs::Permissions::from_mode(0o700),
+            )?;
+        }
+
         info!(
             "Rust FUSE daemon listening on {}",
             self.config.socket_path.display()

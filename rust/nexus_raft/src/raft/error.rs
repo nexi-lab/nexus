@@ -47,6 +47,10 @@ pub enum RaftError {
     /// The actor channel was closed (driver dropped).
     #[error("raft actor channel closed")]
     ChannelClosed,
+
+    /// The actor channel is full — backpressure.
+    #[error("raft actor channel full (capacity {0}), driver overloaded")]
+    ChannelFull(usize),
 }
 
 impl From<crate::storage::StorageError> for RaftError {

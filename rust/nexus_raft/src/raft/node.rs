@@ -62,6 +62,26 @@ use super::state_machine::StateMachine;
 use super::storage::RaftStorage;
 use super::{Command, CommandResult, RaftError, Result};
 
+/// Capacity of the bounded channel between [`ZoneConsensus`] handles and the
+/// [`ZoneConsensusDriver`] actor. Provides backpressure under sustained
+/// overload or network partitions, preventing unbounded memory growth.
+/// 256 aligns with tokio's internal 32-message block allocation.
+const DRIVER_CHANNEL_CAPACITY: usize = 256;
+
+/// Convert a bounded channel `TrySendError` to a `RaftError`.
+fn channel_try_send_err<T>(e: mpsc::error::TrySendError<T>) -> RaftError {
+    match e {
+        mpsc::error::TrySendError::Full(_) => {
+            tracing::warn!(
+                capacity = DRIVER_CHANNEL_CAPACITY,
+                "raft driver channel full, applying backpressure"
+            );
+            RaftError::ChannelFull(DRIVER_CHANNEL_CAPACITY)
+        }
+        mpsc::error::TrySendError::Closed(_) => RaftError::ChannelClosed,
+    }
+}
+
 #[cfg(all(feature = "grpc", has_protos))]
 use crate::transport::{NodeAddress, SharedPeerMap};
 
@@ -228,8 +248,10 @@ pub enum RaftMsg {
 /// This type is `Clone + Send + Sync` and can be freely shared across
 /// gRPC handlers, PyO3, and other contexts.
 pub struct ZoneConsensus<S: StateMachine + 'static> {
-    /// Channel sender to the driver actor.
-    msg_tx: mpsc::UnboundedSender<RaftMsg>,
+    /// Bounded channel sender to the driver actor.
+    /// Capacity: [`DRIVER_CHANNEL_CAPACITY`]. Provides backpressure when
+    /// the driver cannot keep up with incoming messages.
+    msg_tx: mpsc::Sender<RaftMsg>,
     /// Shared state machine for read-only queries (no channel needed).
     state_machine: Arc<RwLock<S>>,
     /// Node configuration.
@@ -290,8 +312,8 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     proposal_id: Arc<AtomicU64>,
     /// Last tick time.
     last_tick: Instant,
-    /// Channel receiver — messages from the handle.
-    msg_rx: mpsc::UnboundedReceiver<RaftMsg>,
+    /// Bounded channel receiver — messages from the handle.
+    msg_rx: mpsc::Receiver<RaftMsg>,
     /// Cached role (shared with handle for reads).
     cached_role: Arc<AtomicU8>,
     /// Cached leader ID (shared with handle for reads).
@@ -394,8 +416,8 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let cached_leader_id = Arc::new(AtomicU64::new(0));
         let cached_term = Arc::new(AtomicU64::new(0));
 
-        // Channel
-        let (msg_tx, msg_rx) = mpsc::unbounded_channel();
+        // Bounded channel with backpressure
+        let (msg_tx, msg_rx) = mpsc::channel(DRIVER_CHANNEL_CAPACITY);
 
         let handle = ZoneConsensus {
             msg_tx,
@@ -508,12 +530,12 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let (tx, rx) = oneshot::channel();
 
         self.msg_tx
-            .send(RaftMsg::Propose {
+            .try_send(RaftMsg::Propose {
                 data,
                 proposal_id: 0, // driver assigns real ID
                 tx,
             })
-            .map_err(|_| RaftError::ChannelClosed)?;
+            .map_err(channel_try_send_err)?;
 
         Ok(rx)
     }
@@ -551,9 +573,12 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
     /// True Local-First EC write — bypasses Raft entirely.
     ///
-    /// Applies the command directly to the local state machine, then appends
-    /// to the replication WAL. Returns the WAL sequence number as a write token.
-    /// Callers can later poll [`is_committed`] to check replication status.
+    /// Appends to the replication WAL first, then applies to the local state
+    /// machine. WAL-first ordering ensures crash safety: if we crash after
+    /// WAL append but before local apply, the entry is recoverable via
+    /// replication (peers will receive it, and the local state will reconcile
+    /// on the next apply). The reverse order (apply-first) would leave local
+    /// state ahead of the WAL, permanently losing the write from replication.
     ///
     /// Only metadata operations (SetMetadata, DeleteMetadata) are supported.
     /// Lock operations require linearizability and must use SC ([`propose`]).
@@ -567,14 +592,18 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         // Serialize command for WAL before acquiring lock
         let command_bytes = bincode::serialize(&command)?;
 
+        // WAL-first: append to replication log before local apply.
+        // This ensures the write is durable and replicable even if we
+        // crash before applying to the local state machine.
+        let seq = repl_log.append(&command_bytes)?;
+
         // Apply to local state machine (write lock)
         {
             let mut sm = self.state_machine.write().await;
             sm.apply_local(&command)?;
         }
 
-        // Append to replication WAL → returns write token
-        repl_log.append(&command_bytes)
+        Ok(seq)
     }
 
     /// Apply an EC entry received from a peer (Phase C receiver side).
@@ -627,8 +656,8 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
         let (tx, rx) = oneshot::channel();
         self.msg_tx
-            .send(RaftMsg::ProposeConfChange { change: cc, tx })
-            .map_err(|_| RaftError::ChannelClosed)?;
+            .try_send(RaftMsg::ProposeConfChange { change: cc, tx })
+            .map_err(channel_try_send_err)?;
 
         match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
             Ok(Ok(result)) => result,
@@ -640,16 +669,16 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// Process a message from another node (sends through channel to driver).
     pub fn step(&self, msg: Message) -> Result<()> {
         self.msg_tx
-            .send(RaftMsg::Step { msg })
-            .map_err(|_| RaftError::ChannelClosed)
+            .try_send(RaftMsg::Step { msg })
+            .map_err(channel_try_send_err)
     }
 
     /// Campaign to become leader (sends through channel to driver).
     pub async fn campaign(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.msg_tx
-            .send(RaftMsg::Campaign { tx })
-            .map_err(|_| RaftError::ChannelClosed)?;
+            .try_send(RaftMsg::Campaign { tx })
+            .map_err(channel_try_send_err)?;
         rx.await.map_err(|_| RaftError::ProposalDropped)?
     }
 }

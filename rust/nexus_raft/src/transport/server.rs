@@ -229,6 +229,18 @@ impl RaftGrpcServer {
 // Helpers
 // =============================================================================
 
+/// Convert milliseconds to seconds using ceiling division.
+///
+/// Prevents sub-second TTLs from silently truncating to zero.
+/// E.g., 999ms → 1s, 1000ms → 1s, 1001ms → 2s.
+/// Negative values clamp to 0.
+fn ms_to_secs_ceil(ms: i64) -> u32 {
+    if ms <= 0 {
+        return 0;
+    }
+    (ms as u64).div_ceil(1000) as u32
+}
+
 /// Convert protobuf RaftCommand to internal Command enum.
 fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
     match proto.command? {
@@ -245,7 +257,7 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
             path: al.lock_id.clone(),
             lock_id: al.holder_id.clone(),
             max_holders: 1, // Default to mutex
-            ttl_secs: (al.ttl_ms / 1000) as u32,
+            ttl_secs: ms_to_secs_ceil(al.ttl_ms),
             holder_info: al.holder_id,
             now_secs: crate::prelude::FullStateMachine::now(),
         }),
@@ -256,7 +268,7 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
         ProtoCommandVariant::ExtendLock(el) => Some(Command::ExtendLock {
             path: el.lock_id.clone(),
             lock_id: el.holder_id,
-            new_ttl_secs: (el.ttl_ms / 1000) as u32,
+            new_ttl_secs: ms_to_secs_ceil(el.ttl_ms),
             now_secs: crate::prelude::FullStateMachine::now(),
         }),
     }
@@ -1273,5 +1285,38 @@ mod tests {
             server.bind_address(),
             "127.0.0.1:0".parse::<SocketAddr>().unwrap()
         );
+    }
+
+    // ---------------------------------------------------------------
+    // TTL conversion boundary-value tests (Issue #3031 / 11A)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_ms_to_secs_ceil_boundary_values() {
+        // Zero stays zero
+        assert_eq!(super::ms_to_secs_ceil(0), 0);
+
+        // Sub-second values round UP to 1 (not down to 0)
+        assert_eq!(super::ms_to_secs_ceil(1), 1);
+        assert_eq!(super::ms_to_secs_ceil(500), 1);
+        assert_eq!(super::ms_to_secs_ceil(999), 1);
+
+        // Exact second boundary
+        assert_eq!(super::ms_to_secs_ceil(1000), 1);
+
+        // Just above boundary rounds up
+        assert_eq!(super::ms_to_secs_ceil(1001), 2);
+        assert_eq!(super::ms_to_secs_ceil(1500), 2);
+        assert_eq!(super::ms_to_secs_ceil(1999), 2);
+        assert_eq!(super::ms_to_secs_ceil(2000), 2);
+
+        // Larger values
+        assert_eq!(super::ms_to_secs_ceil(5000), 5);
+        assert_eq!(super::ms_to_secs_ceil(5001), 6);
+        assert_eq!(super::ms_to_secs_ceil(30_000), 30);
+
+        // Negative values clamp to 0
+        assert_eq!(super::ms_to_secs_ceil(-1), 0);
+        assert_eq!(super::ms_to_secs_ceil(-1000), 0);
     }
 }

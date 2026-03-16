@@ -203,13 +203,17 @@ impl TaskStore {
         let mut target_key = None;
 
         if max_wait_secs > 0 {
-            // Check the last priority band (BestEffort = 4)
-            let prefix_bytes = [4u8];
-            if let Some(guard) = self.pending_idx.prefix(prefix_bytes).next() {
-                if let Ok((key, _)) = guard.into_inner() {
-                    if let Some((_, run_at, _)) = decode_pending_key(key.as_ref()) {
-                        if crate::priority::should_promote_oldest(run_at, now, max_wait_secs) {
-                            target_key = Some(key.as_ref().to_vec());
+            // Check all non-Critical priority bands from lowest (BestEffort=4)
+            // to highest (High=1). Promote the oldest starving task found.
+            for priority in (1..=4u8).rev() {
+                let prefix_bytes = [priority];
+                if let Some(guard) = self.pending_idx.prefix(prefix_bytes).next() {
+                    if let Ok((key, _)) = guard.into_inner() {
+                        if let Some((_, run_at, _)) = decode_pending_key(key.as_ref()) {
+                            if crate::priority::should_promote_oldest(run_at, now, max_wait_secs) {
+                                target_key = Some(key.as_ref().to_vec());
+                                break;
+                            }
                         }
                     }
                 }
@@ -468,7 +472,13 @@ impl TaskStore {
             .running_idx
             .range(..=upper_bound)
             .filter_map(|guard| {
-                let (key, _) = guard.into_inner().ok()?;
+                let (key, _) = match guard.into_inner() {
+                    Ok(kv) => kv,
+                    Err(e) => {
+                        tracing::warn!("skipping task entry: storage iterator error: {}", e);
+                        return None;
+                    }
+                };
                 let key_bytes = key.as_ref().to_vec();
                 let (_, task_id) = decode_running_key(&key_bytes)?;
                 Some((key_bytes, task_id))
@@ -534,8 +544,20 @@ impl TaskStore {
             .tasks
             .iter()
             .filter_map(|guard| {
-                let (_, value) = guard.into_inner().ok()?;
-                let record: TaskRecord = bincode::deserialize(value.as_ref()).ok()?;
+                let (_, value) = match guard.into_inner() {
+                    Ok(kv) => kv,
+                    Err(e) => {
+                        tracing::warn!("skipping task entry: storage iterator error: {}", e);
+                        return None;
+                    }
+                };
+                let record: TaskRecord = match bincode::deserialize(value.as_ref()) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!("skipping task entry: deserialization error: {}", e);
+                        return None;
+                    }
+                };
                 if record.status.is_terminal() {
                     if let Some(completed_at) = record.completed_at {
                         if completed_at < cutoff {
@@ -1172,5 +1194,67 @@ mod tests {
         assert_eq!(stats.dead_letter, 1);
         assert_eq!(stats.pending, 1); // fail_retry was re-queued
         assert_eq!(stats.running, 0);
+    }
+
+    /// E2E anti-starvation test: a starved BestEffort task should be promoted
+    /// over a newer High-priority task when max_wait_secs is exceeded.
+    /// Also verifies multi-band promotion with a Low-priority starved task.
+    #[test]
+    fn test_anti_starvation_promotes_starved_task() {
+        let (store, _dir) = test_store();
+        let now = 1_700_000_100u64;
+
+        // --- Part 1: BestEffort starved task promoted over High ---
+
+        // Submit a BestEffort task with run_at=0 (very old — starved)
+        let mut starved_be = make_task(&store, "starved_best_effort", TaskPriority::BestEffort);
+        starved_be.run_at = 0;
+        let starved_be_id = starved_be.task_id;
+        store.insert_task(&starved_be).unwrap();
+
+        // Submit a High priority task with run_at = now (fresh)
+        let mut fresh_high = make_task(&store, "fresh_high", TaskPriority::High);
+        fresh_high.run_at = now;
+        store.insert_task(&fresh_high).unwrap();
+
+        // Claim with max_wait_secs=60. The BestEffort task has waited
+        // (now - 0) = 1_700_000_100 seconds, far exceeding 60s threshold.
+        let claimed = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(
+            claimed.task_id, starved_be_id,
+            "starved BestEffort task should be promoted over fresh High task"
+        );
+        assert_eq!(claimed.task_type, "starved_best_effort");
+
+        // The High task should still be claimable next
+        let claimed2 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(claimed2.task_type, "fresh_high");
+
+        verify_index_consistency(&store);
+
+        // --- Part 2: Low-priority starved task promoted over Normal ---
+
+        let mut starved_low = make_task(&store, "starved_low", TaskPriority::Low);
+        starved_low.run_at = 0; // very old
+        let starved_low_id = starved_low.task_id;
+        store.insert_task(&starved_low).unwrap();
+
+        let mut fresh_normal = make_task(&store, "fresh_normal", TaskPriority::Normal);
+        fresh_normal.run_at = now;
+        store.insert_task(&fresh_normal).unwrap();
+
+        // Claim with anti-starvation enabled
+        let claimed3 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(
+            claimed3.task_id, starved_low_id,
+            "starved Low task should be promoted over fresh Normal task"
+        );
+        assert_eq!(claimed3.task_type, "starved_low");
+
+        // The Normal task should still be claimable
+        let claimed4 = store.claim_next("w-0", 300, now, 60).unwrap().unwrap();
+        assert_eq!(claimed4.task_type, "fresh_normal");
+
+        verify_index_consistency(&store);
     }
 }

@@ -111,11 +111,41 @@ def _redact_url(url: str) -> str:
     return url
 
 
-def _run_innovation_validation(nx: Any) -> None:
-    """Startup validation for innovation mode (Issue #1667).
+def _print_lifecycle_summary(nx: Any) -> None:
+    """Print one-line service lifecycle summary at startup (Issue #1578).
 
-    Reports service quadrant classification and lifecycle readiness.
-    Logs warnings for services that failed to load but does not abort.
+    Shown for every profile so operators know at a glance whether the
+    daemon has persistent workers and hot-swappable services.
+    """
+    try:
+        coordinator = getattr(nx, "_lifecycle_coordinator", None)
+        if coordinator is None:
+            return
+
+        quadrants = coordinator.classify_all()
+        if not quadrants:
+            return
+
+        n_persistent = sum(1 for q in quadrants.values() if q.is_persistent)
+        n_hot = sum(1 for q in quadrants.values() if q.is_hot_swappable)
+
+        parts: list[str] = [f"{len(quadrants)} services"]
+        if n_hot:
+            parts.append(f"{n_hot} hot-swappable")
+        if n_persistent:
+            parts.append(f"{n_persistent} persistent")
+        distro = "persistent" if n_persistent else "invocation-only"
+        parts.append(f"distro={distro}")
+
+        click.echo(f"  Lifecycle: {', '.join(parts)}")
+    except Exception:
+        pass  # best-effort — never block startup
+
+
+def _print_lifecycle_detail(nx: Any) -> None:
+    """Print detailed quadrant breakdown (innovation mode, Issue #1667).
+
+    Lists every registered service grouped by quadrant (Q1–Q4).
     """
     try:
         coordinator = getattr(nx, "_lifecycle_coordinator", None)
@@ -132,14 +162,6 @@ def _run_innovation_validation(nx: Any) -> None:
         for label in sorted(by_q):
             names = ", ".join(by_q[label])
             click.echo(f"    {label}: {names}")
-
-        # Count persistent + hot-swappable
-        n_persistent = sum(1 for q in quadrants.values() if q.is_persistent)
-        n_hot = sum(1 for q in quadrants.values() if q.is_hot_swappable)
-        click.echo(
-            f"  [validation] {len(quadrants)} services: "
-            f"{n_hot} hot-swappable, {n_persistent} persistent"
-        )
     except Exception as exc:
         logger.warning("Innovation validation failed: %s", exc)
 
@@ -357,9 +379,10 @@ def main(
             logger.exception("NexusFS initialization failed")
             sys.exit(ExitCode.INTERNAL_ERROR)
 
-        # --- Innovation mode: startup validation ----------------------------
+        # --- Service lifecycle summary (Issue #1578) -------------------------
+        _print_lifecycle_summary(nx)
         if deployment_profile == "innovation":
-            _run_innovation_validation(nx)
+            _print_lifecycle_detail(nx)
 
         # --- Resolve auth ---------------------------------------------------
         auth_provider = None

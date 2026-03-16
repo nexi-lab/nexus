@@ -145,7 +145,8 @@ class ProcessTable:
         owner_id: str,
         zone_id: str,
         *,
-        kind: ProcessKind = ProcessKind.INTERNAL,
+        kind: ProcessKind = ProcessKind.MANAGED,
+        pid: str | None = None,
         parent_pid: str | None = None,
         cwd: str = "/",
         external_info: ExternalProcessInfo | None = None,
@@ -158,7 +159,7 @@ class ProcessTable:
             if parent is None:
                 raise ProcessNotFoundError(f"parent not found: {parent_pid}")
 
-        pid = self._alloc_pid()
+        pid = pid or self._alloc_pid()
         now = datetime.now(UTC)
 
         desc = ProcessDescriptor(
@@ -351,7 +352,7 @@ class ProcessTable:
             name,
             owner_id,
             zone_id,
-            kind=ProcessKind.EXTERNAL,
+            kind=ProcessKind.UNMANAGED,
             parent_pid=parent_pid,
             external_info=ext_info,
             labels=labels,
@@ -362,8 +363,8 @@ class ProcessTable:
         desc = self._processes.get(pid)
         if desc is None:
             raise ProcessNotFoundError(f"process not found: {pid}")
-        if desc.kind != ProcessKind.EXTERNAL:
-            raise ProcessError(f"heartbeat only for external processes: {pid}")
+        if desc.kind != ProcessKind.UNMANAGED:
+            raise ProcessError(f"heartbeat only for unmanaged processes: {pid}")
         if desc.external_info is None:
             raise ProcessError(f"missing external_info: {pid}")
 
@@ -379,8 +380,8 @@ class ProcessTable:
         desc = self._processes.get(pid)
         if desc is None:
             raise ProcessNotFoundError(f"process not found: {pid}")
-        if desc.kind != ProcessKind.EXTERNAL:
-            raise ProcessError(f"unregister_external only for external processes: {pid}")
+        if desc.kind != ProcessKind.UNMANAGED:
+            raise ProcessError(f"unregister_external only for unmanaged processes: {pid}")
 
         if desc.state != ProcessState.ZOMBIE:
             desc = self._transition(desc, ProcessState.ZOMBIE)
@@ -421,7 +422,7 @@ class ProcessTable:
 
         - RUNNING/SLEEPING/STOPPED/CREATED → ZOMBIE (crashed)
         - ZOMBIE → kept as-is (waiting for wait())
-        - EXTERNAL → deleted entirely (must reconnect)
+        - UNMANAGED → deleted entirely (must reconnect)
 
         Returns number of recovered processes.
         """
@@ -441,9 +442,9 @@ class ProcessTable:
                 continue
 
             # External processes: clean slate on restart
-            if desc.kind == ProcessKind.EXTERNAL:
+            if desc.kind == ProcessKind.UNMANAGED:
                 self._metastore.delete(entry.path)
-                logger.debug("removed stale external process: pid=%s", desc.pid)
+                logger.debug("removed stale unmanaged process: pid=%s", desc.pid)
                 continue
 
             # Non-terminal processes: mark as crashed (ZOMBIE)

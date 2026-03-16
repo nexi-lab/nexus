@@ -50,7 +50,7 @@ class TestSpawn:
         assert desc.owner_id == OWNER
         assert desc.zone_id == ZONE
         assert desc.state == ProcessState.CREATED
-        assert desc.kind == ProcessKind.INTERNAL
+        assert desc.kind == ProcessKind.MANAGED
         assert len(desc.pid) == 12
 
     def test_spawn_unique_pids(self) -> None:
@@ -112,9 +112,9 @@ class TestSpawn:
 
     def test_list_filter_kind(self) -> None:
         pt = _make_table()
-        pt.spawn("internal", OWNER, ZONE, kind=ProcessKind.INTERNAL)
-        pt.spawn("external", OWNER, ZONE, kind=ProcessKind.EXTERNAL)
-        assert len(pt.list_processes(kind=ProcessKind.INTERNAL)) == 1
+        pt.spawn("managed-agent", OWNER, ZONE, kind=ProcessKind.MANAGED)
+        pt.spawn("unmanaged-agent", OWNER, ZONE, kind=ProcessKind.UNMANAGED)
+        assert len(pt.list_processes(kind=ProcessKind.MANAGED)) == 1
 
     def test_list_filter_state(self) -> None:
         pt = _make_table()
@@ -397,7 +397,7 @@ class TestExternalProcesses:
             host_pid=12345,
             remote_addr="127.0.0.1:50051",
         )
-        assert desc.kind == ProcessKind.EXTERNAL
+        assert desc.kind == ProcessKind.UNMANAGED
         assert desc.external_info is not None
         assert desc.external_info.connection_id == "conn-1"
         assert desc.external_info.host_pid == 12345
@@ -409,10 +409,10 @@ class TestExternalProcesses:
         updated = pt.heartbeat(desc.pid)
         assert updated.external_info.last_heartbeat >= before
 
-    def test_heartbeat_on_internal_raises(self) -> None:
+    def test_heartbeat_on_managed_raises(self) -> None:
         pt = _make_table()
-        desc = pt.spawn("internal", OWNER, ZONE)
-        with pytest.raises(ProcessError, match="heartbeat only for external"):
+        desc = pt.spawn("managed", OWNER, ZONE)
+        with pytest.raises(ProcessError, match="heartbeat only for unmanaged"):
             pt.heartbeat(desc.pid)
 
     def test_unregister_external(self) -> None:
@@ -489,7 +489,7 @@ class TestSerialization:
             name="test",
             owner_id=OWNER,
             zone_id=ZONE,
-            kind=ProcessKind.INTERNAL,
+            kind=ProcessKind.MANAGED,
             state=ProcessState.RUNNING,
             exit_code=None,
             cwd="/workspace",
@@ -514,7 +514,7 @@ class TestSerialization:
             name="external",
             owner_id=OWNER,
             zone_id=ZONE,
-            kind=ProcessKind.EXTERNAL,
+            kind=ProcessKind.UNMANAGED,
             state=ProcessState.CREATED,
             created_at=now,
             updated_at=now,

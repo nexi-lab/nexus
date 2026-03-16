@@ -349,9 +349,9 @@ class NexusConfig(BaseModel):
     def validate_profile(cls, v: str) -> str:
         """Validate deployment profile.
 
-        Valid profiles: minimal, embedded, lite, full, cloud, remote, auto
+        Valid profiles: minimal, embedded, lite, full, cloud, innovation, remote, auto
         """
-        allowed = ["minimal", "embedded", "lite", "full", "cloud", "remote", "auto"]
+        allowed = ["minimal", "embedded", "lite", "full", "cloud", "innovation", "remote", "auto"]
         if v not in allowed:
             raise ValueError(f"profile must be one of {allowed}, got '{v}'")
         return v

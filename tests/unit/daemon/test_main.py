@@ -322,3 +322,70 @@ class TestMainCli:
         call_kwargs = mock_run_server.call_args
         assert call_kwargs.kwargs["host"] == "127.0.0.1"
         assert call_kwargs.kwargs["port"] == 9999
+
+    def test_main_innovation_flag_sets_profile(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """``--innovation`` flag sets profile to 'innovation'."""
+        import sys
+        import types
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        mock_nx = MagicMock()
+        mock_connect = AsyncMock(return_value=mock_nx)
+
+        mock_app = MagicMock()
+        mock_create_app = MagicMock(return_value=mock_app)
+        mock_run_server = MagicMock()
+
+        fake_mod = types.ModuleType("nexus.server.fastapi_server")
+        fake_mod.create_app = mock_create_app
+        fake_mod.run_server = mock_run_server
+        monkeypatch.setitem(sys.modules, "nexus.server.fastapi_server", fake_mod)
+
+        with patch("nexus.connect", mock_connect):
+            runner = CliRunner()
+            result = runner.invoke(main, ["--innovation"])
+
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+        assert "INNOVATION MODE" in result.output
+        # Profile should be "innovation" in the connect config
+        call_args = mock_connect.call_args
+        config = call_args.kwargs.get("config") or call_args.args[0]
+        assert config["profile"] == "innovation"
+
+    def test_main_innovation_flag_overridden_by_explicit_profile(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """Explicit --profile wins over --innovation flag."""
+        import sys
+        import types
+
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+
+        mock_nx = MagicMock()
+        mock_connect = AsyncMock(return_value=mock_nx)
+
+        mock_app = MagicMock()
+        mock_create_app = MagicMock(return_value=mock_app)
+        mock_run_server = MagicMock()
+
+        fake_mod = types.ModuleType("nexus.server.fastapi_server")
+        fake_mod.create_app = mock_create_app
+        fake_mod.run_server = mock_run_server
+        monkeypatch.setitem(sys.modules, "nexus.server.fastapi_server", fake_mod)
+
+        with patch("nexus.connect", mock_connect):
+            runner = CliRunner()
+            result = runner.invoke(main, ["--innovation", "--profile", "full"])
+
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+        assert "INNOVATION MODE" not in result.output
+        call_args = mock_connect.call_args
+        config = call_args.kwargs.get("config") or call_args.args[0]
+        assert config["profile"] == "full"

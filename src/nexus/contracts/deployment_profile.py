@@ -11,7 +11,10 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
+    minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation
+
+INNOVATION extends CLOUD with all bricks enabled + experimental validation.
+Requires explicit opt-in (``nexusd --innovation`` or ``--profile innovation``).
 
 REMOTE is orthogonal — zero local bricks, all operations proxy via RemoteBackend:
     remote  (no local bricks — NFS-client model)
@@ -124,6 +127,7 @@ class DeploymentProfile(StrEnum):
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
+    - innovation: Experimental tier — cloud + all bricks, startup validation (Issue #1667)
     - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
     """
 
@@ -132,6 +136,7 @@ class DeploymentProfile(StrEnum):
     LITE = "lite"
     FULL = "full"
     CLOUD = "cloud"
+    INNOVATION = "innovation"
     REMOTE = "remote"
 
     def default_bricks(self) -> frozenset[str]:
@@ -213,6 +218,10 @@ _CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset(
     }
 )
 
+_INNOVATION_BRICKS: frozenset[str] = (
+    _CLOUD_BRICKS  # same as cloud; future experimental bricks added here
+)
+
 _REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client model
 
 _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
@@ -221,6 +230,7 @@ _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
     DeploymentProfile.LITE: _LITE_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,
     DeploymentProfile.CLOUD: _CLOUD_BRICKS,
+    DeploymentProfile.INNOVATION: _INNOVATION_BRICKS,
     DeploymentProfile.REMOTE: _REMOTE_BRICKS,
 }
 

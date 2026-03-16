@@ -10,6 +10,7 @@ Deployment profiles control which bricks are enabled:
 - lite: Core services
 - full: All bricks (default)
 - cloud: All bricks + federation
+- innovation: All bricks + startup validation (experimental)
 - remote: Thin gRPC client (RemoteBackend + RemoteServiceProxy)
 
 SDK vs CLI:

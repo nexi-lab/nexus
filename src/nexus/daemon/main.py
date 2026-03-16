@@ -111,6 +111,39 @@ def _redact_url(url: str) -> str:
     return url
 
 
+def _run_innovation_validation(nx: Any) -> None:
+    """Startup validation for innovation mode (Issue #1667).
+
+    Reports service quadrant classification and lifecycle readiness.
+    Logs warnings for services that failed to load but does not abort.
+    """
+    try:
+        coordinator = getattr(nx, "_lifecycle_coordinator", None)
+        if coordinator is None:
+            click.echo("  [validation] lifecycle coordinator not available — skipping")
+            return
+
+        quadrants = coordinator.classify_all()
+        by_q: dict[str, list[str]] = {}
+        for name, q in sorted(quadrants.items()):
+            by_q.setdefault(q.label, []).append(name)
+
+        click.echo("  [validation] Service quadrant report:")
+        for label in sorted(by_q):
+            names = ", ".join(by_q[label])
+            click.echo(f"    {label}: {names}")
+
+        # Count persistent + hot-swappable
+        n_persistent = sum(1 for q in quadrants.values() if q.is_persistent)
+        n_hot = sum(1 for q in quadrants.values() if q.is_hot_swappable)
+        click.echo(
+            f"  [validation] {len(quadrants)} services: "
+            f"{n_hot} hot-swappable, {n_persistent} persistent"
+        )
+    except Exception as exc:
+        logger.warning("Innovation validation failed: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # CLI group — bare ``nexusd`` starts the daemon, subcommands are node-local ops
 # ---------------------------------------------------------------------------
@@ -152,7 +185,7 @@ def _redact_url(url: str) -> str:
     "deployment_profile",
     default=None,
     envvar="NEXUS_PROFILE",
-    help="Deployment profile: full, lite, embedded, kernel, cloud, auto (default: auto).",
+    help="Deployment profile: full, lite, embedded, cloud, innovation, auto (default: auto).",
 )
 @click.option(
     "--api-key",
@@ -193,6 +226,13 @@ def _redact_url(url: str) -> str:
     envvar="NEXUS_WORKERS",
     help="Number of uvicorn workers (default: 1).",
 )
+@click.option(
+    "--innovation",
+    is_flag=True,
+    default=False,
+    envvar="NEXUS_INNOVATION_MODE",
+    help="Enable innovation mode (all bricks + startup validation).",
+)
 @click.version_option(package_name="nexus-ai-fs", prog_name="nexusd")
 @click.pass_context
 def main(
@@ -208,6 +248,7 @@ def main(
     log_level: str | None,
     log_format: str,
     workers: int | None,
+    innovation: bool,
 ) -> None:
     """Nexus node daemon.
 
@@ -230,6 +271,10 @@ def main(
     host = host or "0.0.0.0"
     port = port or 2026
     log_level = log_level or "info"
+
+    # --innovation flag overrides profile (explicit --profile wins over --innovation)
+    if innovation and deployment_profile is None:
+        deployment_profile = "innovation"
     deployment_profile = deployment_profile or "auto"
 
     # Configure logging early
@@ -271,6 +316,13 @@ def main(
             click.echo(f"  Config:  {config_path}")
         if database_url:
             click.echo(f"  DB:      {_redact_url(database_url)}")
+
+        if deployment_profile == "innovation":
+            click.echo("")
+            click.echo("  ** INNOVATION MODE **")
+            click.echo("  All bricks enabled. Experimental features active.")
+            click.echo("  Not recommended for production workloads.")
+
         click.echo("")
 
         # --- Create local NexusFS -------------------------------------------
@@ -304,6 +356,10 @@ def main(
             click.echo(f"Error: Failed to initialize NexusFS: {e}", err=True)
             logger.exception("NexusFS initialization failed")
             sys.exit(ExitCode.INTERNAL_ERROR)
+
+        # --- Innovation mode: startup validation ----------------------------
+        if deployment_profile == "innovation":
+            _run_innovation_validation(nx)
 
         # --- Resolve auth ---------------------------------------------------
         auth_provider = None

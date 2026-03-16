@@ -322,7 +322,7 @@ class TestSwapService:
         await coordinator.mount_service("search")
 
         svc2 = _FakeServiceV2()
-        with pytest.raises(TypeError, match="not HotSwappable"):
+        with pytest.raises(TypeError, match="cannot hot-swap"):
             await coordinator.swap_service("search", svc2, exports=("glob",))
 
     @pytest.mark.asyncio()
@@ -985,3 +985,239 @@ class TestEnlist:
         spec = blm.get_spec("child")
         assert spec is not None
         assert "dep" in spec.depends_on
+
+
+# ---------------------------------------------------------------------------
+# ServiceQuadrant — classification and guards (Issue #1673)
+# ---------------------------------------------------------------------------
+
+
+class TestServiceQuadrant:
+    """Tests for ServiceQuadrant enum and classify_service()."""
+
+    def test_classify_q1_static(self) -> None:
+        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
+
+        q = ServiceQuadrant.of(_FakeService())
+        assert q == ServiceQuadrant.Q1_STATIC
+        assert not q.is_hot_swappable
+        assert not q.is_persistent
+        assert "Q1" in q.label
+
+    def test_classify_q2_hot_swappable(self) -> None:
+        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
+
+        q = ServiceQuadrant.of(_HotSwappableService())
+        assert q == ServiceQuadrant.Q2_HOT_SWAPPABLE
+        assert q.is_hot_swappable
+        assert not q.is_persistent
+
+    def test_classify_q3_persistent(self) -> None:
+        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
+
+        q = ServiceQuadrant.of(_PersistentFakeService())
+        assert q == ServiceQuadrant.Q3_PERSISTENT
+        assert not q.is_hot_swappable
+        assert q.is_persistent
+
+    def test_classify_q4_both(self) -> None:
+        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
+
+        q = ServiceQuadrant.of(_BothProtocolsService())
+        assert q == ServiceQuadrant.Q4_BOTH
+        assert q.is_hot_swappable
+        assert q.is_persistent
+
+    def test_coordinator_classify_service(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
+
+        coordinator.register_service("q1", _FakeService())
+        coordinator.register_service("q2", _HotSwappableService())
+        coordinator.register_service("q3", _PersistentFakeService())
+        coordinator.register_service("q4", _BothProtocolsService())
+
+        assert coordinator.classify_service("q1") == ServiceQuadrant.Q1_STATIC
+        assert coordinator.classify_service("q2") == ServiceQuadrant.Q2_HOT_SWAPPABLE
+        assert coordinator.classify_service("q3") == ServiceQuadrant.Q3_PERSISTENT
+        assert coordinator.classify_service("q4") == ServiceQuadrant.Q4_BOTH
+
+    def test_coordinator_classify_service_not_found(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        with pytest.raises(KeyError, match="not registered"):
+            coordinator.classify_service("nonexistent")
+
+    def test_coordinator_classify_all(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
+
+        coordinator.register_service("q1", _FakeService())
+        coordinator.register_service("q2", _HotSwappableService())
+        coordinator.register_service("q3", _PersistentFakeService())
+
+        result = coordinator.classify_all()
+        assert result == {
+            "q1": ServiceQuadrant.Q1_STATIC,
+            "q2": ServiceQuadrant.Q2_HOT_SWAPPABLE,
+            "q3": ServiceQuadrant.Q3_PERSISTENT,
+        }
+
+
+class TestQuadrantGuards:
+    """Tests for quadrant-enforced guards on swap/activate/deactivate."""
+
+    @pytest.mark.asyncio
+    async def test_swap_rejects_q1_with_quadrant_in_error(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """Swapping Q1 service includes quadrant label in error."""
+        coordinator.register_service("svc", _FakeService())
+        await coordinator.mount_service("svc")
+
+        with pytest.raises(TypeError, match="Q1.*static.*cannot hot-swap"):
+            await coordinator.swap_service("svc", _FakeServiceV2())
+
+    @pytest.mark.asyncio
+    async def test_swap_rejects_q3_with_quadrant_in_error(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """Swapping Q3 (PersistentService) includes quadrant label in error."""
+        coordinator.register_service("svc", _PersistentFakeService())
+        await coordinator.mount_service("svc")
+
+        with pytest.raises(TypeError, match="Q3.*PersistentService.*cannot hot-swap"):
+            await coordinator.swap_service("svc", _PersistentFakeService())
+
+    @pytest.mark.asyncio
+    async def test_swap_allows_q2(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+    ) -> None:
+        """Q2 service can be swapped."""
+        svc1 = _HotSwappableService()
+        coordinator.register_service("svc", svc1)
+        await coordinator.mount_service("svc")
+
+        svc2 = _HotSwappableServiceV2()
+        await coordinator.swap_service("svc", svc2)
+
+        ref = registry.service("svc")
+        assert ref is not None
+        assert ref._service_instance is svc2
+
+    @pytest.mark.asyncio
+    async def test_swap_allows_q4(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+        registry: ServiceRegistry,
+    ) -> None:
+        """Q4 service can be swapped."""
+        svc1 = _BothProtocolsService()
+        coordinator.register_service("svc", svc1)
+        await coordinator.mount_service("svc")
+
+        svc2 = _BothProtocolsService()
+        await coordinator.swap_service("svc", svc2)
+
+        ref = registry.service("svc")
+        assert ref is not None
+        assert ref._service_instance is svc2
+
+    @pytest.mark.asyncio
+    async def test_activate_rejects_q1(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """activate_service on Q1 raises TypeError with quadrant info."""
+        coordinator.register_service("svc", _FakeService())
+        with pytest.raises(TypeError, match="Q1.*static.*cannot activate"):
+            await coordinator.activate_service("svc")
+
+    @pytest.mark.asyncio
+    async def test_activate_rejects_q3(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """activate_service on Q3 raises TypeError with quadrant info."""
+        coordinator.register_service("svc", _PersistentFakeService())
+        with pytest.raises(TypeError, match="Q3.*PersistentService.*cannot activate"):
+            await coordinator.activate_service("svc")
+
+    @pytest.mark.asyncio
+    async def test_activate_allows_q2(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """activate_service on Q2 succeeds."""
+        svc = _HotSwappableService()
+        coordinator.register_service("svc", svc)
+        await coordinator.activate_service("svc")
+        assert svc.activated is True
+
+    @pytest.mark.asyncio
+    async def test_activate_allows_q4(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """activate_service on Q4 succeeds."""
+        svc = _BothProtocolsService()
+        coordinator.register_service("svc", svc)
+        await coordinator.activate_service("svc")
+        assert svc.activated is True
+
+    @pytest.mark.asyncio
+    async def test_deactivate_rejects_q1(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """deactivate_service on Q1 raises TypeError."""
+        coordinator.register_service("svc", _FakeService())
+        with pytest.raises(TypeError, match="Q1.*static.*cannot deactivate"):
+            await coordinator.deactivate_service("svc")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_rejects_q3(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """deactivate_service on Q3 raises TypeError."""
+        coordinator.register_service("svc", _PersistentFakeService())
+        with pytest.raises(TypeError, match="Q3.*PersistentService.*cannot deactivate"):
+            await coordinator.deactivate_service("svc")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_allows_q2(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        """deactivate_service on Q2 succeeds — calls drain + unregister hooks."""
+        svc = _HotSwappableService()
+        coordinator.register_service("svc", svc)
+        await coordinator.activate_service("svc")
+        await coordinator.deactivate_service("svc")
+        assert svc.drained is True
+
+    @pytest.mark.asyncio
+    async def test_activate_not_found(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        with pytest.raises(KeyError, match="not registered"):
+            await coordinator.activate_service("ghost")
+
+    @pytest.mark.asyncio
+    async def test_deactivate_not_found(
+        self,
+        coordinator: ServiceLifecycleCoordinator,
+    ) -> None:
+        with pytest.raises(KeyError, match="not registered"):
+            await coordinator.deactivate_service("ghost")

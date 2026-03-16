@@ -54,10 +54,73 @@ References:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+import enum
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
+
+
+# ---------------------------------------------------------------------------
+# ServiceQuadrant — first-class quadrant classification (Issue #1673)
+# ---------------------------------------------------------------------------
+
+
+class ServiceQuadrant(enum.Enum):
+    """Four-quadrant classification based on protocol conformance.
+
+    Constraint lattice (Q1 = fewest constraints, Q4 = most)::
+
+              Q4 (both) ← most constrained
+             /        \\
+           Q2          Q3
+             \\        /
+              Q1 (static) ← least constrained
+
+    Q2 and Q3 are independent constraint dimensions:
+    - Q2 adds hot-swap capability (service must implement drain/activate/hook_spec)
+    - Q3 adds persistent requirement (environment must support long-running process)
+    - Q4 is their union — both constraints apply
+    """
+
+    Q1_STATIC = "Q1"
+    Q2_HOT_SWAPPABLE = "Q2"
+    Q3_PERSISTENT = "Q3"
+    Q4_BOTH = "Q4"
+
+    @staticmethod
+    def of(instance: Any) -> ServiceQuadrant:
+        """Classify a service instance into its quadrant."""
+        is_hot = isinstance(instance, HotSwappable)
+        is_persistent = isinstance(instance, PersistentService)
+        if is_hot and is_persistent:
+            return ServiceQuadrant.Q4_BOTH
+        if is_hot:
+            return ServiceQuadrant.Q2_HOT_SWAPPABLE
+        if is_persistent:
+            return ServiceQuadrant.Q3_PERSISTENT
+        return ServiceQuadrant.Q1_STATIC
+
+    @property
+    def is_hot_swappable(self) -> bool:
+        """True if this quadrant includes HotSwappable capability (Q2/Q4)."""
+        return self in (ServiceQuadrant.Q2_HOT_SWAPPABLE, ServiceQuadrant.Q4_BOTH)
+
+    @property
+    def is_persistent(self) -> bool:
+        """True if this quadrant requires persistent process (Q3/Q4)."""
+        return self in (ServiceQuadrant.Q3_PERSISTENT, ServiceQuadrant.Q4_BOTH)
+
+    @property
+    def label(self) -> str:
+        """Human-readable label for error messages and CLI output."""
+        labels = {
+            ServiceQuadrant.Q1_STATIC: "Q1 (static)",
+            ServiceQuadrant.Q2_HOT_SWAPPABLE: "Q2 (HotSwappable)",
+            ServiceQuadrant.Q3_PERSISTENT: "Q3 (PersistentService)",
+            ServiceQuadrant.Q4_BOTH: "Q4 (HotSwappable + PersistentService)",
+        }
+        return labels[self]
 
 
 # ---------------------------------------------------------------------------

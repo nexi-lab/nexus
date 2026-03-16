@@ -44,17 +44,20 @@ async def _make_connected_pair() -> tuple[StdioPipe, StdioPipe]:
 
 
 class TestProtocolConformance:
-    def test_isinstance_pipe_backend(self) -> None:
+    @pytest.mark.asyncio
+    async def test_isinstance_pipe_backend(self) -> None:
         reader = asyncio.StreamReader()
         pipe = StdioPipe(reader=reader, writer=None)
         assert isinstance(pipe, PipeBackend)
 
-    def test_closed_initially_false(self) -> None:
+    @pytest.mark.asyncio
+    async def test_closed_initially_false(self) -> None:
         reader = asyncio.StreamReader()
         pipe = StdioPipe(reader=reader, writer=None)
         assert pipe.closed is False
 
-    def test_stats_property(self) -> None:
+    @pytest.mark.asyncio
+    async def test_stats_property(self) -> None:
         reader = asyncio.StreamReader()
         pipe = StdioPipe(reader=reader, writer=None)
         stats = pipe.stats
@@ -108,7 +111,8 @@ class TestRead:
         assert data == b"delayed\n"
         await task
 
-    def test_read_nowait_empty_raises(self) -> None:
+    @pytest.mark.asyncio
+    async def test_read_nowait_empty_raises(self) -> None:
         reader = asyncio.StreamReader()
         pipe = StdioPipe(reader=reader, writer=None)
         with pytest.raises(PipeEmptyError):
@@ -199,13 +203,15 @@ class TestWrite:
 
 
 class TestClose:
-    def test_close_sets_flag(self) -> None:
+    @pytest.mark.asyncio
+    async def test_close_sets_flag(self) -> None:
         reader = asyncio.StreamReader()
         pipe = StdioPipe(reader=reader, writer=None)
         pipe.close()
         assert pipe.closed is True
 
-    def test_close_idempotent(self) -> None:
+    @pytest.mark.asyncio
+    async def test_close_idempotent(self) -> None:
         reader = asyncio.StreamReader()
         pipe = StdioPipe(reader=reader, writer=None)
         pipe.close()

@@ -18,17 +18,20 @@ from nexus.core.stream import StreamBackend, StreamClosedError, StreamEmptyError
 
 
 class TestProtocolConformance:
-    def test_isinstance_stream_backend(self) -> None:
+    @pytest.mark.asyncio
+    async def test_isinstance_stream_backend(self) -> None:
         reader = asyncio.StreamReader()
         stream = StdioStream(reader)
         assert isinstance(stream, StreamBackend)
 
-    def test_closed_initially_false(self) -> None:
+    @pytest.mark.asyncio
+    async def test_closed_initially_false(self) -> None:
         reader = asyncio.StreamReader()
         stream = StdioStream(reader)
         assert stream.closed is False
 
-    def test_stats_property(self) -> None:
+    @pytest.mark.asyncio
+    async def test_stats_property(self) -> None:
         reader = asyncio.StreamReader()
         stream = StdioStream(reader)
         stats = stream.stats
@@ -37,7 +40,8 @@ class TestProtocolConformance:
         assert stats["total_bytes"] == 0
         assert stats["closed"] is False
 
-    def test_tail_initially_zero(self) -> None:
+    @pytest.mark.asyncio
+    async def test_tail_initially_zero(self) -> None:
         reader = asyncio.StreamReader()
         stream = StdioStream(reader)
         assert stream.tail == 0

@@ -35,7 +35,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
-from nexus.contracts.protocols.service_lifecycle import HotSwappable, PersistentService
+from nexus.contracts.protocols.service_lifecycle import (
+    HotSwappable,
+    PersistentService,
+    ServiceQuadrant,
+)
 
 if TYPE_CHECKING:
     from nexus.core.kernel_dispatch import KernelDispatch
@@ -253,10 +257,12 @@ class ServiceLifecycleCoordinator:
         old_instance = old_info.instance
 
         # --- Guard: only HotSwappable services can be swapped ---
-        if not isinstance(old_instance, HotSwappable):
+        quadrant = ServiceQuadrant.of(old_instance)
+        if not quadrant.is_hot_swappable:
             raise TypeError(
-                f"swap_service: {name!r} ({type(old_instance).__name__}) is not HotSwappable. "
-                f"Static services cannot be hot-swapped — use full restart instead."
+                f"swap_service: {name!r} is {quadrant.label} — cannot hot-swap. "
+                f"Only Q2/Q4 services (HotSwappable) support runtime swap. "
+                f"Use full restart instead."
             )
 
         # Snapshot old state
@@ -328,6 +334,70 @@ class ServiceLifecycleCoordinator:
     # Distro classification — persistent vs invocation-compatible
     # ------------------------------------------------------------------
 
+    def classify_service(self, name: str) -> ServiceQuadrant:
+        """Return the quadrant classification for a registered service.
+
+        Raises:
+            KeyError: If service is not registered.
+        """
+        info = self._registry.service_info(name)
+        if info is None:
+            raise KeyError(f"classify_service: {name!r} not registered")
+        return ServiceQuadrant.of(info.instance)
+
+    def classify_all(self) -> dict[str, ServiceQuadrant]:
+        """Return quadrant classification for all registered services."""
+        return {info.name: ServiceQuadrant.of(info.instance) for info in self._registry.list_all()}
+
+    # ------------------------------------------------------------------
+    # Single-service activate / deactivate (with quadrant guard)
+    # ------------------------------------------------------------------
+
+    async def activate_service(self, name: str) -> None:
+        """Activate a single HotSwappable service: register hooks + activate().
+
+        Raises:
+            KeyError: If service is not registered.
+            TypeError: If service is not HotSwappable (Q1/Q3).
+        """
+        info = self._registry.service_info(name)
+        if info is None:
+            raise KeyError(f"activate_service: {name!r} not registered")
+        quadrant = ServiceQuadrant.of(info.instance)
+        if not quadrant.is_hot_swappable:
+            raise TypeError(
+                f"activate_service: {name!r} is {quadrant.label} — cannot activate. "
+                f"Only Q2/Q4 services (HotSwappable) support activate/drain."
+            )
+        spec = self._hook_specs.get(name)
+        if spec is None:
+            spec = info.instance.hook_spec()
+            if spec is not None and not spec.is_empty:
+                self._hook_specs[name] = spec
+        self._register_hooks(name)
+        await info.instance.activate()
+        logger.info("[COORDINATOR] activate_service %r — done (%s)", name, quadrant.label)
+
+    async def deactivate_service(self, name: str) -> None:
+        """Deactivate a single HotSwappable service: drain + unregister hooks.
+
+        Raises:
+            KeyError: If service is not registered.
+            TypeError: If service is not HotSwappable (Q1/Q3).
+        """
+        info = self._registry.service_info(name)
+        if info is None:
+            raise KeyError(f"deactivate_service: {name!r} not registered")
+        quadrant = ServiceQuadrant.of(info.instance)
+        if not quadrant.is_hot_swappable:
+            raise TypeError(
+                f"deactivate_service: {name!r} is {quadrant.label} — cannot deactivate. "
+                f"Only Q2/Q4 services (HotSwappable) support activate/drain."
+            )
+        await info.instance.drain()
+        self._unregister_hooks(name)
+        logger.info("[COORDINATOR] deactivate_service %r — done (%s)", name, quadrant.label)
+
     def classify_distro(self) -> tuple[bool, list[str]]:
         """Determine whether this distro requires a persistent process.
 
@@ -351,7 +421,7 @@ class ServiceLifecycleCoordinator:
         hot: list[str] = []
         static: list[str] = []
         for info in self._registry.list_all():
-            if isinstance(info.instance, HotSwappable):
+            if ServiceQuadrant.of(info.instance).is_hot_swappable:
                 hot.append(info.name)
             else:
                 static.append(info.name)

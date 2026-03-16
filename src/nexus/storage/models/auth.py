@@ -78,11 +78,15 @@ class UserModel(Base):
         Index("idx_users_email_active_deleted", "email", "is_active", "deleted_at"),
         # Issue #3062: Prevent duplicate verified emails for active users.
         # Partial unique index — only enforced for active, verified, non-deleted users.
+        # Both postgresql_where and sqlite_where are needed so the index is
+        # created correctly regardless of whether Alembic or
+        # Base.metadata.create_all() builds the schema.
         Index(
             "uq_users_email_verified_active",
             "email",
             unique=True,
             postgresql_where=text("is_active = 1 AND email_verified = 1 AND deleted_at IS NULL"),
+            sqlite_where=text("is_active = 1 AND email_verified = 1 AND deleted_at IS NULL"),
         ),
     )
 

@@ -6,6 +6,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -54,6 +56,8 @@ export interface McpState {
   readonly setSelectedMountIndex: (index: number) => void;
 }
 
+const SOURCE = "zones";
+
 export const useMcpStore = create<McpState>((set, get) => ({
   mounts: [],
   mountsLoading: false,
@@ -62,44 +66,55 @@ export const useMcpStore = create<McpState>((set, get) => ({
   toolsLoading: false,
   error: null,
 
-  fetchMounts: async (client) => {
-    set({ mountsLoading: true, error: null });
+  // =========================================================================
+  // Actions with loading keys — createApiAction
+  // =========================================================================
 
-    try {
+  fetchMounts: createApiAction<McpState, [FetchClient]>(set, {
+    loadingKey: "mountsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch MCP mounts",
+    action: async (client) => {
       const response = await client.post<{
         result: readonly McpMount[];
       }>("/api/nfs/mcp_list_mounts", { params: {} });
-      set({
+      return {
         mounts: response.result ?? [],
-        mountsLoading: false,
         selectedMountIndex: 0,
-      });
-    } catch (err) {
-      set({
-        mountsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch MCP mounts",
-      });
-    }
-  },
+      };
+    },
+  }),
+
+  fetchTools: createApiAction<McpState, [string, FetchClient]>(set, {
+    loadingKey: "toolsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch MCP tools",
+    action: async (name, client) => {
+      const response = await client.post<{
+        result: readonly McpTool[];
+      }>("/api/nfs/mcp_list_tools", { params: { name } });
+      return { tools: response.result ?? [] };
+    },
+  }),
+
+  // =========================================================================
+  // Actions without loading keys — inline with error store integration
+  // =========================================================================
 
   mountServer: async (params, client) => {
     set({ error: null });
-
     try {
       await client.post("/api/nfs/mcp_mount", { params });
       await get().fetchMounts(client);
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to mount MCP server",
-      });
+      const message = err instanceof Error ? err.message : "Failed to mount MCP server";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
   unmountServer: async (name, client) => {
     set({ error: null });
-
     try {
       await client.post("/api/nfs/mcp_unmount", { params: { name } });
       set((state) => ({
@@ -110,44 +125,21 @@ export const useMcpStore = create<McpState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to unmount MCP server",
-      });
+      const message = err instanceof Error ? err.message : "Failed to unmount MCP server";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
   syncServer: async (name, client) => {
     set({ error: null });
-
     try {
       await client.post("/api/nfs/mcp_sync", { params: { name } });
       await get().fetchMounts(client);
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to sync MCP server",
-      });
-    }
-  },
-
-  fetchTools: async (name, client) => {
-    set({ toolsLoading: true, error: null });
-
-    try {
-      const response = await client.post<{
-        result: readonly McpTool[];
-      }>("/api/nfs/mcp_list_tools", { params: { name } });
-      set({ tools: response.result ?? [], toolsLoading: false });
-    } catch (err) {
-      set({
-        tools: [],
-        toolsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch MCP tools",
-      });
+      const message = err instanceof Error ? err.message : "Failed to sync MCP server";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

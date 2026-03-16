@@ -7,6 +7,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -136,6 +138,8 @@ export interface ZonesState {
   readonly setActiveTab: (tab: ZoneTab) => void;
 }
 
+const SOURCE = "zones";
+
 export const useZonesStore = create<ZonesState>((set, get) => ({
   zones: [],
   zonesLoading: false,
@@ -154,36 +158,56 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
   hotFiles: [],
   hotFilesLoading: false,
 
-  fetchZones: async (client) => {
-    set({ zonesLoading: true, error: null });
+  // =========================================================================
+  // Actions migrated to createApiAction
+  // =========================================================================
 
-    try {
+  fetchZones: createApiAction<ZonesState, [FetchClient]>(set, {
+    loadingKey: "zonesLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch zones",
+    action: async (client) => {
       const response = await client.get<ZonesListResponse>("/api/zones");
-      set({ zones: response.zones ?? [], zonesLoading: false });
-    } catch (err) {
-      set({
-        zonesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch zones",
-      });
-    }
-  },
+      return { zones: response.zones ?? [] };
+    },
+  }),
 
-  fetchBricks: async (client) => {
-    set({ isLoading: true, error: null });
-
-    try {
+  fetchBricks: createApiAction<ZonesState, [FetchClient]>(set, {
+    loadingKey: "isLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch bricks",
+    action: async (client) => {
       const response = await client.get<BricksHealthResponse>(
         "/api/v2/bricks/health",
       );
       const bricks = response.bricks ?? [];
-      set({ bricksHealth: response, bricks, isLoading: false });
-    } catch (err) {
-      set({
-        isLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch bricks",
-      });
-    }
-  },
+      return { bricksHealth: response, bricks };
+    },
+  }),
+
+  fetchCacheStats: createApiAction<ZonesState, [FetchClient]>(set, {
+    loadingKey: "cacheStatsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch cache stats",
+    action: async (client) => {
+      const stats = await client.get<unknown>("/api/v2/cache/stats");
+      return { cacheStats: stats };
+    },
+  }),
+
+  fetchHotFiles: createApiAction<ZonesState, [FetchClient]>(set, {
+    loadingKey: "hotFilesLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch hot files",
+    action: async (client) => {
+      const response = await client.get<{ files: readonly unknown[] }>("/api/v2/cache/hot-files");
+      return { hotFiles: response.files ?? [] };
+    },
+  }),
+
+  // =========================================================================
+  // Actions with special error-path state — inline with error store integration
+  // =========================================================================
 
   fetchBrickDetail: async (name, client) => {
     set({ detailLoading: true, error: null });
@@ -194,11 +218,13 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       );
       set({ brickDetail: detail, detailLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch brick detail";
       set({
         brickDetail: null,
         detailLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch brick detail",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -211,13 +237,19 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       );
       set({ driftReport: report, driftLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch drift report";
       set({
         driftReport: null,
         driftLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch drift report",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
+
+  // =========================================================================
+  // Actions without loading keys — inline with error store integration
+  // =========================================================================
 
   mountBrick: async (name, client) => {
     set({ error: null });
@@ -229,9 +261,9 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       );
       await get().fetchBricks(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to mount brick",
-      });
+      const message = err instanceof Error ? err.message : "Failed to mount brick";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -245,9 +277,9 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       );
       await get().fetchBricks(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to unmount brick",
-      });
+      const message = err instanceof Error ? err.message : "Failed to unmount brick";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -265,9 +297,9 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       const clamped = Math.min(selectedIndex, Math.max(0, bricks.length - 1));
       set({ selectedIndex: clamped, brickDetail: null });
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to unregister brick",
-      });
+      const message = err instanceof Error ? err.message : "Failed to unregister brick";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -281,9 +313,9 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       );
       await get().fetchBricks(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to remount brick",
-      });
+      const message = err instanceof Error ? err.message : "Failed to remount brick";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -297,29 +329,9 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       );
       await get().fetchBricks(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to reset brick",
-      });
-    }
-  },
-
-  fetchCacheStats: async (client) => {
-    set({ cacheStatsLoading: true, error: null });
-    try {
-      const stats = await client.get<unknown>("/api/v2/cache/stats");
-      set({ cacheStats: stats, cacheStatsLoading: false });
-    } catch (err) {
-      set({ cacheStatsLoading: false, error: err instanceof Error ? err.message : "Failed to fetch cache stats" });
-    }
-  },
-
-  fetchHotFiles: async (client) => {
-    set({ hotFilesLoading: true, error: null });
-    try {
-      const response = await client.get<{ files: readonly unknown[] }>("/api/v2/cache/hot-files");
-      set({ hotFiles: response.files ?? [], hotFilesLoading: false });
-    } catch (err) {
-      set({ hotFilesLoading: false, error: err instanceof Error ? err.message : "Failed to fetch hot files" });
+      const message = err instanceof Error ? err.message : "Failed to reset brick";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -328,7 +340,9 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     try {
       await client.post("/api/v2/cache/warmup", { paths });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to warmup cache" });
+      const message = err instanceof Error ? err.message : "Failed to warmup cache";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

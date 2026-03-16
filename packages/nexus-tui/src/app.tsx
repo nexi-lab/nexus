@@ -8,10 +8,12 @@ import React, { lazy, Suspense, useState, useCallback } from "react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { TabBar, type Tab } from "./shared/components/tab-bar.js";
 import { StatusBar } from "./shared/components/status-bar.js";
+import { ErrorBar } from "./shared/components/error-bar.js";
 import { ErrorBoundary } from "./shared/components/error-boundary.js";
 import { Spinner } from "./shared/components/spinner.js";
 import { useKeyboard } from "./shared/hooks/use-keyboard.js";
 import { IdentitySwitcher } from "./shared/components/identity-switcher.js";
+import { AppConfirmDialog } from "./shared/components/app-confirm-dialog.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
@@ -127,10 +129,12 @@ export function App(): React.ReactNode {
         </ErrorBoundary>
       </box>
 
-      {/* Identity switcher overlay */}
+      {/* Overlays */}
       <IdentitySwitcher visible={identitySwitcherOpen} onClose={closeIdentitySwitcher} />
+      <AppConfirmDialog />
 
-      {/* Status bar */}
+      {/* Error bar + Status bar */}
+      <ErrorBar />
       <StatusBar />
     </box>
   );

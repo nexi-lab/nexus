@@ -10,6 +10,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -190,6 +192,8 @@ export interface PaymentsState {
   readonly setSelectedTransactionIndex: (index: number) => void;
 }
 
+const SOURCE = "payments";
+
 export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   balance: null,
   balanceLoading: false,
@@ -212,19 +216,44 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
   activeTab: "balance",
   error: null,
 
-  fetchBalance: async (client) => {
-    set({ balanceLoading: true, error: null });
+  // =========================================================================
+  // Actions migrated to createApiAction
+  // =========================================================================
 
-    try {
+  fetchBalance: createApiAction<PaymentsState, [FetchClient]>(set, {
+    loadingKey: "balanceLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch balance",
+    action: async (client) => {
       const balance = await client.get<BalanceInfo>("/api/v2/pay/balance");
-      set({ balance: balance ?? null, balanceLoading: false });
-    } catch (err) {
-      set({
-        balanceLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch balance",
-      });
-    }
-  },
+      return { balance: balance ?? null };
+    },
+  }),
+
+  fetchPolicies: createApiAction<PaymentsState, [FetchClient]>(set, {
+    loadingKey: "policiesLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch policies",
+    action: async (client) => {
+      // Backend returns bare list[PolicyResponse], not a wrapper object
+      const policies = await client.get<readonly PolicyRecord[]>("/api/v2/pay/policies");
+      return { policies };
+    },
+  }),
+
+  fetchBudget: createApiAction<PaymentsState, [FetchClient]>(set, {
+    loadingKey: "budgetLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch budget",
+    action: async (client) => {
+      const budget = await client.get<BudgetSummary>("/api/v2/pay/budget");
+      return { budget: budget ?? null };
+    },
+  }),
+
+  // =========================================================================
+  // Actions without loading keys or with special patterns — inline with error store
+  // =========================================================================
 
   transfer: async (to, amount, memo, client) => {
     set({ error: null });
@@ -237,9 +266,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       });
       await get().fetchBalance(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to transfer credits",
-      });
+      const message = err instanceof Error ? err.message : "Failed to transfer credits";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -256,10 +285,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         reservations: [...state.reservations, reservation],
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to create reservation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create reservation";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -276,10 +304,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to commit reservation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to commit reservation";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -296,10 +323,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to release reservation",
-      });
+      const message = err instanceof Error ? err.message : "Failed to release reservation";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -326,11 +352,12 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         integrityResult: null,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch transactions";
       set({
         transactionsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch transactions",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -361,40 +388,6 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
     await get().fetchTransactions(client, prevCursor);
   },
 
-  fetchPolicies: async (client) => {
-    set({ policiesLoading: true, error: null });
-
-    try {
-      // Backend returns bare list[PolicyResponse], not a wrapper object
-      const policies = await client.get<readonly PolicyRecord[]>("/api/v2/pay/policies");
-      set({
-        policies,
-        policiesLoading: false,
-      });
-    } catch (err) {
-      set({
-        policiesLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch policies",
-      });
-    }
-  },
-
-  fetchBudget: async (client) => {
-    set({ budgetLoading: true, error: null });
-
-    try {
-      const budget = await client.get<BudgetSummary>("/api/v2/pay/budget");
-      set({ budget: budget ?? null, budgetLoading: false });
-    } catch (err) {
-      set({
-        budgetLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch budget",
-      });
-    }
-  },
-
   deletePolicy: async (policyId, client) => {
     set({ error: null });
 
@@ -406,10 +399,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         policies: state.policies.filter((p) => p.policy_id !== policyId),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to delete policy",
-      });
+      const message = err instanceof Error ? err.message : "Failed to delete policy";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -423,10 +415,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       set({ integrityResult: result });
       return result;
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to verify integrity",
-      });
+      const message = err instanceof Error ? err.message : "Failed to verify integrity";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
       return null;
     }
   },
@@ -437,7 +428,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       await client.post("/api/v2/pay/policies", { name, rules });
       await get().fetchPolicies(client);
     } catch (err) {
-      set({ policiesLoading: false, error: err instanceof Error ? err.message : "Failed to create policy" });
+      const message = err instanceof Error ? err.message : "Failed to create policy";
+      set({ policiesLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -449,7 +442,9 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
       );
       set({ affordResult: result });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to check affordability" });
+      const message = err instanceof Error ? err.message : "Failed to check affordability";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

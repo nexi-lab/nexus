@@ -7,6 +7,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -231,6 +233,8 @@ export interface SearchState {
   readonly deleteMemory: (memoryId: string, client: FetchClient) => Promise<void>;
 }
 
+const SOURCE = "search";
+
 export const useSearchStore = create<SearchState>((set, get) => ({
   searchQuery: "",
   searchResults: [],
@@ -265,6 +269,10 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   activeTab: "search",
   error: null,
 
+  // =========================================================================
+  // Actions migrated to createApiAction (Decision 6A)
+  // =========================================================================
+
   search: async (query, client) => {
     set({ searchLoading: true, error: null, searchQuery: query });
 
@@ -287,28 +295,22 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         searchLoading: false,
       });
     } catch (err) {
-      set({
-        searchLoading: false,
-        error: err instanceof Error ? err.message : "Failed to search",
-      });
+      const message = err instanceof Error ? err.message : "Failed to search";
+      set({ searchLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
-  fetchEntity: async (id, client) => {
-    set({ knowledgeLoading: true, error: null });
-
-    try {
+  fetchEntity: createApiAction<SearchState, [string, FetchClient]>(set, {
+    loadingKey: "knowledgeLoading",
+    source: SOURCE,
+    action: async (id, client) => {
       const response = await client.get<EntityResponse>(
         `/api/v2/graph/entity/${encodeURIComponent(id)}`,
       );
-      set({ selectedEntity: response.entity ?? null, knowledgeLoading: false });
-    } catch (err) {
-      set({
-        knowledgeLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch entity",
-      });
-    }
-  },
+      return { selectedEntity: response.entity ?? null };
+    },
+  }),
 
   fetchNeighbors: async (id, client) => {
     set({ knowledgeLoading: true, error: null });
@@ -322,11 +324,13 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         knowledgeLoading: false,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch neighbors";
       set({
         neighbors: [],
         knowledgeLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch neighbors",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -343,34 +347,30 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         knowledgeLoading: false,
       });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to search knowledge graph";
       set({
         knowledgeSearchResult: null,
         knowledgeLoading: false,
-        error: err instanceof Error ? err.message : "Failed to search knowledge graph",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
-  fetchMemories: async (query, client) => {
-    set({ memoriesLoading: true, error: null });
-
-    try {
+  fetchMemories: createApiAction<SearchState, [string, FetchClient]>(set, {
+    loadingKey: "memoriesLoading",
+    source: SOURCE,
+    action: async (query, client) => {
       const response = await client.post<MemorySearchResponse>(
         "/api/v2/memories/search",
         { query },
       );
-      set({
+      return {
         memories: response.memories ?? [],
         selectedMemoryIndex: 0,
-        memoriesLoading: false,
-      });
-    } catch (err) {
-      set({
-        memoriesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch memories",
-      });
-    }
-  },
+      };
+    },
+  }),
 
   fetchMemoryDetail: async (id, client) => {
     set({ memoriesLoading: true, error: null });
@@ -389,10 +389,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         return { memories: updated, memoriesLoading: false };
       });
     } catch (err) {
-      set({
-        memoriesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch memory detail",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch memory detail";
+      set({ memoriesLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -426,26 +425,20 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     }
   },
 
-  fetchPlaybooks: async (query, client) => {
-    set({ playbooksLoading: true, error: null });
-
-    try {
+  fetchPlaybooks: createApiAction<SearchState, [string, FetchClient]>(set, {
+    loadingKey: "playbooksLoading",
+    source: SOURCE,
+    action: async (query, client) => {
       const params = new URLSearchParams({ name_pattern: query });
       const response = await client.get<PlaybooksListResponse>(
         `/api/v2/playbooks?${params.toString()}`,
       );
-      set({
+      return {
         playbooks: response.playbooks ?? [],
         selectedPlaybookIndex: 0,
-        playbooksLoading: false,
-      });
-    } catch (err) {
-      set({
-        playbooksLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch playbooks",
-      });
-    }
-  },
+      };
+    },
+  }),
 
   deletePlaybook: async (id, client) => {
     try {
@@ -459,9 +452,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         error: null,
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to delete playbook",
-      });
+      const message = err instanceof Error ? err.message : "Failed to delete playbook";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -469,33 +462,27 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     set({ selectedPlaybookIndex: index });
   },
 
-  fetchMemoryHistory: async (memoryId, client) => {
-    set({ memoryHistoryLoading: true, error: null });
-
-    try {
+  fetchMemoryHistory: createApiAction<SearchState, [string, FetchClient]>(set, {
+    loadingKey: "memoryHistoryLoading",
+    source: SOURCE,
+    action: async (memoryId, client) => {
       const response = await client.get<MemoryHistoryResponse>(
         `/api/v2/memories/${encodeURIComponent(memoryId)}/history`,
       );
-      set({
+      return {
         memoryHistory: {
           memory_id: response.memory_id,
           current_version: response.current_version,
           versions: response.versions ?? [],
         },
-        memoryHistoryLoading: false,
-      });
-    } catch (err) {
-      set({
-        memoryHistoryLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch memory history",
-      });
-    }
-  },
+      };
+    },
+  }),
 
-  fetchMemoryDiff: async (memoryId, v1, v2, client) => {
-    set({ memoryDiffLoading: true, error: null });
-
-    try {
+  fetchMemoryDiff: createApiAction<SearchState, [string, number, number, FetchClient]>(set, {
+    loadingKey: "memoryDiffLoading",
+    source: SOURCE,
+    action: async (memoryId, v1, v2, client) => {
       const params = new URLSearchParams({
         v1: String(v1),
         v2: String(v2),
@@ -504,22 +491,16 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       const response = await client.get<MemoryDiffResponse>(
         `/api/v2/memories/${encodeURIComponent(memoryId)}/diff?${params.toString()}`,
       );
-      set({
+      return {
         memoryDiff: {
           diff: response.diff,
           mode: response.mode,
           v1: response.v1,
           v2: response.v2,
         },
-        memoryDiffLoading: false,
-      });
-    } catch (err) {
-      set({
-        memoryDiffLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch memory diff",
-      });
-    }
-  },
+      };
+    },
+  }),
 
   rollbackMemory: async (memoryId, version, client) => {
     set({ memoriesLoading: true, error: null });
@@ -544,10 +525,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         await get().fetchMemories(query, client);
       }
     } catch (err) {
-      set({
-        memoriesLoading: false,
-        error: err instanceof Error ? err.message : "Failed to rollback memory",
-      });
+      const message = err instanceof Error ? err.message : "Failed to rollback memory";
+      set({ memoriesLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -575,6 +555,10 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   clearRlmContextPaths: () => {
     set({ rlmContextPaths: [] });
   },
+
+  // =========================================================================
+  // SSE streaming — left as-is with error store integration
+  // =========================================================================
 
   askRlm: async (query, client, zoneId) => {
     const initial: RlmAnswer = {
@@ -711,12 +695,15 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         set({ rlmLoading: false });
       }
     } catch (err) {
-      set({
-        rlmLoading: false,
-        error: err instanceof Error ? err.message : "Failed to query RLM",
-      });
+      const message = err instanceof Error ? err.message : "Failed to query RLM";
+      set({ rlmLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
+
+  // =========================================================================
+  // Memory mutations — inline with error store integration
+  // =========================================================================
 
   createMemory: async (content, metadata, client) => {
     set({ memoriesLoading: true, error: null });
@@ -726,7 +713,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       const query = get().searchQuery;
       await get().fetchMemories(query || "", client);
     } catch (err) {
-      set({ memoriesLoading: false, error: err instanceof Error ? err.message : "Failed to create memory" });
+      const message = err instanceof Error ? err.message : "Failed to create memory";
+      set({ memoriesLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -738,7 +727,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
       // Re-fetch detail
       await get().fetchMemoryDetail(memoryId, client);
     } catch (err) {
-      set({ memoriesLoading: false, error: err instanceof Error ? err.message : "Failed to update memory" });
+      const message = err instanceof Error ? err.message : "Failed to update memory";
+      set({ memoriesLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -752,7 +743,9 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         memoriesLoading: false,
       }));
     } catch (err) {
-      set({ memoriesLoading: false, error: err instanceof Error ? err.message : "Failed to delete memory" });
+      const message = err instanceof Error ? err.message : "Failed to delete memory";
+      set({ memoriesLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 }));

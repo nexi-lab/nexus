@@ -6,6 +6,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -130,6 +132,8 @@ export interface InfraState {
   readonly setSelectedLockIndex: (index: number) => void;
 }
 
+const SOURCE = "infrastructure";
+
 export const useInfraStore = create<InfraState>((set, get) => ({
   connectors: [],
   selectedConnectorIndex: 0,
@@ -148,39 +152,84 @@ export const useInfraStore = create<InfraState>((set, get) => ({
   activeTab: "connectors",
   error: null,
 
-  fetchConnectors: async (client) => {
-    set({ connectorsLoading: true, error: null });
-    try {
+  // =========================================================================
+  // Actions with loading keys — createApiAction
+  // =========================================================================
+
+  fetchConnectors: createApiAction<InfraState, [FetchClient]>(set, {
+    loadingKey: "connectorsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch connectors",
+    action: async (client) => {
       const response = await client.get<{
         readonly connectors: readonly Connector[];
       }>("/api/v2/connectors");
-      set({ connectors: response.connectors ?? [], connectorsLoading: false });
-    } catch (err) {
-      set({
-        connectorsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch connectors",
-      });
-    }
-  },
+      return { connectors: response.connectors ?? [] };
+    },
+  }),
 
-  fetchSubscriptions: async (client) => {
-    set({ subscriptionsLoading: true, error: null });
-    try {
+  fetchSubscriptions: createApiAction<InfraState, [FetchClient]>(set, {
+    loadingKey: "subscriptionsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch subscriptions",
+    action: async (client) => {
       const response = await client.get<{
         readonly subscriptions: readonly Subscription[];
       }>("/api/v2/subscriptions");
-      set({
+      return {
         subscriptions: response.subscriptions ?? [],
-        subscriptionsLoading: false,
         selectedSubscriptionIndex: 0,
-      });
-    } catch (err) {
-      set({
-        subscriptionsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch subscriptions",
-      });
-    }
-  },
+      };
+    },
+  }),
+
+  fetchLocks: createApiAction<InfraState, [FetchClient]>(set, {
+    loadingKey: "locksLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch locks",
+    action: async (client) => {
+      const response = await client.get<{
+        readonly locks: readonly Lock[];
+        readonly count: number;
+      }>("/api/v2/locks");
+      return { locks: response.locks ?? [], selectedLockIndex: 0 };
+    },
+  }),
+
+  fetchSecretAudit: createApiAction<InfraState, [FetchClient]>(set, {
+    loadingKey: "secretsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch secrets audit",
+    action: async (client) => {
+      const response = await client.get<{
+        readonly events: readonly SecretAuditEntry[];
+        readonly limit: number;
+        readonly has_more: boolean;
+        readonly total: number | null;
+        readonly next_cursor: string | null;
+      }>("/api/v2/secrets-audit/events");
+      return { secretAuditEntries: response.events ?? [] };
+    },
+  }),
+
+  fetchOperations: createApiAction<InfraState, [FetchClient]>(set, {
+    loadingKey: "operationsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch operations",
+    action: async (client) => {
+      const response = await client.get<{
+        readonly operations: readonly OperationItem[];
+      }>("/api/v2/operations?limit=20");
+      return {
+        operations: response.operations ?? [],
+        selectedOperationIndex: 0,
+      };
+    },
+  }),
+
+  // =========================================================================
+  // Actions without loading keys — inline with error store integration
+  // =========================================================================
 
   createSubscription: async (eventType, endpoint, client) => {
     set({ error: null });
@@ -191,9 +240,9 @@ export const useInfraStore = create<InfraState>((set, get) => ({
       });
       await get().fetchSubscriptions(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to create subscription",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create subscription";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -205,9 +254,9 @@ export const useInfraStore = create<InfraState>((set, get) => ({
         subscriptions: state.subscriptions.filter((s) => s.subscription_id !== id),
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to delete subscription",
-      });
+      const message = err instanceof Error ? err.message : "Failed to delete subscription";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -219,25 +268,9 @@ export const useInfraStore = create<InfraState>((set, get) => ({
         {},
       );
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to test subscription",
-      });
-    }
-  },
-
-  fetchLocks: async (client) => {
-    set({ locksLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly locks: readonly Lock[];
-        readonly count: number;
-      }>("/api/v2/locks");
-      set({ locks: response.locks ?? [], locksLoading: false, selectedLockIndex: 0 });
-    } catch (err) {
-      set({
-        locksLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch locks",
-      });
+      const message = err instanceof Error ? err.message : "Failed to test subscription";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -251,9 +284,9 @@ export const useInfraStore = create<InfraState>((set, get) => ({
         locks: state.locks.filter((l) => l.lock_id !== lockId),
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to release lock",
-      });
+      const message = err instanceof Error ? err.message : "Failed to release lock";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -266,47 +299,9 @@ export const useInfraStore = create<InfraState>((set, get) => ({
       });
       await get().fetchLocks(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to extend lock",
-      });
-    }
-  },
-
-  fetchSecretAudit: async (client) => {
-    set({ secretsLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly events: readonly SecretAuditEntry[];
-        readonly limit: number;
-        readonly has_more: boolean;
-        readonly total: number | null;
-        readonly next_cursor: string | null;
-      }>("/api/v2/secrets-audit/events");
-      set({ secretAuditEntries: response.events ?? [], secretsLoading: false });
-    } catch (err) {
-      set({
-        secretsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch secrets audit",
-      });
-    }
-  },
-
-  fetchOperations: async (client) => {
-    set({ operationsLoading: true, error: null });
-    try {
-      const response = await client.get<{
-        readonly operations: readonly OperationItem[];
-      }>("/api/v2/operations?limit=20");
-      set({
-        operations: response.operations ?? [],
-        operationsLoading: false,
-        selectedOperationIndex: 0,
-      });
-    } catch (err) {
-      set({
-        operationsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch operations",
-      });
+      const message = err instanceof Error ? err.message : "Failed to extend lock";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

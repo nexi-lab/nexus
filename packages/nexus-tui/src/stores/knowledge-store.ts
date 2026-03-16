@@ -5,6 +5,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types
@@ -90,6 +92,8 @@ export interface KnowledgeState {
   readonly clearReplay: () => void;
 }
 
+const SOURCE = "knowledge";
+
 export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   aspectsCache: new Map(),
   aspectDetailCache: new Map(),
@@ -104,6 +108,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   columnSearchLoading: false,
   error: null,
 
+  // =========================================================================
+  // Actions — inline with error store integration (use get() for cache)
+  // =========================================================================
+
   fetchAspects: async (urn, client) => {
     // Check cache
     if (get().aspectsCache.has(urn)) return;
@@ -117,11 +125,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       newCache.set(urn, result.aspects ?? []);
       set({ aspectsCache: newCache, aspectsLoading: false });
     } catch (err) {
-      set({
-        aspectsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch aspects",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch aspects";
+      set({ aspectsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -149,11 +155,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       newCache.set(key, entry);
       set({ aspectDetailCache: newCache, aspectsLoading: false });
     } catch (err) {
-      set({
-        aspectsLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch aspect",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch aspect";
+      set({ aspectsLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -185,11 +189,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       newCache.set(cacheKey, schema);
       set({ schemaCache: newCache, schemaLoading: false });
     } catch (err) {
-      set({
-        schemaLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch schema",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch schema";
+      set({ schemaLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -228,17 +230,17 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         replayNextCursor: result.nextCursor ?? 0,
       });
     } catch (err) {
-      set({
-        replayLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to fetch replay",
-      });
+      const message = err instanceof Error ? err.message : "Failed to fetch replay";
+      set({ replayLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
-  searchByColumn: async (column, client) => {
-    set({ columnSearchLoading: true, error: null });
-    try {
+  searchByColumn: createApiAction<KnowledgeState, [string, FetchClient]>(set, {
+    loadingKey: "columnSearchLoading",
+    source: SOURCE,
+    errorMessage: "Failed to search",
+    action: async (column, client) => {
       const result = await client.get<{
         results: {
           entityUrn: string;
@@ -248,18 +250,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       }>(
         `/api/v2/catalog/search?column=${encodeURIComponent(column)}`,
       );
-      set({
-        columnSearchResults: result.results ?? [],
-        columnSearchLoading: false,
-      });
-    } catch (err) {
-      set({
-        columnSearchLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to search",
-      });
-    }
-  },
+      return { columnSearchResults: result.results ?? [] };
+    },
+  }),
 
   clearReplay: () =>
     set({ replayEntries: [], replayNextCursor: 0, replayHasMore: false }),

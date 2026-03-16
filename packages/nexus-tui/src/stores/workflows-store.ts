@@ -7,6 +7,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -117,6 +119,8 @@ export interface WorkflowsState {
   readonly setSelectedExecutionIndex: (index: number) => void;
 }
 
+const SOURCE = "workflows";
+
 export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
   workflows: [],
   selectedWorkflowIndex: 0,
@@ -135,22 +139,21 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
   activeTab: "workflows",
   error: null,
 
-  fetchWorkflows: async (client) => {
-    set({ workflowsLoading: true, error: null });
+  // =========================================================================
+  // Actions migrated to createApiAction (Decision 6A)
+  // =========================================================================
 
-    try {
+  fetchWorkflows: createApiAction<WorkflowsState, [FetchClient]>(set, {
+    loadingKey: "workflowsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch workflows",
+    action: async (client) => {
       const workflows = await client.get<readonly WorkflowSummary[]>(
         "/api/v2/workflows",
       );
-
-      set({ workflows: workflows ?? [], workflowsLoading: false });
-    } catch (err) {
-      set({
-        workflowsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch workflows",
-      });
-    }
-  },
+      return { workflows: workflows ?? [] };
+    },
+  }),
 
   fetchWorkflowDetail: async (name, client) => {
     set({ detailLoading: true, error: null });
@@ -161,13 +164,19 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       );
       set({ selectedWorkflow: workflow, detailLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch workflow detail";
       set({
         selectedWorkflow: null,
         detailLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch workflow detail",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
+
+  // =========================================================================
+  // Actions without loading keys — inline with error store integration
+  // =========================================================================
 
   executeWorkflow: async (name, client) => {
     set({ error: null });
@@ -182,9 +191,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       const { fetchExecutions } = get();
       await fetchExecutions(name, client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to execute workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to execute workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -198,11 +207,13 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
 
       set({ executions: executions ?? [], executionsLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch executions";
       set({
         executions: [],
         executionsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch executions",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -215,11 +226,13 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       );
       set({ schedulerMetrics: metrics, schedulerLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch scheduler metrics";
       set({
         schedulerMetrics: null,
         schedulerLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch scheduler metrics",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -230,9 +243,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       await client.post("/api/v2/workflows", { name, description });
       await get().fetchWorkflows(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to create workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -249,9 +262,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to delete workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to delete workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -269,9 +282,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to enable workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to enable workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -289,10 +302,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         ),
       }));
     } catch (err) {
-      set({
-        error:
-          err instanceof Error ? err.message : "Failed to disable workflow",
-      });
+      const message = err instanceof Error ? err.message : "Failed to disable workflow";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

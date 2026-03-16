@@ -4,6 +4,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types
@@ -78,6 +80,8 @@ export interface FilesState {
   readonly renameFile: (oldPath: string, newPath: string, client: FetchClient) => Promise<void>;
 }
 
+const SOURCE = "files";
+
 export const useFilesStore = create<FilesState>((set, get) => ({
   fileCache: new Map(),
   currentPath: "/",
@@ -118,7 +122,9 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       newCache.set(path, { data: sorted, fetchedAt: Date.now() });
       set({ fileCache: newCache, error: null });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to fetch files" });
+      const message = err instanceof Error ? err.message : "Failed to fetch files";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -131,11 +137,13 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       );
       set({ previewContent: response.content ?? "", previewLoading: false });
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch preview";
       set({
         previewContent: null,
         previewLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch preview",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -199,10 +207,12 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       if (node) {
         revertNodes.set(path, { ...node, loading: false, expanded: false });
       }
+      const message = err instanceof Error ? err.message : "Failed to expand directory";
       set({
         treeNodes: revertNodes,
-        error: err instanceof Error ? err.message : "Failed to expand directory",
+        error: message,
       });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -236,7 +246,9 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       await client.post("/api/v2/files/write", { path, content });
       get().invalidate(path.split("/").slice(0, -1).join("/") || "/");
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to write file" });
+      const message = err instanceof Error ? err.message : "Failed to write file";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -248,7 +260,9 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       get().invalidate(parentPath);
       await get().fetchFiles(parentPath, client);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to delete file" });
+      const message = err instanceof Error ? err.message : "Failed to delete file";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -260,7 +274,9 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       get().invalidate(parentPath);
       await get().fetchFiles(parentPath, client);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to create directory" });
+      const message = err instanceof Error ? err.message : "Failed to create directory";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -273,7 +289,9 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       get().invalidate(parentPath);
       await get().fetchFiles(parentPath, client);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : "Failed to rename file" });
+      const message = err instanceof Error ? err.message : "Failed to rename file";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 }));

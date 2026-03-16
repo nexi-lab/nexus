@@ -28,8 +28,59 @@ interface CacheEntry<T> {
   fetchedAt: number;
 }
 
+// =============================================================================
+// LRU cache with eviction (Decision 16A)
+// =============================================================================
+
+const MAX_CACHE_SIZE = 200;
+
+let accessCounter = 0;
+
+class LruCache {
+  private readonly _map = new Map<string, { entry: CacheEntry<unknown>; accessOrder: number }>();
+
+  get(key: string): CacheEntry<unknown> | undefined {
+    const item = this._map.get(key);
+    if (!item) return undefined;
+    // Update access order for LRU tracking (monotonic counter avoids Date.now() ties)
+    item.accessOrder = ++accessCounter;
+    return item.entry;
+  }
+
+  set(key: string, entry: CacheEntry<unknown>): void {
+    this._map.set(key, { entry, accessOrder: ++accessCounter });
+    this._evictIfNeeded();
+  }
+
+  delete(key: string): void {
+    this._map.delete(key);
+  }
+
+  clear(): void {
+    this._map.clear();
+  }
+
+  private _evictIfNeeded(): void {
+    if (this._map.size <= MAX_CACHE_SIZE) return;
+
+    // Find and remove least-recently-accessed entries
+    const entries = [...this._map.entries()].sort(
+      (a, b) => a[1].accessOrder - b[1].accessOrder,
+    );
+
+    const toRemove = this._map.size - MAX_CACHE_SIZE;
+    for (let i = 0; i < toRemove; i++) {
+      this._map.delete(entries[i]![0]);
+    }
+  }
+}
+
 // Module-level cache shared across hook instances
-const cache = new Map<string, CacheEntry<unknown>>();
+/** @internal Exported for testing LRU behavior */
+export const swrCache = new LruCache();
+
+// Keep backward-compatible local alias
+const cache = swrCache;
 
 export function useSwr<T>(
   key: string,

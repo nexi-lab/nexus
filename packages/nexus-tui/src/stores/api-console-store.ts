@@ -4,6 +4,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 /** Minimal OpenAPI 3.x spec shape — only what we parse. */
 interface OpenApiSpec {
@@ -165,6 +167,8 @@ export interface ApiConsoleState {
   readonly setCommandInputBuffer: (buffer: string) => void;
 }
 
+const SOURCE = "console";
+
 export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
   endpoints: [],
   filteredEndpoints: [],
@@ -288,16 +292,18 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
       }));
     } catch (err) {
       const timeMs = performance.now() - start;
+      const message = err instanceof Error ? err.message : "Request failed";
       const responseState: ResponseState = {
         status: 0,
         statusText: "Network Error",
         headers: {},
         body: "",
         timeMs,
-        error: err instanceof Error ? err.message : "Request failed",
+        error: message,
       };
 
       set({ response: responseState, isLoading: false });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -322,8 +328,9 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
       // Sort: by path, then by method
       endpoints.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
       get().setEndpoints(endpoints);
-    } catch {
-      // OpenAPI spec not available — leave endpoints empty
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch OpenAPI spec";
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

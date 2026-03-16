@@ -4,6 +4,8 @@
 
 import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
+import { createApiAction, categorizeError } from "./create-api-action.js";
+import { useErrorStore } from "./error-store.js";
 
 // =============================================================================
 // Types
@@ -46,6 +48,8 @@ export interface ShareLinkState {
   readonly setSelectedLinkIndex: (index: number) => void;
 }
 
+const SOURCE = "files";
+
 export const useShareLinkStore = create<ShareLinkState>((set, get) => ({
   links: [],
   linksLoading: false,
@@ -54,9 +58,15 @@ export const useShareLinkStore = create<ShareLinkState>((set, get) => ({
   accessLogsLoading: false,
   error: null,
 
-  fetchLinks: async (client, options) => {
-    set({ linksLoading: true, error: null });
-    try {
+  // =========================================================================
+  // Actions with loading keys — createApiAction
+  // =========================================================================
+
+  fetchLinks: createApiAction<ShareLinkState, [FetchClient, ({ includeRevoked?: boolean; includeExpired?: boolean } | undefined)?]>(set, {
+    loadingKey: "linksLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch share links",
+    action: async (client, options) => {
       const response = await client.post<{ result: readonly ShareLink[] }>(
         "/api/nfs/list_share_links",
         {
@@ -67,18 +77,33 @@ export const useShareLinkStore = create<ShareLinkState>((set, get) => ({
           },
         },
       );
-      set({
+      return {
         links: response.result ?? [],
-        linksLoading: false,
         selectedLinkIndex: 0,
-      });
-    } catch (err) {
-      set({
-        linksLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch share links",
-      });
-    }
-  },
+      };
+    },
+  }),
+
+  fetchAccessLogs: createApiAction<ShareLinkState, [string, FetchClient]>(set, {
+    loadingKey: "accessLogsLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch access logs",
+    action: async (linkId, client) => {
+      const response = await client.post<{ result: readonly ShareLinkAccessLog[] }>(
+        "/api/nfs/get_share_link_access_logs",
+        {
+          params: { link_id: linkId },
+        },
+      );
+      return {
+        accessLogs: response.result ?? [],
+      };
+    },
+  }),
+
+  // =========================================================================
+  // Actions without loading keys — inline with error store integration
+  // =========================================================================
 
   createLink: async (params, client) => {
     set({ error: null });
@@ -97,9 +122,9 @@ export const useShareLinkStore = create<ShareLinkState>((set, get) => ({
       );
       await get().fetchLinks(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to create share link",
-      });
+      const message = err instanceof Error ? err.message : "Failed to create share link";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 
@@ -114,30 +139,9 @@ export const useShareLinkStore = create<ShareLinkState>((set, get) => ({
       );
       await get().fetchLinks(client);
     } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Failed to revoke share link",
-      });
-    }
-  },
-
-  fetchAccessLogs: async (linkId, client) => {
-    set({ accessLogsLoading: true, error: null });
-    try {
-      const response = await client.post<{ result: readonly ShareLinkAccessLog[] }>(
-        "/api/nfs/get_share_link_access_logs",
-        {
-          params: { link_id: linkId },
-        },
-      );
-      set({
-        accessLogs: response.result ?? [],
-        accessLogsLoading: false,
-      });
-    } catch (err) {
-      set({
-        accessLogsLoading: false,
-        error: err instanceof Error ? err.message : "Failed to fetch access logs",
-      });
+      const message = err instanceof Error ? err.message : "Failed to revoke share link";
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

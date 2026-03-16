@@ -49,7 +49,21 @@ fix_data_dir_and_drop_privileges() {
     if [ "$(id -u)" = "0" ]; then
         # Create required subdirectories inside the (possibly bind-mounted) data dir
         mkdir -p /app/data/skills /app/data/.zoekt-index
-        chown -R nexus:nexus /app/data
+
+        if ! chown -R nexus:nexus /app/data 2>/dev/null; then
+            # chown fails on macOS Docker Desktop (VirtioFS/gRPC FUSE does not
+            # support ownership changes on bind-mounted host directories).
+            # Verify the nexus user can still write — on macOS, Docker maps all
+            # container access through the host uid regardless of in-container
+            # ownership, so writes succeed despite the chown failure.
+            if gosu nexus touch /app/data/.entrypoint-write-test 2>/dev/null; then
+                rm -f /app/data/.entrypoint-write-test
+            else
+                echo -e "${RED:-}ERROR: chown failed and /app/data is not writable by nexus user.${NC:-}"
+                echo "  Check bind-mount permissions on the host directory."
+                exit 1
+            fi
+        fi
 
         # Re-exec the entrypoint as the nexus user
         exec gosu nexus "$0" "$@"

@@ -510,7 +510,7 @@ services:
   #   docker compose --profile zoekt -f dockerfiles/docker-compose.cross-platform-test.yml up -d
   # ==========================================================================
   zoekt:
-    image: sourcegraph/zoekt-webserver:latest
+    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
     container_name: nexus-zoekt
     restart: unless-stopped
     profiles:
@@ -538,7 +538,7 @@ services:
         max-file: "3"
 
   zoekt-indexer:
-    image: sourcegraph/zoekt-webserver:latest
+    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
     container_name: nexus-zoekt-indexer
     profiles:
       - zoekt-index

@@ -590,17 +590,24 @@ class PipedRecordStoreWriteObserver:
             session.close()
 
         # Phase 2: MCL recording (non-critical, separate session)
-        mcl_session = self._session_factory()
+        # Session creation is inside the try so that a factory failure
+        # is caught here (non-critical) instead of propagating to
+        # _flush_batch, which would retry the whole batch after Phase 1
+        # already committed — duplicating operation_log / version-history rows.
+        mcl_session = None
         try:
+            mcl_session = self._session_factory()
             for event in events:
                 if event.get("op") in ("write", "delete", "rename"):
                     self._record_mcl_for_event(mcl_session, event)
             mcl_session.commit()
         except Exception as mcl_err:
-            mcl_session.rollback()
+            if mcl_session is not None:
+                mcl_session.rollback()
             logger.debug("MCL batch recording failed (non-critical): %s", mcl_err)
         finally:
-            mcl_session.close()
+            if mcl_session is not None:
+                mcl_session.close()
 
     async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
         """Flush a batch of events to RecordStore in a single transaction."""

@@ -551,7 +551,7 @@ async def connect(
         _register_federation_resolver(nx_fs, zone_mgr)
 
     # Restore saved mounts (application-layer startup I/O)
-    _restore_mounts(nx_fs)
+    await _restore_mounts(nx_fs)
 
     return nx_fs
 
@@ -585,7 +585,7 @@ def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
     logger.info("Federation resolvers registered: IPC + Content (self=%s)", zone_mgr.advertise_addr)
 
 
-def _restore_mounts(nx_fs: "NexusFS") -> None:
+async def _restore_mounts(nx_fs: "NexusFS") -> None:
     """Restore saved mounts from database at application startup.
 
     This is application-layer I/O that runs after NexusFS construction.
@@ -600,7 +600,7 @@ def _restore_mounts(nx_fs: "NexusFS") -> None:
             "1",
             "yes",
         )
-        mount_result = nx_fs.service("mount_persist").load_all_mounts(auto_sync=auto_sync)
+        mount_result = await nx_fs.service("mount_persist").load_all_mounts(auto_sync=auto_sync)
         if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
             sync_msg = f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
             logger.info(

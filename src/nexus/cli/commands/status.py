@@ -63,19 +63,34 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _server_health(base_url: str, timeout: float = 1.5) -> dict[str, Any] | None:
+def _server_health(
+    base_url: str, api_key: str | None = None, timeout: float = 1.5
+) -> dict[str, Any] | None:
     """Query the running server's ``/health/detailed`` endpoint.
 
     Returns the JSON payload or *None* if the server is unreachable.
+    Falls back to the public ``/health`` endpoint when the detailed
+    endpoint requires authentication and no *api_key* is provided.
     """
     try:
         import httpx
 
-        with httpx.Client(timeout=timeout) as client:
+        headers: dict[str, str] = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        with httpx.Client(timeout=timeout, headers=headers) as client:
             resp = client.get(f"{base_url}/health/detailed")
             if resp.status_code == 200:
                 result: dict[str, Any] = resp.json()
                 return result
+            # Detailed endpoint may require admin auth — fall back to
+            # the public /health endpoint so we still report "healthy".
+            if resp.status_code in (401, 403):
+                fallback = client.get(f"{base_url}/health")
+                if fallback.status_code == 200:
+                    fb_result: dict[str, Any] = fallback.json()
+                    return fb_result
             return {"status": "error", "http_status": resp.status_code}
     except Exception:
         return None
@@ -90,17 +105,19 @@ def _docker_services(profiles: list[str] | None = None) -> list[dict[str, str]]:
         from nexus.cli.compose import ComposeRunner
 
         runner = ComposeRunner()
-        return runner.ps(profiles=profiles)
+        result: list[dict[str, str]] = runner.ps(profiles=profiles)
+        return result
     except Exception:
         return []
 
 
 async def _collect_status_async(
     server_url: str,
+    api_key: str | None = None,
     profiles: list[str] | None = None,
 ) -> dict[str, Any]:
     """Collect all status data concurrently."""
-    health_task = asyncio.to_thread(_server_health, server_url)
+    health_task = asyncio.to_thread(_server_health, server_url, api_key)
     docker_task = asyncio.to_thread(_docker_services, profiles)
     health, docker = await asyncio.gather(health_task, docker_task)
     return {
@@ -113,10 +130,11 @@ async def _collect_status_async(
 
 def _collect_status(
     server_url: str,
+    api_key: str | None = None,
     profiles: list[str] | None = None,
 ) -> dict[str, Any]:
     """Collect all status data (dual-path: server health + Docker state)."""
-    return asyncio.run(_collect_status_async(server_url, profiles))
+    return asyncio.run(_collect_status_async(server_url, api_key, profiles))
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +164,13 @@ def _build_table(data: dict[str, Any]) -> Table:
     if data["server_reachable"]:
         health = data["server_health"] or {}
         status_str = "[green]running[/green]"
-        health_str = f"[green]{health.get('status', 'unknown')}[/green]"
+        health_status = health.get("status", "unknown")
+        if health_status in ("healthy", "ok"):
+            health_str = f"[green]{health_status}[/green]"
+        elif health_status == "error":
+            health_str = f"[red]{health_status}[/red]"
+        else:
+            health_str = f"[yellow]{health_status}[/yellow]"
         components = health.get("components", {})
         details_parts: list[str] = []
         for name, info in components.items():
@@ -229,7 +253,7 @@ def _render_table(data: dict[str, Any]) -> None:
     default=None,
     envvar="NEXUS_API_KEY",
     hidden=True,
-    help="Ignored — status does not require auth. Accepted for CLI consistency.",
+    help="API key for authenticated health checks.",
 )
 @click.option(
     "--profile",
@@ -243,7 +267,7 @@ def status(
     output_opts: OutputOptions,
     watch: bool,
     url: str | None,
-    remote_api_key: str | None,  # noqa: ARG001
+    remote_api_key: str | None,
     profiles: tuple[str, ...],
 ) -> None:
     """Display Nexus service health, latency, and connection details.
@@ -258,11 +282,13 @@ def status(
 
     try:
         if watch and not output_opts.json_output:
-            _watch_loop(server_url, profile_list)
+            _watch_loop(server_url, remote_api_key, profile_list)
         else:
             timing = CommandTiming()
             with timing.phase("collect"):
-                data = _enrich_with_image_info(_collect_status(server_url, profile_list))
+                data = _enrich_with_image_info(
+                    _collect_status(server_url, remote_api_key, profile_list)
+                )
             render_output(
                 data=data,
                 output_opts=output_opts,
@@ -275,17 +301,19 @@ def status(
         handle_error(exc)
 
 
-def _watch_loop(server_url: str, profiles: list[str] | None) -> None:
+def _watch_loop(server_url: str, api_key: str | None, profiles: list[str] | None) -> None:
     """Continuously refresh the status table every 2 seconds."""
     from rich.live import Live
 
-    data = _enrich_with_image_info(_collect_status(server_url, profiles))
+    data = _enrich_with_image_info(_collect_status(server_url, api_key, profiles))
 
     with Live(_build_table(data), refresh_per_second=1, console=console) as live:
         while True:
             time.sleep(2)
             live.update(
-                _build_table(_enrich_with_image_info(_collect_status(server_url, profiles)))
+                _build_table(
+                    _enrich_with_image_info(_collect_status(server_url, api_key, profiles))
+                )
             )
 
 

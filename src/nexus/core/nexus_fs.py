@@ -4743,39 +4743,6 @@ class NexusFS(  # type: ignore[misc]
     def get_mount(self, mount_point: str, context: Any = None) -> dict[str, Any] | None:
         return self.mount_service.get_mount_sync(mount_point=mount_point, context=context)
 
-    def _grant_mount_owner_permission(self, mount_point: str, context: Any | None) -> None:
-        """Grant direct_owner permission to the user who created the mount."""
-        import logging as _logging
-
-        _log = _logging.getLogger(__name__)
-        _log.info(f"Setting up mount point: {mount_point}")
-
-        # Create directory entry for the mount point
-        try:
-            self.sys_mkdir(mount_point, parents=True, exist_ok=True)
-        except Exception as e:
-            _log.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
-
-        # Grant direct_owner permission to the creating user
-        if context:
-            from nexus.lib.context_utils import get_user_identity, get_zone_id
-
-            subject_type, subject_id = get_user_identity(context)
-            zone_id = get_zone_id(context)
-
-            if subject_id and hasattr(self, "rebac_service"):
-                try:
-                    self.rebac_service.rebac_create_sync(
-                        subject=(subject_type, subject_id),
-                        relation="direct_owner",
-                        object=("file", mount_point),
-                        zone_id=zone_id,
-                    )
-                except Exception as e:
-                    _log.warning(
-                        f"Failed to grant direct_owner for {mount_point}: {type(e).__name__}: {e}"
-                    )
-
     def _matches_patterns(
         self,
         file_path: str,

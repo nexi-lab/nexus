@@ -78,6 +78,11 @@ class MountPersistService:
                 "Mount manager not available. Ensure NexusFS is initialized with a database."
             )
 
+    def _check_mounts(self) -> None:
+        """Check that MountService is wired."""
+        if self._mounts is None:
+            raise RuntimeError("MountService not wired into MountPersistService")
+
     async def save_mount(
         self,
         mount_point: str,
@@ -133,6 +138,7 @@ class MountPersistService:
         )
 
         # Also activate the mount via MountService
+        self._check_mounts()
         try:
             self._mounts.add_mount_sync(
                 mount_point=mount_point,
@@ -167,6 +173,7 @@ class MountPersistService:
         self._check_manager()
 
         # Check if mount is already active
+        self._check_mounts()
         if self._mounts.has_mount_sync(mount_point):
             logger.info(f"[LOAD_MOUNT] Mount already active: {mount_point}")
             # Return the mount_id from database
@@ -217,6 +224,7 @@ class MountPersistService:
             return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
 
         logger.info(f"Found {len(saved_mounts)} saved mount(s) to load")
+        self._check_mounts()
 
         loaded = 0
         failed = 0

@@ -500,12 +500,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         """Server-side streaming read — chunked delivery for large files.
 
         Note: Currently buffers the full file in memory before chunking.
-        Files exceeding _MAX_STREAM_SIZE are rejected with an error.
         A future iteration will stream directly from the storage layer
         (see Issue #3063 follow-up).
         """
         _DEFAULT_CHUNK_SIZE = 1_048_576  # 1 MB
-        _MAX_STREAM_SIZE = 512 * 1_048_576  # 512 MB
+        _LARGE_FILE_WARNING = 256 * 1_048_576  # 256 MB
 
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
@@ -518,16 +517,13 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 False,  # parsed
             )
             content = result if isinstance(result, bytes) else b""
-            if len(content) > _MAX_STREAM_SIZE:
-                yield vfs_pb2.ReadChunk(
-                    is_error=True,
-                    error_payload=_error_payload(
-                        RPCErrorCode.VALIDATION_ERROR,
-                        f"File too large for streaming: {len(content)} bytes "
-                        f"(max {_MAX_STREAM_SIZE} bytes)",
-                    ),
+            if len(content) > _LARGE_FILE_WARNING:
+                logger.warning(
+                    "StreamRead buffering large file: %s (%d bytes). "
+                    "Consider true streaming in a future iteration.",
+                    request.path,
+                    len(content),
                 )
-                return
         except ZoneScopingError as e:
             yield vfs_pb2.ReadChunk(
                 is_error=True,

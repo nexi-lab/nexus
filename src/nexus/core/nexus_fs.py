@@ -4964,9 +4964,11 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_process_table") and self._process_table is not None:
             self._process_table.close_all()
 
-        # Stop DeferredPermissionBuffer first to flush pending permissions
+        # Stop DeferredPermissionBuffer first to flush pending permissions.
+        # Uses _stop_sync() because close() is sync; async stop() is handled
+        # by coordinator.stop_persistent_services() in aclose().
         if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
-            self._deferred_permission_buffer.stop()
+            self._deferred_permission_buffer._stop_sync()
 
         # Flush write observer pre-buffer (CLI mode: events buffered in memory
         # because PipeManager was never injected). Must happen before

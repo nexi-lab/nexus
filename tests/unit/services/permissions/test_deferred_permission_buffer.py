@@ -83,29 +83,29 @@ class TestLifecycle:
         """Test that start() creates a daemon background thread."""
         buffer = DeferredPermissionBuffer()
 
-        buffer.start()
+        buffer._start_sync()
 
         assert buffer._started is True
         assert buffer._flush_thread is not None
         assert buffer._flush_thread.is_alive()
         assert buffer._flush_thread.daemon is True
 
-        buffer.stop()
+        buffer._stop_sync()
 
     def test_start_is_idempotent(self) -> None:
         """Test that calling start() twice doesn't create a second thread."""
         buffer = DeferredPermissionBuffer()
 
-        buffer.start()
+        buffer._start_sync()
         first_thread = buffer._flush_thread
 
-        buffer.start()
+        buffer._start_sync()
         second_thread = buffer._flush_thread
 
         assert first_thread is second_thread
         assert threading.active_count() >= 1
 
-        buffer.stop()
+        buffer._stop_sync()
 
     def test_stop_flushes_remaining_items(self) -> None:
         """Test that stop() flushes all pending items."""
@@ -116,10 +116,10 @@ class TestLifecycle:
             hierarchy_manager=hierarchy,
         )
 
-        buffer.start()
+        buffer._start_sync()
         buffer.queue_hierarchy("/test/path", "zone1")
         buffer.queue_owner_grant("user1", "/test/file", "zone1")
-        buffer.stop()
+        buffer._stop_sync()
 
         # Verify both managers were called
         hierarchy.ensure_parent_tuples_batch.assert_called_once()
@@ -134,12 +134,12 @@ class TestLifecycle:
         """Test that calling stop() multiple times is safe."""
         buffer = DeferredPermissionBuffer()
 
-        buffer.start()
-        buffer.stop()
+        buffer._start_sync()
+        buffer._stop_sync()
         assert buffer._started is False
 
         # Second stop should be no-op
-        buffer.stop()
+        buffer._stop_sync()
         assert buffer._started is False
 
     def test_stop_without_start_is_noop(self) -> None:
@@ -147,7 +147,7 @@ class TestLifecycle:
         buffer = DeferredPermissionBuffer()
 
         # Should not raise
-        buffer.stop()
+        buffer._stop_sync()
         assert buffer._started is False
 
 
@@ -435,7 +435,7 @@ class TestErrorHandling:
             flush_interval_sec=0.05,
         )
 
-        buffer.start()
+        buffer._start_sync()
         buffer.queue_owner_grant("user1", "/file1", "zone1")
 
         # Wait for first flush attempt (will fail) — generous margin for slow CI
@@ -447,7 +447,7 @@ class TestErrorHandling:
         # Wait for second flush attempt (should succeed)
         time.sleep(0.3)
 
-        buffer.stop()
+        buffer._stop_sync()
 
         # Should have attempted flush at least twice
         assert rebac.rebac_write_batch.call_count >= 2

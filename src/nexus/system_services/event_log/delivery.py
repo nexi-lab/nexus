@@ -121,8 +121,8 @@ class EventDeliveryWorker:
 
     # ---- Lifecycle -----------------------------------------------------------
 
-    def start(self) -> None:
-        """Start background polling thread."""
+    async def start(self) -> None:
+        """Start background polling thread (PersistentService protocol)."""
         if self._thread is not None and self._thread.is_alive():
             logger.warning("EventDeliveryWorker already running")
             return
@@ -141,8 +141,8 @@ class EventDeliveryWorker:
             self._exporter_registry.exporter_names if self._exporter_registry else "none",
         )
 
-    def stop(self, timeout: float = 5.0) -> None:
-        """Graceful shutdown: signal stop, then wait for in-flight work."""
+    async def stop(self, timeout: float = 5.0) -> None:
+        """Graceful shutdown: signal stop, then wait for in-flight work (PersistentService protocol)."""
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)

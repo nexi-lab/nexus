@@ -101,7 +101,7 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "
  * Each entry is the first token after `nexus` — compound commands like `demo init`
  * are validated by checking the first token only (the CLI handles the rest).
  */
-const ALLOWED_LOCAL_COMMANDS = new Set(["init", "build", "demo", "brick", "agent"]);
+const ALLOWED_LOCAL_COMMANDS = new Set(["init", "build", "demo", "brick", "agent", "up"]);
 
 /**
  * Parse a command string into an HTTP command or local command.

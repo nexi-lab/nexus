@@ -128,7 +128,7 @@ export function PreConnectionScreen(): React.ReactNode {
           u: () => {
             // Start server (nexus up)
             useCommandRunnerStore.getState().reset();
-            executeLocalCommand("init", ["--preset", "shared"]);
+            executeLocalCommand("up", []);
           },
           c: () => {
             // Connect to a different URL
@@ -216,6 +216,10 @@ export function PreConnectionScreen(): React.ReactNode {
             <text>
               <text foregroundColor={statusColor.info}>{"  [S]"}</text>
               <text>{" Initialize shared project (nexus init --preset shared)"}</text>
+            </text>
+            <text>
+              <text foregroundColor={statusColor.info}>{"  [U]"}</text>
+              <text>{" Start server (nexus up)"}</text>
             </text>
             <text>
               <text foregroundColor={statusColor.info}>{"  [C]"}</text>

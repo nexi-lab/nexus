@@ -211,6 +211,12 @@ describe("parseCommand", () => {
       expect(result.args).toEqual(["spawn"]);
     });
 
+    it("!up", () => {
+      const result = expectLocal("!up");
+      expect(result.command).toBe("up");
+      expect(result.args).toEqual([]);
+    });
+
     it("handles leading whitespace after !", () => {
       const result = expectLocal("!  init --preset demo");
       expect(result.command).toBe("init");

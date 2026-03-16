@@ -132,6 +132,11 @@ describe("CommandRunner", () => {
       executeLocalCommand("agent", ["spawn"]);
       expect(useCommandRunnerStore.getState().spawnError).toBeNull();
     });
+
+    it("accepts allowed commands (up)", () => {
+      executeLocalCommand("up", []);
+      expect(useCommandRunnerStore.getState().spawnError).toBeNull();
+    });
   });
 
   // =========================================================================

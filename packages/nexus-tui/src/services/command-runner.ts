@@ -23,7 +23,7 @@ const MAX_OUTPUT_LINES = 200;
 const THROTTLE_MS = 100;
 
 /** Defense-in-depth: re-validate the subcommand even though parseCommand already checks. */
-const ALLOWED_COMMANDS = new Set(["init", "build", "demo", "brick", "agent"]);
+const ALLOWED_COMMANDS = new Set(["init", "build", "demo", "brick", "agent", "up"]);
 
 // =============================================================================
 // Types

@@ -564,18 +564,33 @@ class PipedRecordStoreWriteObserver:
             if op in ("write", "delete", "rename"):
                 self._record_mcl_for_event(session, event)
 
+    def _flush_batch_sync(self, events: list[dict[str, Any]]) -> None:
+        """Synchronous flush using explicit engine connection.
+
+        Uses engine.begin() instead of session context manager to ensure
+        commits persist even when called from an asyncio consumer task
+        running on a different event loop than where the session_factory
+        was created.
+        """
+        engine = self._session_factory.kw["bind"]
+        with engine.begin() as conn:
+            session = self._session_factory(bind=conn)
+            try:
+                self._process_events_in_session(session, events)
+                session.flush()
+            finally:
+                session.close()
+
     async def _flush_batch(self, events: list[dict[str, Any]], attempt: int = 0) -> None:
         """Flush a batch of events to RecordStore in a single transaction."""
         t0 = time.monotonic()
         try:
-            with self._session_factory() as session:
-                self._process_events_in_session(session, events)
-                session.commit()
+            self._flush_batch_sync(events)
 
             duration = time.monotonic() - t0
             self._total_flushed += len(events)
-            logger.debug(
-                "PipedRecordStoreWriteObserver flushed %d events in %.3fs",
+            logger.info(
+                "[PIPE] Flushed %d events in %.3fs",
                 len(events),
                 duration,
             )

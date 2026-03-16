@@ -9,6 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use redb::ReadableTable;
+
 use crate::storage::{RedbStorageError, RedbStore, RedbTree};
 
 use super::Result;
@@ -821,12 +823,6 @@ impl FullStateMachine {
         }
     }
 
-    /// Save last_applied index to storage.
-    fn save_last_applied(&self, index: u64) -> Result<()> {
-        self.metadata.set(KEY_LAST_APPLIED, &index.to_be_bytes())?;
-        Ok(())
-    }
-
     /// Get metadata by path.
     pub fn get_metadata(&self, path: &str) -> Result<Option<Vec<u8>>> {
         Ok(self.metadata.get(path.as_bytes())?)
@@ -906,8 +902,11 @@ struct Snapshot {
 impl FullStateMachine {
     /// Shared command dispatch — the actual redb operations.
     ///
-    /// Both `apply()` (SC/Raft) and `apply_local()` (EC) delegate here.
-    /// This is the SSOT for command→operation mapping.
+    /// Used by `apply_local()` (EC) and `apply_ec_with_lww()`. Each sub-method
+    /// opens its own redb transaction internally.
+    ///
+    /// For the Raft `apply()` path, use `execute_in_txn()` instead — it runs
+    /// inside a caller-provided transaction for atomicity with `last_applied`.
     fn execute(&self, command: &Command) -> Result<CommandResult> {
         match command {
             Command::SetMetadata { key, value } => self.apply_set_metadata(key, value),
@@ -940,6 +939,226 @@ impl FullStateMachine {
                 now_secs,
             } => self.apply_extend_lock(path, lock_id, *new_ttl_secs, *now_secs),
             Command::AdjustCounter { key, delta } => self.apply_adjust_counter(key, *delta),
+            Command::Noop => Ok(CommandResult::Success),
+        }
+    }
+
+    /// Execute a command inside a caller-provided redb write transaction.
+    ///
+    /// This is the transactional variant of `execute()`, used by `apply()` to
+    /// ensure the command mutation and `last_applied` marker are persisted
+    /// atomically in a single redb transaction (matching etcd/CockroachDB/TiKV
+    /// practice). Without this, a crash between execute and save_last_applied
+    /// could cause non-idempotent commands (e.g. AdjustCounter) to replay.
+    fn execute_in_txn(
+        &self,
+        txn: &redb::WriteTransaction,
+        command: &Command,
+    ) -> Result<CommandResult> {
+        let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
+        let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
+
+        match command {
+            Command::SetMetadata { key, value } => {
+                let mut table = txn
+                    .open_table(meta_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open metadata: {e}")))?;
+                table
+                    .insert(key.as_bytes(), value.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert metadata: {e}")))?;
+                Ok(CommandResult::Success)
+            }
+
+            Command::CasSetMetadata {
+                key,
+                value,
+                expected_version,
+            } => {
+                let mut table = txn
+                    .open_table(meta_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open metadata: {e}")))?;
+                let current = table
+                    .get(key.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get metadata: {e}")))?
+                    .map(|v| v.value().to_vec());
+                let current_version = match &current {
+                    Some(bytes) => Self::extract_version(bytes),
+                    None => 0,
+                };
+                if current_version != *expected_version {
+                    return Ok(CommandResult::CasResult {
+                        success: false,
+                        current_version,
+                    });
+                }
+                table
+                    .insert(key.as_bytes(), value.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert metadata: {e}")))?;
+                Ok(CommandResult::CasResult {
+                    success: true,
+                    current_version: expected_version + 1,
+                })
+            }
+
+            Command::DeleteMetadata { key } => {
+                let mut table = txn
+                    .open_table(meta_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open metadata: {e}")))?;
+                table
+                    .remove(key.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("remove metadata: {e}")))?;
+                Ok(CommandResult::Success)
+            }
+
+            Command::AdjustCounter { key, delta } => {
+                let mut table = txn
+                    .open_table(meta_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open metadata: {e}")))?;
+                let current = table
+                    .get(key.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get metadata: {e}")))?
+                    .and_then(|v| <[u8; 8]>::try_from(v.value()).ok())
+                    .map(i64::from_be_bytes)
+                    .unwrap_or(0);
+                let new_val = (current + delta).max(0);
+                table
+                    .insert(key.as_bytes(), new_val.to_be_bytes().as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert counter: {e}")))?;
+                Ok(CommandResult::Value(new_val.to_be_bytes().to_vec()))
+            }
+
+            Command::AcquireLock {
+                path,
+                lock_id,
+                max_holders,
+                ttl_secs,
+                holder_info,
+                now_secs,
+            } => {
+                let expires_at = now_secs + *ttl_secs as u64;
+                let new_holder = HolderInfo {
+                    lock_id: lock_id.to_string(),
+                    holder_info: holder_info.to_string(),
+                    acquired_at: *now_secs,
+                    expires_at,
+                };
+
+                let mut table = txn
+                    .open_table(locks_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
+                let existing = table
+                    .get(path.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
+                    .map(|v| v.value().to_vec());
+
+                let mut lock_info: LockInfo = match existing {
+                    Some(bytes) => bincode::deserialize(&bytes)?,
+                    None => {
+                        let lock = LockInfo::new(path.to_string(), *max_holders, new_holder);
+                        let serialized = bincode::serialize(&lock)?;
+                        table
+                            .insert(path.as_bytes(), serialized.as_slice())
+                            .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                        return Ok(CommandResult::LockResult(lock.to_state(true)));
+                    }
+                };
+
+                lock_info.remove_expired(*now_secs);
+
+                if lock_info.has_holder(lock_id) {
+                    lock_info.extend_ttl(lock_id, expires_at);
+                    let serialized = bincode::serialize(&lock_info)?;
+                    table
+                        .insert(path.as_bytes(), serialized.as_slice())
+                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                    return Ok(CommandResult::LockResult(lock_info.to_state(true)));
+                }
+
+                if lock_info.max_holders != *max_holders {
+                    return Ok(CommandResult::LockResult(lock_info.to_state(false)));
+                }
+
+                if lock_info.can_acquire() {
+                    lock_info.add_holder(new_holder);
+                    let serialized = bincode::serialize(&lock_info)?;
+                    table
+                        .insert(path.as_bytes(), serialized.as_slice())
+                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                    Ok(CommandResult::LockResult(lock_info.to_state(true)))
+                } else {
+                    Ok(CommandResult::LockResult(lock_info.to_state(false)))
+                }
+            }
+
+            Command::ReleaseLock { path, lock_id } => {
+                let mut table = txn
+                    .open_table(locks_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
+                let existing = table
+                    .get(path.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
+                    .map(|v| v.value().to_vec());
+
+                let mut lock_info: LockInfo = match existing {
+                    Some(bytes) => bincode::deserialize(&bytes)?,
+                    None => {
+                        return Ok(CommandResult::Error("Lock not found".to_string()));
+                    }
+                };
+
+                if !lock_info.remove_holder(lock_id) {
+                    return Ok(CommandResult::Error("Lock holder not found".to_string()));
+                }
+
+                if lock_info.is_empty() {
+                    table
+                        .remove(path.as_bytes())
+                        .map_err(|e| super::RaftError::Storage(format!("remove lock: {e}")))?;
+                } else {
+                    let serialized = bincode::serialize(&lock_info)?;
+                    table
+                        .insert(path.as_bytes(), serialized.as_slice())
+                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                }
+
+                Ok(CommandResult::Success)
+            }
+
+            Command::ExtendLock {
+                path,
+                lock_id,
+                new_ttl_secs,
+                now_secs,
+            } => {
+                let new_expires_at = now_secs + *new_ttl_secs as u64;
+                let mut table = txn
+                    .open_table(locks_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
+                let existing = table
+                    .get(path.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
+                    .map(|v| v.value().to_vec());
+
+                let mut lock_info: LockInfo = match existing {
+                    Some(bytes) => bincode::deserialize(&bytes)?,
+                    None => {
+                        return Ok(CommandResult::Error("Lock not found".to_string()));
+                    }
+                };
+
+                lock_info.remove_expired(*now_secs);
+
+                if lock_info.extend_ttl(lock_id, new_expires_at) {
+                    let serialized = bincode::serialize(&lock_info)?;
+                    table
+                        .insert(path.as_bytes(), serialized.as_slice())
+                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                    Ok(CommandResult::Success)
+                } else {
+                    Ok(CommandResult::Error("Lock holder not found".to_string()))
+                }
+            }
+
             Command::Noop => Ok(CommandResult::Success),
         }
     }
@@ -1008,11 +1227,33 @@ impl StateMachine for FullStateMachine {
             return Ok(CommandResult::Success);
         }
 
-        // Execute the command. Storage errors during apply of committed entries
-        // are non-deterministic and unrecoverable — if this replica fails but
-        // others succeed, state has diverged. Following etcd/CockroachDB:
-        // panic to prevent silent divergence (node must be restored from snapshot).
-        let result = match self.execute(command) {
+        // Atomic apply: execute the command AND persist last_applied in a
+        // single redb write transaction. This matches etcd (boltdb txn),
+        // CockroachDB (Pebble WriteBatch), and TiKV (RocksDB WriteBatch).
+        //
+        // Without atomicity, a crash between execute() and save_last_applied()
+        // would cause non-idempotent commands (e.g. AdjustCounter) to replay
+        // on restart, silently diverging from other replicas.
+        let db = self.metadata.raw_db();
+        let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
+
+        let write_txn = match db.begin_write() {
+            Ok(txn) => txn,
+            Err(e) => {
+                panic!(
+                    "Fatal: cannot begin write transaction for apply at index {}: {}. \
+                     Node must be restored from snapshot to recover.",
+                    index, e
+                );
+            }
+        };
+
+        // Execute the command within the transaction.
+        // Storage errors during apply of committed entries are non-deterministic
+        // and unrecoverable — if this replica fails but others succeed, state
+        // has diverged. Following etcd/CockroachDB: panic to prevent silent
+        // divergence (node must be restored from snapshot).
+        let result = match self.execute_in_txn(&write_txn, command) {
             Ok(result) => result,
             Err(e) => {
                 panic!(
@@ -1023,17 +1264,37 @@ impl StateMachine for FullStateMachine {
             }
         };
 
-        // Update last_applied only on success. Panic on failure here too:
-        // execute() already mutated state, so failing to persist the progress
-        // marker would cause replay-after-restart (same divergence risk).
-        self.last_applied = index;
-        if let Err(e) = self.save_last_applied(index) {
+        // Persist last_applied in the SAME transaction — atomic with the
+        // command mutation. On crash, either both are persisted or neither.
+        match write_txn.open_table(meta_def) {
+            Ok(mut table) => {
+                if let Err(e) = table.insert(KEY_LAST_APPLIED, index.to_be_bytes().as_slice()) {
+                    panic!(
+                        "Fatal: failed to write last_applied in apply txn at index {}: {}. \
+                         Node must be restored from snapshot to recover.",
+                        index, e
+                    );
+                }
+            }
+            Err(e) => {
+                panic!(
+                    "Fatal: failed to open metadata table for last_applied at index {}: {}. \
+                     Node must be restored from snapshot to recover.",
+                    index, e
+                );
+            }
+        }
+
+        if let Err(e) = write_txn.commit() {
             panic!(
-                "Fatal: failed to persist last_applied after applying index {}: {}. \
+                "Fatal: failed to commit apply transaction at index {}: {}. \
                  Node must be restored from snapshot to recover.",
                 index, e
             );
         }
+
+        // Update in-memory state only after successful commit
+        self.last_applied = index;
 
         Ok(result)
     }

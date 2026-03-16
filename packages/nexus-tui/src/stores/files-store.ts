@@ -69,6 +69,9 @@ export interface FilesState {
   // Clipboard state
   readonly clipboard: { readonly paths: readonly string[]; readonly operation: "copy" | "cut" } | null;
 
+  // Paste progress
+  readonly pasteProgress: { readonly total: number; readonly completed: number; readonly failed: number } | null;
+
   // Error
   readonly error: string | null;
 
@@ -97,6 +100,9 @@ export interface FilesState {
   readonly yankToClipboard: (paths: readonly string[]) => void;
   readonly cutToClipboard: (paths: readonly string[]) => void;
   readonly clearClipboard: () => void;
+
+  // Paste action (async with progress)
+  readonly pasteFiles: (destinationDir: string, client: FetchClient) => Promise<void>;
 }
 
 const SOURCE = "files";
@@ -140,6 +146,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   selectedPaths: new Set(),
   visualModeAnchor: null,
   clipboard: null,
+  pasteProgress: null,
   error: null,
 
   setCurrentPath: (path) => set({ currentPath: path, selectedIndex: 0 }),
@@ -378,4 +385,63 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   cutToClipboard: (paths) => set({ clipboard: { paths: [...paths], operation: "cut" } }),
 
   clearClipboard: () => set({ clipboard: null }),
+
+  // Paste action with progress tracking
+
+  pasteFiles: async (destinationDir, client) => {
+    const { clipboard } = get();
+    if (!clipboard || clipboard.paths.length === 0) return;
+
+    const total = clipboard.paths.length;
+    set({ pasteProgress: { total, completed: 0, failed: 0 }, error: null });
+
+    const operation = clipboard.operation;
+    let completed = 0;
+    let failed = 0;
+
+    for (const srcPath of clipboard.paths) {
+      const fileName = srcPath.split("/").pop() ?? srcPath;
+      const destPath = destinationDir === "/" ? `/${fileName}` : `${destinationDir}/${fileName}`;
+      try {
+        if (operation === "copy") {
+          await client.post("/api/v2/files/copy", { source: srcPath, destination: destPath });
+        } else {
+          await client.post("/api/v2/files/rename", { source: srcPath, destination: destPath });
+        }
+        completed++;
+      } catch {
+        failed++;
+      }
+      set({ pasteProgress: { total, completed, failed } });
+    }
+
+    // Clear clipboard and progress, invalidate caches
+    set({ clipboard: null });
+    get().invalidate(destinationDir);
+
+    // Also invalidate source parents for cut operations
+    if (operation === "cut") {
+      const sourceParents = new Set(
+        clipboard.paths.map((p) => p.split("/").slice(0, -1).join("/") || "/"),
+      );
+      for (const parent of sourceParents) {
+        get().invalidate(parent);
+      }
+    }
+
+    await get().fetchFiles(destinationDir, client);
+
+    // Clear progress after a short delay so the user sees the completion state
+    setTimeout(() => {
+      if (get().pasteProgress?.completed === completed) {
+        set({ pasteProgress: null });
+      }
+    }, 2000);
+
+    if (failed > 0) {
+      const message = `Paste: ${failed} of ${total} operations failed`;
+      set({ error: message });
+      useErrorStore.getState().pushError({ message, category: "server", source: SOURCE });
+    }
+  },
 }));

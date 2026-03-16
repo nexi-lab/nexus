@@ -40,6 +40,7 @@ describe("FilesStore", () => {
       selectedPaths: new Set(),
       visualModeAnchor: null,
       clipboard: null,
+      pasteProgress: null,
     });
   });
 
@@ -399,6 +400,61 @@ describe("FilesStore", () => {
       expect(useFilesStore.getState().clipboard).not.toBeNull();
       useFilesStore.getState().clearClipboard();
       expect(useFilesStore.getState().clipboard).toBeNull();
+    });
+  });
+
+  describe("pasteFiles", () => {
+    it("copies files and tracks progress", async () => {
+      const client = mockClient({
+        "/api/v2/files/list": { items: [] },
+      });
+
+      useFilesStore.getState().yankToClipboard(["/a.txt", "/b.txt"]);
+      await useFilesStore.getState().pasteFiles("/dest", client);
+
+      // Should have called copy endpoint for each file
+      const postCalls = (client.post as ReturnType<typeof mock>).mock.calls;
+      expect(postCalls.length).toBeGreaterThanOrEqual(2);
+
+      // Clipboard should be cleared after paste
+      expect(useFilesStore.getState().clipboard).toBeNull();
+    });
+
+    it("uses rename endpoint for cut operations", async () => {
+      const client = mockClient({
+        "/api/v2/files/list": { items: [] },
+      });
+
+      useFilesStore.getState().cutToClipboard(["/x.txt"]);
+      await useFilesStore.getState().pasteFiles("/dest", client);
+
+      const postCalls = (client.post as ReturnType<typeof mock>).mock.calls;
+      expect(postCalls.some((c: unknown[]) => (c[0] as string).includes("/api/v2/files/rename"))).toBe(true);
+      expect(useFilesStore.getState().clipboard).toBeNull();
+    });
+
+    it("tracks failed operations", async () => {
+      let callCount = 0;
+      const client = {
+        get: mock(async () => ({ items: [] })),
+        post: mock(async () => {
+          callCount++;
+          if (callCount === 2) throw new Error("Disk full");
+          return { success: true };
+        }),
+        delete: mock(async () => ({})),
+      } as unknown as FetchClient;
+
+      useFilesStore.getState().yankToClipboard(["/a.txt", "/b.txt", "/c.txt"]);
+      await useFilesStore.getState().pasteFiles("/dest", client);
+
+      expect(useFilesStore.getState().error).toContain("1 of 3 operations failed");
+    });
+
+    it("no-ops when clipboard is empty", async () => {
+      const client = mockClient({});
+      await useFilesStore.getState().pasteFiles("/dest", client);
+      expect((client.post as ReturnType<typeof mock>).mock.calls.length).toBe(0);
     });
   });
 

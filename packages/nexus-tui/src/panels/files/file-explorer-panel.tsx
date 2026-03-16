@@ -116,6 +116,7 @@ interface BindingContext {
   readonly yankToClipboard: (paths: readonly string[]) => void;
   readonly cutToClipboard: (paths: readonly string[]) => void;
   readonly clearClipboard: () => void;
+  readonly pasteFiles: (destinationDir: string, client: NonNullable<ReturnType<typeof useApi>>) => Promise<void>;
   // Filter
   readonly filterQuery: string;
   readonly setFilterQuery: (v: string | ((prev: string) => string)) => void;
@@ -246,20 +247,7 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
     },
     p: () => {
       if (ctx.clipboard && ctx.client) {
-        const destDir = ctx.currentPath;
-        for (const srcPath of ctx.clipboard.paths) {
-          const fileName = srcPath.split("/").pop() ?? srcPath;
-          const destPath = destDir === "/" ? `/${fileName}` : `${destDir}/${fileName}`;
-          if (ctx.clipboard.operation === "copy") {
-            ctx.client.post("/api/v2/files/copy", { source: srcPath, destination: destPath });
-          } else {
-            ctx.client.post("/api/v2/files/rename", { source: srcPath, destination: destPath });
-          }
-        }
-        ctx.clearClipboard();
-        // Invalidate and refetch after paste
-        useFilesStore.getState().invalidate(destDir);
-        if (ctx.client) useFilesStore.getState().fetchFiles(destDir, ctx.client);
+        ctx.pasteFiles(ctx.currentPath, ctx.client);
       }
     },
     // Escape clears selection or exits visual mode
@@ -478,6 +466,8 @@ export default function FileExplorerPanel(): React.ReactNode {
   const yankToClipboard = useFilesStore((s) => s.yankToClipboard);
   const cutToClipboard = useFilesStore((s) => s.cutToClipboard);
   const clearClipboard = useFilesStore((s) => s.clearClipboard);
+  const pasteFiles = useFilesStore((s) => s.pasteFiles);
+  const pasteProgress = useFilesStore((s) => s.pasteProgress);
 
   // Share link store
   const shareLinks = useShareLinkStore((s) => s.links);
@@ -618,7 +608,7 @@ export default function FileExplorerPanel(): React.ReactNode {
     setInputMode, setInputBuffer,
     selectedPaths, visualModeAnchor, clipboard,
     toggleSelect, clearSelection, enterVisualMode, exitVisualMode,
-    yankToClipboard, cutToClipboard, clearClipboard,
+    yankToClipboard, cutToClipboard, clearClipboard, pasteFiles,
     filterQuery: inputBufferRef, setFilterQuery, searchQuery, setSearchQuery,
     executeSearch,
   };
@@ -662,11 +652,22 @@ export default function FileExplorerPanel(): React.ReactNode {
         </box>
       )}
 
-      {/* Clipboard indicator */}
-      {clipboard && inputMode === "none" && (
+      {/* Paste progress indicator */}
+      {pasteProgress && (
+        <box height={1} width="100%">
+          <text foregroundColor="cyan">
+            {pasteProgress.completed === pasteProgress.total
+              ? `Paste complete: ${pasteProgress.completed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`
+              : `Pasting... ${pasteProgress.completed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`}
+          </text>
+        </box>
+      )}
+
+      {/* Clipboard indicator (only when not actively pasting) */}
+      {clipboard && !pasteProgress && inputMode === "none" && (
         <box height={1} width="100%">
           <text foregroundColor="yellow">
-            {`📋 ${clipboard.paths.length} file${clipboard.paths.length > 1 ? "s" : ""} ${clipboard.operation === "cut" ? "cut" : "copied"} — press p to paste`}
+            {`${clipboard.paths.length} file${clipboard.paths.length > 1 ? "s" : ""} ${clipboard.operation === "cut" ? "cut" : "copied"} — press p to paste`}
           </text>
         </box>
       )}

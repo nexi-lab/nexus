@@ -270,6 +270,16 @@ impl RedbTree {
         TableDefinition::new(self.table_name)
     }
 
+    /// Get the raw redb Database handle for cross-table transactions.
+    pub fn db(&self) -> &Database {
+        &self.db
+    }
+
+    /// Get the table name for use in raw transactions.
+    pub fn table_name(&self) -> &'static str {
+        self.table_name
+    }
+
     /// Get a value by key.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let read_txn = self.db.begin_read()?;

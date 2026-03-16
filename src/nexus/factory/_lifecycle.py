@@ -108,6 +108,15 @@ async def _do_link(
         coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
         nx._service_coordinator = coordinator
         populate_service_registry(coordinator, _wired)
+
+        # Issue #1666: Register system-tier PersistentService instances so
+        # start_persistent_services() auto-discovers them at bootstrap.
+        _dpb = getattr(nx, "_deferred_permission_buffer", None)
+        if _dpb is not None:
+            coordinator.register_service("deferred_permission_buffer", _dpb, exports=())
+        _dw = getattr(nx._system_services, "delivery_worker", None)
+        if _dw is not None:
+            coordinator.register_service("delivery_worker", _dw, exports=())
     else:
         populate_service_registry(nx._service_registry, _wired)
 
@@ -167,24 +176,10 @@ def _do_initialize(nx: Any) -> None:
     # --- Register background services as bootstrap callbacks ---
     # TL directive: initialize() prepares resources but stays static.
     # bootstrap() is the only phase allowed to spawn active threads/async loops.
-
-    _dpb = nx._deferred_permission_buffer
-    if _dpb is not None and hasattr(_dpb, "start"):
-
-        async def _start_dpb() -> None:
-            _dpb.start()
-            logger.debug("[LIFECYCLE] DeferredPermissionBuffer started (bootstrap)")
-
-        nx._bootstrap_callbacks.append(_start_dpb)
-
-    _dw = getattr(nx._system_services, "delivery_worker", None)
-    if _dw is not None and hasattr(_dw, "start"):
-
-        async def _start_dw() -> None:
-            _dw.start()
-            logger.debug("[LIFECYCLE] EventDeliveryWorker started (bootstrap)")
-
-        nx._bootstrap_callbacks.append(_start_dw)
+    #
+    # Issue #1666: DeferredPermissionBuffer and EventDeliveryWorker now
+    # implement PersistentService and are auto-started by the coordinator's
+    # start_persistent_services() at bootstrap.  Manual callbacks deleted.
 
     _zl = nx._zone_lifecycle
     if _zl is not None and hasattr(_zl, "load_terminating_zones"):

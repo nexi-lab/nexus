@@ -62,6 +62,13 @@ export interface FilesState {
   readonly previewContent: string | null;
   readonly previewLoading: boolean;
 
+  // Selection state
+  readonly selectedPaths: ReadonlySet<string>;
+  readonly visualModeAnchor: number | null;
+
+  // Clipboard state
+  readonly clipboard: { readonly paths: readonly string[]; readonly operation: "copy" | "cut" } | null;
+
   // Error
   readonly error: string | null;
 
@@ -79,9 +86,47 @@ export interface FilesState {
   readonly deleteFile: (path: string, client: FetchClient) => Promise<void>;
   readonly mkdirFile: (path: string, client: FetchClient) => Promise<void>;
   readonly renameFile: (oldPath: string, newPath: string, client: FetchClient) => Promise<void>;
+
+  // Selection actions
+  readonly toggleSelect: (path: string) => void;
+  readonly clearSelection: () => void;
+  readonly enterVisualMode: (anchorIndex: number) => void;
+  readonly exitVisualMode: () => void;
+
+  // Clipboard actions
+  readonly yankToClipboard: (paths: readonly string[]) => void;
+  readonly cutToClipboard: (paths: readonly string[]) => void;
+  readonly clearClipboard: () => void;
 }
 
 const SOURCE = "files";
+
+// =============================================================================
+// Derived helper (pure function)
+// =============================================================================
+
+/**
+ * Compute the effective selection: union of manually toggled selectedPaths
+ * and the visual-mode range (if active).
+ */
+export function getEffectiveSelection(
+  selectedPaths: ReadonlySet<string>,
+  visualModeAnchor: number | null,
+  currentIndex: number,
+  visibleNodes: readonly string[],
+): Set<string> {
+  const result = new Set(selectedPaths);
+
+  if (visualModeAnchor !== null && visibleNodes.length > 0) {
+    const lo = Math.max(0, Math.min(visualModeAnchor, currentIndex));
+    const hi = Math.min(visibleNodes.length - 1, Math.max(visualModeAnchor, currentIndex));
+    for (let i = lo; i <= hi; i++) {
+      result.add(visibleNodes[i]!);
+    }
+  }
+
+  return result;
+}
 
 export const useFilesStore = create<FilesState>((set, get) => ({
   fileCache: new Map(),
@@ -92,6 +137,9 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   previewPath: null,
   previewContent: null,
   previewLoading: false,
+  selectedPaths: new Set(),
+  visualModeAnchor: null,
+  clipboard: null,
   error: null,
 
   setCurrentPath: (path) => set({ currentPath: path, selectedIndex: 0 }),
@@ -288,13 +336,15 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   },
 
   renameFile: async (oldPath, newPath, client) => {
-    // Note: rename is write+delete — not atomic. If delete fails, file exists at both paths.
+    // Atomic rename via dedicated endpoint (Decision 8A) — O(1) metadata-only operation.
     set({ error: null });
     try {
-      await client.post("/api/v2/files/write", { path: newPath, source_path: oldPath });
-      await client.delete(`/api/v2/files/delete?path=${encodeURIComponent(oldPath)}`);
+      await client.post("/api/v2/files/rename", { source: oldPath, destination: newPath });
       const parentPath = oldPath.split("/").slice(0, -1).join("/") || "/";
       get().invalidate(parentPath);
+      // Also invalidate destination parent if different
+      const destParent = newPath.split("/").slice(0, -1).join("/") || "/";
+      if (destParent !== parentPath) get().invalidate(destParent);
       await get().fetchFiles(parentPath, client);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to rename file";
@@ -302,4 +352,30 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
+
+  // Selection actions
+
+  toggleSelect: (path) => {
+    const next = new Set(get().selectedPaths);
+    if (next.has(path)) {
+      next.delete(path);
+    } else {
+      next.add(path);
+    }
+    set({ selectedPaths: next });
+  },
+
+  clearSelection: () => set({ selectedPaths: new Set(), visualModeAnchor: null }),
+
+  enterVisualMode: (anchorIndex) => set({ visualModeAnchor: anchorIndex }),
+
+  exitVisualMode: () => set({ visualModeAnchor: null }),
+
+  // Clipboard actions
+
+  yankToClipboard: (paths) => set({ clipboard: { paths: [...paths], operation: "copy" } }),
+
+  cutToClipboard: (paths) => set({ clipboard: { paths: [...paths], operation: "cut" } }),
+
+  clearClipboard: () => set({ clipboard: null }),
 }));

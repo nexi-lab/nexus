@@ -221,4 +221,31 @@ describe("Connection Lifecycle", () => {
       expect(state.connectionError).toContain("500");
     });
   });
+
+  describe("testConnection with null client (Codex finding 1)", () => {
+    it("testConnection returns immediately when client is null", async () => {
+      // This validates the bug Codex found: calling testConnection() when
+      // client is null does NOT attempt connection — it just stays disconnected.
+      // The fix is that PreConnectionScreen must call initConfig() instead.
+      useGlobalStore.setState({ client: null, connectionStatus: "disconnected" });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("disconnected");
+      expect(state.connectionError).toBeNull();
+    });
+
+    it("initConfig re-reads config and can create a new client", () => {
+      // Verify that initConfig() with overrides creates a new client
+      useGlobalStore.setState({ client: null, connectionStatus: "disconnected" });
+
+      useGlobalStore.getState().initConfig({ apiKey: "sk-new-key", baseUrl: "http://localhost:2026" });
+
+      // Should now have a client and be in connecting state
+      const state = useGlobalStore.getState();
+      expect(state.client).not.toBeNull();
+      expect(state.connectionStatus).toBe("connecting");
+    });
+  });
 });

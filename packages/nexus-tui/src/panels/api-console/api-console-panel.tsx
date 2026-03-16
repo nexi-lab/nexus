@@ -21,6 +21,8 @@ import { Tooltip } from "../../shared/components/tooltip.js";
 
 export default function ApiConsolePanel(): React.ReactNode {
   const client = useApi();
+  // Reactive subscription to command runner status (Codex finding 2)
+  const commandRunnerStatus = useCommandRunnerStore((s) => s.status);
   const endpoints = useApiConsoleStore((s) => s.endpoints);
   const filteredEndpoints = useApiConsoleStore((s) => s.filteredEndpoints);
   const selectedEndpoint = useApiConsoleStore((s) => s.selectedEndpoint);
@@ -192,7 +194,7 @@ export default function ApiConsolePanel(): React.ReactNode {
         </box>
 
         {/* Local command output (when running via !command or Shift+B) */}
-        {useCommandRunnerStore.getState().status !== "idle" && (
+        {commandRunnerStatus !== "idle" && (
           <box borderStyle="single" height={8} width="100%">
             <CommandOutput />
           </box>

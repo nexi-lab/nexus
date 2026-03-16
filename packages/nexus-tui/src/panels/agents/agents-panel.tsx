@@ -43,6 +43,9 @@ export default function AgentsPanel(): React.ReactNode {
   const confirm = useConfirmStore((s) => s.confirm);
   const visibleTabs = useVisibleTabs(ALL_TABS);
 
+  // Reactive subscription to command runner status (Codex finding 2)
+  const commandRunnerStatus = useCommandRunnerStore((s) => s.status);
+
   // Zone ID for fetchAgents
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
   const serverZoneId = useGlobalStore((s) => s.zoneId);
@@ -413,7 +416,7 @@ export default function AgentsPanel(): React.ReactNode {
       </box>
 
       {/* Command runner output (when agent spawn is running) */}
-      {useCommandRunnerStore.getState().status !== "idle" && (
+      {commandRunnerStatus !== "idle" && (
         <box borderStyle="single" height={6} width="100%">
           <CommandOutput />
         </box>

@@ -8,7 +8,7 @@ Defines the directory layout for agent communication:
         outbox/             # Sent messages (audit trail)
         processed/          # Successfully processed messages
         dead_letter/        # Failed messages
-        tasks/              # A2A task persistence (§17.6 convergence)
+        tasks/              # Task persistence
 
 All functions are pure — they compose path strings with no I/O.
 """

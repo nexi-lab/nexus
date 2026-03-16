@@ -22,7 +22,7 @@ from typing import Any
 from nexus.bricks.workflows.protocol import WorkflowProtocol
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.file_events import FileEvent
-from nexus.system_services.pipe_manager import PipeManager
+from nexus.core.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
 
@@ -109,14 +109,14 @@ class WorkflowDispatchService:
         if not (self._enable_workflows and self._workflow_engine):
             return
 
-        from nexus.core.pipe import PipeFullError
+        from nexus.core.pipe import PipeClosedError, PipeFullError
 
         if self._pipe_manager is not None and self._pipe_ready:
             try:
                 data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
                 self._pipe_manager.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
-            except PipeFullError:
-                logger.warning("Workflow pipe full, dropping event: %s", label)
+            except (PipeClosedError, PipeFullError):
+                logger.warning("Workflow pipe full/closed, dropping event: %s", label)
         else:
             # Fallback: fire-and-forget (CLI mode or pre-startup, no pipe yet)
             from nexus.lib.sync_bridge import fire_and_forget
@@ -164,11 +164,21 @@ class WorkflowDispatchService:
         self._consumer_task = asyncio.create_task(self._consume())
 
     async def stop(self) -> None:
-        """Cancel consumer task for graceful shutdown."""
+        """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
         if self._consumer_task is not None and not self._consumer_task.done():
-            self._consumer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._consumer_task
+            # Signal close — wakes blocked consumer, allows drain of remaining messages
+            if self._pipe_manager is not None and self._pipe_ready:
+                with contextlib.suppress(Exception):
+                    self._pipe_manager.signal_close(_WORKFLOW_PIPE_PATH)
+
+            # Let consumer drain naturally, with timeout
+            try:
+                await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
+            except (TimeoutError, asyncio.CancelledError):
+                self._consumer_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._consumer_task
+
             self._consumer_task = None
         self._pipe_ready = False
 

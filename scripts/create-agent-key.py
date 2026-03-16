@@ -27,7 +27,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.bricks.rebac.entity_registry import EntityRegistry
-from nexus.services.agents.agent_registry import AgentRegistry
+from nexus.system_services.agents.agent_registry import AgentRegistry
 
 
 def main() -> None:

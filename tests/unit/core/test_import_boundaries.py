@@ -180,7 +180,7 @@ class TestFourStoragePillars:
 
     PILLARS = [
         ("nexus.core.metastore", "MetastoreABC"),
-        ("nexus.backends.backend", "Backend"),
+        ("nexus.backends.base.backend", "Backend"),
         ("nexus.storage.record_store", "RecordStoreABC"),
         ("nexus.contracts.cache_store", "CacheStoreABC"),
     ]

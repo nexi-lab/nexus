@@ -16,11 +16,11 @@ serde = { version = "1.0", features = ["derive"] }
 bincode = "1.3"
 thiserror = "2.0"
 tracing = "0.1"
+mimalloc = { workspace = true, optional = true }
+
+[features]
+default = []
+mimalloc = ["dep:mimalloc"]
 
 [dev-dependencies]
 tempfile = "3"
-
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3

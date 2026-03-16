@@ -13,9 +13,9 @@ class TestChmod:
     """chmod: permission bit masking."""
 
     def test_chmod_masks_permission_bits(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        # S_IFREG | 0o755 → only 0o755 should be passed to nexus_fs
+        # S_IFREG | 0o755 → only 0o755 should be passed to nexus_fs via sys_setattr
         fuse_ops.chmod("/file.txt", 0o100755)
-        mock_nexus_fs.chmod.assert_called_once_with("/file.txt", 0o755)
+        mock_nexus_fs.sys_setattr.assert_called_once_with("/file.txt", context=None, mode=0o755)
 
     def test_chmod_invalidates_cache(
         self, fuse_ops: Any, mock_nexus_fs: MagicMock, mock_cache: MagicMock

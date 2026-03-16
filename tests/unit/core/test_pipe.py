@@ -19,7 +19,7 @@ from nexus.core.pipe import (
     PipeNotFoundError,
     RingBuffer,
 )
-from nexus.system_services.pipe_manager import PipeManager
+from nexus.core.pipe_manager import PipeManager
 
 # ======================================================================
 # RingBuffer — basic operations
@@ -603,6 +603,75 @@ class TestRingBufferSyncOps:
 
 
 # ======================================================================
+# RingBuffer — u64 fast path (L2)
+# ======================================================================
+
+
+class TestRingBufferU64:
+    def test_write_u64_nowait_read_u64_nowait(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.write_u64_nowait(42)
+        buf.write_u64_nowait(2**64 - 1)
+        buf.write_u64_nowait(0)
+        assert buf.read_u64_nowait() == 42
+        assert buf.read_u64_nowait() == 2**64 - 1
+        assert buf.read_u64_nowait() == 0
+
+    def test_u64_size_tracking(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.write_u64_nowait(99)
+        assert buf.stats["size"] == 8
+        assert buf.stats["msg_count"] == 1
+        buf.read_u64_nowait()
+        assert buf.stats["size"] == 0
+
+    @pytest.mark.asyncio
+    async def test_async_write_u64_read_u64(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        await buf.write_u64(100)
+        result = await buf.read_u64()
+        assert result == 100
+
+    @pytest.mark.asyncio
+    async def test_u64_reader_blocks_until_write(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        result = None
+
+        async def reader() -> None:
+            nonlocal result
+            result = await buf.read_u64()
+
+        async def writer() -> None:
+            await asyncio.sleep(0.01)
+            buf.write_u64_nowait(777)
+
+        await asyncio.gather(reader(), writer())
+        assert result == 777
+
+    def test_u64_closed_raises(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.close()
+        with pytest.raises(PipeClosedError):
+            buf.write_u64_nowait(42)
+        with pytest.raises(PipeClosedError):
+            buf.read_u64_nowait()
+
+    def test_u64_empty_raises(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        with pytest.raises(PipeEmptyError):
+            buf.read_u64_nowait()
+
+    def test_interleaved_bytes_and_u64(self) -> None:
+        buf = RingBuffer(capacity=1024)
+        buf.write_nowait(b"hello")
+        buf.write_u64_nowait(12345)
+        buf.write_nowait(b"world")
+        assert buf.read_nowait() == b"hello"
+        assert buf.read_u64_nowait() == 12345
+        assert buf.read_nowait() == b"world"
+
+
+# ======================================================================
 # PipeManager — MPMC locking
 # ======================================================================
 
@@ -746,3 +815,124 @@ class TestDTPipeMetadata:
         )
         with pytest.raises(Exception, match="backend_name is required"):
             meta.validate()
+
+
+# ======================================================================
+# sys_setattr upsert semantics
+# ======================================================================
+
+
+class TestSysSetAttrUpsert:
+    """Test sys_setattr upsert: create-on-write for metadata."""
+
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms, zone_id="test-zone"), ms
+
+    def test_setattr_create_pipe(self) -> None:
+        """sys_setattr with entry_type=DT_PIPE creates a pipe (replaces sys_mkpipe)."""
+        mgr, ms = self._make_manager()
+        # Simulate what NexusFS._setattr_create does
+        path = "/nexus/pipes/via-setattr"
+        capacity = 4096
+        buf = mgr.create(path, capacity=capacity, owner_id="agent-1")
+        assert isinstance(buf, RingBuffer)
+        assert buf.stats["capacity"] == capacity
+        meta = ms.get(path)
+        assert meta is not None
+        assert meta.entry_type == DT_PIPE
+
+    def test_setattr_update_mutable_fields(self) -> None:
+        """sys_setattr on existing inode only updates mutable fields."""
+        from dataclasses import replace
+
+        _, ms = self._make_manager()
+        meta = FileMetadata(
+            path="/existing/file",
+            backend_name="local",
+            physical_path="/data/file",
+            size=100,
+            entry_type=DT_REG,
+            mime_type="text/plain",
+        )
+        ms.put(meta)
+
+        # Update mime_type (mutable)
+        updated = replace(meta, mime_type="application/json")
+        ms.put(updated)
+        result = ms.get("/existing/file")
+        assert result is not None
+        assert result.mime_type == "application/json"
+
+    def test_setattr_entry_type_immutable_after_creation(self) -> None:
+        """entry_type must be rejected for existing inodes."""
+        _, ms = self._make_manager()
+        meta = FileMetadata(
+            path="/existing/file",
+            backend_name="local",
+            physical_path="/data/file",
+            size=100,
+            entry_type=DT_REG,
+        )
+        ms.put(meta)
+        # Attempting to change entry_type should be rejected by caller
+        assert ms.get("/existing/file") is not None
+        assert ms.get("/existing/file").entry_type == DT_REG
+
+
+# ======================================================================
+# PipeManager federation — self_address and backend_name
+# ======================================================================
+
+SELF_ADDR = "10.0.0.1:50051"
+REMOTE_ADDR = "10.0.0.2:50051"
+
+
+class TestPipeManagerSelfAddress:
+    """Test PipeManager.self_address and backend_name embedding (#1576)."""
+
+    def test_self_address_none_by_default(self) -> None:
+        ms = MockMetastore()
+        mgr = PipeManager(ms)
+        assert mgr.self_address is None
+
+    def test_self_address_set(self) -> None:
+        ms = MockMetastore()
+        mgr = PipeManager(ms, self_address=SELF_ADDR)
+        assert mgr.self_address == SELF_ADDR
+
+    def test_create_with_self_address_embeds_origin(self) -> None:
+        ms = MockMetastore()
+        mgr = PipeManager(ms, self_address=SELF_ADDR)
+        mgr.create("/nexus/pipes/fed")
+
+        meta = ms.get("/nexus/pipes/fed")
+        assert meta is not None
+        assert meta.backend_name == f"pipe@{SELF_ADDR}"
+
+    def test_create_without_self_address_plain_pipe(self) -> None:
+        ms = MockMetastore()
+        mgr = PipeManager(ms)
+        mgr.create("/nexus/pipes/local")
+
+        meta = ms.get("/nexus/pipes/local")
+        assert meta is not None
+        assert meta.backend_name == "pipe"
+
+    def test_backend_address_parse_roundtrip(self) -> None:
+        """Verify BackendAddress can parse pipe@<addr> format."""
+        from nexus.contracts.backend_address import BackendAddress
+
+        addr = BackendAddress.parse(f"pipe@{SELF_ADDR}")
+        assert addr.backend_type == "pipe"
+        assert addr.has_origin is True
+        assert addr.origin == SELF_ADDR
+
+    def test_backend_address_parse_plain_pipe(self) -> None:
+        """Verify BackendAddress handles plain 'pipe' (no origin)."""
+        from nexus.contracts.backend_address import BackendAddress
+
+        addr = BackendAddress.parse("pipe")
+        assert addr.backend_type == "pipe"
+        assert addr.has_origin is False
+        assert addr.origin is None

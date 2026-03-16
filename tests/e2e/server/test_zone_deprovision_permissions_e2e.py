@@ -22,7 +22,7 @@ import pytest
 
 
 @pytest.fixture(scope="module")
-def app_with_auth():
+async def app_with_auth():
     """Create a full FastAPI app with DatabaseLocalAuth and ReBAC."""
     tmpdir = tempfile.mkdtemp()
     tmp_path = Path(tmpdir)
@@ -58,18 +58,18 @@ def app_with_auth():
         conn.commit()
 
     # Create NexusFS via factory
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.factory import create_nexus_fs
     from nexus.storage.raft_metadata_store import RaftMetadataStore
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=storage_path)
+    backend = CASLocalBackend(root_path=storage_path)
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     record_store = SQLAlchemyRecordStore(db_url=db_url)
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

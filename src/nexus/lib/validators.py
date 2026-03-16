@@ -12,6 +12,7 @@ Usage:
 """
 
 import re
+from datetime import datetime
 from typing import Annotated
 
 from pydantic import AfterValidator, BeforeValidator, EmailStr, Field, TypeAdapter
@@ -46,10 +47,10 @@ def _validate_email_list(v: list[str] | None) -> list[str] | None:
     validated: list[str] = []
     for email in v:
         try:
-            _EMAIL_ADAPTER.validate_python(email)
+            normalized = _EMAIL_ADAPTER.validate_python(email)
         except PydanticValidationError as exc:
             raise ValueError(f"Invalid email address: {email!r}") from exc
-        validated.append(email.lower())
+        validated.append(normalized.lower())
     return validated
 
 
@@ -83,6 +84,14 @@ def _validate_iso8601(v: str) -> str:
             f"Invalid datetime format: {v}. "
             "Use ISO 8601 with timezone offset (e.g., 2024-01-15T09:00:00-08:00)"
         )
+    # Semantic check: ensure the parsed values represent a real datetime
+    try:
+        datetime.fromisoformat(v)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid datetime values: {v}. "
+            "Use valid date/time components (e.g., 2024-01-15T09:00:00-08:00)"
+        ) from exc
     return v
 
 

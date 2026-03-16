@@ -88,41 +88,27 @@ def build_v2_registry(
     """
     registry = RouterRegistry()
 
-    # ---- ACE core routers ----
+    # ---- Core v2 routers ----
     try:
         from nexus.server.api.v2.routers import (
             audit,
             conflicts,
-            consolidation,
-            curate,
-            feedback,
-            memories,
             mobile_search,
             operations,
-            playbooks,
-            reflect,
             sync_push,
-            trajectories,
         )
 
-        _ace_routers: list[RouterEntry] = [
-            RouterEntry(router=memories.router, name="memories", endpoint_count=14),
-            RouterEntry(router=trajectories.router, name="trajectories", endpoint_count=5),
-            RouterEntry(router=feedback.router, name="feedback", endpoint_count=5),
-            RouterEntry(router=playbooks.router, name="playbooks", endpoint_count=6),
-            RouterEntry(router=reflect.router, name="reflect", endpoint_count=1),
-            RouterEntry(router=curate.router, name="curate", endpoint_count=2),
-            RouterEntry(router=consolidation.router, name="consolidation", endpoint_count=4),
+        _core_routers: list[RouterEntry] = [
             RouterEntry(router=mobile_search.router, name="mobile_search", endpoint_count=2),
             RouterEntry(router=conflicts.router, name="conflicts", endpoint_count=3),
             RouterEntry(router=operations.router, name="operations", endpoint_count=2),
             RouterEntry(router=audit.router, name="audit", endpoint_count=5),
             RouterEntry(router=sync_push.router, name="sync_push", endpoint_count=1),
         ]
-        for entry in _ace_routers:
+        for entry in _core_routers:
             registry.add(entry)
     except ImportError as e:
-        logger.warning("Failed to import ACE v2 routes: %s", e)
+        logger.warning("Failed to import core v2 routes: %s", e)
 
     # ---- Events replay router (Issue #1139, #2056) ----
     try:
@@ -172,14 +158,6 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import async files router: %s", e)
 
-    # ---- Reputation router (Issue #1356) ----
-    try:
-        from nexus.server.api.v2.routers.reputation import router as reputation_router
-
-        registry.add(RouterEntry(router=reputation_router, name="reputation", endpoint_count=7))
-    except ImportError as e:
-        logger.warning("Failed to import Reputation routes: %s", e)
-
     # ---- tus.io resumable uploads router (Issue #788) ----
     if chunked_upload_service_getter is not None:
         try:
@@ -220,17 +198,9 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.delegation import router as delegation_router
 
-        registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=5))
+        registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=8))
     except ImportError as e:
         logger.warning("Failed to import Delegation routes: %s", e)
-
-    # ---- RLM inference router (Issue #1306) ----
-    try:
-        from nexus.server.api.v2.routers.rlm import router as rlm_router
-
-        registry.add(RouterEntry(router=rlm_router, name="rlm", endpoint_count=1))
-    except ImportError as e:
-        logger.warning("Failed to import RLM routes: %s", e)
 
     # ---- Workflows router (Issue #1522) ----
     try:
@@ -269,6 +239,40 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Connectors routes: %s", e)
 
+    # ---- Aspects router (Issue #2930) ----
+    try:
+        from nexus.server.api.v2.routers.aspects import router as aspects_router
+
+        registry.add(RouterEntry(router=aspects_router, name="aspects", endpoint_count=5))
+    except ImportError as e:
+        logger.warning("Failed to import Aspects routes: %s", e)
+
+    # ---- Catalog router (Issue #2930) ----
+    try:
+        from nexus.server.api.v2.routers.catalog import router as catalog_router
+
+        registry.add(RouterEntry(router=catalog_router, name="catalog", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Catalog routes: %s", e)
+
+    # ---- Replay router (Issue #2930) ----
+    try:
+        from nexus.server.api.v2.routers.replay import router as replay_router
+
+        registry.add(RouterEntry(router=replay_router, name="replay", endpoint_count=2))
+    except ImportError as e:
+        logger.warning("Failed to import Replay routes: %s", e)
+
+    # ---- Task Manager router ----
+    try:
+        from nexus.server.api.v2.routers.task_manager import router as task_manager_router
+
+        registry.add(
+            RouterEntry(router=task_manager_router, name="task_manager", endpoint_count=14)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Task manager routes: %s", e)
+
     # ---- Batch operations router (Issue #1242) ----
     try:
         from nexus.server.api.v2.routers.batch import create_batch_router
@@ -305,7 +309,7 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.agent_status import router as agent_status_router
 
-        registry.add(RouterEntry(router=agent_status_router, name="agent_status", endpoint_count=3))
+        registry.add(RouterEntry(router=agent_status_router, name="agent_status", endpoint_count=5))
     except ImportError as e:
         logger.warning("Failed to import Agent status routes: %s", e)
 
@@ -396,6 +400,20 @@ def build_v2_registry(
         registry.add(RouterEntry(router=x402_router, name="x402", endpoint_count=2))
     except ImportError as e:
         logger.warning("Failed to import x402 routes: %s", e)
+
+    # ---- Workspace/memory registry router (Issue #2987) ----
+    try:
+        from nexus.server.api.v2.routers.workspace import (
+            workspace_router as registry_workspace_router,
+        )
+
+        registry.add(
+            RouterEntry(
+                router=registry_workspace_router, name="registry_workspaces", endpoint_count=5
+            )
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Workspace registry routes: %s", e)
 
     return registry
 

@@ -13,7 +13,6 @@ from nexus.bricks.workflows.protocol import (
     GlobMatchFn,
     MetadataStoreProtocol,
     NexusOperationsProtocol,
-    WorkflowLLMProtocol,
     WorkflowProtocol,
     WorkflowServices,
 )
@@ -49,7 +48,6 @@ __all__ = [
     "GlobMatchFn",
     "NexusOperationsProtocol",
     "MetadataStoreProtocol",
-    "WorkflowLLMProtocol",
     # Types
     "WorkflowDefinition",
     "WorkflowAction",

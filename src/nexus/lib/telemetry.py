@@ -71,7 +71,7 @@ def add_span_attribute(key: str, value: str | int | float | bool) -> None:
         if span:
             span.set_attribute(key, value)
     except Exception:
-        pass
+        pass  # Telemetry must never disrupt application flow
 
 
 def record_exception(exception: Exception) -> None:
@@ -87,4 +87,4 @@ def record_exception(exception: Exception) -> None:
             span.record_exception(exception)
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(exception)))
     except Exception:
-        pass
+        pass  # Telemetry must never disrupt application flow

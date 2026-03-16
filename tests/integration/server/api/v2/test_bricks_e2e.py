@@ -18,6 +18,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.protocols.brick_lifecycle import (
+    BrickLifecycleProtocol,
+    BrickReconcileOutcome,
+    DriftAction,
+    ReconcileContext,
+)
 from nexus.server.api.v2.routers.bricks import (
     _get_lifecycle_manager,
     _get_reconciler,
@@ -25,12 +31,6 @@ from nexus.server.api.v2.routers.bricks import (
     router,
 )
 from nexus.server.dependencies import require_admin
-from nexus.services.protocols.brick_lifecycle import (
-    BrickLifecycleProtocol,
-    BrickReconcileOutcome,
-    DriftAction,
-    ReconcileContext,
-)
 from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
 

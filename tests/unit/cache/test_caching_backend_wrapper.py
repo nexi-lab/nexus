@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.caching_backend_wrapper import (
+from nexus.backends.wrappers.caching import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,

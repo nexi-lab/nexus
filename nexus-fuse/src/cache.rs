@@ -45,19 +45,8 @@ pub struct FileCache {
 }
 
 impl FileCache {
-    /// Create or open a cache database.
-    pub fn new(server_url: &str) -> Result<Self> {
-        let cache_path = Self::cache_path(server_url)?;
-
-        // Ensure cache directory exists
-        if let Some(parent) = cache_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        info!("Opening cache at: {}", cache_path.display());
-
-        let conn = Connection::open(&cache_path)?;
-
+    /// Initialise a cache from an already-opened SQLite connection.
+    fn open_connection(conn: Connection) -> Result<Self> {
         // Configure SQLite for performance
         conn.execute_batch(
             "
@@ -102,6 +91,21 @@ impl FileCache {
         }
 
         Ok(cache)
+    }
+
+    /// Create or open a cache database.
+    pub fn new(server_url: &str) -> Result<Self> {
+        let cache_path = Self::cache_path(server_url)?;
+
+        // Ensure cache directory exists
+        if let Some(parent) = cache_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        info!("Opening cache at: {}", cache_path.display());
+
+        let conn = Connection::open(&cache_path)?;
+        Self::open_connection(conn)
     }
 
     /// Get cache file path based on server URL.
@@ -149,13 +153,13 @@ impl FileCache {
                 if age < MAX_CACHE_AGE_SECS {
                     // Fresh cache hit
                     debug!("Cache hit for {} (age: {}s)", path, age);
-                    CacheLookup::Hit(CacheEntry {
-                        content,
-                        etag,
-                    })
+                    CacheLookup::Hit(CacheEntry { content, etag })
                 } else if let Some(etag) = etag {
                     // Stale but has etag - can revalidate
-                    debug!("Cache stale for {} (age: {}s), needs revalidation", path, age);
+                    debug!(
+                        "Cache stale for {} (age: {}s), needs revalidation",
+                        path, age
+                    );
                     CacheLookup::NeedsRevalidation { etag }
                 } else {
                     // Stale with no etag - treat as miss
@@ -208,7 +212,12 @@ impl FileCache {
         ) {
             error!("Failed to cache {}: {}", path, e);
         } else {
-            debug!("Cached {} ({} bytes, etag: {:?})", path, content.len(), etag);
+            debug!(
+                "Cached {} ({} bytes, etag: {:?})",
+                path,
+                content.len(),
+                etag
+            );
         }
     }
 
@@ -250,11 +259,10 @@ impl FileCache {
         )?;
 
         // Check total cache size
-        let total_size: u64 = conn.query_row(
-            "SELECT COALESCE(SUM(size), 0) FROM file_cache",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_size: u64 =
+            conn.query_row("SELECT COALESCE(SUM(size), 0) FROM file_cache", [], |row| {
+                row.get(0)
+            })?;
 
         if total_size > MAX_CACHE_SIZE {
             info!(
@@ -314,9 +322,10 @@ pub struct CacheStats {
 mod tests {
     use super::*;
 
-    /// Helper: create an in-memory cache for testing (unique URL per test).
-    fn test_cache(label: &str) -> FileCache {
-        FileCache::new(&format!("http://test-{}.local:2026", label)).unwrap()
+    /// Helper: create an in-memory cache for testing (no filesystem access).
+    fn test_cache(_label: &str) -> FileCache {
+        let conn = Connection::open_in_memory().unwrap();
+        FileCache::open_connection(conn).unwrap()
     }
 
     // ──────────────────────────────────────────────────────
@@ -614,6 +623,9 @@ mod tests {
         let cache = test_cache("inv-noop");
         // Should not panic or error
         cache.invalidate("/does-not-exist.txt");
-        assert!(matches!(cache.get("/does-not-exist.txt"), CacheLookup::Miss));
+        assert!(matches!(
+            cache.get("/does-not-exist.txt"),
+            CacheLookup::Miss
+        ));
     }
 }

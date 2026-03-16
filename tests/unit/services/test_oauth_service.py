@@ -1,13 +1,12 @@
-"""Unit tests for OAuthService (services/oauth_service.py).
+"""Unit tests for OAuthCredentialService (bricks/auth/oauth/credential_service.py).
 
-Phase 0 safety net: tests critical paths before refactoring.
 Covers:
 - PKCEStateStore save/pop/expired/no-cache
-- oauth_list_providers
-- oauth_exchange_code (normal + PKCE)
-- oauth_list_credentials filtering
-- oauth_revoke_credential with ownership
-- oauth_test_credential
+- list_providers
+- exchange_code (normal + PKCE)
+- list_credentials filtering
+- revoke_credential with ownership
+- test_credential
 - _map_provider_name
 - _get_pkce_verifier error paths
 - _check_credential_ownership permission enforcement
@@ -20,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.services.oauth.oauth_service import OAuthService, PKCEStateStore
+from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService, PKCEStateStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -98,13 +97,13 @@ class FakeOAuthProvider:
             },
         )
 
-    async def exchange_code(self, code: str) -> FakeCredential:
+    async def exchange_code(self, code: str) -> FakeCredential:  # noqa: ARG002
         return FakeCredential(
             access_token="ya29.exchanged",
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
 
-    async def exchange_code_pkce(self, code: str, code_verifier: str) -> FakeCredential:
+    async def exchange_code_pkce(self, code: str, code_verifier: str) -> FakeCredential:  # noqa: ARG002
         return FakeCredential(
             access_token="ya29.exchanged_pkce",
             expires_at=datetime.now(UTC) + timedelta(hours=1),
@@ -165,12 +164,12 @@ class TestPKCEStateStore:
 
 
 # ===========================================================================
-# OAuthService — Provider Discovery
+# OAuthCredentialService — Provider Discovery
 # ===========================================================================
 
 
-class TestOAuthListProviders:
-    """Tests for oauth_list_providers."""
+class TestListProviders:
+    """Tests for list_providers."""
 
     @pytest.fixture
     def mock_factory(self) -> MagicMock:
@@ -185,8 +184,8 @@ class TestOAuthListProviders:
 
     @pytest.mark.asyncio
     async def test_list_providers(self, mock_factory: MagicMock) -> None:
-        service = OAuthService(oauth_factory=mock_factory)
-        providers = await service.oauth_list_providers()
+        service = OAuthCredentialService(oauth_factory=mock_factory)
+        providers = await service.list_providers()
 
         assert len(providers) == 2
         assert providers[0]["name"] == "google-drive"
@@ -202,19 +201,19 @@ class TestOAuthListProviders:
     async def test_list_providers_empty(self) -> None:
         factory = MagicMock()
         factory.list_providers.return_value = []
-        service = OAuthService(oauth_factory=factory)
+        service = OAuthCredentialService(oauth_factory=factory)
 
-        providers = await service.oauth_list_providers()
+        providers = await service.list_providers()
         assert providers == []
 
 
 # ===========================================================================
-# OAuthService — OAuth Flow (exchange_code)
+# OAuthCredentialService — OAuth Flow (exchange_code)
 # ===========================================================================
 
 
-class TestOAuthExchangeCode:
-    """Tests for oauth_exchange_code."""
+class TestExchangeCode:
+    """Tests for exchange_code."""
 
     @pytest.fixture
     def mock_factory(self) -> MagicMock:
@@ -235,13 +234,13 @@ class TestOAuthExchangeCode:
     async def test_exchange_code_normal(
         self, mock_factory: MagicMock, mock_token_manager: MagicMock
     ) -> None:
-        service = OAuthService(
+        service = OAuthCredentialService(
             oauth_factory=mock_factory,
             token_manager=mock_token_manager,
         )
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="test-zone"):
-            result = await service.oauth_exchange_code(
+            result = await service.exchange_code(
                 provider="google-drive",
                 code="4/0Abc",
                 user_email="alice@example.com",
@@ -262,14 +261,14 @@ class TestOAuthExchangeCode:
         pkce_store = PKCEStateStore(cache_store=FakeCacheStore())
         await pkce_store.save("state123", {"code_verifier": "test_verifier"})
 
-        service = OAuthService(
+        service = OAuthCredentialService(
             oauth_factory=factory,
             token_manager=mock_token_manager,
             pkce_store=pkce_store,
         )
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="test-zone"):
-            result = await service.oauth_exchange_code(
+            result = await service.exchange_code(
                 provider="x",
                 code="auth_code",
                 user_email="bob@example.com",
@@ -288,7 +287,7 @@ class TestOAuthExchangeCode:
 
         tm = MagicMock()
         tm.register_provider = MagicMock()
-        service = OAuthService(oauth_factory=mock_factory, token_manager=tm)
+        service = OAuthCredentialService(oauth_factory=mock_factory, token_manager=tm)
 
         with (
             patch("nexus.lib.context_utils.get_zone_id", return_value="test-zone"),
@@ -297,7 +296,7 @@ class TestOAuthExchangeCode:
             ),
             pytest.raises(ValueError, match="user_email is required"),
         ):
-            await service.oauth_exchange_code(
+            await service.exchange_code(
                 provider="google-drive",
                 code="code",
                 user_email=None,
@@ -305,12 +304,12 @@ class TestOAuthExchangeCode:
 
 
 # ===========================================================================
-# OAuthService — Credential Management
+# OAuthCredentialService — Credential Management
 # ===========================================================================
 
 
-class TestOAuthListCredentials:
-    """Tests for oauth_list_credentials with filtering."""
+class TestListCredentials:
+    """Tests for list_credentials with filtering."""
 
     @pytest.fixture
     def mock_token_manager(self) -> MagicMock:
@@ -344,43 +343,43 @@ class TestOAuthListCredentials:
 
     @pytest.mark.asyncio
     async def test_list_all_as_admin(self, mock_token_manager: MagicMock) -> None:
-        service = OAuthService(token_manager=mock_token_manager)
+        service = OAuthCredentialService(token_manager=mock_token_manager)
         ctx = MagicMock(user_id="admin-user", is_admin=True)
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
-            result = await service.oauth_list_credentials(context=ctx)
+            result = await service.list_credentials(context=ctx)
 
         # Excludes revoked by default
         assert len(result) == 2
 
     @pytest.mark.asyncio
     async def test_list_filters_by_provider(self, mock_token_manager: MagicMock) -> None:
-        service = OAuthService(token_manager=mock_token_manager)
+        service = OAuthCredentialService(token_manager=mock_token_manager)
         ctx = MagicMock(user_id="admin-user", is_admin=True)
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
-            result = await service.oauth_list_credentials(provider="x", context=ctx)
+            result = await service.list_credentials(provider="x", context=ctx)
 
         assert len(result) == 1
         assert result[0]["provider"] == "x"
 
     @pytest.mark.asyncio
     async def test_list_includes_revoked(self, mock_token_manager: MagicMock) -> None:
-        service = OAuthService(token_manager=mock_token_manager)
+        service = OAuthCredentialService(token_manager=mock_token_manager)
         ctx = MagicMock(user_id="admin-user", is_admin=True)
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
-            result = await service.oauth_list_credentials(include_revoked=True, context=ctx)
+            result = await service.list_credentials(include_revoked=True, context=ctx)
 
         assert len(result) == 3
 
     @pytest.mark.asyncio
     async def test_non_admin_sees_only_own(self, mock_token_manager: MagicMock) -> None:
-        service = OAuthService(token_manager=mock_token_manager)
+        service = OAuthCredentialService(token_manager=mock_token_manager)
         ctx = MagicMock(user_id="user-alice", is_admin=False)
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
-            result = await service.oauth_list_credentials(context=ctx)
+            result = await service.list_credentials(context=ctx)
 
         # Alice should only see her own non-revoked credentials
         assert len(result) == 1
@@ -388,12 +387,12 @@ class TestOAuthListCredentials:
 
 
 # ===========================================================================
-# OAuthService — Revoke
+# OAuthCredentialService — Revoke
 # ===========================================================================
 
 
-class TestOAuthRevokeCredential:
-    """Tests for oauth_revoke_credential."""
+class TestRevokeCredential:
+    """Tests for revoke_credential."""
 
     @pytest.mark.asyncio
     async def test_revoke_success(self) -> None:
@@ -402,11 +401,11 @@ class TestOAuthRevokeCredential:
         tm.get_credential = AsyncMock(return_value=None)
         tm.register_provider = MagicMock()
 
-        service = OAuthService(token_manager=tm)
+        service = OAuthCredentialService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=True)
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
-            result = await service.oauth_revoke_credential(
+            result = await service.revoke_credential(
                 provider="google-drive",
                 user_email="alice@example.com",
                 context=ctx,
@@ -420,14 +419,14 @@ class TestOAuthRevokeCredential:
         tm.revoke_credential = AsyncMock(return_value=False)
         tm.get_credential = AsyncMock(return_value=None)
 
-        service = OAuthService(token_manager=tm)
+        service = OAuthCredentialService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=True)
 
         with (
             patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"),
             pytest.raises(ValueError, match="Credential not found"),
         ):
-            await service.oauth_revoke_credential(
+            await service.revoke_credential(
                 provider="google-drive",
                 user_email="unknown@example.com",
                 context=ctx,
@@ -435,12 +434,12 @@ class TestOAuthRevokeCredential:
 
 
 # ===========================================================================
-# OAuthService — Test Credential
+# OAuthCredentialService — Test Credential
 # ===========================================================================
 
 
-class TestOAuthTestCredential:
-    """Tests for oauth_test_credential."""
+class TestTestCredential:
+    """Tests for test_credential."""
 
     @pytest.mark.asyncio
     async def test_valid_credential(self) -> None:
@@ -456,11 +455,11 @@ class TestOAuthTestCredential:
         )
         tm.get_credential = AsyncMock(return_value=None)
 
-        service = OAuthService(token_manager=tm)
+        service = OAuthCredentialService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=True)
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
-            result = await service.oauth_test_credential(
+            result = await service.test_credential(
                 provider="google-drive",
                 user_email="alice@example.com",
                 context=ctx,
@@ -474,11 +473,11 @@ class TestOAuthTestCredential:
         tm.get_valid_token = AsyncMock(return_value=None)
         tm.get_credential = AsyncMock(return_value=None)
 
-        service = OAuthService(token_manager=tm)
+        service = OAuthCredentialService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=True)
 
         with patch("nexus.lib.context_utils.get_zone_id", return_value="zone1"):
-            result = await service.oauth_test_credential(
+            result = await service.test_credential(
                 provider="google-drive",
                 user_email="alice@example.com",
                 context=ctx,
@@ -489,7 +488,7 @@ class TestOAuthTestCredential:
 
 
 # ===========================================================================
-# OAuthService — Credential Ownership
+# OAuthCredentialService — Credential Ownership
 # ===========================================================================
 
 
@@ -499,7 +498,7 @@ class TestCheckCredentialOwnership:
     @pytest.mark.asyncio
     async def test_admin_can_access_any(self) -> None:
         tm = MagicMock()
-        service = OAuthService(token_manager=tm)
+        service = OAuthCredentialService(token_manager=tm)
         ctx = MagicMock(user_id="admin", is_admin=True)
 
         # Should not raise
@@ -513,7 +512,7 @@ class TestCheckCredentialOwnership:
 
         tm = MagicMock()
         tm.get_credential = AsyncMock(return_value=cred)
-        service = OAuthService(token_manager=tm)
+        service = OAuthCredentialService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=False)
 
         # Should not raise
@@ -527,7 +526,7 @@ class TestCheckCredentialOwnership:
 
         tm = MagicMock()
         tm.get_credential = AsyncMock(return_value=cred)
-        service = OAuthService(token_manager=tm)
+        service = OAuthCredentialService(token_manager=tm)
         ctx = MagicMock(user_id="user-alice", is_admin=False)
 
         with pytest.raises(ValueError, match="Permission denied"):
@@ -537,7 +536,7 @@ class TestCheckCredentialOwnership:
 
 
 # ===========================================================================
-# OAuthService — Helper: _map_provider_name
+# OAuthCredentialService — Helper: _map_provider_name
 # ===========================================================================
 
 
@@ -545,19 +544,19 @@ class TestMapProviderName:
     """Tests for _map_provider_name."""
 
     def test_known_mappings(self) -> None:
-        service = OAuthService()
+        service = OAuthCredentialService()
         assert service._map_provider_name("google") == "google-drive"
         assert service._map_provider_name("twitter") == "x"
         assert service._map_provider_name("x") == "x"
         assert service._map_provider_name("microsoft") == "microsoft-onedrive"
 
     def test_unknown_passed_through(self) -> None:
-        service = OAuthService()
+        service = OAuthCredentialService()
         assert service._map_provider_name("custom-provider") == "custom-provider"
 
 
 # ===========================================================================
-# OAuthService — Helper: _get_pkce_verifier
+# OAuthCredentialService — Helper: _get_pkce_verifier
 # ===========================================================================
 
 
@@ -566,7 +565,7 @@ class TestGetPKCEVerifier:
 
     @pytest.mark.asyncio
     async def test_returns_direct_verifier(self) -> None:
-        service = OAuthService()
+        service = OAuthCredentialService()
         result = await service._get_pkce_verifier("x", "direct_verifier", None)
         assert result == "direct_verifier"
 
@@ -576,13 +575,13 @@ class TestGetPKCEVerifier:
         store = PKCEStateStore(cache_store=cache)
         await store.save("state123", {"code_verifier": "cached_verifier"})
 
-        service = OAuthService(pkce_store=store)
+        service = OAuthCredentialService(pkce_store=store)
         result = await service._get_pkce_verifier("x", None, "state123")
         assert result == "cached_verifier"
 
     @pytest.mark.asyncio
     async def test_raises_when_not_found(self) -> None:
-        service = OAuthService(pkce_store=PKCEStateStore(cache_store=None))
+        service = OAuthCredentialService(pkce_store=PKCEStateStore(cache_store=None))
 
         with pytest.raises(ValueError, match="PKCE"):
             await service._get_pkce_verifier("x", None, None)
@@ -593,14 +592,14 @@ class TestGetPKCEVerifier:
         store = PKCEStateStore(cache_store=cache)
         # Don't save anything — simulates expiry
 
-        service = OAuthService(pkce_store=store)
+        service = OAuthCredentialService(pkce_store=store)
 
         with pytest.raises(ValueError, match="PKCE"):
             await service._get_pkce_verifier("x", None, "expired_state")
 
 
 # ===========================================================================
-# OAuthService — Lazy Factory/TokenManager Creation
+# OAuthCredentialService — Lazy Factory/TokenManager Creation
 # ===========================================================================
 
 
@@ -608,7 +607,7 @@ class TestLazyCreation:
     """Tests for lazy creation of factory and token manager."""
 
     def test_get_oauth_factory_creates_on_demand(self) -> None:
-        service = OAuthService(oauth_factory=None, oauth_config=None)
+        service = OAuthCredentialService(oauth_factory=None, oauth_config=None)
 
         with patch("nexus.bricks.auth.oauth.factory.OAuthProviderFactory") as MockFactory:
             MockFactory.return_value = MagicMock()
@@ -617,13 +616,13 @@ class TestLazyCreation:
             MockFactory.assert_called_once()
 
     def test_get_token_manager_no_db_returns_none(self) -> None:
-        service = OAuthService(token_manager=None, database_url=None)
+        service = OAuthCredentialService(token_manager=None, database_url=None)
 
         result = service._get_token_manager()
         assert result is None
 
     def test_get_token_manager_with_db_url(self) -> None:
-        service = OAuthService(token_manager=None, database_url="sqlite:///test.db")
+        service = OAuthCredentialService(token_manager=None, database_url="sqlite:///test.db")
 
         with patch("nexus.bricks.auth.oauth.token_manager.TokenManager") as MockTM:
             MockTM.return_value = MagicMock()

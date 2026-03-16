@@ -44,6 +44,10 @@
 //!
 //! Part of Issue #1159: P2P Federation and Consensus Zones
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod storage;
 
 /// Raft consensus module for STRONG_HA zones.

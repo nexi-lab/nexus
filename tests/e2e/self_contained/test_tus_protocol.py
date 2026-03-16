@@ -12,24 +12,24 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from nexus.backends.local import LocalBackend
-from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
-from nexus.server.dependencies import require_auth
-from nexus.services.upload.chunked_upload_service import (
+from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.bricks.upload.chunked_upload_service import (
     ChunkedUploadConfig,
     ChunkedUploadService,
 )
+from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
+from nexus.server.dependencies import require_auth
 
 # --- Test fixtures ---
 
 
 @pytest.fixture
-def tmp_backend(tmp_path: Path) -> LocalBackend:
-    return LocalBackend(root_path=tmp_path)
+def tmp_backend(tmp_path: Path) -> CASLocalBackend:
+    return CASLocalBackend(root_path=tmp_path)
 
 
 @pytest.fixture
-def upload_service(tmp_backend: LocalBackend) -> ChunkedUploadService:
+def upload_service(tmp_backend: CASLocalBackend) -> ChunkedUploadService:
     """Create a service with an in-memory SQLite session store."""
     from tests.helpers.in_memory_record_store import InMemoryRecordStore
 

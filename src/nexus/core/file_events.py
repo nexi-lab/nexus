@@ -5,7 +5,6 @@ FileEvent is the single kernel-defined I/O event type, analogous to Linux
 
 - KernelDispatch OBSERVE phase (local, fire-and-forget)
 - EventBus (distributed delivery via Dragonfly/NATS)
-- Layer 1 inotify/FSEvents (OS-native, via ``from_file_change()``)
 
 Per NEXUS-LEGO-ARCHITECTURE, data types can be defined in lower tiers and used
 by higher tiers. FileEvent is a kernel data type consumed by all layers.
@@ -42,8 +41,7 @@ class FileEvent:
     Analogous to Linux ``fsnotify_event``. Carries all context that consumers
     might need; each consumer extracts what it requires and ignores the rest.
 
-    Used by KernelDispatch OBSERVE phase, EventBus distributed delivery,
-    and Layer 1 inotify/FSEvents (via ``from_file_change()``).
+    Used by KernelDispatch OBSERVE phase and EventBus distributed delivery.
     """
 
     type: FileEventType | str
@@ -55,8 +53,8 @@ class FileEvent:
     size: int | None = None
     etag: str | None = None
     agent_id: str | None = None
-    revision: int | None = None
     vector_clock: str | None = None
+    sequence_number: int | None = None  # Monotonic ordering within a zone (#2755)
 
     # Identity & write-specific context
     user_id: str | None = None
@@ -83,10 +81,10 @@ class FileEvent:
             result["etag"] = self.etag
         if self.agent_id is not None:
             result["agent_id"] = self.agent_id
-        if self.revision is not None:
-            result["revision"] = self.revision
         if self.vector_clock is not None:
             result["vector_clock"] = self.vector_clock
+        if self.sequence_number is not None:
+            result["sequence_number"] = self.sequence_number
         if self.user_id is not None:
             result["user_id"] = self.user_id
         if self.version is not None:
@@ -114,8 +112,8 @@ class FileEvent:
             size=data.get("size"),
             etag=data.get("etag"),
             agent_id=data.get("agent_id"),
-            revision=data.get("revision"),
             vector_clock=data.get("vector_clock"),
+            sequence_number=data.get("sequence_number"),
             user_id=data.get("user_id"),
             version=data.get("version"),
             is_new=data.get("is_new", False),
@@ -128,46 +126,6 @@ class FileEvent:
         if isinstance(json_str, bytes):
             json_str = json_str.decode("utf-8")
         return cls.from_dict(json.loads(json_str))
-
-    @classmethod
-    def from_file_change(
-        cls,
-        change: Any,  # FileChange from services/watch/file_watcher.py (avoid circular import)
-        zone_id: str | None = None,
-    ) -> "FileEvent":
-        """Create FileEvent from Layer 1 FileChange.
-
-        Maps ChangeType to FileEventType:
-        - CREATED → FILE_WRITE (new file created)
-        - MODIFIED → FILE_WRITE (file content changed)
-        - DELETED → FILE_DELETE
-        - RENAMED → FILE_RENAME
-
-        Args:
-            change: FileChange from services/watch/file_watcher.py
-            zone_id: Optional zone ID to associate
-
-        Returns:
-            FileEvent with unified format
-        """
-        # Map ChangeType string values to FileEventType
-        change_type = change.type.value if hasattr(change.type, "value") else change.type
-
-        type_mapping = {
-            "created": FileEventType.FILE_WRITE,
-            "modified": FileEventType.FILE_WRITE,
-            "deleted": FileEventType.FILE_DELETE,
-            "renamed": FileEventType.FILE_RENAME,
-        }
-
-        event_type = type_mapping.get(change_type, change_type)
-
-        return cls(
-            type=event_type,
-            path=change.path,
-            zone_id=zone_id,
-            old_path=getattr(change, "old_path", None),
-        )
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, FileEvent):

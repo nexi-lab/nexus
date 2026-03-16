@@ -18,14 +18,16 @@ Subcommands:
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
+from nexus.cli.dry_run import add_dry_run_option, dry_run_preview, render_dry_run
+from nexus.cli.output import OutputOptions, add_output_options, render_error, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -103,12 +105,21 @@ def _get_zone_manager(
     default=None,
     help="Comma-separated peer addresses (format: id@host:port)",
 )
+@click.option(
+    "--if-not-exists",
+    is_flag=True,
+    default=False,
+    help="Succeed silently if zone already exists",
+)
+@add_dry_run_option
 def create_zone_cmd(
     zone_id: str,
     node_id: int,
     data_dir: str,
     bind: str,
     peers: str | None,
+    if_not_exists: bool,
+    dry_run: bool,
 ) -> None:
     """Create a new Raft zone.
 
@@ -121,11 +132,30 @@ def create_zone_cmd(
         nexus zone create shared-zone --peers 2@peer2:2126,3@peer3:2126
 
         NEXUS_NODE_ID=2 nexus zone create shared-zone --peers 1@peer1:2126
+
+        nexus zone create my-zone --dry-run
+
+        nexus zone create my-zone --if-not-exists
     """
     try:
+        if dry_run:
+            preview = dry_run_preview(
+                "zone create", path=zone_id, details={"node_id": node_id, "peers": peers}
+            )
+            render_dry_run(preview)
+            return
+
         peer_list = [p.strip() for p in peers.split(",")] if peers else []
         mgr = _get_zone_manager(node_id, data_dir, bind)
-        store = mgr.create_zone(zone_id, peers=peer_list)
+
+        try:
+            store = mgr.create_zone(zone_id, peers=peer_list)
+        except Exception as create_err:
+            if if_not_exists and "already exists" in str(create_err).lower():
+                console.print(f"[green]✓[/green] Zone already exists: {zone_id}")
+                mgr.shutdown()
+                return
+            raise
 
         console.print(f"[green]Zone '{zone_id}' created[/green]")
         console.print(f"  Node ID: {node_id}")
@@ -227,35 +257,53 @@ def join_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@add_output_options
 def list_zones_cmd(
     node_id: int,
     data_dir: str,
     bind: str,
+    output_opts: OutputOptions,
 ) -> None:
     """List all local zones on this node.
 
     Examples:
         nexus zone list
-
+        nexus zone list --json
         nexus zone list --data-dir /var/lib/nexus/zones
     """
-    try:
-        mgr = _get_zone_manager(node_id, data_dir, bind)
-        zones = mgr.list_zones()
+    timing = CommandTiming()
 
-        if not zones:
-            console.print("[dim]No zones found[/dim]")
-        else:
+    try:
+        with timing.phase("server"):
+            mgr = _get_zone_manager(node_id, data_dir, bind)
+            zones = mgr.list_zones()
+            mgr.shutdown()
+
+        data = [{"zone_id": z} for z in sorted(zones)] if zones else []
+
+        def _print_human(entries: list[dict[str, Any]]) -> None:
+            if not entries:
+                console.print("[dim]No zones found[/dim]")
+                return
             table = Table(title=f"Zones (node {node_id})")
             table.add_column("Zone ID", style="cyan")
             console.print()
-            for z in sorted(zones):
-                table.add_row(z)
+            for entry in entries:
+                table.add_row(entry["zone_id"])
             console.print(table)
 
-        mgr.shutdown()
+        render_output(
+            data=data, output_opts=output_opts, timing=timing, human_formatter=_print_human
+        )
     except Exception as e:
-        handle_error(e)
+        if output_opts.json_output:
+            from nexus.cli.exit_codes import ExitCode
+
+            render_error(
+                error=e, output_opts=output_opts, exit_code=ExitCode.GENERAL_ERROR, timing=timing
+            )
+        else:
+            handle_error(e)
 
 
 @zone.command(name="mount")
@@ -292,6 +340,7 @@ def list_zones_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@add_dry_run_option
 def mount_zone_cmd(
     mount_path: str,
     target_zone: str,
@@ -299,6 +348,7 @@ def mount_zone_cmd(
     node_id: int,
     data_dir: str,
     bind: str,
+    dry_run: bool,
 ) -> None:
     """Mount a zone at a path (DT_MOUNT).
 
@@ -311,8 +361,19 @@ def mount_zone_cmd(
         nexus zone mount /shared team-zone
 
         nexus zone mount /projects/alice alice-zone --parent-zone root
+
+        nexus zone mount /shared team-zone --dry-run
     """
     try:
+        if dry_run:
+            preview = dry_run_preview(
+                "zone mount",
+                path=mount_path,
+                details={"target_zone": target_zone, "parent_zone": parent_zone},
+            )
+            render_dry_run(preview)
+            return
+
         mgr = _get_zone_manager(node_id, data_dir, bind)
         mgr.mount(parent_zone, mount_path, target_zone)
 
@@ -358,12 +419,14 @@ def mount_zone_cmd(
     show_default=True,
     help="gRPC bind address",
 )
+@add_dry_run_option
 def unmount_zone_cmd(
     mount_path: str,
     parent_zone: str,
     node_id: int,
     data_dir: str,
     bind: str,
+    dry_run: bool,
 ) -> None:
     """Remove a mount point (DT_MOUNT).
 
@@ -371,8 +434,19 @@ def unmount_zone_cmd(
         nexus zone unmount /shared
 
         nexus zone unmount /projects/alice --parent-zone root
+
+        nexus zone unmount /shared --dry-run
     """
     try:
+        if dry_run:
+            preview = dry_run_preview(
+                "zone unmount",
+                path=mount_path,
+                details={"parent_zone": parent_zone},
+            )
+            render_dry_run(preview)
+            return
+
         mgr = _get_zone_manager(node_id, data_dir, bind)
         mgr.unmount(parent_zone, mount_path)
 
@@ -440,7 +514,8 @@ def export_zone(
     path_prefix: str | None,
     after: str | None,
     compression: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Export zone data to a portable .nexus bundle.
 
@@ -459,7 +534,6 @@ def export_zone(
     """
     try:
         from nexus.bricks.portability import ZoneExportOptions, ZoneExportService
-        from nexus.core.nexus_fs import NexusFS
 
         # Parse after time if provided
         after_time = None
@@ -474,11 +548,7 @@ def export_zone(
                 sys.exit(1)
 
         # Get filesystem
-        nx = get_filesystem(backend_config)
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Zone export requires NexusFS instance")
-            nx.close()
-            sys.exit(1)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Configure export options
         output_path = Path(output)
@@ -510,7 +580,7 @@ def export_zone(
             def update_progress(current: int, total: int) -> None:
                 progress.update(task, description=f"Exporting... ({current}/{total} files)")
 
-            service = ZoneExportService(nx)
+            service = ZoneExportService(cast(Any, nx))
             manifest = service.export_zone(zone_id, options, update_progress)
 
         nx.close()
@@ -581,7 +651,8 @@ def import_zone(
     dry_run: bool,
     import_permissions: bool,
     path_remap: tuple[str, ...],
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Import zone data from a .nexus bundle.
 
@@ -603,7 +674,6 @@ def import_zone(
     """
     try:
         from nexus.bricks.portability import ConflictMode, ZoneImportOptions, ZoneImportService
-        from nexus.core.nexus_fs import NexusFS
 
         # Parse path remappings
         path_prefix_remap: dict[str, str] = {}
@@ -616,11 +686,7 @@ def import_zone(
             path_prefix_remap[old] = new
 
         # Get filesystem
-        nx = get_filesystem(backend_config)
-        if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Zone import requires NexusFS instance")
-            nx.close()
-            sys.exit(1)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Configure import options
         conflict_mode = ConflictMode(conflict)
@@ -653,7 +719,7 @@ def import_zone(
             def update_progress(current: int, total: int, phase: str) -> None:
                 progress.update(task, description=f"Importing {phase}... ({current}/{total})")
 
-            service = ZoneImportService(nx)
+            service = ZoneImportService(cast(Any, nx))
             result = service.import_zone(options, update_progress)
 
         nx.close()

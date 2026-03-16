@@ -416,7 +416,7 @@ class TestInputValidation:
             validate_agent_id("agent$(whoami)")
 
         # Valid agent IDs
-        assert validate_agent_id("user1,SkillBuilder") == "user1,SkillBuilder"
+        assert validate_agent_id("user1,UntrustedAgent") == "user1,UntrustedAgent"
         assert validate_agent_id("agent-123") == "agent-123"
 
     def test_egress_domain_rejects_injection(self) -> None:

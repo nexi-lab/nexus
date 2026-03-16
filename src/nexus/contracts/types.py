@@ -28,25 +28,25 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class VFSOperations(Protocol):
-    """Minimal sync VFS interface that extracted services depend on.
+    """Minimal async VFS interface that extracted services depend on.
 
     NexusFS satisfies this naturally.  Services receive it via DI so they
     never import from ``nexus.core`` at runtime.
     """
 
-    def sys_mkdir(
+    async def sys_mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
     ) -> None: ...
 
-    def sys_write(self, path: str, content: bytes | str, context: Any = None, **kw: Any) -> Any: ...
+    async def sys_write(self, path: str, buf: bytes | str, *, context: Any = None) -> int: ...
 
-    def sys_read(self, path: str, context: Any = None, **kw: Any) -> bytes: ...
+    async def sys_read(self, path: str, *, context: Any = None) -> bytes: ...
 
-    def sys_access(self, path: str, context: Any = None) -> bool: ...
+    async def sys_access(self, path: str, context: Any = None) -> bool: ...
 
-    def sys_readdir(self, path: str = "/", **kw: Any) -> list: ...
+    async def sys_readdir(self, path: str = "/", **kw: Any) -> list: ...
 
-    def sys_unlink(self, path: str, **kw: Any) -> None: ...
+    async def sys_unlink(self, path: str, **kw: Any) -> None: ...
 
 
 class Permission(IntFlag):
@@ -272,6 +272,11 @@ def parse_operation_context(context: OperationContext | dict | None = None) -> O
         agent_id=context.get("agent_id"),
         is_admin=context.get("is_admin", False),
         is_system=context.get("is_system", False),
+        subject_type=context.get("subject_type", "user"),
+        subject_id=context.get("subject_id"),
+        admin_capabilities=set(context.get("admin_capabilities", ())),
+        backend_path=context.get("backend_path"),
+        virtual_path=context.get("virtual_path"),
     )
 
 
@@ -286,6 +291,27 @@ class TransactionProtocol(StrEnum):
     ACP = "acp"
     AP2 = "ap2"
     INTERNAL = "internal"
+
+
+class WriteMode(StrEnum):
+    """Write consistency mode for file operations (Issue #2929).
+
+    Maps to existing Metastore consistency parameter:
+        SYNC  → consistency="sc" (strong, blocks until committed)
+        ASYNC → consistency="ec" (eventual, returns write token)
+
+    PRIMARY_SYNC is deferred — requires async side-effect orchestration.
+    Stored as String for forward-compatible schema evolution.
+    """
+
+    SYNC = "sync"
+    ASYNC = "async"
+
+    def to_metastore_consistency(self) -> str:
+        """Map WriteMode to Metastore consistency parameter."""
+        if self == WriteMode.SYNC:
+            return "sc"
+        return "ec"
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +361,7 @@ class SyncResult:
 
 
 # ---------------------------------------------------------------------------
-# Snapshot types (moved from nexus.services.protocols.transactional_snapshot, Issue #194)
+# Snapshot types (moved from nexus.contracts.protocols.transactional_snapshot, Issue #194)
 # ---------------------------------------------------------------------------
 
 
@@ -372,3 +398,16 @@ class AuditConfig:
     """
 
     strict_mode: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class WriteResult:
+    """Result of a content write operation.
+
+    Attributes:
+        content_hash: SHA-256 hex digest of the written content.
+        size: Content size in bytes (0 = unknown / not tracked).
+    """
+
+    content_hash: str
+    size: int = 0

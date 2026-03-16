@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.services.protocols.brick_lifecycle import (
+from nexus.contracts.protocols.brick_lifecycle import (
     BrickState,
     ZoneDeprovisionReport,
     ZoneState,

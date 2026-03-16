@@ -151,7 +151,7 @@ class TestCacheBrickLifecycleProtocol:
     def test_satisfies_lifecycle_protocol(self) -> None:
         """CacheBrick should be a structural match for BrickLifecycleProtocol."""
         from nexus.cache.brick import CacheBrick
-        from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
+        from nexus.contracts.protocols.brick_lifecycle import BrickLifecycleProtocol
 
         brick = CacheBrick()
         assert isinstance(brick, BrickLifecycleProtocol)

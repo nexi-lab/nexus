@@ -26,7 +26,7 @@ class NexusFSUserProvisioner:
     def __init__(self, nexus_fs: Any) -> None:
         self._nx = nexus_fs
 
-    def provision_user(
+    async def provision_user(
         self,
         *,
         user_id: str,
@@ -35,7 +35,7 @@ class NexusFSUserProvisioner:
         zone_id: str | None = None,
         create_api_key: bool = True,
         create_agents: bool = True,
-        import_skills: bool = True,
+        import_skills: bool = False,
     ) -> dict[str, Any]:
         """Provision resources for a new user via NexusFS."""
         from nexus.contracts.types import OperationContext
@@ -49,7 +49,7 @@ class NexusFSUserProvisioner:
             is_admin=True,
         )
 
-        result: dict[str, Any] = self._nx.provision_user(
+        result: dict[str, Any] = await self._nx.service("user_provisioning").provision_user(
             user_id=user_id,
             email=email,
             display_name=display_name,

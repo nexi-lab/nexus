@@ -12,7 +12,6 @@ without creating cross-tier imports.
 
 from __future__ import annotations
 
-import fnmatch
 import functools
 import re
 
@@ -150,5 +149,50 @@ def path_matches_pattern(path: str, pattern: str) -> bool:
             return False
         return bool(compiled.match(path))
 
-    # Simple patterns without ** use fnmatch
-    return fnmatch.fnmatch(path, pattern)
+    # Simple patterns also use the regex compiler so * does not cross /
+    compiled = _compile_glob_pattern(pattern)
+    if compiled is None:
+        return False
+    return bool(compiled.match(path))
+
+
+def unscope_internal_path(path: str) -> str:
+    """Strip internal zone/tenant/user prefix from a storage path.
+
+    Converts internal storage paths to user-friendly paths by removing
+    the zone/tenant and user prefix segments.
+
+    Args:
+        path: Internal storage path (e.g., "/tenant:default/workspace/file.txt")
+
+    Returns:
+        User-friendly path (e.g., "/workspace/file.txt")
+
+    Examples:
+        >>> unscope_internal_path("/tenant:default/connector/gcs/file.txt")
+        '/connector/gcs/file.txt'
+        >>> unscope_internal_path("/zone/acme/user:alice/workspace/file.txt")
+        '/workspace/file.txt'
+        >>> unscope_internal_path("/workspace/file.txt")
+        '/workspace/file.txt'
+    """
+    parts = path.lstrip("/").split("/")
+
+    # Determine how many leading segments to skip
+    skip = 0
+
+    if parts and parts[0].startswith("tenant:"):
+        skip = 1
+        if len(parts) > 1 and parts[1].startswith("user:"):
+            skip = 2
+
+    elif parts and parts[0] == "zone" and len(parts) >= 2:
+        skip = 2  # skip "zone" + zone_id
+        if len(parts) > 2 and parts[2].startswith("user:"):
+            skip = 3
+
+    if skip == 0:
+        return path if path else "/"
+
+    remaining = "/".join(parts[skip:])
+    return f"/{remaining}" if remaining else "/"

@@ -46,6 +46,8 @@ def _extract_tuple_id(result):
 
 
 def main():
+    import asyncio
+
     passed = failed = 0
 
     def check(name, ok, detail=""):
@@ -59,7 +61,7 @@ def main():
 
     try:
         # ── Setup: Create NexusFS via factory (fully wired services) ─────
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
         from nexus.bricks.rebac.namespace_factory import create_namespace_manager
         from nexus.core.config import PermissionConfig
@@ -68,17 +70,19 @@ def main():
         from nexus.storage.raft_metadata_store import RaftMetadataStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        backend = LocalBackend(root_path=BACKEND_DIR)
+        backend = CASLocalBackend(root_path=BACKEND_DIR)
         metadata_store = RaftMetadataStore.embedded(METADATA_DIR)
         record_store = SQLAlchemyRecordStore(db_path=RECORD_DB)
 
-        nx = create_nexus_fs(
-            backend=backend,
-            metadata_store=metadata_store,
-            record_store=record_store,
-            permissions=PermissionConfig(
-                enforce=True, allow_admin_bypass=True, enforce_zone_isolation=False
-            ),
+        nx = asyncio.run(
+            create_nexus_fs(
+                backend=backend,
+                metadata_store=metadata_store,
+                record_store=record_store,
+                permissions=PermissionConfig(
+                    enforce=True, allow_admin_bypass=True, enforce_zone_isolation=False
+                ),
+            )
         )
 
         # ── Wire namespace manager (dcache + L3 + event-driven invalidation) ──
@@ -176,7 +180,7 @@ def main():
         print("\n" + "=" * 70)
         print("Issue #1244 E2E — FastAPI TestClient, Permissions Enabled")
         print("  Stack: HTTP → StaticAPIKeyAuth → PermissionEnforcer")
-        print("         → NamespaceManager (dcache+L3) → ReBAC → LocalBackend")
+        print("         → NamespaceManager (dcache+L3) → ReBAC → CASLocalBackend")
         print("=" * 70)
 
         # ── Test 1: Health ───────────────────────────────────────────────
@@ -210,7 +214,7 @@ def main():
         # ── Test 5: Grant → IMMEDIATE visibility (Issue #1244 core) ──────
         print("\n[Test 5] Grant → IMMEDIATE visibility (Issue #1244)")
 
-        result = nx.rebac_create(
+        result = nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/workspace/proj/data.csv"),
@@ -246,13 +250,13 @@ def main():
         rpc("write", {"path": "/workspace/bob-dir/f.txt", "content": "Bob-data"}, ADMIN_H)
 
         # Grant each user their own file
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/workspace/alice-dir/f.txt"),
             zone_id="test",
         )
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_viewer",
             object=("file", "/workspace/bob-dir/f.txt"),
@@ -274,7 +278,7 @@ def main():
         # ── Test 8: Rapid grant/revoke/grant (cache churn) ───────────────
         print("\n[Test 8] Rapid grant/revoke/grant (cache churn)")
         for i in range(5):
-            tid_result = nx.rebac_create(
+            tid_result = nx.service("rebac").rebac_create_sync(
                 subject=("user", "alice"),
                 relation="direct_viewer",
                 object=("file", "/workspace/proj/data.csv"),

@@ -16,12 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.caching_backend_wrapper import (
+from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.backends.wrappers.caching import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
-from nexus.backends.local import LocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -34,16 +34,16 @@ from tests.helpers.dict_metastore import DictMetastore
 
 
 @pytest.fixture
-def local_backend(tmp_path: Path) -> LocalBackend:
-    """Create a real LocalBackend with temp directory."""
+def local_backend(tmp_path: Path) -> CASLocalBackend:
+    """Create a real CASLocalBackend with temp directory."""
     root = tmp_path / "storage"
     root.mkdir()
-    return LocalBackend(root_path=str(root))
+    return CASLocalBackend(root_path=str(root))
 
 
 @pytest.fixture
-def cached_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
-    """LocalBackend wrapped with CachingBackendWrapper."""
+def cached_backend(local_backend: CASLocalBackend) -> CachingBackendWrapper:
+    """CASLocalBackend wrapped with CachingBackendWrapper."""
     config = CacheWrapperConfig(
         strategy=CacheStrategy.WRITE_AROUND,
         l1_max_size_mb=16,
@@ -54,8 +54,8 @@ def cached_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
 
 
 @pytest.fixture
-def write_through_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
-    """LocalBackend wrapped with write-through strategy."""
+def write_through_backend(local_backend: CASLocalBackend) -> CachingBackendWrapper:
+    """CASLocalBackend wrapped with write-through strategy."""
     config = CacheWrapperConfig(
         strategy=CacheStrategy.WRITE_THROUGH,
         l1_max_size_mb=16,
@@ -79,7 +79,7 @@ class TestDescribeChain:
     def test_cached_backend_name(self, cached_backend: CachingBackendWrapper) -> None:
         assert cached_backend.name == "cached(local)"
 
-    def test_leaf_backend_describe(self, local_backend: LocalBackend) -> None:
+    def test_leaf_backend_describe(self, local_backend: CASLocalBackend) -> None:
         assert local_backend.describe() == "local"
 
 
@@ -92,7 +92,7 @@ class TestCachingCorrectness:
     """Verify cached operations produce identical results to direct backend."""
 
     def test_write_and_read_through_cache(
-        self, local_backend: LocalBackend, cached_backend: CachingBackendWrapper
+        self, local_backend: CASLocalBackend, cached_backend: CachingBackendWrapper
     ):
         """Written content should be readable through cache identically."""
         content = b"E2E test content: " + uuid.uuid4().bytes
@@ -264,7 +264,7 @@ class TestCachingInvalidation:
         assert not read_resp.success
 
     def test_clear_cache_forces_re_read(
-        self, local_backend: LocalBackend, cached_backend: CachingBackendWrapper
+        self, local_backend: CASLocalBackend, cached_backend: CachingBackendWrapper
     ):
         """After clear_cache, reads should go back to the backend."""
         content = b"clear test"
@@ -323,19 +323,19 @@ class TestCachingPermissions:
     the NexusFS layer, so even cached content must pass permission checks.
 
     These tests create a real NexusFS with:
-    - CachingBackendWrapper wrapping LocalBackend
+    - CachingBackendWrapper wrapping CASLocalBackend
     - enforce_permissions=True
     - ReBAC permission tuples granting specific users access
     """
 
     @pytest.fixture
-    def nexus_with_cache(self, tmp_path: Path):
+    async def nexus_with_cache(self, tmp_path: Path):
         """Create NexusFS with CachingBackendWrapper and permissions enabled."""
         storage_path = tmp_path / "storage"
         storage_path.mkdir()
 
-        # Create LocalBackend wrapped with CachingBackendWrapper
-        inner_backend = LocalBackend(root_path=str(storage_path))
+        # Create CASLocalBackend wrapped with CachingBackendWrapper
+        inner_backend = CASLocalBackend(root_path=str(storage_path))
         config = CacheWrapperConfig(
             strategy=CacheStrategy.WRITE_AROUND,
             l1_max_size_mb=16,
@@ -348,7 +348,7 @@ class TestCachingPermissions:
         metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore()  # in-memory SQLite
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -359,42 +359,44 @@ class TestCachingPermissions:
 
         nx.close()
 
-    def test_admin_can_read_through_cache(self, nexus_with_cache):
+    @pytest.mark.asyncio
+    async def test_admin_can_read_through_cache(self, nexus_with_cache):
         """Admin user can read files, and content gets cached."""
         nx, cached_backend = nexus_with_cache
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write a file as admin
-        nx.sys_write("/test/cached_file.txt", b"cached content", context=admin)
+        await nx.sys_write("/test/cached_file.txt", b"cached content", context=admin)
 
         # First read — cache miss, reads from backend
-        content = nx.sys_read("/test/cached_file.txt", context=admin)
+        content = await nx.sys_read("/test/cached_file.txt", context=admin)
         assert content == b"cached content"
 
         # Second read — should use cache (verify via stats)
         cached_backend.clear_cache()
 
         # Re-read to populate cache
-        content = nx.sys_read("/test/cached_file.txt", context=admin)
+        content = await nx.sys_read("/test/cached_file.txt", context=admin)
         assert content == b"cached content"
 
         # Third read — L1 hit
-        content = nx.sys_read("/test/cached_file.txt", context=admin)
+        content = await nx.sys_read("/test/cached_file.txt", context=admin)
         assert content == b"cached content"
 
         stats = cached_backend.get_cache_stats()
         assert stats["l1_hits"] >= 1, f"Expected L1 hit, got stats: {stats}"
 
-    def test_unauthorized_user_denied_even_when_cached(self, nexus_with_cache):
+    @pytest.mark.asyncio
+    async def test_unauthorized_user_denied_even_when_cached(self, nexus_with_cache):
         """Non-authorized user is denied even when content is in cache."""
         nx, cached_backend = nexus_with_cache
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write a file as admin
-        nx.sys_write("/test/secret.txt", b"secret data", context=admin)
+        await nx.sys_write("/test/secret.txt", b"secret data", context=admin)
 
         # Read as admin to populate cache
-        content = nx.sys_read("/test/secret.txt", context=admin)
+        content = await nx.sys_read("/test/secret.txt", context=admin)
         assert content == b"secret data"
 
         # Verify content is cached
@@ -404,33 +406,35 @@ class TestCachingPermissions:
         # Non-admin user without explicit permission should be DENIED
         unauthorized = OperationContext(user_id="mallory", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
-            nx.sys_read("/test/secret.txt", context=unauthorized)
+            await nx.sys_read("/test/secret.txt", context=unauthorized)
 
-    def test_permission_enforced_on_write_with_cache(self, nexus_with_cache):
+    @pytest.mark.asyncio
+    async def test_permission_enforced_on_write_with_cache(self, nexus_with_cache):
         """Non-authorized user cannot write even with caching enabled."""
         nx, _ = nexus_with_cache
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create directory as admin
-        nx.sys_mkdir("/test/protected", parents=True, context=admin)
+        await nx.sys_mkdir("/test/protected", parents=True, context=admin)
 
         # Non-admin user should be denied write
         unauthorized = OperationContext(user_id="eve", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
-            nx.sys_write("/test/protected/hack.txt", b"pwned", context=unauthorized)
+            await nx.sys_write("/test/protected/hack.txt", b"pwned", context=unauthorized)
 
-    def test_cached_content_not_leaked_across_users(self, nexus_with_cache):
+    @pytest.mark.asyncio
+    async def test_cached_content_not_leaked_across_users(self, nexus_with_cache):
         """User A's cached read does not leak data to unauthorized User B."""
         nx, cached_backend = nexus_with_cache
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write multiple files as admin
-        nx.sys_write("/test/public.txt", b"public info", context=admin)
-        nx.sys_write("/test/private.txt", b"private info", context=admin)
+        await nx.sys_write("/test/public.txt", b"public info", context=admin)
+        await nx.sys_write("/test/private.txt", b"private info", context=admin)
 
         # Admin reads both (populates cache for both)
-        assert nx.sys_read("/test/public.txt", context=admin) == b"public info"
-        assert nx.sys_read("/test/private.txt", context=admin) == b"private info"
+        assert await nx.sys_read("/test/public.txt", context=admin) == b"public info"
+        assert await nx.sys_read("/test/private.txt", context=admin) == b"private info"
 
         # Verify both are cached
         stats = cached_backend.get_cache_stats()
@@ -449,32 +453,34 @@ class TestCachingPermissions:
         # Alice should STILL be denied on private.txt even though it's cached
         alice = OperationContext(user_id="alice", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
-            nx.sys_read("/test/private.txt", context=alice)
+            await nx.sys_read("/test/private.txt", context=alice)
 
-    def test_delete_with_permissions_invalidates_cache(self, nexus_with_cache):
+    @pytest.mark.asyncio
+    async def test_delete_with_permissions_invalidates_cache(self, nexus_with_cache):
         """Deleting a file invalidates it from cache."""
         nx, cached_backend = nexus_with_cache
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write and read to populate cache
-        nx.sys_write("/test/delete_me.txt", b"temp data", context=admin)
-        assert nx.sys_read("/test/delete_me.txt", context=admin) == b"temp data"
+        await nx.sys_write("/test/delete_me.txt", b"temp data", context=admin)
+        assert await nx.sys_read("/test/delete_me.txt", context=admin) == b"temp data"
 
         # Delete the file
-        nx.sys_unlink("/test/delete_me.txt", context=admin)
+        await nx.sys_unlink("/test/delete_me.txt", context=admin)
 
         # Should raise FileNotFoundError — NOT serve stale cached data
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises((NexusFileNotFoundError, FileNotFoundError)):
-            nx.sys_read("/test/delete_me.txt", context=admin)
+            await nx.sys_read("/test/delete_me.txt", context=admin)
 
-    def test_write_through_with_permissions(self, tmp_path: Path):
+    @pytest.mark.asyncio
+    async def test_write_through_with_permissions(self, tmp_path: Path):
         """Write-through strategy works correctly with permission checks."""
         storage_path = tmp_path / "wt_storage"
         storage_path.mkdir()
 
-        inner_backend = LocalBackend(root_path=str(storage_path))
+        inner_backend = CASLocalBackend(root_path=str(storage_path))
         config = CacheWrapperConfig(
             strategy=CacheStrategy.WRITE_THROUGH,
             l1_max_size_mb=16,
@@ -486,7 +492,7 @@ class TestCachingPermissions:
         metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore()
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -497,16 +503,16 @@ class TestCachingPermissions:
             admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
             # Write-through: write populates cache immediately
-            nx.sys_write("/wt/file.txt", b"write through data", context=admin)
+            await nx.sys_write("/wt/file.txt", b"write through data", context=admin)
 
             # Read should be from cache (fast)
-            content = nx.sys_read("/wt/file.txt", context=admin)
+            content = await nx.sys_read("/wt/file.txt", context=admin)
             assert content == b"write through data"
 
             # Unauthorized user still blocked
             unauthorized = OperationContext(user_id="nobody", groups=[], is_admin=False)
             with pytest.raises(PermissionError):
-                nx.sys_read("/wt/file.txt", context=unauthorized)
+                await nx.sys_read("/wt/file.txt", context=unauthorized)
         finally:
             nx.close()
 
@@ -520,13 +526,13 @@ class TestCachingWithFastAPIServer:
     """E2E tests for CachingBackendWrapper through the full FastAPI HTTP stack.
 
     These tests create a real FastAPI app with:
-    - CachingBackendWrapper wrapping LocalBackend
+    - CachingBackendWrapper wrapping CASLocalBackend
     - enforce_permissions=True
     - ReBAC permission tuples granting specific users access
     - Open access mode (no api_key) — identity from X-Nexus-Subject header
 
     HTTP requests go through the full stack:
-        httpx → FastAPI → auth → OperationContext → NexusFS → CachingBackendWrapper → LocalBackend
+        httpx → FastAPI → auth → OperationContext → NexusFS → CachingBackendWrapper → CASLocalBackend
 
     Validates that:
     1. Authorized users can read/write through the HTTP API with caching
@@ -536,11 +542,11 @@ class TestCachingWithFastAPIServer:
     """
 
     @pytest.fixture
-    def fastapi_with_cache(self, tmp_path: Path):
+    async def fastapi_with_cache(self, tmp_path: Path):
         """Create FastAPI app with CachingBackendWrapper-backed NexusFS.
 
         Sets up:
-        - LocalBackend wrapped with CachingBackendWrapper
+        - CASLocalBackend wrapped with CachingBackendWrapper
         - NexusFS with enforce_permissions=True
         - ReBAC grants for specific users
         - FastAPI app in open access mode (no api_key)
@@ -554,8 +560,8 @@ class TestCachingWithFastAPIServer:
         storage_path = tmp_path / "http_storage"
         storage_path.mkdir()
 
-        # Create CachingBackendWrapper-wrapped LocalBackend
-        inner_backend = LocalBackend(root_path=str(storage_path))
+        # Create CachingBackendWrapper-wrapped CASLocalBackend
+        inner_backend = CASLocalBackend(root_path=str(storage_path))
         config = CacheWrapperConfig(
             strategy=CacheStrategy.WRITE_AROUND,
             l1_max_size_mb=16,
@@ -571,7 +577,7 @@ class TestCachingWithFastAPIServer:
         metadata_store = DictMetastore()
         record_store = SQLAlchemyRecordStore(db_path=db_path)
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=cached_backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -589,9 +595,9 @@ class TestCachingWithFastAPIServer:
         # from parent directories to all children.  Using isolated dirs
         # ensures that a grant on /alice_area/readme.md does NOT bleed to
         # /secret_area/secret.txt.
-        nx.sys_write("/alice_area/readme.md", b"# HTTP Cache Test", context=admin)
-        nx.sys_write("/secret_area/secret.txt", b"top secret data", context=admin)
-        nx.sys_write("/shared_area/shared.txt", b"shared content", context=admin)
+        await nx.sys_write("/alice_area/readme.md", b"# HTTP Cache Test", context=admin)
+        await nx.sys_write("/secret_area/secret.txt", b"top secret data", context=admin)
+        await nx.sys_write("/shared_area/shared.txt", b"shared content", context=admin)
 
         # Grant ReBAC permissions
         rebac = nx._rebac_manager

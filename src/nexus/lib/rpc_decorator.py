@@ -1,7 +1,7 @@
 """RPC exposure decorator for marking methods to be exposed via RPC.
 
 Tier-neutral utility (``nexus.lib``) — zero kernel dependency.
-Also re-exported from ``nexus.services.protocols.rpc`` for convenience.
+Also re-exported from ``nexus.contracts.protocols.rpc`` for convenience.
 """
 
 from collections.abc import Callable

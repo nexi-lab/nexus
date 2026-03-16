@@ -17,8 +17,8 @@ import pytest
 
 from nexus.contracts.agent_types import AgentState
 from nexus.contracts.agent_warmup_types import WarmupContext, WarmupStep
-from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.agents.agent_warmup import AgentWarmupService
+from nexus.system_services.agents.agent_registry import AgentRegistry
+from nexus.system_services.agents.agent_warmup import AgentWarmupService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------

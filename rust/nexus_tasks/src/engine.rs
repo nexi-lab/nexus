@@ -84,7 +84,8 @@ impl Engine {
             .claim_next(worker_id, lease_secs, now, self.max_wait_secs)
     }
 
-    /// Update heartbeat/progress for a running task.
+    /// Update heartbeat/progress for a running task. Also renews the lease
+    /// so the task is not reaped by `requeue_abandoned()` while actively heartbeating.
     /// Returns false if the task was cancelled (worker should stop).
     pub fn heartbeat(&self, task_id: u64, progress_pct: u8, message: &str) -> Result<bool> {
         let mut task = self
@@ -110,21 +111,27 @@ impl Engine {
             task.progress_message = Some(message.to_string());
         }
 
-        self.store.update_task(&task)?;
+        // Renew lease: update running_idx key with new expiry
+        let now = now_secs();
+        let new_lease_expires = now + task.lease_secs as u64;
+        self.store.renew_lease(task_id, new_lease_expires, &task)?;
         Ok(true)
     }
 
     /// Mark a task as completed with a result payload.
-    pub fn complete(&self, task_id: u64, result: &[u8]) -> Result<()> {
+    /// `worker_id` must match the current owner (prevents stale workers from
+    /// overwriting a re-claimed task after lease expiry).
+    pub fn complete(&self, task_id: u64, result: &[u8], worker_id: &str) -> Result<()> {
         let now = now_secs();
-        self.store.complete_task(task_id, result, now)?;
+        self.store.complete_task(task_id, result, now, worker_id)?;
         Ok(())
     }
 
     /// Mark a task as failed. Auto-retries if attempts remain; otherwise dead-letters.
-    pub fn fail(&self, task_id: u64, error_message: &str) -> Result<()> {
+    /// `worker_id` must match the current owner.
+    pub fn fail(&self, task_id: u64, error_message: &str, worker_id: &str) -> Result<()> {
         let now = now_secs();
-        self.store.fail_task(task_id, error_message, now)?;
+        self.store.fail_task(task_id, error_message, now, worker_id)?;
         Ok(())
     }
 
@@ -215,7 +222,7 @@ mod tests {
         assert!(alive);
 
         // Complete
-        engine.complete(tid, b"result").unwrap();
+        engine.complete(tid, b"result", "w-0").unwrap();
 
         // Verify final state
         let task = engine.status(tid).unwrap().unwrap();
@@ -252,7 +259,7 @@ mod tests {
             .unwrap();
 
         engine.claim_next("w-0", 300).unwrap();
-        engine.fail(tid, "oops").unwrap();
+        engine.fail(tid, "oops", "w-0").unwrap();
 
         // Should be back in pending (attempt 1 < max_retries 3)
         let task = engine.status(tid).unwrap().unwrap();
@@ -268,7 +275,7 @@ mod tests {
             .unwrap();
 
         engine.claim_next("w-0", 300).unwrap();
-        engine.fail(tid, "fatal").unwrap();
+        engine.fail(tid, "fatal", "w-0").unwrap();
 
         let task = engine.status(tid).unwrap().unwrap();
         assert_eq!(task.status, TaskStatus::DeadLetter);
@@ -383,11 +390,11 @@ mod tests {
         let (engine, _dir) = test_engine();
 
         assert!(matches!(
-            engine.complete(999, b""),
+            engine.complete(999, b"", "w-0"),
             Err(TaskError::NotFound(999))
         ));
         assert!(matches!(
-            engine.fail(999, "err"),
+            engine.fail(999, "err", "w-0"),
             Err(TaskError::NotFound(999))
         ));
         assert!(matches!(engine.cancel(999), Err(TaskError::NotFound(999))));

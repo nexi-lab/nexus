@@ -61,6 +61,38 @@ def format_api_key_response(api_key: Any, *, include_sensitive: bool = False) ->
     return result
 
 
+def handle_admin_write_permission(nexus_fs: Any, params: Any, context: Any) -> dict[str, Any]:
+    """Handle admin_write_permission — write ReBAC relationship tuples.
+
+    Unlike other admin handlers, this receives ``nexus_fs`` (not auth_provider)
+    because the ``_rebac_manager`` lives on the NexusFS instance.
+    """
+    from nexus.contracts.exceptions import ConfigurationError
+
+    require_admin(context)
+
+    rebac = getattr(nexus_fs, "_rebac_manager", None) or getattr(nexus_fs, "rebac_manager", None)
+    if rebac is None:
+        raise ConfigurationError("ReBAC manager not available on this server")
+
+    tuples = getattr(params, "tuples", [])
+    created = 0
+    for t in tuples:
+        subject = tuple(t["subject"])
+        relation = t["relation"]
+        obj = tuple(t["object"])
+        zone_id = t.get("zone_id", "root")
+        rebac.rebac_write(
+            subject=subject,
+            relation=relation,
+            object=obj,
+            zone_id=zone_id,
+        )
+        created += 1
+
+    return {"created": created}
+
+
 def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_create_key method."""
     import uuid

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.lib.performance_tuning import EvictionTuning
-from nexus.services.agents.resource_monitor import PressureLevel, ResourceMonitor
+from nexus.system_services.agents.resource_monitor import PressureLevel, ResourceMonitor
 
 
 @pytest.fixture
@@ -45,8 +45,8 @@ class TestResourceMonitor:
         mem.percent = 50.0
 
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.return_value = mem
             result = await monitor.check_pressure()
@@ -60,8 +60,8 @@ class TestResourceMonitor:
         mem.percent = 78.0
 
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.return_value = mem
             result = await monitor.check_pressure()
@@ -75,8 +75,8 @@ class TestResourceMonitor:
         mem.percent = 90.0
 
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.return_value = mem
             result = await monitor.check_pressure()
@@ -86,7 +86,7 @@ class TestResourceMonitor:
     @pytest.mark.asyncio
     async def test_psutil_missing_fallback(self, monitor):
         """When psutil is unavailable, always returns NORMAL."""
-        with patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", False):
+        with patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", False):
             result = await monitor.check_pressure()
 
         assert result is PressureLevel.NORMAL
@@ -98,8 +98,8 @@ class TestResourceMonitor:
         mem.percent = 67.5
 
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.return_value = mem
             result = await monitor.get_memory_percent()
@@ -109,7 +109,7 @@ class TestResourceMonitor:
     @pytest.mark.asyncio
     async def test_get_memory_percent_no_psutil(self, monitor):
         """get_memory_percent returns -1.0 when psutil is unavailable."""
-        with patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", False):
+        with patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", False):
             result = await monitor.get_memory_percent()
 
         assert result == -1.0
@@ -121,8 +121,8 @@ class TestResourceMonitor:
         mem.percent = 85.0
 
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.return_value = mem
             result = await monitor.check_pressure()
@@ -136,8 +136,8 @@ class TestResourceMonitor:
         mem.percent = 75.0
 
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.return_value = mem
             result = await monitor.check_pressure()
@@ -148,8 +148,8 @@ class TestResourceMonitor:
     async def test_psutil_exception_returns_normal(self, monitor):
         """When psutil.virtual_memory() raises, falls back to NORMAL."""
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.side_effect = OSError("cgroups v2 not supported")
             result = await monitor.check_pressure()
@@ -160,8 +160,8 @@ class TestResourceMonitor:
     async def test_psutil_exception_get_memory_returns_negative(self, monitor):
         """When psutil raises, get_memory_percent returns -1.0."""
         with (
-            patch("nexus.services.agents.resource_monitor.psutil") as mock_psutil,
-            patch("nexus.services.agents.resource_monitor._HAS_PSUTIL", True),
+            patch("nexus.system_services.agents.resource_monitor.psutil") as mock_psutil,
+            patch("nexus.system_services.agents.resource_monitor._HAS_PSUTIL", True),
         ):
             mock_psutil.virtual_memory.side_effect = PermissionError("no access")
             result = await monitor.get_memory_percent()

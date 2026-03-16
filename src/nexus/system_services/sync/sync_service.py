@@ -28,15 +28,16 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import ProgressCallback, SyncContext, SyncResult
+from nexus.core.router import PipeRouteResult
 from nexus.lib.context_utils import get_zone_id
-from nexus.services.permission_utils import check_permission
+from nexus.lib.permission_utils import check_permission
 
 from .change_log_store import ChangeLogEntry, ChangeLogStore
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import FileInfo
+    from nexus.backends.base.backend import FileInfo
     from nexus.contracts.types import OperationContext
-    from nexus.services.gateway import NexusFSGateway
+    from nexus.system_services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,12 @@ class SyncService:
             raise ValueError(f"Mount not found: {ctx.mount_point}")
 
         route = self._gw.router.route(ctx.mount_point)
+        if isinstance(route, PipeRouteResult):
+            raise ValueError(f"Cannot sync pipe path: {ctx.mount_point}")
+        from nexus.core.router import StreamRouteResult
+
+        if isinstance(route, StreamRouteResult):
+            raise ValueError(f"Cannot sync stream path: {ctx.mount_point}")
         backend = route.backend
         backend_name = type(backend).__name__
 
@@ -888,7 +895,7 @@ class SyncService:
         )
 
         try:
-            from nexus.backends.cache_mixin import SyncResult as CacheSyncResult
+            from nexus.backends.wrappers.cache_mixin import SyncResult as CacheSyncResult
 
             # Determine path for cache sync
             cache_sync_path = None

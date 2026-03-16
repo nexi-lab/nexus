@@ -21,7 +21,7 @@ from nexus.contracts.deployment_profile import (
     DeploymentProfile,
     resolve_enabled_bricks,
 )
-from nexus.core.device_capabilities import DeviceCapabilities
+from nexus.lib.device_capabilities import DeviceCapabilities
 from nexus.server.api.core.features import FeaturesResponse, router
 
 
@@ -64,7 +64,7 @@ class TestAutoProfileViaFeatures:
         expected_profile: str,
         expected_absent: set[str],
     ) -> None:
-        from nexus.core.device_capabilities import suggest_profile
+        from nexus.lib.device_capabilities import suggest_profile
 
         caps = DeviceCapabilities(memory_mb=memory_mb, cpu_cores=4, has_gpu=False)
         profile = suggest_profile(caps)
@@ -85,20 +85,20 @@ class TestExplicitProfileWithMismatchWarning:
     """Test that explicit profile with low RAM logs a warning."""
 
     def test_mismatch_warning_logged(self, caplog: pytest.LogCaptureFixture) -> None:
-        from nexus.core.device_capabilities import warn_if_profile_exceeds_device
+        from nexus.lib.device_capabilities import warn_if_profile_exceeds_device
 
         caps = DeviceCapabilities(memory_mb=256)  # suggested: embedded
-        with caplog.at_level(logging.WARNING, logger="nexus.core.device_capabilities"):
+        with caplog.at_level(logging.WARNING, logger="nexus.lib.device_capabilities"):
             warn_if_profile_exceeds_device(DeploymentProfile.FULL, caps)
 
         assert any("may exceed device capabilities" in r.message for r in caplog.records)
         assert any("RAM=256MB" in r.message for r in caplog.records)
 
     def test_no_warning_for_matching_profile(self, caplog: pytest.LogCaptureFixture) -> None:
-        from nexus.core.device_capabilities import warn_if_profile_exceeds_device
+        from nexus.lib.device_capabilities import warn_if_profile_exceeds_device
 
         caps = DeviceCapabilities(memory_mb=8192)  # suggested: full
-        with caplog.at_level(logging.WARNING, logger="nexus.core.device_capabilities"):
+        with caplog.at_level(logging.WARNING, logger="nexus.lib.device_capabilities"):
             warn_if_profile_exceeds_device(DeploymentProfile.FULL, caps)
 
         assert not any("may exceed" in r.message for r in caplog.records)
@@ -109,7 +109,7 @@ class TestFeaturesConfigOverrideWithAutoProfile:
 
     def test_auto_profile_with_search_override(self) -> None:
         """Auto-detect lite profile, then force-enable search via override."""
-        from nexus.core.device_capabilities import suggest_profile
+        from nexus.lib.device_capabilities import suggest_profile
 
         caps = DeviceCapabilities(memory_mb=2048)  # lite
         profile = suggest_profile(caps)
@@ -129,7 +129,7 @@ class TestFeaturesConfigOverrideWithAutoProfile:
 
     def test_auto_profile_with_brick_disabled(self) -> None:
         """Auto-detect full profile, then force-disable pay via override."""
-        from nexus.core.device_capabilities import suggest_profile
+        from nexus.lib.device_capabilities import suggest_profile
 
         caps = DeviceCapabilities(memory_mb=8192)  # full
         profile = suggest_profile(caps)

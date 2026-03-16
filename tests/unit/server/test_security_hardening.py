@@ -294,7 +294,7 @@ class TestWebhookActionErrorSanitization:
             # Also mock the SSRF validator to allow the URL
             with patch(
                 "nexus.bricks.workflows.actions.validate_outbound_url",
-                return_value="http://example.com/webhook",
+                return_value=("http://example.com/webhook", ["93.184.216.34"]),
             ):
                 result = await action.execute(context)
 

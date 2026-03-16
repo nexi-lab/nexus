@@ -9,7 +9,7 @@ Tests verify that:
 
 Requirements:
     - PostgreSQL running at postgresql://postgres:nexus@localhost:5432/nexus
-    - Start with: docker compose -f docker-compose.demo.yml up postgres -d
+    - Start with: docker compose -f dockerfiles/compose.yaml up postgres -d
     - Or set NEXUS_DATABASE_URL environment variable
 """
 
@@ -57,7 +57,6 @@ def engine():
     # (handles tenant_id → zone_id rename and other schema drift)
     with engine.connect() as conn:
         for table in [
-            "rebac_version_sequences",
             "rebac_tuples",
             "rebac_changelog",
             "rebac_group_closure",
@@ -89,10 +88,6 @@ def manager(engine, test_zone):
     # Cleanup test data
     with engine.connect() as conn:
         conn.execute(text("DELETE FROM rebac_tuples WHERE zone_id = :zone"), {"zone": test_zone})
-        conn.execute(
-            text("DELETE FROM rebac_version_sequences WHERE zone_id = :zone"),
-            {"zone": test_zone},
-        )
         conn.commit()
 
     manager.close()

@@ -1,19 +1,15 @@
-"""Tests for RaftMetadataStore serialization and pagination.
+"""Tests for RaftMetadataStore serialization.
 
-Tests the pure Python logic of _serialize_metadata, _deserialize_metadata,
-and list_paginated without requiring the Rust PyO3 library.
+Tests the pure Python logic of _serialize_metadata and _deserialize_metadata
+without requiring the Rust PyO3 library.
 """
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from typing import Any
 
 import pytest
 
-from nexus.contracts.metadata import DT_DIR, FileMetadata, PaginatedResult
-
-if TYPE_CHECKING:
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.contracts.metadata import DT_DIR, FileMetadata
 
 
 def _make_metadata(
@@ -150,143 +146,3 @@ class TestSerializeMetadata:
 
         with pytest.raises(ValueError):
             _deserialize_metadata(b"")
-
-
-class TestListPaginated:
-    """Tests for RaftMetadataStore.list_paginated."""
-
-    def _make_store_with_entries(
-        self, entries: list[tuple[str, FileMetadata]]
-    ) -> "RaftMetadataStore":
-        """Create a mock RaftMetadataStore with pre-loaded entries."""
-        from nexus.storage.raft_metadata_store import (
-            RaftMetadataStore,
-            _serialize_metadata,
-        )
-
-        # Build the mock LocalRaft
-        mock_local = MagicMock()
-
-        # list_metadata returns (path, serialized_bytes) tuples
-        def list_metadata_side_effect(prefix: str) -> list[tuple[str, bytes]]:
-            return [
-                (path, _serialize_metadata(meta))
-                for path, meta in entries
-                if path.startswith(prefix)
-            ]
-
-        mock_local.list_metadata.side_effect = list_metadata_side_effect
-
-        # Create store via __new__ to bypass __init__
-        store = object.__new__(RaftMetadataStore)
-        store._engine = mock_local
-        store._client = None
-        store._zone_id = None
-        return store
-
-    def test_paginated_basic(self) -> None:
-        """Basic pagination returns first page."""
-        entries = [(f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt")) for i in range(5)]
-        store = self._make_store_with_entries(entries)
-
-        result = store.list_paginated(prefix="/files/", limit=3)
-
-        assert isinstance(result, PaginatedResult)
-        assert len(result.items) == 3
-        assert result.has_more is True
-        assert result.total_count is None  # streaming impl doesn't scan for total
-        assert result.next_cursor is not None
-
-    def test_paginated_all_fit_in_one_page(self) -> None:
-        """When all items fit in one page, has_more should be False."""
-        entries = [(f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt")) for i in range(3)]
-        store = self._make_store_with_entries(entries)
-
-        result = store.list_paginated(prefix="/files/", limit=10)
-
-        assert len(result.items) == 3
-        assert result.has_more is False
-        assert result.next_cursor is None
-        assert result.total_count is None  # streaming impl doesn't scan for total
-
-    def test_paginated_empty_results(self) -> None:
-        """Empty prefix returns empty results."""
-        store = self._make_store_with_entries([])
-
-        result = store.list_paginated(prefix="/nonexistent/", limit=10)
-
-        assert len(result.items) == 0
-        assert result.has_more is False
-        assert result.total_count is None  # streaming impl doesn't scan for total
-
-    def test_paginated_cursor_pagination(self) -> None:
-        """Cursor-based pagination navigates through pages."""
-        entries = [
-            (f"/files/{chr(97 + i)}.txt", _make_metadata(path=f"/files/{chr(97 + i)}.txt"))
-            for i in range(5)  # a.txt, b.txt, c.txt, d.txt, e.txt
-        ]
-        store = self._make_store_with_entries(entries)
-
-        # First page
-        page1 = store.list_paginated(prefix="/files/", limit=2)
-        assert len(page1.items) == 2
-        assert page1.has_more is True
-        assert page1.items[0].path == "/files/a.txt"
-        assert page1.items[1].path == "/files/b.txt"
-
-        # Second page using cursor
-        page2 = store.list_paginated(prefix="/files/", limit=2, cursor=page1.next_cursor)
-        assert len(page2.items) == 2
-        assert page2.has_more is True
-        assert page2.items[0].path == "/files/c.txt"
-        assert page2.items[1].path == "/files/d.txt"
-
-        # Third page — last page
-        page3 = store.list_paginated(prefix="/files/", limit=2, cursor=page2.next_cursor)
-        assert len(page3.items) == 1
-        assert page3.has_more is False
-        assert page3.items[0].path == "/files/e.txt"
-
-    def test_paginated_non_recursive_filters_nested(self) -> None:
-        """Non-recursive listing should exclude nested paths."""
-        entries = [
-            ("/root/a.txt", _make_metadata(path="/root/a.txt")),
-            ("/root/b.txt", _make_metadata(path="/root/b.txt")),
-            ("/root/sub/c.txt", _make_metadata(path="/root/sub/c.txt")),
-            ("/root/sub/deep/d.txt", _make_metadata(path="/root/sub/deep/d.txt")),
-        ]
-        store = self._make_store_with_entries(entries)
-
-        result = store.list_paginated(prefix="/root/", recursive=False, limit=10)
-
-        # Only direct children of /root/ should be returned
-        paths = [item.path for item in result.items]
-        assert "/root/a.txt" in paths
-        assert "/root/b.txt" in paths
-        assert "/root/sub/c.txt" not in paths
-        assert "/root/sub/deep/d.txt" not in paths
-
-    def test_paginated_skips_meta_keys(self) -> None:
-        """Extended attribute keys (meta:...) should be skipped."""
-        from nexus.storage.raft_metadata_store import _serialize_metadata
-
-        mock_local = MagicMock()
-        mock_local.list_metadata.return_value = [
-            ("/files/a.txt", _serialize_metadata(_make_metadata(path="/files/a.txt"))),
-            (
-                "meta:/files/a.txt:custom_attr",
-                _serialize_metadata(_make_metadata(path="meta:/files/a.txt:custom_attr")),
-            ),
-        ]
-
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-        store = object.__new__(RaftMetadataStore)
-        store._engine = mock_local
-        store._client = None
-        store._zone_id = None
-
-        result = store.list_paginated(prefix="/files/", limit=10)
-
-        assert len(result.items) == 1
-        assert result.items[0].path == "/files/a.txt"

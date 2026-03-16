@@ -1,24 +1,22 @@
 """Remote Nexus filesystem transport layer.
 
 This module provides the transport and proxy infrastructure for REMOTE
-deployment profile. Use ``nexus.connect(config={"mode": "remote", ...})``
+deployment profile. Use ``nexus.connect(config={"profile": "remote", ...})``
 to create a remote NexusFS instance.
 
 Domain-specific operations are organized into domain clients:
-- SkillsClient / AsyncSkillsClient
 - SandboxClient / AsyncSandboxClient
 - OAuthClient / AsyncOAuthClient
 - MCPClient / AsyncMCPClient
 - ShareLinksClient / AsyncShareLinksClient
 - MemoryClient / AsyncMemoryClient
 - AsyncAdminClient (async-only)
-- AsyncACEClient (async-only)
 - AsyncLLMClient (async-only)
 
 Example:
     >>> import nexus
-    >>> nx = nexus.connect(config={"mode": "remote", "url": "http://localhost:2026", "api_key": "sk-xxx"})
-    >>> content = nx.sys_read("/workspace/file.txt")
+    >>> nx = nexus.connect(config={"profile": "remote", "url": "http://localhost:2026", "api_key": "sk-xxx"})
+    >>> content = await nx.sys_read("/workspace/file.txt")
 """
 
 from nexus.contracts.exceptions import (
@@ -27,21 +25,15 @@ from nexus.contracts.exceptions import (
     RemoteTimeoutError,
 )
 from nexus.remote.domain import (
-    AsyncACEClient,
     AsyncAdminClient,
-    AsyncLLMClient,
     AsyncMCPClient,
-    AsyncMemoryClient,
     AsyncOAuthClient,
     AsyncSandboxClient,
     AsyncShareLinksClient,
-    AsyncSkillsClient,
     MCPClient,
-    MemoryClient,
     OAuthClient,
     SandboxClient,
     ShareLinksClient,
-    SkillsClient,
 )
 
 __all__ = [
@@ -50,8 +42,6 @@ __all__ = [
     "RemoteConnectionError",
     "RemoteTimeoutError",
     # Domain clients (sync + async)
-    "SkillsClient",
-    "AsyncSkillsClient",
     "SandboxClient",
     "AsyncSandboxClient",
     "OAuthClient",
@@ -60,10 +50,6 @@ __all__ = [
     "AsyncMCPClient",
     "ShareLinksClient",
     "AsyncShareLinksClient",
-    "MemoryClient",
-    "AsyncMemoryClient",
     # Async-only domain clients
     "AsyncAdminClient",
-    "AsyncACEClient",
-    "AsyncLLMClient",
 ]

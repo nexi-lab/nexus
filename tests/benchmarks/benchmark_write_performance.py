@@ -76,13 +76,13 @@ def benchmark_native_bash(tmp_dir: str, num_files: int = 50) -> dict:
     }
 
 
-def run_benchmark(enable_deferred: bool = False):
+async def run_benchmark(enable_deferred: bool = False):
     """Run write performance benchmark.
 
     Args:
         enable_deferred: If True, use deferred permission buffer for faster writes
     """
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
     from nexus.core.nexus_fs import NexusFS
 
@@ -96,7 +96,7 @@ def run_benchmark(enable_deferred: bool = False):
         storage_path.mkdir()
         db_path = Path(tmp_dir) / "nexus.db"
 
-        backend = LocalBackend(str(storage_path))
+        backend = CASLocalBackend(str(storage_path))
 
         # Create NexusFS with permissions ENABLED
         nx = NexusFS(
@@ -143,7 +143,7 @@ def run_benchmark(enable_deferred: bool = False):
         for i in range(num_files):
             path = f"/bench/single/file_{i:04d}.txt"
             start = time.perf_counter()
-            nx.sys_write(path, content_1kb, context=ctx)
+            await nx.sys_write(path, content_1kb, context=ctx)
             elapsed = time.perf_counter() - start
             single_times.append(elapsed * 1000)  # Convert to ms
 
@@ -195,7 +195,7 @@ def run_benchmark(enable_deferred: bool = False):
         for i in range(num_files):
             path = f"/bench/single10k/file_{i:04d}.txt"
             start = time.perf_counter()
-            nx.sys_write(path, content_10kb, context=ctx)
+            await nx.sys_write(path, content_10kb, context=ctx)
             elapsed = time.perf_counter() - start
             single_times_10k.append(elapsed * 1000)
 

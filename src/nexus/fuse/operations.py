@@ -300,13 +300,13 @@ class NexusFUSEOperations(Operations):
         return dir_cache_key(self._ctx, path)
 
     def _check_namespace_visible(self, path: str) -> None:
-        return check_namespace_visible(self._ctx, path)
+        return asyncio.run(check_namespace_visible(self._ctx, path))
 
     def _parse_virtual_path(self, path: str) -> tuple[str, str | None]:
         return parse_virtual_path_for_fuse(self._ctx, path)
 
     def _get_file_content(self, path: str, view_type: str | None, **kwargs: Any) -> bytes:
-        return get_file_content(self._ctx, path, view_type, **kwargs)
+        return asyncio.run(get_file_content(self._ctx, path, view_type, **kwargs))
 
     def _resolve_io_profile(self, path: str) -> str:
         return resolve_io_profile(self._ctx, path)
@@ -322,58 +322,58 @@ class NexusFUSEOperations(Operations):
 
     @fuse_operation("GETATTR")
     def getattr(self, path: str, fh: int | None = None) -> dict[str, Any]:
-        return self._meta.getattr(path, fh)
+        return asyncio.run(self._meta.getattr(path, fh))
 
     @fuse_operation("READDIR")
     def readdir(self, path: str, fh: int | None = None) -> list[str]:
-        return self._meta.readdir(path, fh)
+        return asyncio.run(self._meta.readdir(path, fh))
 
     @fuse_operation("OPEN")
     def open(self, path: str, flags: int) -> int:
-        return self._io.open(path, flags)
+        return asyncio.run(self._io.open(path, flags))
 
     @fuse_operation("READ")
     def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
-        return self._io.read(path, size, offset, fh)
+        return asyncio.run(self._io.read(path, size, offset, fh))
 
     @fuse_operation("WRITE")
     def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
-        return self._io.write(path, data, offset, fh)
+        return asyncio.run(self._io.write(path, data, offset, fh))
 
     def release(self, path: str, fh: int) -> None:
         return self._io.release(path, fh)
 
     @fuse_operation("CREATE")
     def create(self, path: str, mode: int, fi: Any = None) -> int:
-        return self._mut.create(path, mode, fi)
+        return asyncio.run(self._mut.create(path, mode, fi))
 
     @fuse_operation("UNLINK")
     def unlink(self, path: str) -> None:
-        return self._mut.unlink(path)
+        return asyncio.run(self._mut.unlink(path))
 
     @fuse_operation("MKDIR")
     def mkdir(self, path: str, mode: int) -> None:
-        return self._mut.mkdir(path, mode)
+        return asyncio.run(self._mut.mkdir(path, mode))
 
     @fuse_operation("RMDIR")
     def rmdir(self, path: str) -> None:
-        return self._mut.rmdir(path)
+        return asyncio.run(self._mut.rmdir(path))
 
     @fuse_operation("RENAME")
     def rename(self, old: str, new: str) -> None:
-        return self._mut.rename(old, new)
+        return asyncio.run(self._mut.rename(old, new))
 
     @fuse_operation("CHMOD")
     def chmod(self, path: str, mode: int) -> None:
-        return self._attr.chmod(path, mode)
+        return asyncio.run(self._attr.chmod(path, mode))
 
     @fuse_operation("CHOWN")
     def chown(self, path: str, uid: int, gid: int) -> None:
-        return self._attr.chown(path, uid, gid)
+        return asyncio.run(self._attr.chown(path, uid, gid))
 
     @fuse_operation("TRUNCATE")
     def truncate(self, path: str, length: int, fh: int | None = None) -> None:
-        return self._attr.truncate(path, length, fh)
+        return asyncio.run(self._attr.truncate(path, length, fh))
 
     def utimens(self, path: str, times: tuple[float, float] | None = None) -> None:
         return self._attr.utimens(path, times)

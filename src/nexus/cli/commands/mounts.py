@@ -13,18 +13,18 @@ For local instances, commands interact directly with the NexusFS methods.
 
 import json
 import sys
-from typing import Any, cast
+from typing import Any
 
 import click
 
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
     handle_error,
 )
-from nexus.lib.sync_bridge import run_sync
 
 
 @click.group(name="mounts")
@@ -69,7 +69,7 @@ def mounts_group() -> None:
 @click.option("--owner", type=str, default=None, help="Owner user ID")
 @click.option("--zone", type=str, default=None, help="Zone ID")
 @add_backend_options
-def add_mount(
+async def add_mount(
     mount_point: str,
     backend_type: str,
     config_json: str,
@@ -77,7 +77,8 @@ def add_mount(
     io_profile: str,
     owner: str | None,
     zone: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Add a new backend mount.
 
@@ -109,23 +110,22 @@ def add_mount(
             sys.exit(1)
 
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Call add_mount via mount_service (async) with sync bridge
+        # Call add_mount via mount_service
         console.print("[yellow]Adding mount...[/yellow]")
 
         try:
-            mount_svc = cast(Any, nx).mount_service
-            mount_id = run_sync(
-                mount_svc.add_mount(
-                    mount_point=mount_point,
-                    backend_type=backend_type,
-                    backend_config=config_dict,
-                    readonly=readonly,
-                    io_profile=io_profile,
-                )
+            mount_svc = nx.service("mount")
+            assert mount_svc is not None
+            mount_id = await mount_svc.add_mount(
+                mount_point=mount_point,
+                backend_type=backend_type,
+                backend_config=config_dict,
+                readonly=readonly,
+                io_profile=io_profile,
             )
-            console.print(f"[green]✓[/green] Mount added successfully (ID: {mount_id})")
+            console.print(f"[green]\u2713[/green] Mount added successfully (ID: {mount_id})")
         except AttributeError:
             # Fallback for older NexusFS that doesn't have mount_service
             console.print("[red]Error:[/red] This Nexus instance doesn't support dynamic mounts")
@@ -153,7 +153,9 @@ def add_mount(
 @mounts_group.command(name="remove")
 @click.argument("mount_point", type=str)
 @add_backend_options
-def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
+async def remove_mount(
+    mount_point: str, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Remove a backend mount.
 
     Removes mount configuration from database. The mount will be unmounted
@@ -165,16 +167,17 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Call remove_mount via mount_service (async) with sync bridge
+        # Call remove_mount via mount_service
         console.print(f"[yellow]Removing mount at {mount_point}...[/yellow]")
 
         try:
-            mount_svc = cast(Any, nx).mount_service
-            result = run_sync(mount_svc.remove_mount(mount_point))
+            mount_svc = nx.service("mount")
+            assert mount_svc is not None
+            result = await mount_svc.remove_mount(mount_point=mount_point)
             if result.get("removed"):
-                console.print("[green]✓[/green] Mount removed successfully")
+                console.print("[green]\u2713[/green] Mount removed successfully")
             else:
                 console.print(f"[red]Error:[/red] Mount not found: {mount_point}")
                 sys.exit(1)
@@ -190,10 +193,14 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
 @mounts_group.command(name="list")
 @click.option("--owner", type=str, default=None, help="Filter by owner user ID")
 @click.option("--zone", type=str, default=None, help="Filter by zone ID")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_output_options
 @add_backend_options
-def list_mounts(
-    owner: str | None, zone: str | None, output_json: bool, backend_config: BackendConfig
+async def list_mounts(
+    owner: str | None,
+    zone: str | None,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all persisted mounts.
 
@@ -213,18 +220,25 @@ def list_mounts(
         # Output as JSON
         nexus mounts list --json
     """
+    timing = CommandTiming()
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Call list_mounts via mount_service (async) with sync bridge
-        try:
-            mount_svc = cast(Any, nx).mount_service
-            mounts = run_sync(mount_svc.list_mounts())
-        except AttributeError:
-            console.print("[red]Error:[/red] This Nexus instance doesn't support listing mounts")
-            console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
-            sys.exit(1)
+        # Call list_mounts via mount_service
+        with timing.phase("server"):
+            try:
+                mount_svc = nx.service("mount")
+                assert mount_svc is not None
+                mounts = await mount_svc.list_mounts()
+            except AttributeError:
+                console.print(
+                    "[red]Error:[/red] This Nexus instance doesn't support listing mounts"
+                )
+                console.print(
+                    "[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version"
+                )
+                sys.exit(1)
 
         # Note: owner/zone filtering not yet supported in remote mode
         if owner or zone:
@@ -232,26 +246,33 @@ def list_mounts(
                 "[yellow]Warning:[/yellow] Filtering by owner/zone not yet supported. Showing all mounts."
             )
 
-        if output_json:
-            # Output as JSON
-            import json as json_lib
+        if not mounts:
+            console.print("[yellow]No mounts found[/yellow]")
+            return
 
-            console.print(json_lib.dumps(mounts, indent=2))
-        else:
-            # Pretty table output
-            if not mounts:
-                console.print("[yellow]No mounts found[/yellow]")
-                return
+        def _render(data: list[dict[str, Any]]) -> None:
+            console.print(f"\n[bold cyan]Mounts ({len(data)} total)[/bold cyan]\n")
 
-            console.print(f"\n[bold cyan]Active Mounts ({len(mounts)} total)[/bold cyan]\n")
-
-            for mount in mounts:
-                console.print(f"[bold]{mount['mount_point']}[/bold]")
+            for mount in data:
+                status = mount.get("status", "active")
+                if status == "stale":
+                    console.print(
+                        f"[yellow]{mount['mount_point']}[/yellow]  [dim yellow](stale)[/dim yellow]"
+                    )
+                else:
+                    console.print(f"[bold]{mount['mount_point']}[/bold]")
                 console.print(f"  Read-Only: [cyan]{'Yes' if mount['readonly'] else 'No'}[/cyan]")
                 console.print(
                     f"  Admin-Only: [cyan]{'Yes' if mount.get('admin_only') else 'No'}[/cyan]"
                 )
                 console.print()
+
+        render_output(
+            data=mounts,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         handle_error(e)
@@ -263,7 +284,9 @@ def list_mounts(
     "--show-config", is_flag=True, help="Show backend configuration (may contain secrets)"
 )
 @add_backend_options
-def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfig) -> None:
+async def mount_info(
+    mount_point: str, show_config: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
     """Show detailed information about a mount.
 
     Examples:
@@ -272,12 +295,13 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
     """
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
 
-        # Call get_mount via mount_service (async) with sync bridge
+        # Call get_mount via mount_service
         try:
-            mount_svc = cast(Any, nx).mount_service
-            mount = run_sync(mount_svc.get_mount(mount_point))
+            mount_svc = nx.service("mount")
+            assert mount_svc is not None
+            mount = await mount_svc.get_mount(mount_point=mount_point)
         except AttributeError:
             console.print("[red]Error:[/red] This Nexus instance doesn't support mount info")
             console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
@@ -324,9 +348,9 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
 @click.option("--embeddings", is_flag=True, help="Generate embeddings for semantic search")
 @click.option("--dry-run", is_flag=True, help="Show what would be synced without making changes")
 @click.option("--async", "run_async", is_flag=True, help="Run sync in background (returns job ID)")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_output_options
 @add_backend_options
-def sync_mount(
+async def sync_mount(
     mount_point: str | None,
     path: str | None,
     no_cache: bool,
@@ -335,8 +359,9 @@ def sync_mount(
     embeddings: bool,
     dry_run: bool,
     run_async: bool,
-    output_json: bool,
-    backend_config: BackendConfig,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Sync metadata and content from connector backend(s).
 
@@ -371,9 +396,10 @@ def sync_mount(
         # Run sync in background (async)
         nexus mounts sync /mnt/gmail --async
     """
+    timing = CommandTiming()
     try:
         # Get filesystem (works with both local and remote)
-        nx = get_filesystem(backend_config)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
 
         # Convert tuples to lists for include/exclude
         include_patterns = list(include) if include else None
@@ -386,8 +412,53 @@ def sync_mount(
                 console.print("[yellow]Hint:[/yellow] Use: nexus mounts sync /mnt/xxx --async")
                 sys.exit(1)
 
+            with timing.phase("server"):
+                try:
+                    result = await nx.service("sync_job").sync_mount_async(
+                        mount_point=mount_point,
+                        path=path,
+                        recursive=True,
+                        dry_run=dry_run,
+                        sync_content=not no_cache,
+                        include_patterns=include_patterns,
+                        exclude_patterns=exclude_patterns,
+                        generate_embeddings=embeddings,
+                    )
+                except AttributeError:
+                    console.print(
+                        "[red]Error:[/red] This Nexus instance doesn't support async sync"
+                    )
+                    console.print("[yellow]Hint:[/yellow] Make sure you're using Nexus >= 0.6.0")
+                    sys.exit(1)
+
+            def _render_async(data: dict[str, Any]) -> None:
+                console.print(f"[green]Job started:[/green] {data['job_id']}")
+                console.print(f"  Mount: {data['mount_point']}")
+                console.print(f"  Status: {data['status']}")
+                console.print()
+                console.print("[dim]Monitor progress with:[/dim]")
+                console.print(f"  nexus mounts sync-status {data['job_id']}")
+
+            render_output(
+                data=result,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=_render_async,
+            )
+            return
+
+        if not output_opts.json_output:
+            if mount_point:
+                console.print(f"[yellow]Syncing mount: {mount_point}...[/yellow]")
+            else:
+                console.print("[yellow]Syncing all connector mounts...[/yellow]")
+
+            if dry_run:
+                console.print("[cyan](dry run - no changes will be made)[/cyan]")
+
+        with timing.phase("server"):
             try:
-                result = nx.sync_mount_async(  # type: ignore[attr-defined]
+                result = await nx.service("sync").sync_mount_flat(
                     mount_point=mount_point,
                     path=path,
                     recursive=True,
@@ -398,78 +469,36 @@ def sync_mount(
                     generate_embeddings=embeddings,
                 )
             except AttributeError:
-                console.print("[red]Error:[/red] This Nexus instance doesn't support async sync")
-                console.print("[yellow]Hint:[/yellow] Make sure you're using Nexus >= 0.6.0")
+                console.print("[red]Error:[/red] This Nexus instance doesn't support sync_mount")
+                console.print(
+                    "[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version"
+                )
                 sys.exit(1)
 
-            if output_json:
-                import json as json_lib
-
-                console.print(json_lib.dumps(result, indent=2))
-            else:
-                console.print(f"[green]Job started:[/green] {result['job_id']}")
-                console.print(f"  Mount: {result['mount_point']}")
-                console.print(f"  Status: {result['status']}")
-                console.print()
-                console.print("[dim]Monitor progress with:[/dim]")
-                console.print(f"  nexus mounts sync-status {result['job_id']}")
-            return
-
-        if not output_json:
-            if mount_point:
-                console.print(f"[yellow]Syncing mount: {mount_point}...[/yellow]")
-            else:
-                console.print("[yellow]Syncing all connector mounts...[/yellow]")
-
-            if dry_run:
-                console.print("[cyan](dry run - no changes will be made)[/cyan]")
-
-        try:
-            result = nx.sync_mount(  # type: ignore[attr-defined]
-                mount_point=mount_point,
-                path=path,
-                recursive=True,
-                dry_run=dry_run,
-                sync_content=not no_cache,
-                include_patterns=include_patterns,
-                exclude_patterns=exclude_patterns,
-                generate_embeddings=embeddings,
-            )
-        except AttributeError:
-            console.print("[red]Error:[/red] This Nexus instance doesn't support sync_mount")
-            console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
-            sys.exit(1)
-
-        if output_json:
-            # Output as JSON
-            import json as json_lib
-
-            console.print(json_lib.dumps(result, indent=2))
-        else:
-            # Pretty output
+        def _render_sync(data: dict[str, Any]) -> None:
             console.print()
             console.print("[bold cyan]Sync Results:[/bold cyan]")
 
             # Show mount-level stats if syncing all
-            if mount_point is None and "mounts_synced" in result:
-                console.print(f"  Mounts synced: [green]{result['mounts_synced']}[/green]")
-                console.print(f"  Mounts skipped: [yellow]{result['mounts_skipped']}[/yellow]")
+            if mount_point is None and "mounts_synced" in data:
+                console.print(f"  Mounts synced: [green]{data['mounts_synced']}[/green]")
+                console.print(f"  Mounts skipped: [yellow]{data['mounts_skipped']}[/yellow]")
                 console.print()
 
             console.print("[bold]Metadata:[/bold]")
-            console.print(f"  Files scanned: [cyan]{result.get('files_scanned', 0)}[/cyan]")
-            console.print(f"  Files created: [green]{result.get('files_created', 0)}[/green]")
-            console.print(f"  Files updated: [cyan]{result.get('files_updated', 0)}[/cyan]")
-            console.print(f"  Files deleted: [red]{result.get('files_deleted', 0)}[/red]")
+            console.print(f"  Files scanned: [cyan]{data.get('files_scanned', 0)}[/cyan]")
+            console.print(f"  Files created: [green]{data.get('files_created', 0)}[/green]")
+            console.print(f"  Files updated: [cyan]{data.get('files_updated', 0)}[/cyan]")
+            console.print(f"  Files deleted: [red]{data.get('files_deleted', 0)}[/red]")
 
             if not no_cache:
                 console.print()
                 console.print("[bold]Cache:[/bold]")
-                console.print(f"  Files cached: [green]{result.get('cache_synced', 0)}[/green]")
-                cache_skipped = result.get("cache_skipped", 0)
+                console.print(f"  Files cached: [green]{data.get('cache_synced', 0)}[/green]")
+                cache_skipped = data.get("cache_skipped", 0)
                 if cache_skipped > 0:
                     console.print(f"  Files skipped: [dim]{cache_skipped}[/dim] (already cached)")
-                cache_bytes = result.get("cache_bytes", 0)
+                cache_bytes = data.get("cache_bytes", 0)
                 if cache_bytes > 1024 * 1024:
                     console.print(
                         f"  Bytes cached: [cyan]{cache_bytes / 1024 / 1024:.2f} MB[/cyan]"
@@ -482,17 +511,15 @@ def sync_mount(
             if embeddings:
                 console.print()
                 console.print("[bold]Embeddings:[/bold]")
-                console.print(
-                    f"  Generated: [green]{result.get('embeddings_generated', 0)}[/green]"
-                )
+                console.print(f"  Generated: [green]{data.get('embeddings_generated', 0)}[/green]")
 
             # Show errors if any
-            errors = result.get("errors", [])
+            errors = data.get("errors", [])
             if errors:
                 console.print()
                 console.print(f"[bold red]Errors ({len(errors)}):[/bold red]")
                 for error in errors[:5]:
-                    console.print(f"  [red]•[/red] {error}")
+                    console.print(f"  [red]\u2022[/red] {error}")
                 if len(errors) > 5:
                     console.print(f"  [red]... and {len(errors) - 5} more[/red]")
 
@@ -500,7 +527,14 @@ def sync_mount(
             if dry_run:
                 console.print("[cyan]Dry run complete - no changes made[/cyan]")
             else:
-                console.print("[green]✓[/green] Sync complete")
+                console.print("[green]\u2713[/green] Sync complete")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render_sync,
+        )
 
     except Exception as e:
         handle_error(e)
@@ -509,13 +543,14 @@ def sync_mount(
 @mounts_group.command(name="sync-status")
 @click.argument("job_id", type=str, required=False, default=None)
 @click.option("--watch", is_flag=True, help="Watch progress until completion")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_output_options
 @add_backend_options
-def sync_status(
+async def sync_status(
     job_id: str | None,
     watch: bool,
-    output_json: bool,
-    backend_config: BackendConfig,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show sync job status and progress.
 
@@ -532,40 +567,45 @@ def sync_status(
         # List recent running jobs
         nexus mounts sync-status
     """
-    import time
+    import asyncio
 
+    timing = CommandTiming()
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
 
         if job_id:
             # Show specific job
-            try:
-                job = nx.get_sync_job(job_id)  # type: ignore[attr-defined]
-            except AttributeError:
-                console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
-                sys.exit(1)
+            with timing.phase("server"):
+                try:
+                    job = await nx.service("sync_job").get_job(job_id)
+                except AttributeError:
+                    console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
+                    sys.exit(1)
 
             if not job:
                 console.print(f"[red]Error:[/red] Job not found: {job_id}")
                 sys.exit(1)
 
-            if output_json:
-                import json as json_lib
+            if not watch or job["status"] not in ("pending", "running"):
 
-                console.print(json_lib.dumps(job, indent=2))
-                return
+                def _render_job(data: dict[str, Any]) -> None:
+                    _display_job_status(data)
 
-            # Initial display
-            _display_job_status(job)
-
-            # Watch mode
-            if watch and job["status"] in ("pending", "running"):
+                render_output(
+                    data=job,
+                    output_opts=output_opts,
+                    timing=timing,
+                    human_formatter=_render_job,
+                )
+            else:
+                # Watch mode - always human output
+                _display_job_status(job)
                 console.print()
                 console.print("[dim]Watching progress (Ctrl+C to stop)...[/dim]")
                 try:
                     while True:
-                        time.sleep(2)
-                        job = nx.get_sync_job(job_id)  # type: ignore[attr-defined]
+                        await asyncio.sleep(2)
+                        job = await nx.service("sync_job").get_job(job_id)
                         if not job:
                             break
                         # Clear and redisplay
@@ -577,36 +617,39 @@ def sync_status(
                     console.print("\n[dim]Stopped watching[/dim]")
         else:
             # List recent running jobs
-            try:
-                jobs = nx.list_sync_jobs(status="running", limit=10)  # type: ignore[attr-defined]
-            except AttributeError:
-                console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
-                sys.exit(1)
-
-            if output_json:
-                import json as json_lib
-
-                console.print(json_lib.dumps(jobs, indent=2))
-                return
+            with timing.phase("server"):
+                try:
+                    jobs = await nx.service("sync_job").list_jobs(status="running", limit=10)
+                except AttributeError:
+                    console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
+                    sys.exit(1)
 
             if not jobs:
                 console.print("[yellow]No running sync jobs[/yellow]")
                 console.print("[dim]Use 'nexus mounts sync-jobs' to see all jobs[/dim]")
                 return
 
-            console.print(f"[bold cyan]Running Sync Jobs ({len(jobs)})[/bold cyan]")
-            console.print()
-            for job in jobs:
-                console.print(f"  [bold]{job['id'][:8]}...[/bold]")
-                console.print(f"    Mount: {job['mount_point']}")
-                console.print(f"    Progress: {job['progress_pct']}%")
+            def _render_jobs(data: list[dict[str, Any]]) -> None:
+                console.print(f"[bold cyan]Running Sync Jobs ({len(data)})[/bold cyan]")
                 console.print()
+                for job_item in data:
+                    console.print(f"  [bold]{job_item['id'][:8]}...[/bold]")
+                    console.print(f"    Mount: {job_item['mount_point']}")
+                    console.print(f"    Progress: {job_item['progress_pct']}%")
+                    console.print()
+
+            render_output(
+                data=jobs,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=_render_jobs,
+            )
 
     except Exception as e:
         handle_error(e)
 
 
-def _display_job_status(job: dict) -> None:
+def _display_job_status(job: dict[str, Any]) -> None:
     """Display job status in a formatted way."""
     status_colors = {
         "pending": "yellow",
@@ -657,38 +700,44 @@ def _display_job_status(job: dict) -> None:
 
 @mounts_group.command(name="sync-cancel")
 @click.argument("job_id", type=str)
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_output_options
 @add_backend_options
-def sync_cancel(
+async def sync_cancel(
     job_id: str,
-    output_json: bool,
-    backend_config: BackendConfig,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Cancel a running sync job.
 
     Examples:
         nexus mounts sync-cancel abc123
     """
+    timing = CommandTiming()
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
 
-        try:
-            result = nx.cancel_sync_job(job_id)  # type: ignore[attr-defined]
-        except AttributeError:
-            console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
-            sys.exit(1)
+        with timing.phase("server"):
+            try:
+                result = await nx.service("sync_job").cancel_sync_job(job_id)
+            except AttributeError:
+                console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
+                sys.exit(1)
 
-        if output_json:
-            import json as json_lib
-
-            console.print(json_lib.dumps(result, indent=2))
-        else:
-            if result["success"]:
+        def _render(data: dict[str, Any]) -> None:
+            if data["success"]:
                 console.print(f"[green]Cancellation requested for job {job_id}[/green]")
                 console.print("[dim]Job will stop at next checkpoint[/dim]")
             else:
-                console.print(f"[red]Failed:[/red] {result['message']}")
+                console.print(f"[red]Failed:[/red] {data['message']}")
                 sys.exit(1)
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         handle_error(e)
@@ -703,14 +752,15 @@ def sync_cancel(
     help="Filter by status",
 )
 @click.option("--limit", type=int, default=20, help="Maximum jobs to show")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@add_output_options
 @add_backend_options
-def sync_jobs(
+async def sync_jobs(
     mount: str | None,
     status: str | None,
     limit: int,
-    output_json: bool,
-    backend_config: BackendConfig,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List sync jobs.
 
@@ -724,50 +774,56 @@ def sync_jobs(
         # List only failed jobs
         nexus mounts sync-jobs --status failed
     """
+    timing = CommandTiming()
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
 
-        try:
-            jobs = nx.list_sync_jobs(mount_point=mount, status=status, limit=limit)  # type: ignore[attr-defined]
-        except AttributeError:
-            console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
-            sys.exit(1)
-
-        if output_json:
-            import json as json_lib
-
-            console.print(json_lib.dumps(jobs, indent=2))
-            return
+        with timing.phase("server"):
+            try:
+                jobs = await nx.service("sync_job").list_jobs(
+                    mount_point=mount, status=status, limit=limit
+                )
+            except AttributeError:
+                console.print("[red]Error:[/red] This Nexus instance doesn't support sync jobs")
+                sys.exit(1)
 
         if not jobs:
             console.print("[yellow]No sync jobs found[/yellow]")
             return
 
-        status_colors = {
-            "pending": "yellow",
-            "running": "cyan",
-            "completed": "green",
-            "failed": "red",
-            "cancelled": "yellow",
-        }
+        def _render(data: list[dict[str, Any]]) -> None:
+            status_colors = {
+                "pending": "yellow",
+                "running": "cyan",
+                "completed": "green",
+                "failed": "red",
+                "cancelled": "yellow",
+            }
 
-        console.print(f"[bold cyan]Sync Jobs ({len(jobs)} shown)[/bold cyan]")
-        console.print()
+            console.print(f"[bold cyan]Sync Jobs ({len(data)} shown)[/bold cyan]")
+            console.print()
 
-        for job in jobs:
-            job_status = job["status"]
-            color = status_colors.get(job_status, "white")
-            job_id_short = job["id"][:8]
+            for job in data:
+                job_status = job["status"]
+                color = status_colors.get(job_status, "white")
+                job_id_short = job["id"][:8]
 
-            console.print(
-                f"  [bold]{job_id_short}...[/bold]  "
-                f"[{color}]{job_status:10}[/{color}]  "
-                f"{job['progress_pct']:3}%  "
-                f"{job['mount_point']}"
-            )
+                console.print(
+                    f"  [bold]{job_id_short}...[/bold]  "
+                    f"[{color}]{job_status:10}[/{color}]  "
+                    f"{job['progress_pct']:3}%  "
+                    f"{job['mount_point']}"
+                )
 
-        console.print()
-        console.print("[dim]Use 'nexus mounts sync-status <job_id>' for details[/dim]")
+            console.print()
+            console.print("[dim]Use 'nexus mounts sync-status <job_id>' for details[/dim]")
+
+        render_output(
+            data=jobs,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
 
     except Exception as e:
         handle_error(e)

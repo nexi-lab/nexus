@@ -24,7 +24,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.services.gateway import NexusFSGateway
+    from nexus.system_services.gateway import NexusFSGateway
 
     from .sync_service import SyncService
 

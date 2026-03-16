@@ -79,12 +79,12 @@ class FilePathModel(Base):
     # Indexes and constraints
     __table_args__ = (
         Index(
-            "uq_virtual_path",
+            "uq_zone_virtual_path",
+            "zone_id",
             "virtual_path",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        Index("idx_file_paths_zone_path", "zone_id", "virtual_path"),
         Index("idx_file_paths_backend_id", "backend_id"),
         Index("idx_file_paths_content_hash", "content_hash"),
         Index("idx_file_paths_virtual_path", "virtual_path"),

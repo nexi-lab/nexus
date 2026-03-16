@@ -16,7 +16,6 @@ import pytest
 
 from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
-    BRICK_A2A,
     BRICK_CACHE,
     BRICK_EVENTLOG,
     BRICK_FEDERATION,
@@ -26,7 +25,6 @@ from nexus.contracts.deployment_profile import (
     BRICK_PERMISSIONS,
     BRICK_SANDBOX,
     BRICK_SEARCH,
-    BRICK_SKILLS,
     BRICK_STORAGE,
     BRICK_WORKFLOWS,
     DeploymentProfile,
@@ -82,7 +80,6 @@ class TestDefaultBrickSets:
         assert BRICK_SEARCH not in bricks
         assert BRICK_PAY not in bricks
         assert BRICK_LLM not in bricks
-        assert BRICK_SKILLS not in bricks
         assert BRICK_SANDBOX not in bricks
 
     def test_full_includes_all_except_federation(self) -> None:
@@ -90,10 +87,8 @@ class TestDefaultBrickSets:
         assert BRICK_SEARCH in bricks
         assert BRICK_PAY in bricks
         assert BRICK_LLM in bricks
-        assert BRICK_SKILLS in bricks
         assert BRICK_SANDBOX in bricks
         assert BRICK_WORKFLOWS in bricks
-        assert BRICK_A2A in bricks
         # Federation is cloud-only
         assert BRICK_FEDERATION not in bricks
 
@@ -221,6 +216,13 @@ class TestFeaturesConfigOverrides:
         overrides = fc.to_overrides()
         assert overrides == {"search": True, "pay": False}
 
+    def test_semantic_search_is_config_only_not_brick_override(self) -> None:
+        from nexus.config import FeaturesConfig
+
+        fc = FeaturesConfig(search=True, semantic_search=True)
+        overrides = fc.to_overrides()
+        assert overrides == {"search": True}
+
     def test_overrides_integrate_with_resolve(self) -> None:
         from nexus.config import FeaturesConfig
 
@@ -244,12 +246,22 @@ class TestNexusConfigProfile:
     def test_valid_profiles(self) -> None:
         from nexus.config import NexusConfig
 
-        for p in ["minimal", "embedded", "lite", "full", "cloud", "remote"]:
+        for p in ["minimal", "embedded", "lite", "full", "cloud"]:
             cfg = NexusConfig(profile=p)
             assert cfg.profile == p
+        # "remote" requires url
+        cfg = NexusConfig(profile="remote", url="grpc://localhost:50051")
+        assert cfg.profile == "remote"
 
     def test_invalid_profile_raises(self) -> None:
         from nexus.config import NexusConfig
 
         with pytest.raises(ValueError, match="profile must be one of"):
             NexusConfig(profile="invalid")
+
+    def test_semantic_search_feature_flag_is_accepted(self) -> None:
+        from nexus.config import NexusConfig
+
+        cfg = NexusConfig(features={"semantic_search": True, "search": True})
+        assert cfg.features.semantic_search is True
+        assert cfg.features.search is True

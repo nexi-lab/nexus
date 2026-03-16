@@ -154,6 +154,17 @@ class MessageVerifier:
                 detail=f"Key {record.key_id} was revoked at {record.revoked_at}",
             )
 
+        # Check key expiration
+        expires_at = getattr(record, "expires_at", None)
+        if expires_at is not None:
+            from datetime import UTC, datetime
+
+            if datetime.now(UTC) >= expires_at:
+                return VerifyResult(
+                    valid=False,
+                    detail=f"Key {record.key_id} expired at {expires_at}",
+                )
+
         # Decode signature
         try:
             raw_signature = base64.b64decode(envelope.signature)

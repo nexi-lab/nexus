@@ -5,37 +5,23 @@
  * This matches the REST API wire format (JSON string amounts).
  */
 
+import type { NexusClientOptions, RequestOptions as BaseRequestOptions } from "@nexus/api-client";
+
 // =============================================================================
-// SDK Configuration
+// SDK Configuration (extends shared client options)
 // =============================================================================
 
-export interface NexusPayOptions {
-  /** API key in format `nx_live_<id>` or `nx_test_<id>`. */
-  readonly apiKey: string;
+/**
+ * Options for creating a NexusPay client.
+ * Extends NexusClientOptions from @nexus/api-client.
+ */
+export type NexusPayOptions = NexusClientOptions;
 
-  /** Base URL of the Nexus API server. Default: "https://nexus.sudorouter.ai" */
-  readonly baseUrl?: string;
-
-  /** Request timeout in milliseconds. Default: 30000 */
-  readonly timeout?: number;
-
-  /** Maximum number of retries for retryable errors. Default: 3. Set to 0 to disable. */
-  readonly maxRetries?: number;
-
-  /** Custom fetch implementation for testing or proxying. Default: global fetch */
-  readonly fetch?: typeof globalThis.fetch;
-}
-
-export interface RequestOptions {
-  /** Per-request timeout in milliseconds (overrides global timeout). */
-  readonly timeout?: number;
-
-  /** AbortSignal for cancellation. */
-  readonly signal?: AbortSignal;
-
-  /** Idempotency key for retry-safe operations. */
-  readonly idempotencyKey?: string;
-}
+/**
+ * Per-request options.
+ * Re-exported from @nexus/api-client for backward compatibility.
+ */
+export type RequestOptions = BaseRequestOptions;
 
 // =============================================================================
 // Response Types (match REST API Pydantic models in pay.py)

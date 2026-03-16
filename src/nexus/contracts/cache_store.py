@@ -10,7 +10,7 @@ CacheStore is NOT required by the Kernel. When absent, consumers degrade gracefu
 - EventBus: disabled (distributed-only feature, single-node doesn't need it)
 - PermissionCache: direct-queries RecordStore (correct, slower)
 - TigerCache: O(n) permission checks (no pre-materialized bitmaps)
-- UserSession: stays in RecordStore (acceptable for kernel-only)
+- UserSession: session management unavailable (CacheStore required)
 
 Canonical home for CacheStoreABC (Issue #2055). Lives in contracts/ because it is
 a multi-layer type used by kernel, services, and bricks — per §3.1 Placement
@@ -102,7 +102,7 @@ class CacheStoreABC(ABC):
         """Return all keys matching a glob pattern.
 
         Supports ``*`` as wildcard. Examples:
-        - ``a2a:task:zone1:*`` — all zone1 task keys
+        - ``session:zone1:*`` — all zone1 session keys
         - ``perm:*:user:alice:*`` — permission keys for alice across zones
 
         Companion to ``delete_by_pattern`` — same pattern syntax, but returns

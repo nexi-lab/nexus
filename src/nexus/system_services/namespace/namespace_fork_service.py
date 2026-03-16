@@ -192,6 +192,16 @@ class AgentNamespaceForkService:
             for k in conflict_keys
         )
 
+        # Apply merged mount table back to the live namespace.
+        # For each merged key, prefer the fork's entry (left), fall back to parent (right).
+        merged_entries = [left.get(k) or right.get(k) for k in sorted(merged_str)]
+        merged_mount_entries = [e for e in merged_entries if e is not None]
+        self._namespace_manager.update_mount_table(
+            ("agent", ns.agent_id),
+            merged_mount_entries,
+            zone_id=ns.zone_id,
+        )
+
         # Clean up fork
         with self._lock:
             self._forks.pop(fork_id, None)

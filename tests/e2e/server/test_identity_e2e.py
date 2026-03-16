@@ -14,68 +14,13 @@ import base64
 import shutil
 import tempfile
 import uuid
-from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
-from nexus.contracts.metadata import FileMetadata, PaginatedResult
 from nexus.core.config import ParseConfig, PermissionConfig
-from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
-
-# ---------------------------------------------------------------------------
-# In-memory metadata store (same pattern as test_memory_paging_postgres.py)
-# ---------------------------------------------------------------------------
-
-
-class InMemoryMetadataStore(MetastoreABC):
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
-
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
-
-    def put(self, metadata: FileMetadata) -> None:
-        self._store[metadata.path] = metadata
-
-    def delete(self, path: str) -> dict[str, Any] | None:
-        removed = self._store.pop(path, None)
-        return {"path": path} if removed else None
-
-    def exists(self, path: str) -> bool:
-        return path in self._store
-
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
-        return [m for p, m in self._store.items() if p.startswith(prefix)]
-
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        zone_id: str | None = None,
-    ) -> PaginatedResult:
-        items = self.list(prefix, recursive)
-        return PaginatedResult(
-            items=items[:limit],
-            next_cursor=None,
-            has_more=len(items) > limit,
-            total_count=len(items),
-        )
-
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        return {p: self._store.get(p) for p in paths}
-
-    def is_implicit_directory(self, path: str) -> bool:
-        """Check if path is an implicit dir (children exist without explicit dir metadata)."""
-        prefix = path.rstrip("/") + "/"
-        return any(p.startswith(prefix) for p in self._store)
-
-    def close(self) -> None:
-        self._store.clear()
-
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -148,7 +93,7 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     Uses RaftMetadataStore.embedded() for realistic filesystem operations
     (mkdir, write) that the identity layer needs for DID document writing.
     """
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
     from nexus.core.nexus_fs import NexusFS
@@ -156,8 +101,8 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
     tmpdir = tempfile.mkdtemp(prefix="nexus-identity-e2e-")
-    backend = LocalBackend(root_path=tmpdir)
-    metadata_store = InMemoryMetadataStore()
+    backend = CASLocalBackend(root_path=tmpdir)
+    metadata_store = DictMetastore()
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}")
 
     nx = NexusFS(

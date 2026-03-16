@@ -8,6 +8,7 @@ Provides version tracking and history management:
 """
 
 import builtins
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -155,6 +156,12 @@ class VersionManager:
 
             versions = []
             for v in session.scalars(versions_stmt):
+                is_rollback = v.source_type == "rollback"
+                rollback_from: int | None = None
+                if is_rollback and v.change_reason:
+                    m = re.search(r"version (\d+)", v.change_reason)
+                    if m:
+                        rollback_from = int(m.group(1))
                 versions.append(
                     {
                         "version": v.version_number,
@@ -166,6 +173,8 @@ class VersionManager:
                         "change_reason": v.change_reason,
                         "source_type": v.source_type,
                         "parent_version_id": v.parent_version_id,
+                        "is_rollback": is_rollback,
+                        "rollback_from": rollback_from,
                     }
                 )
 

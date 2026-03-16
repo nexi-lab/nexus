@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
+    from nexus.backends.base.backend import Backend
     from nexus.contracts.types import AuditConfig
     from nexus.core.config import DistributedConfig, PermissionConfig
     from nexus.core.metastore import MetastoreABC

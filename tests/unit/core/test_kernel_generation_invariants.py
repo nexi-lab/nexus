@@ -9,7 +9,7 @@ Invariants proven:
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nexus.services.protocols.agent_registry import AgentInfo
+from nexus.contracts.protocols.agent_registry import AgentInfo
 from tests.strategies.kernel import agent_info
 
 # ---------------------------------------------------------------------------

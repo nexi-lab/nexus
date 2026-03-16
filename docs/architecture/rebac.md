@@ -100,7 +100,7 @@ allowed = manager.rebac_check(
     permission="read",
     object=("file", "doc.txt"),
     zone_id="org_123",
-    consistency=ConsistencyLevel.STRONG  # NEW: Explicit consistency
+    # Always uses cached consistency (no consistency parameter needed)
 )
 
 # Detailed check (returns CheckResult with metadata)

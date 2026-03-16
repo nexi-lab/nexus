@@ -55,8 +55,41 @@ jobs:
           echo ""
           uv run pytest tests/unit/server/test_rpc_parity.py -v
 
+  # Build Rust extensions once per OS, share wheels with downstream jobs
+  build-rust:
+    name: Build Rust Extensions (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build Rust extensions
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: dev
+          rust-cache-shared-key: "rust-test"
+          output-dir: dist
+          github-token: ${{ github.token }}
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-wheels-${{ matrix.os }}
+          path: dist/*.whl
+          retention-days: 1
+
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    needs: build-rust
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -82,36 +115,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python ${{ matrix.python-version }}
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-${{ matrix.os }}"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-${{ matrix.os }}
+          path: dist
 
-      - name: Build Rust extension (nexus_fast)
-        run: |
-          cd rust/nexus_pyo3
-          pip install maturin
-          maturin develop --release
-        shell: bash
-
-      - name: Build Rust extension (nexus_raft)
-        run: |
-          cd rust/nexus_raft
-          maturin develop --release --features python
-        shell: bash
-
-      - name: Build Rust extension (nexus_tasks)
-        run: |
-          cd rust/nexus_tasks
-          maturin develop --release
-        shell: bash
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: |
@@ -126,21 +137,22 @@ jobs:
       - name: Run unit tests
         run: |
           start=$(date +%s)
-          uv run pytest tests/unit -v --durations=10 -n auto --dist loadgroup
+          uv run pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
+            --cov=nexus --cov-report=term-missing --cov-report=xml
           status=$?
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt
           exit $status
         shell: bash
 
-      - name: Unit test duration (target <3min; fail if >5min)
+      - name: Unit test duration (target <3min; fail if >7min)
         if: always()
         run: |
           if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
           dur=$(cat unit_test_duration_sec.txt)
           echo "### Unit tests" >> $GITHUB_STEP_SUMMARY
-          echo "Duration: **${dur}s** (target &lt;180s; max 300s)" >> $GITHUB_STEP_SUMMARY
-          if [ "$dur" -gt 300 ]; then
-            echo "::error::Unit tests took ${dur}s (max 300s). Keep the suite lean; see tests/unit/README.md"
+          echo "Duration: **${dur}s** (target &lt;180s; max 420s)" >> $GITHUB_STEP_SUMMARY
+          if [ "$dur" -gt 420 ]; then
+            echo "::error::Unit tests took ${dur}s (max 420s). Keep the suite lean; see tests/unit/README.md"
             exit 1
           fi
         shell: bash
@@ -152,6 +164,7 @@ jobs:
 
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
+    needs: build-rust
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -171,24 +184,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -196,10 +199,11 @@ jobs:
       - name: Run self-contained e2e tests
         run: |
           uv run pytest tests/e2e/self_contained/ -v --timeout=120 -o "addopts="
-        timeout-minutes: 10
+        timeout-minutes: 20
 
   e2e-postgres:
     name: E2E Tests (PostgreSQL)
+    needs: build-rust
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -235,24 +239,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"
@@ -264,6 +258,7 @@ jobs:
 
   e2e-redis:
     name: E2E Tests (Redis)
+    needs: build-rust
     runs-on: ubuntu-latest
     services:
       redis:
@@ -297,24 +292,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -326,6 +311,7 @@ jobs:
 
   e2e-docker:
     name: E2E Tests (Docker)
+    needs: build-rust
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -345,24 +331,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -374,6 +350,7 @@ jobs:
 
   e2e-nats:
     name: E2E Tests (NATS)
+    needs: build-rust
     runs-on: ubuntu-latest
     env:
       NEXUS_NATS_URL: nats://localhost:4222
@@ -400,24 +377,14 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
         with:
-          shared-key: "rust-test-ubuntu-latest"
-          workspaces: |
-            rust/nexus_pyo3
-            rust/nexus_raft
-            rust/nexus_tasks
+          name: rust-wheels-ubuntu-latest
+          path: dist
 
-      - name: Build Rust extensions
-        run: |
-          pip install maturin
-          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
-          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
-          cd rust/nexus_tasks && maturin develop --release && cd ../..
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"

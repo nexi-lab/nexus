@@ -6,7 +6,7 @@ an in-memory registry for fast-path O(1) lookups.
 
 Architecture:
     - TransactionRegistry: in-memory fast-path (zero cost when no txns active)
-    - CASBlobStore.hold_reference(): prevents GC of pre-modification content
+    - CASBackend.hold_reference(): prevents GC of pre-modification content
     - DB: TransactionSnapshotModel + SnapshotEntryModel for durability
     - Conflict detection: MVCC at commit time via hash comparison
 
@@ -29,7 +29,7 @@ from nexus.bricks.snapshot.errors import (
     TransactionNotFoundError,
 )
 from nexus.bricks.snapshot.registry import TransactionRegistry
-from nexus.services.protocols.snapshot import (
+from nexus.contracts.protocols.snapshot import (
     ConflictInfo,
     SnapshotEntry,
     TransactionInfo,
@@ -96,7 +96,7 @@ class TransactionalSnapshotService:
 
         Args:
             record_store: RecordStoreABC for DB persistence.
-            cas_store: CASBlobStore for hold_reference/release.
+            cas_store: CASBackend for hold_reference/release.
             metadata_store: MetastoreABC for reading current file state.
             metadata_factory: Callable to construct FileMetadata-like objects
                 (injected by factory.py to avoid importing nexus.contracts.metadata).
@@ -169,6 +169,30 @@ class TransactionalSnapshotService:
             new_hash=None,
         )
 
+    def validate_path_available(self, transaction_id: str, path: str) -> None:
+        """Check that *path* can be tracked by *transaction_id*.
+
+        Call this **before** performing the filesystem mutation so that a
+        conflict is detected before the write/delete occurs.
+
+        Raises:
+            TransactionConflictError: if *path* is owned by another transaction.
+        """
+        if not self._registry.has_active_transactions():
+            return
+        existing_txn = self._registry.get_transaction_for_path(path)
+        if existing_txn is not None and existing_txn != transaction_id:
+            raise TransactionConflictError(
+                conflicts=[
+                    ConflictInfo(
+                        path=path,
+                        expected_hash=None,
+                        current_hash=None,
+                        reason=f"Path already tracked by transaction {existing_txn}",
+                    )
+                ]
+            )
+
     def _track_operation(
         self,
         transaction_id: str,
@@ -193,15 +217,19 @@ class TransactionalSnapshotService:
         # Register path in memory registry
         tracked = self._registry.track_path(transaction_id, path)
         if not tracked:
-            logger.warning(
-                "Path %s already tracked by different transaction (txn=%s)",
-                path,
-                transaction_id,
-            )
             # Release the hold we just acquired since we can't track
             if original_hash is not None:
                 self._cas_store.release(original_hash)
-            return
+            raise TransactionConflictError(
+                conflicts=[
+                    ConflictInfo(
+                        path=path,
+                        expected_hash=original_hash,
+                        current_hash=new_hash,
+                        reason=f"Path already tracked by a different transaction (txn={transaction_id})",
+                    )
+                ]
+            )
 
         # Persist entry to DB
         metadata_json = json.dumps(original_metadata) if original_metadata else None

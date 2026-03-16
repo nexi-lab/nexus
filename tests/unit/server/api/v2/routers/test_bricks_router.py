@@ -10,17 +10,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.contracts.protocols.brick_lifecycle import (
+    BrickHealthReport,
+    BrickState,
+    BrickStatus,
+)
 from nexus.server.api.v2.routers.bricks import (
     _get_lifecycle_manager,
     health_router,
     router,
 )
 from nexus.server.dependencies import require_admin
-from nexus.services.protocols.brick_lifecycle import (
-    BrickHealthReport,
-    BrickState,
-    BrickStatus,
-)
 
 # ---------------------------------------------------------------------------
 # App setup — isolated test app with dependency overrides
@@ -75,6 +75,10 @@ def _reset_mock() -> None:
     _mock_manager.get_status.side_effect = None
     _mock_manager.mount = AsyncMock()
     _mock_manager.unmount = AsyncMock()
+    _mock_manager.get_retry_count.return_value = 0
+    _mock_manager.get_transitions.return_value = []
+    _mock_manager.get_spec.return_value = None
+    _mock_manager.all_specs.return_value = {}
 
 
 def _make_status(
@@ -181,6 +185,26 @@ class TestBrickStatus:
         data = resp.json()
         assert data["state"] == "failed"
         assert data["error"] == "db down"
+
+    def test_detail_includes_retry_count_and_transitions(self) -> None:
+        status = _make_status("search", BrickState.ACTIVE, "SearchProtocol")
+        _mock_manager.get_status.return_value = status
+        _mock_manager.get_retry_count.return_value = 3
+        _mock_manager.get_transitions.return_value = [
+            (1000.0, "mount", "REGISTERED", "STARTING"),
+            (1001.0, "started", "STARTING", "ACTIVE"),
+        ]
+
+        resp = client.get("/api/v2/bricks/search")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["retry_count"] == 3
+        assert len(data["transitions"]) == 2
+        assert data["transitions"][0]["event"] == "mount"
+        assert data["transitions"][0]["from_state"] == "REGISTERED"
+        assert data["transitions"][0]["to_state"] == "STARTING"
+        assert data["transitions"][1]["event"] == "started"
+        assert data["transitions"][1]["timestamp"] == 1001.0
 
 
 # ---------------------------------------------------------------------------

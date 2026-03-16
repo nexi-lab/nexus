@@ -22,13 +22,13 @@ from pathlib import Path
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.services.event_subsystem.log.replay import (
+from nexus.storage.models import OperationLogModel
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.event_log.replay import (
     EventReplayService,
     _decode_cursor,
     _encode_cursor,
 )
-from nexus.storage.models import OperationLogModel
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
@@ -91,11 +91,13 @@ class TestCursorEncoding:
         cursor = _encode_cursor(999_999_999)
         assert _decode_cursor(cursor) == 999_999_999
 
-    def test_invalid_cursor_returns_none(self) -> None:
-        assert _decode_cursor("not-a-valid-cursor") is None
+    def test_invalid_cursor_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Invalid replay cursor"):
+            _decode_cursor("not-a-valid-cursor")
 
-    def test_empty_cursor_returns_none(self) -> None:
-        assert _decode_cursor("") is None
+    def test_empty_cursor_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="Invalid replay cursor"):
+            _decode_cursor("")
 
 
 # =========================================================================
@@ -213,14 +215,14 @@ class TestPagination:
 
         assert len(all_ids) == 10
 
-    def test_invalid_cursor_returns_all(
+    def test_invalid_cursor_raises_value_error(
         self, service: EventReplayService, record_store: SQLAlchemyRecordStore
     ) -> None:
         _insert_event(record_store.session_factory, sequence_number=1)
 
-        # Invalid cursor should be ignored (decoded as None)
-        result = service.replay(cursor="invalid-cursor-value")
-        assert len(result.events) == 1
+        # Invalid cursor raises ValueError instead of silently returning all
+        with pytest.raises(ValueError, match="Invalid replay cursor"):
+            service.replay(cursor="invalid-cursor-value")
 
 
 # =========================================================================

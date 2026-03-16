@@ -75,7 +75,7 @@ class ZoneIsolationMixin:
 
 
 class ResourceConfigMixin:
-    """Mixin for shared fields between WorkspaceConfigModel and MemoryConfigModel."""
+    """Mixin for resource configuration fields (identity, scope, TTL)."""
 
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

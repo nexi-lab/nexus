@@ -1,11 +1,11 @@
-"""Backend contract tests -- parametrized across MockBackend and LocalBackend (Issue #1601)."""
+"""Backend contract tests -- parametrized across MockBackend and CASLocalBackend (Issue #1601)."""
 
 import hashlib
 from typing import Any
 
 import pytest
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 from nexus.core.protocols.connector import (
@@ -98,9 +98,9 @@ def mock_backend() -> _MockBackend:
 
 @pytest.fixture()
 def local_backend(tmp_path: Any) -> Backend:
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
 
-    return LocalBackend(root_path=str(tmp_path / "nexus-data"))
+    return CASLocalBackend(root_path=str(tmp_path / "nexus-data"))
 
 
 @pytest.fixture(params=["mock", "local"])
@@ -109,9 +109,9 @@ def backend(request: Any, tmp_path: Any) -> Backend:
     if request.param == "mock":
         return _MockBackend()
     elif request.param == "local":
-        from nexus.backends.local import LocalBackend
+        from nexus.backends.storage.cas_local import CASLocalBackend
 
-        return LocalBackend(root_path=str(tmp_path / "nexus-data"))
+        return CASLocalBackend(root_path=str(tmp_path / "nexus-data"))
     raise ValueError(f"Unknown backend: {request.param}")
 
 
@@ -213,7 +213,6 @@ class TestBackendContract:
     def test_capability_flags_are_booleans(self, backend: Backend) -> None:
         assert isinstance(backend.user_scoped, bool)
         assert isinstance(backend.is_connected, bool)
-        assert isinstance(backend.is_passthrough, bool)
         assert isinstance(backend.has_root_path, bool)
         assert isinstance(backend.has_token_manager, bool)
 
@@ -255,8 +254,8 @@ class TestBackendContract:
         backend.read_content(content_hash, context=None)
 
 
-class TestLocalBackendSpecific:
-    """LocalBackend-specific tests not covered by contract."""
+class TestCASLocalBackendSpecific:
+    """CASLocalBackend-specific tests not covered by contract."""
 
     def test_local_has_root_path(self, local_backend: Backend) -> None:
         assert local_backend.has_root_path is True

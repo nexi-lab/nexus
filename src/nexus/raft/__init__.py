@@ -1,17 +1,19 @@
-"""Raft consensus client for Nexus.
+"""Raft consensus for Nexus.
 
-This module provides Python clients to communicate with Rust Raft nodes
-for metadata and lock operations.
+This module provides Python bindings to Rust Raft nodes for metadata
+and lock operations.
 
-Three access modes:
+Two access modes:
 1. Metastore (PyO3 FFI) - Direct redb access for embedded mode (~5μs)
 2. ZoneManager + ZoneHandle (PyO3 FFI) - Multi-zone Raft consensus (~2-10ms)
-3. RaftClient (gRPC) - For REMOTE profile NexusFS to access Raft cluster (~200μs)
+
+REMOTE profile uses RPCTransport → NexusVFSService (see nexus.remote).
+Federation uses NexusFederation (see nexus.raft.federation).
 
 Architecture:
     Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
     Consensus:  NexusFS -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
-    Remote:     REMOTE profile NexusFS -> RaftClient (gRPC) -> Raft cluster (~200μs)
+    Remote:     NexusFS -> RPCTransport -> NexusVFSService (gRPC) -> server (~50-100ms)
 
 Example (Metastore - embedded mode):
     from nexus.raft import Metastore
@@ -26,46 +28,12 @@ Example (ZoneManager - consensus mode):
     mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
     handle = mgr.create_zone("root", ["2@peer:2126"])
     handle.set_metadata("/path/to/file", metadata_bytes)  # replicated via consensus
-
-Example (RaftClient - remote):
-    from nexus.raft import RaftClient
-
-    async with RaftClient("10.0.0.2:2026") as client:
-        await client.put_metadata(file_metadata)
 """
 
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
-# =========================================================================
-# gRPC client for remote Raft access (used by REMOTE profile NexusFS)
-# Declare with Any so mypy doesn't complain about None fallback.
-# =========================================================================
-_HAS_GRPC_CLIENT = False
-RemoteLockInfo: Any = None
-LockResult: Any = None
-RaftClient: Any = None
-RaftClientConfig: Any = None
-RaftError: Any = None
-RaftNotLeaderError: Any = None
-
-try:
-    from nexus.raft import client as _raft_client_mod
-
-    RemoteLockInfo = _raft_client_mod.LockInfo  # Renamed to avoid conflict with PyO3 LockInfo
-    LockResult = _raft_client_mod.LockResult
-    RaftClient = _raft_client_mod.RaftClient
-    RaftClientConfig = _raft_client_mod.RaftClientConfig
-    RaftError = _raft_client_mod.RaftError
-    RaftNotLeaderError = _raft_client_mod.RaftNotLeaderError
-    _HAS_GRPC_CLIENT = True
-except ImportError:
-    logger.debug(
-        "RaftClient not available (protobuf code not generated). "
-        "This is expected in CI/testing environments."
-    )
 
 # =========================================================================
 # PyO3 FFI: Metastore (direct redb access, built by maturin)
@@ -125,13 +93,6 @@ def require_metastore() -> None:
 
 
 __all__ = [
-    # gRPC client (remote - for REMOTE profile NexusFS)
-    "RaftClient",
-    "RaftClientConfig",
-    "RaftError",
-    "RaftNotLeaderError",
-    "LockResult",
-    "RemoteLockInfo",
     # PyO3 FFI: Metastore driver (embedded mode)
     "Metastore",
     # Multi-zone federation

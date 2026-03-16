@@ -1,18 +1,17 @@
-"""Simplified tests for session management module."""
+"""Tests for session management module (CacheStore-backed).
 
-from datetime import UTC, datetime, timedelta
+Migrated from SQLAlchemy ORM to CacheStoreABC per data-storage-matrix.md Part 6.
+"""
+
+from datetime import timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from nexus.storage.models import Base, MemoryModel, UserSessionModel
+from nexus.contracts.auth_store_types import SessionDTO
+from nexus.contracts.cache_store import InMemoryCacheStore
+from nexus.storage.auth_stores.cache_session_store import CacheSessionStore
 from nexus.system_services.lifecycle.sessions import (
-    cleanup_expired_sessions,
-    cleanup_inactive_sessions,
     create_session,
-    delete_session,
-    delete_session_resources,
     get_session,
     list_user_sessions,
     update_session_activity,
@@ -20,324 +19,205 @@ from nexus.system_services.lifecycle.sessions import (
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database for testing."""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    return engine
+def cache():
+    """Create in-memory CacheStore."""
+    return InMemoryCacheStore()
 
 
 @pytest.fixture
-def session(engine):
-    """Create database session."""
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
-    yield session
-    session.rollback()
-    session.close()
+def store(cache):
+    """Create CacheSessionStore backed by InMemoryCacheStore."""
+    return CacheSessionStore(cache)
 
 
 class TestCreateSession:
     """Test create_session function."""
 
-    def test_create_temporary_session(self, session):
-        """Test creating a temporary session with TTL."""
-        user_session = create_session(
-            session,
+    @pytest.mark.asyncio
+    async def test_create_temporary_session(self, store):
+        dto = await create_session(
+            store,
             user_id="alice",
             ttl=timedelta(hours=8),
             ip_address="127.0.0.1",
             user_agent="Mozilla/5.0",
         )
 
-        assert user_session is not None
-        assert user_session.session_id is not None
-        assert user_session.user_id == "alice"
-        assert user_session.expires_at is not None
-        assert user_session.ip_address == "127.0.0.1"
-        assert user_session.user_agent == "Mozilla/5.0"
-        assert user_session.agent_id is None
+        assert isinstance(dto, SessionDTO)
+        assert dto.session_id is not None
+        assert dto.user_id == "alice"
+        assert dto.expires_at is not None
+        assert dto.ip_address == "127.0.0.1"
+        assert dto.user_agent == "Mozilla/5.0"
+        assert dto.agent_id is None
 
-    def test_create_persistent_session(self, session):
-        """Test creating a persistent session without TTL."""
-        user_session = create_session(
-            session,
-            user_id="alice",
-            ttl=None,  # Persistent session
-        )
+    @pytest.mark.asyncio
+    async def test_create_persistent_session(self, store):
+        dto = await create_session(store, user_id="alice", ttl=None)
+        assert dto.expires_at is None
 
-        assert user_session is not None
-        assert user_session.expires_at is None  # No expiration
-
-    def test_create_agent_session(self, session):
-        """Test creating a session for an agent."""
-        user_session = create_session(
-            session,
+    @pytest.mark.asyncio
+    async def test_create_agent_session(self, store):
+        dto = await create_session(
+            store,
             user_id="alice",
             agent_id="agent1",
             ttl=timedelta(hours=1),
         )
+        assert dto.agent_id == "agent1"
+        assert dto.user_id == "alice"
 
-        assert user_session is not None
-        assert user_session.agent_id == "agent1"
-        assert user_session.user_id == "alice"
-
-    def test_create_session_with_zone(self, session):
-        """Test creating a session with zone ID."""
-        user_session = create_session(
-            session,
+    @pytest.mark.asyncio
+    async def test_create_session_with_zone(self, store):
+        dto = await create_session(
+            store,
             user_id="alice",
             zone_id="acme",
             ttl=timedelta(hours=8),
         )
+        assert dto.zone_id == "acme"
 
-        assert user_session is not None
-        assert user_session.zone_id == "acme"
-
-    def test_session_auto_generates_id(self, session):
-        """Test that session ID is auto-generated."""
-        sess1 = create_session(session, user_id="alice")
-        sess2 = create_session(session, user_id="bob")
-
-        assert sess1.session_id != sess2.session_id
+    @pytest.mark.asyncio
+    async def test_session_auto_generates_id(self, store):
+        s1 = await create_session(store, user_id="alice")
+        s2 = await create_session(store, user_id="bob")
+        assert s1.session_id != s2.session_id
 
 
 class TestUpdateSessionActivity:
     """Test update_session_activity function."""
 
-    def test_update_activity_success(self, session):
-        """Test updating session activity timestamp."""
-        user_session = create_session(session, user_id="alice")
-        session.commit()
+    @pytest.mark.asyncio
+    async def test_update_activity_success(self, store):
+        dto = await create_session(store, user_id="alice")
+        original_activity = dto.last_activity
 
-        original_activity = user_session.last_activity
-
-        # Wait a tiny bit to ensure timestamp changes
         import time
 
         time.sleep(0.01)
 
-        success = update_session_activity(session, user_session.session_id)
-
+        success = await update_session_activity(store, dto.session_id)
         assert success is True
-        session.refresh(user_session)
-        assert user_session.last_activity > original_activity
 
-    def test_update_activity_nonexistent_session(self, session):
-        """Test updating activity for non-existent session."""
-        success = update_session_activity(session, "nonexistent-session-id")
+        updated = await get_session(store, dto.session_id)
+        assert updated is not None
+        assert updated.last_activity > original_activity
 
+    @pytest.mark.asyncio
+    async def test_update_activity_nonexistent(self, store):
+        success = await update_session_activity(store, "nonexistent-id")
         assert success is False
 
 
-class TestDeleteSessionResources:
-    """Test delete_session_resources function."""
+class TestGetSession:
+    """Test get_session function."""
 
-    def test_delete_memories(self, session):
-        """Test deleting session-scoped memories."""
-        user_session = create_session(session, user_id="alice")
-        session.commit()
+    @pytest.mark.asyncio
+    async def test_get_existing_session(self, store):
+        created = await create_session(store, user_id="alice")
+        fetched = await get_session(store, created.session_id)
+        assert fetched is not None
+        assert fetched.session_id == created.session_id
+        assert fetched.user_id == "alice"
 
-        # Create memories
-        memory = MemoryModel(
-            content_hash="abc123",
-            session_id=user_session.session_id,
-            user_id="alice",
-        )
-        session.add(memory)
-        session.commit()
-
-        counts = delete_session_resources(session, user_session.session_id)
-
-        assert counts["memories"] == 1
-
-
-class TestDeleteSession:
-    """Test delete_session function."""
-
-    def test_delete_existing_session(self, session):
-        """Test deleting an existing session."""
-        user_session = create_session(session, user_id="alice")
-        session.commit()
-
-        success = delete_session(session, user_session.session_id)
-
-        assert success is True
-
-        # Verify session is deleted
-        retrieved = (
-            session.query(UserSessionModel).filter_by(session_id=user_session.session_id).first()
-        )
-        assert retrieved is None
-
-    def test_delete_nonexistent_session(self, session):
-        """Test deleting a non-existent session."""
-        success = delete_session(session, "nonexistent-session-id")
-
-        assert success is False
-
-
-class TestCleanupExpiredSessions:
-    """Test cleanup_expired_sessions function."""
-
-    def test_cleanup_expired_sessions(self, session):
-        """Test cleaning up expired sessions."""
-        # Create expired session
-        expired_session = UserSessionModel(
-            user_id="alice",
-            expires_at=datetime.now(UTC) - timedelta(hours=1),
-        )
-        session.add(expired_session)
-        session.commit()
-
-        result = cleanup_expired_sessions(session)
-
-        assert result["sessions"] == 1
-
-        # Verify session is deleted
-        remaining = (
-            session.query(UserSessionModel).filter_by(session_id=expired_session.session_id).first()
-        )
-        assert remaining is None
-
-    def test_cleanup_preserves_valid_sessions(self, session):
-        """Test that valid sessions are preserved."""
-        # Create valid session
-        valid_session = create_session(session, user_id="alice", ttl=timedelta(hours=8))
-        session.commit()
-
-        result = cleanup_expired_sessions(session)
-
-        assert result["sessions"] == 0
-
-        # Verify session still exists
-        remaining = (
-            session.query(UserSessionModel).filter_by(session_id=valid_session.session_id).first()
-        )
-        assert remaining is not None
-
-    def test_cleanup_preserves_persistent_sessions(self, session):
-        """Test that persistent sessions (expires_at=None) are preserved."""
-        # Create persistent session
-        persistent_session = create_session(session, user_id="alice", ttl=None)
-        session.commit()
-
-        result = cleanup_expired_sessions(session)
-
-        assert result["sessions"] == 0
-
-        # Verify session still exists
-        remaining = (
-            session.query(UserSessionModel)
-            .filter_by(session_id=persistent_session.session_id)
-            .first()
-        )
-        assert remaining is not None
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_session(self, store):
+        assert await get_session(store, "nonexistent") is None
 
 
 class TestListUserSessions:
     """Test list_user_sessions function."""
 
-    def test_list_user_sessions(self, session):
-        """Test listing all sessions for a user."""
-        # Create sessions for alice
-        sess1 = create_session(session, user_id="alice", ttl=timedelta(hours=8))
-        sess2 = create_session(session, user_id="alice", ttl=None)
+    @pytest.mark.asyncio
+    async def test_list_user_sessions(self, store):
+        s1 = await create_session(store, user_id="alice", ttl=timedelta(hours=8))
+        s2 = await create_session(store, user_id="alice", ttl=None)
+        await create_session(store, user_id="bob", ttl=timedelta(hours=8))
 
-        # Create session for bob
-        create_session(session, user_id="bob", ttl=timedelta(hours=8))
-
-        session.commit()
-
-        alice_sessions = list_user_sessions(session, user_id="alice")
-
+        alice_sessions = await list_user_sessions(store, user_id="alice")
         assert len(alice_sessions) == 2
         session_ids = {s.session_id for s in alice_sessions}
-        assert sess1.session_id in session_ids
-        assert sess2.session_id in session_ids
+        assert s1.session_id in session_ids
+        assert s2.session_id in session_ids
 
-    def test_list_includes_persistent_sessions(self, session):
-        """Test that persistent sessions are included."""
-        # Create persistent session
-        create_session(session, user_id="alice", ttl=None)
+    @pytest.mark.asyncio
+    async def test_list_includes_persistent(self, store):
+        await create_session(store, user_id="alice", ttl=None)
+        await create_session(store, user_id="alice", ttl=timedelta(hours=8))
 
-        # Create temporary session
-        create_session(session, user_id="alice", ttl=timedelta(hours=8))
-
-        session.commit()
-
-        alice_sessions = list_user_sessions(session, user_id="alice")
-
-        assert len(alice_sessions) == 2
+        sessions = await list_user_sessions(store, user_id="alice")
+        assert len(sessions) == 2
 
 
-class TestCleanupInactiveSessions:
-    """Test cleanup_inactive_sessions function."""
+class TestCacheSessionStore:
+    """Direct CacheSessionStore tests."""
 
-    def test_cleanup_inactive_sessions(self, session):
-        """Test cleaning up inactive sessions."""
-        # Create inactive session
-        inactive = UserSessionModel(
+    @pytest.mark.asyncio
+    async def test_delete_session(self, store):
+        dto = await store.create(user_id="alice")
+        assert await store.delete(dto.session_id) is True
+        assert await store.get(dto.session_id) is None
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent(self, store):
+        assert await store.delete("nonexistent") is False
+
+    @pytest.mark.asyncio
+    async def test_session_isolation(self, store):
+        await store.create(user_id="alice")
+        await store.create(user_id="bob")
+
+        alice = await store.list_for_user("alice")
+        bob = await store.list_for_user("bob")
+
+        assert len(alice) == 1
+        assert len(bob) == 1
+        assert alice[0].session_id != bob[0].session_id
+
+    @pytest.mark.asyncio
+    async def test_serialization_roundtrip(self, store):
+        dto = await store.create(
             user_id="alice",
-            last_activity=datetime.now(UTC) - timedelta(days=31),
+            agent_id="a1",
+            zone_id="zone1",
+            ttl_seconds=3600,
+            ip_address="10.0.0.1",
+            user_agent="TestAgent",
         )
-        session.add(inactive)
-        session.commit()
 
-        # Capture ID before cleanup (bulk delete invalidates ORM state)
-        inactive_id = inactive.session_id
-        session.expire(inactive)
-
-        count = cleanup_inactive_sessions(session, inactive_threshold=timedelta(days=30))
-
-        assert count == 1
-
-        # Verify session is deleted
-        remaining = session.query(UserSessionModel).filter_by(session_id=inactive_id).first()
-        assert remaining is None
-
-    def test_cleanup_preserves_active_sessions(self, session):
-        """Test that active sessions are preserved."""
-        # Create active session
-        active = create_session(session, user_id="alice")
-        session.commit()
-
-        count = cleanup_inactive_sessions(session, inactive_threshold=timedelta(days=30))
-
-        assert count == 0
-
-        # Verify session still exists
-        remaining = session.query(UserSessionModel).filter_by(session_id=active.session_id).first()
-        assert remaining is not None
+        fetched = await store.get(dto.session_id)
+        assert fetched is not None
+        assert fetched.user_id == "alice"
+        assert fetched.agent_id == "a1"
+        assert fetched.zone_id == "zone1"
+        assert fetched.ip_address == "10.0.0.1"
+        assert fetched.user_agent == "TestAgent"
+        assert fetched.expires_at is not None
 
 
-class TestSessionBasics:
-    """Basic session tests."""
+class TestSessionDTO:
+    """Test SessionDTO.is_expired()."""
 
-    def test_session_creation_and_retrieval(self, session):
-        """Test basic session workflow."""
-        # Create session
-        user_session = create_session(session, user_id="alice")
-        session.commit()
+    def test_persistent_not_expired(self):
+        dto = SessionDTO(session_id="s1", user_id="u1", expires_at=None)
+        assert dto.is_expired() is False
 
-        # Retrieve session
-        retrieved = get_session(session, user_session.session_id)
+    def test_unexpired_session(self):
+        from datetime import UTC, datetime
 
-        assert retrieved is not None
-        assert retrieved.session_id == user_session.session_id
-        assert retrieved.user_id == "alice"
+        dto = SessionDTO(
+            session_id="s1",
+            user_id="u1",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        assert dto.is_expired() is False
 
-    def test_multi_user_session_isolation(self, session):
-        """Test that sessions are properly isolated between users."""
-        # Create sessions for different users
-        _ = create_session(session, user_id="alice")
-        _ = create_session(session, user_id="bob")
-        session.commit()
+    def test_expired_session(self):
+        from datetime import UTC, datetime
 
-        # List sessions for each user
-        alice_sessions = list_user_sessions(session, user_id="alice")
-        bob_sessions = list_user_sessions(session, user_id="bob")
-
-        assert len(alice_sessions) == 1
-        assert len(bob_sessions) == 1
-        assert alice_sessions[0].session_id != bob_sessions[0].session_id
+        dto = SessionDTO(
+            session_id="s1",
+            user_id="u1",
+            expires_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+        assert dto.is_expired() is True

@@ -48,11 +48,12 @@ class TestWatchAPIValidation:
 class TestWatchAPIEndpoint:
     """Tests for GET /api/v2/watch endpoint (may return 501 without event infrastructure)."""
 
-    def test_watch_returns_valid_response(self, nexus_fs: "NexusFS") -> None:
+    @pytest.mark.asyncio
+    async def test_watch_returns_valid_response(self, nexus_fs: "NexusFS") -> None:
         """Test that watch returns a valid response (200 or 501)."""
         from nexus.server.fastapi_server import create_app
 
-        nexus_fs.sys_mkdir("/inbox")
+        await nexus_fs.sys_mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
@@ -83,11 +84,12 @@ class TestWatchAPIEndpoint:
                 assert "timeout" in data
                 assert "changes" in data
 
-    def test_watch_with_glob_pattern(self, nexus_fs: "NexusFS") -> None:
+    @pytest.mark.asyncio
+    async def test_watch_with_glob_pattern(self, nexus_fs: "NexusFS") -> None:
         """Test watch with glob pattern."""
         from nexus.server.fastapi_server import create_app
 
-        nexus_fs.sys_mkdir("/inbox")
+        await nexus_fs.sys_mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
@@ -102,11 +104,12 @@ class TestWatchAPIEndpoint:
                 data = response.json()
                 assert data["timeout"] is True
 
-    def test_watch_response_format(self, nexus_fs: "NexusFS") -> None:
+    @pytest.mark.asyncio
+    async def test_watch_response_format(self, nexus_fs: "NexusFS") -> None:
         """Test that response has correct format when events are available."""
         from nexus.server.fastapi_server import create_app
 
-        nexus_fs.sys_mkdir("/inbox")
+        await nexus_fs.sys_mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
@@ -138,7 +141,7 @@ class TestWatchAPIWithEvents:
         """Test that watch detects file write events (requires event infrastructure)."""
         from nexus.server.fastapi_server import create_app
 
-        nexus_fs.sys_mkdir("/inbox")
+        await nexus_fs.sys_mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
@@ -162,7 +165,7 @@ class TestWatchAPIWithEvents:
                 await asyncio.sleep(0.2)
 
                 # Write a file to trigger the event
-                nexus_fs.sys_write("/inbox/test.txt", b"hello world")
+                await nexus_fs.sys_write("/inbox/test.txt", b"hello world")
 
                 # Wait for watch to return
                 response = future.result(timeout=6.0)

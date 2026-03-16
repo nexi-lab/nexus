@@ -104,5 +104,4 @@ STANDARD_WARMUP: tuple[WarmupStep, ...] = (
     WarmupStep("verify_bricks", timeout=timedelta(seconds=10)),
     WarmupStep("warm_caches", timeout=timedelta(seconds=15), required=False),
     WarmupStep("connect_mcp", timeout=timedelta(seconds=10), required=False),
-    WarmupStep("load_context", timeout=timedelta(seconds=20)),
 )

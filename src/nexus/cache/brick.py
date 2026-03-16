@@ -41,7 +41,7 @@ from nexus.cache.settings import CacheSettings
 from nexus.contracts.cache_store import NullCacheStore
 
 if TYPE_CHECKING:
-    from nexus.backends.caching_backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.wrappers.caching import CacheWrapperConfig, CachingBackendWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +111,15 @@ class CacheBrick:
         if self._started:
             return
         try:
-            await self._store.health_check()
+            healthy = await self._store.health_check()
             self._started = True
-            logger.info("[CacheBrick] started (backend=%s)", self.backend_name)
+            if not healthy:
+                logger.warning(
+                    "[CacheBrick] started but health check returned unhealthy (backend=%s)",
+                    self.backend_name,
+                )
+            else:
+                logger.info("[CacheBrick] started (backend=%s)", self.backend_name)
         except Exception as exc:
             logger.warning("[CacheBrick] start health check failed: %s", exc)
             self._started = True  # Still mark as started — silent degradation
@@ -243,14 +249,14 @@ class CacheBrick:
         Returns:
             CachingBackendWrapper wrapping the inner backend.
         """
-        from nexus.backends.caching_backend_wrapper import CacheWrapperConfig as CWC
-        from nexus.backends.caching_backend_wrapper import CachingBackendWrapper
+        from nexus.backends.wrappers.caching import CacheWrapperConfig as CWC
+        from nexus.backends.wrappers.caching import CachingBackendWrapper
 
         effective_config = config or CWC()
 
         wrapped_inner = inner
         if enable_logging:
-            from nexus.backends.logging_wrapper import LoggingBackendWrapper
+            from nexus.backends.wrappers.logging import LoggingBackendWrapper
 
             wrapped_inner = LoggingBackendWrapper(inner=inner)
 

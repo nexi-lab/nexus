@@ -3,7 +3,7 @@
 Tests the async wrappers against real (non-mocked) kernel implementations:
 1. AsyncAgentRegistry with real AgentRegistry + SQLite DB
 2. AsyncNamespaceManager with real NamespaceManager + ReBAC
-3. AsyncVFSRouter with real PathRouter + LocalBackend
+3. AsyncVFSRouter with real PathRouter + CASLocalBackend
 4. Protocol isinstance conformance for all wrappers
 5. Server factory wiring (import path validation)
 
@@ -21,14 +21,16 @@ from pathlib import Path
 
 import pytest
 
-from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
-from nexus.core.router import PathNotMountedError, PathRouter
-from nexus.services.agents.agent_registry import AgentRegistry, InvalidTransitionError
-from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
-from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
-from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-from nexus.services.routing.async_router import AsyncVFSRouter
+from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
+from nexus.contracts.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
+from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
+from nexus.core.router import AsyncVFSRouter, PathNotMountedError, PathRouter
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.agents.agent_registry import (
+    AgentRegistry,
+    AsyncAgentRegistry,
+    InvalidTransitionError,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures: real implementations, not mocks
@@ -55,14 +57,14 @@ def async_registry(sqlite_registry: AgentRegistry) -> AsyncAgentRegistry:
 @pytest.fixture()
 def real_router(tmp_path: Path) -> PathRouter:
     """Real PathRouter with a local backend mount."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from tests.helpers.dict_metastore import DictMetastore
 
     storage = tmp_path / "storage"
     storage.mkdir()
     metastore = DictMetastore()
     router = PathRouter(metastore)
-    backend = LocalBackend(root_path=str(storage))
+    backend = CASLocalBackend(root_path=str(storage))
     router.add_mount("/workspace", backend)
     return router
 
@@ -174,12 +176,12 @@ class TestAsyncAgentRegistryE2E:
 
 
 # ---------------------------------------------------------------------------
-# 3. AsyncVFSRouter with real PathRouter + LocalBackend
+# 3. AsyncVFSRouter with real PathRouter + CASLocalBackend
 # ---------------------------------------------------------------------------
 
 
 class TestAsyncVFSRouterE2E:
-    """Route resolution through AsyncVFSRouter -> real PathRouter -> LocalBackend."""
+    """Route resolution through AsyncVFSRouter -> real PathRouter -> CASLocalBackend."""
 
     @pytest.mark.asyncio()
     async def test_route_resolves(self, async_router: AsyncVFSRouter) -> None:
@@ -243,17 +245,17 @@ class TestServerWiring:
 
     def test_async_agent_registry_import(self) -> None:
         """AsyncAgentRegistry can be imported from the expected path."""
-        from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+        from nexus.system_services.agents.agent_registry import AsyncAgentRegistry
 
         assert AsyncAgentRegistry is not None
 
     def test_async_namespace_manager_import(self) -> None:
-        from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
 
         assert AsyncNamespaceManager is not None
 
     def test_async_router_import(self) -> None:
-        from nexus.services.routing.async_router import AsyncVFSRouter
+        from nexus.core.router import AsyncVFSRouter
 
         assert AsyncVFSRouter is not None
 
@@ -274,8 +276,7 @@ class TestServerLifespanWiring:
     @pytest.mark.asyncio()
     async def test_lifespan_wiring_with_real_db(self, tmp_path: Path) -> None:
         """Simulate server lifespan: AgentRegistry + AsyncAgentRegistry wiring."""
-        from nexus.services.agents.agent_registry import AgentRegistry
-        from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry, AsyncAgentRegistry
 
         # Create real SQLite-backed AgentRegistry (same as server lifespan does)
         db_path = tmp_path / f"lifespan_{uuid.uuid4().hex[:8]}.db"
@@ -332,14 +333,12 @@ class TestServerLifespanWiring:
         """
         from unittest.mock import MagicMock
 
-        from nexus.backends.local import LocalBackend
-        from nexus.bricks.rebac.async_namespace_manager import AsyncNamespaceManager
+        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
+        from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
         from nexus.core.protocols.vfs_router import VFSRouterProtocol
-        from nexus.core.router import PathRouter
-        from nexus.services.agents.agent_registry import AgentRegistry
-        from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
-        from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-        from nexus.services.routing.async_router import AsyncVFSRouter
+        from nexus.core.router import AsyncVFSRouter, PathRouter
+        from nexus.system_services.agents.agent_registry import AgentRegistry, AsyncAgentRegistry
 
         # 1. AgentRegistry + AsyncAgentRegistry (SQLite)
         db_path = tmp_path / f"all3_{uuid.uuid4().hex[:8]}.db"
@@ -350,13 +349,13 @@ class TestServerLifespanWiring:
         # 2. NamespaceManager + AsyncNamespaceManager
         async_ns = AsyncNamespaceManager(MagicMock())
 
-        # 3. PathRouter + AsyncVFSRouter (real LocalBackend)
+        # 3. PathRouter + AsyncVFSRouter (real CASLocalBackend)
         storage = tmp_path / "storage"
         storage.mkdir()
         from tests.helpers.dict_metastore import DictMetastore
 
         sync_router = PathRouter(DictMetastore())
-        sync_router.add_mount("/workspace", LocalBackend(root_path=str(storage)))
+        sync_router.add_mount("/workspace", CASLocalBackend(root_path=str(storage)))
         async_router = AsyncVFSRouter(sync_router)
 
         # All satisfy their protocols
@@ -385,8 +384,7 @@ class TestServerLifespanWiring:
         agent info. This test verifies the async wrapper provides correct data
         for permission decisions.
         """
-        from nexus.services.agents.agent_registry import AgentRegistry
-        from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+        from nexus.system_services.agents.agent_registry import AgentRegistry, AsyncAgentRegistry
 
         db_path = tmp_path / f"perm_{uuid.uuid4().hex[:8]}.db"
         record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}", create_tables=True)

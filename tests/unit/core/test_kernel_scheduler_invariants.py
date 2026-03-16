@@ -12,7 +12,8 @@ import asyncio
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from nexus.services.protocols.scheduler import AgentRequest, InMemoryScheduler
+from nexus.contracts.protocols.scheduler import AgentRequest
+from nexus.system_services.scheduler.in_memory import InMemoryScheduler
 from tests.strategies.kernel import agent_request
 
 # ---------------------------------------------------------------------------

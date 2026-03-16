@@ -1,7 +1,6 @@
-"""Integration tests for distributed event system.
+"""Integration tests for distributed event system (RedisEventBus).
 
-These tests verify the Redis Pub/Sub integration for distributed file events
-and locking across multiple Nexus nodes.
+These tests verify the Redis Pub/Sub integration for distributed file events.
 
 Requirements:
 - Redis or Dragonfly running at localhost:6379 (or NEXUS_REDIS_URL)
@@ -17,17 +16,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from nexus.lib.distributed_lock import RedisLockManager
-    from nexus.services.event_subsystem.bus.redis import RedisEventBus
+    from nexus.system_services.event_bus.redis import RedisEventBus
 
 # Skip entire module if Redis is not available
 pytestmark = pytest.mark.skipif(
     not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),
     reason="Redis not available (set NEXUS_REDIS_URL or REDIS_ENABLED=1)",
-)
-
-_skip_lock_manager = pytest.mark.skip(
-    reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
 
 # =============================================================================
@@ -61,7 +55,7 @@ async def redis_client():
 @pytest.fixture
 async def event_bus(redis_client):
     """Create a RedisEventBus for testing."""
-    from nexus.services.event_subsystem.bus.redis import RedisEventBus
+    from nexus.system_services.event_bus.redis import RedisEventBus
 
     bus = RedisEventBus(redis_client)
     await bus.start()
@@ -69,16 +63,6 @@ async def event_bus(redis_client):
     yield bus
 
     await bus.stop()
-
-
-@pytest.fixture
-async def lock_manager(redis_client):
-    """Create a RedisLockManager for testing."""
-    from nexus.lib.distributed_lock import RedisLockManager
-
-    manager = RedisLockManager(redis_client)
-
-    yield manager
 
 
 # =============================================================================
@@ -92,7 +76,7 @@ class TestRedisEventBusIntegration:
     @pytest.mark.asyncio
     async def test_publish_event(self, event_bus):
         """Test publishing an event to Redis."""
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
@@ -123,8 +107,8 @@ class TestRedisEventBusIntegration:
         """Test publishing and receiving an event."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         # Use unique zone to avoid cross-test contamination in parallel runs
         zone_id = f"pubsub-test-{uuid.uuid4().hex[:8]}"
@@ -178,8 +162,8 @@ class TestRedisEventBusIntegration:
         """Test that events are filtered by path pattern."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         # Use unique zone to avoid cross-test contamination in parallel runs
         zone_id = f"filter-test-{uuid.uuid4().hex[:8]}"
@@ -231,8 +215,8 @@ class TestRedisEventBusIntegration:
     @pytest.mark.asyncio
     async def test_multi_zone_isolation(self, redis_client):
         """Test that events are isolated per zone."""
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         publisher = RedisEventBus(redis_client)
         subscriber = RedisEventBus(redis_client)
@@ -286,330 +270,6 @@ class TestRedisEventBusIntegration:
 
 
 # =============================================================================
-# Lock Manager Integration Tests
-# =============================================================================
-
-
-@_skip_lock_manager
-class TestRedisLockManagerIntegration:
-    """Integration tests for RedisLockManager with real Redis."""
-
-    @pytest.mark.asyncio
-    async def test_acquire_and_release_lock(self, lock_manager):
-        """Test basic lock acquire and release."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/file.txt",
-            timeout=5.0,
-            ttl=30.0,
-        )
-
-        assert lock_id is not None
-        assert len(lock_id) == 36  # UUID format
-
-        # Verify lock exists
-        is_locked = await lock_manager.is_locked("test-zone", "/file.txt")
-        assert is_locked is True
-
-        # Release
-        released = await lock_manager.release(lock_id, "test-zone", "/file.txt")
-        assert released is True
-
-        # Verify lock is gone
-        is_locked = await lock_manager.is_locked("test-zone", "/file.txt")
-        assert is_locked is False
-
-    @pytest.mark.asyncio
-    async def test_lock_exclusivity(self, lock_manager):
-        """Test that locks are exclusive."""
-        # First lock
-        lock_id1 = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/exclusive.txt",
-            timeout=5.0,
-        )
-        assert lock_id1 is not None
-
-        try:
-            # Second lock should fail (timeout)
-            lock_id2 = await lock_manager.acquire(
-                zone_id="test-zone",
-                path="/exclusive.txt",
-                timeout=0.3,
-            )
-            assert lock_id2 is None
-
-        finally:
-            await lock_manager.release(lock_id1, "test-zone", "/exclusive.txt")
-
-    @pytest.mark.asyncio
-    async def test_lock_extend_heartbeat(self, lock_manager):
-        """Test lock extension (heartbeat pattern)."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/heartbeat.txt",
-            timeout=5.0,
-            ttl=2.0,  # Short TTL
-        )
-        assert lock_id is not None
-
-        try:
-            # Extend lock
-            extended = await lock_manager.extend(lock_id, "test-zone", "/heartbeat.txt", ttl=30.0)
-            assert extended is True
-
-            # Verify still locked
-            is_locked = await lock_manager.is_locked("test-zone", "/heartbeat.txt")
-            assert is_locked is True
-
-        finally:
-            await lock_manager.release(lock_id, "test-zone", "/heartbeat.txt")
-
-    @pytest.mark.asyncio
-    async def test_lock_auto_expiry(self, lock_manager):
-        """Test that locks auto-expire after TTL."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/expiring.txt",
-            timeout=5.0,
-            ttl=0.5,  # Very short TTL for testing
-        )
-        assert lock_id is not None
-
-        # Lock should exist
-        is_locked = await lock_manager.is_locked("test-zone", "/expiring.txt")
-        assert is_locked is True
-
-        # Wait for TTL to expire
-        await asyncio.sleep(0.7)
-
-        # Lock should be gone
-        is_locked = await lock_manager.is_locked("test-zone", "/expiring.txt")
-        assert is_locked is False
-
-        # Release should fail (already expired)
-        released = await lock_manager.release(lock_id, "test-zone", "/expiring.txt")
-        assert released is False
-
-    @pytest.mark.asyncio
-    async def test_lock_wrong_owner_cannot_release(self, lock_manager):
-        """Test that wrong owner cannot release lock."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/owned.txt",
-            timeout=5.0,
-        )
-        assert lock_id is not None
-
-        try:
-            # Try to release with wrong lock_id
-            released = await lock_manager.release("wrong-lock-id", "test-zone", "/owned.txt")
-            assert released is False
-
-            # Lock should still exist
-            is_locked = await lock_manager.is_locked("test-zone", "/owned.txt")
-            assert is_locked is True
-
-        finally:
-            await lock_manager.release(lock_id, "test-zone", "/owned.txt")
-
-    @pytest.mark.asyncio
-    async def test_lock_wrong_owner_cannot_extend(self, lock_manager):
-        """Test that wrong owner cannot extend lock."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/extend.txt",
-            timeout=5.0,
-        )
-        assert lock_id is not None
-
-        try:
-            # Try to extend with wrong lock_id
-            extended = await lock_manager.extend("wrong-lock-id", "test-zone", "/extend.txt")
-            assert extended is False
-
-        finally:
-            await lock_manager.release(lock_id, "test-zone", "/extend.txt")
-
-    @pytest.mark.asyncio
-    async def test_get_lock_info(self, lock_manager):
-        """Test getting lock information."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/info.txt",
-            timeout=5.0,
-            ttl=30.0,
-        )
-        assert lock_id is not None
-
-        try:
-            info = await lock_manager.get_lock_info("test-zone", "/info.txt")
-
-            assert info is not None
-            assert info["lock_id"] == lock_id
-            assert info["zone_id"] == "test-zone"
-            assert info["path"] == "/info.txt"
-            assert 0 < info["ttl"] <= 30
-
-        finally:
-            await lock_manager.release(lock_id, "test-zone", "/info.txt")
-
-    @pytest.mark.asyncio
-    async def test_get_lock_info_not_locked(self, lock_manager):
-        """Test getting lock info when not locked."""
-        info = await lock_manager.get_lock_info("test-zone", "/not-locked.txt")
-        assert info is None
-
-    @pytest.mark.asyncio
-    async def test_force_release(self, lock_manager):
-        """Test administrative force release."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/force.txt",
-            timeout=5.0,
-        )
-        assert lock_id is not None
-
-        # Force release (admin operation)
-        released = await lock_manager.force_release("test-zone", "/force.txt")
-        assert released is True
-
-        # Lock should be gone
-        is_locked = await lock_manager.is_locked("test-zone", "/force.txt")
-        assert is_locked is False
-
-    @pytest.mark.asyncio
-    async def test_health_check(self, lock_manager):
-        """Test lock manager health check."""
-        result = await lock_manager.health_check()
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_multi_zone_lock_isolation(self, lock_manager):
-        """Test that locks are isolated per zone."""
-        # Lock same path for different zones
-        lock_a = await lock_manager.acquire(
-            zone_id="zone-A",
-            path="/shared.txt",
-            timeout=5.0,
-        )
-        lock_b = await lock_manager.acquire(
-            zone_id="zone-B",
-            path="/shared.txt",
-            timeout=5.0,
-        )
-
-        try:
-            # Both should succeed (different zones)
-            assert lock_a is not None
-            assert lock_b is not None
-            assert lock_a != lock_b
-
-        finally:
-            await lock_manager.release(lock_a, "zone-A", "/shared.txt")
-            await lock_manager.release(lock_b, "zone-B", "/shared.txt")
-
-
-# =============================================================================
-# Combined Event + Lock Workflow Tests
-# =============================================================================
-
-
-@_skip_lock_manager
-class TestDistributedWorkflows:
-    """Integration tests for combined event and lock workflows."""
-
-    @pytest.mark.asyncio
-    async def test_lock_then_write_emits_event(self, redis_client, lock_manager):
-        """Test workflow: acquire lock, write file, emit event."""
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
-
-        bus = RedisEventBus(redis_client)
-        await bus.start()
-
-        try:
-            # Acquire lock
-            lock_id = await lock_manager.acquire(
-                zone_id="test-zone",
-                path="/workflow.txt",
-                timeout=5.0,
-            )
-            assert lock_id is not None
-
-            # Emit write event
-            event = FileEvent(
-                type=FileEventType.FILE_WRITE,
-                path="/workflow.txt",
-                zone_id="test-zone",
-            )
-            num_subscribers = await bus.publish(event)
-            assert num_subscribers >= 0
-
-            # Release lock
-            released = await lock_manager.release(lock_id, "test-zone", "/workflow.txt")
-            assert released is True
-
-        finally:
-            await bus.stop()
-
-    @pytest.mark.asyncio
-    async def test_meeting_floor_control_pattern(self, lock_manager):
-        """Test meeting floor control pattern with heartbeat."""
-        # Acquire "floor" lock
-        lock_id = await lock_manager.acquire(
-            zone_id="meeting-123",
-            path="/floor",
-            timeout=2.0,
-            ttl=5.0,
-        )
-        assert lock_id is not None
-
-        try:
-            # Simulate speaking with heartbeats
-            for _ in range(3):
-                await asyncio.sleep(0.3)
-                extended = await lock_manager.extend(lock_id, "meeting-123", "/floor", ttl=5.0)
-                assert extended is True
-
-            # Still have the floor
-            is_locked = await lock_manager.is_locked("meeting-123", "/floor")
-            assert is_locked is True
-
-        finally:
-            # Release floor
-            released = await lock_manager.release(lock_id, "meeting-123", "/floor")
-            assert released is True
-
-    @pytest.mark.asyncio
-    async def test_concurrent_lock_contention(self, lock_manager):
-        """Test multiple clients contending for same lock."""
-        results = {"acquired": 0, "failed": 0}
-
-        async def try_acquire(client_id: int):
-            lock_id = await lock_manager.acquire(
-                zone_id="test-zone",
-                path="/contended.txt",
-                timeout=0.5,
-                ttl=2.0,
-            )
-            if lock_id:
-                results["acquired"] += 1
-                # Hold lock briefly
-                await asyncio.sleep(0.1)
-                await lock_manager.release(lock_id, "test-zone", "/contended.txt")
-            else:
-                results["failed"] += 1
-
-        # Run concurrent attempts
-        await asyncio.gather(*[try_acquire(i) for i in range(5)])
-
-        # At least one should acquire, others may fail or acquire after release
-        assert results["acquired"] >= 1
-        assert results["acquired"] + results["failed"] == 5
-
-
-# =============================================================================
 # Path Pattern Filtering Tests (Layer 1 Parity + Additional)
 # =============================================================================
 
@@ -626,8 +286,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/ -> event at /inbox/test.txt -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"dir-match-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -668,8 +328,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/ -> event at /other/test.txt -> no fire."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"dir-nomatch-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -710,8 +370,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/ -> event at /inbox/subdir/test.txt -> fires (recursive)."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"subdir-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -752,8 +412,8 @@ class TestPathPatternFiltering:
         """Watch /root/ -> event at /root/a/b/c/d/deep.txt -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"deep-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -794,8 +454,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/*.txt -> event at /inbox/test.txt -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"glob-ext-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -836,8 +496,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/*.txt -> event at /inbox/test.pdf -> no fire."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"glob-noext-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -877,8 +537,8 @@ class TestPathPatternFiltering:
         """Watch **/*.txt -> event at /a/b/c/test.txt -> fires (cross-folder)."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"glob-cross-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -919,8 +579,8 @@ class TestPathPatternFiltering:
         """Watch exact /inbox/test.txt -> event at same path -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"exact-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -961,8 +621,8 @@ class TestPathPatternFiltering:
         """Watch exact /inbox/test.txt -> event at /inbox/other.txt -> no fire."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"exact-no-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1002,8 +662,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/tes?.txt -> event at /inbox/test.txt -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"glob-q-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1052,8 +712,8 @@ class TestEventTypes:
         """Watch -> FILE_WRITE event -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-write-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1094,8 +754,8 @@ class TestEventTypes:
         """Watch -> FILE_DELETE event -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-delete-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1136,8 +796,8 @@ class TestEventTypes:
         """Watch -> FILE_RENAME event -> fires (matches new path)."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-rename-new-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1180,8 +840,8 @@ class TestEventTypes:
         """Watch -> FILE_RENAME event -> fires (matches old path)."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-rename-old-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1223,8 +883,8 @@ class TestEventTypes:
         """Watch -> DIR_CREATE event -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-dircreate-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1265,8 +925,8 @@ class TestEventTypes:
         """Watch -> DIR_DELETE event -> fires."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-dirdelete-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1304,214 +964,6 @@ class TestEventTypes:
 
 
 # =============================================================================
-# Lock Corner Cases Tests
-# =============================================================================
-
-
-@_skip_lock_manager
-class TestLockCornerCases:
-    """Tests for lock manager corner cases and edge conditions."""
-
-    @pytest.mark.asyncio
-    async def test_lock_zero_timeout_immediate_fail(self, lock_manager):
-        """Lock with timeout=0 -> immediate fail if already locked."""
-        # First lock
-        lock_id1 = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/zero-timeout.txt",
-            timeout=5.0,
-        )
-        assert lock_id1 is not None
-
-        try:
-            # Second lock with zero timeout should fail immediately
-            lock_id2 = await lock_manager.acquire(
-                zone_id="test-zone",
-                path="/zero-timeout.txt",
-                timeout=0.0,
-            )
-            assert lock_id2 is None
-
-        finally:
-            await lock_manager.release(lock_id1, "test-zone", "/zero-timeout.txt")
-
-    @pytest.mark.asyncio
-    async def test_extend_almost_expired_lock(self, lock_manager):
-        """Extend lock that's about to expire -> success."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/almost-expired.txt",
-            timeout=5.0,
-            ttl=1.0,  # 1 second TTL
-        )
-        assert lock_id is not None
-
-        try:
-            # Wait until almost expired
-            await asyncio.sleep(0.8)
-
-            # Extend should still work
-            extended = await lock_manager.extend(
-                lock_id, "test-zone", "/almost-expired.txt", ttl=30.0
-            )
-            assert extended is True
-
-            # Verify still locked
-            is_locked = await lock_manager.is_locked("test-zone", "/almost-expired.txt")
-            assert is_locked is True
-
-        finally:
-            await lock_manager.release(lock_id, "test-zone", "/almost-expired.txt")
-
-    @pytest.mark.asyncio
-    async def test_extend_expired_lock_fails(self, lock_manager):
-        """Extend lock that has already expired -> failure."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/extend-expired.txt",
-            timeout=5.0,
-            ttl=0.3,  # Very short TTL
-        )
-        assert lock_id is not None
-
-        # Wait for expiration
-        await asyncio.sleep(0.5)
-
-        # Extend should fail (lock expired)
-        extended = await lock_manager.extend(lock_id, "test-zone", "/extend-expired.txt", ttl=30.0)
-        assert extended is False
-
-    @pytest.mark.asyncio
-    async def test_double_release(self, lock_manager):
-        """Release lock twice -> second returns False."""
-        lock_id = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/double-release.txt",
-            timeout=5.0,
-        )
-        assert lock_id is not None
-
-        # First release succeeds
-        released1 = await lock_manager.release(lock_id, "test-zone", "/double-release.txt")
-        assert released1 is True
-
-        # Second release fails
-        released2 = await lock_manager.release(lock_id, "test-zone", "/double-release.txt")
-        assert released2 is False
-
-    @pytest.mark.asyncio
-    async def test_lock_after_ttl_expiry(self, lock_manager):
-        """Lock expires by TTL -> new lock on same path succeeds."""
-        lock_id1 = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/ttl-expiry.txt",
-            timeout=5.0,
-            ttl=0.3,
-        )
-        assert lock_id1 is not None
-
-        # Wait for TTL expiry
-        await asyncio.sleep(0.5)
-
-        # New lock should succeed
-        lock_id2 = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/ttl-expiry.txt",
-            timeout=1.0,
-        )
-        assert lock_id2 is not None
-        assert lock_id2 != lock_id1
-
-        await lock_manager.release(lock_id2, "test-zone", "/ttl-expiry.txt")
-
-    @pytest.mark.asyncio
-    async def test_lock_different_zones_same_path(self, lock_manager):
-        """Different zones can lock same path independently."""
-        lock_a = await lock_manager.acquire(
-            zone_id="zone-A",
-            path="/shared-path.txt",
-            timeout=5.0,
-        )
-        lock_b = await lock_manager.acquire(
-            zone_id="zone-B",
-            path="/shared-path.txt",
-            timeout=5.0,
-        )
-
-        try:
-            # Both should succeed
-            assert lock_a is not None
-            assert lock_b is not None
-            assert lock_a != lock_b
-
-        finally:
-            await lock_manager.release(lock_a, "zone-A", "/shared-path.txt")
-            await lock_manager.release(lock_b, "zone-B", "/shared-path.txt")
-
-    @pytest.mark.asyncio
-    async def test_release_wrong_zone(self, lock_manager):
-        """Release lock with wrong zone -> failure."""
-        lock_id = await lock_manager.acquire(
-            zone_id="correct-zone",
-            path="/wrong-zone.txt",
-            timeout=5.0,
-        )
-        assert lock_id is not None
-
-        try:
-            # Try to release with correct lock_id but wrong zone
-            released = await lock_manager.release(lock_id, "wrong-zone", "/wrong-zone.txt")
-            assert released is False
-
-            # Original lock should still exist
-            is_locked = await lock_manager.is_locked("correct-zone", "/wrong-zone.txt")
-            assert is_locked is True
-
-        finally:
-            await lock_manager.release(lock_id, "correct-zone", "/wrong-zone.txt")
-
-    @pytest.mark.asyncio
-    async def test_acquire_waits_for_release(self, lock_manager):
-        """Second acquire waits and succeeds when first releases."""
-        results = {"second_acquired": False, "second_lock_id": None}
-
-        lock_id1 = await lock_manager.acquire(
-            zone_id="test-zone",
-            path="/wait-release.txt",
-            timeout=5.0,
-            ttl=30.0,
-        )
-        assert lock_id1 is not None
-
-        async def second_acquire():
-            results["second_lock_id"] = await lock_manager.acquire(
-                zone_id="test-zone",
-                path="/wait-release.txt",
-                timeout=3.0,
-            )
-            results["second_acquired"] = results["second_lock_id"] is not None
-
-        # Start second acquire in background
-        acquire_task = asyncio.create_task(second_acquire())
-
-        # Wait a bit, then release first lock
-        await asyncio.sleep(0.3)
-        await lock_manager.release(lock_id1, "test-zone", "/wait-release.txt")
-
-        # Wait for second acquire to complete
-        await acquire_task
-
-        try:
-            assert results["second_acquired"] is True
-            assert results["second_lock_id"] is not None
-        finally:
-            if results["second_lock_id"]:
-                await lock_manager.release(
-                    results["second_lock_id"], "test-zone", "/wait-release.txt"
-                )
-
-
-# =============================================================================
 # Distributed-Specific Tests
 # =============================================================================
 
@@ -1524,8 +976,8 @@ class TestDistributedSpecific:
         """Multiple subscribers with same pattern -> all receive event."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"multi-sub-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1583,8 +1035,8 @@ class TestDistributedSpecific:
         """Event metadata (size, etag, agent_id) preserved through pub/sub."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"metadata-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1630,8 +1082,8 @@ class TestDistributedSpecific:
         """Subscriber joins after event published -> doesn't receive old event."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"late-sub-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1671,8 +1123,8 @@ class TestDistributedSpecific:
         """Rapid sequence of events -> subscriber receives them in order."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"rapid-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1726,8 +1178,8 @@ class TestDistributedSpecific:
         """Each event has unique event_id for deduplication."""
         import uuid
 
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.redis import RedisEventBus
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"unique-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1777,224 +1229,6 @@ class TestDistributedSpecific:
 
 
 # =============================================================================
-# Additional Edge Cases Tests
-# =============================================================================
-
-
-@_skip_lock_manager
-@pytest.mark.skipif(
-    not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),
-    reason="Redis not available (set NEXUS_REDIS_URL or REDIS_ENABLED=1)",
-)
-class TestAdditionalEdgeCases:
-    """Additional edge case tests for completeness."""
-
-    @pytest.mark.asyncio
-    async def test_wait_for_event_nonexistent_path_pattern(self, event_bus: "RedisEventBus"):
-        """Test wait_for_event on path that will never receive events."""
-        import uuid
-
-        zone_id = f"nonexistent-{uuid.uuid4().hex[:8]}"
-
-        # Wait for event on a path where nothing happens
-        event = await event_bus.wait_for_event(
-            zone_id=zone_id,
-            path_pattern="/nonexistent/path/that/will/never/match/",
-            timeout=0.5,
-        )
-
-        # Should timeout and return None
-        assert event is None
-
-    @pytest.mark.asyncio
-    async def test_lock_manager_is_locked_never_locked_path(self, lock_manager: "RedisLockManager"):
-        """Test is_locked() on a path that was never locked."""
-        import uuid
-
-        zone_id = f"never-locked-{uuid.uuid4().hex[:8]}"
-
-        # Check a path that was never locked
-        is_locked = await lock_manager.is_locked(
-            zone_id=zone_id,
-            path="/never/locked/path.txt",
-        )
-
-        assert is_locked is False
-
-    @pytest.mark.asyncio
-    async def test_lock_manager_get_lock_info_never_locked(self, lock_manager: "RedisLockManager"):
-        """Test get_lock_info() on a path that was never locked."""
-        import uuid
-
-        zone_id = f"info-never-locked-{uuid.uuid4().hex[:8]}"
-
-        # Get info on never-locked path
-        info = await lock_manager.get_lock_info(
-            zone_id=zone_id,
-            path="/never/locked/info.txt",
-        )
-
-        # Should return None or empty info
-        assert info is None or info.get("locked") is False
-
-
-# =============================================================================
-# Stress and Performance Tests
-# =============================================================================
-
-
-@_skip_lock_manager
-@pytest.mark.skipif(
-    not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),
-    reason="Redis not available (set NEXUS_REDIS_URL or REDIS_ENABLED=1)",
-)
-class TestStressAndPerformance:
-    """Stress tests for high-volume scenarios."""
-
-    @pytest.mark.asyncio
-    async def test_rapid_event_publishing(self, event_bus: "RedisEventBus"):
-        """Test publishing many events rapidly doesn't cause issues."""
-        import uuid
-
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
-
-        zone_id = f"stress-publish-{uuid.uuid4().hex[:8]}"
-
-        # Publish 50 events rapidly
-        publish_count = 50
-        for i in range(publish_count):
-            event = FileEvent(
-                type=FileEventType.FILE_WRITE,
-                path=f"/stress/file_{i}.txt",
-                zone_id=zone_id,
-            )
-            await event_bus.publish(event)
-
-        # No assertions needed - just verify no exceptions
-
-    @pytest.mark.asyncio
-    async def test_rapid_lock_acquire_release(self, lock_manager: "RedisLockManager"):
-        """Test rapid lock acquire/release cycles."""
-        import uuid
-
-        zone_id = f"stress-lock-{uuid.uuid4().hex[:8]}"
-
-        # 20 rapid lock/unlock cycles
-        for i in range(20):
-            path = f"/stress/lock_{i}.txt"
-            lock_id = await lock_manager.acquire(
-                zone_id=zone_id,
-                path=path,
-                timeout=1.0,
-                ttl=5.0,
-            )
-            assert lock_id is not None
-
-            released = await lock_manager.release(
-                lock_id=lock_id,
-                zone_id=zone_id,
-                path=path,
-            )
-            assert released is True
-
-    @pytest.mark.asyncio
-    async def test_event_ordering_under_load(self, event_bus: "RedisEventBus"):
-        """Test that events maintain ordering under load."""
-        import uuid
-
-        from nexus.cache.dragonfly import DragonflyClient
-        from nexus.services.event_subsystem.bus.redis import RedisEventBus
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
-
-        zone_id = f"order-load-{uuid.uuid4().hex[:8]}"
-
-        # Create second bus for subscribing
-        redis_url = os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6379")
-        subscribe_client = DragonflyClient(url=redis_url)
-        await subscribe_client.connect()
-        subscriber = RedisEventBus(subscribe_client)
-        await subscriber.start()
-
-        try:
-            received_events = []
-
-            async def collect_events():
-                for _ in range(10):
-                    event = await subscriber.wait_for_event(
-                        zone_id=zone_id,
-                        path_pattern="/order/",
-                        timeout=3.0,
-                    )
-                    if event:
-                        received_events.append(event)
-
-            collect_task = asyncio.create_task(collect_events())
-            await asyncio.sleep(0.2)
-
-            # Publish 10 events with sequence numbers in path
-            for i in range(10):
-                event = FileEvent(
-                    type=FileEventType.FILE_WRITE,
-                    path=f"/order/file_{i:03d}.txt",
-                    zone_id=zone_id,
-                )
-                await event_bus.publish(event)
-
-            await collect_task
-
-            # Verify we got at least some events (timing-sensitive, may not get all)
-            assert len(received_events) >= 1
-
-            # Verify ordering of received events by extracting sequence from path
-            sequences = []
-            for e in received_events:
-                # Extract sequence number from path like "/order/file_001.txt"
-                try:
-                    seq = int(e.path.split("_")[-1].replace(".txt", ""))
-                    sequences.append(seq)
-                except (ValueError, IndexError):
-                    pass
-
-            for i in range(len(sequences) - 1):
-                assert sequences[i] <= sequences[i + 1], f"Events out of order: {sequences}"
-
-        finally:
-            await subscriber.stop()
-            await subscribe_client.disconnect()
-
-    @pytest.mark.asyncio
-    async def test_concurrent_locks_different_paths(self, lock_manager: "RedisLockManager"):
-        """Test acquiring locks on many different paths concurrently."""
-        import uuid
-
-        zone_id = f"concurrent-locks-{uuid.uuid4().hex[:8]}"
-
-        async def acquire_and_release(path: str):
-            lock_id = await lock_manager.acquire(
-                zone_id=zone_id,
-                path=path,
-                timeout=5.0,
-                ttl=10.0,
-            )
-            if lock_id:
-                await asyncio.sleep(0.1)  # Hold briefly
-                await lock_manager.release(
-                    lock_id=lock_id,
-                    zone_id=zone_id,
-                    path=path,
-                )
-                return True
-            return False
-
-        # Acquire 20 locks concurrently on different paths
-        tasks = [acquire_and_release(f"/concurrent/{i}.txt") for i in range(20)]
-        results = await asyncio.gather(*tasks)
-
-        # All should succeed (different paths)
-        assert all(results)
-
-
-# =============================================================================
 # Error Recovery Tests (Layer 2)
 # =============================================================================
 
@@ -2009,7 +1243,7 @@ class TestErrorRecoveryLayer2:
     @pytest.mark.asyncio
     async def test_publish_to_stopped_bus_raises(self, event_bus: "RedisEventBus"):
         """Test that publishing to stopped bus raises appropriate error."""
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         # Stop the bus first
         await event_bus.stop()
@@ -2054,7 +1288,7 @@ class TestErrorRecoveryLayer2:
     @pytest.mark.asyncio
     async def test_bus_can_restart_after_stop(self, event_bus: "RedisEventBus"):
         """Test that bus can restart after being stopped."""
-        from nexus.services.event_subsystem.types import FileEvent, FileEventType
+        from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
         # Stop the bus
         await event_bus.stop()

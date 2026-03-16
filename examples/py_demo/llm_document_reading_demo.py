@@ -82,8 +82,8 @@ async def main():
         print()
 
         # Create directories
-        nx.sys_mkdir(f"{demo_base}/docs", parents=True)
-        nx.sys_mkdir(f"{demo_base}/reports", parents=True)
+        await nx.sys_mkdir(f"{demo_base}/docs", parents=True)
+        await nx.sys_mkdir(f"{demo_base}/reports", parents=True)
 
         # Create sample documentation
         auth_doc = """# Authentication System
@@ -109,7 +109,7 @@ Our system uses JWT (JSON Web Tokens) for authentication with these features:
 - "Missing authorization header" → Include Bearer token
 """
 
-        nx.sys_write(f"{demo_base}/docs/authentication.md", auth_doc)
+        await nx.sys_write(f"{demo_base}/docs/authentication.md", auth_doc)
         print("✓ Created authentication.md")
 
         # Create API documentation
@@ -154,7 +154,7 @@ Download file
 - Returns: File content
 """
 
-        nx.sys_write(f"{demo_base}/docs/api-reference.md", api_doc)
+        await nx.sys_write(f"{demo_base}/docs/api-reference.md", api_doc)
         print("✓ Created api-reference.md")
 
         # Create quarterly report
@@ -185,7 +185,7 @@ ACTION ITEMS FOR Q1 2025:
 4. Expand support team by 40%
 """
 
-        nx.sys_write(f"{demo_base}/reports/q4-2024.txt", q4_report)
+        await nx.sys_write(f"{demo_base}/reports/q4-2024.txt", q4_report)
         print("✓ Created q4-2024.txt")
 
         print()
@@ -345,7 +345,7 @@ ACTION ITEMS FOR Q1 2025:
         print("════════════════════════════════════════════════════════════")
         print()
 
-        nx.sys_rmdir(demo_base, recursive=True, force=True)
+        await nx.sys_rmdir(demo_base, recursive=True, force=True)
         print("✓ Cleaned up demo files")
         print()
 

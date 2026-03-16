@@ -10,9 +10,8 @@ from typing import Any
 from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import ValidationError
-from nexus.storage.models._base import Base, ResourceConfigMixin, TimestampMixin, uuid_pk
+from nexus.storage.models._base import Base, TimestampMixin, uuid_pk
 
 
 class SandboxMetadataModel(Base):
@@ -79,55 +78,6 @@ class SandboxMetadataModel(Base):
             raise ValidationError(f"status must be one of {valid_statuses}, got {self.status}")
         if self.ttl_minutes is not None and self.ttl_minutes < 1:
             raise ValidationError(f"ttl_minutes must be >= 1, got {self.ttl_minutes}")
-
-
-class MountConfigModel(TimestampMixin, Base):
-    """Persistent mount configuration storage.
-
-    Stores backend mount configurations to survive server restarts.
-    """
-
-    __tablename__ = "mount_configs"
-
-    mount_id: Mapped[str] = uuid_pk()
-
-    mount_point: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    backend_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    readonly: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
-
-    backend_config: Mapped[str] = mapped_column(Text, nullable=False)
-
-    owner_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    conflict_strategy: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
-
-    io_profile: Mapped[str] = mapped_column(String(50), nullable=False, default="balanced")
-
-    __table_args__ = (
-        Index("idx_mount_configs_owner", "owner_user_id"),
-        Index("idx_mount_configs_zone", "zone_id"),
-        Index("idx_mount_configs_backend_type", "backend_type"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<MountConfigModel(mount_id={self.mount_id}, mount_point={self.mount_point}, backend_type={self.backend_type})>"
-
-    def validate(self) -> None:
-        """Validate mount config model before database operations."""
-        if not self.mount_point:
-            raise ValidationError("mount_point is required")
-        if not self.mount_point.startswith("/"):
-            raise ValidationError(f"mount_point must start with '/', got {self.mount_point!r}")
-        if not self.backend_type:
-            raise ValidationError("backend_type is required")
-        if not self.backend_config:
-            raise ValidationError("backend_config is required")
-        try:
-            json.loads(self.backend_config)
-        except json.JSONDecodeError as e:
-            raise ValidationError(f"backend_config must be valid JSON: {e}") from None
 
 
 class SystemSettingsModel(TimestampMixin, Base):
@@ -269,69 +219,3 @@ class MigrationHistoryModel(Base):
             f"{self.from_version}->{self.to_version}, "
             f"type={self.migration_type}, status={self.status})>"
         )
-
-
-class WorkspaceConfigModel(ResourceConfigMixin, Base):
-    """Workspace configuration registry.
-
-    Tracks which directories are registered as workspaces.
-    """
-
-    __tablename__ = "workspace_configs"
-
-    path: Mapped[str] = mapped_column(Text, primary_key=True)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    __table_args__ = (
-        Index("idx_workspace_configs_created_at", "created_at"),
-        Index("idx_workspace_configs_user", "user_id"),
-        Index("idx_workspace_configs_agent", "agent_id"),
-        Index("idx_workspace_configs_session", "session_id"),
-        Index("idx_workspace_configs_expires", "expires_at"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<WorkspaceConfigModel(path={self.path}, name={self.name})>"
-
-
-class UserSessionModel(Base):
-    """User session tracking for session-scoped resources."""
-
-    __tablename__ = "user_sessions"
-
-    session_id: Mapped[str] = uuid_pk()
-
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    last_activity: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    __table_args__ = (
-        Index("idx_session_user", "user_id"),
-        Index("idx_session_agent", "agent_id"),
-        Index("idx_session_zone", "zone_id"),
-        Index("idx_session_expires", "expires_at"),
-        Index("idx_session_created", "created_at"),
-    )
-
-    def __repr__(self) -> str:
-        return f"<UserSessionModel(session_id={self.session_id}, user_id={self.user_id}, expires_at={self.expires_at})>"
-
-    def is_expired(self) -> bool:
-        """Check if session has expired."""
-        if self.expires_at is None:
-            return False
-        return datetime.now(UTC) > self.expires_at

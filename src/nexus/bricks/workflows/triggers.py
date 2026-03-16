@@ -130,7 +130,10 @@ class ScheduleTrigger(BaseTrigger):
         self.interval_seconds = config.get("interval_seconds")
 
     def matches(self, _event_context: dict[str, Any]) -> bool:
-        return False
+        # Schedule triggers always match when fired by the scheduler.
+        # The scheduler is responsible for evaluating cron/interval timing;
+        # fire_event(TriggerType.SCHEDULE, ...) means "it's time to fire."
+        return True
 
 
 class WebhookTrigger(BaseTrigger):

@@ -94,11 +94,13 @@ class TestRemoteMetastoreRPC:
             result = metastore.get("/nonexistent.txt")
             assert result is None
 
-    def test_get_returns_none_on_exception(self, metastore: RemoteMetastore) -> None:
-        """get() should return None when RPC raises an exception."""
-        with patch.object(metastore, "_call_rpc", side_effect=Exception("boom")):
-            result = metastore.get("/error.txt")
-            assert result is None
+    def test_get_propagates_exception(self, metastore: RemoteMetastore) -> None:
+        """get() should propagate RPC exceptions so callers can distinguish errors from not-found."""
+        with (
+            patch.object(metastore, "_call_rpc", side_effect=Exception("boom")),
+            pytest.raises(Exception, match="boom"),
+        ):
+            metastore.get("/error.txt")
 
     def test_put_calls_sys_setattr(self, metastore: RemoteMetastore) -> None:
         """put() should call _call_rpc('sys_setattr', ...)."""
@@ -174,6 +176,21 @@ class TestRemoteMetastoreRPC:
             assert all(isinstance(m, FileMetadata) for m in result)
             assert result[0].path == "/a.txt"
 
+    def test_list_normalizes_empty_prefix_to_root(self, metastore: RemoteMetastore) -> None:
+        """list('') should call sys_readdir('/') because the server requires absolute paths."""
+        with patch.object(
+            metastore,
+            "_call_rpc",
+            return_value=[],
+        ) as mock_rpc:
+            result = metastore.list("", recursive=True)
+
+            mock_rpc.assert_called_once_with(
+                "sys_readdir",
+                {"path": "/", "recursive": True},
+            )
+            assert result == []
+
     def test_list_returns_empty_on_none(self, metastore: RemoteMetastore) -> None:
         """list() should return empty list when server returns None."""
         with patch.object(metastore, "_call_rpc", return_value=None):
@@ -200,6 +217,23 @@ class TestRemoteMetastoreRPC:
                 "items": [
                     {"path": "/x.txt", "backend_name": "r", "physical_path": "/x", "size": 5},
                 ]
+            },
+        ):
+            result = metastore.list("/")
+            assert len(result) == 1
+            assert result[0].path == "/x.txt"
+
+    def test_list_handles_dict_with_files(self, metastore: RemoteMetastore) -> None:
+        """list() should handle the server's 'files' response envelope."""
+        with patch.object(
+            metastore,
+            "_call_rpc",
+            return_value={
+                "files": [
+                    {"path": "/x.txt", "backend_name": "r", "physical_path": "/x", "size": 5},
+                ],
+                "has_more": False,
+                "next_cursor": None,
             },
         ):
             result = metastore.list("/")

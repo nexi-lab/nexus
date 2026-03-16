@@ -20,9 +20,11 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.domain import Entity
 from nexus.bricks.rebac.tuples.repository import TupleRepository
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 # ============================================================================
 # Fixtures
@@ -49,9 +51,15 @@ def engine():
 
 
 @pytest.fixture
-def repo(engine):
+def version_store():
+    """Create an in-memory MetastoreVersionStore for zone revision tracking."""
+    return MetastoreVersionStore(DictMetastore())
+
+
+@pytest.fixture
+def repo(engine, version_store):
     """Create a TupleRepository backed by in-memory SQLite."""
-    return TupleRepository(engine=engine)
+    return TupleRepository(engine=engine, version_store=version_store)
 
 
 def _insert_tuple(
@@ -282,17 +290,12 @@ class TestZoneRevision:
         assert repo.get_zone_revision("root") == 1
 
     def test_get_revision_with_provided_connection(self, repo: TupleRepository):
-        """get_zone_revision reuses a provided connection."""
+        """get_zone_revision with conn= parameter still works (delegates to version_store)."""
+        # Seed a version via increment
         conn = repo.get_connection()
         try:
-            cursor = repo.create_cursor(conn)
-            cursor.execute(
-                repo.fix_sql_placeholders(
-                    "INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at) VALUES (?, ?, ?)"
-                ),
-                ("manual", 42, datetime.now(UTC).isoformat()),
-            )
-            conn.commit()
+            for _ in range(42):
+                repo.increment_zone_revision("manual", conn)
             rev = repo.get_zone_revision("manual", conn=conn)
             assert rev == 42
         finally:
@@ -1066,9 +1069,9 @@ class TestReadWriteSeparation:
         return eng
 
     @pytest.fixture
-    def dual_repo(self, engine, read_engine):
+    def dual_repo(self, engine, read_engine, version_store):
         """Create a TupleRepository with separate write and read engines."""
-        return TupleRepository(engine=engine, read_engine=read_engine)
+        return TupleRepository(engine=engine, read_engine=read_engine, version_store=version_store)
 
     def test_fallback_to_primary_when_no_read_engine(self, engine):
         """When no read_engine is provided, read_engine defaults to engine."""
@@ -1167,26 +1170,15 @@ class TestReadWriteSeparation:
             row = cursor.fetchone()
             assert row["cnt"] == 1
 
-    def test_get_zone_revision_uses_read_engine(self, dual_repo, read_engine):
-        """get_zone_revision() reads from the correct engine."""
-        from sqlalchemy import text
+    def test_get_zone_revision_uses_version_store(self, dual_repo):
+        """get_zone_revision() delegates to MetastoreVersionStore, not SQL engine."""
+        # Seed version via increment (uses version_store, not SQL)
+        conn = dual_repo.get_connection()
+        try:
+            for _ in range(42):
+                dual_repo.increment_zone_revision("test-zone", conn)
+        finally:
+            dual_repo.close_connection(conn)
 
-        # Insert revision directly into read engine
-        with read_engine.connect() as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO rebac_version_sequences "
-                    "(zone_id, current_version, updated_at) "
-                    "VALUES (:zid, :ver, :ts)"
-                ),
-                {
-                    "zid": "test-zone",
-                    "ver": 42,
-                    "ts": datetime.now(UTC).isoformat(),
-                },
-            )
-            conn.commit()
-
-        # get_zone_revision should find 42 in the read engine
         rev = dual_repo.get_zone_revision("test-zone")
         assert rev == 42

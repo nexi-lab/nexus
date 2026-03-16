@@ -38,6 +38,33 @@ class ZoneTlsConfig:
             known_zones_path=tls_dir / "known_zones",
         )
 
+    @classmethod
+    def from_env(cls) -> ZoneTlsConfig | None:
+        """Resolve TLS config from environment variables or auto-detection.
+
+        Checks ``NEXUS_TLS_CERT``/``NEXUS_TLS_KEY``/``NEXUS_TLS_CA`` first,
+        then auto-detects from ``{NEXUS_DATA_DIR}/tls/``.  Returns ``None``
+        when no TLS material is available.
+        """
+        import os
+
+        cert = os.environ.get("NEXUS_TLS_CERT")
+        key = os.environ.get("NEXUS_TLS_KEY")
+        ca = os.environ.get("NEXUS_TLS_CA")
+        if cert and key and ca:
+            return cls(
+                ca_cert_path=Path(ca),
+                node_cert_path=Path(cert),
+                node_key_path=Path(key),
+                known_zones_path=Path(ca).parent / "known_zones",
+            )
+
+        data_dir = os.environ.get("NEXUS_DATA_DIR")
+        if data_dir:
+            return cls.from_data_dir(data_dir)
+
+        return None
+
     @property
     def ca_pem(self) -> bytes:
         return self.ca_cert_path.read_bytes()

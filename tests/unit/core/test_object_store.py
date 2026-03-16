@@ -10,7 +10,7 @@ Tests:
 - Context propagation (direct method parameter)
 - Backend call overhead
 
-Parametrized across LocalBackend and MockBackend.
+Parametrized across CASLocalBackend and MockBackend.
 """
 
 import hashlib
@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.backend import Backend
-from nexus.backends.local import LocalBackend
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import ObjectStoreABC, WriteResult, _validate_hash
 
@@ -96,8 +96,8 @@ class MockBackend(Backend):
 
 @pytest.fixture
 def local_store(tmp_path) -> ObjectStoreABC:
-    """ObjectStoreABC backed by LocalBackend with tmp_path."""
-    return LocalBackend(root_path=str(tmp_path))
+    """ObjectStoreABC backed by CASLocalBackend with tmp_path."""
+    return CASLocalBackend(root_path=str(tmp_path))
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ def mock_store() -> MockBackend:
 def store(request, tmp_path) -> ObjectStoreABC:
     """Parametrized fixture for both local and mock stores."""
     if request.param == "local":
-        return LocalBackend(root_path=str(tmp_path))
+        return CASLocalBackend(root_path=str(tmp_path))
     else:
         return MockBackend()
 

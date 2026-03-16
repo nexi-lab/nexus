@@ -1,0 +1,325 @@
+"""GCS BlobTransport — raw key→blob I/O over Google Cloud Storage.
+
+Shared between CASGCSBackend (CAS addressing) and PathGCSBackend (path
+addressing).  This is the value of orthogonal composition — one transport
+implementation serves both addressing strategies.
+
+Authentication priority:
+    1. access_token (OAuth, for user-scoped connectors)
+    2. credentials_path (service account JSON)
+    3. Application Default Credentials (gcloud auth / GCE service account)
+
+References:
+    - Issue #1323: CAS x Backend orthogonal composition
+"""
+
+from __future__ import annotations
+
+import io
+import logging
+from collections.abc import Iterator
+
+from google.api_core import retry
+from google.cloud import storage
+from google.cloud.exceptions import NotFound
+
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+
+logger = logging.getLogger(__name__)
+
+
+class GCSBlobTransport:
+    """Raw key→blob I/O over Google Cloud Storage.
+
+    Implements the BlobTransport protocol (structural typing — no inheritance).
+    """
+
+    transport_name: str = "gcs"
+
+    def __init__(
+        self,
+        bucket_name: str,
+        project_id: str | None = None,
+        credentials_path: str | None = None,
+        access_token: str | None = None,
+        operation_timeout: float = 60.0,
+        upload_timeout: float = 300.0,
+    ) -> None:
+        try:
+            if access_token:
+                from google.oauth2 import credentials as oauth2_credentials
+
+                creds = oauth2_credentials.Credentials(token=access_token)
+                self.client = storage.Client(project=project_id, credentials=creds)
+            elif credentials_path:
+                self.client = storage.Client.from_service_account_json(
+                    credentials_path, project=project_id
+                )
+            else:
+                self.client = storage.Client(project=project_id)
+
+            self.bucket = self.client.bucket(bucket_name)
+            self.bucket_name = bucket_name
+            self._operation_timeout = operation_timeout
+            self._upload_timeout = upload_timeout
+
+        except Exception as e:
+            raise BackendError(
+                f"Failed to initialize GCS transport: {e}",
+                backend="gcs",
+                path=bucket_name,
+            ) from e
+
+    def verify_bucket(self) -> None:
+        """Verify the bucket exists.  Called during connector init."""
+        if not self.bucket.exists():
+            raise BackendError(
+                f"Bucket '{self.bucket_name}' does not exist",
+                backend="gcs",
+                path=self.bucket_name,
+            )
+
+    def check_versioning(self) -> bool:
+        """Check if bucket has versioning enabled."""
+        self.bucket.reload()
+        return self.bucket.versioning_enabled or False
+
+    # === BlobTransport Protocol Methods ===
+
+    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+        try:
+            blob = self.bucket.blob(key)
+            blob.upload_from_string(
+                data,
+                content_type=content_type or None,
+                timeout=self._operation_timeout,
+                retry=retry.Retry(deadline=120),
+            )
+
+            # Return generation number if versioning, else None
+            blob.reload()
+            return str(blob.generation) if blob.generation else None
+
+        except Exception as e:
+            raise BackendError(
+                f"Failed to upload blob to {key}: {e}",
+                backend="gcs",
+                path=key,
+            ) from e
+
+    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+        try:
+            if version_id and version_id.isdigit():
+                blob = self.bucket.blob(key, generation=int(version_id))
+            else:
+                blob = self.bucket.blob(key)
+
+            if not blob.exists():
+                raise NexusFileNotFoundError(key)
+
+            content = blob.download_as_bytes(
+                timeout=self._operation_timeout,
+                retry=retry.Retry(deadline=120),
+            )
+
+            blob.reload()
+            generation_str = str(blob.generation) if blob.generation else None
+
+            return bytes(content), generation_str
+
+        except NotFound as e:
+            raise NexusFileNotFoundError(key) from e
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to download blob from {key}: {e}",
+                backend="gcs",
+                path=key,
+            ) from e
+
+    def delete_blob(self, key: str) -> None:
+        try:
+            blob = self.bucket.blob(key)
+
+            if not blob.exists():
+                raise NexusFileNotFoundError(key)
+
+            blob.delete(
+                timeout=self._operation_timeout,
+                retry=retry.Retry(deadline=120),
+            )
+
+        except NotFound as e:
+            raise NexusFileNotFoundError(key) from e
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to delete blob at {key}: {e}",
+                backend="gcs",
+                path=key,
+            ) from e
+
+    def blob_exists(self, key: str) -> bool:
+        try:
+            blob = self.bucket.blob(key)
+            return bool(blob.exists())
+        except Exception:
+            return False
+
+    def get_blob_size(self, key: str) -> int:
+        try:
+            blob = self.bucket.blob(key)
+
+            if not blob.exists():
+                raise NexusFileNotFoundError(key)
+
+            blob.reload()
+            size = blob.size
+            if size is None:
+                raise BackendError(
+                    "Failed to get blob size: size is None",
+                    backend="gcs",
+                    path=key,
+                )
+            return int(size)
+
+        except NotFound as e:
+            raise NexusFileNotFoundError(key) from e
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to get blob size for {key}: {e}",
+                backend="gcs",
+                path=key,
+            ) from e
+
+    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+        try:
+            blobs = self.bucket.list_blobs(prefix=prefix, delimiter=delimiter)
+            blob_keys = [blob.name for blob in blobs]
+            common_prefixes = list(blobs.prefixes) if blobs.prefixes else []
+            return blob_keys, common_prefixes
+
+        except Exception as e:
+            raise BackendError(
+                f"Failed to list blobs with prefix {prefix}: {e}",
+                backend="gcs",
+                path=prefix,
+            ) from e
+
+    def copy_blob(self, src_key: str, dst_key: str) -> None:
+        try:
+            source_blob = self.bucket.blob(src_key)
+            if not source_blob.exists():
+                raise NexusFileNotFoundError(src_key)
+
+            self.bucket.copy_blob(source_blob, self.bucket, dst_key)
+
+        except NotFound as e:
+            raise NexusFileNotFoundError(src_key) from e
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to copy blob from {src_key} to {dst_key}: {e}",
+                backend="gcs",
+                path=src_key,
+            ) from e
+
+    def create_directory_marker(self, key: str) -> None:
+        try:
+            blob = self.bucket.blob(key)
+            blob.upload_from_string(
+                "",
+                content_type="application/x-directory",
+                timeout=self._operation_timeout,
+                retry=retry.Retry(deadline=120),
+            )
+        except Exception as e:
+            raise BackendError(
+                f"Failed to create directory marker at {key}: {e}",
+                backend="gcs",
+                path=key,
+            ) from e
+
+    def stream_blob(
+        self,
+        key: str,
+        chunk_size: int = 8192,
+        version_id: str | None = None,
+    ) -> Iterator[bytes]:
+        try:
+            if version_id and version_id.isdigit():
+                blob = self.bucket.blob(key, generation=int(version_id))
+            else:
+                blob = self.bucket.blob(key)
+
+            if not blob.exists():
+                raise NexusFileNotFoundError(key)
+
+            buffer = io.BytesIO()
+            blob.download_to_file(
+                buffer,
+                timeout=self._operation_timeout,
+                retry=retry.Retry(deadline=120),
+            )
+            buffer.seek(0)
+
+            while True:
+                chunk = buffer.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+        except NotFound as e:
+            raise NexusFileNotFoundError(key) from e
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to stream blob from {key}: {e}",
+                backend="gcs",
+                path=key,
+            ) from e
+
+    # === GCS-Specific Extras (not part of BlobTransport protocol) ===
+
+    def generate_signed_url(self, key: str, expires_in: int = 3600, method: str = "GET") -> str:
+        """Generate a V4 signed URL for direct download."""
+        from datetime import timedelta
+
+        blob = self.bucket.blob(key)
+        url: str = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(seconds=min(expires_in, 604800)),
+            method=method,
+        )
+        return url
+
+    def get_generation(self, key: str) -> str | None:
+        """Get GCS generation number for a blob."""
+        try:
+            blob = self.bucket.blob(key)
+            if not blob.exists():
+                return None
+            blob.reload()
+            return str(blob.generation) if blob.generation else None
+        except Exception:
+            return None
+
+    def reload_blob_metadata(self, key: str) -> dict:
+        """Get full blob metadata (size, updated, generation, etc.)."""
+        blob = self.bucket.blob(key)
+        try:
+            blob.reload()
+        except NotFound as e:
+            raise NexusFileNotFoundError(key) from e
+
+        return {
+            "size": blob.size or 0,
+            "updated": blob.updated,
+            "generation": str(blob.generation) if blob.generation else None,
+        }

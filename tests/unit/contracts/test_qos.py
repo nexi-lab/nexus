@@ -20,7 +20,7 @@ from nexus.contracts.qos import (
     QoSClassConfig,
     QoSTuning,
 )
-from nexus.services.agents.resource_monitor import PressureLevel
+from nexus.system_services.agents.resource_monitor import PressureLevel
 
 # ---------------------------------------------------------------------------
 # QoSClass enum

@@ -4,8 +4,7 @@ Agents discover each other by querying the storage driver:
 - ``list_dir /agents/`` = who exists
 - ``read /agents/{id}/AGENT.json`` = capabilities and status
 
-Bridges internal discovery (IPC storage) with external discovery
-(A2A Agent Card at ``/.well-known/agent.json``).
+Bridges internal discovery (IPC storage) with external discovery.
 """
 
 import json

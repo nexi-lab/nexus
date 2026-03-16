@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.protocols.brick_lifecycle import BrickLifecycleProtocol
 from nexus.contracts.types import OperationContext
-from nexus.services.protocols.brick_lifecycle import BrickLifecycleProtocol
 
 # ---------------------------------------------------------------------------
 # Brick mock factories (shared by test_brick_lifecycle + test_brick_reconciler)

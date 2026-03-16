@@ -33,6 +33,7 @@ from nexus.contracts.exceptions import (
     RemoteConnectionError,
     RemoteTimeoutError,
 )
+from nexus.grpc.defaults import build_channel_options
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
@@ -42,16 +43,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 64 MB max message size (matches server config)
-_MAX_MESSAGE_LENGTH = 64 * 1024 * 1024
-
-_CHANNEL_OPTIONS = [
-    ("grpc.max_send_message_length", _MAX_MESSAGE_LENGTH),
-    ("grpc.max_receive_message_length", _MAX_MESSAGE_LENGTH),
-    ("grpc.keepalive_time_ms", 30_000),
-    ("grpc.keepalive_timeout_ms", 10_000),
-    ("grpc.keepalive_permit_without_calls", 1),
-]
+_CHANNEL_OPTIONS = build_channel_options(
+    keepalive_time_ms=30_000,
+    keepalive_timeout_ms=10_000,
+)
 
 
 class RPCTransport:
@@ -94,8 +89,26 @@ class RPCTransport:
                 server_address, creds, options=_CHANNEL_OPTIONS
             )
         else:
+            host = server_address.rsplit(":", 1)[0].strip("[]")
+            import ipaddress as _ipaddress
+
+            _is_local = host == "localhost"
+            if not _is_local:
+                try:
+                    _is_local = _ipaddress.ip_address(host).is_loopback
+                except ValueError:
+                    _is_local = False
+            if not _is_local:
+                raise ValueError(
+                    f"Insecure gRPC channel refused for non-loopback address '{server_address}'. "
+                    "Configure TLS for remote connections."
+                )
             self._channel = grpc.insecure_channel(server_address, options=_CHANNEL_OPTIONS)
         self._stub = vfs_pb2_grpc.NexusVFSServiceStub(self._channel)
+
+        # Pre-warm: trigger eager TCP/TLS handshake so connection establishment
+        # overlaps with NexusFS construction instead of blocking on first RPC.
+        self._channel_ready = grpc.channel_ready_future(self._channel)
 
         # Reuse BaseRemoteNexusFS error handling (static method access)
         self._error_handler = BaseRemoteNexusFS()
@@ -157,6 +170,9 @@ class RPCTransport:
             self._error_handler._handle_rpc_error(error_dict)
 
         result = decode_rpc_message(response.payload)
+        # Unwrap server envelope: gRPC servicer wraps as {"result": actual_result}
+        if isinstance(result, dict) and "result" in result:
+            result = result["result"]
         logger.debug("RPCTransport.call_rpc OK: %s", method)
         return result
 

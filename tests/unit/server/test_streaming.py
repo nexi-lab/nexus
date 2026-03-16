@@ -88,7 +88,7 @@ class TestSignStreamToken:
 
         expires_at_str, signature = parts
         assert expires_at_str.isdigit()
-        assert len(signature) == 16  # hex[:16]
+        assert len(signature) == 64  # full SHA256 hexdigest
 
     def test_expiry_is_in_future(self):
         """expires_at should be current time + expires_in."""

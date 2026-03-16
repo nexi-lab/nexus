@@ -437,48 +437,6 @@ LIMIT 1000;
 """)
 
 
-def get_orphaned_content_view(db_type: str = "sqlite", _zone_id: str | None = None) -> TextClause:
-    """SQL View: orphaned_content_objects - content chunks with no references (GC targets).
-
-    Note: zone_id is accepted for signature consistency with other view generators
-    but is not used (this view queries content_chunks, not file_paths).
-    """
-    create_stmt = (
-        "CREATE OR REPLACE VIEW" if db_type == "postgresql" else "CREATE VIEW IF NOT EXISTS"
-    )
-
-    if db_type == "postgresql":
-        days_since_access = (
-            "CAST(EXTRACT(EPOCH FROM (NOW() - cc.last_accessed_at)) / 86400 AS INTEGER)"
-        )
-        now_expr = _now(db_type)
-        seven_days_ago = _interval_ago("7 days", db_type)
-    else:
-        days_since_access = "CAST(julianday('now') - julianday(cc.last_accessed_at) AS INTEGER)"
-        now_expr = "datetime('now')"
-        seven_days_ago = "datetime('now', '-7 days')"
-
-    return text(f"""
-{create_stmt} orphaned_content_objects AS
-SELECT
-    cc.chunk_id,
-    cc.content_hash,
-    cc.size_bytes,
-    cc.storage_path,
-    cc.ref_count,
-    cc.created_at,
-    cc.last_accessed_at,
-    cc.protected_until,
-    -- Days since last access
-    {days_since_access} as days_since_access
-FROM content_chunks cc
-WHERE cc.ref_count = 0
-  AND (cc.protected_until IS NULL OR cc.protected_until < {now_expr})
-  AND (cc.last_accessed_at IS NULL OR cc.last_accessed_at < {seven_days_ago})
-ORDER BY cc.last_accessed_at ASC NULLS FIRST;
-""")
-
-
 # List of view names and their generator functions
 VIEW_GENERATORS = [
     ("ready_work_items", get_ready_work_view),
@@ -488,7 +446,6 @@ VIEW_GENERATORS = [
     ("in_progress_work", get_in_progress_work_view),
     ("ready_for_indexing", get_ready_for_indexing_view),
     ("hot_tier_eviction_candidates", get_hot_tier_eviction_view),
-    ("orphaned_content_objects", get_orphaned_content_view),
 ]
 
 # SQL to drop all views

@@ -17,7 +17,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Load configuration from .env file (same as docker-demo.sh)
+# Load configuration from .env file (same as nexus-docker.sh)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${PROJECT_ROOT}/.env"
@@ -377,7 +377,7 @@ ensure_docker_sandbox_image() {
     fi
 
     echo -e "${YELLOW}Docker image '${image}' not found.${NC}"
-    # Prefer dockerfiles/build.sh if present to build runtime image (matches docker-demo.sh)
+    # Prefer dockerfiles/build.sh if present to build runtime image (matches nexus-docker.sh)
     if [ -x "${PROJECT_ROOT}/dockerfiles/build.sh" ]; then
         echo -e "${YELLOW}Building sandbox runtime via dockerfiles/build.sh ...${NC}"
         if "${PROJECT_ROOT}/dockerfiles/build.sh"; then
@@ -424,7 +424,7 @@ check_port_2026_available() {
             echo ""
             echo "Stop the server first using one of these commands:"
             echo "   ./scripts/local-demo.sh --stop              # Stop local Nexus server"
-            echo "   ./scripts/docker-demo.sh --stop             # Stop Docker-based server"
+            echo "   ./scripts/nexus-docker.sh --stop             # Stop Docker-based server"
             echo ""
             echo "Or manually kill the process(es):"
             for PID in $PIDS; do
@@ -710,7 +710,7 @@ start_server() {
             echo ""
             echo "  Run: sudo bash -c 'echo \"127.0.0.1    postgres\" >> /etc/hosts'"
             echo ""
-            echo "  This allows the same .env config to work for both local-demo.sh and docker-demo.sh"
+            echo "  This allows the same .env config to work for both local-demo.sh and nexus-docker.sh"
             echo ""
 
             # Auto-fallback to localhost if postgres hostname not mapped
@@ -768,7 +768,7 @@ start_server() {
     # if command -v maturin &> /dev/null || command -v ~/.local/bin/maturin &> /dev/null; then
     #     echo "Building Rust extension..."
     #     MATURIN_CMD=$(command -v maturin || echo ~/.local/bin/maturin)
-    #     [ -d "rust/nexus_fast" ] && (cd rust/nexus_fast && $MATURIN_CMD develop --release --quiet && cd ../..)
+    #     [ -d "rust/nexus_pyo3" ] && (cd rust/nexus_pyo3 && $MATURIN_CMD develop --release --quiet && cd ../..)
     # fi
 
     # Display configuration

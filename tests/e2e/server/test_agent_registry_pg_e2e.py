@@ -31,13 +31,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.agent_types import AgentState
-from nexus.services.agents.agent_registry import (
+from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.system_services.agents.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,
     StaleAgentError,
 )
-from nexus.storage.models import Base
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # PostgreSQL connection for E2E tests
 POSTGRES_URL = os.getenv(
@@ -432,8 +432,8 @@ class TestServerE2E:
                 sys.executable,
                 "-c",
                 (
-                    "from nexus.cli import main; "
-                    f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                    "from nexus.daemon.main import main; "
+                    f"main(['--host', '127.0.0.1', '--port', '{port}', "
                     f"'--data-dir', '{tmp_path}', '--auth-type', 'database', "
                     f"'--init', '--reset', '--admin-user', 'e2e-admin'])"
                 ),
@@ -620,10 +620,17 @@ class TestNamespaceE2E:
 
     def test_namespace_manager_with_postgres(self, pg_engine):
         """NamespaceManager works with PostgreSQL-backed ReBAC."""
+        from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
         from nexus.bricks.rebac.manager import EnhancedReBACManager
         from nexus.bricks.rebac.namespace_manager import NamespaceManager
+        from tests.helpers.dict_metastore import DictMetastore
 
-        rebac = EnhancedReBACManager(engine=pg_engine, cache_ttl_seconds=5, max_depth=10)
+        rebac = EnhancedReBACManager(
+            engine=pg_engine,
+            cache_ttl_seconds=5,
+            max_depth=10,
+            version_store=MetastoreVersionStore(DictMetastore()),
+        )
         tuple_ids: list[str] = []
 
         try:
@@ -787,8 +794,8 @@ class TestRPCEndpoints:
                 sys.executable,
                 "-c",
                 (
-                    "from nexus.cli import main; "
-                    f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                    "from nexus.daemon.main import main; "
+                    f"main(['--host', '127.0.0.1', '--port', '{port}', "
                     f"'--data-dir', '{tmp_path}', '--auth-type', 'database', "
                     f"'--init', '--reset', '--admin-user', 'e2e-rpc-admin'])"
                 ),
@@ -1201,8 +1208,8 @@ class TestDualWriteBridge:
                 sys.executable,
                 "-c",
                 (
-                    "from nexus.cli import main; "
-                    f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                    "from nexus.daemon.main import main; "
+                    f"main(['--host', '127.0.0.1', '--port', '{port}', "
                     f"'--data-dir', '{tmp_path}', '--auth-type', 'database', "
                     f"'--init', '--reset', '--admin-user', 'e2e-dual-admin'])"
                 ),

@@ -4,7 +4,6 @@ Tests the validation methods on all domain types:
 - FileMetadata
 - FilePathModel
 - FileMetadataModel
-- ContentChunkModel
 """
 
 from datetime import UTC, datetime
@@ -13,7 +12,7 @@ import pytest
 
 from nexus.contracts.exceptions import ValidationError
 from nexus.contracts.metadata import FileMetadata
-from nexus.storage.models import ContentChunkModel, FileMetadataModel, FilePathModel
+from nexus.storage.models import FileMetadataModel, FilePathModel
 
 
 class TestFileMetadataValidation:
@@ -232,87 +231,6 @@ class TestFileMetadataModelValidation:
             metadata.validate()
 
 
-class TestContentChunkModelValidation:
-    """Test suite for ContentChunkModel validation."""
-
-    def test_valid_content_chunk_model(self):
-        """Test that valid ContentChunkModel passes validation."""
-        chunk = ContentChunkModel(
-            content_hash="a" * 64,
-            size_bytes=1024,
-            storage_path="/storage/chunks/abc",
-            ref_count=1,
-        )
-        # Should not raise
-        chunk.validate()
-
-    def test_content_hash_required(self):
-        """Test that content_hash is required."""
-        chunk = ContentChunkModel(
-            content_hash="",
-            size_bytes=1024,
-            storage_path="/storage/chunks/abc",
-            ref_count=1,
-        )
-        with pytest.raises(ValidationError, match="content_hash is required"):
-            chunk.validate()
-
-    def test_content_hash_length(self):
-        """Test that content_hash must be 64 characters."""
-        chunk = ContentChunkModel(
-            content_hash="tooshort",
-            size_bytes=1024,
-            storage_path="/storage/chunks/abc",
-            ref_count=1,
-        )
-        with pytest.raises(ValidationError, match="content_hash must be 64 characters"):
-            chunk.validate()
-
-    def test_content_hash_hex_only(self):
-        """Test that content_hash must contain only hex characters."""
-        chunk = ContentChunkModel(
-            content_hash="z" * 64,  # Invalid hex
-            size_bytes=1024,
-            storage_path="/storage/chunks/abc",
-            ref_count=1,
-        )
-        with pytest.raises(ValidationError, match="content_hash must contain only hexadecimal"):
-            chunk.validate()
-
-    def test_size_bytes_cannot_be_negative(self):
-        """Test that size_bytes cannot be negative."""
-        chunk = ContentChunkModel(
-            content_hash="a" * 64,
-            size_bytes=-100,
-            storage_path="/storage/chunks/abc",
-            ref_count=1,
-        )
-        with pytest.raises(ValidationError, match="size_bytes cannot be negative"):
-            chunk.validate()
-
-    def test_storage_path_required(self):
-        """Test that storage_path is required."""
-        chunk = ContentChunkModel(
-            content_hash="a" * 64,
-            size_bytes=1024,
-            storage_path="",
-            ref_count=1,
-        )
-        with pytest.raises(ValidationError, match="storage_path is required"):
-            chunk.validate()
-
-    def test_ref_count_cannot_be_negative(self):
-        """Test that ref_count cannot be negative."""
-        chunk = ContentChunkModel(
-            content_hash="a" * 64,
-            size_bytes=1024,
-            storage_path="/storage/chunks/abc",
-            ref_count=-1,
-        )
-        with pytest.raises(ValidationError, match="ref_count cannot be negative"):
-            chunk.validate()
-
-
 class TestTableDrivenValidation:
     """Table-driven validation tests for comprehensive coverage."""
 
@@ -347,40 +265,3 @@ class TestTableDrivenValidation:
         else:
             # Should not raise
             metadata.validate()
-
-    @pytest.mark.parametrize(
-        "content_hash,size_bytes,ref_count,should_fail,error_match",
-        [
-            # Valid cases
-            ("a" * 64, 0, 0, False, None),
-            ("0" * 64, 1024, 1, False, None),
-            ("f" * 64, 9999, 100, False, None),
-            # Invalid hash length
-            ("tooshort", 100, 1, True, "content_hash must be 64 characters"),
-            ("a" * 63, 100, 1, True, "content_hash must be 64 characters"),
-            ("a" * 65, 100, 1, True, "content_hash must be 64 characters"),
-            # Invalid hash characters
-            ("z" * 64, 100, 1, True, "content_hash must contain only hexadecimal"),
-            ("x" * 64, 100, 1, True, "content_hash must contain only hexadecimal"),
-            # Invalid sizes and counts
-            ("a" * 64, -1, 1, True, "size_bytes cannot be negative"),
-            ("a" * 64, 100, -1, True, "ref_count cannot be negative"),
-        ],
-    )
-    def test_content_chunk_validation_table(
-        self, content_hash, size_bytes, ref_count, should_fail, error_match
-    ):
-        """Table-driven test for ContentChunkModel validation."""
-        chunk = ContentChunkModel(
-            content_hash=content_hash,
-            size_bytes=size_bytes,
-            storage_path="/storage/chunks/test",
-            ref_count=ref_count,
-        )
-
-        if should_fail:
-            with pytest.raises(ValidationError, match=error_match):
-                chunk.validate()
-        else:
-            # Should not raise
-            chunk.validate()

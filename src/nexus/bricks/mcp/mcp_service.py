@@ -11,10 +11,11 @@ Extracted from: nexus_fs_mcp.py (379 lines)
 
 import builtins
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.lib.rpc_decorator import rpc_expose
-from nexus.services.protocols.filesystem import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +70,21 @@ class MCPService:
 
     def __init__(
         self,
-        filesystem: NexusFilesystem | None = None,
+        filesystem: NexusFilesystemABC | None = None,
+        *,
+        credential_service: Any = None,
+        mount_lister: Callable[[], list[tuple[str, str]]] | None = None,
     ):
         """Initialize MCP service.
 
         Args:
             filesystem: Filesystem Protocol for list/read operations and manager creation
+            credential_service: OAuthCredentialService for token lookup (mcp_connect)
+            mount_lister: Callable returning (mount_point, backend_type) pairs
         """
         self._filesystem = filesystem
+        self._credential_service = credential_service
+        self._mount_lister = mount_lister
 
         logger.info("[MCPService] Initialized")
 
@@ -209,9 +217,7 @@ class MCPService:
                 if self._filesystem is None:
                     raise RuntimeError("Filesystem not configured for MCPService")
 
-                items = await asyncio.to_thread(
-                    self._filesystem.sys_readdir, mount.tools_path, recursive=False
-                )
+                items = await self._filesystem.sys_readdir(mount.tools_path, recursive=False)
 
                 for item in items:
                     if isinstance(item, str) and item.endswith(".json"):
@@ -219,8 +225,8 @@ class MCPService:
                         if item.endswith("mount.json"):
                             continue
                         try:
-                            # Read tool definition file (run in thread)
-                            raw = await asyncio.to_thread(self._filesystem.sys_read, item)
+                            # Read tool definition file
+                            raw = await self._filesystem.sys_read(item)
                             if isinstance(raw, bytes):
                                 text = raw.decode("utf-8")
                             elif isinstance(raw, str):
@@ -258,8 +264,8 @@ class MCPService:
         env: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
         description: str | None = None,
-        tier: str = "system",
-        context: "OperationContext | None" = None,
+        tier: str = "system",  # noqa: ARG002
+        context: "OperationContext | None" = None,  # noqa: ARG002
     ) -> dict[str, Any]:
         """Mount an MCP server.
 
@@ -358,7 +364,7 @@ class MCPService:
         manager = self._get_mcp_mount_manager()
 
         # Mount the server (async operation)
-        await manager.mount(mount_config, tier=tier, context=context)
+        await manager.mount(mount_config)
 
         # Sync tools (async operation)
         tool_count = await manager.sync_tools(name)
@@ -475,6 +481,353 @@ class MCPService:
         return {"name": name, "tool_count": tool_count}
 
     # =========================================================================
+    # Public API: MCP Provider Connection (Klavis)
+    # =========================================================================
+
+    @rpc_expose(description="Connect to MCP provider via Klavis")
+    async def mcp_connect(
+        self,
+        provider: str,
+        redirect_url: str | None = None,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Connect to an MCP provider using Klavis hosted OAuth.
+
+        Creates a Klavis MCP instance for the provider.  If OAuth tokens
+        are stored for this provider, passes them to Klavis.  Otherwise
+        returns an OAuth URL for authentication.
+
+        Args:
+            provider: MCP provider name (e.g. "google_drive", "gmail", "slack")
+            redirect_url: OAuth redirect URL for OAuth flow
+            context: Operation context for user identification
+
+        Returns:
+            Dict with provider, instance_id, oauth_url/strata_url, etc.
+
+        Raises:
+            ValueError: If KLAVIS_API_KEY not set or provider not supported
+        """
+        import importlib as _il
+        import json as json_module
+        import os
+        from datetime import UTC, datetime
+
+        import httpx
+
+        from nexus.backends.misc.service_map import ServiceMap
+
+        _mcp_models = _il.import_module("nexus.bricks.mcp.models")
+        MCPMount = _mcp_models.MCPMount
+        MCPToolConfig = _mcp_models.MCPToolConfig
+        MCPToolDefinition = _mcp_models.MCPToolDefinition
+        _mcp_oauth = _il.import_module("nexus.bricks.mcp.oauth_mappings")
+        OAuthKlavisMappings = _mcp_oauth.OAuthKlavisMappings
+
+        klavis_api_key = os.environ.get("KLAVIS_API_KEY")
+        if not klavis_api_key:
+            raise ValueError("KLAVIS_API_KEY environment variable not set")
+
+        # Get user info from context
+        user_id = "admin"
+        if context:
+            user_id = getattr(context, "user_id", None) or "admin"
+
+        # Create unique Klavis user ID for this Nexus user
+        klavis_user_id = f"nexus-{user_id}"
+
+        headers = {
+            "Authorization": f"Bearer {klavis_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        oauth_mappings = OAuthKlavisMappings()
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Step 1: Check for stored OAuth credentials and pass to Klavis via set_auth
+            oauth_provider = oauth_mappings.get_oauth_provider_for_klavis_mcp(provider)
+            used_stored_token = False
+
+            if oauth_provider and self._credential_service is not None:
+                try:
+                    token_manager = self._credential_service._get_token_manager()
+                    credential = None
+
+                    mapping = oauth_mappings.get_mapping(oauth_provider)
+                    local_providers = mapping.local_providers if mapping else [oauth_provider]
+                    logger.info(
+                        "Looking for credentials: oauth_provider=%s, "
+                        "local_providers=%s, user_id=%s",
+                        oauth_provider,
+                        local_providers,
+                        user_id,
+                    )
+
+                    credentials = await token_manager.list_credentials(user_id=user_id)
+                    logger.info("Found %d credentials for user_id=%s", len(credentials), user_id)
+
+                    if not credentials:
+                        logger.info(
+                            "No credentials found with user_id filter, trying without filter"
+                        )
+                        credentials = await token_manager.list_credentials()
+                        logger.info("Found %d total credentials", len(credentials))
+
+                    for cred_info in credentials:
+                        cred_provider = cred_info.get("provider")
+                        if cred_provider == oauth_provider or cred_provider in local_providers:
+                            user_email = cred_info.get("user_email")
+                            if user_email:
+                                credential = await token_manager.get_credential(
+                                    provider=cred_provider,
+                                    user_email=user_email,
+                                )
+                            if credential:
+                                logger.info(
+                                    "Found matching credential for %s:%s",
+                                    cred_provider,
+                                    cred_info.get("user_email"),
+                                )
+                                break
+
+                    if credential and credential.access_token:
+                        logger.info(
+                            "Passing stored %s token to Klavis for %s",
+                            oauth_provider,
+                            provider,
+                        )
+                        set_auth_resp = await client.post(
+                            "https://api.klavis.ai/user/set-auth",
+                            json={
+                                "serverName": provider,
+                                "userId": klavis_user_id,
+                                "authData": {
+                                    "data": {
+                                        "access_token": credential.access_token,
+                                        "token_type": "Bearer",
+                                        "refresh_token": credential.refresh_token,
+                                    }
+                                },
+                            },
+                            headers=headers,
+                        )
+                        if set_auth_resp.status_code == 200:
+                            logger.info("Successfully passed token to Klavis for %s", provider)
+                            used_stored_token = True
+                        else:
+                            logger.warning("Failed to pass token to Klavis: %s", set_auth_resp.text)
+                except Exception as e:
+                    logger.debug("Could not pass stored token to Klavis: %s", e)
+
+            # Step 2: Create MCP instance
+            create_resp = await client.post(
+                "https://api.klavis.ai/mcp-server/instance/create",
+                json={
+                    "serverName": provider,
+                    "userId": klavis_user_id,
+                },
+                headers=headers,
+            )
+            create_resp.raise_for_status()
+            instance_data = create_resp.json()
+            instance_id = instance_data.get("instanceId")
+            server_url = instance_data.get("serverUrl") or instance_data.get("url")
+            logger.info("Klavis instance created: id=%s, server_url=%s", instance_id, server_url)
+
+            # Step 3: Get instance status to check if authenticated
+            status_resp = await client.get(
+                f"https://api.klavis.ai/mcp-server/instance/{instance_id}",
+                headers=headers,
+            )
+            status_resp.raise_for_status()
+            status_data = status_resp.json()
+            if not server_url:
+                server_url = status_data.get("serverUrl") or status_data.get("url")
+
+            is_authenticated = status_data.get("isAuthenticated", False)
+
+            # If not authenticated after passing token, return OAuth URL
+            if not is_authenticated:
+                oauth_url = status_data.get("oauthUrl")
+                if redirect_url and oauth_url:
+                    separator = "&" if "?" in oauth_url else "?"
+                    oauth_url = f"{oauth_url}{separator}redirect_url={redirect_url}"
+
+                logger.info("MCP OAuth URL generated for %s, user=%s", provider, klavis_user_id)
+                return {
+                    "provider": provider,
+                    "instance_id": instance_id,
+                    "oauth_url": oauth_url,
+                    "is_authenticated": False,
+                    "used_stored_token": used_stored_token,
+                    "user_id": klavis_user_id,
+                }
+
+            # Step 4: Get strata URL for authenticated user
+            strata_url = None
+            try:
+                strata_resp = await client.post(
+                    "https://api.klavis.ai/mcp-server/strata/create",
+                    json={
+                        "serverName": provider,
+                        "userId": klavis_user_id,
+                    },
+                    headers=headers,
+                )
+                if strata_resp.status_code == 200:
+                    strata_data = strata_resp.json()
+                    strata_url = strata_data.get("strataUrl")
+                else:
+                    logger.warning(
+                        "Klavis strata/create returned %d: %s",
+                        strata_resp.status_code,
+                        strata_resp.text,
+                    )
+            except Exception as e:
+                logger.warning("Klavis strata/create failed: %s", e)
+
+            # Step 5: Get available tools
+            tools: list[dict[str, Any]] = []
+            list_tools_payload: dict[str, Any] = {"userId": klavis_user_id}
+            if server_url:
+                list_tools_payload["serverUrl"] = server_url
+            else:
+                list_tools_payload["serverName"] = provider
+
+            tools_resp = await client.post(
+                "https://api.klavis.ai/mcp-server/list-tools",
+                json=list_tools_payload,
+                headers=headers,
+            )
+            logger.info("Klavis list-tools response: %d", tools_resp.status_code)
+            if tools_resp.status_code == 200:
+                tools_data = tools_resp.json()
+                if tools_data.get("success"):
+                    tools = tools_data.get("tools", [])
+                else:
+                    logger.warning("Klavis list-tools returned success=False: %s", tools_data)
+            else:
+                logger.warning(
+                    "Klavis list-tools failed: %d - %s",
+                    tools_resp.status_code,
+                    tools_resp.text,
+                )
+
+            # Step 6: Generate SKILL.md, mount.json, and tool files
+            service_name = ServiceMap.get_service_name(mcp=provider) or provider
+            skill_base_path = f"/skills/users/{user_id}/"
+            skill_path = f"{skill_base_path}{service_name}/"
+            skill_file = f"{skill_path}SKILL.md"
+            mount_file = f"{skill_path}mount.json"
+
+            service_info = ServiceMap.get_service_info(service_name)
+            data_mount_path = skill_path
+            if service_info and service_info.connector and self._mount_lister is not None:
+                mount_entries = self._mount_lister()
+                connector_variants = [
+                    service_info.connector.lower().replace("_", ""),
+                    service_info.connector.lower().replace("_connector", ""),
+                    "googledrive",
+                ]
+                for mount_point_str, backend_type in mount_entries:
+                    backend_type_lower = backend_type.lower()
+                    for variant in connector_variants:
+                        if variant in backend_type_lower:
+                            data_mount_path = mount_point_str
+                            break
+                    if data_mount_path != skill_path:
+                        break
+
+            # Build simple SKILL.md content inline (skill_doc module was removed)
+            tool_lines = "\n".join(
+                f"- **{t.get('name', '?')}**: {t.get('description', '')}" for t in tools
+            )
+            skill_md = (
+                f"# {service_name}\n\nMount path: `{data_mount_path}`\n\n## Tools\n\n{tool_lines}\n"
+            )
+
+            try:
+                if self._filesystem is not None:
+                    await self._filesystem.sys_mkdir(skill_path, parents=True, exist_ok=True)
+                    await self._filesystem.sys_write(
+                        skill_file, skill_md.encode("utf-8"), context=context
+                    )
+                    logger.info("Generated MCP skill: %s", skill_file)
+
+                    now = datetime.now(UTC)
+                    mount_config = MCPMount(
+                        name=service_name,
+                        description=(
+                            service_info.description
+                            if service_info
+                            else f"{provider} MCP integration"
+                        ),
+                        transport="klavis_rest",
+                        url=server_url or strata_url,
+                        klavis_strata_id=instance_id,
+                        auth_type="oauth",
+                        auth_config={"klavis_user_id": klavis_user_id},
+                        tools_path=skill_path,
+                        mounted=True,
+                        mounted_at=now,
+                        last_sync=now,
+                        tool_count=len(tools),
+                        tools=[t.get("name", "") for t in tools],
+                        tier="user",
+                    )
+                    mount_json = json_module.dumps(mount_config.to_dict(), indent=2)
+                    await self._filesystem.sys_write(
+                        mount_file, mount_json.encode("utf-8"), context=context
+                    )
+                    logger.info("Generated mount config: %s", mount_file)
+
+                    for tool in tools:
+                        tool_name = tool.get("name", "")
+                        if not tool_name:
+                            continue
+                        tool_config = MCPToolConfig(
+                            endpoint=f"mcp://{service_name}/{tool_name}",
+                            input_schema=tool.get("inputSchema", {}),
+                            requires_mount=True,
+                            mount_name=service_name,
+                            when_to_use=tool.get("description", ""),
+                        )
+                        tool_def = MCPToolDefinition(
+                            name=tool_name,
+                            description=tool.get("description", ""),
+                            version="1.0.0",
+                            skill_type="mcp_tool",
+                            mcp_config=tool_config,
+                            created_at=now,
+                            modified_at=now,
+                        )
+                        tool_file = f"{skill_path}{tool_name}.json"
+                        tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
+                        await self._filesystem.sys_write(
+                            tool_file,
+                            tool_json.encode("utf-8"),
+                            context=context,
+                        )
+
+                    logger.info("Generated %d tool definitions in %s", len(tools), skill_path)
+
+            except Exception as e:
+                logger.warning("Failed to write skill files: %s", e)
+
+            return {
+                "provider": provider,
+                "instance_id": instance_id,
+                "strata_url": strata_url,
+                "is_authenticated": True,
+                "tools": tools,
+                "tool_count": len(tools),
+                "skill_path": skill_file,
+                "mount_path": mount_file,
+                "tools_path": skill_path,
+                "user_id": klavis_user_id,
+            }
+
+    # =========================================================================
     # Helper Methods
     # =========================================================================
 
@@ -497,35 +850,3 @@ class MCPService:
             raise RuntimeError("Filesystem not configured for MCPService")
 
         return MCPMountManager(self._filesystem)
-
-
-# =============================================================================
-# Phase 2 Extraction Progress
-# =============================================================================
-#
-# Status: Implementation complete ✅
-#
-# Completed:
-# 1. [✅] Extract mcp_list_mounts() and mount listing logic
-# 2. [✅] Extract mcp_list_tools() and tool querying logic
-# 3. [✅] Extract mcp_mount() with transport auto-detection
-# 4. [✅] Extract mcp_unmount() for clean server shutdown
-# 5. [✅] Extract mcp_sync() for tool refresh
-# 6. [✅] Extract helper method (_get_mcp_mount_manager)
-#
-# Remaining tasks:
-# 7. [ ] Add unit tests for MCPService
-# 8. [ ] Update NexusFS to use composition
-# 9. [ ] Add backward compatibility shims with deprecation warnings
-# 10. [ ] Update documentation and migration guide
-#
-# Lines extracted: 379 / 379 (100%)
-# Files affected: 1 created (mcp_service.py)
-#
-# Key changes from original mixin:
-# - All methods are now fully async (removed _run_async_mcp_operation wrapper)
-# - Blocking I/O wrapped with asyncio.to_thread() to avoid blocking event loop
-# - MCPMountManager operations directly awaited (manager.mount, manager.sync_tools, etc.)
-# - Filesystem operations (list/read) wrapped with asyncio.to_thread()
-# - Clean dependency injection via __init__ (nexus_fs)
-#

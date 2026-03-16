@@ -52,7 +52,7 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
 
 @pytest.fixture(scope="module")
 def server():
-    """Start nexus serve with database auth and permissions enabled."""
+    """Start nexusd with database auth and permissions enabled."""
     port = _find_free_port()
     data_dir = tempfile.mkdtemp(prefix="nexus_ns_e2e_")
     backend_root = os.path.join(data_dir, "backend")
@@ -81,7 +81,7 @@ def server():
         [
             PYTHON,
             "-c",
-            f"from nexus.cli import main; main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{data_dir}'])",
+            f"from nexus.daemon.main import main; main(['--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{data_dir}'])",
         ],
         env=env,
         stdout=subprocess.PIPE,

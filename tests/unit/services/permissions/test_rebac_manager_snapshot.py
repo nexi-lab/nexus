@@ -23,16 +23,15 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import (
     EnhancedReBACManager,
 )
 from nexus.contracts.rebac_types import (
-    ConsistencyLevel,
-    ConsistencyMode,
-    ConsistencyRequirement,
     WriteResult,
 )
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 
 @pytest.fixture
@@ -68,6 +67,7 @@ def engine():
 @pytest.fixture
 def manager(engine):
     """Create EnhancedReBACManager for testing."""
+    version_store = MetastoreVersionStore(DictMetastore())
     mgr = EnhancedReBACManager(
         engine=engine,
         cache_ttl_seconds=300,
@@ -76,6 +76,7 @@ def manager(engine):
         enable_graph_limits=True,
         enable_leopard=True,
         enable_tiger_cache=False,  # SQLite doesn't support Tiger
+        version_store=version_store,
     )
     yield mgr
     mgr.close()
@@ -525,11 +526,11 @@ class TestExpandAPI:
         assert ("group", "team-x") in subjects
 
 
-class TestConsistencyLevels:
-    """Test consistency levels for cache control."""
+class TestCachedConsistency:
+    """Test that checks always use cached (eventual) consistency."""
 
-    def test_consistency_eventual_uses_cache(self, manager):
-        """ConsistencyLevel.EVENTUAL uses cache."""
+    def test_check_uses_cache(self, manager):
+        """Checks use cache by default (always cached consistency)."""
         # Write a permission
         manager.rebac_write(
             subject=("user", "alice"),
@@ -542,7 +543,6 @@ class TestConsistencyLevels:
             subject=("user", "alice"),
             permission="viewer-of",
             object=("file", "/cached.txt"),
-            consistency=ConsistencyLevel.EVENTUAL,
         )
 
         # Second check should hit cache
@@ -550,54 +550,10 @@ class TestConsistencyLevels:
             subject=("user", "alice"),
             permission="viewer-of",
             object=("file", "/cached.txt"),
-            consistency=ConsistencyLevel.EVENTUAL,
         )
 
         assert result1 is True
         assert result2 is True
-
-    def test_consistency_strong_bypasses_cache(self, manager):
-        """ConsistencyLevel.STRONG bypasses cache."""
-        # Write a permission
-        manager.rebac_write(
-            subject=("user", "bob"),
-            relation="editor-of",
-            object=("file", "/fresh.txt"),
-        )
-
-        # STRONG consistency bypasses cache
-        result = manager.rebac_check(
-            subject=("user", "bob"),
-            permission="editor-of",
-            object=("file", "/fresh.txt"),
-            consistency=ConsistencyLevel.STRONG,
-        )
-
-        assert result is True
-
-    def test_consistency_requirement_at_least_as_fresh(self, manager):
-        """ConsistencyRequirement with AT_LEAST_AS_FRESH."""
-        # Write a permission and get revision
-        write_result = manager.rebac_write(
-            subject=("user", "charlie"),
-            relation="owner-of",
-            object=("file", "/versioned.txt"),
-        )
-
-        # Check with AT_LEAST_AS_FRESH using the write revision
-        consistency_req = ConsistencyRequirement(
-            mode=ConsistencyMode.AT_LEAST_AS_FRESH,
-            min_revision=write_result.revision,
-        )
-
-        result = manager.rebac_check(
-            subject=("user", "charlie"),
-            permission="owner-of",
-            object=("file", "/versioned.txt"),
-            consistency=consistency_req,
-        )
-
-        assert result is True
 
 
 class TestBulkCheck:
@@ -790,7 +746,7 @@ class TestConsistencyModuleIntegration:
             assert isinstance(result, WriteResult)
 
             # Cross-zone write with non-shared relation should fail
-            from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
+            from nexus.bricks.rebac.consistency.zone_manager import ZoneIsolationError
 
             with pytest.raises(ZoneIsolationError):
                 mgr.rebac_write(

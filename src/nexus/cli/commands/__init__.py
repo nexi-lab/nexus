@@ -1,122 +1,193 @@
-"""Nexus CLI Commands - Modular command structure.
+"""Nexus CLI Commands - modular command structure with lazy top-level loading."""
 
-This package contains all CLI commands organized by functionality:
-- file_ops: File operations (init, cat, write, cp, mv, sync, rm)
-- directory: Directory operations (ls, mkdir, rmdir, tree)
-- search: Search and discovery (glob, grep, find-duplicates)
-- permissions: Permission management (chmod, chown, chgrp, getfacl, setfacl)
-- rebac: Relationship-based access control
-- skills: Skills management system
-- versions: Version tracking and rollback
-- metadata: Metadata operations (info, version, export, import, size)
-- work: Work queue management
-- server: Server operations (serve, mount, unmount)
-- plugins: Plugin management
-- workflows: Workflow automation system
-"""
+import importlib
+from dataclasses import dataclass
+from typing import Any
 
 import click
 
-# Import all command registration functions
-from nexus.cli.commands import (
-    admin,
-    agent,
-    cache,
-    connectors,
-    context,  # Issue #1315: Context versioning — workspace branching
-    directory,
-    file_ops,
-    llm,
-    mcp,
-    memory,
-    metadata,
-    migrate,
-    mounts,
-    network,
-    oauth,
-    operations,
-    plugins,
-    rebac,
-    sandbox,
-    search,
-    server,
-    skills,
-    tls,
-    versions,
-    work,
-    workflows,
-    workspace,
-)
-from nexus.cli.commands import (
-    zone as zone_mod,  # zone.py (federation + portability CLI commands)
-)
+# ---------------------------------------------------------------------------
+# Lazy command registration — modules whose dependencies are missing (e.g. in
+# the slim remote-only Docker image) are silently skipped so that the CLI
+# still boots with whatever commands *can* load.
+# ---------------------------------------------------------------------------
+
+# Modules that expose register_commands(cli)
+_REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
+    "file_ops": (
+        "init",
+        "cat",
+        "write",
+        "append",
+        "write-batch",
+        "cp",
+        "copy",
+        "move",
+        "sync",
+        "rm",
+    ),
+    "directory": ("ls", "mkdir", "rmdir", "tree"),
+    "search": ("glob", "grep", "search"),
+    "rebac": ("rebac",),
+    "versions": ("versions",),
+    "workspace": ("workspace",),
+    "inspect": ("info", "version", "size"),
+    "plugins": ("plugins",),
+    "operations": ("ops", "undo"),
+    "workflows": ("workflows",),
+    "mounts": ("mounts",),
+    "connectors": ("connectors",),
+    "llm": ("llm",),
+    "mcp": ("mcp",),
+    "cache": ("cache",),
+    "migrate": ("migrate",),
+    "context": ("context",),
+    "network": ("network",),
+    "tls": ("tls",),
+    "cluster": ("join",),
+    "status": ("status",),  # status [--watch] [--json]
+    "doctor": ("doctor",),  # doctor [--json] [--fix]
+    # Issue #2809: Profile management
+    "profile": ("profile",),  # profile list/add/use/delete/show/rename
+    "connect_cmd": ("connect",),  # Interactive connection setup
+    "config_cmd": ("config",),  # Config show/set/get/reset
+    # Issue #2915: Stack lifecycle
+    "stack": ("up", "down", "logs", "restart", "upgrade"),
+    # Issue #2929: MCL replay for index rebuild
+    "reindex": ("reindex",),
+    # Issue #2930: Catalog and aspects commands
+    "catalog": ("catalog",),
+    "aspects": ("aspects",),
+}
+
+# Modules that expose a single Click command/group to add via cli.add_command
+# Map module -> (click command name, module attribute name).
+_ADD_COMMAND: dict[str, tuple[str, str]] = {
+    "memory": ("memory", "memory"),
+    "agent": ("agent", "agent"),
+    "admin": ("admin", "admin"),
+    "sandbox": ("sandbox", "sandbox"),
+    "oauth": ("oauth", "oauth"),
+    "zone": ("zone", "zone"),
+    # Issue #2811: New CLI command groups
+    "pay": ("pay", "pay"),
+    "audit": ("audit", "audit"),
+    "locks": ("lock", "lock"),
+    "governance_cli": ("governance", "governance"),
+    "events_cli": ("events", "events"),
+    "snapshots": ("snapshot", "snapshot"),
+    "exchange": ("exchange", "exchange"),
+    "federation": ("federation", "federation"),
+    # Issue #2812: Missing CLI commands for identity, ipc, etc.
+    "identity": ("identity", "identity"),
+    "ipc": ("ipc", "ipc"),
+    "delegation": ("delegation", "delegation"),
+    "scheduler_cli": ("scheduler", "scheduler"),
+    # "share" removed: /api/v2/share-links endpoints not implemented server-side
+    "graph_cli": ("graph", "graph"),
+    "conflicts": ("conflicts", "conflicts"),
+    "manifest_cli": ("manifest", "manifest"),
+    "secrets_audit": ("secrets-audit", "secrets_audit"),
+    "rlm": ("rlm", "rlm"),
+    "upload": ("upload", "upload"),
+    # Issue #2915: Demo data management + preset-aware init
+    "demo": ("demo", "demo"),
+    "init_cmd": ("init", "init"),
+}
+
+
+@dataclass(frozen=True)
+class _LazyCommandSpec:
+    module_name: str
+    attr_name: str | None = None
+
+
+class LazyCommandGroup(click.Group):
+    """Click group that imports only the requested top-level command module."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._lazy_commands: dict[str, _LazyCommandSpec] = {}
+        self._loaded_modules: set[str] = set()
+
+    def add_lazy_module(self, module_name: str, command_names: tuple[str, ...]) -> None:
+        """Register a module that exposes register_commands(cli)."""
+        spec = _LazyCommandSpec(module_name=module_name)
+        for command_name in command_names:
+            self._lazy_commands[command_name] = spec
+
+    def add_lazy_command_attr(self, module_name: str, command_name: str, attr_name: str) -> None:
+        """Register a module that exposes a single Click command/group attribute."""
+        self._lazy_commands[command_name] = _LazyCommandSpec(
+            module_name=module_name,
+            attr_name=attr_name,
+        )
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        names = set(super().list_commands(ctx))
+        names.update(self._lazy_commands)
+        return sorted(names)
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        command = super().get_command(ctx, cmd_name)
+        if command is not None:
+            return command
+
+        self._load_command_module(cmd_name)
+        return super().get_command(ctx, cmd_name)
+
+    def _load_command_module(self, cmd_name: str) -> None:
+        spec = self._lazy_commands.get(cmd_name)
+        if spec is None:
+            # Try underscore form (e.g. secrets-audit → secrets_audit)
+            spec = self._lazy_commands.get(cmd_name.replace("-", "_"))
+        if spec is None or spec.module_name in self._loaded_modules:
+            return
+
+        try:
+            mod = importlib.import_module(f"nexus.cli.commands.{spec.module_name}")
+            if spec.attr_name is None:
+                mod.register_commands(self)
+            else:
+                self.add_command(getattr(mod, spec.attr_name))
+        except (ImportError, Exception):
+            return
+
+        self._loaded_modules.add(spec.module_name)
 
 
 def register_all_commands(cli: click.Group) -> None:
     """Register all commands from all modules to the main CLI group.
 
+    Commands whose dependencies are unavailable are silently skipped so the
+    CLI still works in stripped-down environments (e.g. remote-only image).
+
     Args:
         cli: The main Click group to register commands to
     """
-    # Register commands from each module
-    file_ops.register_commands(cli)
-    directory.register_commands(cli)
-    search.register_commands(cli)
-    rebac.register_commands(cli)
-    skills.register_commands(cli)
-    versions.register_commands(cli)
-    workspace.register_commands(cli)
-    metadata.register_commands(cli)
-    work.register_commands(cli)
-    server.register_commands(cli)
-    plugins.register_commands(cli)
-    operations.register_commands(cli)
-    workflows.register_commands(cli)
-    mounts.register_commands(cli)  # Mount management commands
-    connectors.register_commands(cli)  # Issue #528: Connector registry
-    llm.register_commands(cli)  # v0.4.0: LLM document reading commands
-    mcp.register_commands(cli)  # v0.7.0: MCP server commands
-    cache.register_commands(cli)  # Issue #1076: Cache warmup commands
-    cli.add_command(memory.memory)  # v0.4.0: Memory API commands (includes ACE trajectory/playbook)
-    cli.add_command(agent.agent)  # v0.5.0: Agent management commands
-    cli.add_command(admin.admin)  # v0.5.1: Admin API commands for user management
-    cli.add_command(sandbox.sandbox)  # v0.8.0: Sandbox management commands (Issue #372)
-    cli.add_command(oauth.oauth)  # v0.7.0: OAuth credential management (Issue #137)
-    cli.add_command(zone_mod.zone)  # v0.8.0: Zone federation + portability (Issue #1161, #1326)
-    migrate.register_commands(cli)  # v1.0.0: Migration tools (Issue #165)
-    context.register_commands(cli)  # Issue #1315: Context versioning
-    network.register_commands(cli)  # WireGuard mesh network for federation
-    tls.register_commands(cli)  # Issue #1250: TLS cert management for federation
+    if isinstance(cli, LazyCommandGroup):
+        for module_name, command_names in _REGISTER_COMMANDS.items():
+            cli.add_lazy_module(module_name, command_names)
+        for module_name, (command_name, attr_name) in _ADD_COMMAND.items():
+            cli.add_lazy_command_attr(module_name, command_name, attr_name)
+        return
+
+    for module_name in _REGISTER_COMMANDS:
+        try:
+            mod = importlib.import_module(f"nexus.cli.commands.{module_name}")
+            mod.register_commands(cli)
+        except (ImportError, Exception):
+            pass
+
+    for mod_name, (_, attr_name) in _ADD_COMMAND.items():
+        try:
+            mod = importlib.import_module(f"nexus.cli.commands.{mod_name}")
+            cli.add_command(getattr(mod, attr_name))
+        except (ImportError, Exception):
+            pass
 
 
 __all__ = [
+    "LazyCommandGroup",
     "register_all_commands",
-    "admin",
-    "agent",
-    "cache",
-    "connectors",
-    "file_ops",
-    "directory",
-    "llm",
-    "mcp",
-    "memory",
-    "migrate",
-    "mounts",
-    "oauth",
-    "sandbox",
-    "search",
-    "rebac",
-    "skills",
-    "versions",
-    "workspace",
-    "metadata",
-    "work",
-    "server",
-    "plugins",
-    "operations",
-    "workflows",
-    "context",  # Issue #1315: Context versioning
-    "network",  # WireGuard mesh network for federation
-    "tls",  # Issue #1250: TLS cert management
-    "zone_mod",  # zone.py (federation + portability CLI)
 ]

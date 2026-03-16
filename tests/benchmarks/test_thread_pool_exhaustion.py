@@ -222,12 +222,13 @@ def test_http_concurrent_requests(
 # =============================================================================
 
 
-def test_in_process_thread_exhaustion(
+@pytest.mark.asyncio
+async def test_in_process_thread_exhaustion(
     num_requests: int = 20,
     timeout: float = 60.0,
 ) -> TestResults:
     """Test thread pool exhaustion with in-process NexusFS."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 
     results = TestResults()
@@ -238,10 +239,10 @@ def test_in_process_thread_exhaustion(
 
         # Initialize NexusFS
         db_path = os.path.join(tmpdir, "nexus.db")
-        backend = LocalBackend(root_path=tmpdir)
+        backend = CASLocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -251,7 +252,7 @@ def test_in_process_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(50):
             path = f"/test_file_{i}.txt"
-            nx.sys_write(path, f"Test content {i}".encode())
+            await nx.sys_write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -266,7 +267,7 @@ def test_in_process_thread_exhaustion(
         )
 
         # Grant read permission to test user
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
@@ -284,12 +285,12 @@ def test_in_process_thread_exhaustion(
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 
-        def make_list_call(request_id: int) -> RequestResult:
+        async def make_list_call(request_id: int) -> RequestResult:
             thread_name = threading.current_thread().name
             start = time.time()
             try:
                 # This is the slow path - list with permission checks
-                _result = nx.sys_readdir("/", recursive=False, context=context)
+                _result = await nx.sys_readdir("/", recursive=False, context=context)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,
@@ -345,7 +346,7 @@ async def test_async_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test that simulates exact FastAPI server behavior with asyncio.to_thread."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
 
     results = TestResults()
@@ -354,10 +355,10 @@ async def test_async_thread_exhaustion(
         print(f"\nSetting up async test environment in {tmpdir}...")
 
         db_path = os.path.join(tmpdir, "nexus.db")
-        backend = LocalBackend(root_path=tmpdir)
+        backend = CASLocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -367,7 +368,7 @@ async def test_async_thread_exhaustion(
         # Create test files (no permission check needed)
         for i in range(100):
             path = f"/test_file_{i}.txt"
-            nx.sys_write(path, f"Test content {i}".encode())
+            await nx.sys_write(path, f"Test content {i}".encode())
 
         # Now enable permissions
         nx._enforce_permissions = True
@@ -382,7 +383,7 @@ async def test_async_thread_exhaustion(
         )
 
         # Grant test user read permission on root
-        nx.rebac_create(
+        nx.service("rebac").rebac_create_sync(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
@@ -405,12 +406,12 @@ async def test_async_thread_exhaustion(
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 
-        def sync_list_operation(request_id: int) -> RequestResult:
+        async def sync_list_operation(request_id: int) -> RequestResult:
             """Sync operation that will be run in thread pool."""
             thread_name = threading.current_thread().name
             start = time.time()
             try:
-                _result = nx.sys_readdir("/", recursive=False, context=context)
+                _result = await nx.sys_readdir("/", recursive=False, context=context)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,

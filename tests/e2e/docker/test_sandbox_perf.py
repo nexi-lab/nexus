@@ -116,7 +116,7 @@ class TestTrustTierResolutionPerf:
         times = []
         for _ in range(N_ITERATIONS):
             start = time.perf_counter_ns()
-            SandboxSecurityProfile.from_trust_tier("SkillBuilder")
+            SandboxSecurityProfile.from_trust_tier("UntrustedAgent")
             elapsed_ns = time.perf_counter_ns() - start
             times.append(elapsed_ns)
 
@@ -183,7 +183,7 @@ class TestInputValidationPerf:
         times = []
         for _ in range(N_ITERATIONS):
             start = time.perf_counter_ns()
-            validate_agent_id("user123,SkillBuilder")
+            validate_agent_id("user123,UntrustedAgent")
             elapsed_ns = time.perf_counter_ns() - start
             times.append(elapsed_ns)
 
@@ -251,7 +251,7 @@ class TestAuditLoggingPerf:
         times = []
         for _ in range(N_ITERATIONS):
             start = time.perf_counter_ns()
-            audit.log_creation("sandbox-123", profile, agent_id="user1,SkillBuilder")
+            audit.log_creation("sandbox-123", profile, agent_id="user1,UntrustedAgent")
             elapsed_ns = time.perf_counter_ns() - start
             times.append(elapsed_ns)
 

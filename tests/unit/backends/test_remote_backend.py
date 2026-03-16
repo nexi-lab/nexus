@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.backends.remote import RemoteBackend
+from nexus.backends.storage.remote import RemoteBackend
 from nexus.contracts.exceptions import (
     RemoteConnectionError,
 )

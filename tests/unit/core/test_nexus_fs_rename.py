@@ -9,17 +9,8 @@ Tests cover:
 
 import pytest
 
-from nexus.contracts.constants import INLINE_THRESHOLD
 from tests.conftest import make_test_nexus
 from tests.helpers.failing_backend import FailingBackend
-
-# Content must exceed INLINE_THRESHOLD to go through the backend (Issue #1508).
-# Tests that verify backend rename behavior need files in physical storage.
-_CAS_PAD = b"\x00" * (INLINE_THRESHOLD + 1)
-
-
-def _big(payload: bytes) -> bytes:
-    return payload + _CAS_PAD
 
 
 @pytest.fixture()
@@ -73,8 +64,8 @@ class TestRenameDirectoryWithChildren:
         Recursive rename in DictMetastore and PathLocalBackend ensures children
         are moved to the new path.
         """
-        await nx.sys_write("/files/folder/a.txt", _big(b"a"))
-        await nx.sys_write("/files/folder/b.txt", _big(b"b"))
+        await nx.sys_write("/files/folder/a.txt", b"a")
+        await nx.sys_write("/files/folder/b.txt", b"b")
         # /files/folder/ is an implicit directory
         await nx.sys_rename("/files/folder", "/files/renamed")
 
@@ -83,8 +74,8 @@ class TestRenameDirectoryWithChildren:
         assert not await nx.sys_access("/files/folder/b.txt")
         assert await nx.sys_access("/files/renamed/a.txt")
         assert await nx.sys_access("/files/renamed/b.txt")
-        assert await nx.sys_read("/files/renamed/a.txt") == _big(b"a")
-        assert await nx.sys_read("/files/renamed/b.txt") == _big(b"b")
+        assert await nx.sys_read("/files/renamed/a.txt") == b"a"
+        assert await nx.sys_read("/files/renamed/b.txt") == b"b"
 
 
 class TestRenameErrorPaths:
@@ -136,13 +127,13 @@ class TestRenameWithFailingBackend:
             fail_on_nth=2,
         )
         nx = make_test_nexus(tmp_path / "nx", backend=failing)
-        # First write succeeds (content > INLINE_THRESHOLD to go through backend)
-        await nx.sys_write("/files/a.txt", _big(b"data"))
+        # First write succeeds
+        await nx.sys_write("/files/a.txt", b"data")
         # Second write fails due to backend
         from nexus.contracts.exceptions import BackendError
 
         with pytest.raises(BackendError):
-            await nx.sys_write("/files/b.txt", _big(b"data2"))
+            await nx.sys_write("/files/b.txt", b"data2")
 
 
 class TestRenameMetadataConsistency:

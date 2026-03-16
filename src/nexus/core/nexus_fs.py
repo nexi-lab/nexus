@@ -1373,17 +1373,7 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
-
-            if meta.physical_path.startswith(INLINE_PREFIX):
-                import base64
-
-                _raw = self.metadata.get_file_metadata(path, INLINE_CONTENT_KEY)
-                if _raw is None:
-                    raise NexusFileNotFoundError(path)
-                content = base64.b64decode(_raw)
-            else:
-                content = route.backend.read_content(meta.etag, context=read_context)
+            content = route.backend.read_content(meta.etag, context=read_context)
 
         # Post-read hooks
         if self._dispatch.read_hook_count > 0:
@@ -1537,18 +1527,7 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            # Issue #1508: Inline data — read from metastore if inline-stored
-            from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
-
-            if meta.physical_path.startswith(INLINE_PREFIX):
-                import base64
-
-                _raw = self.metadata.get_file_metadata(path, INLINE_CONTENT_KEY)
-                if _raw is None:
-                    raise NexusFileNotFoundError(path)
-                content = base64.b64decode(_raw)
-            else:
-                content = route.backend.read_content(meta.etag, context=read_context)
+            content = route.backend.read_content(meta.etag, context=read_context)
 
         # --- Lock released — post-read processing (like Linux inotify after i_rwsem) ---
 
@@ -2516,33 +2495,7 @@ class NexusFS(  # type: ignore[misc]
             # VFS I/O Lock: exclusive write lock around backend write + metadata put.
             # Like Linux i_rwsem: held for I/O duration only, released before observers.
             with self._vfs_locked(path, "write"):
-                # Issue #1508: Inline data — store small files directly in metastore
-                # (Raft-replicated), bypassing CAS backend entirely.
-                from nexus.contracts.constants import (
-                    INLINE_CONTENT_KEY,
-                    INLINE_PREFIX,
-                    INLINE_THRESHOLD,
-                )
-
-                _use_inline = len(content) <= INLINE_THRESHOLD
-
-                if _use_inline:
-                    # Inline path: compute hash locally, skip backend I/O
-                    content_hash = hash_content(content)
-                    # Store content in metastore custom metadata (Raft-replicated)
-                    import base64
-
-                    self.metadata.set_file_metadata(
-                        path, INLINE_CONTENT_KEY, base64.b64encode(content).decode("ascii")
-                    )
-                else:
-                    # CAS path: write to backend (original behavior)
-                    content_hash = route.backend.write_content(
-                        content, context=context
-                    ).content_hash
-                    # Clean up stale inline data if file grew past threshold
-                    if meta and meta.physical_path.startswith(INLINE_PREFIX):
-                        self.metadata.set_file_metadata(path, INLINE_CONTENT_KEY, None)
+                content_hash = route.backend.write_content(content, context=context).content_hash
 
                 # NOTE: sys_write does NOT release old content on overwrite.
                 # HDFS/GFS pattern: content cleanup is async via background GC.
@@ -2559,7 +2512,7 @@ class NexusFS(  # type: ignore[misc]
                 metadata = FileMetadata(
                     path=path,
                     backend_name=route.backend.name,
-                    physical_path=f"{INLINE_PREFIX}{content_hash}" if _use_inline else content_hash,
+                    physical_path=content_hash,
                     size=len(content),
                     etag=content_hash,
                     created_at=meta.created_at if meta else now,
@@ -3465,13 +3418,7 @@ class NexusFS(  # type: ignore[misc]
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
         # Like Linux i_rwsem: held for I/O duration only, released before observers.
         with self._vfs_locked(path, "write"):
-            # Issue #1508: Inline data — delete from metastore instead of CAS
-            from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
-
-            if meta.physical_path.startswith(INLINE_PREFIX):
-                # Inline file: remove custom metadata content key
-                self.metadata.set_file_metadata(path, INLINE_CONTENT_KEY, None)
-            elif meta.etag and meta.mime_type != "inode/directory":
+            if meta.etag and meta.mime_type != "inode/directory":
                 # CAS file: delete from routed backend (decrements ref count)
                 # Content is only physically deleted when ref_count reaches 0
                 # Skip content deletion for directories (no CAS entry)
@@ -3638,11 +3585,7 @@ class NexusFS(  # type: ignore[misc]
             try:
                 # For path-based connector backends, move actual file/directory in storage
                 # CAS backends have supports_rename = False
-                # Inline files (Issue #1508) skip backend rename — content is in metastore
-                from nexus.contracts.constants import INLINE_CONTENT_KEY, INLINE_PREFIX
-
-                _is_inline = meta is not None and meta.physical_path.startswith(INLINE_PREFIX)
-                if old_route.backend.supports_rename is True and not _is_inline:
+                if old_route.backend.supports_rename is True:
                     try:
                         old_route.backend.rename_file(
                             old_route.backend_path, new_route.backend_path
@@ -3655,19 +3598,8 @@ class NexusFS(  # type: ignore[misc]
                             backend=old_route.backend.name,
                         ) from e
 
-                # Save inline content before rename (needed for RaftMetadataStore
-                # which does not migrate custom metadata keys automatically)
-                _inline_raw = None
-                if _is_inline:
-                    _inline_raw = self.metadata.get_file_metadata(old_path, INLINE_CONTENT_KEY)
-
                 # Perform metadata rename (recursively for directories)
                 self.metadata.rename_path(old_path, new_path)
-
-                # Migrate inline content metadata to new path
-                if _is_inline and _inline_raw is not None:
-                    self.metadata.set_file_metadata(new_path, INLINE_CONTENT_KEY, _inline_raw)
-                    self.metadata.set_file_metadata(old_path, INLINE_CONTENT_KEY, None)
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)

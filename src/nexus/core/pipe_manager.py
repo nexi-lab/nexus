@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.pipe import (
+    PipeBackend,
     PipeClosedError,
     PipeEmptyError,
     PipeError,
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 # Re-export exceptions so callers can import from either module
 __all__ = [
     "PipeManager",
+    "PipeBackend",
     "PipeError",
     "PipeFullError",
     "PipeEmptyError",
@@ -72,7 +74,7 @@ class PipeManager:
         self._metastore = metastore
         self._zone_id = zone_id
         self._self_address = self_address
-        self._buffers: dict[str, RingBuffer] = {}
+        self._buffers: dict[str, PipeBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     @property
@@ -134,7 +136,7 @@ class PipeManager:
         logger.debug("pipe created: %s (capacity=%d)", path, capacity)
         return buf
 
-    def open(self, path: str, *, capacity: int = 65_536) -> RingBuffer:
+    def open(self, path: str, *, capacity: int = 65_536) -> PipeBackend:
         """Open an existing pipe, or recover its buffer after restart.
 
         If the buffer is already in memory, returns it. If a DT_PIPE inode
@@ -168,6 +170,58 @@ class PipeManager:
 
         logger.debug("pipe opened (recovered): %s", path)
         return buf
+
+    def create_from_backend(
+        self,
+        path: str,
+        backend: PipeBackend,
+        *,
+        owner_id: str | None = None,
+    ) -> PipeBackend:
+        """Create a named pipe backed by an external PipeBackend.
+
+        Unlike ``create()`` which always uses an in-process RingBuffer,
+        this method accepts any PipeBackend implementation (e.g., a future
+        SharedMemoryPipeBackend for inter-process IPC).
+
+        The DT_PIPE inode is still registered in MetastoreABC for VFS
+        visibility and ReBAC.
+
+        Args:
+            path: VFS path. Must start with "/".
+            backend: The PipeBackend instance to use for data transport.
+            owner_id: Owner for ReBAC permission checks.
+
+        Returns:
+            The registered PipeBackend (same object passed in).
+
+        Raises:
+            PipeError: Pipe already exists at this path.
+        """
+        from nexus.contracts.metadata import DT_PIPE, FileMetadata
+
+        if path in self._buffers:
+            raise PipeError(f"pipe already exists: {path}")
+
+        existing = self._metastore.get(path)
+        if existing is not None:
+            raise PipeError(f"path already exists: {path}")
+
+        pipe_backend_name = f"pipe@{self._self_address}" if self._self_address else "pipe"
+        metadata = FileMetadata(
+            path=path,
+            backend_name=pipe_backend_name,
+            physical_path="mem://",
+            size=0,
+            entry_type=DT_PIPE,
+            zone_id=self._zone_id,
+            owner_id=owner_id,
+        )
+        self._metastore.put(metadata)
+
+        self._buffers[path] = backend
+        logger.debug("pipe created (custom backend): %s", path)
+        return backend
 
     def signal_close(self, path: str) -> None:
         """Signal a pipe closed without removing from registry.
@@ -221,7 +275,7 @@ class PipeManager:
         self._metastore.delete(path)
         logger.debug("pipe destroyed: %s", path)
 
-    def _get_buffer(self, path: str) -> RingBuffer:
+    def _get_buffer(self, path: str) -> PipeBackend:
         """Get buffer or raise PipeNotFoundError."""
         buf = self._buffers.get(path)
         if buf is None:
@@ -289,12 +343,24 @@ class PipeManager:
     # ------------------------------------------------------------------
 
     def pipe_peek(self, path: str) -> bytes | None:
-        """Peek at next message in a named pipe."""
-        return self._get_buffer(path).peek()
+        """Peek at next message in a named pipe.
+
+        Only supported for RingBuffer backends. Returns None for other backends.
+        """
+        buf = self._get_buffer(path)
+        if isinstance(buf, RingBuffer):
+            return buf.peek()
+        return None
 
     def pipe_peek_all(self, path: str) -> list[bytes]:
-        """Peek at all messages in a named pipe."""
-        return self._get_buffer(path).peek_all()
+        """Peek at all messages in a named pipe.
+
+        Only supported for RingBuffer backends. Returns empty list for others.
+        """
+        buf = self._get_buffer(path)
+        if isinstance(buf, RingBuffer):
+            return buf.peek_all()
+        return []
 
     def list_pipes(self) -> dict[str, dict]:
         """List all active pipes with their stats."""

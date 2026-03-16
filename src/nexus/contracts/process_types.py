@@ -8,7 +8,7 @@ on kernel/services/bricks — only stdlib + contracts.
 Defines:
     ProcessState     — finite state machine (CREATED → RUNNING → … → ZOMBIE)
     ProcessSignal    — POSIX-like signals (SIGTERM, SIGSTOP, SIGCONT, SIGKILL, SIGUSR1)
-    ProcessKind      — INTERNAL (async coroutine) vs EXTERNAL (OS process via gRPC)
+    ProcessKind      — MANAGED (nexusd-spawned) vs UNMANAGED (self-managed via gRPC)
     ProcessDescriptor — frozen PCB (Process Control Block)
     ExternalProcessInfo — connection metadata for external agents
 
@@ -62,10 +62,10 @@ class ProcessSignal(StrEnum):
 
 
 class ProcessKind(StrEnum):
-    """Process kind — determines lifecycle depth."""
+    """Process kind — who controls the lifecycle."""
 
-    INTERNAL = "internal"  # async coroutine inside nexusd
-    EXTERNAL = "external"  # separate OS process via gRPC/MCP
+    MANAGED = "managed"  # nexusd spawns + owns lifecycle (spawn/kill/signal)
+    UNMANAGED = "unmanaged"  # external agent connects, self-managed (register/heartbeat)
 
 
 # ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ class ProcessTableProtocol(Protocol):
         zone_id: str,
         *,
         kind: ProcessKind = ...,
+        pid: str | None = None,
         parent_pid: str | None = None,
         cwd: str = "/",
         external_info: ExternalProcessInfo | None = None,

@@ -24,8 +24,11 @@ byte-capacity tracking. Data plane in Rust (nexus_fast.RingBufferCore) for
 See: federation-memo.md §7j
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
+from typing import Protocol, runtime_checkable
 
 from nexus_fast import RingBufferCore
 
@@ -54,6 +57,39 @@ class PipeClosedError(PipeError):
 
 class PipeNotFoundError(PipeError):
     """No pipe registered at the given path."""
+
+
+# ---------------------------------------------------------------------------
+# PipeBackend protocol — pluggable transport tier
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class PipeBackend(Protocol):
+    """Protocol for pipe data transport backends.
+
+    Pluggable transport tier for DT_PIPE (KERNEL-ARCHITECTURE.md §4.2).
+    PipeManager stores ``dict[str, PipeBackend]`` — all backends share
+    this interface so PipeManager is transport-agnostic.
+
+    Implementations:
+        RingBuffer              — in-process SPSC ring buffer (Rust, ~0.5μs)
+        [Future] SharedMemoryPipeBackend — mmap'd ring buffer (~1–5μs)
+    """
+
+    async def write(self, data: bytes, *, blocking: bool = True) -> int: ...
+    async def read(self, *, blocking: bool = True) -> bytes: ...
+    def write_nowait(self, data: bytes) -> int: ...
+    def read_nowait(self) -> bytes: ...
+    async def wait_writable(self) -> None: ...
+    async def wait_readable(self) -> None: ...
+    def close(self) -> None: ...
+
+    @property
+    def closed(self) -> bool: ...
+
+    @property
+    def stats(self) -> dict: ...
 
 
 # ---------------------------------------------------------------------------

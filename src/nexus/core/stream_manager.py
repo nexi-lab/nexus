@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.stream import (
+    StreamBackend,
     StreamBuffer,
     StreamClosedError,
     StreamEmptyError,
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 # Re-export exceptions so callers can import from either module
 __all__ = [
     "StreamManager",
+    "StreamBackend",
     "StreamError",
     "StreamFullError",
     "StreamEmptyError",
@@ -65,7 +67,7 @@ class StreamManager:
         self._metastore = metastore
         self._zone_id = zone_id
         self._self_address = self_address
-        self._buffers: dict[str, StreamBuffer] = {}
+        self._buffers: dict[str, StreamBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     @property
@@ -127,7 +129,7 @@ class StreamManager:
         logger.debug("stream created: %s (capacity=%d)", path, capacity)
         return buf
 
-    def open(self, path: str, *, capacity: int = 65_536) -> StreamBuffer:
+    def open(self, path: str, *, capacity: int = 65_536) -> StreamBackend:
         """Open an existing stream, or recover its buffer after restart.
 
         If the buffer is already in memory, returns it. If a DT_STREAM inode
@@ -161,6 +163,58 @@ class StreamManager:
 
         logger.debug("stream opened (recovered): %s", path)
         return buf
+
+    def create_from_backend(
+        self,
+        path: str,
+        backend: StreamBackend,
+        *,
+        owner_id: str | None = None,
+    ) -> StreamBackend:
+        """Create a named stream backed by an external StreamBackend.
+
+        Unlike ``create()`` which always uses an in-process StreamBuffer,
+        this method accepts any StreamBackend implementation (e.g., a future
+        SharedMemoryStreamBackend for inter-process IPC).
+
+        The DT_STREAM inode is still registered in MetastoreABC for VFS
+        visibility and ReBAC.
+
+        Args:
+            path: VFS path. Must start with "/".
+            backend: The StreamBackend instance to use for data transport.
+            owner_id: Owner for ReBAC permission checks.
+
+        Returns:
+            The registered StreamBackend (same object passed in).
+
+        Raises:
+            StreamError: Stream already exists at this path.
+        """
+        from nexus.contracts.metadata import DT_STREAM, FileMetadata
+
+        if path in self._buffers:
+            raise StreamError(f"stream already exists: {path}")
+
+        existing = self._metastore.get(path)
+        if existing is not None:
+            raise StreamError(f"path already exists: {path}")
+
+        stream_backend_name = f"stream@{self._self_address}" if self._self_address else "stream"
+        metadata = FileMetadata(
+            path=path,
+            backend_name=stream_backend_name,
+            physical_path="mem://",
+            size=0,
+            entry_type=DT_STREAM,
+            zone_id=self._zone_id,
+            owner_id=owner_id,
+        )
+        self._metastore.put(metadata)
+
+        self._buffers[path] = backend
+        logger.debug("stream created (custom backend): %s", path)
+        return backend
 
     def signal_close(self, path: str) -> None:
         """Signal a stream closed without removing from registry.
@@ -210,7 +264,7 @@ class StreamManager:
         self._metastore.delete(path)
         logger.debug("stream destroyed: %s", path)
 
-    def _get_buffer(self, path: str) -> StreamBuffer:
+    def _get_buffer(self, path: str) -> StreamBackend:
         """Get buffer or raise StreamNotFoundError."""
         buf = self._buffers.get(path)
         if buf is None:

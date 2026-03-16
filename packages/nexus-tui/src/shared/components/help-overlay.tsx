@@ -18,7 +18,7 @@ interface HelpOverlayProps {
   readonly onDismiss: () => void;
 }
 
-interface KeyBinding {
+export interface KeyBinding {
   readonly key: string;
   readonly action: string;
 }
@@ -45,7 +45,8 @@ const NAV_BINDINGS: readonly KeyBinding[] = [
   { key: "Esc", action: "Cancel/back" },
 ];
 
-const PANEL_BINDINGS: Record<string, readonly KeyBinding[]> = {
+/** Exported for keybinding consistency tests. */
+export const PANEL_BINDINGS: Record<string, readonly KeyBinding[]> = {
   files: [
     { key: "l/→", action: "Expand folder" },
     { key: "h/←", action: "Collapse folder" },

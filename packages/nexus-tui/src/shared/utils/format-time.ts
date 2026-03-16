@@ -24,9 +24,10 @@ const MONTHS = [
  *
  * @param input - Unix epoch ms, ISO string, or Date object
  * @param now - Current time in ms (injectable for testing). Defaults to Date.now()
+ * @param utc - If true, use UTC for absolute timestamps (recommended for distributed systems). Default: true.
  * @returns Formatted time string, max 19 chars
  */
-export function formatTimestamp(input: number | string | Date, now?: number): string {
+export function formatTimestamp(input: number | string | Date, now?: number, utc = true): string {
   const date = input instanceof Date ? input : new Date(input);
   const ts = date.getTime();
 
@@ -58,13 +59,14 @@ export function formatTimestamp(input: number | string | Date, now?: number): st
     return `${hours}h ago`;
   }
 
-  return formatAbsolute(date);
+  return formatAbsolute(date, utc);
 }
 
-function formatAbsolute(date: Date): string {
-  const month = MONTHS[date.getMonth()]!;
-  const day = date.getDate();
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${month} ${String(day).padStart(2, " ")}, ${hours}:${minutes}`;
+function formatAbsolute(date: Date, utc: boolean): string {
+  const month = MONTHS[utc ? date.getUTCMonth() : date.getMonth()]!;
+  const day = utc ? date.getUTCDate() : date.getDate();
+  const hours = String(utc ? date.getUTCHours() : date.getHours()).padStart(2, "0");
+  const minutes = String(utc ? date.getUTCMinutes() : date.getMinutes()).padStart(2, "0");
+  const suffix = utc ? "Z" : "";
+  return `${month} ${String(day).padStart(2, " ")}, ${hours}:${minutes}${suffix}`;
 }

@@ -11,6 +11,13 @@
 import React from "react";
 import Anser from "anser";
 
+/** Convert anser's "R, G, B" format to "#RRGGBB" hex for terminal compatibility. */
+function rgbToHex(rgb: string): string {
+  const parts = rgb.split(",").map((s) => parseInt(s.trim(), 10));
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return rgb;
+  return `#${parts.map((n) => Math.max(0, Math.min(255, n!)).toString(16).padStart(2, "0")).join("")}`;
+}
+
 interface StyledTextProps {
   /** Raw text potentially containing ANSI escape codes. */
   readonly children: string;
@@ -42,8 +49,8 @@ export function StyledText({ children }: StyledTextProps): React.ReactNode {
             dimColor={decoration.includes("dim") || undefined}
             underline={decoration.includes("underline") || undefined}
             inverse={decoration.includes("reverse") || undefined}
-            foregroundColor={span.fg ? `rgb(${span.fg})` : undefined}
-            backgroundColor={span.bg ? `rgb(${span.bg})` : undefined}
+            foregroundColor={span.fg ? rgbToHex(span.fg) : undefined}
+            backgroundColor={span.bg ? rgbToHex(span.bg) : undefined}
           >
             {span.content}
           </text>

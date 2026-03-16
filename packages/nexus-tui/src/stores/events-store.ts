@@ -67,6 +67,9 @@ export const useEventsStore = create<EventsState>((set, get) => ({
 
     client.onEvent((newEvents) => {
       set((state) => {
+        // Note: eventsBuffer is mutated in-place (push), but consumers read
+        // the derived `events` array (new ref each time), so shallow-comparison
+        // subscribers re-render correctly. Do NOT subscribe to eventsBuffer directly.
         const buf = state.eventsBuffer;
         for (const event of newEvents) {
           buf.push(event);

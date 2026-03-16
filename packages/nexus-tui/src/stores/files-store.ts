@@ -120,6 +120,11 @@ export const useFilesStore = create<FilesState>((set, get) => ({
 
       const newCache = new Map(get().fileCache);
       newCache.set(path, { data: sorted, fetchedAt: Date.now() });
+      // Evict oldest entries if cache exceeds 200 paths
+      if (newCache.size > 200) {
+        const oldest = newCache.keys().next().value;
+        if (oldest !== undefined) newCache.delete(oldest);
+      }
       set({ fileCache: newCache, error: null });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch files";

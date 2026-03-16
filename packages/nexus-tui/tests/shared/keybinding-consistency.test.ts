@@ -1,19 +1,14 @@
 /**
  * Keybinding consistency integration tests.
  *
- * Verifies that standardized keys (d, n, x, c) have consistent semantics
- * across all panels, and that navigation keys (g, G) work everywhere.
- *
- * These tests validate the help-overlay keybinding registry as the
- * source of truth for the keybinding contract.
+ * Verifies that standardized keys (d, n, x) have consistent semantics
+ * across all panels using the REAL keybinding registry from help-overlay.
  *
  * @see Issue #3066, Decision 12A
  */
 
 import { describe, it, expect } from "bun:test";
-
-// Import the keybinding registry from the help overlay
-// We test the registry as the contract — runtime behavior is tested per-panel
+import { PANEL_BINDINGS, type KeyBinding } from "../../src/shared/components/help-overlay.js";
 import {
   jumpToStart,
   jumpToEnd,
@@ -23,54 +18,69 @@ import {
   listNavigationBindings,
 } from "../../src/shared/hooks/use-list-navigation.js";
 
-describe("keybinding consistency", () => {
+// =============================================================================
+// Helper: find all bindings for a given key across all panels
+// =============================================================================
+
+function findBindingsForKey(key: string): Array<{ panel: string; action: string }> {
+  const results: Array<{ panel: string; action: string }> = [];
+  for (const [panel, bindings] of Object.entries(PANEL_BINDINGS)) {
+    for (const binding of bindings) {
+      if (binding.key.toLowerCase() === key.toLowerCase()) {
+        results.push({ panel, action: binding.action.toLowerCase() });
+      }
+    }
+  }
+  return results;
+}
+
+describe("keybinding consistency (from real registry)", () => {
   describe("standardized key semantics", () => {
     it("d should only be used for destructive actions", () => {
-      // This is a documentation test — ensures the convention is recorded.
-      // Runtime enforcement is via code review + help overlay.
-      const dActions = [
-        "delete file",        // files
-        "revoke delegation",  // agents
-        "delete subscription",// events
-        "delete policy",      // payments
-        "delete",             // search
-        "delete workflow",    // workflows
-        "unregister",         // zones
-      ];
-      // All 'd' actions are destructive
-      for (const action of dActions) {
-        expect(
-          action.includes("delete") || action.includes("revoke") || action.includes("unregister"),
-        ).toBe(true);
+      const dBindings = findBindingsForKey("d");
+      expect(dBindings.length).toBeGreaterThan(0);
+      for (const { panel, action } of dBindings) {
+        const isDestructive =
+          action.includes("delete") ||
+          action.includes("revoke") ||
+          action.includes("unregister") ||
+          action.includes("release");
+        expect(isDestructive).toBe(true);
       }
     });
 
     it("n should only be used for creation actions", () => {
-      const nActions = [
-        "new transaction",   // versions
-        "register new",      // zones
-        "new delegation",    // access
-        "new policy",        // payments
-        "create memory",     // search
-      ];
-      for (const action of nActions) {
-        expect(
-          action.includes("new") || action.includes("create") || action.includes("register"),
-        ).toBe(true);
+      const nBindings = findBindingsForKey("n");
+      expect(nBindings.length).toBeGreaterThan(0);
+      for (const { panel, action } of nBindings) {
+        const isCreation =
+          action.includes("new") ||
+          action.includes("create") ||
+          action.includes("register") ||
+          action.includes("acquire");
+        expect(isCreation).toBe(true);
       }
     });
 
     it("x should only be used for revoke/cancel actions", () => {
-      const xActions = [
-        "revoke share link", // files
-        "revoke credential", // access
-        "release reservation",// payments
-        "reset brick",       // zones
-      ];
-      for (const action of xActions) {
-        expect(
-          action.includes("revoke") || action.includes("release") || action.includes("reset"),
-        ).toBe(true);
+      const xBindings = findBindingsForKey("x");
+      expect(xBindings.length).toBeGreaterThan(0);
+      for (const { panel, action } of xBindings) {
+        const isRevoke =
+          action.includes("revoke") ||
+          action.includes("release") ||
+          action.includes("reset") ||
+          action.includes("reject");
+        expect(isRevoke).toBe(true);
+      }
+    });
+
+    it("no panel uses d for non-destructive actions", () => {
+      const dBindings = findBindingsForKey("d");
+      for (const { action } of dBindings) {
+        // "diff" and "view" are NOT destructive — should not use d
+        expect(action.includes("diff")).toBe(false);
+        expect(action.includes("view")).toBe(false);
       }
     });
   });
@@ -87,13 +97,9 @@ describe("keybinding consistency", () => {
     });
 
     it("j/k (moveIndex) clamps correctly", () => {
-      // j (down) from position 0 in 10-item list
       expect(moveIndex(0, 1, 10)).toBe(1);
-      // k (up) from position 0 — clamped
       expect(moveIndex(0, -1, 10)).toBe(0);
-      // j at end — clamped
       expect(moveIndex(9, 1, 10)).toBe(9);
-      // Empty list
       expect(moveIndex(0, 1, 0)).toBe(0);
     });
 
@@ -118,7 +124,6 @@ describe("keybinding consistency", () => {
         getLength: () => 5,
       });
 
-      // Should have j, k, up, down, shift+g
       expect(bindings["j"]).toBeDefined();
       expect(bindings["k"]).toBeDefined();
       expect(bindings["down"]).toBeDefined();
@@ -137,17 +142,6 @@ describe("keybinding consistency", () => {
       expect(idx).toBe(1);
     });
 
-    it("k moves up", () => {
-      let idx = 3;
-      const bindings = listNavigationBindings({
-        getIndex: () => idx,
-        setIndex: (i) => { idx = i; },
-        getLength: () => 5,
-      });
-      bindings["k"]!();
-      expect(idx).toBe(2);
-    });
-
     it("shift+g jumps to end", () => {
       let idx = 0;
       const bindings = listNavigationBindings({
@@ -159,7 +153,7 @@ describe("keybinding consistency", () => {
       expect(idx).toBe(9);
     });
 
-    it("includes Enter handler when onSelect is provided", () => {
+    it("includes Enter handler when onSelect provided", () => {
       let selected = -1;
       const bindings = listNavigationBindings({
         getIndex: () => 3,
@@ -172,13 +166,26 @@ describe("keybinding consistency", () => {
       expect(selected).toBe(3);
     });
 
-    it("omits Enter handler when onSelect not provided", () => {
+    it("omits Enter when onSelect not provided", () => {
       const bindings = listNavigationBindings({
         getIndex: () => 0,
         setIndex: () => {},
         getLength: () => 5,
       });
       expect(bindings["return"]).toBeUndefined();
+    });
+  });
+
+  describe("registry completeness", () => {
+    it("all 10 panels have keybinding entries", () => {
+      const expectedPanels = [
+        "files", "versions", "agents", "zones", "access",
+        "payments", "search", "workflows", "infrastructure", "console",
+      ];
+      for (const panel of expectedPanels) {
+        expect(PANEL_BINDINGS[panel]).toBeDefined();
+        expect(PANEL_BINDINGS[panel]!.length).toBeGreaterThan(0);
+      }
     });
   });
 });

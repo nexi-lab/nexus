@@ -6,6 +6,8 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+export type { DelegationItem } from "./delegation-store.js";
+import type { DelegationItem } from "./delegation-store.js";
 
 // =============================================================================
 // Types
@@ -64,20 +66,7 @@ export interface AgentIdentity {
   readonly expires_at: string | null;
 }
 
-export interface DelegationItem {
-  readonly delegation_id: string;
-  readonly agent_id: string;
-  readonly parent_agent_id: string;
-  readonly delegation_mode: "copy" | "clean" | "shared";
-  readonly status: "active" | "revoked" | "expired" | "completed";
-  readonly scope_prefix: string | null;
-  readonly lease_expires_at: string | null;
-  readonly zone_id: string | null;
-  readonly intent: string;
-  readonly depth: number;
-  readonly can_sub_delegate: boolean;
-  readonly created_at: string;
-}
+// DelegationItem re-exported from delegation-store.ts (canonical source)
 
 export interface InboxMessage {
   readonly filename: string;

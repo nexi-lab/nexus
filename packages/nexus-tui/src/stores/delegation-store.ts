@@ -10,13 +10,13 @@ import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
 
-// Types (consolidated from access-store.ts)
+// Canonical DelegationItem type — other stores re-export this.
 export interface DelegationItem {
   readonly delegation_id: string;
   readonly agent_id: string;
   readonly parent_agent_id: string;
-  readonly delegation_mode: string;
-  readonly status: string;
+  readonly delegation_mode: "copy" | "clean" | "shared";
+  readonly status: "active" | "revoked" | "expired" | "completed";
   readonly scope_prefix: string | null;
   readonly lease_expires_at: string | null;
   readonly zone_id: string | null;

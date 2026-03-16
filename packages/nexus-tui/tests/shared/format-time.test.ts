@@ -39,16 +39,16 @@ describe("formatTimestamp", () => {
       expect(result).toContain("12:00");
     });
 
-    it("pads single-digit days with space", () => {
+    it("pads single-digit days with space (UTC)", () => {
       const jan5 = new Date("2026-01-05T09:30:00.000Z").getTime();
       const result = formatTimestamp(jan5, NOW);
-      expect(result).toBe("Jan  5, 09:30");
+      expect(result).toBe("Jan  5, 09:30Z");
     });
 
-    it("pads hours and minutes with zeros", () => {
+    it("pads hours and minutes with zeros (UTC)", () => {
       const earlyMorning = new Date("2026-01-15T03:05:00.000Z").getTime();
       const result = formatTimestamp(earlyMorning, NOW);
-      expect(result).toBe("Jan 15, 03:05");
+      expect(result).toBe("Jan 15, 03:05Z");
     });
   });
 

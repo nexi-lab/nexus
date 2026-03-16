@@ -530,28 +530,14 @@ def test_expand_api_with_union(rebac_manager):
 
 
 def test_cleanup_expired_cache(rebac_manager_fast_cache):
-    """Test cleanup of expired cache entries."""
-    with freeze_time("2025-01-01 12:00:00") as frozen_time:
-        # Create a relationship
-        rebac_manager_fast_cache.rebac_write(
-            subject=("agent", "alice"),
-            relation="member-of",
-            object=("group", "eng-team"),
-        )
+    """Test cleanup of expired cache entries.
 
-        # Check to create cache entry
-        rebac_manager_fast_cache.rebac_check(
-            subject=("agent", "alice"),
-            permission="member-of",
-            object=("group", "eng-team"),
-        )
-
-        # Advance time by 2 seconds to expire the cache (TTL is 1 second)
-        frozen_time.tick(delta=timedelta(seconds=2))
-
-        # Cleanup expired cache
-        removed = rebac_manager_fast_cache.cleanup_expired_cache()
-        assert removed > 0
+    Note: L2 SQL cache (rebac_check_cache) was removed — cleanup_expired_cache()
+    now always returns 0.  This test verifies the method is callable and returns
+    a non-negative integer.
+    """
+    removed = rebac_manager_fast_cache.cleanup_expired_cache()
+    assert removed >= 0
 
 
 def test_delete_nonexistent_tuple(rebac_manager):

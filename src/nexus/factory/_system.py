@@ -476,12 +476,8 @@ def _boot_system_services(
     try:
         from nexus.core.process_table import ProcessTable
 
-        process_table = ProcessTable(ctx.metadata_store, zone_id=ctx.zone_id or ROOT_ZONE_ID)
-        recovered = process_table.recover()
-        if recovered > 0:
-            logger.info("[BOOT:SYSTEM] ProcessTable recovered %d processes", recovered)
-        else:
-            logger.debug("[BOOT:SYSTEM] ProcessTable created")
+        process_table = ProcessTable(zone_id=ctx.zone_id or ROOT_ZONE_ID)
+        logger.debug("[BOOT:SYSTEM] ProcessTable created (in-memory)")
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ProcessTable unavailable: %s", exc)
 

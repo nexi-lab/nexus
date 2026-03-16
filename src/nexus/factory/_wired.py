@@ -292,18 +292,29 @@ async def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] AgentRPCService unavailable: %s", exc)
 
+    # --- ProcResolver (procfs virtual filesystem for ProcessTable) ---
+    _proc_table = getattr(system_services, "process_table", None)
+    if _proc_table is not None:
+        try:
+            from nexus.system_services.proc.proc_resolver import ProcResolver
+
+            _proc_resolver = ProcResolver(_proc_table)
+            nx._dispatch.register_resolver(_proc_resolver)
+            logger.debug("[BOOT:WIRED] ProcResolver registered")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] ProcResolver unavailable: %s", exc)
+
     acp_rpc_service: Any = None
     _acp_service = getattr(system_services, "acp_service", None)
     if _acp_service is None:
-        # System tier didn't create AcpService (e.g. no record_store / local connect).
-        # Construct it here if ProcessTable + metastore are available.
+        # System tier didn't create AcpService — construct inline.
         try:
             from nexus.core.process_table import ProcessTable
             from nexus.system_services.acp.service import AcpService
 
-            _acp_pt = getattr(system_services, "process_table", None)
+            _acp_pt = _proc_table
             if _acp_pt is None:
-                _acp_pt = ProcessTable(nx.metadata, zone_id=ROOT_ZONE_ID)
+                _acp_pt = ProcessTable(zone_id=ROOT_ZONE_ID)
             _acp_service = AcpService(
                 process_table=_acp_pt,
                 metastore=nx.metadata,

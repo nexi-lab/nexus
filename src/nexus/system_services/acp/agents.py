@@ -5,11 +5,25 @@ invocation flags.  Multiple configs can target the same binary with
 different models (e.g., ``claude-opus``, ``claude-sonnet``).
 
 Agent catalog sourced from AionUi (``src/types/acpTypes.ts``).
+
+VFS convention: agent configs live at ``/{zone}/agents/{name}/config.yaml``
+as metastore xattr on the inode.  ``seed_builtin_agents()`` writes
+BUILTIN_AGENTS to VFS on boot; ``load_agent_config()`` reads them back.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
+
+# Metastore xattr key for agent config storage
+AGENT_CONFIG_KEY = "__agent_config__"
 
 
 @dataclass(frozen=True, slots=True)

@@ -20,7 +20,6 @@ import json
 import logging
 import os
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -167,23 +166,18 @@ class AcpService:
         if labels:
             merged_labels.update(labels)
 
-        # Register in ProcessTable (CREATED state)
-        connection_id = uuid.uuid4().hex
-        desc = self._process_table.register_external(
+        # Register in ProcessTable via spawn (CREATED → RUNNING).
+        desc = self._process_table.spawn(
             name=f"acp:{config.name}",
             owner_id=owner_id,
             zone_id=zone_id,
-            connection_id=connection_id,
-            host_pid=None,
-            protocol="acp",
+            kind=ProcessKind.UNMANAGED,
             labels=merged_labels,
         )
         pid = desc.pid
 
         # Transition CREATED → RUNNING.
-        # TODO(#1510): ProcessTableProtocol lacks a public start() method.
-        # Add ``start(pid) → RUNNING`` to the protocol and use it here
-        # instead of reaching into the private ``_transition`` method.
+        # TODO(#1691): Once spawn → RUNNING lands, remove this.
         self._process_table._transition(desc, ProcessState.RUNNING)
 
         # Build VFS-backed file I/O callables when NexusFS is available.
@@ -309,7 +303,7 @@ class AcpService:
     _ACP_RESULT_KEY = "__acp_result__"
 
     def _system_prompt_path(self, agent_id: str, zone_id: str) -> str:
-        return f"/{zone_id}/acp/{agent_id}/SYSTEM.md"
+        return f"/{zone_id}/agents/{agent_id}/SYSTEM.md"
 
     def set_system_prompt(
         self,
@@ -351,7 +345,7 @@ class AcpService:
     # ------------------------------------------------------------------
 
     def _config_path(self, agent_id: str, zone_id: str) -> str:
-        return f"/{zone_id}/acp/{agent_id}/config"
+        return f"/{zone_id}/agents/{agent_id}/config"
 
     def set_enabled_skills(
         self,

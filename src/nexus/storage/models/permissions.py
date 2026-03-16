@@ -220,47 +220,18 @@ class ReBACChangelogModel(Base):
     )
 
 
-class ReBACCheckCacheModel(Base):
-    """Cache for ReBAC permission check results."""
+class ReBACVersionSequenceModel(Base):
+    """Per-zone version sequence for ReBAC consistency tokens."""
 
-    __tablename__ = "rebac_check_cache"
+    __tablename__ = "rebac_version_sequences"
 
-    cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
-
-    subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    permission: Mapped[str] = mapped_column(String(50), nullable=False)
-    object_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    object_id: Mapped[str] = mapped_column(String(255), nullable=False)
-
-    result: Mapped[bool] = mapped_column(Integer, nullable=False)
-    computed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
-    )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        Index(
-            "idx_rebac_cache_zone_check",
-            "zone_id",
-            "subject_type",
-            "subject_id",
-            "permission",
-            "object_type",
-            "object_id",
-        ),
-        Index(
-            "idx_rebac_cache_check",
-            "subject_type",
-            "subject_id",
-            "permission",
-            "object_type",
-            "object_id",
-        ),
+    zone_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    current_version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
 
+    __table_args__: tuple = ()
 
 class TigerResourceMapModel(Base):
     """Maps resource UUIDs to int64 IDs for Roaring Bitmap compatibility."""

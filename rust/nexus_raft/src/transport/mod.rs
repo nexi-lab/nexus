@@ -104,6 +104,7 @@ pub mod proto {
 
 /// Transport error types.
 #[derive(Debug, thiserror::Error)]
+#[allow(clippy::result_large_err)]
 pub enum TransportError {
     /// Connection failed.
     #[error("connection error: {0}")]

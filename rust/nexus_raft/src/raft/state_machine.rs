@@ -1004,18 +1004,38 @@ impl StateMachine for FullStateMachine {
     }
 
     fn apply(&mut self, index: u64, command: &Command) -> Result<CommandResult> {
-        // Skip if already applied (idempotent)
         if index <= self.last_applied {
             return Ok(CommandResult::Success);
         }
 
-        let result = self.execute(command);
+        // Execute the command. Storage errors during apply of committed entries
+        // are non-deterministic and unrecoverable — if this replica fails but
+        // others succeed, state has diverged. Following etcd/CockroachDB:
+        // panic to prevent silent divergence (node must be restored from snapshot).
+        let result = match self.execute(command) {
+            Ok(result) => result,
+            Err(e) => {
+                panic!(
+                    "Fatal: storage error applying committed entry at index {}: {}. \
+                     Node must be restored from snapshot to recover.",
+                    index, e
+                );
+            }
+        };
 
-        // Update last_applied
+        // Update last_applied only on success. Panic on failure here too:
+        // execute() already mutated state, so failing to persist the progress
+        // marker would cause replay-after-restart (same divergence risk).
         self.last_applied = index;
-        self.save_last_applied(index)?;
+        if let Err(e) = self.save_last_applied(index) {
+            panic!(
+                "Fatal: failed to persist last_applied after applying index {}: {}. \
+                 Node must be restored from snapshot to recover.",
+                index, e
+            );
+        }
 
-        result
+        Ok(result)
     }
 
     fn snapshot(&self) -> Result<Vec<u8>> {
@@ -1052,24 +1072,59 @@ impl StateMachine for FullStateMachine {
     fn restore_snapshot(&mut self, data: &[u8]) -> Result<()> {
         let snapshot: Snapshot = bincode::deserialize(data)?;
 
-        // Clear existing data
-        self.metadata.clear()?;
-        self.locks.clear()?;
+        // Atomic restore: all clears + inserts in a single redb transaction.
+        // If any step fails, the transaction rolls back and old state is preserved.
+        let db = self.metadata.raw_db();
+        let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
+        let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
 
-        // Restore metadata
-        for (path, value) in snapshot.metadata {
-            self.metadata.set(path.as_bytes(), &value)?;
+        let write_txn = db.begin_write().map_err(|e| {
+            super::RaftError::Storage(format!("begin_write for snapshot restore: {e}"))
+        })?;
+
+        {
+            // Clear and repopulate metadata table
+            write_txn
+                .delete_table(meta_def)
+                .map_err(|e| super::RaftError::Storage(format!("delete metadata table: {e}")))?;
+            let mut meta_table = write_txn
+                .open_table(meta_def)
+                .map_err(|e| super::RaftError::Storage(format!("open metadata table: {e}")))?;
+            for (path, value) in &snapshot.metadata {
+                meta_table
+                    .insert(path.as_bytes(), value.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert metadata: {e}")))?;
+            }
+            // Persist last_applied inside the same transaction
+            meta_table
+                .insert(
+                    KEY_LAST_APPLIED,
+                    snapshot.last_applied.to_be_bytes().as_slice(),
+                )
+                .map_err(|e| super::RaftError::Storage(format!("insert last_applied: {e}")))?;
+
+            // Clear and repopulate locks table
+            drop(meta_table);
+            write_txn
+                .delete_table(locks_def)
+                .map_err(|e| super::RaftError::Storage(format!("delete locks table: {e}")))?;
+            let mut locks_table = write_txn
+                .open_table(locks_def)
+                .map_err(|e| super::RaftError::Storage(format!("open locks table: {e}")))?;
+            for (path, lock_info) in &snapshot.locks {
+                let serialized = bincode::serialize(lock_info)?;
+                locks_table
+                    .insert(path.as_bytes(), serialized.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+            }
         }
 
-        // Restore locks
-        for (path, lock_info) in snapshot.locks {
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
-        }
+        write_txn
+            .commit()
+            .map_err(|e| super::RaftError::Storage(format!("commit snapshot restore: {e}")))?;
 
-        // Restore last_applied
+        // Update in-memory state only after successful commit
         self.last_applied = snapshot.last_applied;
-        self.save_last_applied(snapshot.last_applied)?;
 
         Ok(())
     }
@@ -1885,5 +1940,172 @@ mod tests {
         } else {
             panic!("Expected Value result");
         }
+    }
+
+    #[test]
+    fn test_apply_idempotency_guard() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        let cmd = Command::SetMetadata {
+            key: "/test".into(),
+            value: b"data".to_vec(),
+        };
+        sm.apply(1, &cmd).unwrap();
+        assert_eq!(sm.last_applied_index(), 1);
+        let result = sm
+            .apply(
+                1,
+                &Command::DeleteMetadata {
+                    key: "/test".into(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(result, CommandResult::Success));
+        assert_eq!(sm.get_metadata("/test").unwrap(), Some(b"data".to_vec()));
+        assert_eq!(sm.last_applied_index(), 1);
+        let result = sm.apply(0, &Command::Noop).unwrap();
+        assert!(matches!(result, CommandResult::Success));
+        assert_eq!(sm.last_applied_index(), 1);
+    }
+
+    #[test]
+    fn test_apply_advances_last_applied_sequentially() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        for i in 1..=5 {
+            sm.apply(i, &Command::Noop).unwrap();
+            assert_eq!(sm.last_applied_index(), i);
+        }
+        let sm2 = FullStateMachine::new(&store).unwrap();
+        assert_eq!(sm2.last_applied_index(), 5);
+    }
+
+    #[test]
+    fn test_apply_skips_gaps_correctly() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(1, &Command::Noop).unwrap();
+        sm.apply(
+            5,
+            &Command::SetMetadata {
+                key: "/test".into(),
+                value: b"data".to_vec(),
+            },
+        )
+        .unwrap();
+        assert_eq!(sm.last_applied_index(), 5);
+        assert_eq!(sm.get_metadata("/test").unwrap(), Some(b"data".to_vec()));
+    }
+
+    #[test]
+    fn test_restore_snapshot_corrupt_data_preserves_state() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/existing".into(),
+                value: b"original".to_vec(),
+            },
+        )
+        .unwrap();
+        assert_eq!(sm.last_applied_index(), 1);
+        let result = sm.restore_snapshot(b"this is not valid bincode");
+        assert!(result.is_err(), "corrupt snapshot should return error");
+        assert_eq!(
+            sm.get_metadata("/existing").unwrap(),
+            Some(b"original".to_vec())
+        );
+        assert_eq!(sm.last_applied_index(), 1);
+    }
+
+    #[test]
+    fn test_restore_snapshot_empty_data() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        let result = sm.restore_snapshot(b"");
+        assert!(result.is_err(), "empty snapshot should return error");
+    }
+
+    #[test]
+    fn test_restore_snapshot_overwrites_existing_data() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/old_file".into(),
+                value: b"old_data".to_vec(),
+            },
+        )
+        .unwrap();
+        sm.apply(
+            2,
+            &Command::AcquireLock {
+                path: "/old_file".into(),
+                lock_id: "lock-old".into(),
+                max_holders: 1,
+                ttl_secs: 3600,
+                holder_info: "agent:old".into(),
+                now_secs: 1000,
+            },
+        )
+        .unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/new_file".into(),
+                value: b"new_data".to_vec(),
+            },
+        )
+        .unwrap();
+        let snapshot_data = sm2.snapshot().unwrap();
+        sm.restore_snapshot(&snapshot_data).unwrap();
+        assert!(sm.get_metadata("/old_file").unwrap().is_none());
+        assert!(sm.get_lock("/old_file").unwrap().is_none());
+        assert_eq!(
+            sm.get_metadata("/new_file").unwrap(),
+            Some(b"new_data".to_vec())
+        );
+        assert_eq!(sm.last_applied_index(), 1);
+    }
+
+    #[test]
+    fn test_restore_snapshot_persists_atomically() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/persisted".into(),
+                value: b"value".to_vec(),
+            },
+        )
+        .unwrap();
+        sm2.apply(
+            2,
+            &Command::AcquireLock {
+                path: "/persisted".into(),
+                lock_id: "lock-1".into(),
+                max_holders: 1,
+                ttl_secs: 3600,
+                holder_info: "agent:test".into(),
+                now_secs: 1000,
+            },
+        )
+        .unwrap();
+        let snapshot_data = sm2.snapshot().unwrap();
+        sm.restore_snapshot(&snapshot_data).unwrap();
+        let sm3 = FullStateMachine::new(&store).unwrap();
+        assert_eq!(
+            sm3.get_metadata("/persisted").unwrap(),
+            Some(b"value".to_vec())
+        );
+        assert!(sm3.get_lock("/persisted").unwrap().is_some());
+        assert_eq!(sm3.last_applied_index(), 2);
     }
 }

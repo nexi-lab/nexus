@@ -26,6 +26,10 @@ pub struct ReBACGraph {
     /// Enables tupleToUserset resolution which needs "find subjects with relation on object".
     pub reverse_adjacency: AHashMap<AdjacencyKey, Vec<Entity>>,
     pub userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>>,
+    /// Direct-only reverse adjacency: (object_type, object_id, relation) → [subjects].
+    /// Built only from tuples WITHOUT subject_relation (direct relations).
+    /// Used by add_direct_subjects() to avoid conflating userset subjects with direct ones.
+    pub direct_reverse: AHashMap<AdjacencyKey, Vec<Entity>>,
 }
 
 impl ReBACGraph {
@@ -35,6 +39,7 @@ impl ReBACGraph {
         let mut adjacency_list: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
         let mut reverse_adjacency: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
         let mut userset_index: AHashMap<UsersetKey, Vec<UsersetEntry>> = AHashMap::new();
+        let mut direct_reverse: AHashMap<AdjacencyKey, Vec<Entity>> = AHashMap::new();
 
         for tuple in tuples {
             if let Some(ref subject_relation) = tuple.subject_relation {
@@ -60,6 +65,19 @@ impl ReBACGraph {
                     tuple.subject_id.clone(),
                 );
                 tuple_index.insert(tuple_key);
+
+                let direct_rev_key = (
+                    tuple.object_type.clone(),
+                    tuple.object_id.clone(),
+                    tuple.relation.clone(),
+                );
+                direct_reverse
+                    .entry(direct_rev_key)
+                    .or_default()
+                    .push(Entity {
+                        entity_type: tuple.subject_type.clone(),
+                        entity_id: tuple.subject_id.clone(),
+                    });
             }
 
             // Forward adjacency: subject → objects
@@ -90,6 +108,7 @@ impl ReBACGraph {
             adjacency_list,
             reverse_adjacency,
             userset_index,
+            direct_reverse,
         }
     }
 
@@ -142,6 +161,15 @@ impl ReBACGraph {
             .get(&rev_key)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn find_direct_subjects_for_object(&self, object: &Entity, relation: &str) -> Vec<Entity> {
+        let key = (
+            object.entity_type.clone(),
+            object.entity_id.clone(),
+            relation.to_string(),
+        );
+        self.direct_reverse.get(&key).cloned().unwrap_or_default()
     }
 
     /// Get usersets that grant a relation on an object.
@@ -469,11 +497,8 @@ fn add_direct_subjects(
     graph: &ReBACGraph,
     subjects: &mut AHashSet<(String, String)>,
 ) {
-    for key in graph.tuple_index.iter() {
-        let (obj_type, obj_id, rel, subj_type, subj_id) = key;
-        if obj_type == &object.entity_type && obj_id == &object.entity_id && rel == relation {
-            subjects.insert((subj_type.clone(), subj_id.clone()));
-        }
+    for entity in graph.find_direct_subjects_for_object(object, relation) {
+        subjects.insert((entity.entity_type, entity.entity_id));
     }
 
     for userset in graph.get_usersets(object, relation) {

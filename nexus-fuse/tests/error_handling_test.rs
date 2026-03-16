@@ -106,10 +106,11 @@ fn test_connection_refused_is_transient() {
 }
 
 #[test]
-fn test_rpc_not_found_in_body() {
+fn test_rpc_file_not_found_code_maps_to_enoent() {
     let mut server = Server::new();
 
-    // Server returns 200 but the RPC body indicates "not found"
+    // Server returns RPC error with code -32000 (RPCErrorCode.FILE_NOT_FOUND).
+    // This is the server's canonical "file not found" signal and must map to ENOENT.
     let _m = server
         .mock("POST", "/api/nfs/read")
         .with_status(200)
@@ -122,7 +123,7 @@ fn test_rpc_not_found_in_body() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.is_not_found());
+    assert!(err.is_not_found(), "RPC code -32000 must map to NotFound");
     assert_eq!(err.to_errno(), libc::ENOENT);
 }
 
@@ -334,4 +335,91 @@ fn test_list_directory() {
     assert_eq!(entries[0].name, "hello.txt");
     assert_eq!(entries[0].entry_type, "file");
     assert_eq!(entries[0].size, 5);
+}
+
+#[test]
+fn test_rpc_non_32000_code_with_not_found_message_is_not_enoent() {
+    let mut server = Server::new();
+
+    // RPC errors are classified by error code, not message text.
+    // Code -1 is NOT -32000 (FILE_NOT_FOUND), so even though the message
+    // says "Not Found", this must map to InvalidResponse, not NotFound.
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"Not Found: /missing"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/test");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(!err.is_not_found(), "RPC errors should not map to NotFound");
+    assert_eq!(err.to_errno(), libc::EPROTO);
+    assert!(!err.is_transient());
+}
+
+#[test]
+fn test_rpc_error_permission_denied_maps_to_invalid_response() {
+    let mut server = Server::new();
+
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"Permission denied"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/test");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(!err.is_not_found());
+    assert_eq!(err.to_errno(), libc::EPROTO);
+    assert!(!err.is_transient());
+}
+
+#[test]
+fn test_http_404_maps_to_not_found() {
+    let mut server = Server::new();
+
+    // HTTP 404 should map to NotFound/ENOENT (alongside RPC code -32000).
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body("Not Found")
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/test");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_not_found(), "HTTP 404 should map to NotFound");
+    assert_eq!(err.to_errno(), libc::ENOENT);
+    assert!(!err.is_transient());
+}
+
+#[test]
+fn test_rpc_internal_error_not_misclassified() {
+    let mut server = Server::new();
+
+    // Internal errors with "not found" substring must NOT become ENOENT
+    let _m = server
+        .mock("POST", "/api/nfs/stat")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"Key not found in distributed hash table"}}"#)
+        .create();
+
+    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let result = client.stat("/test");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(!err.is_not_found(), "Internal errors must not be misclassified as NotFound");
 }

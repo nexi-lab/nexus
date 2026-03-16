@@ -17,7 +17,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a3062sec01"
-down_revision: Union[str, ABCSequence[str], None] = "f537c8b67980"
+down_revision: Union[str, ABCSequence[str], None] = "drop_context_manifest_col"
 branch_labels: Union[str, ABCSequence[str], None] = None
 depends_on: Union[str, ABCSequence[str], None] = None
 

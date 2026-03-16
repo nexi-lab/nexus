@@ -2,16 +2,20 @@
 
 Extracted from server.auth.database_key to allow services layer
 to manage API keys without importing from the server layer.
+
+Note: This module lives in the kernel (storage) layer and must NOT
+import from the bricks layer.  The HMAC secret env var is read
+directly here to stay consistent with bricks.auth.constants without
+creating a cross-layer dependency (Issue #3062).
 """
 
 import hashlib
 import hmac
 import logging
+import os
 import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-
-from nexus.bricks.auth.constants import get_hmac_secret
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -21,13 +25,22 @@ logger = logging.getLogger(__name__)
 # API key security constants
 API_KEY_PREFIX = "sk-"
 API_KEY_MIN_LENGTH = 32
+_HMAC_SALT_DEFAULT = "nexus-api-key-v1"
+
+
+def _get_hmac_secret() -> str:
+    """Return the HMAC secret for API key hashing.
+
+    Reads from NEXUS_API_KEY_SECRET env var for per-install isolation.
+    Falls back to the legacy hardcoded salt for backward compat.
+    Mirrors nexus.bricks.auth.constants.get_hmac_secret() without
+    importing from the bricks layer.
+    """
+    return os.environ.get("NEXUS_API_KEY_SECRET", _HMAC_SALT_DEFAULT)
 
 
 def hash_api_key(key: str) -> str:
     """Hash API key using HMAC-SHA256 with per-install secret.
-
-    Uses get_hmac_secret() for consistent hashing across all code
-    paths (Issue #3062).
 
     Args:
         key: Raw API key string.
@@ -35,7 +48,7 @@ def hash_api_key(key: str) -> str:
     Returns:
         HMAC-SHA256 hex digest.
     """
-    secret = get_hmac_secret()
+    secret = _get_hmac_secret()
     return hmac.new(
         secret.encode("utf-8"),
         key.encode("utf-8"),

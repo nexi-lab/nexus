@@ -4627,7 +4627,11 @@ class NexusFS(  # type: ignore[misc]
         """Read from DT_STREAM — async blocking, waits until data at offset is available."""
         from nexus.core.stream import StreamClosedError, StreamNotFoundError
 
-        # TODO: remote proxy (like _pipe_read_remote) when federation is wired
+        # Locality check: forward to origin if stream is on a remote node
+        remote_origin = self._stream_is_remote(path)
+        if remote_origin is not None:
+            return self._stream_read_remote(remote_origin, path, count=count, offset=offset)
+
         try:
             if count is not None and count > 1:
                 items, _ = await self._stream_manager.stream_read_batch_blocking(
@@ -4645,7 +4649,11 @@ class NexusFS(  # type: ignore[misc]
         """Write to DT_STREAM — non-blocking append, returns byte offset."""
         from nexus.core.stream import StreamClosedError, StreamNotFoundError
 
-        # TODO: remote proxy when federation is wired
+        # Locality check: forward to origin if stream is on a remote node
+        remote_origin = self._stream_is_remote(path)
+        if remote_origin is not None:
+            return self._stream_write_remote(remote_origin, path, data)
+
         try:
             return self._stream_manager.stream_write_nowait(path, data)
         except StreamNotFoundError:
@@ -4657,12 +4665,117 @@ class NexusFS(  # type: ignore[misc]
         """Destroy DT_STREAM — close buffer + delete inode."""
         from nexus.core.stream import StreamNotFoundError
 
-        # TODO: remote proxy when federation is wired
+        # Locality check: forward full sys_unlink to origin if remote
+        remote_origin = self._stream_is_remote(path)
+        if remote_origin is not None:
+            return self._stream_destroy_remote(remote_origin, path)
+
         try:
             self._stream_manager.destroy(path)
         except StreamNotFoundError:
             raise NexusFileNotFoundError(path, f"Stream not found: {path}") from None
         return {}
+
+    # ------------------------------------------------------------------
+    # DT_STREAM remote proxy — forward stream ops to origin via Call RPC
+    # ------------------------------------------------------------------
+
+    def _stream_read_remote(
+        self, origin: str, path: str, *, count: int | None = None, offset: int = 0
+    ) -> bytes:
+        """Read from a remote DT_STREAM via gRPC Call RPC."""
+        import grpc
+
+        from nexus.grpc.channel_factory import build_peer_channel
+        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+        from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+
+        params: dict[str, Any] = {"path": path}
+        if count is not None:
+            params["count"] = count
+        if offset:
+            params["offset"] = offset
+
+        channel = build_peer_channel(origin)
+        try:
+            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
+            request = vfs_pb2.CallRequest(
+                method="sys_read",
+                payload=encode_rpc_message(params),
+            )
+            response = stub.Call(request, timeout=30.0)
+            if response.is_error:
+                payload = decode_rpc_message(response.payload) if response.payload else {}
+                msg = payload.get("message", "Remote stream read failed")
+                raise NexusFileNotFoundError(path, msg)
+            result = decode_rpc_message(response.payload)
+            content = result.get("result", b"")
+            if isinstance(content, str):
+                import base64
+
+                content = base64.b64decode(content)
+            return content
+        except grpc.RpcError as exc:
+            raise NexusFileNotFoundError(
+                path, f"Remote stream read to {origin} failed: {exc}"
+            ) from exc
+        finally:
+            channel.close()
+
+    def _stream_write_remote(self, origin: str, path: str, data: bytes) -> int:
+        """Write to a remote DT_STREAM via gRPC Call RPC."""
+        import base64
+
+        import grpc
+
+        from nexus.grpc.channel_factory import build_peer_channel
+        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+        from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+
+        params = {"path": path, "buf": base64.b64encode(data).decode("ascii")}
+        channel = build_peer_channel(origin)
+        try:
+            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
+            request = vfs_pb2.CallRequest(
+                method="sys_write",
+                payload=encode_rpc_message(params),
+            )
+            response = stub.Call(request, timeout=30.0)
+            if response.is_error:
+                payload = decode_rpc_message(response.payload) if response.payload else {}
+                msg = payload.get("message", "Remote stream write failed")
+                raise NexusFileNotFoundError(path, msg)
+            result = decode_rpc_message(response.payload)
+            return result.get("result", len(data))
+        except grpc.RpcError as exc:
+            raise NexusFileNotFoundError(
+                path, f"Remote stream write to {origin} failed: {exc}"
+            ) from exc
+        finally:
+            channel.close()
+
+    def _stream_destroy_remote(self, origin: str, path: str) -> dict[str, Any]:
+        """Destroy a remote DT_STREAM via gRPC Delete RPC."""
+        import grpc
+
+        from nexus.grpc.channel_factory import build_peer_channel
+        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
+
+        channel = build_peer_channel(origin)
+        try:
+            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
+            request = vfs_pb2.DeleteRequest(path=path, auth_token="")
+            response = stub.Delete(request, timeout=30.0)
+            if response.is_error:
+                logger.warning("Remote stream destroy on %s failed for %s", origin, path)
+            return {}
+        except grpc.RpcError as exc:
+            logger.warning("Remote stream destroy to %s failed: %s", origin, exc)
+            raise NexusFileNotFoundError(
+                path, f"Remote stream destroy to {origin} failed: {exc}"
+            ) from exc
+        finally:
+            channel.close()
 
     async def aclose(self) -> None:
         """Async shutdown: stop PersistentService + deactivate HotSwappable, then close.

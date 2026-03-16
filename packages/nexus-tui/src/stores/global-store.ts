@@ -116,7 +116,26 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
     set({ connectionStatus: "connecting", connectionError: null });
 
     try {
-      const userInfo = await client.get<UserInfo>("/auth/me");
+      // Consolidated connection check (Decision 5A): health + features + auth in one flow
+      const [health, features, userInfo] = await Promise.all([
+        client.get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
+          "/api/v2/bricks/health",
+        ).catch(() => null),
+        client.get<FeaturesResponse>("/api/v2/features").catch(() => null),
+        client.get<UserInfo>("/auth/me"),
+      ]);
+
+      if (health) {
+        set({
+          serverVersion: health.version ?? get().serverVersion,
+          zoneId: health.zone_id ?? get().zoneId,
+          uptime: health.uptime_seconds ?? get().uptime,
+        });
+      }
+      if (features) {
+        get().setFeatures(features);
+      }
+
       set({ connectionStatus: "connected", connectionError: null, userInfo });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Connection test failed";

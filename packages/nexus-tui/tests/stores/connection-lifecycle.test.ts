@@ -1,0 +1,224 @@
+/**
+ * Tests for connection lifecycle transitions — Phase 0, Issue #10A.
+ *
+ * Tests the full initConfig → testConnection flow with mocked FetchClient,
+ * covering happy path + all error modes. These tests validate the signals
+ * that the PreConnectionScreen will rely on.
+ */
+
+import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { useGlobalStore } from "../../src/stores/global-store.js";
+import type { FetchClient } from "@nexus/api-client";
+
+function createMockClient(overrides: {
+  health?: () => Promise<unknown>;
+  features?: () => Promise<unknown>;
+  authMe?: () => Promise<unknown>;
+} = {}): FetchClient {
+  const defaultUserInfo = {
+    user_id: "user-1",
+    email: "test@example.com",
+    username: "testuser",
+    display_name: "Test User",
+    avatar_url: null,
+    is_global_admin: false,
+    primary_auth_method: "api_key",
+  };
+
+  const defaultHealth = { version: "0.9.0", zone_id: "default", uptime_seconds: 100 };
+  const defaultFeatures = {
+    profile: "full",
+    mode: "standalone",
+    enabled_bricks: ["search", "catalog"],
+    disabled_bricks: [],
+    version: "0.9.0",
+    rate_limit_enabled: false,
+  };
+
+  return {
+    get: mock(async (url: string) => {
+      if (url === "/auth/me") {
+        return overrides.authMe ? overrides.authMe() : defaultUserInfo;
+      }
+      if (url === "/api/v2/bricks/health") {
+        return overrides.health ? overrides.health() : defaultHealth;
+      }
+      if (url === "/api/v2/features") {
+        return overrides.features ? overrides.features() : defaultFeatures;
+      }
+      throw new Error(`Unmocked URL: ${url}`);
+    }),
+    rawRequest: mock(async () => new Response("{}", { status: 200 })),
+  } as unknown as FetchClient;
+}
+
+describe("Connection Lifecycle", () => {
+  beforeEach(() => {
+    useGlobalStore.setState({
+      connectionStatus: "disconnected",
+      connectionError: null,
+      client: null,
+      serverVersion: null,
+      zoneId: null,
+      uptime: null,
+      userInfo: null,
+      enabledBricks: [],
+      profile: null,
+      mode: null,
+      featuresLoaded: false,
+      featuresLastFetched: 0,
+    });
+  });
+
+  describe("happy path: disconnected → connecting → connected", () => {
+    it("testConnection sets connected + userInfo on success", async () => {
+      const client = createMockClient();
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("connected");
+      expect(state.connectionError).toBeNull();
+      expect(state.userInfo).not.toBeNull();
+      expect(state.userInfo!.email).toBe("test@example.com");
+    });
+
+    it("transitions through connecting state", async () => {
+      const states: string[] = [];
+      const unsubscribe = useGlobalStore.subscribe((s) => {
+        states.push(s.connectionStatus);
+      });
+
+      const client = createMockClient();
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+      unsubscribe();
+
+      // Should have gone through connecting → connected
+      expect(states).toContain("connecting");
+      expect(states[states.length - 1]).toBe("connected");
+    });
+  });
+
+  describe("server unreachable → error", () => {
+    it("network error sets error status", async () => {
+      const client = createMockClient({
+        authMe: async () => { throw new Error("ECONNREFUSED"); },
+      });
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("error");
+      expect(state.connectionError).toBe("ECONNREFUSED");
+      expect(state.userInfo).toBeNull();
+    });
+
+    it("timeout sets error status", async () => {
+      const client = createMockClient({
+        authMe: async () => { throw new Error("Request timed out"); },
+      });
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("error");
+      expect(state.connectionError).toBe("Request timed out");
+    });
+  });
+
+  describe("auth failures", () => {
+    it("401 unauthorized sets error", async () => {
+      const client = createMockClient({
+        authMe: async () => { throw new Error("Unauthorized (401)"); },
+      });
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("error");
+      expect(state.connectionError).toContain("Unauthorized");
+    });
+
+    it("403 forbidden sets error", async () => {
+      const client = createMockClient({
+        authMe: async () => { throw new Error("Forbidden (403)"); },
+      });
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("error");
+      expect(state.connectionError).toContain("Forbidden");
+    });
+  });
+
+  describe("no client → disconnected", () => {
+    it("testConnection with null client stays disconnected", async () => {
+      useGlobalStore.setState({ client: null });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("disconnected");
+      expect(state.connectionError).toBeNull();
+      expect(state.userInfo).toBeNull();
+    });
+  });
+
+  describe("reconnection", () => {
+    it("can recover from error to connected", async () => {
+      // First: fail
+      const failClient = createMockClient({
+        authMe: async () => { throw new Error("Connection refused"); },
+      });
+      useGlobalStore.setState({ client: failClient });
+      await useGlobalStore.getState().testConnection();
+      expect(useGlobalStore.getState().connectionStatus).toBe("error");
+
+      // Second: succeed
+      const okClient = createMockClient();
+      useGlobalStore.setState({ client: okClient });
+      await useGlobalStore.getState().testConnection();
+      expect(useGlobalStore.getState().connectionStatus).toBe("connected");
+      expect(useGlobalStore.getState().userInfo).not.toBeNull();
+      expect(useGlobalStore.getState().connectionError).toBeNull();
+    });
+  });
+
+  describe("non-Error thrown objects", () => {
+    it("handles string throws", async () => {
+      const client = createMockClient({
+        authMe: async () => { throw "raw string error"; },
+      });
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("error");
+      expect(state.connectionError).toBe("Connection test failed");
+    });
+  });
+
+  describe("server error (500)", () => {
+    it("server error sets error status", async () => {
+      const client = createMockClient({
+        authMe: async () => { throw new Error("Internal Server Error (500)"); },
+      });
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+
+      const state = useGlobalStore.getState();
+      expect(state.connectionStatus).toBe("error");
+      expect(state.connectionError).toContain("500");
+    });
+  });
+});

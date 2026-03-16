@@ -2,8 +2,13 @@
 
 This module provides the main CLI entry point for the Nexus command-line tool.
 It creates the main command group and registers all commands from the modular structure.
+
+When invoked with no subcommand, ``nexus`` execs into the TUI (``nexus-tui``).
 """
 
+import os
+import shutil
+import sys
 import warnings
 
 import click
@@ -21,7 +26,47 @@ warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", cate
 setup_uvloop()
 
 
-@click.group(cls=LazyCommandGroup)
+# ---------------------------------------------------------------------------
+# TUI launcher helpers
+# ---------------------------------------------------------------------------
+
+
+def _exec_tui(extra_args: list[str] | None = None) -> None:
+    """Replace the current process with the TUI.
+
+    Prefers a locally-installed ``nexus-tui`` binary (faster startup) and
+    falls back to ``bunx nexus-tui``.  If neither is available, prints a
+    helpful error and exits with code 1.
+    """
+    args = extra_args or []
+
+    # Fast path: nexus-tui already on PATH
+    nexus_tui = shutil.which("nexus-tui")
+    if nexus_tui is not None:
+        os.execvp(nexus_tui, ["nexus-tui", *args])
+        # execvp does not return
+
+    # Fallback: use bunx (Bun's npx equivalent)
+    bunx = shutil.which("bunx")
+    if bunx is not None:
+        os.execvp(bunx, ["bunx", "nexus-tui", *args])
+        # execvp does not return
+
+    # Neither found – give the user actionable guidance.
+    click.secho("Error: could not find nexus-tui or bunx on PATH.", fg="red", err=True)
+    click.echo(
+        "Install the TUI with:\n  npm install -g nexus-tui   # or\n  bun install -g nexus-tui\n",
+        err=True,
+    )
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Main CLI group
+# ---------------------------------------------------------------------------
+
+
+@click.group(cls=LazyCommandGroup, invoke_without_command=True)
 @click.version_option(version=nexus.__version__, prog_name="nexus")
 @click.option(
     "--profile",
@@ -35,7 +80,12 @@ def main(ctx: click.Context, profile: str | None) -> None:
 
     Beautiful command-line interface for file operations, discovery, and management.
 
+    When invoked without a subcommand the interactive TUI is launched.
+
     Examples:
+        # Launch the TUI
+        nexus
+
         # Initialize a workspace
         nexus init ./my-workspace
 
@@ -71,6 +121,43 @@ def main(ctx: click.Context, profile: str | None) -> None:
     """
     ctx.ensure_object(dict)
     ctx.obj["profile"] = profile
+
+    # When no subcommand is supplied, launch the TUI.
+    if ctx.invoked_subcommand is None:
+        _exec_tui()
+
+
+# ---------------------------------------------------------------------------
+# Explicit ``nexus tui`` subcommand (convenience / backward-compat alias)
+# ---------------------------------------------------------------------------
+
+
+@main.command("tui")
+@click.option("--url", default=None, help="Nexus server URL.")
+@click.option("--api-key", default=None, help="API key for authentication.")
+@click.option("--agent-id", default=None, help="Agent ID to connect as.")
+@click.option("--subject", default=None, help="Subject (user) identity.")
+@click.option("--zone-id", default=None, help="Zone ID to target.")
+def tui_cmd(
+    url: str | None,
+    api_key: str | None,
+    agent_id: str | None,
+    subject: str | None,
+    zone_id: str | None,
+) -> None:
+    """Launch the Nexus interactive TUI."""
+    args: list[str] = []
+    if url is not None:
+        args.extend(["--url", url])
+    if api_key is not None:
+        args.extend(["--api-key", api_key])
+    if agent_id is not None:
+        args.extend(["--agent-id", agent_id])
+    if subject is not None:
+        args.extend(["--subject", subject])
+    if zone_id is not None:
+        args.extend(["--zone-id", zone_id])
+    _exec_tui(args)
 
 
 # Register all commands from the modular structure

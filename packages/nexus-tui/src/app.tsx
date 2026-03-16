@@ -2,6 +2,7 @@
  * Root application component.
  *
  * Lazy-loads panels on first navigation for fast startup.
+ * Shows PreConnectionScreen when the server is unavailable (Decision 3A).
  */
 
 import React, { lazy, Suspense, useState, useCallback, useEffect } from "react";
@@ -17,7 +18,10 @@ import { IdentitySwitcher } from "./shared/components/identity-switcher.js";
 import { AppConfirmDialog } from "./shared/components/app-confirm-dialog.js";
 import { HelpOverlay } from "./shared/components/help-overlay.js";
 import { WelcomeScreen } from "./shared/components/welcome-screen.js";
+import { PreConnectionScreen } from "./shared/components/pre-connection-screen.js";
 import { useFreshServer } from "./shared/hooks/use-fresh-server.js";
+import { detectConnectionState } from "./shared/hooks/use-connection-state.js";
+import { killAllProcesses } from "./services/command-runner.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
@@ -77,9 +81,20 @@ function PanelRouter(): React.ReactNode {
   }
 }
 
+/**
+ * Graceful shutdown: kill child processes then exit (Decision 6A).
+ */
+function shutdown(): void {
+  killAllProcesses();
+  process.exit(0);
+}
+
 export function App(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
+  const connectionStatus = useGlobalStore((s) => s.connectionStatus);
+  const connectionError = useGlobalStore((s) => s.connectionError);
+  const config = useGlobalStore((s) => s.config);
   const toggleZoom = useUiStore((s) => s.toggleZoom);
   const zoomedPanel = useUiStore((s) => s.zoomedPanel);
   const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
@@ -87,6 +102,10 @@ export function App(): React.ReactNode {
   const { isFresh } = useFreshServer();
   const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   const showWelcome = isFresh === true && !welcomeDismissed;
+
+  // Determine if we should show the pre-connection screen (Decision 3A)
+  const connState = detectConnectionState(connectionStatus, connectionError, config);
+  const showPreConnection = connState !== "ready" && connState !== "connecting";
 
   const setOverlayActive = useUiStore((s) => s.setOverlayActive);
   useEffect(() => {
@@ -102,7 +121,12 @@ export function App(): React.ReactNode {
   }, []);
 
   useKeyboard(
-    identitySwitcherOpen || helpOpen || showWelcome
+    showPreConnection
+      ? {
+          // Pre-connection screen handles its own keybindings
+          "q": shutdown,
+        }
+      : identitySwitcherOpen || helpOpen || showWelcome
       ? {
           // When an overlay is open, only its dismiss key works from app level.
           "ctrl+i": toggleIdentitySwitcher,
@@ -121,9 +145,19 @@ export function App(): React.ReactNode {
           "ctrl+i": toggleIdentitySwitcher,
           "z": () => toggleZoom(activePanel),
           "?": () => setHelpOpen(true),
-          "q": () => process.exit(0),
+          "q": shutdown,
         },
   );
+
+  // Pre-connection screen (Decision 3A): shown when server is unavailable
+  if (showPreConnection) {
+    return (
+      <box height="100%" width="100%" flexDirection="column">
+        <PreConnectionScreen />
+        <StatusBar />
+      </box>
+    );
+  }
 
   return (
     <box height="100%" width="100%" flexDirection="column">

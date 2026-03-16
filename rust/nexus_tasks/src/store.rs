@@ -269,8 +269,8 @@ impl TaskStore {
         // Atomic: remove from pending, add to running + reverse lookup, update task
         let mut batch = self.db.batch();
         batch.remove(&self.pending_idx, &key_bytes);
-        batch.insert(&self.running_idx, &running_key, vec![]);
-        batch.insert(&self.running_task_key, task_id.to_be_bytes(), &running_key);
+        batch.insert(&self.running_idx, running_key, vec![]);
+        batch.insert(&self.running_task_key, task_id.to_be_bytes(), running_key);
         batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
         batch.commit()?;
         self.pending_count.fetch_sub(1, Ordering::Relaxed);
@@ -663,11 +663,11 @@ impl TaskStore {
         if let Some(ref old) = old_key {
             batch.remove(&self.running_idx, old);
         }
-        batch.insert(&self.running_idx, &new_running_key, vec![]);
+        batch.insert(&self.running_idx, new_running_key, vec![]);
         batch.insert(
             &self.running_task_key,
             task_id.to_be_bytes(),
-            &new_running_key,
+            new_running_key,
         );
         batch.insert(&self.tasks, task_id.to_be_bytes(), task_value);
         batch.commit()?;
@@ -1079,13 +1079,8 @@ mod tests {
             let claimed = Arc::clone(&claimed);
             handles.push(std::thread::spawn(move || {
                 let worker_id = format!("worker-{}", w);
-                loop {
-                    match store.claim_next(&worker_id, 300, 1700000000, 0).unwrap() {
-                        Some(task) => {
-                            claimed.lock().unwrap().push(task.task_id);
-                        }
-                        None => break,
-                    }
+                while let Some(task) = store.claim_next(&worker_id, 300, 1700000000, 0).unwrap() {
+                    claimed.lock().unwrap().push(task.task_id);
                 }
             }));
         }

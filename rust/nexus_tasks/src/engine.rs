@@ -131,7 +131,8 @@ impl Engine {
     /// `worker_id` must match the current owner.
     pub fn fail(&self, task_id: u64, error_message: &str, worker_id: &str) -> Result<()> {
         let now = now_secs();
-        self.store.fail_task(task_id, error_message, now, worker_id)?;
+        self.store
+            .fail_task(task_id, error_message, now, worker_id)?;
         Ok(())
     }
 

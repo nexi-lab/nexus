@@ -65,9 +65,9 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     mnt_meta = nx.metadata.get("/mnt")
     assert mnt_meta is not None
 
-    # Verify mount point is a DT_MOUNT entry (created by PathRouter.add_mount,
-    # not overwritten by sys_mkdir which honours the existing entry) and is
-    # recognized as a directory by the kernel.
+    # PathRouter.add_mount() is pure in-memory (no metastore.put); DT_MOUNT
+    # persistence is the mount subsystem's job.  sys_mkdir creates a DT_DIR
+    # entry, which the kernel still treats as directory-like.
     assert await nx.sys_is_directory("/mnt/test")
     test_meta = nx.metadata.get("/mnt/test")
     assert test_meta is not None
@@ -166,7 +166,7 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
     for p in ["/a", "/a/b", "/a/b/c", "/a/b/c/mount"]:
         assert await nx.sys_is_directory(p), f"Expected {p} to be a directory"
 
-    # The mount point should be a DT_MOUNT entry
+    # PathRouter.add_mount() is pure in-memory; sys_mkdir creates DT_DIR.
     mount_meta = nx.metadata.get("/a/b/c/mount")
     assert mount_meta is not None
     # sys_mkdir creates entry_type=0 (regular dir); DT_MOUNT is set by topology code.

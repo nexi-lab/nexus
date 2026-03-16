@@ -45,7 +45,9 @@ class MetadataChangeLogModel(Base):
         server_default=_get_uuid_server_default(),
     )
 
-    # Monotonic sequence for ordered replay
+    # Monotonic sequence for ordered replay.
+    # PostgreSQL uses a SEQUENCE (mcl_sequence_number_seq) via migration.
+    # SQLite uses MCLRecorder's fallback allocator (Issue #3062).
     sequence_number: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
 
     # Entity and aspect identification

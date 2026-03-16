@@ -18,11 +18,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nexus.storage.models.metadata_change_log import MCLChangeType, MetadataChangeLogModel
 
 logger = logging.getLogger(__name__)
+
+# Maximum retries for sequence collision (SQLite fallback only)
+_MAX_SEQUENCE_RETRIES = 3
 
 
 class MCLRecorder:
@@ -30,17 +34,24 @@ class MCLRecorder:
 
     Designed to be called from write observer hooks (fire-and-forget).
     Failures are logged but never raised (MCL is non-critical).
+
+    Sequence allocation (Issue #3062):
+        PostgreSQL — uses a database SEQUENCE (mcl_sequence_number_seq),
+        allocated server-side with no Python-level race window.
+        SQLite/other — falls back to time-based microsecond allocation
+        with retry on uniqueness violation.
     """
 
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def _next_sequence(self) -> int:
-        """Get the next MCL sequence number.
+    def _is_postgres(self) -> bool:
+        return self._session.bind is not None and self._session.bind.dialect.name == "postgresql"
 
-        Uses time-based microsecond timestamps to avoid race conditions
-        under concurrent transactions. Falls back to MAX+1 if the
-        timestamp would be lower than existing entries.
+    def _next_sequence_fallback(self) -> int:
+        """Fallback sequence allocation for non-PostgreSQL dialects.
+
+        Uses time-based microsecond timestamps with MAX+1 floor.
         """
         time_based = int(time.time() * 1_000_000)
         result = self._session.execute(
@@ -48,6 +59,42 @@ class MCLRecorder:
         ).scalar()
         current_max = int(result) if result is not None else 0
         return max(time_based, current_max + 1)
+
+    def _allocate_sequence(self) -> int | None:
+        """Allocate a sequence number.
+
+        Returns None on PostgreSQL (server_default handles it),
+        or a Python-generated value for other dialects.
+        """
+        if self._is_postgres():
+            return None  # Let the DB sequence handle it
+        return self._next_sequence_fallback()
+
+    def _record(self, mcl_kwargs: dict[str, Any], label: str) -> None:
+        """Create and persist an MCL entry with retry on sequence collision.
+
+        On PostgreSQL the DB sequence prevents collisions.  On SQLite the
+        fallback allocator can race under concurrency; retrying with a
+        fresh value resolves it (Issue #3062).
+        """
+        seq = self._allocate_sequence()
+        for attempt in range(_MAX_SEQUENCE_RETRIES):
+            try:
+                if seq is not None:
+                    mcl_kwargs["sequence_number"] = seq
+                mcl = MetadataChangeLogModel(**mcl_kwargs)
+                self._session.add(mcl)
+                self._session.flush()
+                return
+            except IntegrityError:
+                self._session.rollback()
+                if attempt < _MAX_SEQUENCE_RETRIES - 1:
+                    seq = self._next_sequence_fallback()
+                else:
+                    logger.warning("MCL %s failed after %d retries", label, _MAX_SEQUENCE_RETRIES)
+            except Exception:
+                logger.warning("MCL %s failed", label, exc_info=True)
+                return
 
     def record_file_write(
         self,
@@ -59,23 +106,21 @@ class MCLRecorder:
         previous_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Record an MCL entry for a file write operation."""
-        try:
-            mcl = MetadataChangeLogModel(
-                sequence_number=self._next_sequence(),
-                entity_urn=entity_urn,
-                aspect_name="file_metadata",
-                change_type=MCLChangeType.UPSERT.value,
-                aspect_value=json.dumps(metadata_dict, default=str) if metadata_dict else None,
-                previous_value=(
+        self._record(
+            {
+                "entity_urn": entity_urn,
+                "aspect_name": "file_metadata",
+                "change_type": MCLChangeType.UPSERT.value,
+                "aspect_value": json.dumps(metadata_dict, default=str) if metadata_dict else None,
+                "previous_value": (
                     json.dumps(previous_metadata, default=str) if previous_metadata else None
                 ),
-                zone_id=zone_id,
-                changed_by=changed_by,
-                created_at=datetime.now(UTC),
-            )
-            self._session.add(mcl)
-        except Exception:
-            logger.warning("MCL record_file_write failed", exc_info=True)
+                "zone_id": zone_id,
+                "changed_by": changed_by,
+                "created_at": datetime.now(UTC),
+            },
+            "record_file_write",
+        )
 
     def record_file_delete(
         self,
@@ -86,22 +131,20 @@ class MCLRecorder:
         previous_metadata: dict[str, Any] | None = None,
     ) -> None:
         """Record an MCL entry for a file delete operation."""
-        try:
-            mcl = MetadataChangeLogModel(
-                sequence_number=self._next_sequence(),
-                entity_urn=entity_urn,
-                aspect_name="file_metadata",
-                change_type=MCLChangeType.DELETE.value,
-                previous_value=(
+        self._record(
+            {
+                "entity_urn": entity_urn,
+                "aspect_name": "file_metadata",
+                "change_type": MCLChangeType.DELETE.value,
+                "previous_value": (
                     json.dumps(previous_metadata, default=str) if previous_metadata else None
                 ),
-                zone_id=zone_id,
-                changed_by=changed_by,
-                created_at=datetime.now(UTC),
-            )
-            self._session.add(mcl)
-        except Exception:
-            logger.warning("MCL record_file_delete failed", exc_info=True)
+                "zone_id": zone_id,
+                "changed_by": changed_by,
+                "created_at": datetime.now(UTC),
+            },
+            "record_file_delete",
+        )
 
     def record_file_rename(
         self,
@@ -117,21 +160,19 @@ class MCLRecorder:
         With UUID-based URN, rename doesn't change the URN — only the
         path aspect updates. We record a PATH_CHANGED event.
         """
-        try:
-            mcl = MetadataChangeLogModel(
-                sequence_number=self._next_sequence(),
-                entity_urn=entity_urn,
-                aspect_name="path",
-                change_type=MCLChangeType.PATH_CHANGED.value,
-                aspect_value=json.dumps({"virtual_path": new_path}, default=str),
-                previous_value=json.dumps({"virtual_path": old_path}, default=str),
-                zone_id=zone_id,
-                changed_by=changed_by,
-                created_at=datetime.now(UTC),
-            )
-            self._session.add(mcl)
-        except Exception:
-            logger.warning("MCL record_file_rename failed", exc_info=True)
+        self._record(
+            {
+                "entity_urn": entity_urn,
+                "aspect_name": "path",
+                "change_type": MCLChangeType.PATH_CHANGED.value,
+                "aspect_value": json.dumps({"virtual_path": new_path}, default=str),
+                "previous_value": json.dumps({"virtual_path": old_path}, default=str),
+                "zone_id": zone_id,
+                "changed_by": changed_by,
+                "created_at": datetime.now(UTC),
+            },
+            "record_file_rename",
+        )
 
     # ------------------------------------------------------------------
     # Replay API (Issue #2929)

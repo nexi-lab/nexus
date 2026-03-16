@@ -267,20 +267,16 @@ class OAuthUserAuth:
                     logger.info("Linked OAuth account to existing user: %s", provider_email)
                     return existing_user, False
                 except IntegrityError:
-                    session.rollback()
-                    existing_oauth = session.scalar(stmt)
-                    if existing_oauth:
-                        user = session.get(UserModel, existing_oauth.user_id)
-                        if not user:
-                            raise ValueError("User not found for OAuth account") from None
-                        session.expunge(user)
-                        return user, False
-                    raise
+                    return self._retry_oauth_race(session, stmt)
 
             elif existing_user and existing_user.email_verified == 0:
-                logger.warning(
-                    "OAuth email matches existing user but email not verified: %s",
-                    provider_email,
+                # Issue #3062: Block OAuth signup when an unverified local
+                # account exists with the same email.  This prevents
+                # duplicate-account confusion and pre-account-takeover
+                # attacks (see CVE-2024-38351).
+                raise ValueError(
+                    "An account with this email already exists but is not verified. "
+                    "Please verify your existing account first."
                 )
 
             user_id = str(uuid.uuid4())
@@ -327,15 +323,28 @@ class OAuthUserAuth:
                 return user, True
 
             except IntegrityError:
-                session.rollback()
-                existing_oauth = session.scalar(stmt)
-                if existing_oauth:
-                    user = session.get(UserModel, existing_oauth.user_id)
-                    if not user:
-                        raise ValueError("User not found for OAuth account") from None
-                    session.expunge(user)
-                    return user, False
-                raise
+                return self._retry_oauth_race(session, stmt)
+
+    @staticmethod
+    def _retry_oauth_race(
+        session: Session,
+        stmt: Any,
+    ) -> tuple[UserModel, bool]:
+        """Handle IntegrityError from a concurrent OAuth account creation race.
+
+        Rolls back, re-queries for the winning OAuth account, and returns
+        the associated user.  Extracted to avoid duplicating this pattern
+        in the link-existing-user and create-new-user code paths.
+        """
+        session.rollback()
+        existing_oauth = session.scalar(stmt)
+        if existing_oauth:
+            user = session.get(UserModel, existing_oauth.user_id)
+            if not user:
+                raise ValueError("User not found for OAuth account")
+            session.expunge(user)
+            return user, False
+        raise  # re-raise original IntegrityError if no OAuth row found
 
     async def _create_oauth_account(
         self,

@@ -25,6 +25,8 @@ SearchBackendProtocol = txtai_backend.SearchBackendProtocol
 TxtaiBackend = txtai_backend.TxtaiBackend
 SEARCH_BACKENDS = txtai_backend.SEARCH_BACKENDS
 _escape_sql_string = txtai_backend._escape_sql_string
+_escape_like_string = txtai_backend._escape_like_string
+_build_search_sql = txtai_backend._build_search_sql
 _stamp_zone_id = txtai_backend._stamp_zone_id
 create_backend = txtai_backend.create_backend
 
@@ -41,6 +43,33 @@ class TestHelpers:
 
     def test_escape_sql_string_with_quotes(self) -> None:
         assert _escape_sql_string("it's a test") == "it''s a test"
+
+    def test_escape_like_string_percent(self) -> None:
+        """Issue #3062: % in path filter must be escaped for LIKE."""
+        assert _escape_like_string("foo%bar") == "foo\\%bar"
+
+    def test_escape_like_string_underscore(self) -> None:
+        """Issue #3062: _ in path filter must be escaped for LIKE."""
+        assert _escape_like_string("file_name") == "file\\_name"
+
+    def test_escape_like_string_backslash(self) -> None:
+        """Backslashes must be escaped before % and _."""
+        assert _escape_like_string("a\\b") == "a\\\\b"
+
+    def test_escape_like_string_combined(self) -> None:
+        """Combined escaping: quotes + wildcards."""
+        assert _escape_like_string("it's 100% done_1") == "it''s 100\\% done\\_1"
+
+    def test_build_search_sql_path_filter_escapes_wildcards(self) -> None:
+        """Issue #3062: _build_search_sql escapes LIKE wildcards in path_filter."""
+        sql = _build_search_sql("query", zone_id="z1", path_filter="/data/100%_files")
+        assert "\\%" in sql
+        assert "\\_" in sql
+        assert "ESCAPE" in sql
+
+    def test_build_search_sql_no_path_filter(self) -> None:
+        sql = _build_search_sql("query", zone_id="z1")
+        assert "LIKE" not in sql
 
     def test_stamp_zone_id_immutable(self) -> None:
         docs = [{"id": "1", "text": "hello"}]

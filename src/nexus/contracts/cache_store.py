@@ -31,7 +31,6 @@ Usage:
 """
 
 import asyncio
-import threading
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict, defaultdict
@@ -233,7 +232,7 @@ class InMemoryCacheStore(CacheStoreABC):
         max_size: Maximum number of entries. 0 = unlimited (default).
             When the limit is hit, the least-recently-used entry is evicted.
 
-    Thread Safety: Uses threading.Lock for LRU eviction safety.
+    Thread Safety: Uses asyncio.Lock for cooperative async safety (Issue #3063).
     """
 
     def __init__(self, max_size: int = 0) -> None:
@@ -244,12 +243,12 @@ class InMemoryCacheStore(CacheStoreABC):
         self._closed = False
         self._max_size = max_size
         self._evictions = 0
-        self._lock = threading.Lock()
+        self._lock = asyncio.Lock()
 
     # --- KV operations ---
 
     async def get(self, key: str) -> bytes | None:
-        with self._lock:
+        async with self._lock:
             entry = self._store.get(key)
             if entry is None:
                 return None
@@ -263,7 +262,7 @@ class InMemoryCacheStore(CacheStoreABC):
 
     async def set(self, key: str, value: bytes, ttl: int | None = None) -> None:
         expire_at = (time.monotonic() + ttl) if ttl is not None else None
-        with self._lock:
+        async with self._lock:
             if key in self._store:
                 # Update existing — refresh LRU
                 self._store[key] = (value, expire_at)
@@ -275,7 +274,7 @@ class InMemoryCacheStore(CacheStoreABC):
                 self._store[key] = (value, expire_at)
 
     async def delete(self, key: str) -> bool:
-        with self._lock:
+        async with self._lock:
             try:
                 del self._store[key]
                 return True
@@ -283,7 +282,7 @@ class InMemoryCacheStore(CacheStoreABC):
                 return False
 
     async def exists(self, key: str) -> bool:
-        with self._lock:
+        async with self._lock:
             entry = self._store.get(key)
             if entry is None:
                 return False
@@ -294,7 +293,7 @@ class InMemoryCacheStore(CacheStoreABC):
             return True
 
     async def delete_by_pattern(self, pattern: str) -> int:
-        with self._lock:
+        async with self._lock:
             to_delete = [k for k in self._store if fnmatch(k, pattern)]
             for k in to_delete:
                 del self._store[k]
@@ -302,7 +301,7 @@ class InMemoryCacheStore(CacheStoreABC):
 
     async def keys_by_pattern(self, pattern: str) -> list[str]:
         now = time.monotonic()
-        with self._lock:
+        async with self._lock:
             return [
                 k
                 for k, (_, expire_at) in self._store.items()
@@ -343,7 +342,7 @@ class InMemoryCacheStore(CacheStoreABC):
 
     async def close(self) -> None:
         self._closed = True
-        with self._lock:
+        async with self._lock:
             self._store.clear()
         # Signal all subscribers to stop
         for queues in self._subscribers.values():
@@ -379,9 +378,9 @@ class InMemoryCacheStore(CacheStoreABC):
         Returns:
             Dict with current_size, max_size, and evictions count.
         """
-        with self._lock:
-            return {
-                "current_size": len(self._store),
-                "max_size": self._max_size,
-                "evictions": self._evictions,
-            }
+        # No lock needed — read-only snapshot of atomic int/len values.
+        return {
+            "current_size": len(self._store),
+            "max_size": self._max_size,
+            "evictions": self._evictions,
+        }

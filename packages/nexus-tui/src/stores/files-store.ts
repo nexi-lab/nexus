@@ -33,6 +33,7 @@ export interface TreeNode {
   readonly children: readonly string[];
   readonly loading: boolean;
   readonly depth: number;
+  readonly size: number;
 }
 
 interface CachedEntry<T> {
@@ -161,7 +162,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     // Mark as loading
     const loadingNodes = new Map(nodes);
     loadingNodes.set(path, {
-      ...(existing ?? { path, name: path.split("/").pop() ?? path, isDirectory: true, children: [], depth: 0 }),
+      ...(existing ?? { path, name: path.split("/").pop() ?? path, isDirectory: true, children: [], depth: 0, size: 0 }),
       expanded: true,
       loading: true,
     });
@@ -200,6 +201,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
             children: [],
             loading: false,
             depth: parentDepth + 1,
+            size: item.size,
           });
         }
       }

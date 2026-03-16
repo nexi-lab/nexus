@@ -21,6 +21,7 @@ import { PlaybookList } from "./playbook-list.js";
 import { RlmAnswerView } from "./rlm-answer-view.js";
 import { ColumnSearch } from "./column-search.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
+import { Tooltip } from "../../shared/components/tooltip.js";
 
 const ALL_TABS: readonly TabDef<SearchTab>[] = [
   { id: "search", label: "Search", brick: "search" },
@@ -54,8 +55,9 @@ export default function SearchPanel(): React.ReactNode {
   const serverZoneId = useGlobalStore((s) => s.zoneId);
   const effectiveZoneId = configZoneId ?? serverZoneId ?? undefined;
   const [inputMode, setInputMode] = useState(false);
-  const [inputBuffer, setInputBuffer] = useState("");
 
+  const inputBuffer = useSearchStore((s) => s.inputBuffer);
+  const setInputBuffer = useSearchStore((s) => s.setInputBuffer);
   const searchQuery = useSearchStore((s) => s.searchQuery);
   const searchResults = useSearchStore((s) => s.searchResults);
   const searchTotal = useSearchStore((s) => s.searchTotal);
@@ -167,12 +169,12 @@ export default function SearchPanel(): React.ReactNode {
       if (!inputMode) return;
       // Single printable character (letter, digit, symbol, space)
       if (keyName.length === 1) {
-        setInputBuffer((b) => b + keyName);
+        setInputBuffer(inputBuffer + keyName);
       } else if (keyName === "space") {
-        setInputBuffer((b) => b + " ");
+        setInputBuffer(inputBuffer + " ");
       }
     },
-    [inputMode],
+    [inputMode, inputBuffer, setInputBuffer],
   );
 
   useKeyboard(
@@ -190,7 +192,7 @@ export default function SearchPanel(): React.ReactNode {
             setInputBuffer("");
           },
           backspace: () => {
-            setInputBuffer((b) => b.slice(0, -1));
+            setInputBuffer(inputBuffer.slice(0, -1));
           },
         }
       : {
@@ -397,6 +399,7 @@ export default function SearchPanel(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
+      <Tooltip tooltipKey="search-panel" message="Tip: Press ? for keybinding help" />
       {/* Search input bar */}
       <box height={1} width="100%">
         <text>

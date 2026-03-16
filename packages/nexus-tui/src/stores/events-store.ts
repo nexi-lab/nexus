@@ -8,6 +8,7 @@ import { SseClient } from "@nexus/api-client";
 import { CircularBuffer } from "../shared/lib/circular-buffer.js";
 
 const EVENTS_BUFFER_CAPACITY = 10_000;
+const MAX_RECONNECT_ATTEMPTS = 10;
 
 export interface EventFilters {
   readonly eventType: string | null;
@@ -24,6 +25,7 @@ export interface EventsState {
   readonly events: readonly SseEvent[];
   readonly connected: boolean;
   readonly reconnectCount: number;
+  readonly reconnectExhausted: boolean;
   readonly filters: EventFilters;
   readonly filteredEvents: readonly SseEvent[];
   readonly eventsOverflowed: boolean;
@@ -34,6 +36,9 @@ export interface EventsState {
 
   // SSE client instance (not serializable, but that's fine for Zustand)
   readonly sseClient: SseClient | null;
+
+  // Last connection params for manual reconnect after exhaustion
+  readonly lastConnectParams: { baseUrl: string; apiKey: string; identity?: SseIdentity } | null;
 
   // Actions
   readonly connect: (baseUrl: string, apiKey: string, identity?: SseIdentity) => void;
@@ -46,12 +51,14 @@ export const useEventsStore = create<EventsState>((set, get) => ({
   events: [],
   connected: false,
   reconnectCount: 0,
+  reconnectExhausted: false,
   filters: { eventType: null, search: null },
   filteredEvents: [],
   eventsOverflowed: false,
   evictedCount: 0,
   eventsBuffer: new CircularBuffer<SseEvent>(EVENTS_BUFFER_CAPACITY),
   sseClient: null,
+  lastConnectParams: null,
 
   connect: (baseUrl, apiKey, identity) => {
     // Disconnect existing
@@ -81,19 +88,33 @@ export const useEventsStore = create<EventsState>((set, get) => ({
           eventsOverflowed: buf.hasOverflowed,
           evictedCount: buf.evictedCount,
           connected: true, // confirmed connected on first event
+          reconnectExhausted: false,
         };
       });
     });
 
     client.onError(() => {
-      set({ connected: false });
+      const { reconnectCount } = get();
+      if (reconnectCount >= MAX_RECONNECT_ATTEMPTS) {
+        // Stop reconnecting — disconnect and mark exhausted
+        client.disconnect();
+        set({ connected: false, reconnectExhausted: true, sseClient: null });
+      } else {
+        set({ connected: false });
+      }
     });
 
     client.onReconnect((attempt) => {
       set({ reconnectCount: attempt });
     });
 
-    set({ sseClient: client, connected: false, reconnectCount: 0 });
+    set({
+      sseClient: client,
+      connected: false,
+      reconnectCount: 0,
+      reconnectExhausted: false,
+      lastConnectParams: { baseUrl, apiKey, identity },
+    });
 
     // Connect async — don't await (fire and forget)
     client.connect("/api/v2/events/stream").catch(() => {
@@ -103,7 +124,7 @@ export const useEventsStore = create<EventsState>((set, get) => ({
 
   disconnect: () => {
     get().sseClient?.disconnect();
-    set({ sseClient: null, connected: false, reconnectCount: 0 });
+    set({ sseClient: null, connected: false, reconnectCount: 0, reconnectExhausted: false });
   },
 
   setFilter: (partial) => {

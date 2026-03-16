@@ -4,7 +4,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useAgentsStore } from "../../stores/agents-store.js";
-import type { AgentTab } from "../../stores/agents-store.js";
+import type { AgentTab, DelegationItem } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
@@ -97,6 +97,9 @@ export default function AgentsPanel(): React.ReactNode {
 
   // Local loading state for async warmup/evict/verify operations
   const [operationLoading, setOperationLoading] = useState<string | null>(null);
+
+  // Expanded delegation detail
+  const [expandedDelegation, setExpandedDelegation] = useState<DelegationItem | null>(null);
 
   // Merge fetched agents into a display list: fetched agents + any manually added knownAgents not in the fetched list
   const fetchedAgentIds = agents.map((a) => a.agent_id);
@@ -223,11 +226,26 @@ export default function AgentsPanel(): React.ReactNode {
       }
     },
     return: () => {
+      if (activeTab === "delegations") {
+        // Toggle delegation detail drill-down
+        const selected = delegations[selectedDelegationIndex];
+        if (selected) {
+          setExpandedDelegation(
+            expandedDelegation?.delegation_id === selected.delegation_id ? null : selected,
+          );
+        }
+        return;
+      }
       // If an agent is highlighted in the agents list, select it
       const agent = displayAgentIds[selectedAgentIndex];
       if (agent) {
         setSelectedAgentId(agent);
         addKnownAgent(agent);
+      }
+    },
+    escape: () => {
+      if (expandedDelegation) {
+        setExpandedDelegation(null);
       }
     },
     "shift+w": async () => {
@@ -371,6 +389,7 @@ export default function AgentsPanel(): React.ReactNode {
                 delegations={delegations}
                 selectedIndex={selectedDelegationIndex}
                 loading={delegationsLoading}
+                expandedDelegation={expandedDelegation}
               />
             )}
             {activeTab === "inbox" && (
@@ -395,7 +414,7 @@ export default function AgentsPanel(): React.ReactNode {
         {copied
           ? <text foregroundColor="green">Copied!</text>
           : <text>
-          {"j/k:navigate  Tab:switch tab  r:refresh  d:revoke  Shift+W:warmup  Shift+E:evict  Shift+V:verify  y:copy  Enter:select  q:quit"}
+          {"j/k:navigate  Tab:switch tab  r:refresh  Enter:detail  d:revoke  Shift+W:warmup  Shift+E:evict  Shift+V:verify  y:copy  q:quit"}
         </text>}
       </box>
     </box>

@@ -6,6 +6,7 @@ import React, { useEffect } from "react";
 import { useFilesStore } from "../../stores/files-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { Spinner } from "../../shared/components/spinner.js";
+import { StyledText } from "../../shared/components/styled-text.js";
 
 export function FilePreview(): React.ReactNode {
   const client = useApi();
@@ -47,6 +48,18 @@ export function FilePreview(): React.ReactNode {
   // Detect file extension for syntax highlighting
   const ext = previewPath.split(".").pop()?.toLowerCase() ?? "";
   const language = extensionToLanguage(ext);
+
+  // Files that may contain ANSI escape sequences get rendered with StyledText
+  const ansiExtensions = new Set(["log", "out", "err", "ans", "ansi"]);
+  const hasAnsi = ansiExtensions.has(ext) || previewContent.includes("\x1b[");
+
+  if (hasAnsi) {
+    return (
+      <scrollbox height="100%" width="100%">
+        <StyledText>{previewContent}</StyledText>
+      </scrollbox>
+    );
+  }
 
   // Use OpenTUI's Code component for syntax highlighting
   return (

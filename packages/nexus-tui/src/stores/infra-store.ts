@@ -73,6 +73,17 @@ export interface OperationItem {
   readonly completed_at: string | null;
 }
 
+/** Audit transaction from /api/v2/audit/transactions. */
+export interface AuditTransaction {
+  readonly transaction_id: string;
+  readonly actor_id: string;
+  readonly action: string;
+  readonly resource: string;
+  readonly timestamp: string;
+  readonly status: string;
+  readonly details: string | null;
+}
+
 export type InfraTab = "connectors" | "subscriptions" | "locks" | "secrets";
 
 // =============================================================================
@@ -104,6 +115,16 @@ export interface InfraState {
   readonly operationsLoading: boolean;
   readonly selectedOperationIndex: number;
 
+  // Connector capabilities
+  readonly connectorCapabilities: unknown | null;
+  readonly capabilitiesLoading: boolean;
+
+  // Audit transactions
+  readonly auditTransactions: readonly AuditTransaction[];
+  readonly auditLoading: boolean;
+  readonly auditHasMore: boolean;
+  readonly auditNextCursor: string | null;
+
   // Navigation
   readonly activeTab: InfraTab;
 
@@ -126,6 +147,8 @@ export interface InfraState {
   readonly extendLock: (path: string, lockId: string, ttlSeconds: number, client: FetchClient) => Promise<void>;
   readonly fetchSecretAudit: (client: FetchClient) => Promise<void>;
   readonly fetchOperations: (client: FetchClient) => Promise<void>;
+  readonly fetchConnectorCapabilities: (connectorName: string, client: FetchClient) => Promise<void>;
+  readonly fetchAuditTransactions: (filters: { cursor?: string; limit?: number }, client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: InfraTab) => void;
   readonly setSelectedOperationIndex: (index: number) => void;
   readonly setSelectedConnectorIndex: (index: number) => void;
@@ -150,6 +173,12 @@ export const useInfraStore = create<InfraState>((set, get) => ({
   operations: [],
   operationsLoading: false,
   selectedOperationIndex: 0,
+  connectorCapabilities: null,
+  capabilitiesLoading: false,
+  auditTransactions: [],
+  auditLoading: false,
+  auditHasMore: false,
+  auditNextCursor: null,
   activeTab: "connectors",
   error: null,
 
@@ -227,6 +256,55 @@ export const useInfraStore = create<InfraState>((set, get) => ({
       };
     },
   }),
+
+  fetchConnectorCapabilities: createApiAction<InfraState, [string, FetchClient]>(set, {
+    loadingKey: "capabilitiesLoading",
+    source: SOURCE,
+    errorMessage: "Failed to fetch connector capabilities",
+    action: async (connectorName, client) => {
+      const response = await client.get<{
+        readonly capabilities: unknown;
+      }>(`/api/v2/connectors/${encodeURIComponent(connectorName)}/capabilities`);
+      return { connectorCapabilities: response.capabilities ?? null };
+    },
+  }),
+
+  fetchAuditTransactions: async (filters, client) => {
+    set({ auditLoading: true, error: null });
+    try {
+      const params = new URLSearchParams();
+      if (filters.cursor) params.set("cursor", filters.cursor);
+      params.set("limit", String(filters.limit ?? 50));
+      const qs = params.toString();
+      const url = `/api/v2/audit/transactions${qs ? `?${qs}` : ""}`;
+      const response = await client.get<{
+        readonly transactions: readonly AuditTransaction[];
+        readonly has_more: boolean;
+        readonly next_cursor: string | null;
+      }>(url);
+      const incoming = (response.transactions ?? []).map((t) => ({
+        transaction_id: t.transaction_id ?? "",
+        actor_id: t.actor_id ?? "",
+        action: t.action ?? "",
+        resource: t.resource ?? "",
+        timestamp: t.timestamp ?? "",
+        status: t.status ?? "",
+        details: t.details ?? null,
+      }));
+      set((state) => ({
+        auditTransactions: filters.cursor
+          ? [...state.auditTransactions, ...incoming]
+          : incoming,
+        auditLoading: false,
+        auditHasMore: response.has_more ?? false,
+        auditNextCursor: response.next_cursor ?? null,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch audit transactions";
+      set({ auditLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
 
   // =========================================================================
   // Actions without loading keys — inline with error store integration

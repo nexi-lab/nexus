@@ -16,6 +16,7 @@ import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { WorkflowList } from "./workflow-list.js";
 import { ExecutionList } from "./execution-list.js";
 import { SchedulerView } from "./scheduler-view.js";
+import { Tooltip } from "../../shared/components/tooltip.js";
 
 const TAB_ORDER: readonly WorkflowTab[] = [
   "workflows",
@@ -40,6 +41,8 @@ export default function WorkflowsPanel(): React.ReactNode {
   const executions = useWorkflowsStore((s) => s.executions);
   const selectedExecutionIndex = useWorkflowsStore((s) => s.selectedExecutionIndex);
   const executionsLoading = useWorkflowsStore((s) => s.executionsLoading);
+  const selectedExecution = useWorkflowsStore((s) => s.selectedExecution);
+  const executionDetailLoading = useWorkflowsStore((s) => s.executionDetailLoading);
   const schedulerMetrics = useWorkflowsStore((s) => s.schedulerMetrics);
   const schedulerLoading = useWorkflowsStore((s) => s.schedulerLoading);
   const activeTab = useWorkflowsStore((s) => s.activeTab);
@@ -53,6 +56,8 @@ export default function WorkflowsPanel(): React.ReactNode {
   const deleteWorkflow = useWorkflowsStore((s) => s.deleteWorkflow);
   const enableWorkflow = useWorkflowsStore((s) => s.enableWorkflow);
   const disableWorkflow = useWorkflowsStore((s) => s.disableWorkflow);
+  const fetchExecutionDetail = useWorkflowsStore((s) => s.fetchExecutionDetail);
+  const clearExecutionDetail = useWorkflowsStore((s) => s.clearExecutionDetail);
   const setActiveTab = useWorkflowsStore((s) => s.setActiveTab);
   const setSelectedWorkflowIndex = useWorkflowsStore((s) => s.setSelectedWorkflowIndex);
   const setSelectedExecutionIndex = useWorkflowsStore((s) => s.setSelectedExecutionIndex);
@@ -183,6 +188,22 @@ export default function WorkflowsPanel(): React.ReactNode {
               if (wf) {
                 fetchWorkflowDetail(wf.name, client);
               }
+            } else if (activeTab === "executions") {
+              const ex = executions[selectedExecutionIndex];
+              if (ex) {
+                // Toggle: if detail is shown for this execution, clear it
+                if (selectedExecution?.execution_id === ex.execution_id) {
+                  clearExecutionDetail();
+                } else {
+                  fetchExecutionDetail(ex.execution_id, client);
+                }
+              }
+            }
+          },
+          escape: () => {
+            // Clear expanded detail views
+            if (activeTab === "executions" && selectedExecution) {
+              clearExecutionDetail();
             }
           },
           g: () => {
@@ -197,6 +218,7 @@ export default function WorkflowsPanel(): React.ReactNode {
   return (
     <BrickGate brick={["workflows", "scheduler"]}>
       <box height="100%" width="100%" flexDirection="column">
+        <Tooltip tooltipKey="workflows-panel" message="Tip: Press ? for keybinding help" />
         {/* Tab bar */}
         <box height={1} width="100%">
           <text>
@@ -245,6 +267,33 @@ export default function WorkflowsPanel(): React.ReactNode {
           )}
         </box>
 
+        {/* Execution detail overlay when loaded */}
+        {activeTab === "executions" && executionDetailLoading && (
+          <box height={1} width="100%">
+            <LoadingIndicator message="Loading execution detail..." centered={false} />
+          </box>
+        )}
+        {activeTab === "executions" && selectedExecution && !executionDetailLoading && (
+          <box height={Math.min((selectedExecution.steps?.length ?? 0) + 3, 12)} width="100%" borderStyle="single" flexDirection="column">
+            <text>
+              {`Execution: ${selectedExecution.execution_id} | ${selectedExecution.status} | ${selectedExecution.actions_completed}/${selectedExecution.actions_total} actions`}
+            </text>
+            {(selectedExecution.steps ?? []).length > 0 ? (
+              <scrollbox flexGrow={1} width="100%">
+                {(selectedExecution.steps ?? []).map((step, i) => (
+                  <box key={i} height={1} width="100%">
+                    <text>
+                      {`  ${String(step.step_index).padEnd(3)} ${(step.action_name ?? "").padEnd(20)} ${step.status.padEnd(10)} ${step.error_message ? `ERR: ${step.error_message}` : ""}`}
+                    </text>
+                  </box>
+                ))}
+              </scrollbox>
+            ) : (
+              <text dimColor>  No steps recorded</text>
+            )}
+          </box>
+        )}
+
         {/* Workflow detail overlay when loaded */}
         {selectedWorkflow && activeTab === "workflows" && !detailLoading && (
           <box height={3} width="100%">
@@ -257,7 +306,9 @@ export default function WorkflowsPanel(): React.ReactNode {
         {/* Help bar */}
         <box height={1} width="100%">
           <text>
-            {"j/k:navigate  Tab:switch tab  e:execute  d:delete  p:enable/disable  r:refresh  Enter:detail  q:quit"}
+            {activeTab === "executions"
+              ? "j/k:navigate  Tab:switch tab  Enter:detail  Esc:close  r:refresh  q:quit"
+              : "j/k:navigate  Tab:switch tab  e:execute  d:delete  p:enable/disable  r:refresh  Enter:detail  q:quit"}
           </text>
         </box>
 

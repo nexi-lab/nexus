@@ -40,6 +40,16 @@ export interface ReplayEntry {
   readonly timestamp: string;
 }
 
+/** Event from the historical event replay endpoint. */
+export interface EventReplayEntry {
+  readonly event_id: string;
+  readonly event_type: string;
+  readonly agent_id: string | null;
+  readonly path: string | null;
+  readonly timestamp: string;
+  readonly payload: Record<string, unknown>;
+}
+
 // =============================================================================
 // Store
 // =============================================================================
@@ -60,6 +70,11 @@ export interface KnowledgeState {
   readonly replayLoading: boolean;
   readonly replayHasMore: boolean;
   readonly replayNextCursor: number;
+
+  // Historical event replay
+  readonly eventReplayEntries: readonly EventReplayEntry[];
+  readonly eventReplayLoading: boolean;
+  readonly eventReplayHasMore: boolean;
 
   // Column search
   readonly columnSearchResults: readonly {
@@ -86,11 +101,21 @@ export interface KnowledgeState {
     entityUrn?: string,
     aspectName?: string,
   ) => Promise<void>;
+  readonly fetchEventReplay: (
+    filters: {
+      event_types?: string;
+      path_pattern?: string;
+      agent_id?: string;
+      since?: string;
+    },
+    client: FetchClient,
+  ) => Promise<void>;
   readonly searchByColumn: (
     column: string,
     client: FetchClient,
   ) => Promise<void>;
   readonly clearReplay: () => void;
+  readonly clearEventReplay: () => void;
 }
 
 const SOURCE = "knowledge";
@@ -106,6 +131,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   replayLoading: false,
   replayHasMore: false,
   replayNextCursor: 0,
+  eventReplayEntries: [],
+  eventReplayLoading: false,
+  eventReplayHasMore: false,
   columnSearchResults: [],
   columnSearchLoading: false,
   error: null,
@@ -238,6 +266,41 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     }
   },
 
+  fetchEventReplay: async (filters, client) => {
+    set({ eventReplayLoading: true, error: null });
+    try {
+      const params = new URLSearchParams();
+      if (filters.event_types) params.set("event_types", filters.event_types);
+      if (filters.path_pattern) params.set("path_pattern", filters.path_pattern);
+      if (filters.agent_id) params.set("agent_id", filters.agent_id);
+      if (filters.since) params.set("since", filters.since);
+      const qs = params.toString();
+      const url = `/api/v2/events/replay${qs ? `?${qs}` : ""}`;
+      const result = await client.get<{
+        events: EventReplayEntry[];
+        has_more: boolean;
+        next_cursor: string | null;
+      }>(url);
+      const events: EventReplayEntry[] = (result.events ?? []).map((e) => ({
+        event_id: e.event_id ?? "",
+        event_type: e.event_type ?? "",
+        agent_id: e.agent_id ?? null,
+        path: e.path ?? null,
+        timestamp: e.timestamp ?? "",
+        payload: e.payload ?? {},
+      }));
+      set({
+        eventReplayEntries: events,
+        eventReplayLoading: false,
+        eventReplayHasMore: result.has_more ?? false,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch event replay";
+      set({ eventReplayLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
   searchByColumn: createApiAction<KnowledgeState, [string, FetchClient]>(set, {
     loadingKey: "columnSearchLoading",
     source: SOURCE,
@@ -258,4 +321,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 
   clearReplay: () =>
     set({ replayEntries: [], replayNextCursor: 0, replayHasMore: false }),
+
+  clearEventReplay: () =>
+    set({ eventReplayEntries: [], eventReplayHasMore: false }),
 }));

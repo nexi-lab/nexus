@@ -197,6 +197,9 @@ export interface SearchState {
   // Search mode
   readonly searchMode: SearchMode;
 
+  // Input buffer (persists across tab switches)
+  readonly inputBuffer: string;
+
   // Shared
   readonly activeTab: SearchTab;
   readonly error: string | null;
@@ -212,6 +215,7 @@ export interface SearchState {
   readonly setSelectedResultIndex: (index: number) => void;
   readonly setSelectedMemoryIndex: (index: number) => void;
   readonly setSearchQuery: (query: string) => void;
+  readonly setInputBuffer: (buffer: string) => void;
   readonly setSearchMode: (mode: SearchMode) => void;
   readonly cycleSearchMode: () => void;
   readonly fetchPlaybooks: (query: string, client: FetchClient) => Promise<void>;
@@ -263,6 +267,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   rlmAnswer: null,
   rlmLoading: false,
   rlmContextPaths: [],
+
+  inputBuffer: "",
 
   searchMode: "hybrid",
 
@@ -409,6 +415,10 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
   setSearchQuery: (query) => {
     set({ searchQuery: query });
+  },
+
+  setInputBuffer: (buffer) => {
+    set({ inputBuffer: buffer });
   },
 
   setSearchMode: (mode) => {

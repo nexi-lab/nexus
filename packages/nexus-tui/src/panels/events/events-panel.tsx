@@ -7,7 +7,7 @@
  * In filter mode, type the filter value, Enter to apply, Escape to cancel.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useEventsStore } from "../../stores/events-store.js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import type { InfraTab } from "../../stores/infra-store.js";
@@ -20,37 +20,45 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { ConnectorList } from "./connector-list.js";
+import { ConnectorDetail } from "./connector-detail.js";
 import { SubscriptionList } from "./subscription-list.js";
 import { LockList } from "./lock-list.js";
 import { SecretsAudit } from "./secrets-audit.js";
 import { MclReplay } from "./mcl-replay.js";
+import { EventReplay } from "./event-replay.js";
 import { OperationsTab } from "./operations-tab.js";
+import { AuditTrail } from "./audit-trail.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
+import { Tooltip } from "../../shared/components/tooltip.js";
 
-type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect" | "acquire_path" | "secrets_filter";
+type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect" | "acquire_path" | "secrets_filter" | "replay_filter";
 
-type PanelTab = "events" | "mcl" | "operations" | InfraTab;
+type PanelTab = "events" | "mcl" | "replay" | "operations" | "audit" | InfraTab;
 
 const ALL_TABS: readonly TabDef<PanelTab>[] = [
   { id: "events", label: "Events", brick: "eventlog" },
   { id: "mcl", label: "MCL", brick: "catalog" },
+  { id: "replay", label: "Replay", brick: "eventlog" },
   { id: "operations", label: "Operations", brick: "eventlog" },
   { id: "connectors", label: "Connectors", brick: null },
   { id: "subscriptions", label: "Subscriptions", brick: "eventlog" },
   { id: "locks", label: "Locks", brick: null },
   { id: "secrets", label: "Secrets", brick: "auth" },
+  { id: "audit", label: "Audit", brick: "auth" },
 ];
 
 const TAB_LABELS: Readonly<Record<PanelTab, string>> = {
   events: "Events",
   mcl: "MCL",
+  replay: "Replay",
   operations: "Operations",
   connectors: "Connectors",
   subscriptions: "Subscriptions",
   locks: "Locks",
   secrets: "Secrets",
+  audit: "Audit",
 };
 
 export default function EventsPanel(): React.ReactNode {
@@ -67,6 +75,10 @@ export default function EventsPanel(): React.ReactNode {
   const [filterMode, setFilterMode] = useState<FilterMode>("none");
   const [filterBuffer, setFilterBuffer] = useState("");
 
+  // Event detail expansion
+  const [selectedEventIndex, setSelectedEventIndex] = useState(-1);
+  const [expandedEventIndex, setExpandedEventIndex] = useState<number | null>(null);
+
   // MCL filter state
   const [mclUrnFilter, setMclUrnFilter] = useState("");
   const [mclAspectFilter, setMclAspectFilter] = useState("");
@@ -74,10 +86,20 @@ export default function EventsPanel(): React.ReactNode {
   // Secrets filter state
   const [secretsFilter, setSecretsFilter] = useState("");
 
+  // Replay filter state
+  const [replayTypeFilter, setReplayTypeFilter] = useState("");
+
+  // Connector detail state
+  const [connectorDetailView, setConnectorDetailView] = useState(false);
+
+  // Audit selected index
+  const [selectedAuditIndex, setSelectedAuditIndex] = useState(0);
+
   // Events store (SSE)
   const connected = useEventsStore((s) => s.connected);
   const events = useEventsStore((s) => s.filteredEvents);
   const reconnectCount = useEventsStore((s) => s.reconnectCount);
+  const reconnectExhausted = useEventsStore((s) => s.reconnectExhausted);
   const filters = useEventsStore((s) => s.filters);
   const eventsOverflowed = useEventsStore((s) => s.eventsOverflowed);
   const evictedCount = useEventsStore((s) => s.evictedCount);
@@ -105,6 +127,13 @@ export default function EventsPanel(): React.ReactNode {
   const selectedOperationIndex = useInfraStore((s) => s.selectedOperationIndex);
   const infraError = useInfraStore((s) => s.error);
 
+  const connectorCapabilities = useInfraStore((s) => s.connectorCapabilities);
+  const capabilitiesLoading = useInfraStore((s) => s.capabilitiesLoading);
+  const auditTransactions = useInfraStore((s) => s.auditTransactions);
+  const auditLoading = useInfraStore((s) => s.auditLoading);
+  const auditHasMore = useInfraStore((s) => s.auditHasMore);
+  const auditNextCursor = useInfraStore((s) => s.auditNextCursor);
+
   const fetchConnectors = useInfraStore((s) => s.fetchConnectors);
   const fetchSubscriptions = useInfraStore((s) => s.fetchSubscriptions);
   const deleteSubscription = useInfraStore((s) => s.deleteSubscription);
@@ -115,6 +144,8 @@ export default function EventsPanel(): React.ReactNode {
   const extendLock = useInfraStore((s) => s.extendLock);
   const fetchSecretAudit = useInfraStore((s) => s.fetchSecretAudit);
   const fetchOperations = useInfraStore((s) => s.fetchOperations);
+  const fetchConnectorCapabilities = useInfraStore((s) => s.fetchConnectorCapabilities);
+  const fetchAuditTransactions = useInfraStore((s) => s.fetchAuditTransactions);
   const setSelectedOperationIndex = useInfraStore((s) => s.setSelectedOperationIndex);
   const setInfraTab = useInfraStore((s) => s.setActiveTab);
   const setSelectedConnectorIndex = useInfraStore((s) => s.setSelectedConnectorIndex);
@@ -144,25 +175,29 @@ export default function EventsPanel(): React.ReactNode {
     return () => disconnect();
   }, [config.apiKey, config.baseUrl, config.agentId, config.subject, config.zoneId, connect, disconnect]);
 
-  // Knowledge store (MCL replay)
+  // Knowledge store (MCL replay + event replay)
   const fetchReplay = useKnowledgeStore((s) => s.fetchReplay);
   const clearReplay = useKnowledgeStore((s) => s.clearReplay);
+  const fetchEventReplay = useKnowledgeStore((s) => s.fetchEventReplay);
+  const clearEventReplay = useKnowledgeStore((s) => s.clearEventReplay);
 
   // Fetch infra data when switching tabs
   useEffect(() => {
     if (!apiClient || activeTab === "events") return;
 
     if (activeTab === "mcl") void fetchReplay(apiClient, 0, 50);
-    else if (activeTab === "connectors") fetchConnectors(apiClient);
+    else if (activeTab === "replay") void fetchEventReplay({}, apiClient);
+    else if (activeTab === "connectors") { fetchConnectors(apiClient); setConnectorDetailView(false); }
     else if (activeTab === "subscriptions") fetchSubscriptions(apiClient);
     else if (activeTab === "locks") fetchLocks(apiClient);
     else if (activeTab === "secrets") fetchSecretAudit(apiClient);
     else if (activeTab === "operations") fetchOperations(apiClient);
-  }, [activeTab, apiClient, fetchConnectors, fetchSubscriptions, fetchLocks, fetchSecretAudit, fetchOperations, fetchReplay]);
+    else if (activeTab === "audit") void fetchAuditTransactions({}, apiClient);
+  }, [activeTab, apiClient, fetchConnectors, fetchSubscriptions, fetchLocks, fetchSecretAudit, fetchOperations, fetchReplay, fetchEventReplay, fetchAuditTransactions]);
 
   // Sync infra tab state
   useEffect(() => {
-    if (activeTab !== "events" && activeTab !== "mcl" && activeTab !== "operations") {
+    if (activeTab !== "events" && activeTab !== "mcl" && activeTab !== "replay" && activeTab !== "operations" && activeTab !== "audit") {
       setInfraTab(activeTab as InfraTab);
     }
   }, [activeTab, setInfraTab]);
@@ -173,6 +208,7 @@ export default function EventsPanel(): React.ReactNode {
       case "subscriptions": return subscriptions.length;
       case "locks": return locks.length;
       case "operations": return operations.length;
+      case "audit": return auditTransactions.length;
       default: return 0;
     }
   };
@@ -183,6 +219,7 @@ export default function EventsPanel(): React.ReactNode {
       case "subscriptions": return selectedSubscriptionIndex;
       case "locks": return selectedLockIndex;
       case "operations": return selectedOperationIndex;
+      case "audit": return selectedAuditIndex;
       default: return 0;
     }
   };
@@ -193,6 +230,7 @@ export default function EventsPanel(): React.ReactNode {
       case "subscriptions": setSelectedSubscriptionIndex(index); break;
       case "locks": setSelectedLockIndex(index); break;
       case "operations": setSelectedOperationIndex(index); break;
+      case "audit": setSelectedAuditIndex(index); break;
     }
   };
 
@@ -209,12 +247,16 @@ export default function EventsPanel(): React.ReactNode {
     } else if (activeTab === "mcl" && apiClient) {
       clearReplay();
       void fetchReplay(apiClient, 0, 50);
+    } else if (activeTab === "replay" && apiClient) {
+      clearEventReplay();
+      void fetchEventReplay({ event_types: replayTypeFilter || undefined }, apiClient);
     } else if (apiClient) {
-      if (activeTab === "connectors") fetchConnectors(apiClient);
+      if (activeTab === "connectors") { fetchConnectors(apiClient); setConnectorDetailView(false); }
       else if (activeTab === "subscriptions") fetchSubscriptions(apiClient);
       else if (activeTab === "locks") fetchLocks(apiClient);
       else if (activeTab === "secrets") fetchSecretAudit(apiClient);
       else if (activeTab === "operations") fetchOperations(apiClient);
+      else if (activeTab === "audit") void fetchAuditTransactions({}, apiClient);
     }
   };
 
@@ -253,6 +295,9 @@ export default function EventsPanel(): React.ReactNode {
               }
             } else if (filterMode === "secrets_filter") {
               setSecretsFilter(value);
+            } else if (filterMode === "replay_filter") {
+              setReplayTypeFilter(value);
+              if (apiClient) void fetchEventReplay({ event_types: value || undefined }, apiClient);
             }
             setFilterMode("none");
             setFilterBuffer("");
@@ -268,18 +313,52 @@ export default function EventsPanel(): React.ReactNode {
       : {
           // Normal mode
           j: () => {
-            const max = currentItemCount() - 1;
-            if (max >= 0) setCurrentSelectedIndex(Math.min(currentSelectedIndex() + 1, max));
+            if (activeTab === "events") {
+              setSelectedEventIndex((i) => Math.min(i + 1, events.length - 1));
+            } else {
+              const max = currentItemCount() - 1;
+              if (max >= 0) setCurrentSelectedIndex(Math.min(currentSelectedIndex() + 1, max));
+            }
           },
           down: () => {
-            const max = currentItemCount() - 1;
-            if (max >= 0) setCurrentSelectedIndex(Math.min(currentSelectedIndex() + 1, max));
+            if (activeTab === "events") {
+              setSelectedEventIndex((i) => Math.min(i + 1, events.length - 1));
+            } else {
+              const max = currentItemCount() - 1;
+              if (max >= 0) setCurrentSelectedIndex(Math.min(currentSelectedIndex() + 1, max));
+            }
           },
           k: () => {
-            setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
+            if (activeTab === "events") {
+              setSelectedEventIndex((i) => Math.max(i - 1, 0));
+            } else {
+              setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
+            }
           },
           up: () => {
-            setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
+            if (activeTab === "events") {
+              setSelectedEventIndex((i) => Math.max(i - 1, 0));
+            } else {
+              setCurrentSelectedIndex(Math.max(currentSelectedIndex() - 1, 0));
+            }
+          },
+          return: () => {
+            if (activeTab === "events" && selectedEventIndex >= 0 && selectedEventIndex < events.length) {
+              setExpandedEventIndex((prev) => prev === selectedEventIndex ? null : selectedEventIndex);
+            } else if (activeTab === "connectors" && apiClient) {
+              const conn = connectors[selectedConnectorIndex];
+              if (conn) {
+                void fetchConnectorCapabilities(conn.name, apiClient);
+                setConnectorDetailView(true);
+              }
+            }
+          },
+          escape: () => {
+            if (activeTab === "events" && expandedEventIndex !== null) {
+              setExpandedEventIndex(null);
+            } else if (activeTab === "connectors" && connectorDetailView) {
+              setConnectorDetailView(false);
+            }
           },
           tab: () => {
             const ids = visibleTabs.map((t) => t.id);
@@ -293,6 +372,14 @@ export default function EventsPanel(): React.ReactNode {
             if (activeTab === "events") {
               setFilterMode("type");
               setFilterBuffer(filters.eventType ?? "");
+            } else if (activeTab === "replay") {
+              setFilterMode("replay_filter");
+              setFilterBuffer(replayTypeFilter);
+            }
+          },
+          m: () => {
+            if (activeTab === "audit" && auditHasMore && auditNextCursor && apiClient) {
+              void fetchAuditTransactions({ cursor: auditNextCursor }, apiClient);
             }
           },
           s: () => {
@@ -370,6 +457,7 @@ export default function EventsPanel(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
+      <Tooltip tooltipKey="events-panel" message="Tip: Press ? for keybinding help" />
       {/* Tab bar */}
       <box height={1} width="100%">
         <text>
@@ -412,6 +500,17 @@ export default function EventsPanel(): React.ReactNode {
         </box>
       )}
 
+      {/* Replay filter bar */}
+      {activeTab === "replay" && (
+        <box height={1} width="100%">
+          <text>
+            {filterMode === "replay_filter"
+              ? `Filter event type: ${filterBuffer}\u2588`
+              : `Filter: event_type=${replayTypeFilter || "*"}`}
+          </text>
+        </box>
+      )}
+
       {/* Secrets filter bar */}
       {activeTab === "secrets" && (
         <box height={1} width="100%">
@@ -426,7 +525,7 @@ export default function EventsPanel(): React.ReactNode {
       )}
 
       {/* Error display */}
-      {infraError && activeTab !== "events" && activeTab !== "mcl" && (
+      {infraError && activeTab !== "events" && activeTab !== "mcl" && activeTab !== "replay" && (
         <box height={1} width="100%">
           <text>{`Error: ${infraError}`}</text>
         </box>
@@ -441,9 +540,11 @@ export default function EventsPanel(): React.ReactNode {
               <text>
                 {connected
                   ? `● Connected — ${events.length} events`
-                  : reconnectCount > 0
-                    ? `◐ Reconnecting (attempt ${reconnectCount})...`
-                    : "○ Disconnected"}
+                  : reconnectExhausted
+                    ? `✕ Reconnect failed after ${reconnectCount} attempts — press r to retry`
+                    : reconnectCount > 0
+                      ? `◐ Auto-reconnecting (attempt ${reconnectCount}/10)...`
+                      : "○ Disconnected"}
               </text>
             </box>
 
@@ -457,33 +558,56 @@ export default function EventsPanel(): React.ReactNode {
             )}
 
             {/* Event stream */}
-            <ScrollIndicator selectedIndex={events.length - 1} totalItems={events.length} visibleItems={20}>
-              <scrollbox flexGrow={1} width="100%">
-                {events.length === 0 ? (
-                  <EmptyState
-                    message="Listening for events..."
-                    hint="Waiting for activity on the server."
-                  />
-                ) : (
-                  events.map((event, index) => (
-                    <box key={event.id ?? index} height={1} width="100%" flexDirection="row">
-                      <text>{`[${event.event}] ${truncate(event.data, 120)}`}</text>
-                    </box>
-                  ))
-                )}
-              </scrollbox>
-            </ScrollIndicator>
+            {expandedEventIndex !== null && expandedEventIndex < events.length ? (
+              <box flexGrow={1} width="100%" flexDirection="column">
+                <box height={1} width="100%">
+                  <text bold>{`[${events[expandedEventIndex]!.event}] — Event #${expandedEventIndex} (Escape to close)`}</text>
+                </box>
+                <scrollbox flexGrow={1} width="100%">
+                  <text>{formatEventData(events[expandedEventIndex]!.data)}</text>
+                </scrollbox>
+              </box>
+            ) : (
+              <ScrollIndicator selectedIndex={selectedEventIndex >= 0 ? selectedEventIndex : events.length - 1} totalItems={events.length} visibleItems={20}>
+                <scrollbox flexGrow={1} width="100%">
+                  {events.length === 0 ? (
+                    <EmptyState
+                      message="Listening for events..."
+                      hint="Waiting for activity on the server."
+                    />
+                  ) : (
+                    events.map((event, index) => (
+                      <box key={event.id ?? index} height={1} width="100%" flexDirection="row">
+                        <text inverse={index === selectedEventIndex || undefined}>
+                          {`[${event.event}] ${event.data}`}
+                        </text>
+                      </box>
+                    ))
+                  )}
+                </scrollbox>
+              </ScrollIndicator>
+            )}
           </box>
         )}
 
         {activeTab === "mcl" && <MclReplay urnFilter={mclUrnFilter} aspectFilter={mclAspectFilter} />}
 
+        {activeTab === "replay" && <EventReplay typeFilter={replayTypeFilter} />}
+
         {activeTab === "connectors" && (
-          <ConnectorList
-            connectors={connectors}
-            selectedIndex={selectedConnectorIndex}
-            loading={connectorsLoading}
-          />
+          connectorDetailView && connectors[selectedConnectorIndex] ? (
+            <ConnectorDetail
+              connectorName={connectors[selectedConnectorIndex]!.name}
+              capabilities={connectorCapabilities}
+              loading={capabilitiesLoading}
+            />
+          ) : (
+            <ConnectorList
+              connectors={connectors}
+              selectedIndex={selectedConnectorIndex}
+              loading={connectorsLoading}
+            />
+          )
         )}
 
         {activeTab === "subscriptions" && (
@@ -517,6 +641,15 @@ export default function EventsPanel(): React.ReactNode {
             loading={operationsLoading}
           />
         )}
+
+        {activeTab === "audit" && (
+          <AuditTrail
+            transactions={auditTransactions}
+            loading={auditLoading}
+            hasMore={auditHasMore}
+            selectedIndex={selectedAuditIndex}
+          />
+        )}
       </box>
 
       {/* Help bar */}
@@ -524,30 +657,38 @@ export default function EventsPanel(): React.ReactNode {
         {copied
           ? <text foregroundColor="green">Copied!</text>
           : <text>
-          {activeTab === "events" && filterMode !== "none"
-            ? "Type filter, Enter:apply, Escape:cancel, Backspace:delete"
+          {filterMode !== "none"
+            ? "Type value, Enter:apply, Escape:cancel, Backspace:delete"
             : activeTab === "events"
-            ? "f:filter type  s:filter search  c:clear  r:reconnect  y:copy  Tab:switch tab  q:quit"
-            : activeTab === "mcl" && filterMode !== "none"
-              ? "Type filter, Enter:apply, Escape:cancel, Backspace:delete"
-              : activeTab === "mcl"
-              ? "u:filter URN  n:filter aspect  r:refresh  Tab:switch tab  q:quit"
-              : filterMode !== "none"
-                ? "Type value, Enter:apply, Escape:cancel, Backspace:delete"
-                : activeTab === "subscriptions"
-                  ? "j/k:navigate  d:delete  t:test  r:refresh  Tab:switch tab"
-                  : activeTab === "locks"
-                    ? "j/k:navigate  n:acquire  d:release  e:extend  r:refresh  Tab:switch tab"
-                    : activeTab === "secrets"
-                      ? "/:filter  r:refresh  Tab:switch tab"
-                      : "j/k:navigate  r:refresh  Tab:switch tab"}
+            ? "j/k:navigate  Enter:expand  f:filter type  s:search  c:clear  r:reconnect  y:copy  Tab:switch"
+            : activeTab === "mcl"
+              ? "u:filter URN  n:filter aspect  r:refresh  Tab:switch tab"
+              : activeTab === "replay"
+                ? "f:filter event type  r:refresh  Tab:switch tab"
+                : activeTab === "connectors"
+                  ? connectorDetailView
+                    ? "Escape:back  r:refresh  Tab:switch tab"
+                    : "j/k:navigate  Enter:capabilities  r:refresh  Tab:switch tab"
+                  : activeTab === "subscriptions"
+                    ? "j/k:navigate  d:delete  t:test  r:refresh  Tab:switch tab"
+                    : activeTab === "locks"
+                      ? "j/k:navigate  n:acquire  d:release  e:extend  r:refresh  Tab:switch tab"
+                      : activeTab === "secrets"
+                        ? "/:filter  r:refresh  Tab:switch tab"
+                        : activeTab === "audit"
+                          ? "j/k:navigate  m:load more  r:refresh  Tab:switch tab"
+                          : "j/k:navigate  r:refresh  Tab:switch tab"}
         </text>}
       </box>
     </box>
   );
 }
 
-function truncate(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen - 3) + "...";
+function formatEventData(data: string): string {
+  try {
+    const parsed = JSON.parse(data);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return data;
+  }
 }

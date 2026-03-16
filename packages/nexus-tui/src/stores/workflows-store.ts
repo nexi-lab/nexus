@@ -61,6 +61,30 @@ export interface ExecutionResult {
   readonly error_message: string | null;
 }
 
+export interface ExecutionStep {
+  readonly step_index: number;
+  readonly action_name: string;
+  readonly status: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly inputs: Readonly<Record<string, unknown>>;
+  readonly outputs: Readonly<Record<string, unknown>>;
+  readonly error_message: string | null;
+}
+
+export interface ExecutionDetail {
+  readonly execution_id: string;
+  readonly workflow_id: string;
+  readonly trigger_type: string;
+  readonly status: string;
+  readonly started_at: string | null;
+  readonly completed_at: string | null;
+  readonly actions_completed: number;
+  readonly actions_total: number;
+  readonly error_message: string | null;
+  readonly steps: readonly ExecutionStep[];
+}
+
 export interface SchedulerMetrics {
   readonly queued_tasks: number;
   readonly running_tasks: number;
@@ -96,6 +120,10 @@ export interface WorkflowsState {
   readonly selectedExecutionIndex: number;
   readonly executionsLoading: boolean;
 
+  // Execution detail (expanded view)
+  readonly selectedExecution: ExecutionDetail | null;
+  readonly executionDetailLoading: boolean;
+
   // Scheduler metrics
   readonly schedulerMetrics: SchedulerMetrics | null;
   readonly schedulerLoading: boolean;
@@ -114,6 +142,8 @@ export interface WorkflowsState {
   readonly deleteWorkflow: (name: string, client: FetchClient) => Promise<void>;
   readonly enableWorkflow: (name: string, client: FetchClient) => Promise<void>;
   readonly disableWorkflow: (name: string, client: FetchClient) => Promise<void>;
+  readonly fetchExecutionDetail: (executionId: string, client: FetchClient) => Promise<void>;
+  readonly clearExecutionDetail: () => void;
   readonly setActiveTab: (tab: WorkflowTab) => void;
   readonly setSelectedWorkflowIndex: (index: number) => void;
   readonly setSelectedExecutionIndex: (index: number) => void;
@@ -132,6 +162,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
   executions: [],
   selectedExecutionIndex: 0,
   executionsLoading: false,
+
+  selectedExecution: null,
+  executionDetailLoading: false,
 
   schedulerMetrics: null,
   schedulerLoading: false,
@@ -306,6 +339,29 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       set({ error: message });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
+  },
+
+  fetchExecutionDetail: async (executionId, client) => {
+    set({ executionDetailLoading: true, error: null });
+
+    try {
+      const detail = await client.get<ExecutionDetail>(
+        `/api/v2/workflows/executions/${encodeURIComponent(executionId)}`,
+      );
+      set({ selectedExecution: detail, executionDetailLoading: false });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch execution detail";
+      set({
+        selectedExecution: null,
+        executionDetailLoading: false,
+        error: message,
+      });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
+
+  clearExecutionDetail: () => {
+    set({ selectedExecution: null });
   },
 
   setActiveTab: (tab) => {

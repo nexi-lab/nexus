@@ -5,6 +5,7 @@
 import React from "react";
 import { useApiConsoleStore } from "../../stores/api-console-store.js";
 import { httpStatusColor } from "../../shared/theme.js";
+import { StyledText } from "../../shared/components/styled-text.js";
 
 export function ResponseViewer(): React.ReactNode {
   const response = useApiConsoleStore((s) => s.response);
@@ -38,9 +39,13 @@ export function ResponseViewer(): React.ReactNode {
         <text>{` ${response.statusText} — ${response.timeMs.toFixed(0)}ms`}</text>
       </box>
 
-      {/* Response body with syntax highlighting */}
+      {/* Response body with syntax highlighting (ANSI-aware) */}
       <scrollbox flexGrow={1} width="100%">
-        <code content={response.body} filetype="json" syntaxStyle={undefined!} />
+        {response.body.includes("\x1b[") ? (
+          <StyledText>{response.body}</StyledText>
+        ) : (
+          <code content={response.body} filetype="json" syntaxStyle={undefined!} />
+        )}
       </scrollbox>
     </box>
   );

@@ -6,6 +6,7 @@
 
 import React from "react";
 import { useGlobalStore } from "../../stores/global-store.js";
+import { useEventsStore } from "../../stores/events-store.js";
 import { connectionColor, statusColor } from "../theme.js";
 
 const STATUS_ICONS: Record<string, string> = {
@@ -22,6 +23,11 @@ export function StatusBar(): React.ReactNode {
   const zoneId = useGlobalStore((s) => s.zoneId);
   const activePanel = useGlobalStore((s) => s.activePanel);
   const userInfo = useGlobalStore((s) => s.userInfo);
+  const enabledBricks = useGlobalStore((s) => s.enabledBricks);
+
+  // Check if events panel has active filters
+  const eventFilters = useEventsStore((s) => s.filters);
+  const hasActiveFilter = eventFilters.eventType !== null || eventFilters.search !== null;
 
   const icon = STATUS_ICONS[status] ?? "?";
   const baseUrl = config.baseUrl ?? "localhost:2026";
@@ -68,8 +74,17 @@ export function StatusBar(): React.ReactNode {
             <text foregroundColor={statusColor.reference}>{`zone:${zone}`}</text>
           </text>
         )}
+        {enabledBricks.length > 0 && (
+          <text>
+            <text dimColor>{" │ "}</text>
+            <text foregroundColor={statusColor.info}>{`${enabledBricks.length} bricks`}</text>
+          </text>
+        )}
         <text dimColor>{" │ "}</text>
         <text foregroundColor={statusColor.info}>{`[${activePanel}]`}</text>
+        {hasActiveFilter && (
+          <text foregroundColor="yellow">{" [filtered]"}</text>
+        )}
       </text>
     </box>
   );

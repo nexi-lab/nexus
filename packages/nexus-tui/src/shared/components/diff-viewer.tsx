@@ -212,8 +212,8 @@ export function DiffViewer({
   }
 
   return (
-    <box height="100%" width="100%" flexDirection="column">
+    <scrollbox height="100%" width="100%">
       <diff diff={diffString} view={view} showLineNumbers />
-    </box>
+    </scrollbox>
   );
 }

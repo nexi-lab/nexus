@@ -93,7 +93,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         # Core filesystem syscalls (sys_ prefix — Linux VFS aligned)
         "sys_read": DispatchEntry(handle_read_async, is_async=True),
         "sys_write": DispatchEntry(
-            handle_write, event_type="file_write", event_size_key="bytes_written"
+            handle_write, is_async=True, event_type="file_write", event_size_key="bytes_written"
         ),
         "sys_access": DispatchEntry(handle_exists, is_async=True),
         "sys_readdir": DispatchEntry(handle_list, is_async=True),

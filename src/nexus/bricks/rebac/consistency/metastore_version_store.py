@@ -24,7 +24,7 @@ class _MetastoreProto(Protocol):
 
 logger = logging.getLogger(__name__)
 
-_VER_PREFIX = "ver:rebac:"
+_VER_PREFIX = "/_internal/ver/rebac/"
 _VER_BACKEND = "_version"
 
 

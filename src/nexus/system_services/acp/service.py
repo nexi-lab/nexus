@@ -4,6 +4,11 @@ Calls coding agent CLIs (Claude Code, Gemini CLI, Codex, etc.) over the
 ACP JSON-RPC 2.0 protocol (stdin/stdout).  Each call is a one-shot
 session: spawn → initialize → session/new → session/prompt → disconnect.
 
+AcpService **owns the subprocess** and wraps stdin/stdout in StdioPipe
+(kernel PipeBackend).  Agent pipes are registered as DT_PIPEs at
+``/{zone}/proc/{pid}/fd/0`` (stdin) and ``fd/1`` (stdout) when PipeManager
+is available.  AcpConnection is a pure protocol adapter — no subprocess.
+
 Results are persisted to the VFS at ``/{zone}/proc/{pid}/result`` via
 ``sys_write`` (when NexusFS is available) or direct metastore fallback.
 
@@ -24,7 +29,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.process_types import ProcessDescriptor, ProcessKind, ProcessState
+from nexus.contracts.process_types import ProcessDescriptor, ProcessKind
+from nexus.core.stdio_pipe import StdioPipe
 
 from .agents import BUILTIN_AGENTS, AgentConfig
 from .connection import AcpConnection, AcpPromptResult, AcpRpcError, FsReadFn, FsWriteFn
@@ -49,6 +55,16 @@ class AcpResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class _ActiveAgent:
+    """Tracks active agent subprocess + connection for cleanup."""
+
+    conn: AcpConnection
+    proc: asyncio.subprocess.Process
+    fd0_path: str  # /{zone}/proc/{pid}/fd/0  (stdin)
+    fd1_path: str  # /{zone}/proc/{pid}/fd/1  (stdout)
+
+
 class AcpService:
     """Stateless coding agent caller via ACP JSON-RPC — Tier 1 system service.
 
@@ -56,11 +72,12 @@ class AcpService:
         1. Look up ``AgentConfig`` by ``agent_id``
         2. Inject system prompt (VFS override > config default)
         3. Build ACP command (binary + acp_args, no prompt in argv)
-        4. Register external process in ``ProcessTable``
-        5. Spawn ``AcpConnection`` → initialize → session/new → session/prompt
-        6. Disconnect and transition process to ZOMBIE
-        7. Map ``AcpPromptResult`` → ``AcpResult`` with unified metadata
-        8. Persist result to VFS at ``/{zone}/proc/{pid}/result``
+        4. Register process in ``ProcessTable`` (spawn → RUNNING)
+        5. Create subprocess, wrap in StdioPipe, register DT_PIPEs
+        6. ``AcpConnection`` → initialize → session/new → session/prompt
+        7. Disconnect, kill subprocess, destroy DT_PIPEs, → ZOMBIE
+        8. Map ``AcpPromptResult`` → ``AcpResult`` with unified metadata
+        9. Persist result to VFS at ``/{zone}/proc/{pid}/result``
     """
 
     def __init__(
@@ -73,10 +90,11 @@ class AcpService:
         self._metastore = metastore
         self._zone_id = zone_id
         self._nexus_fs: VFSOperations | None = None
+        self._pipe_manager: Any | None = None
         self._agents: dict[str, AgentConfig] = {
             k: v for k, v in BUILTIN_AGENTS.items() if v.enabled
         }
-        self._connections: dict[str, AcpConnection] = {}
+        self._connections: dict[str, _ActiveAgent] = {}
 
     # ------------------------------------------------------------------
     # Public properties (used by AcpRPCService — no private access)
@@ -103,6 +121,15 @@ class AcpService:
         """
         self._nexus_fs = nexus_fs
         logger.debug("AcpService: NexusFS bound for VFS-backed file I/O")
+
+    def bind_pipe_manager(self, pipe_manager: Any) -> None:
+        """Bind PipeManager for DT_PIPE registration of agent stdio.
+
+        Called after NexusFS construction (factory ``_wired.py`` phase).
+        When not bound, agent pipes are not visible in the VFS (degraded).
+        """
+        self._pipe_manager = pipe_manager
+        logger.debug("AcpService: PipeManager bound for DT_PIPE registration")
 
     # ------------------------------------------------------------------
     # Public API
@@ -166,7 +193,7 @@ class AcpService:
         if labels:
             merged_labels.update(labels)
 
-        # Register in ProcessTable via spawn (CREATED → RUNNING).
+        # Register in ProcessTable via spawn (→ RUNNING directly, #1691).
         desc = self._process_table.spawn(
             name=f"acp:{config.name}",
             owner_id=owner_id,
@@ -176,13 +203,13 @@ class AcpService:
         )
         pid = desc.pid
 
-        # Transition CREATED → RUNNING.
-        # TODO(#1691): Once spawn → RUNNING lands, remove this.
-        self._process_table._transition(desc, ProcessState.RUNNING)
-
         # Build VFS-backed file I/O callables when NexusFS is available.
         host_cwd = os.path.abspath(cwd)
         fs_read, fs_write = self._make_fs_callables(host_cwd, zone_id)
+
+        # DT_PIPE paths for VFS visibility
+        fd0_path = f"/{zone_id}/proc/{pid}/fd/0"
+        fd1_path = f"/{zone_id}/proc/{pid}/fd/1"
 
         # Run ACP session
         timed_out = False
@@ -190,11 +217,45 @@ class AcpService:
         response_text = ""
         stderr_text = ""
         metadata: dict[str, Any] = {}
-        conn = AcpConnection(fs_read=fs_read, fs_write=fs_write)
+        proc: asyncio.subprocess.Process | None = None
+        conn: AcpConnection | None = None
 
         try:
-            await conn.spawn(cmd, cwd=cwd, env=env)
-            self._connections[pid] = conn
+            # OS subprocess (was in AcpConnection.spawn())
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                env=env,
+            )
+
+            # Wrap in StdioPipe (kernel PipeBackend)
+            stdin_pipe = StdioPipe(reader=None, writer=proc.stdin)
+            stdout_pipe = StdioPipe(reader=proc.stdout, writer=None)
+
+            # Register DT_PIPEs in VFS (graceful degradation)
+            if self._pipe_manager is not None:
+                try:
+                    self._pipe_manager.create_from_backend(fd0_path, stdin_pipe, owner_id=owner_id)
+                    self._pipe_manager.create_from_backend(fd1_path, stdout_pipe, owner_id=owner_id)
+                except Exception as exc:
+                    logger.debug("DT_PIPE registration failed (degraded): %s", exc)
+
+            # AcpConnection with PipeBackend (no more spawn())
+            conn = AcpConnection(
+                stdin_pipe=stdin_pipe,
+                stdout_pipe=stdout_pipe,
+                stderr_reader=proc.stderr,
+                cwd=cwd,
+                fs_read=fs_read,
+                fs_write=fs_write,
+            )
+            conn.start()
+            self._connections[pid] = _ActiveAgent(
+                conn=conn, proc=proc, fd0_path=fd0_path, fd1_path=fd1_path
+            )
 
             try:
                 await conn.initialize(timeout=30.0)
@@ -238,10 +299,24 @@ class AcpService:
             logger.error("ACP agent %s (pid=%s) failed: %s", agent_id, pid, exc)
         finally:
             # Collect stderr before disconnect
-            if conn.stderr_output and not stderr_text:
-                stderr_text = conn.stderr_output
-            await conn.disconnect()
-            self._connections.pop(pid, None)
+            if conn is not None:
+                if conn.stderr_output and not stderr_text:
+                    stderr_text = conn.stderr_output
+                await conn.disconnect()
+
+            # Teardown subprocess + DT_PIPEs
+            active = self._connections.pop(pid, None)
+            if active is not None:
+                self._teardown_agent(active)
+                # Wait for process exit (best-effort)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(active.proc.wait(), timeout=5.0)
+            elif proc is not None and proc.returncode is None:
+                # Subprocess started but never registered (early failure)
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
 
         # Kill in ProcessTable (→ ZOMBIE)
         try:
@@ -265,12 +340,23 @@ class AcpService:
 
         return result
 
+    def _teardown_agent(self, active: _ActiveAgent) -> None:
+        """Kill subprocess and destroy DT_PIPEs for an active agent."""
+        if active.proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                active.proc.kill()
+        if self._pipe_manager is not None:
+            with contextlib.suppress(Exception):
+                self._pipe_manager.destroy(active.fd0_path)
+            with contextlib.suppress(Exception):
+                self._pipe_manager.destroy(active.fd1_path)
+
     def kill_agent(self, pid: str) -> ProcessDescriptor:
         """Kill a running agent connection and mark ZOMBIE in ProcessTable."""
-        conn = self._connections.pop(pid, None)
-        if conn is not None:
-            # Schedule disconnect in the background (fire-and-forget)
-            asyncio.ensure_future(conn.disconnect())
+        active = self._connections.pop(pid, None)
+        if active is not None:
+            asyncio.ensure_future(active.conn.disconnect())
+            self._teardown_agent(active)
 
         desc: ProcessDescriptor = self._process_table.kill(pid, exit_code=-9)
         return desc
@@ -398,9 +484,10 @@ class AcpService:
         return results[:limit]
 
     def close_all(self) -> None:
-        """Disconnect all active ACP connections."""
-        for pid, conn in list(self._connections.items()):
-            asyncio.ensure_future(conn.disconnect())
+        """Disconnect all active ACP connections and kill subprocesses."""
+        for pid, active in list(self._connections.items()):
+            asyncio.ensure_future(active.conn.disconnect())
+            self._teardown_agent(active)
             logger.debug("ACP disconnecting pid=%s", pid)
         self._connections.clear()
 

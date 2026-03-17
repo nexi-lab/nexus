@@ -154,28 +154,30 @@ export function App(): React.ReactNode {
         }
       : identitySwitcherOpen || helpOpen || showWelcome
       ? {
-          // When an overlay is open, only its dismiss key works from app level.
+          // When an overlay is open, only dismiss keys work from app level.
           "ctrl+i": toggleIdentitySwitcher,
         }
       : {
-          "1": () => setActivePanel("files"),
-          "2": () => setActivePanel("versions"),
-          "3": () => setActivePanel("agents"),
-          "4": () => setActivePanel("zones"),
-          "5": () => setActivePanel("access"),
-          "6": () => setActivePanel("payments"),
-          "7": () => setActivePanel("search"),
-          "8": () => setActivePanel("workflows"),
-          "9": () => setActivePanel("infrastructure"),
-          "0": () => setActivePanel("console"),
+          // Check fileEditorOpen synchronously inside each handler so we don't
+          // depend on React re-render timing — OpenTUI broadcasts to ALL handlers.
+          "1": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("files"); },
+          "2": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("versions"); },
+          "3": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("agents"); },
+          "4": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("zones"); },
+          "5": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("access"); },
+          "6": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("payments"); },
+          "7": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("search"); },
+          "8": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("workflows"); },
+          "9": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("infrastructure"); },
+          "0": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("console"); },
           "ctrl+i": toggleIdentitySwitcher,
           "ctrl+d": () => {
             // Disconnect and go back to setup menu
             useGlobalStore.getState().setConnectionStatus("error", "Disconnected by user");
           },
-          "z": () => toggleZoom(activePanel),
-          "?": () => setHelpOpen(true),
-          "q": shutdown,
+          "z": () => { if (!useUiStore.getState().fileEditorOpen) toggleZoom(activePanel); },
+          "?": () => { if (!useUiStore.getState().fileEditorOpen) setHelpOpen(true); },
+          "q": () => { if (!useUiStore.getState().fileEditorOpen) shutdown(); },
         },
   );
 

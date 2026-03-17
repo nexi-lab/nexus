@@ -29,6 +29,9 @@ export interface UiState {
   /** True when a global overlay (welcome, help, identity switcher) is active. */
   readonly overlayActive: boolean;
 
+  /** True when a full-screen panel-level editor is open (suppresses global keybindings). */
+  readonly fileEditorOpen: boolean;
+
   // Actions
   readonly setFocusPane: (panel: string, pane: FocusPane) => void;
   readonly toggleFocusPane: (panel: string) => void;
@@ -38,6 +41,7 @@ export interface UiState {
   readonly setScrollPosition: (key: string, position: number) => void;
   readonly getScrollPosition: (key: string) => number;
   readonly setOverlayActive: (active: boolean) => void;
+  readonly setFileEditorOpen: (open: boolean) => void;
 }
 
 // =============================================================================
@@ -49,6 +53,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   zoomedPanel: null,
   scrollPositions: {},
   overlayActive: false,
+  fileEditorOpen: false,
 
   setFocusPane: (panel, pane) => {
     set((state) => ({
@@ -90,5 +95,9 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   setOverlayActive: (active) => {
     set({ overlayActive: active });
+  },
+
+  setFileEditorOpen: (open) => {
+    set({ fileEditorOpen: open });
   },
 }));

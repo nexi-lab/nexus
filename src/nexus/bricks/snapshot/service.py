@@ -204,7 +204,7 @@ class TransactionalSnapshotService:
     ) -> None:
         """Internal: track a filesystem operation within a transaction."""
         # Hold CAS reference to prevent GC of original content
-        if original_hash is not None:
+        if original_hash is not None and hasattr(self._cas_store, "hold_reference"):
             held = self._cas_store.hold_reference(original_hash)
             if not held:
                 logger.warning(
@@ -218,7 +218,7 @@ class TransactionalSnapshotService:
         tracked = self._registry.track_path(transaction_id, path)
         if not tracked:
             # Release the hold we just acquired since we can't track
-            if original_hash is not None:
+            if original_hash is not None and hasattr(self._cas_store, "release"):
                 self._cas_store.release(original_hash)
             raise TransactionConflictError(
                 conflicts=[
@@ -249,7 +249,7 @@ class TransactionalSnapshotService:
                 transaction_id,
             )
             # Release CAS hold to prevent ref_count leak (CRITICAL-2 fix)
-            if original_hash is not None:
+            if original_hash is not None and hasattr(self._cas_store, "release"):
                 try:
                     self._cas_store.release(original_hash)
                 except Exception:

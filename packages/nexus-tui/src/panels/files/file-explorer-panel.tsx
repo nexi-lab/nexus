@@ -135,7 +135,7 @@ interface BindingContext {
   // Paste destination input
   readonly setInputModeWithCallback: (mode: InputMode, onSubmit: (value: string) => void) => void;
   // Editor
-  readonly setEditorPath: (path: string | null) => void;
+  readonly openEditor: (path: string) => void;
 }
 
 /** Navigation bindings for the currently active tab (Decision 5A). */
@@ -236,7 +236,7 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
     // Edit existing file: open full-screen editor
     e: () => {
       if (ctx.selectedItem && !ctx.selectedItem.isDirectory) {
-        ctx.setEditorPath(ctx.selectedItem.path);
+        ctx.openEditor(ctx.selectedItem.path);
       }
     },
     // Create new file: prompt for filename, then open editor
@@ -415,7 +415,7 @@ function getInputModeBindings(
           const filePath = ctx.filterQuery.trim();
           if (!filePath) { resetInput(); return; }
           // Open editor for the new path (editor handles creation on save)
-          ctx.setEditorPath(filePath);
+          ctx.openEditor(filePath);
           resetInput();
         },
       };
@@ -574,6 +574,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   const uiFocusPane = useUiStore((s) => s.getFocusPane("files"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
   const overlayActive = useUiStore((s) => s.overlayActive);
+  const setOverlayActive = useUiStore((s) => s.setOverlayActive);
 
   // Catalog brick availability
   const { available: catalogAvailable } = useBrickAvailable("catalog");
@@ -635,8 +636,16 @@ export default function FileExplorerPanel(): React.ReactNode {
   // Clipboard copy (system)
   const { copy, copied } = useCopy();
 
-  // Editor overlay state
+  // Editor overlay state — suppress global panel-switch keys while editor is open
   const [editorPath, setEditorPath] = useState<string | null>(null);
+  const openEditor = useCallback((path: string) => {
+    useUiStore.getState().setFileEditorOpen(true);
+    setEditorPath(path);
+  }, []);
+  const closeEditor = useCallback(() => {
+    useUiStore.getState().setFileEditorOpen(false);
+    setEditorPath(null);
+  }, []);
 
   // Dialog state
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -739,7 +748,7 @@ export default function FileExplorerPanel(): React.ReactNode {
     executeSearch,
     searchResults, setSearchResults,
     setInputModeWithCallback: setInputMode as BindingContext["setInputModeWithCallback"],
-    setEditorPath,
+    openEditor,
   };
 
   useKeyboard(
@@ -778,7 +787,7 @@ export default function FileExplorerPanel(): React.ReactNode {
     <box height="100%" width="100%" flexDirection="column">
       {/* Full-screen file editor */}
       {editorPath ? (
-        <FileEditor path={editorPath} onClose={() => setEditorPath(null)} />
+        <FileEditor path={editorPath} onClose={closeEditor} />
       ) : <>
 
       {/* Panel-level tab bar */}

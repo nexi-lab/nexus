@@ -29,6 +29,9 @@ export function FileEditor({ path, onClose }: FileEditorProps): React.ReactNode 
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [initialContent, setInitialContent] = useState("");
+  // Must be called at top level (before any conditional returns) to respect Rules of Hooks
+  const activeTxn = useVersionsStore((s) => s.selectedTransaction);
+  const hasTxn = activeTxn?.status === "active";
 
   // Load file content
   useEffect(() => {
@@ -71,8 +74,8 @@ export function FileEditor({ path, onClose }: FileEditorProps): React.ReactNode 
     try {
       // If an active transaction exists, pass its ID so the write is tracked
       const activeTxn = useVersionsStore.getState().selectedTransaction;
-      const txnParam = activeTxn?.status === "active" ? `&transaction_id=${activeTxn.transaction_id}` : "";
-      await client.post(`/api/v2/files/write?${txnParam}`, {
+      const txnParam = activeTxn?.status === "active" ? `?transaction_id=${activeTxn.transaction_id}` : "";
+      await client.post(`/api/v2/files/write${txnParam}`, {
         path,
         content,
       });
@@ -107,8 +110,6 @@ export function FileEditor({ path, onClose }: FileEditorProps): React.ReactNode 
   }
 
   const fileName = path.split("/").pop() ?? path;
-  const activeTxn = useVersionsStore((s) => s.selectedTransaction);
-  const hasTxn = activeTxn?.status === "active";
 
   return (
     <box height="100%" width="100%" flexDirection="column">

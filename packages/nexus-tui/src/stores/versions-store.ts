@@ -270,8 +270,15 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
       if (description !== undefined) body["description"] = description;
       if (ttlSeconds !== undefined) body["ttl_seconds"] = ttlSeconds;
 
-      await client.post<Transaction>("/api/v2/snapshots", body);
+      const newTxn = await client.post<Transaction>("/api/v2/snapshots", body);
       await get().fetchTransactions(client);
+      // Auto-select the newly created transaction so the editor shows [txn:xxx]
+      if (newTxn?.transaction_id) {
+        const fresh = get().transactions.find(
+          (t) => t.transaction_id === newTxn.transaction_id,
+        ) ?? newTxn;
+        get().selectTransaction(fresh);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to begin transaction";
       set({ error: message });

@@ -41,6 +41,7 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.lib.path_utils import validate_path as _normalize_path
 
 logger = logging.getLogger(__name__)
 
@@ -389,15 +390,25 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
 
-            # Pre-register path with active transaction so the NexusFS write
-            # path's is_tracked() check finds it and calls track_write().
+            # Snapshot tracking setup: validate conflict + capture original hash BEFORE write
+            _ss = None
+            _norm_path: str | None = None
+            _original_hash: str | None = None
             if transaction_id:
                 _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
                 if _ss is not None:
-                    _ss.validate_path_available(transaction_id, request.path)
-                    # Track path in the in-memory registry so is_tracked() returns
-                    # this transaction_id during the subsequent fs.write() call.
-                    _ss._registry.track_path(transaction_id, request.path)
+                    _norm_path = _normalize_path(request.path)
+                    _ss.validate_path_available(transaction_id, _norm_path)
+                    # Capture original hash for CAS hold (enables proper rollback)
+                    try:
+                        _orig_meta = fs.metadata.get(_norm_path)
+                        _original_hash = _orig_meta.etag if _orig_meta else None
+                    except Exception:
+                        _original_hash = None
+                else:
+                    logger.warning(
+                        "txn track: snapshot_service unavailable, skipping txn=%s", transaction_id
+                    )
 
             # Decode content based on encoding
             if request.encoding == "base64":
@@ -426,6 +437,21 @@ def create_async_files_router(
 
             # fs.write is async — call directly
             result = await fs.write(**write_kwargs)
+
+            # Track write in transaction AFTER successful write (direct call, bypasses
+            # is_tracked() timing issues in _write_internal)
+            if _ss is not None and _norm_path is not None:
+                try:
+                    _ss.track_write(
+                        transaction_id=transaction_id,
+                        path=_norm_path,
+                        original_hash=_original_hash,
+                        original_metadata=None,
+                        new_hash=result.get("etag"),
+                    )
+                    logger.info("txn tracked write: txn=%s path=%s", transaction_id, _norm_path)
+                except Exception as _track_err:
+                    logger.warning("txn track write failed: %s", _track_err)
 
             modified = result["modified_at"]
             if hasattr(modified, "isoformat"):
@@ -548,14 +574,33 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
 
-            # Pre-register path with active transaction for delete tracking
+            _ss = None
+            _norm_path: str | None = None
+            _original_hash: str | None = None
             if transaction_id:
                 _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
                 if _ss is not None:
-                    _ss.validate_path_available(transaction_id, path)
-                    _ss._registry.track_path(transaction_id, path)
+                    _norm_path = _normalize_path(path)
+                    _ss.validate_path_available(transaction_id, _norm_path)
+                    try:
+                        _orig_meta = fs.metadata.get(_norm_path)
+                        _original_hash = _orig_meta.etag if _orig_meta else None
+                    except Exception:
+                        _original_hash = None
 
             await fs.sys_unlink(path, context=context)
+
+            if _ss is not None and _norm_path is not None:
+                try:
+                    _ss.track_delete(
+                        transaction_id=transaction_id,
+                        path=_norm_path,
+                        original_hash=_original_hash,
+                        original_metadata=None,
+                    )
+                except Exception as _track_err:
+                    logger.warning("txn track delete failed: %s", _track_err)
+
             return DeleteResponse(deleted=True, path=path)
 
         except NexusPermissionError as e:

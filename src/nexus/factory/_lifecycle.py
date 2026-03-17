@@ -32,7 +32,7 @@ async def _do_link(
     from nexus.factory.service_routing import populate_service_registry
 
     # --- Wire non-hot-path facade attrs from containers (Issue #1570) ---
-    # These 13 attrs are only accessed outside kernel (CLI, services, API).
+    # These 15 attrs are only accessed outside kernel (CLI, services, API).
     # Kernel-referenced attrs (zone_lifecycle, snapshot_service, lock_manager,
     # process_table, audit_store, deferred_permission_buffer) use container
     # access — getattr(self._system_services/brick_services, ...).
@@ -42,9 +42,7 @@ async def _do_link(
     nx._workspace_registry = _sys.workspace_registry
     nx.mount_manager = _sys.mount_manager
     nx._workspace_manager = _sys.workspace_manager
-    nx._agent_registry = _sys.agent_registry
     nx._namespace_manager = _sys.namespace_manager
-    nx._async_agent_registry = _sys.async_agent_registry
     nx._async_namespace_manager = _sys.async_namespace_manager
     nx._context_branch_service = _sys.context_branch_service
     nx._dir_visibility_cache = _sys.dir_visibility_cache  # Issue #1703: facade, not kernel

@@ -24,7 +24,6 @@ from nexus.contracts.agent_warmup_types import WarmupContext, WarmupStep
 from nexus.contracts.process_types import ProcessSignal, ProcessState
 from nexus.core.process_table import ProcessTable
 from nexus.system_services.agents.agent_warmup import AgentWarmupService
-from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -33,7 +32,7 @@ from tests.helpers.dict_metastore import DictMetastore
 
 @pytest.fixture
 def process_table():
-    return ProcessTable(DictMetastore(), zone_id="test")
+    return ProcessTable(zone_id="test")
 
 
 @pytest.fixture

@@ -121,7 +121,11 @@ class AcpService:
         that override or extend the built-in defaults.
         """
         self._nexus_fs = nexus_fs
-        asyncio.ensure_future(self._load_persisted_agents())
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._load_persisted_agents(), name="acp-load-agents")
+        except RuntimeError:
+            pass  # No running loop — agents loaded on first call_agent instead
         logger.debug("AcpService: NexusFS bound for VFS-backed file I/O")
 
     def bind_pipe_manager(self, pipe_manager: Any) -> None:
@@ -365,7 +369,11 @@ class AcpService:
         """Kill a running agent connection and mark ZOMBIE in ProcessTable."""
         active = self._connections.pop(pid, None)
         if active is not None:
-            asyncio.ensure_future(active.conn.disconnect())
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(active.conn.disconnect(), name=f"acp-disconnect-{pid}")
+            except RuntimeError:
+                pass
             self._teardown_agent(active)
 
         desc: ProcessDescriptor = self._process_table.kill(pid, exit_code=-9)
@@ -570,7 +578,11 @@ class AcpService:
     def close_all(self) -> None:
         """Disconnect all active ACP connections and kill subprocesses."""
         for pid, active in list(self._connections.items()):
-            asyncio.ensure_future(active.conn.disconnect())
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(active.conn.disconnect(), name=f"acp-disconnect-{pid}")
+            except RuntimeError:
+                pass
             self._teardown_agent(active)
             logger.debug("ACP disconnecting pid=%s", pid)
         self._connections.clear()

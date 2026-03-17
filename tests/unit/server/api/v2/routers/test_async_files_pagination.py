@@ -1,7 +1,7 @@
 """Tests for paginated /list endpoint (Issue #3102, Decision 2A)."""
 
 import base64
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -16,9 +16,9 @@ from nexus.server.dependencies import get_auth_result
 # ---------------------------------------------------------------------------
 
 
-def _make_entry(path: str, size: int = 100, etag: str = "etag1") -> dict:
+def _make_entry(path: str, size: int = 100, etag: str = "etag1", entry_type: int = 0) -> dict:
     """Build a details dict as returned by sys_readdir(details=True)."""
-    return {"path": path, "size": size, "etag": etag}
+    return {"path": path, "size": size, "etag": etag, "entry_type": entry_type}
 
 
 def _encode_cursor(path: str) -> str:
@@ -32,8 +32,11 @@ def _encode_cursor(path: str) -> str:
 
 @pytest.fixture()
 def mock_fs() -> MagicMock:
-    """Create a mock NexusFS."""
-    return MagicMock()
+    """Create a mock NexusFS with async methods."""
+    fs = MagicMock()
+    # sys_readdir is async — must return a coroutine
+    fs.sys_readdir = AsyncMock()
+    return fs
 
 
 @pytest.fixture()
@@ -69,7 +72,7 @@ class TestListPagination:
         mock_fs.sys_readdir.return_value = [
             _make_entry("/data/a.txt", size=10, etag="e1"),
             _make_entry("/data/b.txt", size=20, etag="e2"),
-            _make_entry("/data/sub/", size=0, etag="e3"),
+            _make_entry("/data/sub/", size=0, etag="e3", entry_type=1),
         ]
 
         resp = client.get("/list", params={"path": "/data"})

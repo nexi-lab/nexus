@@ -65,7 +65,7 @@ export function TextInput({
       )}
       <text dimColor={!!isDimmed}>
         {displayValue}
-        {active && <text foregroundColor={statusColor.info}>{"█"}</text>}
+        {active && <span foregroundColor={statusColor.info}>{"█"}</span>}
       </text>
     </box>
   );

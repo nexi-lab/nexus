@@ -30,6 +30,7 @@ export interface KeyBinding {
 const GLOBAL_BINDINGS: readonly KeyBinding[] = [
   { key: "1-9,0", action: "Switch panel" },
   { key: "Ctrl+I", action: "Identity switcher" },
+  { key: "Ctrl+D", action: "Disconnect (back to setup)" },
   { key: "z", action: "Toggle zoom" },
   { key: "?", action: "Help overlay" },
   { key: "q", action: "Quit" },
@@ -179,8 +180,8 @@ export function HelpOverlay({
         <text foregroundColor={statusColor.info} bold>{"─── Global ───"}</text>
         {GLOBAL_BINDINGS.map((b) => (
           <text key={b.key}>
-            <text foregroundColor={statusColor.info}>{`  ${b.key.padEnd(12)}`}</text>
-            <text>{b.action}</text>
+            <span foregroundColor={statusColor.info}>{`  ${b.key.padEnd(12)}`}</span>
+            <span>{b.action}</span>
           </text>
         ))}
 
@@ -188,8 +189,8 @@ export function HelpOverlay({
         <text foregroundColor={statusColor.info} bold>{"─── Navigation ───"}</text>
         {NAV_BINDINGS.map((b) => (
           <text key={b.key}>
-            <text foregroundColor={statusColor.info}>{`  ${b.key.padEnd(12)}`}</text>
-            <text>{b.action}</text>
+            <span foregroundColor={statusColor.info}>{`  ${b.key.padEnd(12)}`}</span>
+            <span>{b.action}</span>
           </text>
         ))}
 
@@ -199,8 +200,8 @@ export function HelpOverlay({
             <text foregroundColor={statusColor.info} bold>{`─── ${panel} ───`}</text>
             {panelBindings.map((b) => (
               <text key={b.key}>
-                <text foregroundColor={statusColor.info}>{`  ${b.key.padEnd(12)}`}</text>
-                <text>{b.action}</text>
+                <span foregroundColor={statusColor.info}>{`  ${b.key.padEnd(12)}`}</span>
+                <span>{b.action}</span>
               </text>
             ))}
           </>

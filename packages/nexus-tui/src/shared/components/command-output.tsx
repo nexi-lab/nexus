@@ -29,8 +29,8 @@ export function CommandOutput(): React.ReactNode {
       {/* Header */}
       <box height={1} width="100%">
         <text>
-          <text dimColor>{"$ "}</text>
-          <text bold>{commandLabel}</text>
+          <span dimColor>{"$ "}</span>
+          <span bold>{commandLabel}</span>
         </text>
       </box>
 

@@ -342,7 +342,11 @@ export const useFilesStore = create<FilesState>((set, get) => ({
         }
       }
 
-      set({ treeNodes: updatedNodes, error: null });
+      // Also populate the file cache so metadata/aspects/schema panes
+      // can look up selectedItem via getCachedFiles().
+      fileCache.set(path, { data: sorted, fetchedAt: Date.now() });
+
+      set({ treeNodes: updatedNodes, fileCacheRevision: get().fileCacheRevision + 1, error: null });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       // Revert loading state

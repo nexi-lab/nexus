@@ -15,13 +15,15 @@ interface FileAspectsProps {
 }
 
 function computeUrn(item: FileItem): string | null {
-  if (!item.path || !item.zoneId) return null;
+  if (!item.path) return null;
+  // Use "default" zone when zone isolation is not configured
+  const zone = item.zoneId || "default";
   const pathHash = crypto
     .createHash("sha256")
     .update(item.path)
     .digest("hex")
     .slice(0, 32);
-  return `urn:nexus:file:${item.zoneId}:${pathHash}`;
+  return `urn:nexus:file:${zone}:${pathHash}`;
 }
 
 export function FileAspects({ item }: FileAspectsProps): React.ReactNode {

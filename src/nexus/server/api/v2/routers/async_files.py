@@ -17,8 +17,9 @@ Provides file operations using NexusFS via asyncio.to_thread():
 - GET    /glob            - Glob pattern search across files
 - GET    /grep            - Regex pattern search within files
 
-All operations use asyncio.to_thread() to run sync NexusFS calls
-in worker threads (io_uring pattern: async scheduling, sync kernel).
+Async NexusFS methods (read, write, sys_stat, sys_readdir, sys_unlink,
+sys_access, sys_mkdir) are awaited directly. Sync methods (read_bulk,
+stream, write_stream) use asyncio.to_thread() for thread offloading.
 All operations pass user context for permission enforcement.
 """
 
@@ -52,11 +53,20 @@ logger = logging.getLogger(__name__)
 def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
     """Convert a sys_readdir details dict to a FileItemResponse.
 
-    sys_readdir(details=True) returns dicts with path, size, etag.
-    We derive name and is_directory from the path.
+    sys_readdir(details=True) returns dicts with path, size, etag, entry_type.
+    entry_type: 0=file, 1=directory, 2=mount, 3=pipe, 4=stream.
     """
     raw_path: str = entry.get("path", "")
-    is_dir = raw_path.endswith("/")
+    # Use entry_type if available: 1=dir, 2=mount (both act as directories).
+    # Also treat entries with trailing "/" as directories (legacy fallback).
+    # entry_type 0 with no etag and size 0 is likely an implicit directory
+    # (created by writing files underneath it in CAS-based storage).
+    et = entry.get("entry_type", 0)
+    is_dir = (
+        et in (1, 2)
+        or raw_path.endswith("/")
+        or (et == 0 and entry.get("size", 0) == 0 and not entry.get("etag"))
+    )
     clean_path = raw_path.rstrip("/")
     name = (
         clean_path[len(prefix) :]
@@ -399,10 +409,8 @@ def create_async_files_router(
                     ) from None
                 write_kwargs["consistency"] = mode.to_metastore_consistency()
 
-            result = await asyncio.to_thread(
-                fs.write,
-                **write_kwargs,
-            )
+            # fs.write is async — call directly
+            result = await fs.write(**write_kwargs)
 
             modified = result["modified_at"]
             if hasattr(modified, "isoformat"):
@@ -457,7 +465,7 @@ def create_async_files_router(
 
             # Get metadata first for ETag check
             if if_none_match:
-                meta = await asyncio.to_thread(fs.sys_stat, path)
+                meta = await fs.sys_stat(path)
                 if meta and meta.etag:
                     client_etag = if_none_match.strip('"')
                     if client_etag == meta.etag:
@@ -466,10 +474,8 @@ def create_async_files_router(
                             headers={"ETag": f'"{meta.etag}"'},
                         )
 
-            # Read content
-            result = await asyncio.to_thread(
-                fs.read, path, return_metadata=include_metadata, context=context
-            )
+            # Read content — fs.read is async, call directly
+            result = await fs.read(path, return_metadata=include_metadata, context=context)
 
             if include_metadata and isinstance(result, dict):
                 content = result["content"]
@@ -522,7 +528,7 @@ def create_async_files_router(
         """Delete a file."""
         try:
             fs = await _get_fs()
-            await asyncio.to_thread(fs.sys_unlink, path, context=context)
+            await fs.sys_unlink(path, context=context)
             return DeleteResponse(deleted=True, path=path)
 
         except NexusPermissionError as e:
@@ -547,7 +553,7 @@ def create_async_files_router(
         """Check if a file or directory exists."""
         try:
             fs = await _get_fs()
-            exists = await asyncio.to_thread(fs.sys_access, path, context=context)
+            exists = await fs.sys_access(path, context=context)
             return ExistsResponse(exists=exists)
 
         except NexusPermissionError as e:
@@ -593,9 +599,8 @@ def create_async_files_router(
                 except Exception:
                     raise HTTPException(status_code=400, detail="Invalid cursor") from None
 
-            # sys_readdir already supports limit/cursor/details natively
-            result = await asyncio.to_thread(
-                fs.sys_readdir,
+            # sys_readdir is async — call it directly (not via to_thread)
+            result = await fs.sys_readdir(
                 path,
                 recursive=False,
                 details=True,
@@ -605,10 +610,17 @@ def create_async_files_router(
             )
 
             prefix = path.rstrip("/") + "/"
+            # The listed path itself (e.g. "/" → empty name) must not appear
+            # in its own listing — that causes infinite recursion in tree UIs.
+            clean_path = path.rstrip("/") or "/"
 
             # Paginated path: result is a PaginatedResult
             if limit is not None:
-                file_items = [_to_file_item(entry, prefix) for entry in result.items]
+                file_items = [
+                    _to_file_item(entry, prefix)
+                    for entry in result.items
+                    if entry.get("path", "").rstrip("/") != clean_path.rstrip("/")
+                ]
                 next_cursor = (
                     base64.b64encode(result.next_cursor.encode("utf-8")).decode("ascii")
                     if result.next_cursor
@@ -621,7 +633,11 @@ def create_async_files_router(
                 )
 
             # Non-paginated path (backward compat): result is list[dict]
-            file_items = [_to_file_item(entry, prefix) for entry in result]
+            file_items = [
+                _to_file_item(entry, prefix)
+                for entry in result
+                if entry.get("path", "").rstrip("/") != clean_path.rstrip("/")
+            ]
             return ListResponse(items=file_items, has_more=False)
 
         except HTTPException:
@@ -648,9 +664,8 @@ def create_async_files_router(
         """Create a directory."""
         try:
             fs = await _get_fs()
-            await asyncio.to_thread(
-                fs.sys_mkdir, request.path, parents=request.parents, context=context
-            )
+            # fs.sys_mkdir is async — call directly
+            await fs.sys_mkdir(request.path, parents=request.parents, context=context)
             return {"created": True, "path": request.path}
 
         except NexusPermissionError as e:
@@ -677,7 +692,7 @@ def create_async_files_router(
         """Get file or directory metadata."""
         try:
             fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
+            meta = await fs.sys_stat(path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -764,7 +779,7 @@ def create_async_files_router(
 
         try:
             fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.sys_stat, path, context=context)
+            meta = await fs.sys_stat(path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -1039,9 +1054,8 @@ def create_async_files_router(
             fs = await _get_fs()
 
             # List all files under the base path
-            all_paths = await asyncio.to_thread(
-                fs.sys_readdir, path, recursive=True, context=context
-            )
+            # sys_readdir is async — call directly, not via to_thread
+            all_paths = await fs.sys_readdir(path, recursive=True, context=context)
 
             # Apply glob pattern filter
             matched = await asyncio.to_thread(glob_filter, all_paths, include_patterns=[pattern])
@@ -1090,9 +1104,8 @@ def create_async_files_router(
             fs = await _get_fs()
 
             # List all files under the base path
-            all_paths = await asyncio.to_thread(
-                fs.sys_readdir, path, recursive=True, context=context
-            )
+            # sys_readdir is async — call directly, not via to_thread
+            all_paths = await fs.sys_readdir(path, recursive=True, context=context)
 
             # Try Rust mmap grep first
             results = await asyncio.to_thread(
@@ -1114,7 +1127,7 @@ def create_async_files_router(
                     if len(results) >= limit:
                         break
                     try:
-                        content = await asyncio.to_thread(fs.read, file_path, context=context)
+                        content = await fs.read(file_path, context=context)
                         if isinstance(content, bytes):
                             content = content.decode("utf-8", errors="replace")
                         elif isinstance(content, dict):

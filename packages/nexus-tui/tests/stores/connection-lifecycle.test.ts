@@ -103,8 +103,9 @@ describe("Connection Lifecycle", () => {
   });
 
   describe("server unreachable → error", () => {
-    it("network error sets error status", async () => {
+    it("network error sets error status when health fails", async () => {
       const client = createMockClient({
+        health: async () => { throw new Error("ECONNREFUSED"); },
         authMe: async () => { throw new Error("ECONNREFUSED"); },
       });
       useGlobalStore.setState({ client });
@@ -113,12 +114,13 @@ describe("Connection Lifecycle", () => {
 
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toBe("ECONNREFUSED");
+      expect(state.connectionError).toBe("Server health check failed");
       expect(state.userInfo).toBeNull();
     });
 
-    it("timeout sets error status", async () => {
+    it("timeout sets error status when health fails", async () => {
       const client = createMockClient({
+        health: async () => { throw new Error("Request timed out"); },
         authMe: async () => { throw new Error("Request timed out"); },
       });
       useGlobalStore.setState({ client });
@@ -127,12 +129,12 @@ describe("Connection Lifecycle", () => {
 
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toBe("Request timed out");
+      expect(state.connectionError).toBe("Server health check failed");
     });
   });
 
-  describe("auth failures", () => {
-    it("401 unauthorized sets error", async () => {
+  describe("auth failures (non-fatal when health passes)", () => {
+    it("401 unauthorized still connects if health passes", async () => {
       const client = createMockClient({
         authMe: async () => { throw new Error("Unauthorized (401)"); },
       });
@@ -141,11 +143,11 @@ describe("Connection Lifecycle", () => {
       await useGlobalStore.getState().testConnection();
 
       const state = useGlobalStore.getState();
-      expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toContain("Unauthorized");
+      expect(state.connectionStatus).toBe("connected");
+      expect(state.userInfo).toBeNull();
     });
 
-    it("403 forbidden sets error", async () => {
+    it("403 forbidden still connects if health passes", async () => {
       const client = createMockClient({
         authMe: async () => { throw new Error("Forbidden (403)"); },
       });
@@ -154,8 +156,8 @@ describe("Connection Lifecycle", () => {
       await useGlobalStore.getState().testConnection();
 
       const state = useGlobalStore.getState();
-      expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toContain("Forbidden");
+      expect(state.connectionStatus).toBe("connected");
+      expect(state.userInfo).toBeNull();
     });
   });
 
@@ -174,8 +176,9 @@ describe("Connection Lifecycle", () => {
 
   describe("reconnection", () => {
     it("can recover from error to connected", async () => {
-      // First: fail
+      // First: fail (health must also fail for error status)
       const failClient = createMockClient({
+        health: async () => { throw new Error("Connection refused"); },
         authMe: async () => { throw new Error("Connection refused"); },
       });
       useGlobalStore.setState({ client: failClient });
@@ -193,8 +196,9 @@ describe("Connection Lifecycle", () => {
   });
 
   describe("non-Error thrown objects", () => {
-    it("handles string throws", async () => {
+    it("handles string throws when health fails", async () => {
       const client = createMockClient({
+        health: async () => { throw "raw string error"; },
         authMe: async () => { throw "raw string error"; },
       });
       useGlobalStore.setState({ client });
@@ -203,13 +207,14 @@ describe("Connection Lifecycle", () => {
 
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toBe("Connection test failed");
+      expect(state.connectionError).toBe("Server health check failed");
     });
   });
 
   describe("server error (500)", () => {
-    it("server error sets error status", async () => {
+    it("server error on health sets error status", async () => {
       const client = createMockClient({
+        health: async () => { throw new Error("Internal Server Error (500)"); },
         authMe: async () => { throw new Error("Internal Server Error (500)"); },
       });
       useGlobalStore.setState({ client });
@@ -218,7 +223,6 @@ describe("Connection Lifecycle", () => {
 
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toContain("500");
     });
   });
 

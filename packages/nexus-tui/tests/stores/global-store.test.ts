@@ -218,6 +218,7 @@ describe("GlobalStore", () => {
 
   describe("testConnection", () => {
     it("sets connected and userInfo on success", async () => {
+      const mockHealth = { version: "1.0", zone_id: "z1", uptime_seconds: 100 };
       const mockUserInfo = {
         user_id: "user-1",
         email: "test@example.com",
@@ -228,10 +229,13 @@ describe("GlobalStore", () => {
         primary_auth_method: "api_key",
       };
 
-      const mockFetchClient = {
-        get: mock(async () => mockUserInfo),
-      } as unknown as FetchClient;
+      // testConnection calls client.get 3 times: health, features, auth/me
+      const mockGet = mock()
+        .mockResolvedValueOnce(mockHealth)     // health
+        .mockResolvedValueOnce(null)           // features
+        .mockResolvedValueOnce(mockUserInfo);  // auth/me
 
+      const mockFetchClient = { get: mockGet } as unknown as FetchClient;
       useGlobalStore.setState({ client: mockFetchClient });
 
       await useGlobalStore.getState().testConnection();
@@ -245,10 +249,29 @@ describe("GlobalStore", () => {
       expect(state.userInfo!.is_global_admin).toBe(false);
     });
 
-    it("sets error status on failure", async () => {
+    it("sets connected when health passes but auth/me fails", async () => {
+      const mockHealth = { version: "1.0", zone_id: null, uptime_seconds: 10 };
+      const mockGet = mock()
+        .mockResolvedValueOnce(mockHealth)     // health OK
+        .mockResolvedValueOnce(null)           // features
+        .mockRejectedValueOnce(new Error("Auth not configured")); // auth/me fails
+
+      const mockFetchClient = { get: mockGet } as unknown as FetchClient;
+      useGlobalStore.setState({ client: mockFetchClient });
+
+      await useGlobalStore.getState().testConnection();
+      const state = useGlobalStore.getState();
+
+      // Server is connected if health passes, even when auth fails
+      expect(state.connectionStatus).toBe("connected");
+      expect(state.userInfo).toBeNull();
+    });
+
+    it("sets error status when health fails", async () => {
+      // All 3 calls fail (server unreachable) → health is null → error
       const mockFetchClient = {
         get: mock(async () => {
-          throw new Error("Unauthorized");
+          throw new Error("Network error");
         }),
       } as unknown as FetchClient;
 
@@ -258,7 +281,7 @@ describe("GlobalStore", () => {
       const state = useGlobalStore.getState();
 
       expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toBe("Unauthorized");
+      expect(state.connectionError).toBe("Server health check failed");
       expect(state.userInfo).toBeNull();
     });
 
@@ -284,7 +307,7 @@ describe("GlobalStore", () => {
       const state = useGlobalStore.getState();
 
       expect(state.connectionStatus).toBe("error");
-      expect(state.connectionError).toBe("Connection test failed");
+      expect(state.connectionError).toBe("Server health check failed");
     });
   });
 });

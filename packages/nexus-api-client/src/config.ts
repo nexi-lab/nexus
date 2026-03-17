@@ -81,7 +81,9 @@ function readYamlConfig(): YamlConfig {
     const os = require("node:os") as typeof import("node:os");
     const path = require("node:path") as typeof import("node:path");
 
-    // Search order: local dir first, then home dir (matches config.py:_auto_discover)
+    // Search order: CWD first, then home dir.
+    // Each TUI instance uses its own nexus.yaml in its CWD to avoid
+    // conflicts with other running Nexus stacks.
     const candidates = [
       path.resolve("nexus.yaml"),
       path.resolve("nexus.yml"),
@@ -91,10 +93,20 @@ function readYamlConfig(): YamlConfig {
     for (const configPath of candidates) {
       try {
         const content = fs.readFileSync(configPath, "utf-8");
-        const url = extractYamlValue(content, "url");
+        let url = extractYamlValue(content, "url");
         const apiKey = extractYamlValue(content, "api_key");
         const agentId = extractYamlValue(content, "agent_id");
         const zoneId = extractYamlValue(content, "zone_id");
+
+        // If no explicit url but ports.http exists, build URL from port
+        // (nexus init --preset shared/demo writes ports.http instead of url)
+        if (!url) {
+          const httpPort = extractIndentedYamlValue(content, "ports", "http");
+          if (httpPort) {
+            url = `http://localhost:${httpPort}`;
+          }
+        }
+
         return {
           url: url ?? undefined,
           apiKey: apiKey ?? undefined,
@@ -114,6 +126,16 @@ function readYamlConfig(): YamlConfig {
 
 function extractYamlValue(content: string, key: string): string | null {
   const regex = new RegExp(`^${key}:\\s*["']?([^"'\\n]+)["']?`, "m");
+  const match = regex.exec(content);
+  return match?.[1]?.trim() ?? null;
+}
+
+/**
+ * Extract a nested YAML value like `ports:\n  http: 2027`.
+ * Only handles one level of nesting with 2-space indent.
+ */
+function extractIndentedYamlValue(content: string, parent: string, child: string): string | null {
+  const regex = new RegExp(`^${parent}:\\s*\\n(?:[ ]{2}\\w+:[^\\n]*\\n)*?[ ]{2}${child}:\\s*["']?([^"'\\n]+)["']?`, "m");
   const match = regex.exec(content);
   return match?.[1]?.trim() ?? null;
 }

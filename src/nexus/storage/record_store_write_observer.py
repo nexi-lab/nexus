@@ -109,6 +109,10 @@ class RecordStoreWriteObserver:
                 error,
             )
 
+    async def flush(self, timeout: float = 5.0) -> int:  # noqa: ARG002
+        """No-op — synchronous observer commits inline, nothing to flush."""
+        return 0
+
     def on_write(
         self,
         metadata: FileMetadata,

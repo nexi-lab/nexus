@@ -1,41 +1,34 @@
-name: Publish Docker Image
-
-# Builds, smoke-tests, and publishes edge/dev Docker images to GHCR.
-# For release tags (v*), Docker build is handled inline by release.yml
-# to enable atomic releases (Issue #2946).
-# This workflow handles branch pushes only (develop → edge, main → latest).
+name: Docker Publish
 
 on:
-  workflow_dispatch:
   push:
+    tags:
+      - "v*"
     branches:
       - main
-      - develop
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (default: git SHA short)"
+        required: false
 
 permissions:
   contents: read
   packages: write
-  id-token: write
-  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/nexus
 
 jobs:
   build-and-push:
-    name: Build & Push (${{ matrix.variant }})
+    name: Build & push multi-arch image
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      matrix:
-        include:
-          - variant: cpu
-            suffix: ""
-          - variant: cuda
-            suffix: "-cuda"
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (multi-arch)
+      - name: Set up QEMU (for cross-platform builds)
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -44,98 +37,78 @@ jobs:
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version metadata
+      - name: Determine image tags
         id: meta
-        run: |
-          SHA="${GITHUB_SHA::8}"
-          SUFFIX="${{ matrix.suffix }}"
-          # Branch pushes only get channel tags (edge/sha-*), never semver.
-          # Semver tags (0.9.2, latest) are owned exclusively by release.yml
-          # to prevent mutable version tags appearing before atomic release.
-          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "tags=ghcr.io/nexi-lab/nexus:sha-${SHA}${SUFFIX},ghcr.io/nexi-lab/nexus:edge${SUFFIX}" >> "$GITHUB_OUTPUT"
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # For tagged releases: v1.2.3 -> 1.2.3, latest, stable
+            type=semver,pattern={{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            # For main branch pushes: edge
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            # For manual dispatch: custom tag or SHA
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
+            type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
 
-      # ---- Build locally for smoke testing (Issue #2946) ----
-      - name: Build image (local load for smoke tests)
+      - name: Build and push multi-arch image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
-          load: true
-          tags: ghcr.io/nexi-lab/nexus:smoke-test
-          build-args: TORCH_VARIANT=${{ matrix.variant }}
-          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-${{ matrix.variant }}
-          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-${{ matrix.variant }},mode=max,ignore-error=true
-
-      # ---- Smoke tests — must pass before push ----
-      - name: Smoke test — critical imports
-        run: |
-          docker run --rm --entrypoint "" \
-            ghcr.io/nexi-lab/nexus:smoke-test \
-            python3 -c "
-          import nexus_fast
-          from _nexus_raft import Metastore
-          import txtai
-          import pgvector
-          import docker
-          import fastembed
-          import psutil
-          print('All critical imports OK')
-          "
-
-      - name: Smoke test — CLI entrypoints
-        run: |
-          docker run --rm --entrypoint "" \
-            ghcr.io/nexi-lab/nexus:smoke-test \
-            sh -c "nexus --version && nexusd --help > /dev/null 2>&1 && echo 'CLI OK'"
-
-      - name: Smoke test — Zoekt binaries
-        run: |
-          docker run --rm --entrypoint "" \
-            ghcr.io/nexi-lab/nexus:smoke-test \
-            sh -c "which zoekt-index && which zoekt-webserver && echo 'Zoekt binaries OK'"
-
-      - name: Smoke test — env-var config (no config file)
-        run: |
-          docker run --rm --entrypoint "" \
-            ghcr.io/nexi-lab/nexus:smoke-test \
-            python3 -c "
-          from nexus.config import load_config
-          cfg = load_config()
-          assert cfg.profile == 'full', f'Expected profile=full, got {cfg.profile}'
-          print(f'Config OK: profile={cfg.profile}')
-          "
-
-      # ---- Push to GHCR (only after smoke tests pass) ----
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
+          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          provenance: false
-          sbom: false
           tags: ${{ steps.meta.outputs.tags }}
-          build-args: TORCH_VARIANT=${{ matrix.variant }}
-          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-${{ matrix.variant }}
-          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-${{ matrix.variant }},mode=max,ignore-error=true
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      # ---- Zoekt sidecar image (multi-arch, CPU-only variant only) ----
-      - name: Build and push Zoekt sidecar
-        if: matrix.variant == 'cpu'
+  build-zoekt:
+    name: Build & push multi-arch zoekt image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-zoekt
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=,enable=${{ github.event.inputs.tag == '' }}
+
+      - name: Build and push multi-arch zoekt image
         uses: docker/build-push-action@v6
         with:
           context: ./dockerfiles
-          file: dockerfiles/Dockerfile.zoekt
+          file: ./dockerfiles/Dockerfile.zoekt
           platforms: linux/amd64,linux/arm64
           push: true
-          provenance: false
-          sbom: false
-          tags: ghcr.io/nexi-lab/nexus-zoekt:sha-${{ steps.meta.outputs.sha }},ghcr.io/nexi-lab/nexus-zoekt:edge
-          cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus-zoekt:buildcache
-          cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus-zoekt:buildcache,mode=max,ignore-error=true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

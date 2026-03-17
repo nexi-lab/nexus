@@ -53,7 +53,7 @@ export function PreConnectionScreen(): React.ReactNode {
     ) {
       // Re-read config from disk without triggering connection test.
       // resolveConfig() picks up new api_key/ports from nexus.yaml.
-      const config = resolveConfig();
+      const config = resolveConfig({ transformKeys: false });
       const client = config.apiKey ? new FetchClient(config) : null;
       useGlobalStore.setState({
         config,

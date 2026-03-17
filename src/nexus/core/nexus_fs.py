@@ -154,9 +154,7 @@ class NexusFS(  # type: ignore[misc]
         # =====================================================================
         # Hot-path service attrs — kept on kernel for perf (Issue #1682)
         # =====================================================================
-        self._rebac_manager = sys_svc.rebac_manager
         self._permission_enforcer = sys_svc.permission_enforcer
-        self._hierarchy_manager = sys_svc.hierarchy_manager
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
@@ -606,7 +604,12 @@ class NexusFS(  # type: ignore[misc]
         # Grant direct_owner permission to the user who created the directory
         # Note: Use 'direct_owner' (not 'owner') as the base relation.
         # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
-        if self._rebac_manager and ctx.user_id and not ctx.is_system:
+        if (
+            hasattr(self, "_rebac_manager")
+            and self._rebac_manager
+            and ctx.user_id
+            and not ctx.is_system
+        ):
             try:
                 logger.debug(
                     "mkdir: Granting direct_owner permission to %s for %s", ctx.user_id, path

@@ -46,37 +46,6 @@ class MockProcessTable:
 
 
 # ---------------------------------------------------------------------------
-# Mock Metastore
-# ---------------------------------------------------------------------------
-
-
-class MockMetastore:
-    def __init__(self) -> None:
-        self._store: dict[str, Any] = {}
-        self._metadata: dict[str, dict[str, Any]] = {}
-
-    def get(self, path: str) -> Any:
-        return self._store.get(path)
-
-    def put(self, meta: Any) -> None:
-        self._store[meta.path] = meta
-
-    def delete(self, path: str) -> None:
-        self._store.pop(path, None)
-
-    def list(self, prefix: str) -> list:
-        return [v for k, v in self._store.items() if k.startswith(prefix)]
-
-    def set_file_metadata(self, path: str, key: str, value: Any) -> None:
-        if path not in self._metadata:
-            self._metadata[path] = {}
-        self._metadata[path][key] = value
-
-    def get_file_metadata(self, path: str, key: str) -> Any:
-        return self._metadata.get(path, {}).get(key)
-
-
-# ---------------------------------------------------------------------------
 # Mock PipeManager
 # ---------------------------------------------------------------------------
 
@@ -105,15 +74,13 @@ class TestAcpServiceConstruction:
 
     def test_init(self):
         pt = MockProcessTable()
-        ms = MockMetastore()
-        svc = AcpService(process_table=pt, metastore=ms)
+        svc = AcpService(process_table=pt)
         assert svc._pipe_manager is None
         assert svc._nexus_fs is None
 
     def test_bind_pipe_manager(self):
         pt = MockProcessTable()
-        ms = MockMetastore()
-        svc = AcpService(process_table=pt, metastore=ms)
+        svc = AcpService(process_table=pt)
 
         pm = MockPipeManager()
         svc.bind_pipe_manager(pm)
@@ -121,8 +88,7 @@ class TestAcpServiceConstruction:
 
     def test_bind_fs(self):
         pt = MockProcessTable()
-        ms = MockMetastore()
-        svc = AcpService(process_table=pt, metastore=ms)
+        svc = AcpService(process_table=pt)
 
         mock_nx = MagicMock()
         svc.bind_fs(mock_nx)
@@ -141,6 +107,16 @@ class TestAcpServiceNoTransitionHack:
 
         source = inspect.getsource(service)
         assert "_transition" not in source
+
+    def test_no_metastore_reference(self):
+        """AcpService must not access metastore directly — all I/O through VFS."""
+        import inspect
+
+        from nexus.system_services.acp import service
+
+        source = inspect.getsource(service)
+        assert "_metastore" not in source
+        assert "_ensure_vfs_entry" not in source
 
 
 class TestActiveAgentDataclass:
@@ -167,9 +143,8 @@ class TestAcpServiceKillAgent:
 
     def test_kill_agent_destroys_pipes(self):
         pt = MockProcessTable()
-        ms = MockMetastore()
         pm = MockPipeManager()
-        svc = AcpService(process_table=pt, metastore=ms)
+        svc = AcpService(process_table=pt)
         svc.bind_pipe_manager(pm)
 
         # Set up an active agent
@@ -204,8 +179,7 @@ class TestAcpServiceKillAgent:
     def test_kill_agent_without_pipe_manager(self):
         """Graceful degradation — no PipeManager bound."""
         pt = MockProcessTable()
-        ms = MockMetastore()
-        svc = AcpService(process_table=pt, metastore=ms)
+        svc = AcpService(process_table=pt)
 
         mock_conn = MagicMock()
         mock_conn.disconnect = AsyncMock()
@@ -232,9 +206,8 @@ class TestAcpServiceCloseAll:
 
     def test_close_all_cleans_up(self):
         pt = MockProcessTable()
-        ms = MockMetastore()
         pm = MockPipeManager()
-        svc = AcpService(process_table=pt, metastore=ms)
+        svc = AcpService(process_table=pt)
         svc.bind_pipe_manager(pm)
 
         for i in range(3):
@@ -263,9 +236,8 @@ class TestAcpServiceCallAgent:
     async def test_call_agent_creates_stdio_pipes(self):
         """Verify StdioPipe wrapping and DT_PIPE registration."""
         pt = MockProcessTable()
-        ms = MockMetastore()
         pm = MockPipeManager()
-        svc = AcpService(process_table=pt, metastore=ms)
+        svc = AcpService(process_table=pt)
         svc.bind_pipe_manager(pm)
 
         # Register a test agent

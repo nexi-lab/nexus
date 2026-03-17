@@ -10,7 +10,7 @@ AcpService **owns the subprocess** and wraps stdin/stdout in StdioPipe
 is available.  AcpConnection is a pure protocol adapter — no subprocess.
 
 Results are persisted to the VFS at ``/{zone}/proc/{pid}/result`` via
-``sys_write`` (when NexusFS is available) or direct metastore fallback.
+``sys_write``.  NexusFS **must** be bound for all I/O — no metastore fallback.
 
 Bidirectional communication (file reads, permission requests) is handled
 automatically by ``AcpConnection``.  File I/O from the agent is routed
@@ -84,11 +84,9 @@ class AcpService:
     def __init__(
         self,
         process_table: Any,
-        metastore: Any,
         zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         self._process_table = process_table
-        self._metastore = metastore
         self._zone_id = zone_id
         self._nexus_fs: VFSOperations | None = None
         self._pipe_manager: Any | None = None
@@ -393,8 +391,6 @@ class AcpService:
     # System prompt management (VFS-backed via sys_write/sys_read)
     # ------------------------------------------------------------------
 
-    _ACP_RESULT_KEY = "__acp_result__"
-
     def _system_prompt_path(self, agent_id: str, zone_id: str) -> str:
         return f"/{zone_id}/agents/{agent_id}/SYSTEM.md"
 
@@ -407,11 +403,9 @@ class AcpService:
         """Write a system prompt for *agent_id* via VFS syscall."""
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
-        if self._nexus_fs is not None:
-            await self._nexus_fs.sys_write(path, content.encode("utf-8"))
-        else:
-            self._ensure_vfs_entry(path, zone_id, backend="acp")
-            self._metastore.set_file_metadata(path, "__acp_system_prompt__", content)
+        if self._nexus_fs is None:
+            raise RuntimeError("NexusFS not bound — cannot set system prompt")
+        await self._nexus_fs.sys_write(path, content.encode("utf-8"))
         logger.debug("ACP system prompt set for %s (%d chars)", agent_id, len(content))
 
     async def get_system_prompt(
@@ -420,17 +414,13 @@ class AcpService:
         zone_id: str | None = None,
     ) -> str | None:
         """Read the system prompt for *agent_id* via VFS syscall."""
+        if self._nexus_fs is None:
+            return None
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
         try:
-            if self._nexus_fs is not None:
-                data: bytes = await self._nexus_fs.sys_read(path)
-                return data.decode("utf-8", errors="replace") if data else None
-            else:
-                result: str | None = self._metastore.get_file_metadata(
-                    path, "__acp_system_prompt__"
-                )
-                return result
+            data: bytes = await self._nexus_fs.sys_read(path)
+            return data.decode("utf-8", errors="replace") if data else None
         except FileNotFoundError:
             return None
         except Exception:
@@ -442,15 +432,12 @@ class AcpService:
         zone_id: str | None = None,
     ) -> None:
         """Remove the system prompt for *agent_id* via VFS syscall."""
+        if self._nexus_fs is None:
+            return
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
-        try:
-            if self._nexus_fs is not None:
-                await self._nexus_fs.sys_unlink(path)
-            else:
-                self._metastore.delete(path)
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            await self._nexus_fs.sys_unlink(path)
 
     # ------------------------------------------------------------------
     # Enabled skills management (VFS-backed via sys_write/sys_read)
@@ -469,11 +456,9 @@ class AcpService:
         zone_id = zone_id or self._zone_id
         path = self._config_path(agent_id, zone_id)
         content = json.dumps(skills, ensure_ascii=False)
-        if self._nexus_fs is not None:
-            await self._nexus_fs.sys_write(path, content.encode("utf-8"))
-        else:
-            self._ensure_vfs_entry(path, zone_id, backend="acp")
-            self._metastore.set_file_metadata(path, "__acp_enabled_skills__", skills)
+        if self._nexus_fs is None:
+            raise RuntimeError("NexusFS not bound — cannot set enabled skills")
+        await self._nexus_fs.sys_write(path, content.encode("utf-8"))
         logger.debug("ACP enabled_skills set for %s: %s", agent_id, skills)
 
     async def get_enabled_skills(
@@ -482,43 +467,54 @@ class AcpService:
         zone_id: str | None = None,
     ) -> list[dict] | None:
         """Read the enabled skills list for *agent_id* via VFS syscall."""
+        if self._nexus_fs is None:
+            return None
         zone_id = zone_id or self._zone_id
         path = self._config_path(agent_id, zone_id)
         try:
-            if self._nexus_fs is not None:
-                data: bytes = await self._nexus_fs.sys_read(path)
-                return json.loads(data.decode("utf-8")) if data else None
-            else:
-                result: list[dict] | None = self._metastore.get_file_metadata(
-                    path, "__acp_enabled_skills__"
-                )
-                return result
+            data: bytes = await self._nexus_fs.sys_read(path)
+            return json.loads(data.decode("utf-8")) if data else None
         except FileNotFoundError:
             return None
         except Exception:
             return None
 
-    def get_call_history(
+    async def get_call_history(
         self,
         zone_id: str | None = None,
         *,
         limit: int = 50,
     ) -> list[dict]:
-        """Return past ACP call results from the VFS metastore (newest first)."""
+        """Return past ACP call results from VFS (newest first).
+
+        Reads ``/{zone}/proc/*/result`` files via ``sys_readdir`` + ``sys_read``.
+        """
+        if self._nexus_fs is None:
+            return []
         zone_id = zone_id or self._zone_id
-        prefix = f"/{zone_id}/proc/"
+        proc_dir = f"/{zone_id}/proc"
         results: list[dict] = []
         try:
-            entries = self._metastore.list(prefix)
+            entries = await self._nexus_fs.sys_readdir(proc_dir)
             for entry in entries:
-                if not entry.path.endswith("/result"):
+                entry_path = getattr(entry, "path", None) or str(entry)
+                result_path = (
+                    f"{entry_path}/result"
+                    if not entry_path.endswith("/")
+                    else f"{entry_path}result"
+                )
+                try:
+                    data: bytes = await self._nexus_fs.sys_read(result_path)
+                    if data:
+                        payload = json.loads(data.decode("utf-8"))
+                        if isinstance(payload, dict):
+                            results.append(payload)
+                except (FileNotFoundError, json.JSONDecodeError):
                     continue
-                payload = self._metastore.get_file_metadata(entry.path, self._ACP_RESULT_KEY)
-                if payload and isinstance(payload, dict):
-                    results.append(payload)
+                except Exception:
+                    continue
         except Exception as exc:
             logger.debug("get_call_history failed: %s", exc)
-        # Newest first
         results.sort(key=lambda r: r.get("created_at", 0), reverse=True)
         return results[:limit]
 
@@ -541,12 +537,12 @@ class AcpService:
     ) -> tuple[FsReadFn | None, FsWriteFn | None]:
         """Create VFS-backed read/write callables for ``AcpConnection``.
 
-        When NexusFS is bound, file paths from the agent (host paths)
-        are mapped to VFS paths relative to the zone root and routed
-        through ``sys_read`` / ``sys_write``.
+        File paths from the agent (host paths) are mapped to VFS paths
+        relative to the zone root and routed through ``sys_read`` /
+        ``sys_write``.
 
-        Returns ``(None, None)`` when no NexusFS is available — the
-        connection will fall back to host-native ``open()``.
+        Returns ``(None, None)`` when NexusFS is not available — the
+        connection will return JSON-RPC errors for file I/O requests.
         """
         nx = self._nexus_fs
         if nx is None:
@@ -582,30 +578,11 @@ class AcpService:
             ]
         return [config.command, *config.acp_args]
 
-    def _ensure_vfs_entry(self, path: str, zone_id: str, backend: str = "acp") -> None:
-        """Ensure a metastore entry exists at *path* (idempotent)."""
-        from nexus.contracts.metadata import DT_REG, FileMetadata
-
-        existing = self._metastore.get(path)
-        if existing is None:
-            meta = FileMetadata(
-                path=path,
-                backend_name=backend,
-                physical_path=f"{backend}://{path.lstrip('/')}",
-                size=0,
-                entry_type=DT_REG,
-                zone_id=zone_id,
-                owner_id="system",
-            )
-            self._metastore.put(meta)
-
     async def _persist_result(self, result: AcpResult, zone_id: str, *, prompt: str = "") -> None:
-        """Persist result to VFS at ``/{zone}/proc/{pid}/result``.
-
-        Uses ``sys_write`` when NexusFS is available (``everything is a
-        file`` — the result is readable via ``sys_read``).  Falls back
-        to direct metastore xattr storage otherwise.
-        """
+        """Persist result to VFS at ``/{zone}/proc/{pid}/result`` via ``sys_write``."""
+        if self._nexus_fs is None:
+            logger.debug("ACP result not persisted (NexusFS not bound) for pid=%s", result.pid)
+            return
         path = f"/{zone_id}/proc/{result.pid}/result"
         payload = {
             "pid": result.pid,
@@ -620,16 +597,9 @@ class AcpService:
             "metadata": result.metadata,
             "session_id": result.metadata.get("session_id"),
         }
-
         try:
-            if self._nexus_fs is not None:
-                # Route through VFS — result is readable via sys_read.
-                content = json.dumps(payload, ensure_ascii=False, indent=2)
-                await self._nexus_fs.sys_write(path, content.encode("utf-8"))
-            else:
-                # Fallback: direct metastore xattr (legacy path).
-                self._ensure_vfs_entry(path, zone_id, backend="proc")
-                self._metastore.set_file_metadata(path, self._ACP_RESULT_KEY, payload)
+            content = json.dumps(payload, ensure_ascii=False, indent=2)
+            await self._nexus_fs.sys_write(path, content.encode("utf-8"))
         except Exception as exc:
             logger.warning("ACP result persistence failed for pid=%s: %s", result.pid, exc)
 

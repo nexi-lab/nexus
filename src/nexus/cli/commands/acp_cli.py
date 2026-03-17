@@ -298,7 +298,7 @@ async def _async_history(
             nx.close()
             return
 
-        entries = svc.acp_history(limit=limit)
+        entries = await svc.acp_history(limit=limit)
 
         if not entries:
             console.print("[yellow]No call history[/yellow]")

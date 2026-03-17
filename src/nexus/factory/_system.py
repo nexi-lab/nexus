@@ -512,7 +512,6 @@ def _boot_system_services(
 
             acp_service = AcpService(
                 process_table=process_table,
-                metastore=ctx.metadata_store,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
             )
             logger.debug("[BOOT:SYSTEM] AcpService created")

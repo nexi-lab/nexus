@@ -163,12 +163,12 @@ class AcpRPCService:
         return {"agent_id": agent_id, "skills": skills}
 
     @rpc_expose(description="List ACP call history")
-    def acp_history(
+    async def acp_history(
         self,
         limit: int = 50,
         context: dict | None = None,
     ) -> list[dict]:
         """List past ACP call results."""
         zone_id = self._zone_id(context)
-        result: list[dict] = self._acp.get_call_history(zone_id=zone_id, limit=limit)
+        result: list[dict] = await self._acp.get_call_history(zone_id=zone_id, limit=limit)
         return result

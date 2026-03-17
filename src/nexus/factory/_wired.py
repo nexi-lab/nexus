@@ -317,7 +317,6 @@ async def _boot_wired_services(
                 _acp_pt = ProcessTable(zone_id=ROOT_ZONE_ID)
             _acp_service = AcpService(
                 process_table=_acp_pt,
-                metastore=nx.metadata,
                 zone_id=ROOT_ZONE_ID,
             )
             logger.debug("[BOOT:WIRED] AcpService created (inline)")

@@ -6,9 +6,9 @@ different models (e.g., ``claude-opus``, ``claude-sonnet``).
 
 Agent catalog sourced from AionUi (``src/types/acpTypes.ts``).
 
-VFS convention: agent configs live at ``/{zone}/agents/{name}/config.yaml``
-as metastore xattr on the inode.  ``seed_builtin_agents()`` writes
-BUILTIN_AGENTS to VFS on boot; ``load_agent_config()`` reads them back.
+VFS convention: runtime agent configs are persisted as files at
+``/{zone}/agents/{id}/agent.json`` via ``sys_write``.  ``BUILTIN_AGENTS``
+are compile-time defaults; VFS-persisted configs override them on load.
 """
 
 from __future__ import annotations
@@ -21,9 +21,6 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
-# Metastore xattr key for agent config storage
-AGENT_CONFIG_KEY = "__agent_config__"
 
 
 @dataclass(frozen=True, slots=True)

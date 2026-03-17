@@ -13,8 +13,7 @@ File I/O routing (``everything is a file``):
     and ``fs/write_text_file`` requests from the agent are routed
     through the VFS syscall layer, enabling ReBAC enforcement, audit
     logging, and federation-aware reads.  When no callables are
-    supplied, the connection falls back to host-native ``open()``
-    for backward compatibility.
+    supplied, file I/O requests return a JSON-RPC error (-32002).
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ class AcpConnection(AgentLoop):
 
     Extends AgentLoop with ACP-specific dispatch:
     - ``session/request_permission`` → auto-grant
-    - ``fs/read_text_file`` / ``fs/write_text_file`` → VFS or host fallback
+    - ``fs/read_text_file`` / ``fs/write_text_file`` → VFS syscalls (error if unbound)
     - ``session/update`` notifications → usage/chunk accumulation
     """
 
@@ -310,7 +309,7 @@ class AcpConnection(AgentLoop):
         """Handle fs/read_text_file and fs/write_text_file.
 
         Routes through VFS syscalls when ``fs_read`` / ``fs_write``
-        callables are provided; falls back to host-native ``open()``
+        callables are provided; returns JSON-RPC error (-32002)
         otherwise.
         """
         try:

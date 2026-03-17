@@ -31,6 +31,7 @@ import { Breadcrumb } from "../../shared/components/breadcrumb.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { FileTree, flattenVisibleNodes, LOAD_MORE_SENTINEL } from "./file-tree.js";
 import { FilePreview } from "./file-preview.js";
+import { FileEditor } from "./file-editor.js";
 import { FileMetadata } from "./file-metadata.js";
 import { FileAspects } from "./file-aspects.js";
 import { FileSchema } from "./file-schema.js";
@@ -66,7 +67,7 @@ const ALL_TABS: readonly TabDef<FilesTab>[] = [
 // Input mode types
 // =============================================================================
 
-type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest" | "write";
+type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest";
 
 // =============================================================================
 // Keybinding builders — one function per mode (Decision 6A)
@@ -133,6 +134,8 @@ interface BindingContext {
   readonly setSearchResults: (v: readonly { path: string; line?: number; content?: string }[] | null) => void;
   // Paste destination input
   readonly setInputModeWithCallback: (mode: InputMode, onSubmit: (value: string) => void) => void;
+  // Editor
+  readonly setEditorPath: (path: string | null) => void;
 }
 
 /** Navigation bindings for the currently active tab (Decision 5A). */
@@ -230,13 +233,11 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
         ctx.setInputBuffer(ctx.selectedItem.name);
       }
     },
-    // Write/create file: enter "path content" (space-separated after first space)
+    // Edit file: open full-screen editor
     e: () => {
-      const defaultPath = ctx.selectedItem
-        ? (ctx.selectedItem.isDirectory ? ctx.selectedItem.path + "/" : ctx.selectedItem.path)
-        : ctx.currentPath + "/";
-      ctx.setInputMode("write");
-      ctx.setInputBuffer(defaultPath);
+      if (ctx.selectedItem && !ctx.selectedItem.isDirectory) {
+        ctx.setEditorPath(ctx.selectedItem.path);
+      }
     },
     // Copy path to system clipboard
     y: () => {
@@ -398,31 +399,6 @@ function getInputModeBindings(
         },
       };
 
-    case "write":
-      return {
-        ...baseBindings,
-        return: () => {
-          const input = ctx.filterQuery.trim();
-          if (!input || !ctx.client) { resetInput(); return; }
-          // Format: "path content..." — first space separates path from content
-          const spaceIdx = input.indexOf(" ");
-          const filePath = spaceIdx > 0 ? input.slice(0, spaceIdx) : input;
-          const content = spaceIdx > 0 ? input.slice(spaceIdx + 1) : "";
-          ctx.client.post("/api/v2/files/write", {
-            path: filePath,
-            content: content || `# New file created at ${new Date().toISOString()}\n`,
-          }).then(() => {
-            // Refresh the parent directory
-            const parentDir = filePath.split("/").slice(0, -1).join("/") || "/";
-            useFilesStore.getState().invalidate(parentDir);
-            if (ctx.client) useFilesStore.getState().expandNode(parentDir, ctx.client);
-          }).catch(() => {
-            // Error will show in error bar
-          });
-          resetInput();
-        },
-      };
-
     default:
       return {};
   }
@@ -465,7 +441,6 @@ function getInputLabel(mode: InputMode, buffer: string): string {
     case "filter": return `/${buffer}\u2588`;
     case "search": return `Search (g: glob, r: grep): ${buffer}\u2588`;
     case "paste-dest": return `Paste to: ${buffer}\u2588`;
-    case "write": return `Write (path content): ${buffer}\u2588`;
     default: return "";
   }
 }
@@ -499,7 +474,7 @@ function getHelpText(
     if (clipboard) {
       parts.push(`p:paste ${clipboard.paths.length} ${clipboard.operation === "cut" ? "cut" : "copied"}`, "P:paste to path");
     }
-    parts.push("d:del", "N:mkdir", "R:rename", "e:write");
+    parts.push("d:del", "N:mkdir", "R:rename", "e:edit");
     if (catalogAvailable) parts.push("m/a/s:meta");
     parts.push("?:help");
     return parts.join("  ");
@@ -638,6 +613,9 @@ export default function FileExplorerPanel(): React.ReactNode {
   // Clipboard copy (system)
   const { copy, copied } = useCopy();
 
+  // Editor overlay state
+  const [editorPath, setEditorPath] = useState<string | null>(null);
+
   // Dialog state
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -739,6 +717,7 @@ export default function FileExplorerPanel(): React.ReactNode {
     executeSearch,
     searchResults, setSearchResults,
     setInputModeWithCallback: setInputMode as BindingContext["setInputModeWithCallback"],
+    setEditorPath,
   };
 
   useKeyboard(
@@ -775,6 +754,11 @@ export default function FileExplorerPanel(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
+      {/* Full-screen file editor */}
+      {editorPath ? (
+        <FileEditor path={editorPath} onClose={() => setEditorPath(null)} />
+      ) : <>
+
       {/* Panel-level tab bar */}
       <box height={1} width="100%">
         <text>
@@ -921,6 +905,7 @@ export default function FileExplorerPanel(): React.ReactNode {
         onConfirm={handleConfirmDelete}
         onCancel={handleCancelDelete}
       />
+    </>}
     </box>
   );
 }

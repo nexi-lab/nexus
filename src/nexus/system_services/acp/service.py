@@ -554,12 +554,7 @@ class AcpService:
         try:
             entries = await self._nexus_fs.sys_readdir(proc_dir)
             for entry in entries:
-                entry_path = getattr(entry, "path", None) or str(entry)
-                result_path = (
-                    f"{entry_path}/result"
-                    if not entry_path.endswith("/")
-                    else f"{entry_path}result"
-                )
+                result_path = getattr(entry, "path", None) or str(entry)
                 try:
                     data: bytes = await self._nexus_fs.sys_read(result_path)
                     if data:

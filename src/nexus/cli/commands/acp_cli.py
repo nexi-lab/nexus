@@ -298,7 +298,7 @@ async def _async_history(
             nx.close()
             return
 
-        entries = await svc.acp_history(limit=limit)
+        entries = svc.acp_history(limit=limit)
 
         if not entries:
             console.print("[yellow]No call history[/yellow]")
@@ -452,19 +452,19 @@ async def _async_config_agent(
             paths = [s.strip() for s in skills.split(",") if s.strip()]
             if paths:
                 skill_list = [_parse_skill_md(p) for p in paths]
-                await svc.acp_set_enabled_skills(agent_id=agent_id, skills=skill_list)
+                svc.acp_set_enabled_skills(agent_id=agent_id, skills=skill_list)
                 names = [sk["name"] for sk in skill_list]
                 console.print(
                     f"[green]Set enabled skills for {agent_id}:[/green] {', '.join(names)}"
                 )
             else:
-                await svc.acp_set_enabled_skills(agent_id=agent_id, skills=[])
+                svc.acp_set_enabled_skills(agent_id=agent_id, skills=[])
                 console.print(f"[green]Cleared enabled skills for {agent_id}[/green]")
             made_changes = True
 
         # Set system prompt if provided
         if system_prompt is not None:
-            await svc.acp_set_system_prompt(agent_id=agent_id, content=system_prompt)
+            svc.acp_set_system_prompt(agent_id=agent_id, content=system_prompt)
             console.print(
                 f"[green]Set system prompt for {agent_id}[/green] ({len(system_prompt)} chars)"
             )
@@ -472,8 +472,8 @@ async def _async_config_agent(
 
         # If no setters, show current config
         if not made_changes:
-            skills_result = await svc.acp_get_enabled_skills(agent_id=agent_id)
-            prompt_result = await svc.acp_get_system_prompt(agent_id=agent_id)
+            skills_result = svc.acp_get_enabled_skills(agent_id=agent_id)
+            prompt_result = svc.acp_get_system_prompt(agent_id=agent_id)
 
             console.print(f"[bold]Config for {agent_id}[/bold]\n")
 
@@ -537,7 +537,7 @@ async def _async_get_system_prompt(
             nx.close()
             return
 
-        result = await svc.acp_get_system_prompt(agent_id=agent_id)
+        result = svc.acp_get_system_prompt(agent_id=agent_id)
         content = result.get("content")
         if content:
             console.print(content)
@@ -583,7 +583,7 @@ async def _async_set_system_prompt(
             nx.close()
             return
 
-        result = await svc.acp_set_system_prompt(agent_id=agent_id, content=content)
+        result = svc.acp_set_system_prompt(agent_id=agent_id, content=content)
         console.print(
             f"[green]Set system prompt for {agent_id}[/green] ({result.get('length', 0)} chars)"
         )

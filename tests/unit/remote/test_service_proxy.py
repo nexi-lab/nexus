@@ -137,13 +137,13 @@ class TestBootRemoteServices:
         nfs = MagicMock()
 
         _, call_rpc = _make_recorder()
-        with patch("nexus.factory.service_routing.populate_service_registry") as mock_pop:
-            mock_pop.return_value = len(_CANONICAL_NAMES)
+        with patch("nexus.factory.service_routing.register_wired_services") as mock_reg:
+            mock_reg.return_value = len(_CANONICAL_NAMES)
             _boot_remote_services(nfs, call_rpc)
 
-            # populate_service_registry was called with registry and a dict covering all canonical keys
-            mock_pop.assert_called_once()
-            registry, wired_dict = mock_pop.call_args[0]
+            # register_wired_services was called with registry and a dict covering all canonical keys
+            mock_reg.assert_called_once()
+            registry, wired_dict = mock_reg.call_args[0]
             assert registry is nfs._service_registry
             assert isinstance(wired_dict, dict)
             for field in _CANONICAL_NAMES:
@@ -163,11 +163,11 @@ class TestBootRemoteServices:
         nfs = MagicMock()
 
         _, call_rpc = _make_recorder()
-        with patch("nexus.factory.service_routing.populate_service_registry") as mock_pop:
-            mock_pop.return_value = len(_CANONICAL_NAMES)
+        with patch("nexus.factory.service_routing.register_wired_services") as mock_reg:
+            mock_reg.return_value = len(_CANONICAL_NAMES)
             _boot_remote_services(nfs, call_rpc)
 
-            wired_dict = mock_pop.call_args[0][1]
+            wired_dict = mock_reg.call_args[0][1]
             proxies = list(wired_dict.values())
 
             # All values should be the same object

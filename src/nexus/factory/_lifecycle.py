@@ -29,7 +29,7 @@ async def _do_link(
 
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_wired_services
-    from nexus.factory.service_routing import populate_service_registry
+    from nexus.factory.service_routing import register_wired_services
 
     # --- Wire non-hot-path facade attrs from containers (Issue #1570) ---
     # These 15 attrs are only accessed outside kernel (CLI, services, API).
@@ -130,7 +130,7 @@ async def _do_link(
 
         coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
         nx._service_coordinator = coordinator
-        populate_service_registry(coordinator, _wired)
+        register_wired_services(coordinator, _wired)
 
         # Issue #1666: Register system-tier PersistentService instances so
         # start_persistent_services() auto-discovers them at bootstrap.
@@ -141,7 +141,7 @@ async def _do_link(
         if _dw is not None:
             coordinator.register_service("delivery_worker", _dw, exports=())
     else:
-        populate_service_registry(nx._service_registry, _wired)
+        register_wired_services(nx._service_registry, _wired)
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.

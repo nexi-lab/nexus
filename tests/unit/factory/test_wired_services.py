@@ -1,4 +1,4 @@
-"""Tests for WiredServices dataclass and populate_service_registry (Issue #2133, #1381, #1452)."""
+"""Tests for WiredServices dataclass and register_wired_services (Issue #2133, #1381, #1452)."""
 
 import dataclasses
 from typing import Any
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core.config import WiredServices
-from nexus.factory.service_routing import populate_service_registry
+from nexus.factory.service_routing import register_wired_services
 
 
 class TestWiredServicesDataclass:
@@ -42,7 +42,7 @@ class TestWiredServicesDataclass:
 
 
 class TestPopulateServiceRegistryFromWired:
-    """Test populate_service_registry accepts both WiredServices and dict."""
+    """Test register_wired_services accepts both WiredServices and dict."""
 
     @pytest.fixture()
     def nx(self) -> Any:
@@ -63,14 +63,14 @@ class TestPopulateServiceRegistryFromWired:
     def test_populate_from_dataclass(self, nx: Any) -> None:
         mock_svc = MagicMock()
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
-        populate_service_registry(nx._service_registry, ws)
+        register_wired_services(nx._service_registry, ws)
         assert nx.service("rebac")._service_instance is mock_svc
         assert nx.service("mount")._service_instance is mock_svc
         assert nx.service("mcp") is None
 
     def test_populate_from_dict(self, nx: Any) -> None:
         mock_svc = MagicMock()
-        populate_service_registry(
+        register_wired_services(
             nx._service_registry, {"rebac_service": mock_svc, "mount_service": mock_svc}
         )
         assert nx.service("rebac")._service_instance is mock_svc

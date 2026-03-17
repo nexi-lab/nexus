@@ -176,18 +176,18 @@ class TestSnapshot:
 
 
 # ---------------------------------------------------------------------------
-# Dual-write invariant: populate_service_registry
+# Dual-write invariant: register_wired_services
 # ---------------------------------------------------------------------------
 
 
-class TestPopulateServiceRegistry:
-    """Verify populate_service_registry registers all services correctly."""
+class TestRegisterWiredServices:
+    """Verify register_wired_services registers all services correctly."""
 
     def test_all_canonical_names_registered(self) -> None:
         from nexus.core.service_registry import ServiceRegistry
         from nexus.factory.service_routing import (
             _CANONICAL_NAMES,
-            populate_service_registry,
+            register_wired_services,
         )
 
         # Build a dict with a unique mock per service
@@ -196,7 +196,7 @@ class TestPopulateServiceRegistry:
             wired_dict[src_key] = MagicMock(name=f"mock_{src_key}")
 
         reg = ServiceRegistry()
-        count = populate_service_registry(reg, wired_dict)
+        count = register_wired_services(reg, wired_dict)
         assert count == len(_CANONICAL_NAMES)
 
         # Every canonical name should map to the correct mock instance

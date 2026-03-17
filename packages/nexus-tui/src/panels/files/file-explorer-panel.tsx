@@ -14,19 +14,21 @@
  *   - "visual"  → visual mode for range selection (not an input mode)
  *
  * @see Issue #3101 — filter/search, bulk ops, move/copy
+ * @see Issue #3102 — TUI rendering & data-fetching performance
  */
 
 import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
   useFilesStore,
   type FileItem,
+  type TreeNode,
   getEffectiveSelection,
 } from "../../stores/files-store.js";
 import { useShareLinkStore } from "../../stores/share-link-store.js";
 import { useUploadStore } from "../../stores/upload-store.js";
 import { Breadcrumb } from "../../shared/components/breadcrumb.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
-import { FileTree } from "./file-tree.js";
+import { FileTree, flattenVisibleNodes, LOAD_MORE_SENTINEL } from "./file-tree.js";
 import { FilePreview } from "./file-preview.js";
 import { FileMetadata } from "./file-metadata.js";
 import { FileAspects } from "./file-aspects.js";
@@ -76,6 +78,8 @@ interface BindingContext {
   readonly cachedFiles: readonly FileItem[];
   readonly selectedIndex: number;
   readonly selectedItem: FileItem | null;
+  readonly selectedNode: TreeNode | null;
+  readonly isSentinel: boolean;
   readonly visibleNodeCount: number;
   readonly currentPath: string;
   readonly client: ReturnType<typeof useApi>;
@@ -140,12 +144,13 @@ function getTabNavBindings(ctx: BindingContext): Record<string, () => void> {
           setIndex: ctx.setSelectedIndex,
           getLength: () => ctx.visibleNodeCount,
           onSelect: (index) => {
-            const item = ctx.cachedFiles[index];
-            if (item && ctx.client) {
-              if (item.isDirectory) {
-                ctx.toggleNode(item.path, ctx.client);
+            // Sentinel nodes are handled by FileTree's auto-load effect
+            if (ctx.isSentinel) return;
+            if (ctx.selectedNode && ctx.client) {
+              if (ctx.selectedNode.isDirectory) {
+                ctx.toggleNode(ctx.selectedNode.path, ctx.client);
               } else {
-                ctx.fetchPreview(item.path, ctx.client);
+                ctx.fetchPreview(ctx.selectedNode.path, ctx.client);
               }
             }
           },
@@ -192,12 +197,12 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
   return {
     // Tree navigation
     l: () => {
-      const item = ctx.cachedFiles[ctx.selectedIndex];
-      if (item?.isDirectory && ctx.client) ctx.toggleNode(item.path, ctx.client);
+      if (ctx.isSentinel) return;
+      if (ctx.selectedNode?.isDirectory && ctx.client) ctx.toggleNode(ctx.selectedNode.path, ctx.client);
     },
     h: () => {
-      const item = ctx.cachedFiles[ctx.selectedIndex];
-      if (item?.isDirectory) ctx.collapseNode(item.path);
+      if (ctx.isSentinel) return;
+      if (ctx.selectedNode?.isDirectory) ctx.collapseNode(ctx.selectedNode.path);
     },
     // Metadata tabs
     m: () => ctx.setMetadataTab("metadata"),
@@ -207,6 +212,7 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
     } : {}),
     // File operations — bulk delete if selection active, otherwise single item
     d: () => {
+      if (ctx.isSentinel) return;
       const effective = getEffectiveSelection(
         ctx.selectedPaths, ctx.visualModeAnchor, ctx.selectedIndex,
         ctx.cachedFiles.map((f) => f.path),
@@ -217,15 +223,20 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
     },
     N: () => { ctx.setInputMode("mkdir"); ctx.setInputBuffer(""); },
     R: () => {
+      if (ctx.isSentinel) return;
       if (ctx.selectedItem) {
         ctx.setInputMode("rename");
         ctx.setInputBuffer(ctx.selectedItem.name);
       }
     },
     // Copy path to system clipboard
-    y: () => { if (ctx.selectedItem) ctx.copy(ctx.selectedItem.path); },
+    y: () => {
+      if (ctx.isSentinel) return;
+      if (ctx.selectedItem) ctx.copy(ctx.selectedItem.path);
+    },
     // Selection
     space: () => {
+      if (ctx.isSentinel) return;
       const item = ctx.cachedFiles[ctx.selectedIndex];
       if (item) ctx.toggleSelect(item.path);
     },
@@ -484,12 +495,20 @@ export default function FileExplorerPanel(): React.ReactNode {
   // Files store
   const currentPath = useFilesStore((s) => s.currentPath);
   const setCurrentPath = useFilesStore((s) => s.setCurrentPath);
-  const fileCache = useFilesStore((s) => s.fileCache);
+  const treeNodes = useFilesStore((s) => s.treeNodes);
+  const fileCacheRevision = useFilesStore((s) => s.fileCacheRevision);
+  const getCachedFiles = useFilesStore((s) => s.getCachedFiles);
+  const abortAll = useFilesStore((s) => s.abortAllInFlight);
   const selectedIndex = useFilesStore((s) => s.selectedIndex);
   const toggleNode = useFilesStore((s) => s.toggleNode);
   const collapseNode = useFilesStore((s) => s.collapseNode);
   const setSelectedIndex = useFilesStore((s) => s.setSelectedIndex);
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
+
+  // Cancel all in-flight file requests when panel unmounts (Issue #3102)
+  useEffect(() => {
+    return () => { abortAll(); };
+  }, [abortAll]);
 
   // Selection & clipboard store
   const selectedPaths = useFilesStore((s) => s.selectedPaths);
@@ -534,10 +553,26 @@ export default function FileExplorerPanel(): React.ReactNode {
     }
   }, [catalogAvailable, metadataTab]);
 
-  // Derived values
-  const cachedFiles = fileCache.get(currentPath)?.data ?? [];
-  const selectedItem: FileItem | null = cachedFiles[selectedIndex] ?? null;
-  const visibleNodeCount = cachedFiles.length;
+  // Flattened visible tree nodes — the source of truth for explorer navigation.
+  const visibleNodes = useMemo(
+    () => flattenVisibleNodes(currentPath, treeNodes),
+    [currentPath, treeNodes],
+  );
+
+  const selectedNode = visibleNodes[selectedIndex] ?? null;
+  const isSentinel = selectedNode?.path.endsWith(LOAD_MORE_SENTINEL) ?? false;
+
+  // For metadata/actions, look up the FileItem from the node's parent directory cache.
+  const selectedItem: FileItem | null = useMemo(() => {
+    if (!selectedNode || isSentinel) return null;
+    const parentDir = selectedNode.path.split("/").slice(0, -1).join("/") || "/";
+    const parentFiles = getCachedFiles(parentDir);
+    return parentFiles?.find((f) => f.path === selectedNode.path) ?? null;
+  }, [selectedNode, isSentinel, getCachedFiles, fileCacheRevision]);
+
+  const visibleNodeCount = visibleNodes.length;
+  // Keep cachedFiles for backward compat with BindingContext (selection uses it)
+  const cachedFiles = fileCacheRevision >= 0 ? (getCachedFiles(currentPath) ?? []) : [];
 
   // Aspect count badge
   const aspectsCache = useKnowledgeStore((s) => s.aspectsCache);
@@ -636,8 +671,8 @@ export default function FileExplorerPanel(): React.ReactNode {
 
   // Build binding context
   const ctx: BindingContext = {
-    activeTab, cachedFiles, selectedIndex, selectedItem, visibleNodeCount,
-    currentPath, client, setSelectedIndex, toggleNode, collapseNode,
+    activeTab, cachedFiles, selectedIndex, selectedItem, selectedNode, isSentinel,
+    visibleNodeCount, currentPath, client, setSelectedIndex, toggleNode, collapseNode,
     fetchPreview, setMetadataTab, catalogAvailable,
     shareLinks, selectedLinkIndex, setSelectedLinkIndex, revokeLink, fetchLinks,
     uploadSessions, selectedSessionIndex, setSelectedSessionIndex,

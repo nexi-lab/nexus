@@ -7,6 +7,7 @@
 
 import React from "react";
 import type { Memory, MemoryHistory, MemoryDiff } from "../../stores/search-store.js";
+import { truncateText } from "../../shared/utils/format-text.js";
 
 interface MemoryListProps {
   readonly memories: readonly Memory[];
@@ -16,11 +17,6 @@ interface MemoryListProps {
   readonly memoryHistoryLoading: boolean;
   readonly memoryDiff: MemoryDiff | null;
   readonly memoryDiffLoading: boolean;
-}
-
-function truncateText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return `${text.slice(0, maxLen - 3)}...`;
 }
 
 function shortId(id: unknown): string {

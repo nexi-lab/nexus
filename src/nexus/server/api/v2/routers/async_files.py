@@ -43,6 +43,39 @@ from nexus.contracts.exceptions import (
 
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
+    """Convert a sys_readdir details dict to a FileItemResponse.
+
+    sys_readdir(details=True) returns dicts with path, size, etag.
+    We derive name and is_directory from the path.
+    """
+    raw_path: str = entry.get("path", "")
+    is_dir = raw_path.endswith("/")
+    clean_path = raw_path.rstrip("/")
+    name = (
+        clean_path[len(prefix) :]
+        if clean_path.startswith(prefix)
+        else clean_path.rsplit("/", 1)[-1]
+    )
+
+    return FileItemResponse(
+        name=name,
+        path=clean_path,
+        is_directory=is_dir,
+        size=entry.get("size", 0) if not is_dir else 0,
+        modified_at=None,
+        etag=entry.get("etag"),
+        mime_type=None,
+        zone_id=None,
+    )
+
+
 # =============================================================================
 # Request/Response Models
 # =============================================================================
@@ -90,10 +123,34 @@ class ExistsResponse(BaseModel):
     exists: bool
 
 
-class ListResponse(BaseModel):
-    """Response model for list directory."""
+class FileItemResponse(BaseModel):
+    """Single file/directory entry with metadata.
 
-    items: list[str]
+    Uses serialization_alias so JSON output matches the TUI's camelCase convention.
+    """
+
+    name: str
+    path: str
+    is_directory: bool = Field(default=False, serialization_alias="isDirectory")
+    size: int = 0
+    modified_at: str | None = Field(None, serialization_alias="modifiedAt")
+    etag: str | None = None
+    mime_type: str | None = Field(None, serialization_alias="mimeType")
+    version: int | None = None
+    owner: str | None = None
+    permissions: str | None = None
+    zone_id: str | None = Field(None, serialization_alias="zoneId")
+
+
+class ListResponse(BaseModel):
+    """Response model for list directory — supports cursor pagination.
+
+    @see Issue #3102, Decision 2A
+    """
+
+    items: list[FileItemResponse]
+    has_more: bool = False
+    next_cursor: str | None = None
 
 
 class MkdirRequest(BaseModel):
@@ -505,26 +562,70 @@ def create_async_files_router(
     # List Directory Endpoint
     # =============================================================================
 
-    @router.get("/list", response_model=ListResponse)
+    @router.get("/list", response_model=ListResponse, response_model_by_alias=True)
     async def list_directory(
         path: str = Query(..., description="Directory path to list"),
+        limit: int | None = Query(
+            None, ge=1, le=1000, description="Max items per page (default: all)"
+        ),
+        cursor: str | None = Query(
+            None, description="Opaque cursor from previous response's next_cursor"
+        ),
         context: Any = Depends(get_context),
     ) -> ListResponse:
-        """List directory contents."""
+        """List directory contents with optional cursor pagination.
+
+        When ``limit`` is provided, returns at most ``limit`` items plus
+        ``has_more`` / ``next_cursor`` for fetching the next page.  Without
+        ``limit``, all entries are returned in a single response (backward
+        compatible).
+
+        @see Issue #3102, Decision 2A
+        """
         try:
             fs = await _get_fs()
 
-            # NexusFS.list() returns full paths; strip prefix to get names
-            full_paths = await asyncio.to_thread(
-                fs.sys_readdir, path, recursive=False, context=context
-            )
-            prefix = path.rstrip("/") + "/"
-            items = [
-                fp[len(prefix) :] if fp.startswith(prefix) else fp.rsplit("/", 1)[-1]
-                for fp in full_paths
-            ]
-            return ListResponse(items=items)
+            # Decode opaque cursor (base64-encoded path)
+            cursor_path: str | None = None
+            if cursor is not None:
+                try:
+                    cursor_path = base64.b64decode(cursor).decode("utf-8")
+                except Exception:
+                    raise HTTPException(status_code=400, detail="Invalid cursor") from None
 
+            # sys_readdir already supports limit/cursor/details natively
+            result = await asyncio.to_thread(
+                fs.sys_readdir,
+                path,
+                recursive=False,
+                details=True,
+                context=context,
+                limit=limit,
+                cursor=cursor_path,
+            )
+
+            prefix = path.rstrip("/") + "/"
+
+            # Paginated path: result is a PaginatedResult
+            if limit is not None:
+                file_items = [_to_file_item(entry, prefix) for entry in result.items]
+                next_cursor = (
+                    base64.b64encode(result.next_cursor.encode("utf-8")).decode("ascii")
+                    if result.next_cursor
+                    else None
+                )
+                return ListResponse(
+                    items=file_items,
+                    has_more=result.has_more,
+                    next_cursor=next_cursor,
+                )
+
+            # Non-paginated path (backward compat): result is list[dict]
+            file_items = [_to_file_item(entry, prefix) for entry in result]
+            return ListResponse(items=file_items, has_more=False)
+
+        except HTTPException:
+            raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:

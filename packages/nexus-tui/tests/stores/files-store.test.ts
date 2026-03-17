@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, mock } from "bun:test";
-import { useFilesStore, getEffectiveSelection } from "../../src/stores/files-store.js";
+import { useFilesStore, getEffectiveSelection, _fileCache } from "../../src/stores/files-store.js";
 import type { FetchClient } from "@nexus/api-client";
 
 function mockClient(responses: Record<string, unknown>): FetchClient {
@@ -27,10 +27,11 @@ function mockClient(responses: Record<string, unknown>): FetchClient {
 
 describe("FilesStore", () => {
   beforeEach(() => {
+    _fileCache.clear();
     useFilesStore.setState({
-      fileCache: new Map(),
       currentPath: "/",
       selectedIndex: 0,
+      fileCacheRevision: 0,
       treeNodes: new Map(),
       focusPane: "tree",
       previewPath: null,
@@ -72,21 +73,23 @@ describe("FilesStore", () => {
             { name: "a_dir", path: "/a_dir", isDirectory: true, size: 0, modifiedAt: null, etag: null, mimeType: null },
             { name: "b.txt", path: "/b.txt", isDirectory: false, size: 200, modifiedAt: null, etag: null, mimeType: null },
           ],
+          has_more: false,
+          next_cursor: null,
         },
       });
 
       await useFilesStore.getState().fetchFiles("/", client);
-      const cached = useFilesStore.getState().fileCache.get("/");
+      const cached = useFilesStore.getState().getCachedFiles("/");
       expect(cached).toBeDefined();
-      expect(cached!.data[0]!.name).toBe("a_dir");
-      expect(cached!.data[0]!.isDirectory).toBe(true);
-      expect(cached!.data[1]!.name).toBe("b.txt");
-      expect(cached!.data[2]!.name).toBe("z.txt");
+      expect(cached![0]!.name).toBe("a_dir");
+      expect(cached![0]!.isDirectory).toBe(true);
+      expect(cached![1]!.name).toBe("b.txt");
+      expect(cached![2]!.name).toBe("z.txt");
     });
 
     it("uses SWR cache (doesn't re-fetch within TTL)", async () => {
       const client = mockClient({
-        "/api/v2/files/list": { items: [] },
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
       });
 
       await useFilesStore.getState().fetchFiles("/", client);
@@ -103,18 +106,28 @@ describe("FilesStore", () => {
       await useFilesStore.getState().fetchFiles("/", client);
       expect(useFilesStore.getState().error).toBe("Network error");
     });
+
+    it("increments fileCacheRevision on successful fetch", async () => {
+      const client = mockClient({
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
+      });
+
+      const revBefore = useFilesStore.getState().fileCacheRevision;
+      await useFilesStore.getState().fetchFiles("/", client);
+      expect(useFilesStore.getState().fileCacheRevision).toBe(revBefore + 1);
+    });
   });
 
   describe("invalidate", () => {
     it("removes path from cache", async () => {
       const client = mockClient({
-        "/api/v2/files/list": { items: [] },
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
       });
       await useFilesStore.getState().fetchFiles("/", client);
-      expect(useFilesStore.getState().fileCache.has("/")).toBe(true);
+      expect(useFilesStore.getState().getCachedFiles("/")).toBeDefined();
 
       useFilesStore.getState().invalidate("/");
-      expect(useFilesStore.getState().fileCache.has("/")).toBe(false);
+      expect(_fileCache.has("/")).toBe(false);
     });
   });
 
@@ -126,6 +139,8 @@ describe("FilesStore", () => {
             { name: "child.txt", path: "/child.txt", isDirectory: false, size: 100, modifiedAt: null, etag: null, mimeType: null },
             { name: "subdir", path: "/subdir", isDirectory: true, size: 0, modifiedAt: null, etag: null, mimeType: null },
           ],
+          has_more: false,
+          next_cursor: null,
         },
       });
 
@@ -146,9 +161,27 @@ describe("FilesStore", () => {
       expect(subdir!.depth).toBe(1);
     });
 
+    it("expandNode stores pagination state", async () => {
+      const client = mockClient({
+        "/api/v2/files/list": {
+          items: [
+            { name: "file1.txt", path: "/file1.txt", isDirectory: false, size: 50, modifiedAt: null, etag: null, mimeType: null },
+          ],
+          has_more: true,
+          next_cursor: "abc123",
+        },
+      });
+
+      await useFilesStore.getState().expandNode("/", client);
+      const root = useFilesStore.getState().treeNodes.get("/")!;
+      expect(root.hasMore).toBe(true);
+      expect(root.nextCursor).toBe("abc123");
+      expect(root.loadingMore).toBe(false);
+    });
+
     it("collapseNode sets expanded to false", async () => {
       const client = mockClient({
-        "/api/v2/files/list": { items: [] },
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
       });
 
       await useFilesStore.getState().expandNode("/", client);
@@ -156,6 +189,77 @@ describe("FilesStore", () => {
 
       useFilesStore.getState().collapseNode("/");
       expect(useFilesStore.getState().treeNodes.get("/")!.expanded).toBe(false);
+    });
+
+    it("expandNode sorts directories first", async () => {
+      const client = mockClient({
+        "/api/v2/files/list": {
+          items: [
+            { name: "z.txt", path: "/z.txt", isDirectory: false, size: 100, modifiedAt: null, etag: null, mimeType: null },
+            { name: "a_dir", path: "/a_dir", isDirectory: true, size: 0, modifiedAt: null, etag: null, mimeType: null },
+          ],
+          has_more: false,
+          next_cursor: null,
+        },
+      });
+
+      await useFilesStore.getState().expandNode("/", client);
+      const root = useFilesStore.getState().treeNodes.get("/")!;
+      expect(root.children[0]).toBe("/a_dir");
+      expect(root.children[1]).toBe("/z.txt");
+    });
+  });
+
+  describe("loadMoreChildren", () => {
+    it("appends next page to existing children", async () => {
+      // First page
+      const getMock = mock(async (path: string) => {
+        if (path.includes("cursor=")) {
+          return {
+            items: [
+              { name: "file3.txt", path: "/file3.txt", isDirectory: false, size: 300, modifiedAt: null, etag: null, mimeType: null },
+            ],
+            has_more: false,
+            next_cursor: null,
+          };
+        }
+        return {
+          items: [
+            { name: "file1.txt", path: "/file1.txt", isDirectory: false, size: 100, modifiedAt: null, etag: null, mimeType: null },
+            { name: "file2.txt", path: "/file2.txt", isDirectory: false, size: 200, modifiedAt: null, etag: null, mimeType: null },
+          ],
+          has_more: true,
+          next_cursor: "cursor_abc",
+        };
+      });
+      const client = { get: getMock } as unknown as FetchClient;
+
+      // Expand first
+      await useFilesStore.getState().expandNode("/", client);
+      const rootBefore = useFilesStore.getState().treeNodes.get("/")!;
+      expect(rootBefore.children.length).toBe(2);
+      expect(rootBefore.hasMore).toBe(true);
+
+      // Load more
+      await useFilesStore.getState().loadMoreChildren("/", client);
+      const rootAfter = useFilesStore.getState().treeNodes.get("/")!;
+      expect(rootAfter.children.length).toBe(3);
+      expect(rootAfter.children).toContain("/file3.txt");
+      expect(rootAfter.hasMore).toBe(false);
+      expect(rootAfter.nextCursor).toBeNull();
+    });
+
+    it("does nothing when hasMore is false", async () => {
+      const client = mockClient({
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
+      });
+
+      await useFilesStore.getState().expandNode("/", client);
+      const callsBefore = (client.get as ReturnType<typeof mock>).mock.calls.length;
+
+      await useFilesStore.getState().loadMoreChildren("/", client);
+      // No additional call should be made
+      expect((client.get as ReturnType<typeof mock>).mock.calls.length).toBe(callsBefore);
     });
   });
 
@@ -190,12 +294,12 @@ describe("FilesStore", () => {
   describe("deleteFile", () => {
     it("calls DELETE API and invalidates parent cache", async () => {
       const client = mockClient({
-        "/api/v2/files/list": { items: [] },
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
       });
 
       // Pre-populate cache for parent
       await useFilesStore.getState().fetchFiles("/", client);
-      expect(useFilesStore.getState().fileCache.has("/")).toBe(true);
+      expect(useFilesStore.getState().getCachedFiles("/")).toBeDefined();
 
       await useFilesStore.getState().deleteFile("/test.txt", client);
 
@@ -220,7 +324,7 @@ describe("FilesStore", () => {
   describe("mkdirFile", () => {
     it("calls POST mkdir API and invalidates parent cache", async () => {
       const client = mockClient({
-        "/api/v2/files/list": { items: [] },
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
       });
 
       await useFilesStore.getState().mkdirFile("/newdir", client);
@@ -244,7 +348,7 @@ describe("FilesStore", () => {
   describe("renameFile", () => {
     it("calls rename API and invalidates parent cache", async () => {
       const client = mockClient({
-        "/api/v2/files/list": { items: [] },
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
         "/api/v2/files/rename": { success: true },
       });
 
@@ -406,7 +510,7 @@ describe("FilesStore", () => {
   describe("pasteFiles", () => {
     it("copies files and tracks progress", async () => {
       const client = mockClient({
-        "/api/v2/files/list": { items: [] },
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
       });
 
       useFilesStore.getState().yankToClipboard(["/a.txt", "/b.txt"]);
@@ -422,7 +526,7 @@ describe("FilesStore", () => {
 
     it("uses rename endpoint for cut operations", async () => {
       const client = mockClient({
-        "/api/v2/files/list": { items: [] },
+        "/api/v2/files/list": { items: [], has_more: false, next_cursor: null },
       });
 
       useFilesStore.getState().cutToClipboard(["/x.txt"]);
@@ -504,6 +608,32 @@ describe("FilesStore", () => {
       // anchor=5, cursor=10 with only 7 items → clamp cursor to 6
       const result = getEffectiveSelection(new Set(), 5, 10, nodes);
       expect(result).toEqual(new Set(["/f", "/g"]));
+    });
+  });
+
+  // ===========================================================================
+  // getCachedFiles (#3102)
+  // ===========================================================================
+
+  describe("getCachedFiles", () => {
+    it("returns cached data within TTL", async () => {
+      const client = mockClient({
+        "/api/v2/files/list": {
+          items: [{ name: "test.txt", path: "/test.txt", isDirectory: false, size: 50, modifiedAt: null, etag: null, mimeType: null }],
+          has_more: false,
+          next_cursor: null,
+        },
+      });
+
+      await useFilesStore.getState().fetchFiles("/", client);
+      const files = useFilesStore.getState().getCachedFiles("/");
+      expect(files).toBeDefined();
+      expect(files!.length).toBe(1);
+      expect(files![0]!.name).toBe("test.txt");
+    });
+
+    it("returns undefined for uncached path", () => {
+      expect(useFilesStore.getState().getCachedFiles("/unknown")).toBeUndefined();
     });
   });
 });

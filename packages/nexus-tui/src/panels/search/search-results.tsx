@@ -6,17 +6,13 @@ import React from "react";
 import type { SearchResult } from "../../stores/search-store.js";
 import { statusColor } from "../../shared/theme.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { truncateText } from "../../shared/utils/format-text.js";
 
 interface SearchResultsProps {
   readonly results: readonly SearchResult[];
   readonly total: number;
   readonly selectedIndex: number;
   readonly loading: boolean;
-}
-
-function truncateText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return `${text.slice(0, maxLen - 3)}...`;
 }
 
 function formatScore(score: number): string {

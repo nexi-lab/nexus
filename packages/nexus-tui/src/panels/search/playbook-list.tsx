@@ -4,16 +4,12 @@
 
 import React from "react";
 import type { PlaybookRecord } from "../../stores/search-store.js";
+import { truncateText } from "../../shared/utils/format-text.js";
 
 interface PlaybookListProps {
   readonly playbooks: readonly PlaybookRecord[];
   readonly selectedIndex: number;
   readonly loading: boolean;
-}
-
-function truncateText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return `${text.slice(0, maxLen - 3)}...`;
 }
 
 function formatRate(rate: number | null): string {

@@ -517,6 +517,13 @@ def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
         if task_write_hook is not None:
             app.state.task_write_hook = task_write_hook
 
+            # SSE broadcaster for frontend live-refresh
+            from nexus.server.api.v2.routers.task_manager import TaskEventBroadcaster
+
+            broadcaster = TaskEventBroadcaster()
+            task_write_hook.register_handler(broadcaster)
+            app.state.task_event_broadcaster = broadcaster
+
             # Wire up DT_PIPE dispatch consumer for task signals
             from nexus.bricks.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
 

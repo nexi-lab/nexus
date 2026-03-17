@@ -205,7 +205,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Service registry — /proc/modules of Nexus (Issue #1452).
-        # Populated by factory via register_wired_services() at link().
+        # Populated by factory via enlist_wired_services() at link().
         from nexus.core.service_registry import ServiceRegistry
 
         self._service_registry: ServiceRegistry = ServiceRegistry()
@@ -314,7 +314,7 @@ class NexusFS(  # type: ignore[misc]
         return self._service_registry
 
     # Services accessed via self.service("name") → ServiceRegistry (Issue #1452).
-    # Registered by factory via register_wired_services() at link().
+    # Registered by factory via enlist_wired_services() at link().
 
     @property
     def service_coordinator(self) -> Any | None:

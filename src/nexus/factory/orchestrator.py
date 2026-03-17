@@ -389,33 +389,6 @@ async def create_nexus_fs(
     return nx
 
 
-def _apply_hook_spec(dispatch: Any, hook: Any) -> None:
-    """Apply a HotSwappable hook's spec directly to KernelDispatch.
-
-    Fallback for when no ServiceLifecycleCoordinator is available (e.g.
-    unit tests creating NexusFS without the full factory lifecycle).
-    """
-    spec = hook.hook_spec()
-    for h in spec.resolvers:
-        dispatch.register_resolver(h)
-    for h in spec.read_hooks:
-        dispatch.register_intercept_read(h)
-    for h in spec.write_hooks:
-        dispatch.register_intercept_write(h)
-    for h in spec.write_batch_hooks:
-        dispatch.register_intercept_write_batch(h)
-    for h in spec.delete_hooks:
-        dispatch.register_intercept_delete(h)
-    for h in spec.rename_hooks:
-        dispatch.register_intercept_rename(h)
-    for h in spec.mkdir_hooks:
-        dispatch.register_intercept_mkdir(h)
-    for h in spec.rmdir_hooks:
-        dispatch.register_intercept_rmdir(h)
-    for h in spec.observers:
-        dispatch.register_observe(h)
-
-
 async def _register_vfs_hooks(
     nx: "NexusFS",
     *,
@@ -429,26 +402,19 @@ async def _register_vfs_hooks(
     This function populates them at boot — modules register into
     kernel-owned infrastructure, kernel never auto-constructs hooks.
 
-    Issue #1709: All hooks are now enlisted via coordinator.enlist(),
-    which is the single entry point for all service registration.
-    enlist() auto-detects HotSwappable, registers hooks on dispatch,
-    and calls activate().  Without coordinator (unit tests), hooks are
-    registered directly on dispatch via _apply_hook_spec() fallback.
+    Issue #1708/1709: All hooks enlisted via coordinator.enlist() —
+    single entry point, no fallback.  Coordinator is always available
+    (created in _do_link for local profiles, _boot_remote_services for REMOTE).
     """
-    dispatch = nx._dispatch
-
     from nexus.factory._helpers import _make_gate
 
     _on = _make_gate(brick_on)
 
-    _coordinator = getattr(nx, "_service_coordinator", None)
+    _coordinator = nx._service_coordinator
 
     async def _enlist(name: str, hook: Any) -> None:
-        """Enlist hook via coordinator (preferred) or direct dispatch (fallback)."""
-        if _coordinator is not None:
-            await _coordinator.enlist(name, hook)
-        else:
-            _apply_hook_spec(dispatch, hook)
+        """Enlist hook via coordinator — the single entry point."""
+        await _coordinator.enlist(name, hook)
 
     # ── Permission pre-intercept hook (Issue #899) ────────────────
     if permission_checker is not None:
@@ -593,4 +559,4 @@ async def _register_vfs_hooks(
     if os.getenv("NEXUS_TEST_HOOKS") == "true":
         from nexus.core.test_hooks import register_test_hooks
 
-        register_test_hooks(dispatch)
+        register_test_hooks(nx._dispatch)

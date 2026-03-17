@@ -176,18 +176,24 @@ class TestSnapshot:
 
 
 # ---------------------------------------------------------------------------
-# Dual-write invariant: register_wired_services
+# enlist_wired_services (Issue #1708)
 # ---------------------------------------------------------------------------
 
 
-class TestRegisterWiredServices:
-    """Verify register_wired_services registers all services correctly."""
+class TestEnlistWiredServices:
+    """Verify enlist_wired_services registers all services via coordinator (#1708)."""
 
     def test_all_canonical_names_registered(self) -> None:
+        import asyncio
+
+        from nexus.core.kernel_dispatch import KernelDispatch
         from nexus.core.service_registry import ServiceRegistry
         from nexus.factory.service_routing import (
             _CANONICAL_NAMES,
-            register_wired_services,
+            enlist_wired_services,
+        )
+        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+            ServiceLifecycleCoordinator,
         )
 
         # Build a dict with a unique mock per service
@@ -196,7 +202,9 @@ class TestRegisterWiredServices:
             wired_dict[src_key] = MagicMock(name=f"mock_{src_key}")
 
         reg = ServiceRegistry()
-        count = register_wired_services(reg, wired_dict)
+        dispatch = KernelDispatch()
+        coordinator = ServiceLifecycleCoordinator(reg, None, dispatch)
+        count = asyncio.run(enlist_wired_services(coordinator, wired_dict))
         assert count == len(_CANONICAL_NAMES)
 
         # Every canonical name should map to the correct mock instance

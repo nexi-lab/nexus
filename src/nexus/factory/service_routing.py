@@ -3,10 +3,9 @@
 Issue #1502: ``bind_wired_services()`` and the setattr wiring path have been
 deleted.  All service access now goes through ``nx.service("name")``.
 
-Issue #1615 / #1708: Services are registered via direct
-``coordinator.register_service()`` or ``registry.register_service()`` calls
-in ``_do_link()`` and ``_boot_remote_services()``.  This module provides
-only the data maps (``_CANONICAL_NAMES``, ``_CANONICAL_EXPORTS``).
+Issue #1708: Single entry point via ``enlist_wired_services()`` which calls
+``coordinator.enlist()`` for each service.  Coordinator is always available
+for all deployment profiles (BLM optional).
 """
 
 from __future__ import annotations
@@ -76,21 +75,17 @@ _CANONICAL_NAMES: dict[str, str] = {
 }
 
 
-def register_wired_services(
-    registrar: Any,
-    wired: Any,
-    *,
-    is_remote: bool = False,
-) -> int:
-    """Register WiredServices into a registrar (coordinator or registry).
+async def enlist_wired_services(coordinator: Any, wired: Any) -> int:
+    """Enlist WiredServices via coordinator.enlist() (#1708).
 
     Iterates ``_CANONICAL_NAMES``, extracts each non-None service from
     ``wired`` (WiredServices dataclass or dict), and calls
-    ``registrar.register_service()`` with canonical name + exports.
+    ``await coordinator.enlist()`` with canonical name + exports.
 
-    Issue #1708: Renamed from ``populate_service_registry()``.
+    All wired services are Q1 (static) — no HotSwappable or PersistentService
+    — so enlist() auto-detects and registers them without lifecycle side effects.
 
-    Returns the number of services registered.
+    Returns the number of services enlisted.
     """
     count = 0
     for src_key, canonical in _CANONICAL_NAMES.items():
@@ -98,11 +93,6 @@ def register_wired_services(
         if val is None:
             continue
         exports = _CANONICAL_EXPORTS.get(canonical, ())
-        registrar.register_service(
-            canonical,
-            val,
-            exports=exports,
-            is_remote=is_remote,
-        )
+        await coordinator.enlist(canonical, val, exports=exports)
         count += 1
     return count

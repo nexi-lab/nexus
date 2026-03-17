@@ -272,7 +272,7 @@ async def connect(
         # method calls to the server via gRPC.
         from nexus.factory._remote import _boot_remote_services
 
-        _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+        await _boot_remote_services(nfs, call_rpc=transport.call_rpc)
         nfs._register_runtime_closeable(transport)
 
         return nfs
@@ -569,7 +569,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None
     from nexus.raft.federation_content_resolver import FederationContentResolver
     from nexus.raft.federation_ipc_resolver import FederationIPCResolver
 
-    _coordinator = getattr(nx_fs, "_service_coordinator", None)
+    _coordinator = nx_fs._service_coordinator
 
     # IPC resolver — remote DT_PIPE/DT_STREAM (#1625)
     ipc_resolver = FederationIPCResolver(
@@ -577,10 +577,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None
         self_address=zone_mgr.advertise_addr,
         tls_config=zone_mgr.tls_config,
     )
-    if _coordinator is not None:
-        await _coordinator.enlist("federation_ipc", ipc_resolver)
-    else:
-        nx_fs._dispatch.register_resolver(ipc_resolver)
+    await _coordinator.enlist("federation_ipc", ipc_resolver)
 
     # Content resolver — remote CAS content (#163)
     content_resolver = FederationContentResolver(
@@ -588,10 +585,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None
         self_address=zone_mgr.advertise_addr,
         tls_config=zone_mgr.tls_config,
     )
-    if _coordinator is not None:
-        await _coordinator.enlist("federation_content", content_resolver)
-    else:
-        nx_fs._dispatch.register_resolver(content_resolver)
+    await _coordinator.enlist("federation_content", content_resolver)
 
     logger.info("Federation resolvers registered: IPC + Content (self=%s)", zone_mgr.advertise_addr)
 

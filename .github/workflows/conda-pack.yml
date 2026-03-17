@@ -1,0 +1,105 @@
+name: Conda Pack
+
+# Build a self-contained conda environment tarball for each platform.
+# Triggered by the same v* tags as release.yml, runs in parallel.
+# Artifacts are attached to the GitHub Release created by release.yml.
+# softprops/action-gh-release@v2 safely updates an existing release,
+# so there is no conflict between this workflow and release.yml.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  conda-pack:
+    name: conda-pack / ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: nexus-windows-x86_64
+
+          # Intel Mac (x86_64) — matches the runner used in release.yml
+          - os: macos-15-intel
+            artifact_name: nexus-macos-x86_64
+
+          # Apple Silicon (arm64)
+          - os: macos-14
+            artifact_name: nexus-macos-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Sets up Miniconda and configures bash as a login shell with conda
+      # initialized. All subsequent steps that touch conda use
+      # `shell: bash -el {0}` to inherit this environment.
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniconda-version: latest
+          auto-activate-base: true
+          activate-environment: ""
+          channels: conda-forge,defaults
+          channel-priority: strict
+
+      - name: Create nexus conda environment (Python 3.13)
+        shell: bash -el {0}
+        run: |
+          conda create -n nexus python=3.13 -y
+
+      - name: Install project into nexus environment
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus pip install .
+
+      - name: Install conda-pack into base environment
+        shell: bash -el {0}
+        run: |
+          conda install -n base -c conda-forge conda-pack -y
+
+      - name: Pack nexus environment
+        shell: bash -el {0}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          OUTPUT="${{ matrix.artifact_name }}-${VERSION}.tar.gz"
+          echo "Packing environment to: ${OUTPUT}"
+          conda-pack -n nexus -o "${OUTPUT}"
+          ls -lh "${OUTPUT}"
+
+      - name: Upload packed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}-*.tar.gz
+          if-no-files-found: error
+
+  # Attaches all three tarballs to the GitHub Release.
+  # Runs after every conda-pack job succeeds. The release itself is created
+  # by release.yml — this job simply appends files to it.
+  attach-to-release:
+    name: Attach conda packs to GitHub Release
+    needs: conda-pack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all conda-pack artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded files
+        run: find artifacts -type f | sort
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -143,7 +143,7 @@ class LifespanServices:
             coordination_client=(getattr(nx, "_coordination_client", None) if nx else None),
             workflow_engine=(getattr(nx, "workflow_engine", None) if nx else None),
             snapshot_service=(
-                (_brk or {}).get("snapshot_service")
+                getattr(_brk, "snapshot_service", None)
                 or (getattr(nx, "_snapshot_service", None) if nx else None)
             ),
             namespace_manager=(getattr(nx, "_namespace_manager", None) if nx else None),

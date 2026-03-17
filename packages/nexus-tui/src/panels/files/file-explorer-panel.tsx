@@ -67,7 +67,7 @@ const ALL_TABS: readonly TabDef<FilesTab>[] = [
 // Input mode types
 // =============================================================================
 
-type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest";
+type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest" | "create";
 
 // =============================================================================
 // Keybinding builders — one function per mode (Decision 6A)
@@ -233,11 +233,20 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
         ctx.setInputBuffer(ctx.selectedItem.name);
       }
     },
-    // Edit file: open full-screen editor
+    // Edit existing file: open full-screen editor
     e: () => {
       if (ctx.selectedItem && !ctx.selectedItem.isDirectory) {
         ctx.setEditorPath(ctx.selectedItem.path);
       }
+    },
+    // Create new file: prompt for filename, then open editor
+    "shift+e": () => {
+      const dir = ctx.selectedItem?.isDirectory
+        ? ctx.selectedItem.path
+        : ctx.currentPath;
+      const prefix = dir === "/" ? "/" : dir + "/";
+      ctx.setInputMode("create");
+      ctx.setInputBuffer(prefix);
     },
     // Copy path to system clipboard
     y: () => {
@@ -399,6 +408,18 @@ function getInputModeBindings(
         },
       };
 
+    case "create":
+      return {
+        ...baseBindings,
+        return: () => {
+          const filePath = ctx.filterQuery.trim();
+          if (!filePath) { resetInput(); return; }
+          // Open editor for the new path (editor handles creation on save)
+          ctx.setEditorPath(filePath);
+          resetInput();
+        },
+      };
+
     default:
       return {};
   }
@@ -441,6 +462,7 @@ function getInputLabel(mode: InputMode, buffer: string): string {
     case "filter": return `/${buffer}\u2588`;
     case "search": return `Search (g: glob, r: grep): ${buffer}\u2588`;
     case "paste-dest": return `Paste to: ${buffer}\u2588`;
+    case "create": return `New file path: ${buffer}\u2588`;
     default: return "";
   }
 }
@@ -474,7 +496,7 @@ function getHelpText(
     if (clipboard) {
       parts.push(`p:paste ${clipboard.paths.length} ${clipboard.operation === "cut" ? "cut" : "copied"}`, "P:paste to path");
     }
-    parts.push("d:del", "N:mkdir", "R:rename", "e:edit");
+    parts.push("d:del", "N:mkdir", "R:rename", "e:edit", "E:new file");
     if (catalogAvailable) parts.push("m/a/s:meta");
     parts.push("?:help");
     return parts.join("  ");

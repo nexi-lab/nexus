@@ -55,6 +55,7 @@ export const PANEL_BINDINGS: Record<string, readonly KeyBinding[]> = {
     { key: "Shift+N", action: "New directory" },
     { key: "Shift+R", action: "Rename" },
     { key: "e", action: "Edit file (full editor)" },
+    { key: "Shift+E", action: "Create new file" },
     { key: "/", action: "Quick filter (fuzzy)" },
     { key: "Ctrl+F", action: "Power search (glob/grep/deep)" },
     { key: "v", action: "Toggle visual mode" },

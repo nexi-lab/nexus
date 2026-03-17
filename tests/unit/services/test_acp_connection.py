@@ -376,7 +376,7 @@ class TestAcpRpcError:
     """Test AcpRpcError alias."""
 
     def test_acp_rpc_error_is_agent_rpc_error(self):
-        from nexus.system_services.agent_loop import AgentRpcError
+        from nexus.system_services.agent_runtime.loop import AgentRpcError
 
         assert AcpRpcError is AgentRpcError
 

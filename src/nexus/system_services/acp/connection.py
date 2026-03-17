@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from nexus.system_services.agent_loop import AgentLoop, AgentRpcError
+from nexus.system_services.agent_runtime.loop import AgentLoop, AgentRpcError
 
 logger = logging.getLogger(__name__)
 

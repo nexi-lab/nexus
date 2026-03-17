@@ -185,8 +185,6 @@ class TestBootSystemServices:
             # Process lifecycle (Issue #1509)
             "process_table",
             "scheduler_service",
-            # Agent Runtime (AGENT-PROCESS-ARCHITECTURE)
-            "agent_runtime",
             # ACP coding agent service
             "acp_service",
         }

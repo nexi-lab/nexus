@@ -1,8 +1,7 @@
-"""Agent Runtime — agent process execution engine.
+"""Agent Runtime — agent loop and process communication.
 
-System service tier (Tier 1). Manages agent process lifecycle:
-spawn, resume, terminate, signal. Integrates with VFS for file I/O,
-LLM providers for inference, and CAS for session checkpoints.
+Shared base for managed (nexusd-spawned) and unmanaged (3rd-party gRPC)
+agent subprocess communication over PipeBackend (DT_PIPE).
 
-Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md.
+    agent_runtime/loop.py = JSON-RPC 2.0 over PipeBackend base class
 """

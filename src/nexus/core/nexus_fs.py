@@ -151,10 +151,9 @@ class NexusFS(  # type: ignore[misc]
             admin_capabilities=set(),
         )
 
-        # =====================================================================
-        # Hot-path service attrs — kept on kernel for perf (Issue #1682)
-        # =====================================================================
-        self._permission_enforcer = sys_svc.permission_enforcer
+        # Issue #1706: sentinel — real value wired by factory._do_link().
+        # Kept as sentinel (not deleted) because 8 kernel methods access without hasattr guard.
+        self._permission_enforcer: Any = None
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)

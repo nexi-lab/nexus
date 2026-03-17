@@ -47,8 +47,12 @@ export function ErrorBar(): React.ReactNode {
 
   return (
     <box height={1} width="100%" flexDirection="row">
-      <text foregroundColor={statusColor.error}>
-        {`${prefix}✗ ${latest.message}  ${hint}${latest.dismissable ? "  Esc:dismiss" : ""}`}
+      <text>
+        <span foregroundColor="#ff4444" bold>{`${prefix}✗ ${latest.message}`}</span>
+        <span foregroundColor="#ff8888">{`  ${hint}`}</span>
+        {latest.dismissable ? (
+          <span foregroundColor="#666666">{"  Esc:dismiss"}</span>
+        ) : ""}
       </text>
     </box>
   );

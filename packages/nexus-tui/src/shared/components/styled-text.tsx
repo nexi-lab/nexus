@@ -43,7 +43,7 @@ export function StyledText({ children }: StyledTextProps): React.ReactNode {
       {spans.map((span, i) => {
         const decoration = span.decoration ?? "";
         return (
-          <text
+          <span
             key={i}
             bold={decoration.includes("bold") || undefined}
             dimColor={decoration.includes("dim") || undefined}
@@ -53,7 +53,7 @@ export function StyledText({ children }: StyledTextProps): React.ReactNode {
             backgroundColor={span.bg ? rgbToHex(span.bg) : undefined}
           >
             {span.content}
-          </text>
+          </span>
         );
       })}
     </text>

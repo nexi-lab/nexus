@@ -48,18 +48,18 @@ export function PaginationBar({
     <box height={1} width="100%" flexDirection="row">
       <text dimColor>
         {hasPrev && (
-          <text>
-            <text foregroundColor={statusColor.info}>{prevKey}</text>
-            <text>{":prev "}</text>
-          </text>
+          <span>
+            <span foregroundColor={statusColor.info}>{prevKey}</span>
+            <span>{":prev "}</span>
+          </span>
         )}
-        <text>{loading ? "Loading..." : pageDisplay}</text>
+        <span>{loading ? "Loading..." : pageDisplay}</span>
         {hasMore && (
-          <text>
-            <text>{" "}</text>
-            <text foregroundColor={statusColor.info}>{nextKey}</text>
-            <text>{":next"}</text>
-          </text>
+          <span>
+            <span>{" "}</span>
+            <span foregroundColor={statusColor.info}>{nextKey}</span>
+            <span>{":next"}</span>
+          </span>
         )}
       </text>
     </box>

@@ -122,16 +122,20 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
           "/api/v2/bricks/health",
         ).catch(() => null),
         client.get<FeaturesResponse>("/api/v2/features").catch(() => null),
-        client.get<UserInfo>("/auth/me"),
+        client.get<UserInfo>("/auth/me").catch(() => null),
       ]);
 
-      if (health) {
-        set({
-          serverVersion: health.version ?? get().serverVersion,
-          zoneId: health.zone_id ?? get().zoneId,
-          uptime: health.uptime_seconds ?? get().uptime,
-        });
+      // If health check succeeds, consider the server connected even if
+      // /auth/me fails (e.g. "Authentication provider not configured").
+      if (!health) {
+        throw new Error("Server health check failed");
       }
+
+      set({
+        serverVersion: health.version ?? get().serverVersion,
+        zoneId: health.zone_id ?? get().zoneId,
+        uptime: health.uptime_seconds ?? get().uptime,
+      });
       if (features) {
         get().setFeatures(features);
       }

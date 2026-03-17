@@ -71,7 +71,7 @@ export function ApprovalList({
           <box key={a.id} height={1} width="100%">
             <text>
               {`${prefix}${shortId(a.id).padEnd(10)}  ${amount}  ${purpose}  `}
-              <text foregroundColor={color}>{a.status.padEnd(9)}</text>
+              <span foregroundColor={color}>{a.status.padEnd(9)}</span>
               {`  ${shortId(a.requester_id).padEnd(12)}  ${formatTime(a.created_at)}`}
             </text>
           </box>

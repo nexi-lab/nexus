@@ -4713,7 +4713,19 @@ class NexusFS(  # type: ignore[misc]
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
             if details:
                 result.items = [
-                    {"path": e.path, "size": e.size, "etag": e.etag} for e in result.items
+                    {
+                        "path": e.path,
+                        "size": e.size,
+                        "etag": e.etag,
+                        "entry_type": 1
+                        if (
+                            not recursive
+                            and e.entry_type == 0
+                            and self.metadata.is_implicit_directory(e.path)
+                        )
+                        else e.entry_type,
+                    }
+                    for e in result.items
                 ]
             else:
                 result.items = [e.path for e in result.items]
@@ -4721,7 +4733,21 @@ class NexusFS(  # type: ignore[misc]
 
         entries = self.metadata.list(prefix=prefix, recursive=recursive)
         if details:
-            return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
+            return [
+                {
+                    "path": e.path,
+                    "size": e.size,
+                    "etag": e.etag,
+                    "entry_type": 1
+                    if (
+                        not recursive
+                        and e.entry_type == 0
+                        and self.metadata.is_implicit_directory(e.path)
+                    )
+                    else e.entry_type,
+                }
+                for e in entries
+            ]
         return [e.path for e in entries]
 
     # _run_async: replaced by direct run_sync() calls (Issue #1381)

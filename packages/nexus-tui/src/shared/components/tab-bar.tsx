@@ -28,17 +28,19 @@ export function TabBar({ tabs, activeTab }: TabBarProps): React.ReactNode {
         return (
           <text key={tab.id}>
             {isActive ? (
-              <text>
-                <text foregroundColor={statusColor.info}>{"▸ "}</text>
-                <text dimColor>{`${tab.shortcut}:`}</text>
-                <text foregroundColor={statusColor.info} bold>{tab.label}</text>
-                <text dimColor>{suffix}</text>
-              </text>
+              <span>
+                <span foregroundColor="#00d4ff" bold>{"▸ "}</span>
+                <span foregroundColor="#888888">{`${tab.shortcut}:`}</span>
+                <span foregroundColor="#00d4ff" bold>{tab.label}</span>
+                <span foregroundColor="#444444">{suffix}</span>
+              </span>
             ) : (
-              <text>
-                <text>{"  "}</text>
-                <text dimColor>{`${tab.shortcut}:${tab.label}${suffix}`}</text>
-              </text>
+              <span>
+                <span>{"  "}</span>
+                <span foregroundColor="#555555">{`${tab.shortcut}:`}</span>
+                <span foregroundColor="#777777">{tab.label}</span>
+                <span foregroundColor="#444444">{suffix}</span>
+              </span>
             )}
           </text>
         );

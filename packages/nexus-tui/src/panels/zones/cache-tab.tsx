@@ -58,7 +58,7 @@ export function CacheTab({ stats, hotFiles, loading }: CacheTabProps): React.Rea
         <box height={1} width="100%">
           <text>
             {"  Hit rate:        "}
-            <text foregroundColor={hitRateColor(s.hit_rate)}>{`${(s.hit_rate * 100).toFixed(1)}%`}</text>
+            <span foregroundColor={hitRateColor(s.hit_rate)}>{`${(s.hit_rate * 100).toFixed(1)}%`}</span>
           </text>
         </box>
       )}
@@ -88,7 +88,7 @@ export function CacheTab({ stats, hotFiles, loading }: CacheTabProps): React.Rea
             <box key={layer.name} height={1} width="100%">
               <text>
                 {`  ${layer.name.padEnd(19)}  ${String(layer.entries).padEnd(10)}  ${formatSize(layer.size_bytes).padEnd(11)}  `}
-                <text foregroundColor={hitRateColor(layer.hit_rate)}>{`${(layer.hit_rate * 100).toFixed(1)}%`}</text>
+                <span foregroundColor={hitRateColor(layer.hit_rate)}>{`${(layer.hit_rate * 100).toFixed(1)}%`}</span>
               </text>
             </box>
           ))}

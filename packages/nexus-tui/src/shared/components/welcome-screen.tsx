@@ -48,14 +48,20 @@ export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNod
         width={56}
         padding={1}
       >
-        <text bold foregroundColor={statusColor.info}>
-          {"    \u2554\u2557\u2554\u250C\u2500\u2510\u2500\u2510 \u2510\u252C\u2510 \u252C\u250C\u2500\u2510"}
+        <text bold foregroundColor="#00d4ff">
+          {"    _   _ _____ __  __ _   _ ____"}
         </text>
-        <text bold foregroundColor={statusColor.info}>
-          {"    \u2551\u2551\u2551\u251C\u2524 \u250C\u2524 \u2502 \u2502\u2502\u2514\u2500\u2510"}
+        <text bold foregroundColor="#00b8ff">
+          {"   | \\ | | ____|  \\/  | | | / ___|"}
         </text>
-        <text bold foregroundColor={statusColor.info}>
-          {"    \u255D\u255A\u255D\u2514\u2500\u2518\u2518\u2514 \u2514\u2500\u2518\u2514\u2500\u2518"}
+        <text bold foregroundColor="#4d8eff">
+          {"   |  \\| |  _|  >\\/< | | | \\___ \\"}
+        </text>
+        <text bold foregroundColor="#8066ff">
+          {"   | |\\  | |___/ /\\ \\| |_| |___) |"}
+        </text>
+        <text bold foregroundColor="#b44dff">
+          {"   |_| \\_|_____/_/  \\_\\\\___/|____/"}
         </text>
         <text>{""}</text>
         <text dimColor>{`  Connected to ${baseUrl}${serverVersion ? ` (v${serverVersion})` : ""}`}</text>

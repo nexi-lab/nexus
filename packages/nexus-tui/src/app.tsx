@@ -82,10 +82,34 @@ function PanelRouter(): React.ReactNode {
 }
 
 /**
- * Graceful shutdown: kill child processes then exit (Decision 6A).
+ * Graceful shutdown: kill child processes, restore terminal, then exit (Decision 6A).
+ *
+ * We must manually reset the terminal before process.exit() because exit()
+ * bypasses OpenTUI's renderer.destroy() cleanup, leaving mouse tracking
+ * and alternate screen enabled — which causes raw escape sequences to leak
+ * into the shell after exit.
  */
 function shutdown(): void {
   killAllProcesses();
+
+  // Restore stdin from raw mode first (stops reading mouse input)
+  if (process.stdin.setRawMode) {
+    process.stdin.setRawMode(false);
+  }
+  process.stdin.pause();
+
+  // Restore terminal: disable mouse tracking, leave alternate screen, show cursor.
+  // Use writeSync via fd to guarantee the sequences are flushed before exit.
+  const fs = require("fs");
+  const reset = [
+    "\x1b[?1003l", // disable all-motion mouse tracking
+    "\x1b[?1006l", // disable SGR mouse mode
+    "\x1b[?1000l", // disable normal mouse tracking
+    "\x1b[?1049l", // switch back to main screen
+    "\x1b[?25h",   // show cursor
+  ].join("");
+  fs.writeSync(1, reset);
+
   process.exit(0);
 }
 
@@ -104,8 +128,10 @@ export function App(): React.ReactNode {
   const showWelcome = isFresh === true && !welcomeDismissed;
 
   // Determine if we should show the pre-connection screen (Decision 3A)
+  // Only hide it when fully connected — "connecting" still shows the pre-connection
+  // screen with a spinner to avoid flashing the main UI during connection attempts.
   const connState = detectConnectionState(connectionStatus, connectionError, config);
-  const showPreConnection = connState !== "ready" && connState !== "connecting";
+  const showPreConnection = connState !== "ready";
 
   const setOverlayActive = useUiStore((s) => s.setOverlayActive);
   useEffect(() => {
@@ -143,6 +169,10 @@ export function App(): React.ReactNode {
           "9": () => setActivePanel("infrastructure"),
           "0": () => setActivePanel("console"),
           "ctrl+i": toggleIdentitySwitcher,
+          "ctrl+d": () => {
+            // Disconnect and go back to setup menu
+            useGlobalStore.getState().setConnectionStatus("error", "Disconnected by user");
+          },
           "z": () => toggleZoom(activePanel),
           "?": () => setHelpOpen(true),
           "q": shutdown,

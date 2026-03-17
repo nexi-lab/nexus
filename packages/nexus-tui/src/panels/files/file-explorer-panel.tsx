@@ -24,6 +24,7 @@ import {
   type TreeNode,
   getEffectiveSelection,
 } from "../../stores/files-store.js";
+import { useGlobalStore } from "../../stores/global-store.js";
 import { useShareLinkStore } from "../../stores/share-link-store.js";
 import { useUploadStore } from "../../stores/upload-store.js";
 import { Breadcrumb } from "../../shared/components/breadcrumb.js";
@@ -221,8 +222,8 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
         ctx.setConfirmDelete(true);
       }
     },
-    N: () => { ctx.setInputMode("mkdir"); ctx.setInputBuffer(""); },
-    R: () => {
+    "shift+n": () => { ctx.setInputMode("mkdir"); ctx.setInputBuffer(""); },
+    "shift+r": () => {
       if (ctx.isSentinel) return;
       if (ctx.selectedItem) {
         ctx.setInputMode("rename");
@@ -562,12 +563,30 @@ export default function FileExplorerPanel(): React.ReactNode {
   const selectedNode = visibleNodes[selectedIndex] ?? null;
   const isSentinel = selectedNode?.path.endsWith(LOAD_MORE_SENTINEL) ?? false;
 
-  // For metadata/actions, look up the FileItem from the node's parent directory cache.
+  // For metadata/actions, look up FileItem from parent's file cache first,
+  // then fall back to constructing a minimal FileItem from the tree node.
+  // The fallback ensures metadata pane works even if the file cache is empty
+  // (e.g. requests were aborted during rapid navigation).
   const selectedItem: FileItem | null = useMemo(() => {
     if (!selectedNode || isSentinel) return null;
     const parentDir = selectedNode.path.split("/").slice(0, -1).join("/") || "/";
     const parentFiles = getCachedFiles(parentDir);
-    return parentFiles?.find((f) => f.path === selectedNode.path) ?? null;
+    const cached = parentFiles?.find((f) => f.path === selectedNode.path);
+    if (cached) return cached;
+    // Fallback: construct from tree node, using global zoneId from health check
+    return {
+      name: selectedNode.name,
+      path: selectedNode.path,
+      isDirectory: selectedNode.isDirectory,
+      size: selectedNode.size ?? 0,
+      modifiedAt: null,
+      etag: null,
+      mimeType: null,
+      version: null,
+      owner: null,
+      permissions: null,
+      zoneId: useGlobalStore.getState().zoneId,
+    };
   }, [selectedNode, isSentinel, getCachedFiles, fileCacheRevision]);
 
   const visibleNodeCount = visibleNodes.length;
@@ -576,8 +595,8 @@ export default function FileExplorerPanel(): React.ReactNode {
 
   // Aspect count badge
   const aspectsCache = useKnowledgeStore((s) => s.aspectsCache);
-  const selectedUrn = selectedItem?.path && selectedItem?.zoneId
-    ? `urn:nexus:file:${selectedItem.zoneId}:${crypto.createHash("sha256").update(selectedItem.path).digest("hex").slice(0, 32)}`
+  const selectedUrn = selectedItem?.path
+    ? `urn:nexus:file:${selectedItem.zoneId || "default"}:${crypto.createHash("sha256").update(selectedItem.path).digest("hex").slice(0, 32)}`
     : null;
   const aspectCount = selectedUrn ? (aspectsCache.get(selectedUrn)?.length ?? 0) : 0;
 

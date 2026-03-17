@@ -5,13 +5,20 @@ Tests cover:
 - LRUEvictionPolicy satisfies EvictionPolicy protocol
 - QoSEvictionPolicy: spot-first ordering, preemption filtering,
   fallback to LRU within same class, mixed QoS ordering
+
+Post-AgentRegistry deletion: tests use ProcessDescriptor instead of AgentRecord.
 """
 
-import types
 from datetime import UTC, datetime, timedelta
 
-from nexus.contracts.agent_types import AgentRecord, AgentState, EvictionReason
-from nexus.contracts.qos import AgentQoS, EvictionContext, QoSClass
+from nexus.contracts.agent_types import EvictionReason
+from nexus.contracts.process_types import (
+    ExternalProcessInfo,
+    ProcessDescriptor,
+    ProcessKind,
+    ProcessState,
+)
+from nexus.contracts.qos import EvictionContext, QoSClass
 from nexus.system_services.agents.eviction_policy import (
     EvictionPolicy,
     LRUEvictionPolicy,
@@ -24,21 +31,25 @@ def _make_agent(
     agent_id: str,
     last_heartbeat: datetime | None = None,
     eviction_class: QoSClass = QoSClass.STANDARD,
-) -> AgentRecord:
-    """Create a minimal AgentRecord for testing."""
+) -> ProcessDescriptor:
+    """Create a minimal ProcessDescriptor for testing."""
     now = datetime.now(UTC)
-    return AgentRecord(
-        agent_id=agent_id,
+    return ProcessDescriptor(
+        pid=agent_id,
+        ppid=None,
+        name=agent_id,
         owner_id="test-owner",
-        zone_id=None,
-        name=None,
-        state=AgentState.CONNECTED,
+        zone_id="root",
+        kind=ProcessKind.UNMANAGED,
+        state=ProcessState.RUNNING,
         generation=1,
-        last_heartbeat=last_heartbeat,
-        metadata=types.MappingProxyType({}),
         created_at=now,
         updated_at=now,
-        qos=AgentQoS(eviction_class=eviction_class),
+        external_info=ExternalProcessInfo(
+            connection_id=f"conn-{agent_id}",
+            last_heartbeat=last_heartbeat,
+        ),
+        labels={"eviction_class": eviction_class.value},
     )
 
 
@@ -62,8 +73,8 @@ class TestLRUEvictionPolicy:
         selected = policy.select_candidates(agents, batch_size=2)
 
         assert len(selected) == 2
-        assert selected[0].agent_id == "old"
-        assert selected[1].agent_id == "medium"
+        assert selected[0].pid == "old"
+        assert selected[1].pid == "medium"
 
     def test_lru_respects_batch_size(self):
         now = datetime.now(UTC)
@@ -87,8 +98,8 @@ class TestLRUEvictionPolicy:
         selected = policy.select_candidates(agents, batch_size=2)
 
         assert len(selected) == 2
-        assert selected[0].agent_id == "no-heartbeat-1"
-        assert selected[1].agent_id == "no-heartbeat-2"
+        assert selected[0].pid == "no-heartbeat-1"
+        assert selected[1].pid == "no-heartbeat-2"
 
     def test_lru_empty_list(self):
         policy = LRUEvictionPolicy()
@@ -137,7 +148,7 @@ class TestQoSEvictionPolicy:
         selected = policy.select_candidates(agents, batch_size=1)
 
         assert len(selected) == 1
-        assert selected[0].agent_id == "spot-1"
+        assert selected[0].pid == "spot-1"
 
     def test_standard_evicted_before_premium(self):
         """Standard agents are evicted before premium agents."""
@@ -154,7 +165,7 @@ class TestQoSEvictionPolicy:
         policy = QoSEvictionPolicy()
         selected = policy.select_candidates(agents, batch_size=1)
 
-        assert selected[0].agent_id == "std-1"
+        assert selected[0].pid == "std-1"
 
     def test_within_class_oldest_first(self):
         """Within same QoS class, oldest heartbeat is evicted first."""
@@ -169,7 +180,7 @@ class TestQoSEvictionPolicy:
         policy = QoSEvictionPolicy()
         selected = policy.select_candidates(agents, batch_size=1)
 
-        assert selected[0].agent_id == "spot-old"
+        assert selected[0].pid == "spot-old"
 
     def test_none_heartbeat_evicted_first_within_class(self):
         """Agents with None heartbeat are evicted first within same class."""
@@ -182,7 +193,7 @@ class TestQoSEvictionPolicy:
         policy = QoSEvictionPolicy()
         selected = policy.select_candidates(agents, batch_size=1)
 
-        assert selected[0].agent_id == "spot-no-hb"
+        assert selected[0].pid == "spot-no-hb"
 
     def test_full_ordering_spot_standard_premium(self):
         """Full ordering: spot (oldest first) -> standard -> premium."""
@@ -208,7 +219,7 @@ class TestQoSEvictionPolicy:
         policy = QoSEvictionPolicy()
         selected = policy.select_candidates(agents, batch_size=10)
 
-        ids = [a.agent_id for a in selected]
+        ids = [a.pid for a in selected]
         assert ids == ["spot-old", "spot-new", "std-old", "std-new", "premium-1"]
 
     def test_batch_size_limits_output(self):
@@ -247,7 +258,7 @@ class TestQoSEvictionPolicy:
         policy = QoSEvictionPolicy()
         selected = policy.select_candidates(agents, batch_size=10, context=ctx)
 
-        ids = [a.agent_id for a in selected]
+        ids = [a.pid for a in selected]
         assert "spot-1" in ids
         assert "std-1" in ids
         assert "premium-1" not in ids
@@ -270,7 +281,7 @@ class TestQoSEvictionPolicy:
         policy = QoSEvictionPolicy()
         selected = policy.select_candidates(agents, batch_size=10, context=ctx)
 
-        ids = [a.agent_id for a in selected]
+        ids = [a.pid for a in selected]
         assert ids == ["spot-1"]
 
     def test_preemption_spot_evicts_nobody(self):
@@ -303,5 +314,5 @@ class TestQoSEvictionPolicy:
         policy = QoSEvictionPolicy()
         selected = policy.select_candidates(agents, batch_size=10)
 
-        assert selected[0].agent_id == "spot-1"
-        assert selected[1].agent_id == "premium-1"
+        assert selected[0].pid == "spot-1"
+        assert selected[1].pid == "premium-1"

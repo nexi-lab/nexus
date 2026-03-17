@@ -61,7 +61,6 @@ class FeaturesConfig(BaseModel):
     # System services
     eventlog: bool | None = Field(default=None, description="Enable event log service")
     namespace: bool | None = Field(default=None, description="Enable namespace manager")
-    agent_registry: bool | None = Field(default=None, description="Enable agent registry")
     permissions: bool | None = Field(default=None, description="Enable permission enforcement")
     scheduler: bool | None = Field(default=None, description="Enable task scheduler")
 

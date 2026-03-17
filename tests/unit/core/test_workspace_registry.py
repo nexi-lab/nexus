@@ -289,12 +289,9 @@ class TestDRYHelpers:
     def test_validate_agent_ownership_no_agent(self, registry: WorkspaceRegistry) -> None:
         registry._validate_agent_ownership(None, "alice")  # should not raise
 
-    def test_validate_agent_ownership_invalid(self, registry: WorkspaceRegistry) -> None:
-        mock_agent_reg = MagicMock()
-        mock_agent_reg.validate_ownership.return_value = False
-        registry._agent_registry = mock_agent_reg
-        with pytest.raises(PermissionError, match="not owned"):
-            registry._validate_agent_ownership("agent-1", "alice")
+    def test_validate_agent_ownership_is_noop(self, registry: WorkspaceRegistry) -> None:
+        # method is a no-op — ownership validated via ReBAC
+        registry._validate_agent_ownership("agent-1", "alice")  # should not raise
 
     def test_compute_expiry_none(self, registry: WorkspaceRegistry) -> None:
         assert registry._compute_expiry(None) is None

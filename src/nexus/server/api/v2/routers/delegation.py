@@ -62,7 +62,7 @@ def _get_delegation_service(request: Request) -> Any:
         rebac_manager=rebac_manager,
         namespace_manager=getattr(state, "namespace_manager", None),
         entity_registry=getattr(state, "entity_registry", None),
-        agent_registry=getattr(state, "agent_registry", None),
+        process_table=getattr(state, "process_table", None),
     )
     state._delegation_service = service
     return service

@@ -72,9 +72,7 @@ class NexusAppState:
     observability_registry: Any = None
 
     # === Services (initialized to None, set during lifespan) ===
-    agent_registry: Any = None
     agent_warmup_service: Any = None
-    async_agent_registry: Any = None
     async_rebac_manager: Any = None
     key_service: Any = None
     credential_service: Any = None

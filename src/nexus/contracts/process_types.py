@@ -119,6 +119,7 @@ class ProcessDescriptor:
     # Lifecycle
     state: ProcessState
     exit_code: int | None = None
+    generation: int = 0
 
     # Filesystem
     cwd: str = "/"
@@ -152,6 +153,7 @@ class ProcessDescriptor:
             "kind": str(self.kind),
             "state": str(self.state),
             "exit_code": self.exit_code,
+            "generation": self.generation,
             "cwd": self.cwd,
             "root": self.root,
             "children": list(self.children),
@@ -202,6 +204,7 @@ class ProcessDescriptor:
             kind=ProcessKind(d["kind"]),
             state=ProcessState(d["state"]),
             exit_code=d.get("exit_code"),
+            generation=d.get("generation", 0),
             cwd=d.get("cwd", "/"),
             root=d.get("root", "/"),
             children=tuple(d.get("children", ())),

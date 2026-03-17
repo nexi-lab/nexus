@@ -74,13 +74,13 @@ class DelegationService:
         rebac_manager: Any,
         namespace_manager: Any = None,
         entity_registry: "EntityRegistryProtocol | None" = None,
-        agent_registry: Any = None,
+        process_table: Any = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._rebac_manager = rebac_manager
         self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
-        self._agent_registry: Any = agent_registry
+        self._process_table: Any = process_table
         logger.info("[DelegationService] Initialized")
 
     @contextmanager
@@ -188,15 +188,15 @@ class DelegationService:
             delegation_mode.value,
         )
 
-        # 6. Register worker agent (UNKNOWN state, no API key yet)
-        if self._agent_registry is None:
-            raise DelegationError("agent_registry is required for DelegationService")
-        self._agent_registry.register(
-            agent_id=worker_id,
-            owner_id=coordinator_owner_id,
-            zone_id=zone_id,
-            name=worker_name,
-            metadata={"delegated_by": coordinator_agent_id},
+        # 6. Register worker agent via ProcessTable
+        if self._process_table is None:
+            raise DelegationError("process_table is required for DelegationService")
+        self._process_table.register_external(
+            worker_name,
+            coordinator_owner_id,
+            zone_id or ROOT_ZONE_ID,
+            connection_id=worker_id,
+            labels={"delegated_by": coordinator_agent_id},
         )
 
         try:
@@ -243,7 +243,7 @@ class DelegationService:
 
         except Exception:
             # Cleanup: unregister agent on failure (no key exists yet)
-            self._agent_registry.unregister(worker_id)
+            self._process_table.unregister_external(worker_id)
             raise
 
         logger.info(
@@ -303,9 +303,9 @@ class DelegationService:
         self._revoke_worker_api_key(record.agent_id)
 
         # Step 3: Unregister agent entity
-        if self._agent_registry is None:
-            raise DelegationError("agent_registry is required for DelegationService")
-        self._agent_registry.unregister(record.agent_id)
+        if self._process_table is None:
+            raise DelegationError("process_table is required for DelegationService")
+        self._process_table.unregister_external(record.agent_id)
 
         logger.info(
             "[Delegation] Revoked delegation=%s worker=%s",

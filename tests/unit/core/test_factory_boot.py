@@ -60,8 +60,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "mount_manager",
         "workspace_manager",
         # Original system services
-        "agent_registry",
-        "async_agent_registry",
         "eviction_manager",
         "namespace_manager",
         "async_namespace_manager",
@@ -238,31 +236,17 @@ class TestBootSystemServices:
     def test_degradable_failure_returns_none(self) -> None:
         """Degradable service failure returns None (not an exception).
 
-        Patches agent_registry and namespace_manager.
+        Patches namespace_manager. Agent registry was removed (Issue #1692).
         """
         ctx = _make_boot_context()
 
-        patches = [
-            patch(
-                "nexus.system_services.agents.agent_registry.AgentRegistry.__init__",
-                side_effect=RuntimeError("agent fail"),
-            ),
-            patch(
-                "nexus.bricks.rebac.namespace_factory.create_namespace_manager",
-                side_effect=RuntimeError("ns fail"),
-            ),
-        ]
-
-        for p in patches:
-            p.start()
-        try:
+        with patch(
+            "nexus.bricks.rebac.namespace_factory.create_namespace_manager",
+            side_effect=RuntimeError("ns fail"),
+        ):
             result = _boot_system_services(ctx)
-        finally:
-            for p in patches:
-                p.stop()
 
         assert isinstance(result, dict)
-        assert result["agent_registry"] is None
         assert result["namespace_manager"] is None
         # Critical services should still work
         assert result["rebac_manager"] is not None

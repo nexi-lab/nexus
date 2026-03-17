@@ -7,24 +7,24 @@ with pagination support.
 # AgentInfo is a frozen dataclass — create a lightweight stand-in for tests
 # since the protocol module uses namespace packages that aren't directly importable.
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.server.api.v2.routers.agent_status import (
-    _get_async_agent_registry,
+    _get_process_table,
     router,
 )
 from nexus.server.dependencies import require_auth
 
 
 @dataclass(frozen=True, slots=True)
-class AgentInfo:
-    """Test stand-in for nexus.services.protocols.agent_registry.AgentInfo."""
+class ProcessRecord:
+    """Test stand-in for ProcessTable records returned by list_processes()."""
 
-    agent_id: str
+    pid: str
     owner_id: str
     zone_id: str | None
     name: str | None
@@ -40,17 +40,17 @@ _test_app = FastAPI()
 _test_app.include_router(router)
 
 
-def _make_agent_info(
-    agent_id: str = "agent-1",
+def _make_process_record(
+    pid: str = "agent-1",
     owner_id: str = "user-1",
     zone_id: str | None = "root",
     name: str | None = "TestAgent",
     state: str = "CONNECTED",
     generation: int = 1,
-) -> AgentInfo:
-    """Create an AgentInfo with sensible defaults."""
-    return AgentInfo(
-        agent_id=agent_id,
+) -> ProcessRecord:
+    """Create a ProcessRecord with sensible defaults."""
+    return ProcessRecord(
+        pid=pid,
         owner_id=owner_id,
         zone_id=zone_id,
         name=name,
@@ -59,18 +59,18 @@ def _make_agent_info(
     )
 
 
-def _make_mock_registry() -> MagicMock:
-    """Create a mock async agent registry with sensible defaults."""
-    registry = MagicMock()
-    registry.list_by_zone = AsyncMock(return_value=[])
-    return registry
+def _make_mock_process_table() -> MagicMock:
+    """Create a mock ProcessTable with sensible defaults."""
+    pt = MagicMock()
+    pt.list_processes = MagicMock(return_value=[])
+    return pt
 
 
-_mock_registry = _make_mock_registry()
+_mock_process_table = _make_mock_process_table()
 
 
-def _override_registry() -> MagicMock:
-    return _mock_registry
+def _override_process_table() -> MagicMock:
+    return _mock_process_table
 
 
 # Default auth
@@ -82,7 +82,7 @@ _auth_result = {
 }
 
 _test_app.dependency_overrides[require_auth] = lambda: _auth_result
-_test_app.dependency_overrides[_get_async_agent_registry] = _override_registry
+_test_app.dependency_overrides[_get_process_table] = _override_process_table
 
 client = TestClient(_test_app)
 
@@ -94,8 +94,8 @@ client = TestClient(_test_app)
 @pytest.fixture(autouse=True)
 def _reset_mock() -> None:
     """Reset mock between tests."""
-    _mock_registry.reset_mock()
-    _mock_registry.list_by_zone = AsyncMock(return_value=[])
+    _mock_process_table.reset_mock()
+    _mock_process_table.list_processes = MagicMock(return_value=[])
 
 
 # ---------------------------------------------------------------------------
@@ -108,11 +108,11 @@ class TestListAgents:
 
     def test_200_with_agents(self) -> None:
         agents = [
-            _make_agent_info(agent_id="agent-1", name="Alpha"),
-            _make_agent_info(agent_id="agent-2", name="Beta", state="DISCONNECTED"),
-            _make_agent_info(agent_id="agent-3", name="Gamma", generation=3),
+            _make_process_record(pid="agent-1", name="Alpha"),
+            _make_process_record(pid="agent-2", name="Beta", state="DISCONNECTED"),
+            _make_process_record(pid="agent-3", name="Gamma", generation=3),
         ]
-        _mock_registry.list_by_zone = AsyncMock(return_value=agents)
+        _mock_process_table.list_processes = MagicMock(return_value=agents)
 
         resp = client.get("/api/v2/agents")
         assert resp.status_code == 200
@@ -135,10 +135,10 @@ class TestListAgents:
         assert second["agent_id"] == "agent-2"
         assert second["state"] == "DISCONNECTED"
 
-        _mock_registry.list_by_zone.assert_called_once_with("root")
+        _mock_process_table.list_processes.assert_called_once_with(zone_id="root")
 
     def test_200_empty_zone(self) -> None:
-        _mock_registry.list_by_zone = AsyncMock(return_value=[])
+        _mock_process_table.list_processes = MagicMock(return_value=[])
 
         resp = client.get("/api/v2/agents?zone_id=empty-zone")
         assert resp.status_code == 200
@@ -147,12 +147,12 @@ class TestListAgents:
         assert data["agents"] == []
         assert data["limit"] == 50
         assert data["offset"] == 0
-        _mock_registry.list_by_zone.assert_called_once_with("empty-zone")
+        _mock_process_table.list_processes.assert_called_once_with(zone_id="empty-zone")
 
     def test_pagination(self) -> None:
         """With 5 agents, limit=2, offset=1 returns agents[1:3]."""
-        agents = [_make_agent_info(agent_id=f"agent-{i}", name=f"Agent{i}") for i in range(5)]
-        _mock_registry.list_by_zone = AsyncMock(return_value=agents)
+        agents = [_make_process_record(pid=f"agent-{i}", name=f"Agent{i}") for i in range(5)]
+        _mock_process_table.list_processes = MagicMock(return_value=agents)
 
         resp = client.get("/api/v2/agents?limit=2&offset=1")
         assert resp.status_code == 200
@@ -165,8 +165,8 @@ class TestListAgents:
         assert data["agents"][1]["agent_id"] == "agent-2"
 
     def test_default_zone_id_is_root(self) -> None:
-        _mock_registry.list_by_zone = AsyncMock(return_value=[])
+        _mock_process_table.list_processes = MagicMock(return_value=[])
 
         resp = client.get("/api/v2/agents")
         assert resp.status_code == 200
-        _mock_registry.list_by_zone.assert_called_once_with("root")
+        _mock_process_table.list_processes.assert_called_once_with(zone_id="root")

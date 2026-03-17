@@ -633,14 +633,14 @@ class TestStaleSessionDetection:
         """Agent with outdated generation is rejected."""
         from nexus.contracts.exceptions import StaleSessionError
 
-        agent_registry = MagicMock()
+        process_table = MagicMock()
         record = MagicMock()
         record.generation = 5  # current generation
-        agent_registry.get.return_value = record
+        process_table.get.return_value = record
 
         enforcer = PermissionEnforcer(
             rebac_manager=MagicMock(rebac_check=MagicMock(return_value=True)),
-            agent_registry=agent_registry,
+            process_table=process_table,
         )
         ctx = OperationContext(
             user_id="alice",
@@ -655,16 +655,16 @@ class TestStaleSessionDetection:
 
     def test_current_agent_generation_allowed(self):
         """Agent with current generation is not rejected."""
-        agent_registry = MagicMock()
+        process_table = MagicMock()
         record = MagicMock()
         record.generation = 5
-        agent_registry.get.return_value = record
+        process_table.get.return_value = record
 
         rebac = MagicMock()
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(
             rebac_manager=rebac,
-            agent_registry=agent_registry,
+            process_table=process_table,
         )
         ctx = OperationContext(
             user_id="alice",
@@ -680,12 +680,12 @@ class TestStaleSessionDetection:
         """Agent deleted from registry but JWT still valid should be rejected."""
         from nexus.contracts.exceptions import StaleSessionError
 
-        agent_registry = MagicMock()
-        agent_registry.get.return_value = None  # Agent no longer exists
+        process_table = MagicMock()
+        process_table.get.return_value = None  # Agent no longer exists
 
         enforcer = PermissionEnforcer(
             rebac_manager=MagicMock(rebac_check=MagicMock(return_value=True)),
-            agent_registry=agent_registry,
+            process_table=process_table,
         )
         ctx = OperationContext(
             user_id="alice",
@@ -700,13 +700,13 @@ class TestStaleSessionDetection:
 
     def test_no_generation_skips_stale_check(self):
         """Agent without agent_generation (SK-key auth) should skip stale check."""
-        agent_registry = MagicMock()
+        process_table = MagicMock()
 
         rebac = MagicMock()
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(
             rebac_manager=rebac,
-            agent_registry=agent_registry,
+            process_table=process_table,
         )
         ctx = OperationContext(
             user_id="alice",
@@ -717,18 +717,18 @@ class TestStaleSessionDetection:
             agent_generation=None,  # No generation = SK-key auth
         )
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-        # agent_registry.get should NOT be called when generation is None
-        agent_registry.get.assert_not_called()
+        # process_table.get should NOT be called when generation is None
+        process_table.get.assert_not_called()
 
     def test_user_subject_skips_stale_check(self):
         """User subjects should never trigger stale-session checks."""
-        agent_registry = MagicMock()
+        process_table = MagicMock()
 
         rebac = MagicMock()
         rebac.rebac_check.return_value = True
         enforcer = PermissionEnforcer(
             rebac_manager=rebac,
-            agent_registry=agent_registry,
+            process_table=process_table,
         )
         ctx = OperationContext(
             user_id="alice",
@@ -738,7 +738,7 @@ class TestStaleSessionDetection:
             agent_generation=None,
         )
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-        agent_registry.get.assert_not_called()
+        process_table.get.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -809,7 +809,7 @@ class TestCheckStaleSessionHelper:
             check_stale_session(registry, ctx)
 
     def test_none_registry_skips(self):
-        """None agent_registry should skip check entirely."""
+        """None process_table should skip check entirely."""
         from nexus.bricks.rebac.enforcer import check_stale_session
 
         ctx = OperationContext(

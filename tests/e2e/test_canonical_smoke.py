@@ -273,8 +273,8 @@ class TestCanonicalSmoke:
 
         print(f"\n[SMOKE_TIMING] permissions: {json.dumps(timings)}")
 
-    def test_agent_registry(self, stack_env: tuple[dict[str, str], Path]) -> None:
-        """Verify agent registry lists the seeded demo agent."""
+    def test_agent_list(self, stack_env: tuple[dict[str, str], Path]) -> None:
+        """Verify agent list shows the seeded demo agent."""
         env, cwd = stack_env
         r = _run(["nexus", "agent", "list"], env=env, cwd=cwd)
         assert r.returncode == 0, (

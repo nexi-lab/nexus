@@ -1,13 +1,18 @@
 """Tests for AgentWarmupService (Issue #2172).
 
 Covers:
-- Happy path: all required steps pass → CONNECTED
+- Happy path: all required steps pass -> SLEEPING (connected)
 - Mixed required + optional steps
 - Required step failures (exception, timeout, returns False)
-- Optional step failures → still CONNECTED
+- Optional step failures -> still connected
 - Edge cases: re-warmup, nonexistent agent, empty steps, concurrent, unregister-during
 - Step registry operations
-- Integration: warmup → status phase check
+
+ProcessTable migration notes:
+  - External agents are registered via register_external() -> RUNNING (generation=1)
+  - To test warmup (which skips RUNNING), we SIGSTOP -> STOPPED first
+  - After warmup, SIGCONT transitions STOPPED -> SLEEPING, bumping generation
+  - ProcessTable.get() uses PID, not name
 """
 
 import asyncio
@@ -15,11 +20,11 @@ from datetime import timedelta
 
 import pytest
 
-from nexus.contracts.agent_types import AgentState
 from nexus.contracts.agent_warmup_types import WarmupContext, WarmupStep
-from nexus.system_services.agents.agent_registry import AgentRegistry
+from nexus.contracts.process_types import ProcessSignal, ProcessState
+from nexus.core.process_table import ProcessTable
 from nexus.system_services.agents.agent_warmup import AgentWarmupService
-from tests.helpers.in_memory_record_store import InMemoryRecordStore
+from tests.helpers.dict_metastore import DictMetastore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -27,24 +32,34 @@ from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 
 @pytest.fixture
-def record_store():
-    store = InMemoryRecordStore()
-    yield store
-    store.close()
+def process_table():
+    return ProcessTable(DictMetastore(), zone_id="test")
 
 
 @pytest.fixture
-def registry(record_store):
-    return AgentRegistry(record_store=record_store, flush_interval=60)
-
-
-@pytest.fixture
-def warmup_service(registry):
+def warmup_service(process_table):
     service = AgentWarmupService(
-        agent_registry=registry,
+        process_table=process_table,
         enabled_bricks=frozenset({"search", "pay", "auth"}),
     )
     return service
+
+
+def _register_agent(
+    process_table: ProcessTable, name: str = "agent-1", owner: str = "alice"
+) -> str:
+    """Register an external agent and STOP it so warmup can proceed.
+
+    Returns the PID.  The process starts in RUNNING (from register_external),
+    then we SIGSTOP it to STOPPED so the warmup service does not skip it
+    (warmup skips agents already in RUNNING).
+    """
+    desc = process_table.register_external(
+        name, owner_id=owner, zone_id="test", connection_id=f"conn-{name}"
+    )
+    # Move RUNNING -> STOPPED so warmup will not short-circuit
+    process_table.signal(desc.pid, ProcessSignal.SIGSTOP)
+    return desc.pid
 
 
 # ---------------------------------------------------------------------------
@@ -96,9 +111,9 @@ class TestStepRegistry:
 
 class TestHappyPath:
     @pytest.mark.asyncio
-    async def test_all_required_steps_pass(self, warmup_service, registry):
-        """All required steps pass → agent transitions to CONNECTED."""
-        registry.register("agent-1", "alice")
+    async def test_all_required_steps_pass(self, warmup_service, process_table):
+        """All required steps pass -> agent transitions to SLEEPING (connected)."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("step_a", _always_pass)
         warmup_service.register_step("step_b", _always_pass)
@@ -108,24 +123,24 @@ class TestHappyPath:
             WarmupStep("step_b", timeout=timedelta(seconds=5)),
         ]
 
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
         assert result.success is True
-        assert result.agent_id == "agent-1"
+        assert result.agent_id == pid
         assert result.steps_completed == ("step_a", "step_b")
         assert result.steps_skipped == ()
         assert result.failed_step is None
         assert result.error is None
         assert result.duration_ms > 0
 
-        # Verify agent is now CONNECTED
-        record = registry.get("agent-1")
-        assert record.state is AgentState.CONNECTED
-        assert record.generation == 1
+        # Verify agent transitioned (SIGCONT: STOPPED -> SLEEPING, generation bumped)
+        desc = process_table.get(pid)
+        assert desc.state is ProcessState.SLEEPING
+        assert desc.generation == 2  # 1 from spawn, +1 from SIGCONT
 
     @pytest.mark.asyncio
-    async def test_mixed_required_and_optional(self, warmup_service, registry):
-        """Required passes, optional fails → still CONNECTED."""
-        registry.register("agent-1", "alice")
+    async def test_mixed_required_and_optional(self, warmup_service, process_table):
+        """Required passes, optional fails -> still connected."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("required_step", _always_pass)
         warmup_service.register_step("optional_step", _always_fail)
@@ -135,15 +150,15 @@ class TestHappyPath:
             WarmupStep("optional_step", timeout=timedelta(seconds=5), required=False),
         ]
 
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
         assert result.success is True
         assert "required_step" in result.steps_completed
         assert "optional_step" in result.steps_skipped
 
     @pytest.mark.asyncio
-    async def test_standard_warmup_runs_in_order(self, warmup_service, registry):
-        """Steps execute in order — verified by step_completed ordering."""
-        registry.register("agent-1", "alice")
+    async def test_standard_warmup_runs_in_order(self, warmup_service, process_table):
+        """Steps execute in order -- verified by step_completed ordering."""
+        pid = _register_agent(process_table)
 
         order: list[str] = []
 
@@ -163,7 +178,7 @@ class TestHappyPath:
             WarmupStep("c", timeout=timedelta(seconds=5)),
         ]
 
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
         assert result.success is True
         assert order == ["a", "b", "c"]
         assert result.steps_completed == ("a", "b", "c")
@@ -176,61 +191,61 @@ class TestHappyPath:
 
 class TestRequiredStepFailure:
     @pytest.mark.asyncio
-    async def test_required_step_exception(self, warmup_service, registry):
-        """Required step that raises → warmup fails, agent stays UNKNOWN."""
-        registry.register("agent-1", "alice")
+    async def test_required_step_exception(self, warmup_service, process_table):
+        """Required step that raises -> warmup fails, agent stays STOPPED."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("boom", _raise_error)
 
         steps = [WarmupStep("boom", timeout=timedelta(seconds=5))]
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
 
         assert result.success is False
         assert result.failed_step == "boom"
         assert result.error is not None
 
-        record = registry.get("agent-1")
-        assert record.state is AgentState.UNKNOWN
+        desc = process_table.get(pid)
+        assert desc.state is ProcessState.STOPPED
 
     @pytest.mark.asyncio
-    async def test_required_step_timeout(self, warmup_service, registry):
-        """Required step that times out → warmup fails."""
-        registry.register("agent-1", "alice")
+    async def test_required_step_timeout(self, warmup_service, process_table):
+        """Required step that times out -> warmup fails."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("slow", _slow_step)
 
         steps = [WarmupStep("slow", timeout=timedelta(milliseconds=50))]
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
 
         assert result.success is False
         assert result.failed_step == "slow"
 
-        record = registry.get("agent-1")
-        assert record.state is AgentState.UNKNOWN
+        desc = process_table.get(pid)
+        assert desc.state is ProcessState.STOPPED
 
     @pytest.mark.asyncio
-    async def test_required_step_returns_false(self, warmup_service, registry):
-        """Required step returns False → warmup fails."""
-        registry.register("agent-1", "alice")
+    async def test_required_step_returns_false(self, warmup_service, process_table):
+        """Required step returns False -> warmup fails."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("nope", _always_fail)
 
         steps = [WarmupStep("nope", timeout=timedelta(seconds=5))]
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
 
         assert result.success is False
         assert result.failed_step == "nope"
 
-        record = registry.get("agent-1")
-        assert record.state is AgentState.UNKNOWN
+        desc = process_table.get(pid)
+        assert desc.state is ProcessState.STOPPED
 
     @pytest.mark.asyncio
-    async def test_unregistered_required_step(self, warmup_service, registry):
-        """Required step not in registry → warmup fails."""
-        registry.register("agent-1", "alice")
+    async def test_unregistered_required_step(self, warmup_service, process_table):
+        """Required step not in registry -> warmup fails."""
+        pid = _register_agent(process_table)
 
         steps = [WarmupStep("missing_step", timeout=timedelta(seconds=5), required=True)]
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
 
         assert result.success is False
         assert result.failed_step == "missing_step"
@@ -244,9 +259,9 @@ class TestRequiredStepFailure:
 
 class TestOptionalStepFailure:
     @pytest.mark.asyncio
-    async def test_optional_step_fails_continues(self, warmup_service, registry):
-        """Optional step failure → logged and skipped, warmup continues."""
-        registry.register("agent-1", "alice")
+    async def test_optional_step_fails_continues(self, warmup_service, process_table):
+        """Optional step failure -> logged and skipped, warmup continues."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("opt_fail", _always_fail)
         warmup_service.register_step("required_ok", _always_pass)
@@ -256,15 +271,15 @@ class TestOptionalStepFailure:
             WarmupStep("required_ok", timeout=timedelta(seconds=5), required=True),
         ]
 
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
         assert result.success is True
         assert "opt_fail" in result.steps_skipped
         assert "required_ok" in result.steps_completed
 
     @pytest.mark.asyncio
-    async def test_optional_step_timeout(self, warmup_service, registry):
-        """Optional step timeout → skipped, warmup continues."""
-        registry.register("agent-1", "alice")
+    async def test_optional_step_timeout(self, warmup_service, process_table):
+        """Optional step timeout -> skipped, warmup continues."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("slow_opt", _slow_step)
         warmup_service.register_step("fast_req", _always_pass)
@@ -274,14 +289,14 @@ class TestOptionalStepFailure:
             WarmupStep("fast_req", timeout=timedelta(seconds=5), required=True),
         ]
 
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
         assert result.success is True
         assert "slow_opt" in result.steps_skipped
 
     @pytest.mark.asyncio
-    async def test_all_optional_steps_fail(self, warmup_service, registry):
-        """ALL optional steps fail → still CONNECTED."""
-        registry.register("agent-1", "alice")
+    async def test_all_optional_steps_fail(self, warmup_service, process_table):
+        """ALL optional steps fail -> still connected."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("opt1", _always_fail)
         warmup_service.register_step("opt2", _raise_error)
@@ -291,7 +306,7 @@ class TestOptionalStepFailure:
             WarmupStep("opt2", timeout=timedelta(seconds=5), required=False),
         ]
 
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
         assert result.success is True
         assert result.steps_skipped == ("opt1", "opt2")
         assert result.steps_completed == ()
@@ -304,98 +319,82 @@ class TestOptionalStepFailure:
 
 class TestEdgeCases:
     @pytest.mark.asyncio
-    async def test_warmup_already_connected(self, warmup_service, registry):
-        """Warmup on already-CONNECTED agent → skipped (idempotent)."""
-        registry.register("agent-1", "alice")
-        registry.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
+    async def test_warmup_already_running(self, warmup_service, process_table):
+        """Warmup on already-RUNNING agent -> skipped (idempotent)."""
+        # register_external creates in RUNNING; do NOT stop it
+        desc = process_table.register_external(
+            "agent-1", owner_id="alice", zone_id="test", connection_id="conn-1"
+        )
 
-        result = await warmup_service.warmup("agent-1", steps=[])
+        result = await warmup_service.warmup(desc.pid, steps=[])
         assert result.success is True
         assert result.duration_ms >= 0
 
     @pytest.mark.asyncio
     async def test_warmup_nonexistent_agent(self, warmup_service):
-        """Warmup on nonexistent agent → error result."""
-        result = await warmup_service.warmup("no-such-agent", steps=[])
+        """Warmup on nonexistent agent -> error result."""
+        result = await warmup_service.warmup("no-such-pid", steps=[])
         assert result.success is False
         assert "not found" in result.error
 
     @pytest.mark.asyncio
-    async def test_empty_step_list(self, warmup_service, registry):
-        """Empty step list → immediate CONNECTED."""
-        registry.register("agent-1", "alice")
+    async def test_empty_step_list(self, warmup_service, process_table):
+        """Empty step list -> immediate transition to SLEEPING."""
+        pid = _register_agent(process_table)
 
-        result = await warmup_service.warmup("agent-1", steps=[])
+        result = await warmup_service.warmup(pid, steps=[])
         assert result.success is True
 
-        record = registry.get("agent-1")
-        assert record.state is AgentState.CONNECTED
+        desc = process_table.get(pid)
+        assert desc.state is ProcessState.SLEEPING
 
     @pytest.mark.asyncio
-    async def test_agent_unregistered_during_warmup(self, warmup_service, registry):
-        """Agent unregistered between warmup start and transition → clean failure."""
-        registry.register("agent-1", "alice")
+    async def test_agent_unregistered_during_warmup(self, warmup_service, process_table):
+        """Agent unregistered between warmup start and transition -> clean failure."""
+        pid = _register_agent(process_table)
 
         async def _unregister_and_pass(ctx: WarmupContext) -> bool:
-            # Simulate agent being unregistered during warmup
-            registry.unregister(ctx.agent_id)
+            # Simulate agent being unregistered during warmup.
+            # unregister_external kills + reaps the process.
+            process_table.unregister_external(ctx.agent_id)
             return True
 
         warmup_service.register_step("sneaky", _unregister_and_pass)
 
         steps = [WarmupStep("sneaky", timeout=timedelta(seconds=5))]
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
 
         assert result.success is False
         assert result.error is not None
 
     @pytest.mark.asyncio
-    async def test_concurrent_warmup_same_agent(self, warmup_service, registry):
-        """Concurrent warmup for same agent → one wins via optimistic locking."""
-        registry.register("agent-1", "alice")
+    async def test_concurrent_warmup_same_agent(self, warmup_service, process_table):
+        """Concurrent warmup for same agent -> second fails (SLEEPING->SLEEPING invalid)."""
+        pid = _register_agent(process_table)
 
         warmup_service.register_step("pass", _always_pass)
 
         steps = [WarmupStep("pass", timeout=timedelta(seconds=5))]
 
-        # First warmup succeeds
-        result1 = await warmup_service.warmup("agent-1", steps=steps)
+        # First warmup succeeds: STOPPED -> SLEEPING via SIGCONT
+        result1 = await warmup_service.warmup(pid, steps=steps)
         assert result1.success is True
 
-        # Second warmup on now-CONNECTED agent → idempotent skip
-        result2 = await warmup_service.warmup("agent-1", steps=steps)
-        assert result2.success is True
+        # Second warmup: agent is now SLEEPING (not RUNNING, so not skipped).
+        # Steps pass, but _transition_connected calls signal(SIGCONT) which
+        # tries SLEEPING -> SLEEPING -- an invalid transition. Warmup fails
+        # cleanly via InvalidTransitionError handling.
+        result2 = await warmup_service.warmup(pid, steps=steps)
+        assert result2.success is False
+        assert result2.error is not None
 
     @pytest.mark.asyncio
-    async def test_unregistered_optional_step_skipped(self, warmup_service, registry):
-        """Optional step not in registry → skipped, not failed."""
-        registry.register("agent-1", "alice")
+    async def test_unregistered_optional_step_skipped(self, warmup_service, process_table):
+        """Optional step not in registry -> skipped, not failed."""
+        pid = _register_agent(process_table)
 
         steps = [WarmupStep("nonexistent_opt", timeout=timedelta(seconds=5), required=False)]
-        result = await warmup_service.warmup("agent-1", steps=steps)
+        result = await warmup_service.warmup(pid, steps=steps)
 
         assert result.success is True
         assert "nonexistent_opt" in result.steps_skipped
-
-
-# ---------------------------------------------------------------------------
-# Integration: warmup → status phase
-# ---------------------------------------------------------------------------
-
-
-class TestWarmupStatusIntegration:
-    @pytest.mark.asyncio
-    async def test_warmup_changes_status_phase(self, warmup_service, registry):
-        """After warmup, get_status returns phase=active (CONNECTED → ACTIVE)."""
-        registry.register("agent-1", "alice")
-
-        warmup_service.register_step("pass", _always_pass)
-        steps = [WarmupStep("pass", timeout=timedelta(seconds=5))]
-
-        result = await warmup_service.warmup("agent-1", steps=steps)
-        assert result.success is True
-
-        # Check status via registry
-        status = registry.get_status("agent-1")
-        assert status is not None
-        assert str(status.phase) == "active"

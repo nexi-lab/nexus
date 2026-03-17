@@ -26,16 +26,21 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.agent_types import AgentState
 from nexus.contracts.agent_warmup_types import (
     STANDARD_WARMUP,
     WarmupContext,
     WarmupResult,
     WarmupStep,
 )
+from nexus.contracts.process_types import (
+    InvalidTransitionError,
+    ProcessError,
+    ProcessSignal,
+    ProcessState,
+)
 
 if TYPE_CHECKING:
-    from nexus.system_services.agents.agent_registry import AgentRegistry
+    from nexus.core.process_table import ProcessTable
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +56,7 @@ class AgentWarmupService:
     iterates the step list calling the registry.
 
     Args:
-        agent_registry: AgentRegistry for state queries and transitions.
+        process_table: ProcessTable for state queries and transitions.
         namespace_manager: Optional NamespaceManager for mount resolution.
         enabled_bricks: Set of brick names enabled in this deployment.
         cache_store: Optional CacheStoreABC for cache warming.
@@ -60,13 +65,13 @@ class AgentWarmupService:
 
     def __init__(
         self,
-        agent_registry: "AgentRegistry",
+        process_table: "ProcessTable",
         namespace_manager: Any | None = None,
         enabled_bricks: frozenset[str] | None = None,
         cache_store: Any | None = None,
         mcp_config: dict[str, Any] | None = None,
     ) -> None:
-        self._registry = agent_registry
+        self._process_table = process_table
         self._namespace_manager = namespace_manager
         self._enabled_bricks = enabled_bricks or frozenset()
         self._cache_store = cache_store
@@ -122,7 +127,7 @@ class AgentWarmupService:
         start = time.monotonic()
 
         # Edge case 1: Verify agent exists
-        record = self._registry.get(agent_id)
+        record = self._process_table.get(agent_id)
         if record is None:
             return WarmupResult(
                 success=False,
@@ -132,7 +137,7 @@ class AgentWarmupService:
             )
 
         # Edge case 2: Already CONNECTED → skip (idempotent)
-        if record.state is AgentState.CONNECTED:
+        if record.state is ProcessState.RUNNING:
             logger.info("[WARMUP] Agent %s already CONNECTED, skipping warmup", agent_id)
             return WarmupResult(
                 success=True,
@@ -148,7 +153,7 @@ class AgentWarmupService:
         ctx = WarmupContext(
             agent_id=agent_id,
             agent_record=record,
-            agent_registry=self._registry,
+            process_table=self._process_table,
             namespace_manager=self._namespace_manager,
             enabled_bricks=self._enabled_bricks,
             cache_store=self._cache_store,
@@ -254,16 +259,17 @@ class AgentWarmupService:
         - Agent unregistered during warmup (ValueError)
         - Concurrent warmup (StaleAgentError / InvalidTransitionError)
         """
-        from nexus.system_services.agents.agent_registry import (
-            InvalidTransitionError,
-            StaleAgentError,
-        )
-
         try:
-            self._registry.transition(
-                agent_id, AgentState.CONNECTED, expected_generation=expected_generation
-            )
-        except (ValueError, InvalidTransitionError, StaleAgentError) as exc:
+            # CAS check: verify generation hasn't changed
+            current = self._process_table.get(agent_id)
+            if current is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+            if current.generation != expected_generation:
+                raise InvalidTransitionError(
+                    f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
+                )
+            self._process_table.signal(agent_id, ProcessSignal.SIGCONT)
+        except (ValueError, InvalidTransitionError, ProcessError) as exc:
             logger.warning("[WARMUP] Failed to transition agent %s to CONNECTED: %s", agent_id, exc)
             return WarmupResult(
                 success=False,

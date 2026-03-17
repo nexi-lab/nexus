@@ -78,7 +78,7 @@ class WarmupContext:
     Attributes:
         agent_id: The agent being warmed up.
         agent_record: Immutable snapshot of the agent at warmup start.
-        agent_registry: AgentRegistry for state queries.
+        process_table: ProcessTable for state queries.
         namespace_manager: NamespaceManager for mount resolution (optional).
         enabled_bricks: Set of brick names enabled in this deployment.
         cache_store: CacheStoreABC for cache warming (optional).
@@ -87,7 +87,7 @@ class WarmupContext:
 
     agent_id: str
     agent_record: Any  # AgentRecord (TYPE_CHECKING import avoided for zero-dep)
-    agent_registry: Any  # AgentRegistry
+    process_table: Any  # ProcessTable
     namespace_manager: Any | None = None
     enabled_bricks: frozenset[str] = field(default_factory=frozenset)
     cache_store: Any | None = None

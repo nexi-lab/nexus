@@ -190,12 +190,20 @@ def _spec_to_response(stored: Any) -> AgentSpecResponse:
 # ---------------------------------------------------------------------------
 
 
-async def _get_async_agent_registry(request: Request) -> Any:
-    """Get AsyncAgentRegistry from app state."""
-    registry = getattr(request.app.state, "async_agent_registry", None)
-    if registry is None:
-        raise HTTPException(status_code=503, detail="Agent registry not available")
-    return registry
+async def _get_process_table(request: Request) -> Any:
+    """Get ProcessTable from app state."""
+    pt = getattr(request.app.state, "process_table", None)
+    if pt is None:
+        raise HTTPException(status_code=503, detail="ProcessTable not available")
+    return pt
+
+
+async def _get_vfs(request: Request) -> Any:
+    """Get VFS from app state."""
+    vfs = getattr(request.app.state, "vfs", None)
+    if vfs is None:
+        raise HTTPException(status_code=503, detail="VFS not available")
+    return vfs
 
 
 # ---------------------------------------------------------------------------
@@ -214,20 +222,20 @@ async def list_agents(
     limit: int = Query(default=50, ge=1, le=200, description="Max agents to return"),
     offset: int = Query(default=0, ge=0, description="Agents to skip"),
     _auth: dict = Depends(_get_require_auth()),
-    registry: Any = Depends(_get_async_agent_registry),
+    process_table: Any = Depends(_get_process_table),
 ) -> AgentListResponse:
     """List agents in a zone with pagination."""
-    all_agents = await registry.list_by_zone(zone_id)
+    all_agents = process_table.list_processes(zone_id=zone_id)
     total = len(all_agents)
     page = all_agents[offset : offset + limit]
     return AgentListResponse(
         agents=[
             AgentListItem(
-                agent_id=a.agent_id,
+                agent_id=a.pid,
                 owner_id=a.owner_id,
                 zone_id=a.zone_id,
                 name=a.name,
-                state=a.state,
+                state=str(a.state),
                 generation=a.generation,
             )
             for a in page
@@ -251,37 +259,29 @@ async def list_agents(
 async def get_agent_status(
     agent_id: str,
     auth_result: dict = Depends(_get_require_auth()),
-    registry: Any = Depends(_get_async_agent_registry),
+    process_table: Any = Depends(_get_process_table),
 ) -> AgentStatusResponse:
     """Get computed status for an agent."""
     _authorize_agent_access(auth_result, agent_id, "read status of")
-    status = await registry.get_status(agent_id)
-    if status is None:
+    desc = process_table.get(agent_id)
+    if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
+    last_hb = (
+        desc.external_info.last_heartbeat
+        if desc.external_info and desc.external_info.last_heartbeat
+        else None
+    )
+
     return AgentStatusResponse(
-        phase=str(status.phase),
-        observed_generation=status.observed_generation,
-        conditions=[
-            AgentConditionModel(
-                type=c.type,
-                status=c.status,
-                reason=c.reason,
-                message=c.message,
-                last_transition=c.last_transition.isoformat(),
-                observed_generation=c.observed_generation,
-            )
-            for c in status.conditions
-        ],
-        resource_usage=AgentResourceUsageModel(
-            tokens_used=status.resource_usage.tokens_used,
-            storage_used_mb=status.resource_usage.storage_used_mb,
-            context_usage_pct=status.resource_usage.context_usage_pct,
-        ),
-        last_heartbeat=status.last_heartbeat.isoformat() if status.last_heartbeat else None,
-        last_activity=status.last_activity.isoformat() if status.last_activity else None,
-        inbox_depth=status.inbox_depth,
-        context_usage_pct=status.context_usage_pct,
+        phase=str(desc.state),
+        observed_generation=desc.generation,
+        conditions=[],
+        resource_usage=AgentResourceUsageModel(),
+        last_heartbeat=last_hb.isoformat() if last_hb else None,
+        last_activity=desc.updated_at.isoformat(),
+        inbox_depth=0,
+        context_usage_pct=0.0,
     )
 
 
@@ -298,46 +298,46 @@ async def set_agent_spec(
     agent_id: str,
     body: AgentSpecRequest,
     auth_result: dict = Depends(_get_require_auth()),
-    registry: Any = Depends(_get_async_agent_registry),
+    process_table: Any = Depends(_get_process_table),
+    vfs: Any = Depends(_get_vfs),
 ) -> AgentSpecResponse:
     """Set the desired state spec for an agent."""
     _authorize_agent_access(auth_result, agent_id, "set spec for")
-    from nexus.contracts.agent_types import AgentResources, AgentSpec, QoSClass
 
+    desc = process_table.get(agent_id)
+    if desc is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    import json as _json
+
+    from nexus.contracts.types import parse_operation_context
+
+    spec_data = body.model_dump()
+    # Increment spec_generation
+    spec_path = f"/{desc.zone_id}/agents/{agent_id}/settings.json"
+    existing_gen = 0
     try:
-        qos = QoSClass(body.qos_class)
-    except ValueError:
-        valid = [e.value for e in QoSClass]
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid qos_class {body.qos_class!r}. Valid: {', '.join(valid)}",
-        ) from None
+        ctx = parse_operation_context(None)
+        raw = await vfs.sys_read(spec_path, context=ctx)
+        if raw:
+            existing = _json.loads(raw if isinstance(raw, str) else raw.decode())
+            existing_gen = existing.get("spec_generation", 0)
+    except Exception:
+        pass
+    spec_data["spec_generation"] = existing_gen + 1
 
-    spec = AgentSpec(
+    ctx = parse_operation_context(None)
+    await vfs.sys_write(spec_path, _json.dumps(spec_data).encode(), context=ctx)
+
+    return AgentSpecResponse(
         agent_type=body.agent_type,
-        capabilities=frozenset(body.capabilities),
-        resource_requests=AgentResources(
-            token_budget=body.resource_requests.token_budget,
-            token_request=body.resource_requests.token_request,
-            storage_limit_mb=body.resource_requests.storage_limit_mb,
-            context_limit=body.resource_requests.context_limit,
-        ),
-        resource_limits=AgentResources(
-            token_budget=body.resource_limits.token_budget,
-            token_request=body.resource_limits.token_request,
-            storage_limit_mb=body.resource_limits.storage_limit_mb,
-            context_limit=body.resource_limits.context_limit,
-        ),
-        qos_class=qos,
+        capabilities=sorted(body.capabilities),
+        resource_requests=body.resource_requests,
+        resource_limits=body.resource_limits,
+        qos_class=body.qos_class,
         zone_affinity=body.zone_affinity,
+        spec_generation=spec_data["spec_generation"],
     )
-
-    try:
-        stored = await registry.set_spec(agent_id, spec)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    return _spec_to_response(stored)
 
 
 @router.get(
@@ -349,15 +349,37 @@ async def set_agent_spec(
 async def get_agent_spec(
     agent_id: str,
     auth_result: dict = Depends(_get_require_auth()),
-    registry: Any = Depends(_get_async_agent_registry),
+    process_table: Any = Depends(_get_process_table),
+    vfs: Any = Depends(_get_vfs),
 ) -> AgentSpecResponse:
     """Get the stored spec for an agent."""
     _authorize_agent_access(auth_result, agent_id, "read spec of")
-    stored = await registry.get_spec(agent_id)
-    if stored is None:
+
+    desc = process_table.get(agent_id)
+    if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec")
 
-    return _spec_to_response(stored)
+    import json as _json
+
+    from nexus.contracts.types import parse_operation_context
+
+    spec_path = f"/{desc.zone_id}/agents/{agent_id}/settings.json"
+    try:
+        ctx = parse_operation_context(None)
+        raw = await vfs.sys_read(spec_path, context=ctx)
+        data = _json.loads(raw if isinstance(raw, str) else raw.decode())
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec") from exc
+
+    return AgentSpecResponse(
+        agent_type=data.get("agent_type", "unknown"),
+        capabilities=sorted(data.get("capabilities", [])),
+        resource_requests=AgentResourcesModel(**data.get("resource_requests", {})),
+        resource_limits=AgentResourcesModel(**data.get("resource_limits", {})),
+        qos_class=data.get("qos_class", "standard"),
+        zone_affinity=data.get("zone_affinity"),
+        spec_generation=data.get("spec_generation", 0),
+    )
 
 
 # ---------------------------------------------------------------------------

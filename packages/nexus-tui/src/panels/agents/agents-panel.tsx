@@ -26,10 +26,10 @@ import { focusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
 const ALL_TABS: readonly TabDef<AgentTab>[] = [
-  { id: "status", label: "Status", brick: "agent_registry" },
+  { id: "status", label: "Status", brick: "agent_runtime" },
   { id: "delegations", label: "Delegations", brick: "delegation" },
   { id: "inbox", label: "Inbox", brick: "ipc" },
-  { id: "trajectories", label: "Trajectories", brick: "agent_registry" },
+  { id: "trajectories", label: "Trajectories", brick: "agent_runtime" },
 ];
 const TAB_LABELS: Readonly<Record<AgentTab, string>> = {
   status: "Status",

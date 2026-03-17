@@ -5,7 +5,6 @@ Public API
 - ``ProxyBrick``           — base proxy (subclass for custom protocols)
 - ``ProxyVFSBrick``        — proxy for VFSOperations protocol
 - ``ProxySchedulerBrick``  — proxy for SchedulerProtocol
-- ``ProxyAgentRegistryBrick`` — proxy for AgentRegistryProtocol
 - ``ProxyBrickConfig``     — immutable configuration dataclass
 - ``create_proxy_brick()`` — convenience factory
 
@@ -19,7 +18,6 @@ Errors
 """
 
 from nexus.proxy.brick import (
-    ProxyAgentRegistryBrick,
     ProxyBrick,
     ProxySchedulerBrick,
     ProxyVFSBrick,
@@ -40,7 +38,6 @@ __all__ = [
     "ProxyBrick",
     "ProxyVFSBrick",
     "ProxySchedulerBrick",
-    "ProxyAgentRegistryBrick",
     "ProxyBrickConfig",
     "ProxyError",
     "OfflineQueuedError",
@@ -58,7 +55,6 @@ __all__ = [
 _PROTOCOL_MAP: dict[str, type[ProxyBrick]] = {
     "vfs": ProxyVFSBrick,
     "scheduler": ProxySchedulerBrick,
-    "agent_registry": ProxyAgentRegistryBrick,
 }
 
 
@@ -71,7 +67,7 @@ def create_proxy_brick(
     Parameters
     ----------
     protocol:
-        One of ``"vfs"``, ``"scheduler"``, ``"agent_registry"``.
+        One of ``"vfs"``, ``"scheduler"``.
     config:
         Proxy configuration.
 

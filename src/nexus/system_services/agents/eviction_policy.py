@@ -7,12 +7,11 @@ under resource pressure. Includes:
   preemption filtering for agent-level preemption scenarios.
 """
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from datetime import datetime
+from typing import Protocol, runtime_checkable
 
-from nexus.contracts.qos import EVICTION_ORDER, EvictionContext
-
-if TYPE_CHECKING:
-    from nexus.contracts.agent_types import AgentRecord
+from nexus.contracts.process_types import ProcessDescriptor
+from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, QoSClass
 
 
 @runtime_checkable
@@ -26,10 +25,10 @@ class EvictionPolicy(Protocol):
 
     def select_candidates(
         self,
-        agents: "list[AgentRecord]",
+        agents: list[ProcessDescriptor],
         batch_size: int,
         context: EvictionContext | None = None,
-    ) -> "list[AgentRecord]":
+    ) -> list[ProcessDescriptor]:
         """Select which agents to evict from the candidates list.
 
         Args:
@@ -53,10 +52,10 @@ class LRUEvictionPolicy:
 
     def select_candidates(
         self,
-        agents: "list[AgentRecord]",
+        agents: list[ProcessDescriptor],
         batch_size: int,
         context: EvictionContext | None = None,  # noqa: ARG002
-    ) -> "list[AgentRecord]":
+    ) -> list[ProcessDescriptor]:
         """Select least-recently-used agents for eviction.
 
         Args:
@@ -83,10 +82,10 @@ class QoSEvictionPolicy:
 
     def select_candidates(
         self,
-        agents: "list[AgentRecord]",
+        agents: list[ProcessDescriptor],
         batch_size: int,
         context: EvictionContext | None = None,
-    ) -> "list[AgentRecord]":
+    ) -> list[ProcessDescriptor]:
         """Select agents for eviction with QoS-aware ordering.
 
         Args:
@@ -99,24 +98,33 @@ class QoSEvictionPolicy:
         Returns:
             List of agents to evict (up to batch_size).
         """
+
+        def _eviction_class(p: ProcessDescriptor) -> QoSClass:
+            raw = p.labels.get("eviction_class", "standard")
+            try:
+                return QoSClass(raw)
+            except ValueError:
+                return QoSClass.STANDARD
+
+        def _heartbeat(p: ProcessDescriptor) -> datetime | None:
+            if p.external_info is not None:
+                return p.external_info.last_heartbeat
+            return p.updated_at
+
         # Filter for preemption: only evict agents below the requester's QoS
         if context is not None and context.requesting_agent_qos is not None:
             requester_priority = EVICTION_ORDER.get(context.requesting_agent_qos, 1)
             candidates = [
-                a
-                for a in agents
-                if EVICTION_ORDER.get(a.qos.eviction_class, 1) < requester_priority
+                a for a in agents if EVICTION_ORDER.get(_eviction_class(a), 1) < requester_priority
             ]
         else:
-            # Input is typically pre-sorted by DB query, but re-sort for safety
-            # when called from non-DB contexts (e.g., unit tests with unsorted input).
-            candidates = agents  # no copy needed — input is a fresh list from the registry
+            candidates = agents
 
-        # Sort by (eviction_priority ASC, last_heartbeat ASC with None first)
+        # Sort by (eviction_priority ASC, heartbeat ASC with None first)
         candidates.sort(
             key=lambda a: (
-                EVICTION_ORDER.get(a.qos.eviction_class, 1),
-                (0 if a.last_heartbeat is None else 1, a.last_heartbeat),
+                EVICTION_ORDER.get(_eviction_class(a), 1),
+                (0 if _heartbeat(a) is None else 1, _heartbeat(a)),
             )
         )
 

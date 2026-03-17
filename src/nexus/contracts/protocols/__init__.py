@@ -11,7 +11,6 @@ because they are tier-neutral interface definitions consumed by bricks,
 services, and the kernel alike.
 
 Storage Affinity (per data-storage-matrix.md):
-    - AgentRegistryProtocol  -> RecordStore (relational agent identity)
     - NamespaceManagerProtocol -> RecordStore + CacheStore (ReBAC views)
     - SchedulerProtocol      -> CacheStore or RecordStore (work queue)
 
@@ -21,7 +20,6 @@ References:
 """
 
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
-from nexus.contracts.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.contracts.protocols.auth import APIKeyCreatorProtocol
 from nexus.contracts.protocols.brick_lifecycle import (
     BrickReconcileOutcome,
@@ -59,8 +57,6 @@ from nexus.contracts.protocols.write_back import WriteBackProtocol
 
 __all__ = [
     "APIKeyCreatorProtocol",
-    "AgentInfo",
-    "AgentRegistryProtocol",
     "AgentRequest",
     "BrickReconcileOutcome",
     "ChunkedUploadProtocol",

@@ -113,7 +113,7 @@ class TestWarmupContext:
         ctx = WarmupContext(
             agent_id="agent-1",
             agent_record={"fake": "record"},
-            agent_registry={"fake": "registry"},
+            process_table={"fake": "registry"},
         )
         assert ctx.agent_id == "agent-1"
         assert ctx.namespace_manager is None
@@ -125,7 +125,7 @@ class TestWarmupContext:
         ctx = WarmupContext(
             agent_id="agent-1",
             agent_record={"fake": "record"},
-            agent_registry={"fake": "registry"},
+            process_table={"fake": "registry"},
             namespace_manager="ns_mgr",
             enabled_bricks=frozenset({"search", "pay"}),
             cache_store="cache",
@@ -140,7 +140,7 @@ class TestWarmupContext:
         ctx = WarmupContext(
             agent_id="agent-1",
             agent_record={"fake": "record"},
-            agent_registry={"fake": "registry"},
+            process_table={"fake": "registry"},
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             ctx.agent_id = "mutated"

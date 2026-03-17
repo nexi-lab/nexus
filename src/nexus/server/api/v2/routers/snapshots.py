@@ -95,7 +95,10 @@ async def get_snapshot_context(request: Request) -> tuple[Any, str, str | None]:
     if nexus_fs is None:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
-    snapshot_service = getattr(nexus_fs, "_snapshot_service", None)
+    # Check app.state first (wired by lifespan), then fall back to nexus_fs attr
+    snapshot_service = getattr(request.app.state, "transactional_snapshot_service", None)
+    if snapshot_service is None:
+        snapshot_service = getattr(nexus_fs, "_snapshot_service", None)
     if snapshot_service is None:
         raise HTTPException(status_code=503, detail="Snapshot service not available")
 

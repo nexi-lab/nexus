@@ -71,6 +71,8 @@ def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
         size=entry.get("size", 0) if not is_dir else 0,
         modified_at=None,
         etag=entry.get("etag"),
+        mime_type=None,
+        zone_id=None,
     )
 
 

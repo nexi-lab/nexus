@@ -528,14 +528,6 @@ async def _register_vfs_hooks(
     else:
         logger.debug("[BOOT:BRICK] TaskWriteHook disabled by profile")
 
-    # ── TaskWriteHook (post-write: emit task lifecycle events) ─────────
-    from nexus.bricks.task_manager.write_hook import TaskWriteHook
-
-    _task_write_hook = TaskWriteHook()
-    dispatch.register_intercept_write(_task_write_hook)
-    hook_refs["task_write_hook"] = _task_write_hook
-    nx._task_write_hook = _task_write_hook
-
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.

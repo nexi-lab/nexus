@@ -37,9 +37,9 @@ export function TabBar({ tabs, activeTab }: TabBarProps): React.ReactNode {
             ) : (
               <span>
                 <span>{"  "}</span>
-                <span foregroundColor="#555555">{`${tab.shortcut}:`}</span>
-                <span foregroundColor="#777777">{tab.label}</span>
-                <span foregroundColor="#444444">{suffix}</span>
+                <span foregroundColor="#808080">{`${tab.shortcut}:`}</span>
+                <span foregroundColor="#aaaaaa">{tab.label}</span>
+                <span foregroundColor="#555555">{suffix}</span>
               </span>
             )}
           </text>

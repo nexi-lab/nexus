@@ -150,6 +150,7 @@ def _boot_independent_bricks(
     # === Manually-wired bricks (complex conditional logic) ===
 
     zoekt_pipe_consumer: Any = None  # Issue #810: DT_PIPE Zoekt consumer
+    task_dispatch_consumer: Any = None  # Task Manager: DT_PIPE lifecycle consumer
 
     # --- Search Brick Import Validation (Issue #1520) ---
     if _on("search"):
@@ -196,6 +197,23 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
     else:
         logger.debug("[BOOT:BRICK] Search brick disabled by profile")
+
+    # --- Task Manager Brick ---
+    if _on("task_manager"):
+        try:
+            from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
+
+            task_dispatch_consumer = TaskDispatchPipeConsumer(
+                acp_service=system.get("acp_service"),
+                process_table=system.get("process_table"),
+            )
+            # TaskManagerService and TaskWriteHook are registered in _register_vfs_hooks
+            # (needs NexusFS reference); consumer stored here for lifespan startup.
+            logger.debug("[BOOT:BRICK] TaskDispatchPipeConsumer created")
+        except Exception as exc:
+            logger.warning("[BOOT:BRICK] task_manager unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:BRICK] task_manager brick disabled by profile")
 
     # --- Wallet Provisioner (Issue #1210) ---
     wallet_provisioner: Any = None
@@ -578,6 +596,8 @@ def _boot_independent_bricks(
         "governance_response_service": governance_response_service,
         # DT_PIPE consumers (Issue #810)
         "zoekt_pipe_consumer": zoekt_pipe_consumer,
+        # Task Manager Brick
+        "task_dispatch_consumer": task_dispatch_consumer,
     }
 
     elapsed = time.perf_counter() - t0

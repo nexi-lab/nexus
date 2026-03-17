@@ -58,6 +58,7 @@ BRICK_A2A = "a2a"
 BRICK_DISCOVERY = "discovery"
 BRICK_MCP = "mcp"
 BRICK_MEMORY = "memory"
+BRICK_TASK_MANAGER = "task_manager"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -86,6 +87,7 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_TASK_MANAGER,
         BRICK_FEDERATION,
     }
 )
@@ -171,6 +173,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_TASK_MANAGER,
         BRICK_OBSERVABILITY,
         BRICK_UPLOADS,
         BRICK_RESILIENCY,

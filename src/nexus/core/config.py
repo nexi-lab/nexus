@@ -324,6 +324,9 @@ class BrickServices:
     # --- Search Brick (Issue #810) ---
     zoekt_pipe_consumer: Any = None  # DT_PIPE consumer for Zoekt index notifications
 
+    # --- Task Manager Brick ---
+    task_dispatch_consumer: Any = None  # TaskDispatchPipeConsumer (DT_PIPE lifecycle signals)
+
     # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
     parse_fn: Any = None  # Callable for parsing files (ParsersBrick)
     content_cache: Any = None  # ContentCache instance

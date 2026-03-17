@@ -599,6 +599,28 @@ def _register_vfs_hooks(nx: "NexusFS", *, permission_checker: Any = None) -> Non
             read_tracker_fn=getattr(nx, "_record_read_if_tracking", None),
         )
     )
+    # ── TaskWriteHook + TaskAgentResolver (task lifecycle VFS hooks) ──────────
+    _task_consumer = getattr(nx._brick_services, "task_dispatch_consumer", None)
+    if _task_consumer is not None:
+        try:
+            from nexus.bricks.task_manager.service import TaskManagerService
+            from nexus.bricks.task_manager.task_agent_resolver import TaskAgentResolver
+            from nexus.bricks.task_manager.write_hook import TaskWriteHook
+
+            _task_svc = TaskManagerService(nexus_fs=nx)
+            _task_write_hook = TaskWriteHook()
+            _task_write_hook.register_handler(_task_consumer)
+            _task_consumer.set_task_service(_task_svc)
+
+            dispatch.register_intercept_write(_task_write_hook)
+            dispatch.register_intercept_write_batch(_task_write_hook)
+
+            _proc_table = getattr(nx._system_services, "process_table", None)
+            dispatch.register_resolver(TaskAgentResolver(_task_svc, _proc_table))
+
+            logger.debug("[BOOT:HOOK] TaskWriteHook + TaskAgentResolver registered")
+        except Exception as exc:
+            logger.warning("[BOOT:HOOK] task_manager hook wiring failed: %s", exc)
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).

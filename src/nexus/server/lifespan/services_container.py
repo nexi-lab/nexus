@@ -62,6 +62,7 @@ class LifespanServices:
 
     # --- DT_PIPE consumers (Issue #810) -----------------------------------
     zoekt_pipe_consumer: Any = None
+    task_dispatch_consumer: Any = None  # Task Manager DT_PIPE consumer
 
     # --- Brick services container ----------------------------------------
     brick_services: Any = None  # The whole BrickServices dataclass
@@ -121,6 +122,10 @@ class LifespanServices:
             pipe_manager=(getattr(_sys, "pipe_manager", None) if _sys else None),
             # Issue #810: DT_PIPE Zoekt consumer
             zoekt_pipe_consumer=(getattr(_brk, "zoekt_pipe_consumer", None) if _brk else None),
+            # Task Manager DT_PIPE consumer
+            task_dispatch_consumer=(
+                getattr(_brk, "task_dispatch_consumer", None) if _brk else None
+            ),
             # Issue #2195: EventLog + Scheduler
             event_log=(getattr(_sys, "event_log", None) if _sys else None),
             scheduler_service=(getattr(_sys, "scheduler_service", None) if _sys else None),

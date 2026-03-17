@@ -270,27 +270,6 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         """Return the full ``ServiceInfo`` envelope, or ``None``."""
         return self.get(name)
 
-    # -- bulk registration -------------------------------------------------
-
-    def register_many(
-        self,
-        services: dict[str, Any],
-        *,
-        is_remote: bool = False,
-    ) -> int:
-        """Register multiple services at once (skips ``None`` values).
-
-        Used by factory ``enlist_wired_services()`` for batch wiring.
-        Returns the number of services actually registered.
-        """
-        count = 0
-        for name, instance in services.items():
-            if instance is None:
-                continue
-            self.register_service(name, instance, is_remote=is_remote)
-            count += 1
-        return count
-
     # -- diagnostics -------------------------------------------------------
 
     def snapshot(self) -> list[dict[str, Any]]:

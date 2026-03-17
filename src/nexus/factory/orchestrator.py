@@ -200,6 +200,9 @@ def create_nexus_services(
         # constructed in NexusFS.__init__ — not injected via SystemServices.)
         # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
+        # Process table + ACP
+        process_table=system_dict.get("process_table"),
+        acp_service=system_dict.get("acp_service"),
     )
 
     brick_services = _BrickServices(

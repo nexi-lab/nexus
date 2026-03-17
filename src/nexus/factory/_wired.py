@@ -5,6 +5,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.core.config import BrickServices, KernelServices, WiredServices
 
@@ -290,6 +292,51 @@ async def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] AgentRPCService unavailable: %s", exc)
 
+    # --- ProcResolver (procfs virtual filesystem for ProcessTable) ---
+    _proc_table = getattr(system_services, "process_table", None)
+    if _proc_table is not None:
+        try:
+            from nexus.system_services.proc.proc_resolver import ProcResolver
+
+            _proc_resolver = ProcResolver(_proc_table)
+            nx._dispatch.register_resolver(_proc_resolver)
+            logger.debug("[BOOT:WIRED] ProcResolver registered")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] ProcResolver unavailable: %s", exc)
+
+    acp_rpc_service: Any = None
+    _acp_service = getattr(system_services, "acp_service", None)
+    if _acp_service is None:
+        # System tier didn't create AcpService — construct inline.
+        try:
+            from nexus.core.process_table import ProcessTable
+            from nexus.system_services.acp.service import AcpService
+
+            _acp_pt = _proc_table
+            if _acp_pt is None:
+                _acp_pt = ProcessTable(zone_id=ROOT_ZONE_ID)
+            _acp_service = AcpService(
+                process_table=_acp_pt,
+                zone_id=ROOT_ZONE_ID,
+            )
+            logger.debug("[BOOT:WIRED] AcpService created (inline)")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
+    if _acp_service is not None:
+        # Late-bind NexusFS for VFS-routed file I/O (``everything is a file``).
+        if hasattr(_acp_service, "bind_fs"):
+            _acp_service.bind_fs(nx)
+        # Late-bind PipeManager for DT_PIPE registration of agent stdio.
+        if hasattr(_acp_service, "bind_pipe_manager"):
+            _acp_service.bind_pipe_manager(getattr(nx, "_pipe_manager", None))
+        try:
+            from nexus.system_services.acp.acp_rpc_service import AcpRPCService
+
+            acp_rpc_service = AcpRPCService(acp_service=_acp_service)
+            logger.debug("[BOOT:WIRED] AcpRPCService created")
+        except Exception as exc:
+            logger.warning("[BOOT:WIRED] AcpRPCService unavailable: %s", exc)
+
     user_provisioning_service: Any = None
     try:
         from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
@@ -409,6 +456,7 @@ async def _boot_wired_services(
         operations_service=operations_service,
         workspace_rpc_service=workspace_rpc_service,
         agent_rpc_service=agent_rpc_service,
+        acp_rpc_service=acp_rpc_service,
         user_provisioning_service=user_provisioning_service,
         sandbox_rpc_service=sandbox_rpc_service,
         metadata_export_service=metadata_export_service,

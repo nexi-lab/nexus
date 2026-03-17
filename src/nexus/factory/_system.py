@@ -476,12 +476,8 @@ def _boot_system_services(
     try:
         from nexus.core.process_table import ProcessTable
 
-        process_table = ProcessTable(ctx.metadata_store, zone_id=ctx.zone_id or ROOT_ZONE_ID)
-        recovered = process_table.recover()
-        if recovered > 0:
-            logger.info("[BOOT:SYSTEM] ProcessTable recovered %d processes", recovered)
-        else:
-            logger.debug("[BOOT:SYSTEM] ProcessTable created")
+        process_table = ProcessTable(zone_id=ctx.zone_id or ROOT_ZONE_ID)
+        logger.debug("[BOOT:SYSTEM] ProcessTable created (in-memory)")
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ProcessTable unavailable: %s", exc)
 
@@ -505,6 +501,22 @@ def _boot_system_services(
             logger.debug("[BOOT:SYSTEM] EvictionManager created (QoS-aware)")
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
+
+    # --- ACP Service (Stateless coding agent CLI caller) ---
+    acp_service: Any = None
+    if not _on("acp"):
+        logger.debug("[BOOT:SYSTEM] AcpService disabled by profile")
+    elif process_table is not None:
+        try:
+            from nexus.system_services.acp.service import AcpService
+
+            acp_service = AcpService(
+                process_table=process_table,
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
+            )
+            logger.debug("[BOOT:SYSTEM] AcpService created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] AcpService unavailable: %s", exc)
 
     # --- Agent Runtime (Agent Process Engine, AGENT-PROCESS-ARCHITECTURE) ---
     agent_runtime: Any = None
@@ -558,6 +570,7 @@ def _boot_system_services(
         "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
+        "acp_service": acp_service,
         "agent_runtime": agent_runtime,
     }
 

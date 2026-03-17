@@ -63,6 +63,7 @@ class _ActiveAgent:
     proc: asyncio.subprocess.Process
     fd0_path: str  # /{zone}/proc/{pid}/fd/0  (stdin)
     fd1_path: str  # /{zone}/proc/{pid}/fd/1  (stdout)
+    fd2_path: str  # /{zone}/proc/{pid}/fd/2  (stderr)
 
 
 class AcpService:
@@ -159,8 +160,10 @@ class AcpService:
         user_prompt = prompt  # preserve original for history
 
         # Inject system prompt as first-message prefix (mirrors AionUi)
-        system_prompt = self.get_system_prompt(agent_id, zone_id) or config.default_system_prompt
-        enabled_skills = self.get_enabled_skills(agent_id, zone_id)
+        system_prompt = (
+            await self.get_system_prompt(agent_id, zone_id) or config.default_system_prompt
+        )
+        enabled_skills = await self.get_enabled_skills(agent_id, zone_id)
 
         if system_prompt or enabled_skills:
             rules_parts: list[str] = []
@@ -210,6 +213,7 @@ class AcpService:
         # DT_PIPE paths for VFS visibility
         fd0_path = f"/{zone_id}/proc/{pid}/fd/0"
         fd1_path = f"/{zone_id}/proc/{pid}/fd/1"
+        fd2_path = f"/{zone_id}/proc/{pid}/fd/2"
 
         # Run ACP session
         timed_out = False
@@ -231,15 +235,17 @@ class AcpService:
                 env=env,
             )
 
-            # Wrap in StdioPipe (kernel PipeBackend)
+            # Wrap in StdioPipe (kernel PipeBackend) — all three fds
             stdin_pipe = StdioPipe(reader=None, writer=proc.stdin)
             stdout_pipe = StdioPipe(reader=proc.stdout, writer=None)
+            stderr_pipe = StdioPipe(reader=proc.stderr, writer=None)
 
             # Register DT_PIPEs in VFS (graceful degradation)
             if self._pipe_manager is not None:
                 try:
                     self._pipe_manager.create_from_backend(fd0_path, stdin_pipe, owner_id=owner_id)
                     self._pipe_manager.create_from_backend(fd1_path, stdout_pipe, owner_id=owner_id)
+                    self._pipe_manager.create_from_backend(fd2_path, stderr_pipe, owner_id=owner_id)
                 except Exception as exc:
                     logger.debug("DT_PIPE registration failed (degraded): %s", exc)
 
@@ -247,14 +253,18 @@ class AcpService:
             conn = AcpConnection(
                 stdin_pipe=stdin_pipe,
                 stdout_pipe=stdout_pipe,
-                stderr_reader=proc.stderr,
+                stderr_pipe=stderr_pipe,
                 cwd=cwd,
                 fs_read=fs_read,
                 fs_write=fs_write,
             )
             conn.start()
             self._connections[pid] = _ActiveAgent(
-                conn=conn, proc=proc, fd0_path=fd0_path, fd1_path=fd1_path
+                conn=conn,
+                proc=proc,
+                fd0_path=fd0_path,
+                fd1_path=fd1_path,
+                fd2_path=fd2_path,
             )
 
             try:
@@ -346,10 +356,9 @@ class AcpService:
             with contextlib.suppress(ProcessLookupError):
                 active.proc.kill()
         if self._pipe_manager is not None:
-            with contextlib.suppress(Exception):
-                self._pipe_manager.destroy(active.fd0_path)
-            with contextlib.suppress(Exception):
-                self._pipe_manager.destroy(active.fd1_path)
+            for fd_path in (active.fd0_path, active.fd1_path, active.fd2_path):
+                with contextlib.suppress(Exception):
+                    self._pipe_manager.destroy(fd_path)
 
     def kill_agent(self, pid: str) -> ProcessDescriptor:
         """Kill a running agent connection and mark ZOMBIE in ProcessTable."""
@@ -381,83 +390,113 @@ class AcpService:
         logger.debug("ACP agent registered: %s (%s)", config.agent_id, config.command)
 
     # ------------------------------------------------------------------
-    # System prompt management (VFS-backed via metastore xattr)
+    # System prompt management (VFS-backed via sys_write/sys_read)
     # ------------------------------------------------------------------
 
-    _ACP_SYSTEM_PROMPT_KEY = "__acp_system_prompt__"
-    _ACP_ENABLED_SKILLS_KEY = "__acp_enabled_skills__"
     _ACP_RESULT_KEY = "__acp_result__"
 
     def _system_prompt_path(self, agent_id: str, zone_id: str) -> str:
         return f"/{zone_id}/agents/{agent_id}/SYSTEM.md"
 
-    def set_system_prompt(
+    async def set_system_prompt(
         self,
         agent_id: str,
         content: str,
         zone_id: str | None = None,
     ) -> None:
-        """Write a system prompt for *agent_id* to the VFS."""
+        """Write a system prompt for *agent_id* via VFS syscall."""
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
-        self._ensure_vfs_entry(path, zone_id, backend="acp")
-        self._metastore.set_file_metadata(path, self._ACP_SYSTEM_PROMPT_KEY, content)
+        if self._nexus_fs is not None:
+            await self._nexus_fs.sys_write(path, content.encode("utf-8"))
+        else:
+            self._ensure_vfs_entry(path, zone_id, backend="acp")
+            self._metastore.set_file_metadata(path, "__acp_system_prompt__", content)
         logger.debug("ACP system prompt set for %s (%d chars)", agent_id, len(content))
 
-    def get_system_prompt(
+    async def get_system_prompt(
         self,
         agent_id: str,
         zone_id: str | None = None,
     ) -> str | None:
-        """Read the system prompt for *agent_id* from the VFS."""
+        """Read the system prompt for *agent_id* via VFS syscall."""
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
-        result: str | None = self._metastore.get_file_metadata(path, self._ACP_SYSTEM_PROMPT_KEY)
-        return result
+        try:
+            if self._nexus_fs is not None:
+                data: bytes = await self._nexus_fs.sys_read(path)
+                return data.decode("utf-8", errors="replace") if data else None
+            else:
+                result: str | None = self._metastore.get_file_metadata(
+                    path, "__acp_system_prompt__"
+                )
+                return result
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
 
-    def delete_system_prompt(
+    async def delete_system_prompt(
         self,
         agent_id: str,
         zone_id: str | None = None,
     ) -> None:
-        """Remove the system prompt for *agent_id* from the VFS."""
+        """Remove the system prompt for *agent_id* via VFS syscall."""
         zone_id = zone_id or self._zone_id
         path = self._system_prompt_path(agent_id, zone_id)
-        with contextlib.suppress(Exception):
-            self._metastore.delete(path)
+        try:
+            if self._nexus_fs is not None:
+                await self._nexus_fs.sys_unlink(path)
+            else:
+                self._metastore.delete(path)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
-    # Enabled skills management (VFS-backed via metastore xattr)
+    # Enabled skills management (VFS-backed via sys_write/sys_read)
     # ------------------------------------------------------------------
 
     def _config_path(self, agent_id: str, zone_id: str) -> str:
         return f"/{zone_id}/agents/{agent_id}/config"
 
-    def set_enabled_skills(
+    async def set_enabled_skills(
         self,
         agent_id: str,
         skills: list[dict],
         zone_id: str | None = None,
     ) -> None:
-        """Store the enabled skills list for *agent_id* in the VFS."""
+        """Store the enabled skills list for *agent_id* via VFS syscall."""
         zone_id = zone_id or self._zone_id
         path = self._config_path(agent_id, zone_id)
-        self._ensure_vfs_entry(path, zone_id, backend="acp")
-        self._metastore.set_file_metadata(path, self._ACP_ENABLED_SKILLS_KEY, skills)
+        content = json.dumps(skills, ensure_ascii=False)
+        if self._nexus_fs is not None:
+            await self._nexus_fs.sys_write(path, content.encode("utf-8"))
+        else:
+            self._ensure_vfs_entry(path, zone_id, backend="acp")
+            self._metastore.set_file_metadata(path, "__acp_enabled_skills__", skills)
         logger.debug("ACP enabled_skills set for %s: %s", agent_id, skills)
 
-    def get_enabled_skills(
+    async def get_enabled_skills(
         self,
         agent_id: str,
         zone_id: str | None = None,
     ) -> list[dict] | None:
-        """Read the enabled skills list for *agent_id* from the VFS."""
+        """Read the enabled skills list for *agent_id* via VFS syscall."""
         zone_id = zone_id or self._zone_id
         path = self._config_path(agent_id, zone_id)
-        result: list[dict] | None = self._metastore.get_file_metadata(
-            path, self._ACP_ENABLED_SKILLS_KEY
-        )
-        return result
+        try:
+            if self._nexus_fs is not None:
+                data: bytes = await self._nexus_fs.sys_read(path)
+                return json.loads(data.decode("utf-8")) if data else None
+            else:
+                result: list[dict] | None = self._metastore.get_file_metadata(
+                    path, "__acp_enabled_skills__"
+                )
+                return result
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
 
     def get_call_history(
         self,

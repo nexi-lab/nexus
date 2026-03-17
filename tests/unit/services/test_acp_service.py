@@ -150,7 +150,11 @@ class TestActiveAgentDataclass:
         conn = MagicMock()
         proc = MagicMock()
         active = _ActiveAgent(
-            conn=conn, proc=proc, fd0_path="/root/proc/p1/fd/0", fd1_path="/root/proc/p1/fd/1"
+            conn=conn,
+            proc=proc,
+            fd0_path="/root/proc/p1/fd/0",
+            fd1_path="/root/proc/p1/fd/1",
+            fd2_path="/root/proc/p1/fd/2",
         )
         assert active.conn is conn
         assert active.proc is proc
@@ -180,6 +184,7 @@ class TestAcpServiceKillAgent:
             proc=mock_proc,
             fd0_path="/root/proc/pid-1/fd/0",
             fd1_path="/root/proc/pid-1/fd/1",
+            fd2_path="/root/proc/pid-1/fd/2",
         )
         svc._connections["pid-1"] = active
 
@@ -191,9 +196,10 @@ class TestAcpServiceKillAgent:
         # Verify subprocess killed
         mock_proc.kill.assert_called_once()
 
-        # Verify DT_PIPEs destroyed
+        # Verify DT_PIPEs destroyed (all 3 fds)
         assert "/root/proc/pid-1/fd/0" in pm.destroyed
         assert "/root/proc/pid-1/fd/1" in pm.destroyed
+        assert "/root/proc/pid-1/fd/2" in pm.destroyed
 
     def test_kill_agent_without_pipe_manager(self):
         """Graceful degradation — no PipeManager bound."""
@@ -211,6 +217,7 @@ class TestAcpServiceKillAgent:
             proc=mock_proc,
             fd0_path="/root/proc/pid-1/fd/0",
             fd1_path="/root/proc/pid-1/fd/1",
+            fd2_path="/root/proc/pid-1/fd/2",
         )
         svc._connections["pid-1"] = active
         pt._procs["pid-1"] = MockProcessDescriptor(pid="pid-1")
@@ -240,12 +247,13 @@ class TestAcpServiceCloseAll:
                 proc=mock_proc,
                 fd0_path=f"/root/proc/pid-{i}/fd/0",
                 fd1_path=f"/root/proc/pid-{i}/fd/1",
+                fd2_path=f"/root/proc/pid-{i}/fd/2",
             )
 
         svc.close_all()
 
         assert len(svc._connections) == 0
-        assert len(pm.destroyed) == 6  # 2 pipes per agent × 3 agents
+        assert len(pm.destroyed) == 9  # 3 pipes per agent × 3 agents
 
 
 class TestAcpServiceCallAgent:

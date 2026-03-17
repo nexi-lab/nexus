@@ -271,26 +271,26 @@ class TestAgentLoopLifecycle:
     async def test_stderr_collection(self):
         stdin_pipe = MockPipeBackend()
         stdout_pipe = MockPipeBackend()
+        stderr_pipe = MockPipeBackend()
 
-        # Create a mock stderr reader
-        reader = asyncio.StreamReader()
-        reader.feed_data(b"error line 1\n")
-        reader.feed_data(b"error line 2\n")
-        reader.feed_eof()
+        # Inject stderr lines into the pipe
+        stderr_pipe.inject(b"error line 1\n")
+        stderr_pipe.inject(b"error line 2\n")
 
         agent = ConcreteAgentLoop(
             stdin_pipe=stdin_pipe,
             stdout_pipe=stdout_pipe,
-            stderr_reader=reader,
+            stderr_pipe=stderr_pipe,
         )
         agent.start()
 
-        # Wait for stderr collector to finish
+        # Wait for stderr collector to read lines
         await asyncio.sleep(0.1)
 
         assert "error line 1" in agent.stderr_output
         assert "error line 2" in agent.stderr_output
 
+        stderr_pipe.signal_close()
         stdout_pipe.signal_close()
         await agent.disconnect()
 

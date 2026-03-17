@@ -198,6 +198,56 @@ class TestAcpConnectionDispatch:
             stdout.signal_close()
             await conn.disconnect()
 
+    @pytest.mark.asyncio
+    async def test_fs_read_without_vfs_returns_error(self, acp_conn):
+        """fs/read_text_file without VFS bound should error, not fall back to host open()."""
+        conn, stdin, stdout = acp_conn
+        # _fs_read is None by default — VFS not bound
+        conn.start()
+        try:
+            stdout.inject_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "fs/read_text_file",
+                    "params": {"path": "/some/file.txt"},
+                }
+            )
+            await asyncio.sleep(0.1)
+
+            resp = json.loads(stdin._written[-1].decode())
+            assert resp["id"] == 10
+            assert "error" in resp
+            assert resp["error"]["code"] == -32002
+            assert "VFS not available" in resp["error"]["message"]
+        finally:
+            stdout.signal_close()
+            await conn.disconnect()
+
+    @pytest.mark.asyncio
+    async def test_fs_write_without_vfs_returns_error(self, acp_conn):
+        """fs/write_text_file without VFS bound should error, not fall back to host open()."""
+        conn, stdin, stdout = acp_conn
+        conn.start()
+        try:
+            stdout.inject_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "fs/write_text_file",
+                    "params": {"path": "/some/file.txt", "content": "hello"},
+                }
+            )
+            await asyncio.sleep(0.1)
+
+            resp = json.loads(stdin._written[-1].decode())
+            assert resp["id"] == 11
+            assert "error" in resp
+            assert resp["error"]["code"] == -32002
+        finally:
+            stdout.signal_close()
+            await conn.disconnect()
+
 
 class TestAcpConnectionNotifications:
     """Test session/update notification accumulation."""

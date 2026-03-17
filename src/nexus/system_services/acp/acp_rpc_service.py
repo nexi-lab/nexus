@@ -117,7 +117,7 @@ class AcpRPCService:
         }
 
     @rpc_expose(description="Set system prompt for an ACP agent")
-    def acp_set_system_prompt(
+    async def acp_set_system_prompt(
         self,
         agent_id: str,
         content: str,
@@ -125,22 +125,22 @@ class AcpRPCService:
     ) -> dict:
         """Set the system prompt for a coding agent."""
         zone_id = self._zone_id(context)
-        self._acp.set_system_prompt(agent_id, content, zone_id=zone_id)
+        await self._acp.set_system_prompt(agent_id, content, zone_id=zone_id)
         return {"agent_id": agent_id, "length": len(content)}
 
     @rpc_expose(description="Get system prompt for an ACP agent")
-    def acp_get_system_prompt(
+    async def acp_get_system_prompt(
         self,
         agent_id: str,
         context: dict | None = None,
     ) -> dict:
         """Get the system prompt for a coding agent."""
         zone_id = self._zone_id(context)
-        prompt = self._acp.get_system_prompt(agent_id, zone_id=zone_id)
+        prompt = await self._acp.get_system_prompt(agent_id, zone_id=zone_id)
         return {"agent_id": agent_id, "content": prompt}
 
     @rpc_expose(description="Set enabled skills for an ACP agent")
-    def acp_set_enabled_skills(
+    async def acp_set_enabled_skills(
         self,
         agent_id: str,
         skills: list[dict],
@@ -148,18 +148,18 @@ class AcpRPCService:
     ) -> dict:
         """Set the enabled skills for a coding agent."""
         zone_id = self._zone_id(context)
-        self._acp.set_enabled_skills(agent_id, skills, zone_id=zone_id)
+        await self._acp.set_enabled_skills(agent_id, skills, zone_id=zone_id)
         return {"agent_id": agent_id, "skills": skills}
 
     @rpc_expose(description="Get enabled skills for an ACP agent")
-    def acp_get_enabled_skills(
+    async def acp_get_enabled_skills(
         self,
         agent_id: str,
         context: dict | None = None,
     ) -> dict:
         """Get the enabled skills for a coding agent."""
         zone_id = self._zone_id(context)
-        skills = self._acp.get_enabled_skills(agent_id, zone_id=zone_id)
+        skills = await self._acp.get_enabled_skills(agent_id, zone_id=zone_id)
         return {"agent_id": agent_id, "skills": skills}
 
     @rpc_expose(description="List ACP call history")

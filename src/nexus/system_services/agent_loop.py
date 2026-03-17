@@ -60,12 +60,12 @@ class AgentLoop(ABC):
         *,
         stdin_pipe: PipeBackend,
         stdout_pipe: PipeBackend,
-        stderr_reader: asyncio.StreamReader | None = None,
+        stderr_pipe: PipeBackend | None = None,
         cwd: str | None = None,
     ) -> None:
         self._stdin = stdin_pipe
         self._stdout = stdout_pipe
-        self._stderr_reader = stderr_reader
+        self._stderr = stderr_pipe
         self._cwd = cwd
         self._next_id: int = 1
         self._pending: dict[int, asyncio.Future[Any]] = {}
@@ -80,7 +80,7 @@ class AgentLoop(ABC):
     def start(self) -> None:
         """Launch reader and stderr collector tasks."""
         self._reader_task = asyncio.create_task(self._reader_loop(), name="agent-reader")
-        if self._stderr_reader is not None:
+        if self._stderr is not None:
             self._stderr_task = asyncio.create_task(self._stderr_collector(), name="agent-stderr")
 
     async def disconnect(self) -> None:
@@ -94,6 +94,9 @@ class AgentLoop(ABC):
             self._stdin.close()
         with contextlib.suppress(Exception):
             self._stdout.close()
+        if self._stderr is not None:
+            with contextlib.suppress(Exception):
+                self._stderr.close()
 
         # Fail all pending futures
         for fut in self._pending.values():
@@ -190,17 +193,17 @@ class AgentLoop(ABC):
                     fut.set_exception(ConnectionError("Agent reader loop ended"))
 
     async def _stderr_collector(self) -> None:
-        """Collect stderr output for diagnostics."""
-        assert self._stderr_reader is not None
+        """Collect stderr output via PipeBackend (DT_PIPE at fd/2)."""
+        assert self._stderr is not None
         try:
             while True:
-                line = await self._stderr_reader.readline()
-                if not line:
-                    break
-                text = line.decode("utf-8", errors="replace").rstrip()
+                data = await self._stderr.read()
+                text = data.decode("utf-8", errors="replace").rstrip()
                 if text:
                     self._stderr_lines.append(text)
                     logger.debug("Agent stderr: %s", text[:500])
+        except PipeClosedError:
+            pass
         except asyncio.CancelledError:
             pass
         except Exception:

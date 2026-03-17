@@ -64,7 +64,7 @@ class AcpConnection(AgentLoop):
         *,
         stdin_pipe: Any,
         stdout_pipe: Any,
-        stderr_reader: asyncio.StreamReader | None = None,
+        stderr_pipe: Any | None = None,
         cwd: str | None = None,
         fs_read: FsReadFn | None = None,
         fs_write: FsWriteFn | None = None,
@@ -72,7 +72,7 @@ class AcpConnection(AgentLoop):
         super().__init__(
             stdin_pipe=stdin_pipe,
             stdout_pipe=stdout_pipe,
-            stderr_reader=stderr_reader,
+            stderr_pipe=stderr_pipe,
             cwd=cwd,
         )
         self._session_id: str | None = None
@@ -316,22 +316,19 @@ class AcpConnection(AgentLoop):
         try:
             if method == "fs/read_text_file":
                 path = self._resolve_path(params.get("path", ""))
-                if self._fs_read is not None:
-                    content = await self._fs_read(path)
-                else:
-                    with open(path, encoding="utf-8", errors="replace") as f:
-                        content = f.read()
+                if self._fs_read is None:
+                    self._respond_error(msg_id, "VFS not available: NexusFS not bound", code=-32002)
+                    return
+                content = await self._fs_read(path)
                 self._respond(msg_id, {"content": content})
 
             elif method == "fs/write_text_file":
                 path = self._resolve_path(params.get("path", ""))
                 content = params.get("content", "")
-                if self._fs_write is not None:
-                    await self._fs_write(path, content)
-                else:
-                    os.makedirs(os.path.dirname(path), exist_ok=True)
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write(content)
+                if self._fs_write is None:
+                    self._respond_error(msg_id, "VFS not available: NexusFS not bound", code=-32002)
+                    return
+                await self._fs_write(path, content)
                 self._respond(msg_id, None)
 
         except Exception as exc:

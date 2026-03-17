@@ -370,6 +370,10 @@ def create_async_files_router(
             None,
             description="Write consistency mode: 'sync' (default, strong) or 'async' (eventual)",
         ),
+        transaction_id: str | None = Query(
+            None,
+            description="Active transaction ID to track this write in (from snapshots API)",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -384,6 +388,17 @@ def create_async_files_router(
         """
         try:
             fs = await _get_fs()
+
+            # Pre-register path with active transaction so the NexusFS write
+            # path's is_tracked() check finds it and calls track_write().
+            if transaction_id:
+                _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
+                if _ss is not None:
+                    _ss.validate_path_available(transaction_id, request.path)
+                    # Track path in the in-memory registry so is_tracked() returns
+                    # this transaction_id during the subsequent fs.write() call.
+                    _ss._registry.track_path(transaction_id, request.path)
+
             # Decode content based on encoding
             if request.encoding == "base64":
                 content = base64.b64decode(request.content)
@@ -523,11 +538,23 @@ def create_async_files_router(
     @router.delete("/delete", response_model=DeleteResponse)
     async def delete_file(
         path: str = Query(..., description="Path to delete"),
+        transaction_id: str | None = Query(
+            None,
+            description="Active transaction ID to track this delete in",
+        ),
         context: Any = Depends(get_context),
     ) -> DeleteResponse:
         """Delete a file."""
         try:
             fs = await _get_fs()
+
+            # Pre-register path with active transaction for delete tracking
+            if transaction_id:
+                _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
+                if _ss is not None:
+                    _ss.validate_path_available(transaction_id, path)
+                    _ss._registry.track_path(transaction_id, path)
+
             await fs.sys_unlink(path, context=context)
             return DeleteResponse(deleted=True, path=path)
 

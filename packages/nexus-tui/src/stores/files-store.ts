@@ -482,7 +482,11 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   deleteFile: async (path, client) => {
     set({ error: null });
     try {
-      await client.delete(`/api/v2/files/delete?path=${encodeURIComponent(path)}`);
+      // Pass active transaction ID if one exists
+      const { useVersionsStore } = await import("./versions-store.js");
+      const activeTxn = useVersionsStore.getState().selectedTransaction;
+      const txnParam = activeTxn?.status === "active" ? `&transaction_id=${activeTxn.transaction_id}` : "";
+      await client.delete(`/api/v2/files/delete?path=${encodeURIComponent(path)}${txnParam}`);
       const parentPath = path.split("/").slice(0, -1).join("/") || "/";
       get().invalidate(parentPath);
       await get().fetchFiles(parentPath, client);

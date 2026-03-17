@@ -13,6 +13,7 @@ import type { TextareaRenderable } from "@opentui/core";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useFilesStore } from "../../stores/files-store.js";
+import { useVersionsStore } from "../../stores/versions-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
 
 interface FileEditorProps {
@@ -61,14 +62,17 @@ export function FileEditor({ path, onClose }: FileEditorProps): React.ReactNode 
     }
   }, [loading, initialContent]);
 
-  // Save file
+  // Save file (with optional transaction tracking)
   const handleSave = useCallback(async () => {
     if (!client || saving) return;
     const content = textareaRef.current?.plainText ?? "";
     setSaving(true);
     setError(null);
     try {
-      await client.post("/api/v2/files/write", {
+      // If an active transaction exists, pass its ID so the write is tracked
+      const activeTxn = useVersionsStore.getState().selectedTransaction;
+      const txnParam = activeTxn?.status === "active" ? `&transaction_id=${activeTxn.transaction_id}` : "";
+      await client.post(`/api/v2/files/write?${txnParam}`, {
         path,
         content,
       });
@@ -103,6 +107,8 @@ export function FileEditor({ path, onClose }: FileEditorProps): React.ReactNode 
   }
 
   const fileName = path.split("/").pop() ?? path;
+  const activeTxn = useVersionsStore((s) => s.selectedTransaction);
+  const hasTxn = activeTxn?.status === "active";
 
   return (
     <box height="100%" width="100%" flexDirection="column">
@@ -113,6 +119,7 @@ export function FileEditor({ path, onClose }: FileEditorProps): React.ReactNode 
           <span foregroundColor="#666666">{` — ${path}`}</span>
           {dirty ? <span foregroundColor="#ffaa00">{" [modified]"}</span> : ""}
           {saving ? <span foregroundColor="#ffaa00">{" saving..."}</span> : ""}
+          {hasTxn ? <span foregroundColor="#4dff88">{` [txn:${activeTxn!.transaction_id.slice(0, 8)}]`}</span> : ""}
         </text>
       </box>
 

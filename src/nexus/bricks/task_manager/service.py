@@ -67,7 +67,18 @@ class TaskManagerService:
 
     def __init__(self, nexus_fs: Any) -> None:
         self._fs = nexus_fs
-        self._ensure_dirs()
+
+    async def initialize(self) -> None:
+        """Create base directory structure in NexusFS."""
+        for d in (
+            "/.tasks",
+            "/.tasks/missions",
+            "/.tasks/tasks",
+            "/.tasks/artifacts",
+            "/.tasks/comments",
+            "/.tasks/audit",
+        ):
+            await self._fs.sys_mkdir(d, parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Path helpers
@@ -93,18 +104,6 @@ class TaskManagerService:
     def _artifact_path(artifact_id: str) -> str:
         return f"/.tasks/artifacts/{artifact_id}.json"
 
-    # ------------------------------------------------------------------
-    # I/O helpers
-    # ------------------------------------------------------------------
-
-    def _read_json(self, path: str) -> dict[str, Any]:
-        raw = self._fs.sys_read(path)
-        result: dict[str, Any] = json.loads(raw)
-        return result
-
-    def _write_json(self, path: str, data: dict[str, Any]) -> None:
-        self._fs.sys_write(path, json.dumps(data, default=str))
-
     @staticmethod
     def _audit_dir(task_id: str) -> str:
         return f"/.tasks/audit/{task_id}"
@@ -113,16 +112,17 @@ class TaskManagerService:
     def _audit_path(task_id: str, entry_id: str) -> str:
         return f"/.tasks/audit/{task_id}/{entry_id}.json"
 
-    def _ensure_dirs(self) -> None:
-        for d in (
-            "/.tasks",
-            "/.tasks/missions",
-            "/.tasks/tasks",
-            "/.tasks/artifacts",
-            "/.tasks/comments",
-            "/.tasks/audit",
-        ):
-            self._fs.sys_mkdir(d, parents=True, exist_ok=True)
+    # ------------------------------------------------------------------
+    # I/O helpers
+    # ------------------------------------------------------------------
+
+    async def _read_json(self, path: str) -> dict[str, Any]:
+        raw = await self._fs.sys_read(path)
+        result: dict[str, Any] = json.loads(raw)
+        return result
+
+    async def _write_json(self, path: str, data: dict[str, Any]) -> None:
+        await self._fs.sys_write(path, json.dumps(data, default=str))
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()
@@ -131,7 +131,7 @@ class TaskManagerService:
     # Copilot methods
     # ------------------------------------------------------------------
 
-    def create_mission(
+    async def create_mission(
         self,
         title: str,
         context_summary: str | None = None,
@@ -149,14 +149,14 @@ class TaskManagerService:
             "created_at": now,
             "updated_at": now,
         }
-        self._write_json(self._mission_path(mission_id), doc)
+        await self._write_json(self._mission_path(mission_id), doc)
         return doc
 
-    def update_mission(self, mission_id: str, **fields: Any) -> dict[str, Any]:
+    async def update_mission(self, mission_id: str, **fields: Any) -> dict[str, Any]:
         """Update mission fields (status, conclusion, archived)."""
         path = self._mission_path(mission_id)
         try:
-            doc = self._read_json(path)
+            doc = await self._read_json(path)
         except Exception as exc:
             raise NotFoundError(f"Mission {mission_id} not found") from exc
 
@@ -172,10 +172,10 @@ class TaskManagerService:
             doc[key] = value
 
         doc["updated_at"] = self._now()
-        self._write_json(path, doc)
+        await self._write_json(path, doc)
         return doc
 
-    def create_task(
+    async def create_task(
         self,
         mission_id: str,
         instruction: str,
@@ -190,14 +190,14 @@ class TaskManagerService:
         """Create a new task within a mission."""
         # Verify mission exists; reopen if completed
         try:
-            mission = self._read_json(self._mission_path(mission_id))
+            mission = await self._read_json(self._mission_path(mission_id))
         except Exception as exc:
             raise NotFoundError(f"Mission {mission_id} not found") from exc
 
         if mission.get("status") in ("completed", "partial_complete"):
             mission["status"] = "running"
             mission["updated_at"] = self._now()
-            self._write_json(self._mission_path(mission_id), mission)
+            await self._write_json(self._mission_path(mission_id), mission)
             logger.info("[TASK-MGR] Mission %s reopened (new task added)", mission_id)
 
         task_id = uuid.uuid4().hex
@@ -218,10 +218,10 @@ class TaskManagerService:
             "started_at": None,
             "completed_at": None,
         }
-        self._write_json(self._task_path(task_id), doc)
+        await self._write_json(self._task_path(task_id), doc)
         return doc
 
-    def update_task(self, task_id: str, **fields: Any) -> dict[str, Any]:
+    async def update_task(self, task_id: str, **fields: Any) -> dict[str, Any]:
         """Update task fields — enforces state machine for status changes."""
         allowed = {"status", "output_refs"}
         for key in fields:
@@ -230,7 +230,7 @@ class TaskManagerService:
 
         path = self._task_path(task_id)
         try:
-            doc = self._read_json(path)
+            doc = await self._read_json(path)
         except Exception as exc:
             raise NotFoundError(f"Task {task_id} not found") from exc
 
@@ -253,22 +253,22 @@ class TaskManagerService:
         if "output_refs" in fields:
             doc["output_refs"] = fields["output_refs"]
 
-        self._write_json(path, doc)
+        await self._write_json(path, doc)
 
         # Auto-complete mission when all its tasks are terminal
         if "status" in fields and fields["status"] in ("completed", "failed", "cancelled"):
-            self._maybe_complete_mission(doc.get("mission_id"))
+            await self._maybe_complete_mission(doc.get("mission_id"))
 
         return doc
 
-    def get_task(self, task_id: str) -> dict[str, Any]:
+    async def get_task(self, task_id: str) -> dict[str, Any]:
         """Get a single task by ID."""
         try:
-            return self._read_json(self._task_path(task_id))
+            return await self._read_json(self._task_path(task_id))
         except Exception as exc:
             raise NotFoundError(f"Task {task_id} not found") from exc
 
-    def create_comment(
+    async def create_comment(
         self,
         task_id: str,
         author: str,
@@ -280,10 +280,10 @@ class TaskManagerService:
             raise ValidationError(f"Invalid author '{author}'. Must be 'copilot' or 'worker'.")
 
         # Verify task exists
-        self.get_task(task_id)
+        await self.get_task(task_id)
 
         # Ensure per-task comment directory
-        self._fs.sys_mkdir(self._comment_dir(task_id), parents=True, exist_ok=True)
+        await self._fs.sys_mkdir(self._comment_dir(task_id), parents=True, exist_ok=True)
 
         comment_id = uuid.uuid4().hex
         doc: dict[str, Any] = {
@@ -294,27 +294,27 @@ class TaskManagerService:
             "artifact_refs": artifact_refs or [],
             "created_at": self._now(),
         }
-        self._write_json(self._comment_path(task_id, comment_id), doc)
+        await self._write_json(self._comment_path(task_id, comment_id), doc)
         return doc
 
-    def get_comments(self, task_id: str) -> list[dict[str, Any]]:
+    async def get_comments(self, task_id: str) -> list[dict[str, Any]]:
         """Get all comments for a task, ordered by created_at."""
         comment_dir = self._comment_dir(task_id)
-        if not self._fs.sys_is_directory(comment_dir):
+        if not await self._fs.sys_is_directory(comment_dir):
             return []
 
-        paths = self._fs.sys_readdir(comment_dir, recursive=False)
+        paths = await self._fs.sys_readdir(comment_dir, recursive=False)
         comments = []
         for p in paths:
             if p.endswith(".json"):
                 try:
-                    comments.append(self._read_json(p))
+                    comments.append(await self._read_json(p))
                 except Exception:
                     logger.warning("Failed to read comment at %s", p)
         comments.sort(key=lambda c: c.get("created_at", ""))
         return comments
 
-    def create_artifact(
+    async def create_artifact(
         self,
         type: str,
         uri: str,
@@ -339,16 +339,16 @@ class TaskManagerService:
             "size_bytes": size_bytes,
             "created_at": self._now(),
         }
-        self._write_json(self._artifact_path(artifact_id), doc)
+        await self._write_json(self._artifact_path(artifact_id), doc)
         return doc
 
     # ------------------------------------------------------------------
     # Dispatcher methods
     # ------------------------------------------------------------------
 
-    def list_dispatchable_tasks(self, worker_type: str | None = None) -> list[dict[str, Any]]:
+    async def list_dispatchable_tasks(self, worker_type: str | None = None) -> list[dict[str, Any]]:
         """List tasks with status=created whose blocked_by are all completed."""
-        all_tasks = self._list_all_tasks()
+        all_tasks = await self._list_all_tasks()
 
         # Build a lookup of task statuses for blocked_by resolution
         status_by_id = {t["id"]: t["status"] for t in all_tasks}
@@ -365,26 +365,28 @@ class TaskManagerService:
                 result.append(t)
         return result
 
-    def start_task(self, task_id: str) -> dict[str, Any]:
+    async def start_task(self, task_id: str) -> dict[str, Any]:
         """Dispatcher: created → running."""
-        return self.update_task(task_id, status="running")
+        return await self.update_task(task_id, status="running")
 
-    def complete_task(self, task_id: str, output_refs: list[str] | None = None) -> dict[str, Any]:
+    async def complete_task(
+        self, task_id: str, output_refs: list[str] | None = None
+    ) -> dict[str, Any]:
         """Worker: running → completed."""
         fields: dict[str, Any] = {"status": "completed"}
         if output_refs is not None:
             fields["output_refs"] = output_refs
-        return self.update_task(task_id, **fields)
+        return await self.update_task(task_id, **fields)
 
-    def fail_task(self, task_id: str) -> dict[str, Any]:
+    async def fail_task(self, task_id: str) -> dict[str, Any]:
         """Worker: running → failed."""
-        return self.update_task(task_id, status="failed")
+        return await self.update_task(task_id, status="failed")
 
     # ------------------------------------------------------------------
     # User methods (read-only)
     # ------------------------------------------------------------------
 
-    def list_missions(
+    async def list_missions(
         self,
         *,
         archived: bool = False,
@@ -394,15 +396,15 @@ class TaskManagerService:
     ) -> dict[str, Any]:
         """List missions with optional filters and pagination."""
         missions_dir = "/.tasks/missions"
-        if not self._fs.sys_is_directory(missions_dir):
+        if not await self._fs.sys_is_directory(missions_dir):
             return {"items": [], "total": 0, "page": page, "limit": limit}
 
-        paths = self._fs.sys_readdir(missions_dir, recursive=False)
+        paths = await self._fs.sys_readdir(missions_dir, recursive=False)
         missions = []
         for p in paths:
             if p.endswith(".json"):
                 try:
-                    m = self._read_json(p)
+                    m = await self._read_json(p)
                     if m.get("archived", False) != archived:
                         continue
                     if status and m.get("status") != status:
@@ -417,25 +419,25 @@ class TaskManagerService:
         items = missions[start : start + limit]
         return {"items": items, "total": total, "page": page, "limit": limit}
 
-    def get_mission(self, mission_id: str) -> dict[str, Any]:
+    async def get_mission(self, mission_id: str) -> dict[str, Any]:
         """Get mission detail with its task list."""
         try:
-            mission = self._read_json(self._mission_path(mission_id))
+            mission = await self._read_json(self._mission_path(mission_id))
         except Exception as exc:
             raise NotFoundError(f"Mission {mission_id} not found") from exc
 
         # Collect tasks for this mission
-        all_tasks = self._list_all_tasks()
+        all_tasks = await self._list_all_tasks()
         tasks = [t for t in all_tasks if t.get("mission_id") == mission_id]
         tasks.sort(key=lambda t: t.get("created_at", ""))
         mission["tasks"] = tasks
         return mission
 
-    def get_task_detail(self, task_id: str) -> dict[str, Any]:
+    async def get_task_detail(self, task_id: str) -> dict[str, Any]:
         """Get task detail with comments, artifacts, and history."""
-        task = self.get_task(task_id)
-        task["comments"] = self.get_comments(task_id)
-        task["history"] = self.get_task_history(task_id)
+        task = await self.get_task(task_id)
+        task["comments"] = await self.get_comments(task_id)
+        task["history"] = await self.get_task_history(task_id)
 
         # Resolve artifact references
         all_refs = set(task.get("input_refs", []) + task.get("output_refs", []))
@@ -445,7 +447,7 @@ class TaskManagerService:
         artifacts = []
         for ref_id in all_refs:
             with contextlib.suppress(Exception):
-                artifacts.append(self._read_json(self._artifact_path(ref_id)))
+                artifacts.append(await self._read_json(self._artifact_path(ref_id)))
         task["artifacts"] = artifacts
         return task
 
@@ -453,7 +455,7 @@ class TaskManagerService:
     # Audit trail
     # ------------------------------------------------------------------
 
-    def create_audit_entry(
+    async def create_audit_entry(
         self,
         task_id: str,
         action: str,
@@ -463,10 +465,10 @@ class TaskManagerService:
     ) -> dict[str, Any]:
         """Create an audit trail entry for a task."""
         # Verify task exists
-        self.get_task(task_id)
+        await self.get_task(task_id)
 
         # Ensure per-task audit directory
-        self._fs.sys_mkdir(self._audit_dir(task_id), parents=True, exist_ok=True)
+        await self._fs.sys_mkdir(self._audit_dir(task_id), parents=True, exist_ok=True)
 
         entry_id = uuid.uuid4().hex
         doc: dict[str, Any] = {
@@ -477,37 +479,37 @@ class TaskManagerService:
             "detail": detail,
             "created_at": self._now(),
         }
-        self._write_json(self._audit_path(task_id, entry_id), doc)
+        await self._write_json(self._audit_path(task_id, entry_id), doc)
         return doc
 
-    def get_audit_trail(self, task_id: str) -> list[dict[str, Any]]:
+    async def get_audit_trail(self, task_id: str) -> list[dict[str, Any]]:
         """Get all audit entries for a task, ordered by created_at."""
         audit_dir = self._audit_dir(task_id)
-        if not self._fs.sys_is_directory(audit_dir):
+        if not await self._fs.sys_is_directory(audit_dir):
             return []
 
-        paths = self._fs.sys_readdir(audit_dir, recursive=False)
+        paths = await self._fs.sys_readdir(audit_dir, recursive=False)
         entries = []
         for p in paths:
             if p.endswith(".json"):
                 try:
-                    entries.append(self._read_json(p))
+                    entries.append(await self._read_json(p))
                 except Exception:
                     logger.warning("Failed to read audit entry at %s", p)
         entries.sort(key=lambda e: e.get("created_at", ""))
         return entries
 
-    def get_task_history(self, task_id: str) -> list[dict[str, Any]]:
+    async def get_task_history(self, task_id: str) -> list[dict[str, Any]]:
         """Get unified timeline merging audit entries and comments."""
         # Verify task exists
-        self.get_task(task_id)
+        await self.get_task(task_id)
 
         history: list[dict[str, Any]] = []
 
-        for entry in self.get_audit_trail(task_id):
+        for entry in await self.get_audit_trail(task_id):
             history.append({"type": "audit", **entry})
 
-        for comment in self.get_comments(task_id):
+        for comment in await self.get_comments(task_id):
             history.append({"type": "comment", **comment})
 
         history.sort(key=lambda h: h.get("created_at", ""))
@@ -519,38 +521,38 @@ class TaskManagerService:
 
     _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
-    def _maybe_complete_mission(self, mission_id: str | None) -> None:
+    async def _maybe_complete_mission(self, mission_id: str | None) -> None:
         """Auto-complete the mission if all its tasks have reached a terminal status."""
         if not mission_id:
             return
         try:
-            mission = self._read_json(self._mission_path(mission_id))
+            mission = await self._read_json(self._mission_path(mission_id))
         except Exception:
             return
         if mission.get("status") != "running":
             return
 
-        tasks = [t for t in self._list_all_tasks() if t.get("mission_id") == mission_id]
+        tasks = [t for t in await self._list_all_tasks() if t.get("mission_id") == mission_id]
         if not tasks:
             return
         if all(t.get("status") in self._TERMINAL_STATUSES for t in tasks):
             mission["status"] = "completed"
             mission["updated_at"] = self._now()
-            self._write_json(self._mission_path(mission_id), mission)
+            await self._write_json(self._mission_path(mission_id), mission)
             logger.info("[TASK-MGR] Mission %s auto-completed (all tasks terminal)", mission_id)
 
-    def _list_all_tasks(self) -> list[dict[str, Any]]:
+    async def _list_all_tasks(self) -> list[dict[str, Any]]:
         """Read all task JSON files from NexusFS."""
         tasks_dir = "/.tasks/tasks"
-        if not self._fs.sys_is_directory(tasks_dir):
+        if not await self._fs.sys_is_directory(tasks_dir):
             return []
 
-        paths = self._fs.sys_readdir(tasks_dir, recursive=False)
+        paths = await self._fs.sys_readdir(tasks_dir, recursive=False)
         tasks = []
         for p in paths:
             if p.endswith(".json"):
                 try:
-                    tasks.append(self._read_json(p))
+                    tasks.append(await self._read_json(p))
                 except Exception:
                     logger.warning("Failed to read task at %s", p)
         return tasks

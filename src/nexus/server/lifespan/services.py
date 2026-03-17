@@ -42,7 +42,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     agent_tasks = _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
 
-    _startup_task_manager(app, svc)
+    await _startup_task_manager(app, svc)
 
     await _startup_scheduler(app, svc)
     await _startup_workflow_engine(app, svc)
@@ -501,7 +501,7 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
     return tasks
 
 
-def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
+async def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize TaskManagerService backed by NexusFS."""
     if svc.nexus_fs is None:
         app.state.task_manager_service = None
@@ -510,7 +510,9 @@ def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
     try:
         from nexus.bricks.task_manager.service import TaskManagerService
 
-        app.state.task_manager_service = TaskManagerService(nexus_fs=svc.nexus_fs)
+        task_svc = TaskManagerService(nexus_fs=svc.nexus_fs)
+        await task_svc.initialize()
+        app.state.task_manager_service = task_svc
         logger.info("[TASK-MGR] TaskManagerService initialized")
 
         task_write_hook = getattr(svc.nexus_fs, "_task_write_hook", None)

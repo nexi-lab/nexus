@@ -281,7 +281,7 @@ async def create_mission(
     svc: Any = Depends(get_task_manager_service),
 ) -> MissionResponse:
     """Create a new mission."""
-    doc = svc.create_mission(
+    doc = await svc.create_mission(
         title=request.title,
         context_summary=request.context_summary,
     )
@@ -298,7 +298,7 @@ async def list_missions(
     svc: Any = Depends(get_task_manager_service),
 ) -> MissionListResponse:
     """List missions with optional filters."""
-    result = svc.list_missions(archived=archived, status=status, page=page, limit=limit)
+    result = await svc.list_missions(archived=archived, status=status, page=page, limit=limit)
     return MissionListResponse(**result)
 
 
@@ -312,7 +312,7 @@ async def get_mission(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        doc = svc.get_mission(mission_id)
+        doc = await svc.get_mission(mission_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return MissionResponse(**doc)
@@ -333,7 +333,7 @@ async def update_mission(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     try:
-        doc = svc.update_mission(mission_id, **fields)
+        doc = await svc.update_mission(mission_id, **fields)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
@@ -356,7 +356,7 @@ async def create_task(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        doc = svc.create_task(
+        doc = await svc.create_task(
             mission_id=body.mission_id,
             instruction=body.instruction,
             worker_type=body.worker_type,
@@ -378,7 +378,7 @@ async def list_tasks(
     svc: Any = Depends(get_task_manager_service),
 ) -> list[TaskResponse]:
     """List dispatchable tasks (status=created, unblocked)."""
-    tasks = svc.list_dispatchable_tasks(worker_type=worker_type)
+    tasks = await svc.list_dispatchable_tasks(worker_type=worker_type)
     return [TaskResponse(**t) for t in tasks]
 
 
@@ -392,7 +392,7 @@ async def get_task_detail(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        doc = svc.get_task_detail(task_id)
+        doc = await svc.get_task_detail(task_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return TaskResponse(**doc)
@@ -417,7 +417,7 @@ async def update_task(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     try:
-        doc = svc.update_task(task_id, **fields)
+        doc = await svc.update_task(task_id, **fields)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
@@ -441,7 +441,7 @@ async def create_audit_entry(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        doc = svc.create_audit_entry(
+        doc = await svc.create_audit_entry(
             task_id,
             body.action,
             actor=body.actor,
@@ -462,7 +462,7 @@ async def get_task_history(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        history = svc.get_task_history(task_id)
+        history = await svc.get_task_history(task_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return [HistoryEntryResponse(**h) for h in history]
@@ -483,7 +483,7 @@ async def create_comment(
     from nexus.bricks.task_manager.service import NotFoundError, ValidationError
 
     try:
-        doc = svc.create_comment(
+        doc = await svc.create_comment(
             task_id=body.task_id,
             author=body.author,
             content=body.content,
@@ -503,7 +503,7 @@ async def list_comments(
     svc: Any = Depends(get_task_manager_service),
 ) -> list[CommentResponse]:
     """List comments for a task."""
-    comments = svc.get_comments(task_id)
+    comments = await svc.get_comments(task_id)
     return [CommentResponse(**c) for c in comments]
 
 
@@ -522,7 +522,7 @@ async def create_artifact(
     from nexus.bricks.task_manager.service import ValidationError
 
     try:
-        doc = svc.create_artifact(
+        doc = await svc.create_artifact(
             type=request.type,
             uri=request.uri,
             title=request.title,

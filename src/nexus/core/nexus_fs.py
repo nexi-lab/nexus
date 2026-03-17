@@ -155,7 +155,6 @@ class NexusFS(  # type: ignore[misc]
         # Hot-path service attrs — kept on kernel for perf (Issue #1682)
         # =====================================================================
         self._rebac_manager = sys_svc.rebac_manager
-        self._dir_visibility_cache = sys_svc.dir_visibility_cache
         self._permission_enforcer = sys_svc.permission_enforcer
         self._hierarchy_manager = sys_svc.hierarchy_manager
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented

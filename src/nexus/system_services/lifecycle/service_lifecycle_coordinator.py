@@ -154,6 +154,7 @@ class ServiceLifecycleCoordinator:
             self._hook_specs[name] = spec
             if not spec.is_empty:
                 self._register_hooks(name)
+                self._hooks_on_dispatch.add(name)
             await instance.activate()
             logger.info("[COORDINATOR] enlist %r — activated (HotSwappable)", name)
 

@@ -386,28 +386,51 @@ async def create_nexus_fs(
     return nx
 
 
-def _register_vfs_hooks(
+def _apply_hook_spec(dispatch: Any, hook: Any) -> None:
+    """Apply a HotSwappable hook's spec directly to KernelDispatch.
+
+    Fallback for when no ServiceLifecycleCoordinator is available (e.g.
+    unit tests creating NexusFS without the full factory lifecycle).
+    """
+    spec = hook.hook_spec()
+    for h in spec.resolvers:
+        dispatch.register_resolver(h)
+    for h in spec.read_hooks:
+        dispatch.register_intercept_read(h)
+    for h in spec.write_hooks:
+        dispatch.register_intercept_write(h)
+    for h in spec.write_batch_hooks:
+        dispatch.register_intercept_write_batch(h)
+    for h in spec.delete_hooks:
+        dispatch.register_intercept_delete(h)
+    for h in spec.rename_hooks:
+        dispatch.register_intercept_rename(h)
+    for h in spec.mkdir_hooks:
+        dispatch.register_intercept_mkdir(h)
+    for h in spec.rmdir_hooks:
+        dispatch.register_intercept_rmdir(h)
+    for h in spec.observers:
+        dispatch.register_observe(h)
+
+
+async def _register_vfs_hooks(
     nx: "NexusFS",
     *,
     permission_checker: Any = None,
     auto_parse: bool = True,
     brick_on: "Callable[[str], bool] | None" = None,
 ) -> None:
-    """Register hooks + observers into kernel-owned dispatch (Issue #900).
+    """Register hooks + observers via coordinator.enlist() (Issue #900, #1709).
 
     Kernel creates KernelDispatch with empty callback lists at init.
     This function populates them at boot — modules register into
     kernel-owned infrastructure, kernel never auto-constructs hooks.
 
-    Called by ``create_nexus_fs()`` after NexusFS construction + wired
-    services binding, keeping the kernel free of service-layer imports.
-
-    Issue #1610/#1612/#1613/#1616: All hook classes now implement
-    HotSwappable — they self-describe via ``hook_spec()``.  When a
-    ServiceLifecycleCoordinator is available, hooks are registered as
-    services and dispatch-registered at bootstrap via
-    ``activate_hot_swappable_services()``.  Without coordinator,
-    hooks are registered directly on dispatch (backward compat).
+    Issue #1709: All hooks are now enlisted via coordinator.enlist(),
+    which is the single entry point for all service registration.
+    enlist() auto-detects HotSwappable, registers hooks on dispatch,
+    and calls activate().  Without coordinator (unit tests), hooks are
+    registered directly on dispatch via _apply_hook_spec() fallback.
     """
     dispatch = nx._dispatch
 
@@ -415,46 +438,14 @@ def _register_vfs_hooks(
 
     _on = _make_gate(brick_on)
 
-    # Coordinator: when available, hooks are registered as services AND
-    # immediately on dispatch.  Pre-caching the spec in coordinator._hook_specs
-    # ensures activate_hot_swappable_services() at bootstrap skips re-registration
-    # (it only calls _register_hooks for services whose spec was NOT already cached).
     _coordinator = getattr(nx, "_service_coordinator", None)
 
-    def _enlist_hook(name: str, hook: Any) -> None:
-        """Register hook on dispatch immediately + as service when coordinator available."""
-        from nexus.contracts.protocols.service_hooks import HookSpec
-
-        spec: HookSpec = hook.hook_spec()
-
-        # Always register on dispatch — hooks must be active after initialize().
-        for h in spec.resolvers:
-            dispatch.register_resolver(h)
-        for h in spec.read_hooks:
-            dispatch.register_intercept_read(h)
-        for h in spec.write_hooks:
-            dispatch.register_intercept_write(h)
-        for h in spec.write_batch_hooks:
-            dispatch.register_intercept_write_batch(h)
-        for h in spec.delete_hooks:
-            dispatch.register_intercept_delete(h)
-        for h in spec.rename_hooks:
-            dispatch.register_intercept_rename(h)
-        for h in spec.mkdir_hooks:
-            dispatch.register_intercept_mkdir(h)
-        for h in spec.rmdir_hooks:
-            dispatch.register_intercept_rmdir(h)
-        for h in spec.observers:
-            dispatch.register_observe(h)
-
-        # Also register as service for lifecycle management (drain/activate/swap).
-        # Mark as pre-registered so activate_hot_swappable_services() skips
-        # _register_hooks() and avoids double dispatch registration.
+    async def _enlist(name: str, hook: Any) -> None:
+        """Enlist hook via coordinator (preferred) or direct dispatch (fallback)."""
         if _coordinator is not None:
-            _coordinator.register_service(name, hook)
-            if not spec.is_empty:
-                _coordinator._hook_specs[name] = spec
-            _coordinator._hooks_on_dispatch.add(name)
+            await _coordinator.enlist(name, hook)
+        else:
+            _apply_hook_spec(dispatch, hook)
 
     # ── Permission pre-intercept hook (Issue #899) ────────────────
     if permission_checker is not None:
@@ -468,7 +459,7 @@ def _register_vfs_hooks(
             permission_enforcer=nx._permission_enforcer,
             descendant_checker=getattr(nx, "_descendant_checker", None),
         )
-        _enlist_hook("permission", _perm_hook)
+        await _enlist("permission", _perm_hook)
 
     # ── Audit write observer as interceptor (Issue #900) ──────────
     # Registered FIRST so it runs before other hooks (audit before side effects).
@@ -480,7 +471,7 @@ def _register_vfs_hooks(
 
         strict = getattr(write_observer, "_strict_mode", True)
         audit = AuditWriteInterceptor(write_observer, strict_mode=strict)
-        _enlist_hook("audit", audit)
+        await _enlist("audit", audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (
@@ -497,7 +488,7 @@ def _register_vfs_hooks(
             get_viewer_config=nx.get_dynamic_viewer_config,
             apply_filter=nx.apply_dynamic_viewer_filter,
         )
-        _enlist_hook("viewer", _viewer_hook)
+        await _enlist("viewer", _viewer_hook)
 
     # ContentParserEngine (on-demand parsed reads — Issue #1383)
     from nexus.bricks.parsers.engine import ContentParserEngine
@@ -518,7 +509,7 @@ def _register_vfs_hooks(
             parse_fn=parse_fn,
             metadata=nx.metadata,
         )
-        _enlist_hook("auto_parse", _auto_parse_hook)
+        await _enlist("auto_parse", _auto_parse_hook)
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
     _rebac_mgr = getattr(nx, "_rebac_manager", None)
@@ -537,14 +528,14 @@ def _register_vfs_hooks(
             tiger_cache=tiger_cache,
             metadata_list_iter=_metadata_list_iter,
         )
-        _enlist_hook("tiger_rename", _tiger_rename_hook)
+        await _enlist("tiger_rename", _tiger_rename_hook)
 
     # TigerCacheWriteHook (post-write: add new files to ancestor directory grants)
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
 
         _tiger_write_hook = TigerCacheWriteHook(tiger_cache=tiger_cache)
-        _enlist_hook("tiger_write", _tiger_write_hook)
+        await _enlist("tiger_write", _tiger_write_hook)
 
     # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
     from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
@@ -556,14 +547,14 @@ def _register_vfs_hooks(
         parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
         read_tracker_fn=None,
     )
-    _enlist_hook("virtual_view", _vview_resolver)
+    await _enlist("virtual_view", _vview_resolver)
 
     # ── TaskWriteHook (post-write: emit task lifecycle events) ─────────
     if _on("task_manager"):
         from nexus.bricks.task_manager.write_hook import TaskWriteHook
 
         _task_write_hook = TaskWriteHook()
-        _enlist_hook("task_write", _task_write_hook)
+        await _enlist("task_write", _task_write_hook)
         nx._task_write_hook = _task_write_hook
     else:
         logger.debug("[BOOT:BRICK] TaskWriteHook disabled by profile")
@@ -577,7 +568,7 @@ def _register_vfs_hooks(
     from nexus.system_services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(bus_provider=nx)
-    _enlist_hook("event_bus_observer", _bus_observer)
+    await _enlist("event_bus_observer", _bus_observer)
 
     # EventsService observer: self-registered via HotSwappable.hook_spec()
     # at bootstrap() → activate_hot_swappable_services() (Issue #1611).
@@ -589,7 +580,7 @@ def _register_vfs_hooks(
 
     _rev_notifier = RevisionNotifier()
     _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
-    _enlist_hook("revision_tracking", _rev_observer)
+    await _enlist("revision_tracking", _rev_observer)
     nx._revision_notifier = _rev_notifier
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────

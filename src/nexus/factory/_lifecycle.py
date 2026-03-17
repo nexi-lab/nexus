@@ -160,7 +160,7 @@ async def _do_link(
     )
 
 
-def _do_initialize(nx: Any) -> None:
+async def _do_initialize(nx: Any) -> None:
     """Phase 2 implementation: one-time side effects.  NO background threads.
 
     Prepares resources but remains static — no active threads or async loops.
@@ -181,7 +181,7 @@ def _do_initialize(nx: Any) -> None:
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    _register_vfs_hooks(
+    await _register_vfs_hooks(
         nx,
         permission_checker=nx._permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,

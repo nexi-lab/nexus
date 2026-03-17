@@ -131,8 +131,8 @@ class NexusConfig(BaseModel):
 
     # Backend selection
     backend: str = Field(
-        default="local",
-        description="Storage backend: 'local' for local filesystem, 'gcs' for Google Cloud Storage",
+        default="path_local",
+        description="Storage backend: 'path_local' for local filesystem, 'local' for CAS, 'gcs' for Google Cloud Storage",
     )
 
     # Local backend settings

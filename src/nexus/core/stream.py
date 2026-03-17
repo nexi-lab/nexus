@@ -74,7 +74,7 @@ class StreamBackend(Protocol):
 
     Implementations:
         StreamBuffer            — in-process append-only buffer (Rust, ~0.5μs)
-        [Future] SharedMemoryStreamBackend — mmap'd linear buffer (~1–5μs)
+        SharedStreamBuffer (shm_stream.py) — cross-process mmap'd linear buffer (~1–5μs)
     """
 
     async def write(self, data: bytes, *, blocking: bool = True) -> int: ...

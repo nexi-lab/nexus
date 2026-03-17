@@ -47,6 +47,7 @@ async def _do_link(
     nx._async_agent_registry = _sys.async_agent_registry
     nx._async_namespace_manager = _sys.async_namespace_manager
     nx._context_branch_service = _sys.context_branch_service
+    nx._dir_visibility_cache = _sys.dir_visibility_cache  # Issue #1703: facade, not kernel
     nx._event_bus = _brk.event_bus
     nx._wallet_provisioner = _brk.wallet_provisioner
     nx._api_key_creator = _brk.api_key_creator

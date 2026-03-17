@@ -1074,8 +1074,18 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     console.print(f"  Files:        {total_files} ({files_created} new)")
 
     # 3. Seed version history
-    await _seed_versions(nx, manifest)
-    console.print(f"  Versions:     {len(PLAN_VERSIONS) + 1} (plan.md history)")
+    versions_created = await _seed_versions(nx, manifest)
+
+    # Flush the async write observer so version records are committed to the
+    # database before any subsequent query (e.g. `nexus versions history`).
+    # Without this, the PipedRecordStoreWriteObserver may not have flushed yet.
+    try:
+        if hasattr(nx, "flush_write_observer"):
+            nx.flush_write_observer()
+    except Exception:
+        pass  # best-effort; sync observer is a no-op
+
+    console.print(f"  Versions:     {versions_created} (plan.md history)")
 
     # 4. Seed demo identities via admin RPC (best-effort)
     identities_created = _seed_identities(config, manifest)

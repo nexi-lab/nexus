@@ -4750,6 +4750,32 @@ class NexusFS(  # type: ignore[misc]
         created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
 
+    @rpc_expose(description="Flush pending write observer events to DB", admin_only=True)
+    def flush_write_observer(
+        self,
+        _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
+    ) -> dict[str, Any]:
+        """Flush the async write observer so pending version/audit records are committed.
+
+        The PipedRecordStoreWriteObserver enqueues events asynchronously via
+        DT_PIPE.  This method drains the pipe and commits all pending events,
+        guaranteeing that subsequent queries (e.g. list_versions) see the data.
+
+        No-op when the synchronous RecordStoreWriteObserver is in use.
+
+        Returns:
+            Dict with ``flushed`` count.
+        """
+        wo = (
+            getattr(self._system_services, "write_observer", None)
+            if self._system_services
+            else None
+        )
+        if wo is None or not hasattr(wo, "flush"):
+            return {"flushed": 0}
+        flushed: int = NexusFS._run_async(wo.flush())
+        return {"flushed": flushed}
+
     # ------------------------------------------------------------------
     # DT_PIPE kernel primitives (§4.2)
     # ------------------------------------------------------------------

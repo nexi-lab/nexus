@@ -305,6 +305,125 @@ class PipedRecordStoreWriteObserver:
 
         self._consumer_task = asyncio.create_task(self._consume())
 
+    async def flush(self, timeout: float = 5.0) -> int:
+        """Drain the pipe and flush all pending events to RecordStore.
+
+        Blocks until all enqueued events have been committed to the database,
+        ensuring that subsequent queries (e.g. list_versions) see the data.
+
+        This fixes the race condition where sys_write() returns before the
+        background consumer has flushed version records to the DB.
+
+        Args:
+            timeout: Maximum seconds to wait for events to appear. Defaults to 5.
+
+        Returns:
+            Number of events flushed.
+        """
+        if not self._pipe_ready or self._pipe_manager is None:
+            # Pipe not started — flush pre-buffer directly via sync path
+            return self._flush_pre_buffer_sync()
+
+        from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeNotFoundError
+
+        # Drain all available events from the pipe (non-blocking)
+        batch: list[dict[str, Any]] = []
+        deadline = time.monotonic() + timeout
+
+        while time.monotonic() < deadline:
+            try:
+                data = await self._pipe_manager.pipe_read(_AUDIT_PIPE_PATH, blocking=False)
+                batch.append(json.loads(data))
+            except (PipeEmptyError, PipeClosedError, PipeNotFoundError):
+                break
+
+        if batch:
+            await self._flush_batch(batch)
+
+        return len(batch)
+
+    def _flush_pre_buffer_sync(self) -> int:
+        """Flush pre-startup buffer directly to RecordStore (synchronous)."""
+        from nexus.storage.operation_logger import OperationLogger
+        from nexus.storage.version_recorder import VersionRecorder
+
+        if not self._pre_buffer:
+            return 0
+
+        events = [json.loads(data) for data in self._pre_buffer]
+        self._pre_buffer.clear()
+
+        try:
+            with self._session_factory() as session:
+                op_logger = OperationLogger(session)
+                recorder = VersionRecorder(session)
+
+                for event in events:
+                    op = event["op"]
+                    zone_id = event.get("zone_id")
+                    agent_id = event.get("agent_id")
+
+                    if op == "write":
+                        op_logger.log_operation(
+                            operation_type="write",
+                            path=event["path"],
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            snapshot_hash=event.get("snapshot_hash"),
+                            metadata_snapshot=event.get("metadata_snapshot"),
+                            status="success",
+                        )
+                        md = _metadata_from_dict(event["metadata"])
+                        recorder.record_write(md, is_new=event["is_new"])
+                    elif op == "delete":
+                        op_logger.log_operation(
+                            operation_type="delete",
+                            path=event["path"],
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            snapshot_hash=event.get("snapshot_hash"),
+                            metadata_snapshot=event.get("metadata_snapshot"),
+                            status="success",
+                        )
+                        recorder.record_delete(event["path"])
+                    elif op == "rename":
+                        op_logger.log_operation(
+                            operation_type="rename",
+                            path=event["path"],
+                            new_path=event.get("new_path"),
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            snapshot_hash=event.get("snapshot_hash"),
+                            metadata_snapshot=event.get("metadata_snapshot"),
+                            status="success",
+                        )
+                    elif op == "mkdir":
+                        op_logger.log_operation(
+                            operation_type="mkdir",
+                            path=event["path"],
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            status="success",
+                        )
+                    elif op == "rmdir":
+                        op_type = "rmdir_recursive" if event.get("recursive") else "rmdir"
+                        op_logger.log_operation(
+                            operation_type=op_type,
+                            path=event["path"],
+                            zone_id=zone_id,
+                            agent_id=agent_id,
+                            status="success",
+                        )
+
+                session.commit()
+
+            self._total_flushed += len(events)
+            return len(events)
+        except Exception as e:
+            self._total_failed += len(events)
+            logger.error("PipedRecordStoreWriteObserver pre-buffer flush failed: %s", e)
+            return 0
+
     async def stop(self) -> None:
         """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
         if self._consumer_task is not None and not self._consumer_task.done():

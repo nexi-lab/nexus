@@ -72,7 +72,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "zone_lifecycle",
         "process_table",
         "scheduler_service",
-        "agent_runtime",
         "acp_service",
     }
 )
@@ -226,7 +225,6 @@ class TestBootSystemServices:
             "observability_subsystem",
             "workspace_registry",  # degradable — None with mock session_factory
             "scheduler_service",  # degradable — None if SchedulerService unavailable
-            "agent_runtime",  # degradable — None if AgentRuntime unavailable
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:

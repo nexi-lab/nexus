@@ -8,7 +8,7 @@ import json
 import pytest
 
 from nexus.core.pipe import PipeClosedError
-from nexus.system_services.agent_loop import AgentLoop, AgentRpcError
+from nexus.system_services.agent_runtime.loop import AgentLoop, AgentRpcError
 
 # ---------------------------------------------------------------------------
 # Mock PipeBackend

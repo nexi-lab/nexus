@@ -531,15 +531,29 @@ async def _register_vfs_hooks(
         except Exception as exc:
             logger.debug("[BOOT:HOOKS] ProcResolver unavailable: %s", exc)
 
-    # ── TaskWriteHook (post-write: emit task lifecycle events) ─────────
+    # ── TaskWriteHook + TaskDispatchPipeConsumer + TaskAgentResolver ───────────
     if _on("task_manager"):
-        from nexus.bricks.task_manager.write_hook import TaskWriteHook
+        try:
+            from nexus.bricks.task_manager.service import TaskManagerService
+            from nexus.bricks.task_manager.task_agent_resolver import TaskAgentResolver
+            from nexus.bricks.task_manager.write_hook import TaskWriteHook
 
-        _task_write_hook = TaskWriteHook()
-        await _enlist("task_write", _task_write_hook)
-        nx._task_write_hook = _task_write_hook
+            _task_svc = TaskManagerService(nexus_fs=nx)
+            _task_write_hook = TaskWriteHook()
+
+            # Wire consumer from brick_services (created in _bricks.py)
+            _task_consumer = getattr(nx._brick_services, "task_dispatch_consumer", None)
+            if _task_consumer is not None:
+                _task_write_hook.register_handler(_task_consumer)
+                _task_consumer.set_task_service(_task_svc)
+
+            await _enlist("task_write", _task_write_hook)
+            await _enlist("task_agent_resolver", TaskAgentResolver(_task_svc, _proc_table))
+            nx._task_write_hook = _task_write_hook
+        except Exception as exc:
+            logger.warning("[BOOT:BRICK] task_manager wiring failed: %s", exc)
     else:
-        logger.debug("[BOOT:BRICK] TaskWriteHook disabled by profile")
+        logger.debug("[BOOT:BRICK] task_manager disabled by profile")
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).

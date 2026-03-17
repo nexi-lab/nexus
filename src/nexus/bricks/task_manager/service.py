@@ -217,13 +217,15 @@ class TaskManagerService:
             "created_at": now,
             "started_at": None,
             "completed_at": None,
+            "worker_pid": None,  # set when AcpService spawns the worker agent
+            "agent_name": None,  # set from AcpResult.agent_id after spawn
         }
         self._write_json(self._task_path(task_id), doc)
         return doc
 
     def update_task(self, task_id: str, **fields: Any) -> dict[str, Any]:
         """Update task fields — enforces state machine for status changes."""
-        allowed = {"status", "output_refs"}
+        allowed = {"status", "output_refs", "worker_pid", "agent_name"}
         for key in fields:
             if key not in allowed:
                 raise ValidationError(f"Cannot update field '{key}' on task")
@@ -253,6 +255,10 @@ class TaskManagerService:
         if "output_refs" in fields:
             doc["output_refs"] = fields["output_refs"]
 
+        for field in ("worker_pid", "agent_name"):
+            if field in fields:
+                doc[field] = fields[field]
+
         self._write_json(path, doc)
 
         # Auto-complete mission when all its tasks are terminal
@@ -276,8 +282,8 @@ class TaskManagerService:
         artifact_refs: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a comment on a task."""
-        if author not in ("copilot", "worker"):
-            raise ValidationError(f"Invalid author '{author}'. Must be 'copilot' or 'worker'.")
+        if not author or not isinstance(author, str):
+            raise ValidationError("author must be a non-empty string")
 
         # Verify task exists
         self.get_task(task_id)

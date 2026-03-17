@@ -279,6 +279,8 @@ class TestBootBrickServices:
             "governance_response_service",
             # DT_PIPE Zoekt consumer (Issue #810)
             "zoekt_pipe_consumer",
+            # Task Manager DT_PIPE consumer
+            "task_dispatch_consumer",
         }
         assert expected_keys == set(result.keys())
 

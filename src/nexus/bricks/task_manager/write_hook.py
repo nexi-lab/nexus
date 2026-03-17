@@ -32,7 +32,7 @@ class TaskWriteHook:
     cache — all state comes from the written content and ``ctx.is_new_file``.
     """
 
-    # ── HotSwappable protocol (Issue #1616) ────────────────────────────
+    # ── HotSwappable protocol ──────────────────────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
@@ -58,7 +58,7 @@ class TaskWriteHook:
 
     # ── VFSWriteHook protocol ──────────────────────────────────────────
 
-    def on_post_write(self, ctx: WriteHookContext) -> None:
+    def on_post_write(self, ctx: "WriteHookContext") -> None:
         if not fnmatch(ctx.path, _TASK_PATTERN):
             return
 

@@ -71,6 +71,7 @@ BRICK_WORKSPACE = "workspace"
 BRICK_PORTABILITY = "portability"
 BRICK_PARSERS = "parsers"
 BRICK_SNAPSHOT = "snapshot"
+BRICK_TASK_MANAGER = "task_manager"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -107,6 +108,7 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_PORTABILITY,
         BRICK_PARSERS,
         BRICK_SNAPSHOT,
+        BRICK_TASK_MANAGER,
         BRICK_FEDERATION,
         BRICK_AGENT_RUNTIME,
         BRICK_ACP,
@@ -195,6 +197,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_TASK_MANAGER,
         BRICK_OBSERVABILITY,
         BRICK_UPLOADS,
         BRICK_RESILIENCY,

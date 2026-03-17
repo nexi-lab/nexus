@@ -620,6 +620,17 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         except Exception as e:
             logger.warning("[PIPE] ZoektPipeConsumer start failed: %s", e, exc_info=True)
 
+    # TaskDispatchPipeConsumer (task lifecycle signals)
+    tdc = svc.task_dispatch_consumer
+    if tdc is not None and hasattr(tdc, "set_pipe_manager"):
+        try:
+            tdc.set_pipe_manager(pipe_manager)
+            await tdc.start()
+            app.state.task_dispatch_consumer = tdc
+            logger.info("[PIPE] TaskDispatchPipeConsumer started")
+        except Exception as e:
+            logger.warning("[PIPE] TaskDispatchPipeConsumer start failed: %s", e, exc_info=True)
+
 
 async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     """Stop DT_PIPE consumers (Issue #809, #810)."""
@@ -642,3 +653,12 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
             logger.info("[PIPE] ZoektPipeConsumer stopped")
         except Exception as e:
             logger.warning("[PIPE] Error stopping ZoektPipeConsumer: %s", e, exc_info=True)
+
+    # TaskDispatchPipeConsumer
+    tdc = getattr(app.state, "task_dispatch_consumer", None)
+    if tdc is not None and hasattr(tdc, "stop"):
+        try:
+            await tdc.stop()
+            logger.info("[PIPE] TaskDispatchPipeConsumer stopped")
+        except Exception as e:
+            logger.warning("[PIPE] Error stopping TaskDispatchPipeConsumer: %s", e, exc_info=True)

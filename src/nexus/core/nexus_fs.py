@@ -2,6 +2,7 @@
 
 import builtins
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Callable, Generator, Iterator
@@ -219,7 +220,7 @@ class NexusFS(  # type: ignore[misc]
         # Factory-injected lifecycle implementations.
         # Keeps nexus.core free of nexus.factory / nexus.bricks imports.
         self._link_fn: Callable[..., Any] | None = None
-        self._initialize_fn: Callable[..., None] | None = None
+        self._initialize_fn: Callable[..., Any] | None = None
 
     # =====================================================================
     # Lifecycle methods: link() → initialize() → bootstrap()
@@ -262,7 +263,9 @@ class NexusFS(  # type: ignore[misc]
         if not self._linked:
             await self.link()
         if self._initialize_fn is not None:
-            self._initialize_fn(self)
+            _result = self._initialize_fn(self)
+            if inspect.isawaitable(_result):
+                await _result
         self._initialized = True
 
     async def bootstrap(self) -> None:

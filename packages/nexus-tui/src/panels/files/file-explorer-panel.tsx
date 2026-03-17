@@ -66,7 +66,7 @@ const ALL_TABS: readonly TabDef<FilesTab>[] = [
 // Input mode types
 // =============================================================================
 
-type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest";
+type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest" | "write";
 
 // =============================================================================
 // Keybinding builders — one function per mode (Decision 6A)
@@ -230,6 +230,14 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
         ctx.setInputBuffer(ctx.selectedItem.name);
       }
     },
+    // Write/create file: enter "path content" (space-separated after first space)
+    e: () => {
+      const defaultPath = ctx.selectedItem
+        ? (ctx.selectedItem.isDirectory ? ctx.selectedItem.path + "/" : ctx.selectedItem.path)
+        : ctx.currentPath + "/";
+      ctx.setInputMode("write");
+      ctx.setInputBuffer(defaultPath);
+    },
     // Copy path to system clipboard
     y: () => {
       if (ctx.isSentinel) return;
@@ -390,6 +398,31 @@ function getInputModeBindings(
         },
       };
 
+    case "write":
+      return {
+        ...baseBindings,
+        return: () => {
+          const input = ctx.filterQuery.trim();
+          if (!input || !ctx.client) { resetInput(); return; }
+          // Format: "path content..." — first space separates path from content
+          const spaceIdx = input.indexOf(" ");
+          const filePath = spaceIdx > 0 ? input.slice(0, spaceIdx) : input;
+          const content = spaceIdx > 0 ? input.slice(spaceIdx + 1) : "";
+          ctx.client.post("/api/v2/files/write", {
+            path: filePath,
+            content: content || `# New file created at ${new Date().toISOString()}\n`,
+          }).then(() => {
+            // Refresh the parent directory
+            const parentDir = filePath.split("/").slice(0, -1).join("/") || "/";
+            useFilesStore.getState().invalidate(parentDir);
+            if (ctx.client) useFilesStore.getState().expandNode(parentDir, ctx.client);
+          }).catch(() => {
+            // Error will show in error bar
+          });
+          resetInput();
+        },
+      };
+
     default:
       return {};
   }
@@ -432,6 +465,7 @@ function getInputLabel(mode: InputMode, buffer: string): string {
     case "filter": return `/${buffer}\u2588`;
     case "search": return `Search (g: glob, r: grep): ${buffer}\u2588`;
     case "paste-dest": return `Paste to: ${buffer}\u2588`;
+    case "write": return `Write (path content): ${buffer}\u2588`;
     default: return "";
   }
 }
@@ -465,8 +499,9 @@ function getHelpText(
     if (clipboard) {
       parts.push(`p:paste ${clipboard.paths.length} ${clipboard.operation === "cut" ? "cut" : "copied"}`, "P:paste to path");
     }
-    parts.push("d:del", "N:mkdir", "R:rename");
+    parts.push("d:del", "N:mkdir", "R:rename", "e:write");
     if (catalogAvailable) parts.push("m/a/s:meta");
+    parts.push("?:help");
     return parts.join("  ");
   }
 

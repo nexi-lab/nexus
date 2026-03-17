@@ -683,23 +683,12 @@ function connectSSE() {
   _evtSource = new EventSource(BASE_URL + '/api/v2/tasks/events');
 
   _evtSource.onmessage = function(e) {
-    try {
-      const msg = JSON.parse(e.data);
-      // Refresh task detail if we're looking at the changed task
-      if (selectedTaskId && msg.task_id === selectedTaskId) {
-        selectTask(selectedTaskId);
-      }
-      // Refresh mission task list if a mission is selected
-      if (selectedMissionId) {
-        selectMission(selectedMissionId);
-      }
-      refreshDispatch();
-    } catch {}
+    if (selectedTaskId) selectTask(selectedTaskId);
+    if (selectedMissionId) selectMission(selectedMissionId);
+    refreshDispatch();
   };
 
   _evtSource.onerror = function() {
-    // Reconnect after a brief delay (browser auto-reconnects SSE,
-    // but we reset state just in case)
     setTimeout(connectSSE, 5000);
   };
 }

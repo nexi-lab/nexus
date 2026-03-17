@@ -211,55 +211,56 @@ def get_task_manager_service(request: Request) -> Any:
 
 
 # =============================================================================
-# SSE via DT_STREAM (task change notifications)
+# SSE broadcaster (task change notifications)
 # =============================================================================
 
-_TASK_SSE_STREAM_PATH = "/nexus/streams/task-events"
+
+class TaskEventBroadcaster:
+    """Lightweight broadcast for task change pings.
+
+    Implements ``TaskSignalHandler`` so it can be registered on
+    ``TaskWriteHook``.  SSE clients await an ``asyncio.Event`` that
+    gets set on every task write.
+    """
+
+    def __init__(self) -> None:
+        self._event = asyncio.Event()
+
+    def on_task_signal(self, _signal_type: str, _payload: dict[str, Any]) -> None:
+        """Called from VFS write-hook (sync context)."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(self._event.set)
+        except RuntimeError:
+            pass
+
+    async def wait(self) -> None:
+        """Block until next task change, then auto-reset."""
+        self._event.clear()
+        await self._event.wait()
 
 
-def _get_stream_manager(request: Request) -> Any:
-    """Get StreamManager from app state (optional — SSE degrades gracefully)."""
-    return getattr(request.app.state, "task_stream_manager", None)
-
-
-def _notify_stream(request: Request, event: str, task_id: str) -> None:
-    """Write a task event notification to the DT_STREAM (best-effort)."""
-    sm = _get_stream_manager(request)
-    if sm is None:
-        return
-    try:
-        data = json.dumps({"event": event, "task_id": task_id}).encode()
-        sm.stream_write_nowait(_TASK_SSE_STREAM_PATH, data)
-    except Exception:
-        logger.debug("[TASK-SSE] stream write failed (non-fatal)")
+def _get_broadcaster(request: Request) -> TaskEventBroadcaster | None:
+    return getattr(request.app.state, "task_event_broadcaster", None)
 
 
 @router.get("/api/v2/tasks/events")
 async def task_events(request: Request) -> StreamingResponse:
-    """SSE stream of task mutation notifications via DT_STREAM.
-
-    Each SSE client maintains its own byte offset into the stream,
-    providing true fan-out without destructive reads (unlike DT_PIPE).
-    """
-    sm = _get_stream_manager(request)
+    """SSE stream that emits a ping whenever any task changes."""
+    broadcaster = _get_broadcaster(request)
 
     async def _stream() -> AsyncGenerator[str, None]:
-        if sm is None:
-            yield ": stream manager not available\n\n"
+        if broadcaster is None:
+            yield ": broadcaster not available\n\n"
             return
-
-        offset = 0
         while True:
+            try:
+                await asyncio.wait_for(broadcaster.wait(), timeout=25)
+                yield f"data: {json.dumps({'ping': True})}\n\n"
+            except TimeoutError:
+                yield ": keepalive\n\n"
             if await request.is_disconnected():
                 break
-            try:
-                data, next_offset = sm.stream_read_at(_TASK_SSE_STREAM_PATH, offset)
-                offset = next_offset
-                yield f"data: {data.decode()}\n\n"
-            except Exception:
-                # StreamEmptyError or StreamNotFoundError — wait and send keepalive
-                await asyncio.sleep(25)
-                yield ": keepalive\n\n"
 
     return StreamingResponse(
         _stream(),
@@ -280,7 +281,7 @@ async def create_mission(
     svc: Any = Depends(get_task_manager_service),
 ) -> MissionResponse:
     """Create a new mission."""
-    doc = svc.create_mission(
+    doc = await svc.create_mission(
         title=request.title,
         context_summary=request.context_summary,
     )
@@ -297,7 +298,7 @@ async def list_missions(
     svc: Any = Depends(get_task_manager_service),
 ) -> MissionListResponse:
     """List missions with optional filters."""
-    result = svc.list_missions(archived=archived, status=status, page=page, limit=limit)
+    result = await svc.list_missions(archived=archived, status=status, page=page, limit=limit)
     return MissionListResponse(**result)
 
 
@@ -311,7 +312,7 @@ async def get_mission(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        doc = svc.get_mission(mission_id)
+        doc = await svc.get_mission(mission_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return MissionResponse(**doc)
@@ -332,7 +333,7 @@ async def update_mission(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     try:
-        doc = svc.update_mission(mission_id, **fields)
+        doc = await svc.update_mission(mission_id, **fields)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
@@ -347,7 +348,6 @@ async def update_mission(
 
 @router.post("/api/v2/tasks", response_model=TaskResponse, status_code=201)
 async def create_task(
-    raw_request: Request,
     body: CreateTaskRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
     svc: Any = Depends(get_task_manager_service),
@@ -356,7 +356,7 @@ async def create_task(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        doc = svc.create_task(
+        doc = await svc.create_task(
             mission_id=body.mission_id,
             instruction=body.instruction,
             worker_type=body.worker_type,
@@ -368,7 +368,6 @@ async def create_task(
         )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    _notify_stream(raw_request, "task_created", doc["id"])
     return TaskResponse(**doc)
 
 
@@ -379,7 +378,7 @@ async def list_tasks(
     svc: Any = Depends(get_task_manager_service),
 ) -> list[TaskResponse]:
     """List dispatchable tasks (status=created, unblocked)."""
-    tasks = svc.list_dispatchable_tasks(worker_type=worker_type)
+    tasks = await svc.list_dispatchable_tasks(worker_type=worker_type)
     return [TaskResponse(**t) for t in tasks]
 
 
@@ -393,7 +392,7 @@ async def get_task_detail(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        doc = svc.get_task_detail(task_id)
+        doc = await svc.get_task_detail(task_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return TaskResponse(**doc)
@@ -401,7 +400,6 @@ async def get_task_detail(
 
 @router.patch("/api/v2/tasks/{task_id}", response_model=TaskResponse)
 async def update_task(
-    raw_request: Request,
     task_id: str,
     body: UpdateTaskRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
@@ -419,12 +417,11 @@ async def update_task(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     try:
-        doc = svc.update_task(task_id, **fields)
+        doc = await svc.update_task(task_id, **fields)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _notify_stream(raw_request, "task_updated", task_id)
     return TaskResponse(**doc)
 
 
@@ -435,7 +432,6 @@ async def update_task(
 
 @router.post("/api/v2/tasks/{task_id}/audit", response_model=AuditEntryResponse, status_code=201)
 async def create_audit_entry(
-    raw_request: Request,
     task_id: str,
     body: CreateAuditEntryRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
@@ -445,7 +441,7 @@ async def create_audit_entry(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        doc = svc.create_audit_entry(
+        doc = await svc.create_audit_entry(
             task_id,
             body.action,
             actor=body.actor,
@@ -453,7 +449,6 @@ async def create_audit_entry(
         )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    _notify_stream(raw_request, "audit_created", task_id)
     return AuditEntryResponse(**doc)
 
 
@@ -467,7 +462,7 @@ async def get_task_history(
     from nexus.bricks.task_manager.service import NotFoundError
 
     try:
-        history = svc.get_task_history(task_id)
+        history = await svc.get_task_history(task_id)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return [HistoryEntryResponse(**h) for h in history]
@@ -480,7 +475,6 @@ async def get_task_history(
 
 @router.post("/api/v2/comments", response_model=CommentResponse, status_code=201)
 async def create_comment(
-    raw_request: Request,
     body: CreateCommentRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
     svc: Any = Depends(get_task_manager_service),
@@ -489,7 +483,7 @@ async def create_comment(
     from nexus.bricks.task_manager.service import NotFoundError, ValidationError
 
     try:
-        doc = svc.create_comment(
+        doc = await svc.create_comment(
             task_id=body.task_id,
             author=body.author,
             content=body.content,
@@ -499,7 +493,6 @@ async def create_comment(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _notify_stream(raw_request, "comment_created", body.task_id)
     return CommentResponse(**doc)
 
 
@@ -510,7 +503,7 @@ async def list_comments(
     svc: Any = Depends(get_task_manager_service),
 ) -> list[CommentResponse]:
     """List comments for a task."""
-    comments = svc.get_comments(task_id)
+    comments = await svc.get_comments(task_id)
     return [CommentResponse(**c) for c in comments]
 
 
@@ -529,7 +522,7 @@ async def create_artifact(
     from nexus.bricks.task_manager.service import ValidationError
 
     try:
-        doc = svc.create_artifact(
+        doc = await svc.create_artifact(
             type=request.type,
             uri=request.uri,
             title=request.title,

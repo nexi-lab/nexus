@@ -8,8 +8,8 @@ nothing is stored on disk.
     system_services/proc/proc_resolver.py = fs/proc/ (procfs)
     core/process_table.py                 = kernel/fork.c (task_struct table)
 
-Registration: factory/_wired.py registers ProcResolver on KernelDispatch
-at boot, after ProcessTable creation.
+Registration: factory/orchestrator.py registers ProcResolver via
+coordinator.enlist() at boot, after ProcessTable creation.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ import json
 import logging
 import re
 from typing import TYPE_CHECKING, Any
+
+from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
     from nexus.core.process_table import ProcessTable
@@ -38,6 +40,17 @@ class ProcResolver:
 
     def __init__(self, process_table: ProcessTable) -> None:
         self._process_table = process_table
+
+    # -- HotSwappable protocol (registered via coordinator.enlist) --
+
+    def hook_spec(self) -> HookSpec:
+        return HookSpec(resolvers=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def _match_pid(self, path: str) -> str | None:
         """Extract PID from path if it matches and process exists."""

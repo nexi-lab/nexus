@@ -132,14 +132,14 @@ async def _do_link(
     await enlist_wired_services(coordinator, _wired)
 
     # Issue #1666: Register system-tier PersistentService instances.
-    # These are Q3 (PersistentService) — registered via register_service()
-    # (NOT enlist) so start() is deferred to bootstrap, not link().
+    # These are Q3 (PersistentService) — enlist() defers start() because
+    # coordinator is not yet bootstrapped (mark_bootstrapped at bootstrap).
     _dpb = getattr(nx._system_services, "deferred_permission_buffer", None)
     if _dpb is not None:
-        coordinator.register_service("deferred_permission_buffer", _dpb, exports=())
+        await coordinator.enlist("deferred_permission_buffer", _dpb)
     _dw = getattr(nx._system_services, "delivery_worker", None)
     if _dw is not None:
-        coordinator.register_service("delivery_worker", _dw, exports=())
+        await coordinator.enlist("delivery_worker", _dw)
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.

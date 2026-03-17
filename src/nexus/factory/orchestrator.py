@@ -518,6 +518,19 @@ async def _register_vfs_hooks(
     )
     await _enlist("virtual_view", _vview_resolver)
 
+    # ── ProcResolver (procfs virtual filesystem for ProcessTable — Issue #1570) ──
+    _proc_table = (
+        getattr(nx._system_services, "process_table", None) if nx._system_services else None
+    )
+    if _proc_table is not None:
+        try:
+            from nexus.system_services.proc.proc_resolver import ProcResolver
+
+            _proc_resolver = ProcResolver(_proc_table)
+            await _enlist("proc", _proc_resolver)
+        except Exception as exc:
+            logger.debug("[BOOT:HOOKS] ProcResolver unavailable: %s", exc)
+
     # ── TaskWriteHook (post-write: emit task lifecycle events) ─────────
     if _on("task_manager"):
         from nexus.bricks.task_manager.write_hook import TaskWriteHook

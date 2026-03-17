@@ -288,6 +288,7 @@ class NexusFS(  # type: ignore[misc]
         if coord is not None:
             await coord.activate_hot_swappable_services()
             await coord.start_persistent_services()
+            coord.mark_bootstrapped()  # future enlist() calls auto-start Q3
         self._bootstrapped = True
 
     def _register_runtime_closeable(self, resource: Any) -> None:

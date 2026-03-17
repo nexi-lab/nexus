@@ -131,32 +131,6 @@ class TestDependencyValidation:
 
 
 # ---------------------------------------------------------------------------
-# register_many
-# ---------------------------------------------------------------------------
-
-
-class TestRegisterMany:
-    def test_skips_none(self, registry: ServiceRegistry) -> None:
-        svc = MagicMock()
-        count = registry.register_many({"search": svc, "mcp": None, "llm": None})
-        assert count == 1
-        ref = registry.service("search")
-        assert ref is not None
-        assert ref._service_instance is svc
-        assert registry.service("mcp") is None
-
-    def test_is_remote_flag(self, registry: ServiceRegistry) -> None:
-        svc = MagicMock()
-        registry.register_many({"search": svc}, is_remote=True)
-        info = registry.service_info("search")
-        assert info is not None
-        assert info.is_remote is True
-
-    def test_empty_dict(self, registry: ServiceRegistry) -> None:
-        assert registry.register_many({}) == 0
-
-
-# ---------------------------------------------------------------------------
 # snapshot
 # ---------------------------------------------------------------------------
 

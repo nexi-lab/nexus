@@ -38,6 +38,37 @@ class AgentConfig:
     acp_args: tuple[str, ...] = ("--experimental-acp",)  # ACP session flags
     enabled: bool = True
 
+    def to_dict(self) -> dict:
+        """Serialize to JSON-compatible dict for VFS persistence."""
+        return {
+            "agent_id": self.agent_id,
+            "name": self.name,
+            "command": self.command,
+            "prompt_flag": self.prompt_flag,
+            "default_system_prompt": self.default_system_prompt,
+            "extra_args": list(self.extra_args),
+            "env": dict(self.env),
+            "npx_package": self.npx_package,
+            "acp_args": list(self.acp_args),
+            "enabled": self.enabled,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> AgentConfig:
+        """Deserialize from a JSON-compatible dict."""
+        return cls(
+            agent_id=data["agent_id"],
+            name=data["name"],
+            command=data["command"],
+            prompt_flag=data.get("prompt_flag", "-p"),
+            default_system_prompt=data.get("default_system_prompt"),
+            extra_args=tuple(data.get("extra_args", ())),
+            env=dict(data.get("env", {})),
+            npx_package=data.get("npx_package"),
+            acp_args=tuple(data.get("acp_args", ("--experimental-acp",))),
+            enabled=data.get("enabled", True),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Built-in agents — mirrors AionUi ACP_BACKENDS_ALL

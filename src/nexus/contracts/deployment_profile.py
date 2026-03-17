@@ -39,7 +39,6 @@ BRICK_STORAGE = "storage"
 # System services (gated by profile)
 BRICK_EVENTLOG = "eventlog"
 BRICK_NAMESPACE = "namespace"
-BRICK_AGENT_REGISTRY = "agent_registry"
 BRICK_PERMISSIONS = "permissions"
 BRICK_SCHEDULER = "scheduler"
 BRICK_AGENT_RUNTIME = "agent_runtime"
@@ -81,7 +80,6 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_STORAGE,
         BRICK_EVENTLOG,
         BRICK_NAMESPACE,
-        BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_SCHEDULER,
         BRICK_CACHE,
@@ -176,7 +174,6 @@ _EMBEDDED_BRICKS: frozenset[str] = _MINIMAL_BRICKS | frozenset(
 _LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
     {
         BRICK_NAMESPACE,
-        BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_CACHE,
         BRICK_IPC,

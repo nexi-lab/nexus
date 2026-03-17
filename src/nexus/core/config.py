@@ -223,10 +223,6 @@ class SystemServices:
     # Original system services (all degradable)
     # =================================================================
 
-    # Agent identity (Issue #1502)
-    agent_registry: Any = None
-    async_agent_registry: Any = None
-
     # Namespace visibility (Issue #1502)
     namespace_manager: NamespaceManagerProtocol | None = None
     async_namespace_manager: Any = None

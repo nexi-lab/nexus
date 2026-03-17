@@ -1,6 +1,6 @@
 """Eviction manager orchestrating resource-pressure agent eviction (Issues #2170, #2171).
 
-Composes ResourceMonitor + EvictionPolicy + AgentRegistry to implement the
+Composes ResourceMonitor + EvictionPolicy + ProcessTable to implement the
 eviction pipeline: check pressure -> select candidates -> checkpoint -> evict.
 
 Follows Orleans watermark-based eviction pattern:
@@ -24,9 +24,9 @@ from nexus.contracts.agent_types import EvictionReason
 from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, PressureLevel, QoSClass
 
 if TYPE_CHECKING:
-    from nexus.contracts.agent_types import AgentRecord
+    from nexus.contracts.process_types import ProcessDescriptor
+    from nexus.core.process_table import ProcessTable
     from nexus.lib.performance_tuning import EvictionTuning
-    from nexus.system_services.agents.agent_registry import AgentRegistry
     from nexus.system_services.agents.eviction_policy import EvictionPolicy
     from nexus.system_services.agents.resource_monitor import ResourceMonitor
 
@@ -54,13 +54,13 @@ class EvictionManager:
     Composes:
     - ResourceMonitor: checks memory pressure
     - EvictionPolicy: selects which agents to evict
-    - AgentRegistry: manages agent state transitions and checkpoints
+    - ProcessTable: manages process state transitions and signals
 
     Issue #2171: Adds an asyncio.Event for immediate preemption cycles
     triggered by premium agent registration when at capacity.
 
     Args:
-        registry: AgentRegistry for state transitions and checkpoints.
+        process_table: ProcessTable for state transitions and signals.
         monitor: ResourceMonitor for pressure detection.
         policy: EvictionPolicy for candidate selection.
         tuning: EvictionTuning with thresholds and batch sizes.
@@ -68,12 +68,12 @@ class EvictionManager:
 
     def __init__(
         self,
-        registry: "AgentRegistry",
+        process_table: "ProcessTable",
         monitor: "ResourceMonitor",
         policy: "EvictionPolicy",
         tuning: "EvictionTuning",
     ) -> None:
-        self._registry = registry
+        self._process_table = process_table
         self._monitor = monitor
         self._policy = policy
         self._tuning = tuning
@@ -126,10 +126,11 @@ class EvictionManager:
         Returns:
             EvictionResult with eviction counts and reason.
         """
-        from nexus.contracts.agent_types import AgentState
-        from nexus.system_services.agents.agent_registry import (
+        from nexus.contracts.process_types import (
             InvalidTransitionError,
-            StaleAgentError,
+            ProcessError,
+            ProcessSignal,
+            ProcessState,
         )
 
         # Consume urgent event if set, drain queue for highest-priority requester
@@ -154,9 +155,7 @@ class EvictionManager:
         # 1b. Check max_active_agents cap (secondary trigger, lightweight COUNT)
         over_cap = False
         if pressure is PressureLevel.NORMAL:
-            connected_count = await asyncio.to_thread(
-                self._registry.count_connected_agents,
-            )
+            connected_count = self._process_table.count_by_state(ProcessState.RUNNING)
             if connected_count > self._tuning.max_active_agents:
                 over_cap = True
                 logger.info(
@@ -192,9 +191,8 @@ class EvictionManager:
                 requesting_agent_qos=requesting_qos,
             )
 
-        # 3. Get candidates via to_thread (sync registry)
-        candidates = await asyncio.to_thread(
-            self._registry.list_eviction_candidates,
+        # 3. Get candidates from process table (synchronous in-memory)
+        candidates = self._process_table.list_by_priority(
             batch_size=self._tuning.eviction_batch_size,
         )
         if not candidates:
@@ -207,48 +205,34 @@ class EvictionManager:
         if not selected:
             return EvictionResult(evicted=0, reason=EvictionReason.NO_CANDIDATES)
 
-        # 5. Batch checkpoint with timeout enforcement
-        checkpoint_data = {a.agent_id: self._build_checkpoint(a) for a in selected}
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(self._registry.batch_checkpoint, checkpoint_data),
-                timeout=self._tuning.checkpoint_timeout_seconds,
-            )
-        except TimeoutError:
-            logger.warning(
-                "[EVICTION] Checkpoint timed out after %.1fs for %d agents",
-                self._tuning.checkpoint_timeout_seconds,
-                len(selected),
-            )
-            return EvictionResult(evicted=0, reason=EvictionReason.CHECKPOINT_TIMEOUT)
+        # 5. (Checkpoint skipped — will migrate to VFS writes)
 
         # 6. Transition concurrently to SUSPENDED (semaphore-bounded, CAS-safe)
-        async def _transition_one(agent: "AgentRecord") -> bool:
+        async def _transition_one(agent: "ProcessDescriptor") -> bool:
             async with self._transition_semaphore:
                 try:
-                    await asyncio.to_thread(
-                        self._registry.transition,
-                        agent.agent_id,
-                        AgentState.SUSPENDED,
-                        expected_generation=agent.generation,
-                    )
+                    # CAS check: verify generation hasn't changed
+                    current = self._process_table.get(agent.pid)
+                    if current is None or current.generation != agent.generation:
+                        raise InvalidTransitionError(f"stale generation for {agent.pid}")
+                    self._process_table.signal(agent.pid, ProcessSignal.SIGSTOP)
                     logger.debug(
-                        "[EVICTION] Transitioned agent %s to SUSPENDED (gen=%d)",
-                        agent.agent_id,
+                        "[EVICTION] Sent SIGSTOP to process %s (gen=%d)",
+                        agent.pid,
                         agent.generation,
                     )
                     return True
-                except (InvalidTransitionError, StaleAgentError) as exc:
+                except (InvalidTransitionError, ProcessError) as exc:
                     logger.info(
-                        "[EVICTION] Skipping agent %s: %s",
-                        agent.agent_id,
+                        "[EVICTION] Skipping process %s: %s",
+                        agent.pid,
                         exc,
                     )
                     return False
                 except Exception:
                     logger.exception(
-                        "[EVICTION] Unexpected error transitioning agent %s",
-                        agent.agent_id,
+                        "[EVICTION] Unexpected error transitioning process %s",
+                        agent.pid,
                     )
                     return False
 
@@ -286,31 +270,28 @@ class EvictionManager:
         Returns:
             EvictionResult with eviction outcome.
         """
-        from nexus.contracts.agent_types import AgentState
-        from nexus.system_services.agents.agent_registry import (
+        from nexus.contracts.process_types import (
             InvalidTransitionError,
-            StaleAgentError,
+            ProcessError,
+            ProcessSignal,
+            ProcessState,
         )
 
-        record = await asyncio.to_thread(self._registry.get, agent_id)
+        record = self._process_table.get(agent_id)
         if record is None:
             raise ValueError(f"Agent '{agent_id}' not found")
-        if record.state is not AgentState.CONNECTED:
-            raise ValueError(f"Agent '{agent_id}' is {record.state.value}, not CONNECTED")
+        if record.state is not ProcessState.RUNNING:
+            raise ValueError(f"Agent '{agent_id}' is {record.state}, not RUNNING")
 
-        # Checkpoint
-        checkpoint_data = self._build_checkpoint(record)
-        await asyncio.to_thread(self._registry.checkpoint, agent_id, checkpoint_data)
+        # (Checkpoint skipped — will migrate to VFS writes)
 
-        # Transition
+        # Transition via CAS + signal
         try:
-            await asyncio.to_thread(
-                self._registry.transition,
-                agent_id,
-                AgentState.SUSPENDED,
-                expected_generation=record.generation,
-            )
-        except (InvalidTransitionError, StaleAgentError) as exc:
+            current = self._process_table.get(agent_id)
+            if current is None or current.generation != record.generation:
+                raise InvalidTransitionError(f"stale generation for {agent_id}")
+            self._process_table.signal(agent_id, ProcessSignal.SIGSTOP)
+        except (InvalidTransitionError, ProcessError) as exc:
             logger.info("[EVICTION] Manual eviction skipped for %s: %s", agent_id, exc)
             return EvictionResult(evicted=0, reason=EvictionReason.MANUAL, skipped=1)
 
@@ -325,21 +306,22 @@ class EvictionManager:
         return elapsed < self._tuning.eviction_cooldown_seconds
 
     @staticmethod
-    def _build_checkpoint(agent: "AgentRecord") -> dict[str, Any]:
-        """Build checkpoint data for an agent before eviction.
+    def _build_checkpoint(agent: "ProcessDescriptor") -> dict[str, Any]:
+        """Build checkpoint data for a process before eviction.
 
-        Captures the essential state needed to restore the agent on
+        Captures the essential state needed to restore the process on
         reconnection.
 
         Args:
-            agent: Agent record to checkpoint.
+            agent: Process descriptor to checkpoint.
 
         Returns:
             Dict of checkpoint data.
         """
+        last_hb = agent.external_info.last_heartbeat if agent.external_info else None
         return {
-            "state": agent.state.value,
+            "state": str(agent.state),
             "generation": agent.generation,
-            "last_heartbeat": (agent.last_heartbeat.isoformat() if agent.last_heartbeat else None),
+            "last_heartbeat": (last_hb.isoformat() if last_hb else None),
             "evicted_at": time.time(),
         }

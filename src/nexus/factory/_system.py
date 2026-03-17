@@ -293,50 +293,6 @@ def _boot_system_services(
     # ORIGINAL SYSTEM SERVICES (all degradable)
     # =====================================================================
 
-    # --- Agent Registry (Issue #1502) ---
-    agent_registry: Any = None
-    async_agent_registry: Any = None
-    if _on("agent_registry") and ctx.record_store is not None:
-        try:
-            from nexus.system_services.agents.agent_registry import (
-                AgentRegistry,
-                AsyncAgentRegistry,
-            )
-
-            agent_registry = AgentRegistry(
-                record_store=ctx.record_store,
-                entity_registry=entity_registry,
-                flush_interval=ctx.profile_tuning.background_task.heartbeat_flush_interval,
-            )
-            async_agent_registry = AsyncAgentRegistry(agent_registry)
-            logger.debug("[BOOT:SYSTEM] AgentRegistry + AsyncAgentRegistry created")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] AgentRegistry unavailable: %s", exc)
-
-    if not _on("agent_registry"):
-        logger.debug("[BOOT:SYSTEM] AgentRegistry disabled by profile")
-
-    # --- Eviction Manager (Issues #2170, #2171) ---
-    eviction_manager: Any = None
-    if agent_registry is not None:
-        try:
-            from nexus.system_services.agents.eviction_manager import EvictionManager
-            from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
-            from nexus.system_services.agents.resource_monitor import ResourceMonitor
-
-            eviction_tuning = ctx.profile_tuning.eviction
-            resource_monitor = ResourceMonitor(tuning=eviction_tuning)
-            eviction_policy = QoSEvictionPolicy()
-            eviction_manager = EvictionManager(
-                registry=agent_registry,
-                monitor=resource_monitor,
-                policy=eviction_policy,
-                tuning=eviction_tuning,
-            )
-            logger.debug("[BOOT:SYSTEM] EvictionManager created (QoS-aware)")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
-
     # --- Namespace Manager (Issue #1502) ---
     namespace_manager: Any = None
     async_namespace_manager: Any = None
@@ -529,6 +485,27 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ProcessTable unavailable: %s", exc)
 
+    # --- Eviction Manager (Issues #2170, #2171) ---
+    eviction_manager: Any = None
+    if process_table is not None:
+        try:
+            from nexus.system_services.agents.eviction_manager import EvictionManager
+            from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
+            from nexus.system_services.agents.resource_monitor import ResourceMonitor
+
+            eviction_tuning = ctx.profile_tuning.eviction
+            resource_monitor = ResourceMonitor(tuning=eviction_tuning)
+            eviction_policy = QoSEvictionPolicy()
+            eviction_manager = EvictionManager(
+                process_table=process_table,
+                monitor=resource_monitor,
+                policy=eviction_policy,
+                tuning=eviction_tuning,
+            )
+            logger.debug("[BOOT:SYSTEM] EvictionManager created (QoS-aware)")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
+
     # --- Agent Runtime (Agent Process Engine, AGENT-PROCESS-ARCHITECTURE) ---
     agent_runtime: Any = None
     if _on("agent_runtime"):
@@ -570,8 +547,6 @@ def _boot_system_services(
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
         # Original system services
-        "agent_registry": agent_registry,
-        "async_agent_registry": async_agent_registry,
         "namespace_manager": namespace_manager,
         "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,

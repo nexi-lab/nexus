@@ -1,4 +1,4 @@
-"""Service startup/shutdown: AgentRegistry, KeyService, Sandbox, Scheduler, TaskQueue.
+"""Service startup/shutdown: ProcessTable, KeyService, Sandbox, Scheduler, TaskQueue.
 
 Extracted from fastapi_server.py (#1602).
 """
@@ -21,7 +21,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """Initialize application services and return background tasks.
 
     Covers:
-    - AgentRegistry (Issue #1240)
+    - ProcessTable (Issue #1240)
     - KeyService (Issue #1355)
     - SandboxAuthService (Issue #1307)
     - SchedulerService (Issue #1212)
@@ -29,7 +29,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """
     bg_tasks: list[asyncio.Task] = []
 
-    _startup_agent_registry(app, svc)
+    _startup_agent_lifecycle(app, svc)
     _startup_key_service(app, svc)
     _startup_credential_service(app, svc)
     _startup_delegation_from_bricks(app, svc)
@@ -38,7 +38,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_transactional_snapshot(app, svc)
     _startup_access_manifest(app, svc)
 
-    # Agent background tasks depend on agent_registry
+    # Agent background tasks depend on process_table
     agent_tasks = _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
 
@@ -82,27 +82,13 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error shutting down scheduler: %s", e, exc_info=True)
 
-    # Cancel agent background tasks and final flush (Issue #1240, #2170)
-    heartbeat_task = getattr(app.state, "_heartbeat_task", None)
-    stale_detection_task = getattr(app.state, "_stale_detection_task", None)
+    # Cancel agent eviction task (Issue #2170)
     eviction_task = getattr(app.state, "_eviction_task", None)
-    cleanup_task = getattr(app.state, "_checkpoint_cleanup_task", None)
-    for task_ref in (heartbeat_task, stale_detection_task, eviction_task, cleanup_task):
-        if task_ref and not task_ref.done():
-            task_ref.cancel()
-            with suppress(asyncio.CancelledError):
-                await task_ref
-    app.state._heartbeat_task = None
-    app.state._stale_detection_task = None
+    if eviction_task and not eviction_task.done():
+        eviction_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await eviction_task
     app.state._eviction_task = None
-    app.state._checkpoint_cleanup_task = None
-
-    if app.state.agent_registry:
-        try:
-            app.state.agent_registry.flush_heartbeats()
-            logger.info("[AGENT-REG] Final heartbeat flush completed")
-        except Exception:
-            logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
     # SandboxManager cleanup
     if app.state.sandbox_auth_service:
@@ -142,59 +128,39 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
 # ---------------------------------------------------------------------------
 
 
-def _startup_agent_registry(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
-    if svc.nexus_fs and svc.session_factory:
-        try:
-            from nexus.system_services.agents.agent_registry import AgentRegistry
+def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Wire ProcessTable for agent lifecycle tracking."""
+    process_table = svc.process_table
+    if process_table is None:
+        app.state.process_table = None
+        return
 
-            _bg = getattr(svc.profile_tuning, "background_task", None)
-            app.state.agent_registry = AgentRegistry(
-                record_store=svc.record_store,
-                entity_registry=svc.entity_registry,
-                flush_interval=_bg.heartbeat_flush_interval if _bg else 60,
-            )
-            # Inject into NexusFS for RPC methods
-            svc.nexus_fs._agent_registry = app.state.agent_registry
+    app.state.process_table = process_table
 
-            # Wire into sync PermissionEnforcer
-            perm_enforcer = svc.permission_enforcer
-            if perm_enforcer is not None:
-                perm_enforcer.agent_registry = app.state.agent_registry
+    # Wire into sync PermissionEnforcer
+    perm_enforcer = svc.permission_enforcer
+    if perm_enforcer is not None:
+        perm_enforcer.process_table = process_table
 
-            # Issue #1440: Create async wrapper for protocol conformance
-            from nexus.system_services.agents.agent_registry import AsyncAgentRegistry
+    # Issue #2172: Create AgentWarmupService with step registry
+    try:
+        from nexus.system_services.agents.agent_warmup import AgentWarmupService
+        from nexus.system_services.agents.warmup_steps import register_standard_steps
 
-            app.state.async_agent_registry = AsyncAgentRegistry(app.state.agent_registry)
+        app.state.agent_warmup_service = AgentWarmupService(
+            process_table=process_table,
+            namespace_manager=svc.namespace_manager,
+            enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
+            cache_store=getattr(app.state, "cache_brick", None),
+            mcp_config=None,
+        )
+        register_standard_steps(app.state.agent_warmup_service)
+        logger.info("[WARMUP] AgentWarmupService initialized with standard steps")
+    except Exception as e:
+        logger.warning("[WARMUP] Failed to initialize AgentWarmupService: %s", e, exc_info=True)
+        app.state.agent_warmup_service = None
 
-            # Issue #2172: Create AgentWarmupService with step registry
-            try:
-                from nexus.system_services.agents.agent_warmup import AgentWarmupService
-                from nexus.system_services.agents.warmup_steps import register_standard_steps
-
-                app.state.agent_warmup_service = AgentWarmupService(
-                    agent_registry=app.state.agent_registry,
-                    namespace_manager=svc.namespace_manager,
-                    enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
-                    cache_store=getattr(app.state, "cache_brick", None),
-                    mcp_config=None,
-                )
-                register_standard_steps(app.state.agent_warmup_service)
-                logger.info("[WARMUP] AgentWarmupService initialized with standard steps")
-            except Exception as e:
-                logger.warning(
-                    "[WARMUP] Failed to initialize AgentWarmupService: %s", e, exc_info=True
-                )
-                app.state.agent_warmup_service = None
-
-            logger.info("[AGENT-REG] AgentRegistry initialized and wired")
-        except Exception as e:
-            logger.warning("[AGENT-REG] Failed to initialize AgentRegistry: %s", e, exc_info=True)
-            app.state.agent_registry = None
-            app.state.async_agent_registry = None
-    else:
-        app.state.agent_registry = None
-        app.state.async_agent_registry = None
+    logger.info("[PROCESS-TABLE] ProcessTable wired for agent lifecycle")
 
 
 def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
@@ -319,8 +285,8 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
         deleg = app.state.delegation_service
         if getattr(deleg, "_namespace_manager", None) is None:
             deleg._namespace_manager = svc.namespace_manager
-        if getattr(deleg, "_agent_registry", None) is None:
-            deleg._agent_registry = app.state.agent_registry
+        if getattr(deleg, "_process_table", None) is None:
+            deleg._process_table = app.state.process_table
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
 
@@ -354,11 +320,11 @@ def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
 
 def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
-    if svc.nexus_fs and not app.state.agent_registry:
+    if svc.nexus_fs and not app.state.process_table:
         logger.info(
-            "[SANDBOX-AUTH] AgentRegistry not available, SandboxAuthService will not be initialized"
+            "[SANDBOX-AUTH] ProcessTable not available, SandboxAuthService will not be initialized"
         )
-    if not (svc.nexus_fs and app.state.agent_registry):
+    if not (svc.nexus_fs and app.state.process_table):
         return
 
     try:
@@ -421,7 +387,7 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
                 )
 
         app.state.sandbox_auth_service = SandboxAuthService(
-            agent_registry=app.state.agent_registry,
+            process_table=app.state.process_table,
             sandbox_manager=sandbox_mgr,
             namespace_manager=namespace_manager,
             event_log=app.state.agent_event_log,
@@ -466,45 +432,23 @@ def _startup_access_manifest(app: "FastAPI", svc: "LifespanServices") -> None:
 
 
 def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
-    """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
-    if not app.state.agent_registry:
-        return []
-
-    from nexus.server.background_tasks import (
-        heartbeat_flush_task,
-        stale_agent_detection_task,
-    )
-
-    _bg_tuning = svc.profile_tuning.background_task
-    app.state._heartbeat_task = asyncio.create_task(
-        heartbeat_flush_task(
-            app.state.agent_registry,
-            interval_seconds=_bg_tuning.heartbeat_flush_interval,
-        )
-    )
-    app.state._stale_detection_task = asyncio.create_task(
-        stale_agent_detection_task(
-            app.state.agent_registry,
-            interval_seconds=_bg_tuning.stale_agent_check_interval,
-            threshold_seconds=_bg_tuning.stale_agent_threshold,
-        )
-    )
-    logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
-
-    tasks = [app.state._heartbeat_task, app.state._stale_detection_task]
-
-    # Agent eviction under resource pressure (Issue #2170)
-    # Use factory-constructed EvictionManager (DRY — avoid duplicate construction)
+    """Start agent eviction background task."""
+    # ProcessTable handles heartbeats directly (no buffer), so no flush task needed.
+    # Stale detection handled by ProcessTable's external_info.last_heartbeat field.
+    # Checkpoint cleanup handled by VFS when process is reaped.
+    app.state._heartbeat_task = None
+    app.state._stale_detection_task = None
     app.state._eviction_task = None
     app.state._checkpoint_cleanup_task = None
+
+    tasks: list[asyncio.Task] = []
+
+    # Agent eviction under resource pressure (Issue #2170)
     _factory_em = svc.eviction_manager
     _eviction_tuning = getattr(svc.profile_tuning, "eviction", None)
     if _factory_em is not None and _eviction_tuning is not None:
         try:
-            from nexus.server.background_tasks import (
-                agent_eviction_task,
-                checkpoint_cleanup_task,
-            )
+            from nexus.server.background_tasks import agent_eviction_task
 
             app.state._eviction_task = asyncio.create_task(
                 agent_eviction_task(
@@ -513,20 +457,10 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                 )
             )
             tasks.append(app.state._eviction_task)
-
-            # Stale checkpoint cleanup (Issue #2170, #16A)
-            app.state._checkpoint_cleanup_task = asyncio.create_task(
-                checkpoint_cleanup_task(
-                    app.state.agent_registry,
-                    interval_seconds=_eviction_tuning.checkpoint_cleanup_interval_seconds,
-                    max_age_seconds=_eviction_tuning.checkpoint_max_age_seconds,
-                )
-            )
-            tasks.append(app.state._checkpoint_cleanup_task)
-            logger.info("[EVICTION] Background eviction + checkpoint cleanup tasks started")
+            logger.info("[EVICTION] Background eviction task started")
         except Exception:
             logger.warning("[EVICTION] Failed to start eviction tasks", exc_info=True)
-    elif _eviction_tuning is not None:
+    elif _eviction_tuning is not None and app.state.process_table is not None:
         # Fallback: construct EvictionManager here if factory didn't create one
         try:
             from nexus.server.background_tasks import agent_eviction_task
@@ -537,7 +471,7 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
             eviction_policy = LRUEvictionPolicy()
             app.state.eviction_manager = EvictionManager(
-                registry=app.state.agent_registry,
+                process_table=app.state.process_table,
                 monitor=resource_monitor,
                 policy=eviction_policy,
                 tuning=_eviction_tuning,

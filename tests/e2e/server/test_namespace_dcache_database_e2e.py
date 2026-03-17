@@ -43,7 +43,7 @@ from sqlalchemy.orm import sessionmaker
 PYTHON = sys.executable
 SERVER_STARTUP_TIMEOUT = 45  # seconds
 
-# PostgreSQL connection — same as test_agent_registry_e2e.py
+# PostgreSQL connection — shared E2E database config
 POSTGRES_URL = os.getenv(
     "NEXUS_E2E_DATABASE_URL",
     "postgresql://scorpio@localhost:5432/nexus_e2e_test",

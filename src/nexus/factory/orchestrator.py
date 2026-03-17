@@ -186,8 +186,6 @@ def create_nexus_services(
         mount_manager=system_dict["mount_manager"],
         workspace_manager=system_dict["workspace_manager"],
         # Original system services
-        agent_registry=system_dict["agent_registry"],
-        async_agent_registry=system_dict["async_agent_registry"],
         namespace_manager=system_dict["namespace_manager"],
         async_namespace_manager=system_dict["async_namespace_manager"],
         context_branch_service=system_dict.get("context_branch_service"),

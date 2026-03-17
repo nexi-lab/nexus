@@ -266,8 +266,6 @@ class TestSystemServices:
         assert ss.mount_manager is None
         assert ss.workspace_manager is None
         # Original system services
-        assert ss.agent_registry is None
-        assert ss.async_agent_registry is None
         assert ss.namespace_manager is None
         assert ss.async_namespace_manager is None
         assert ss.context_branch_service is None
@@ -280,14 +278,14 @@ class TestSystemServices:
     def test_frozen(self) -> None:
         ss = SystemServices()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            ss.agent_registry = "x"  # type: ignore[misc]
+            ss.namespace_manager = "x"
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
-        ss = SystemServices(agent_registry=sentinel, resiliency_manager=sentinel)
-        assert ss.agent_registry is sentinel
+        ss = SystemServices(namespace_manager=sentinel, resiliency_manager=sentinel)
+        assert ss.namespace_manager is sentinel
         assert ss.resiliency_manager is sentinel
-        assert ss.namespace_manager is None
+        assert ss.delivery_worker is None
 
     def test_replace(self) -> None:
         ss = SystemServices()
@@ -316,8 +314,6 @@ class TestSystemServices:
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "agent_registry",
-            "async_agent_registry",
             "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",

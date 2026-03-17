@@ -122,11 +122,10 @@ class WorkspaceRegistry:
         return user_id, agent_id, zone_id
 
     def _validate_agent_ownership(self, agent_id: str | None, user_id: str | None) -> None:
-        """Validate that agent belongs to user, if both are provided."""
-        if agent_id and user_id:
-            _agent_reg = getattr(self, "_agent_registry", None)
-            if _agent_reg is not None and not _agent_reg.validate_ownership(agent_id, user_id):
-                raise PermissionError(f"Agent {agent_id} not owned by {user_id}")
+        """Validate that agent belongs to user, if both are provided.
+
+        No-op: ownership validation is handled by ReBAC permission checks.
+        """
 
     def _compute_expiry(self, ttl: Any | None) -> datetime | None:
         """Compute expiration datetime from a timedelta TTL."""

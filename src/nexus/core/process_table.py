@@ -170,6 +170,7 @@ class ProcessTable:
             zone_id=zone_id,
             kind=kind,
             state=ProcessState.RUNNING,
+            generation=1,
             cwd=cwd,
             external_info=external_info,
             labels=labels or {},
@@ -227,7 +228,8 @@ class ProcessTable:
             case ProcessSignal.SIGSTOP:
                 return self._transition(desc, ProcessState.STOPPED)
             case ProcessSignal.SIGCONT:
-                return self._transition(desc, ProcessState.SLEEPING)
+                new_gen = desc.generation + 1
+                return self._transition(desc, ProcessState.SLEEPING, generation=new_gen)
             case ProcessSignal.SIGTERM:
                 return self.kill(pid)
             case ProcessSignal.SIGKILL:
@@ -321,6 +323,30 @@ class ProcessTable:
         if state is not None:
             result = [p for p in result if p.state == state]
         return result
+
+    # ------------------------------------------------------------------
+    # Convenience queries (Issue #1692)
+    # ------------------------------------------------------------------
+
+    def count_by_state(self, state: ProcessState, *, zone_id: str | None = None) -> int:
+        """Count processes in a given state."""
+        return len(self.list_processes(state=state, zone_id=zone_id))
+
+    def list_by_priority(
+        self,
+        *,
+        zone_id: str | None = None,
+        batch_size: int = 10,
+    ) -> list[ProcessDescriptor]:
+        """List RUNNING processes sorted by eviction priority (lowest first), then LRU."""
+        procs = self.list_processes(state=ProcessState.RUNNING, zone_id=zone_id)
+        procs.sort(
+            key=lambda p: (
+                int(p.labels.get("eviction_priority", "50")),
+                p.updated_at,
+            )
+        )
+        return procs[:batch_size]
 
     # ------------------------------------------------------------------
     # External process management

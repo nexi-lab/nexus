@@ -51,6 +51,9 @@ class LifespanServices:
     # --- Coordinator (post-bootstrap service registration) ---------------
     service_coordinator: Any = None  # ServiceLifecycleCoordinator
 
+    # --- Process table (kernel process lifecycle) -------------------------
+    process_table: Any = None
+
     # --- System services (from nexus_fs._system_services) ----------------
     brick_lifecycle_manager: Any = None
     brick_reconciler: Any = None
@@ -105,6 +108,8 @@ class LifespanServices:
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
+            # Process table
+            process_table=getattr(app.state, "process_table", None),
             # Coordinator
             service_coordinator=_coord,
             # Configuration

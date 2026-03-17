@@ -1,6 +1,6 @@
 """Sandbox authentication service (Issue #1307).
 
-Orchestrates sandbox creation through the Agent Registry, enforcing the
+Orchestrates sandbox creation through the ProcessTable, enforcing the
 Agent OS design principle: *the sandbox is a platform service that USES
 kernel primitives, not a kernel component*.
 
@@ -10,7 +10,7 @@ Pipeline: validate agent → check ownership → transition to CONNECTED →
 Design decisions:
     - #1A: Thin orchestration layer above SandboxManager
     - #8A: ``agent_id`` is required (non-optional) at this layer
-    - #13A: Sync registry calls wrapped in ``asyncio.to_thread``
+    - #13A: Sync ProcessTable calls wrapped in ``asyncio.to_thread``
     - #15A: Budget enforcement gated by feature flag
     - #4A / #16C: Events emitted synchronously from this service
 """
@@ -38,13 +38,13 @@ class SandboxAuthResult:
 
 
 class SandboxAuthService:
-    """Orchestrates sandbox creation through Agent Registry.
+    """Orchestrates sandbox creation through ProcessTable.
 
-    This is a platform service that uses kernel primitives (AgentRegistry,
+    This is a platform service that uses kernel primitives (ProcessTable,
     NamespaceManager). The sandbox doesn't bypass the kernel for auth.
 
     Args:
-        agent_registry: Agent lifecycle registry (required).
+        process_table: Process lifecycle table (required).
         sandbox_manager: Infrastructure-layer sandbox lifecycle manager (required).
         namespace_manager: Per-subject namespace visibility (optional).
         nexus_pay: Budget enforcement SDK (optional).
@@ -55,14 +55,14 @@ class SandboxAuthService:
 
     def __init__(
         self,
-        agent_registry: Any,  # AgentRegistry injected via DI
+        process_table: Any,  # ProcessTable injected via DI
         sandbox_manager: "SandboxManager",
         namespace_manager: Any = None,
         nexus_pay: Any = None,
         event_log: "AgentEventLogProtocol | None" = None,
         budget_enforcement: bool = False,
     ) -> None:
-        self._registry = agent_registry
+        self._process_table = process_table
         self._sandbox_manager = sandbox_manager
         self._namespace_manager = namespace_manager
         self._nexus_pay = nexus_pay
@@ -112,19 +112,19 @@ class SandboxAuthService:
         template_id: str | None = None,
         sandbox_cost: float = 1.0,
     ) -> SandboxAuthResult:
-        """Create a sandbox through the Agent Registry authentication pipeline.
+        """Create a sandbox through the ProcessTable authentication pipeline.
 
         Pipeline:
-            1. Validate agent exists in registry
+            1. Validate agent exists in process table
             2. Verify ownership (agent belongs to owner_id)
-            3. Transition agent to CONNECTED (new session)
+            3. Signal SIGCONT to transition agent to CONNECTED (new session)
             4. Construct namespace from grants (if NamespaceManager available)
             5. Check budget (if budget_enforcement enabled)
             6. Delegate sandbox creation to SandboxManager
             7. Record lifecycle event
 
         Args:
-            agent_id: Agent identifier (required — validated against registry).
+            agent_id: Agent identifier (required — validated against process table).
             owner_id: User who owns the agent.
             zone_id: Zone for multi-zone isolation.
             name: User-friendly sandbox name.
@@ -142,19 +142,23 @@ class SandboxAuthService:
             InvalidTransitionError: If agent cannot transition to CONNECTED.
         """
         # Step 1: Validate agent exists
-        agent_record = await asyncio.to_thread(self._registry.get, agent_id)
+        agent_record = await asyncio.to_thread(self._process_table.get, agent_id)
         if agent_record is None:
-            raise ValueError(f"Agent '{agent_id}' not found in registry")
+            raise ValueError(f"Agent '{agent_id}' not found in process table")
 
         # Step 2: Verify ownership
-        owns = await asyncio.to_thread(self._registry.validate_ownership, agent_id, owner_id)
+        owns = agent_record is not None and agent_record.owner_id == owner_id
         if not owns:
             raise PermissionError(
                 f"Ownership validation failed: user '{owner_id}' does not own agent '{agent_id}'"
             )
 
-        # Step 3: Transition agent to CONNECTED (new session)
-        connected_record = await asyncio.to_thread(self._registry.transition, agent_id, "CONNECTED")
+        # Step 3: Signal agent SIGCONT (transition to CONNECTED)
+        from nexus.contracts.process_types import ProcessSignal
+
+        connected_record = await asyncio.to_thread(
+            self._process_table.signal, agent_id, ProcessSignal.SIGCONT
+        )
 
         # Step 4: Construct namespace (best-effort — failure doesn't block sandbox)
         mount_table: list[Any] = []
@@ -232,9 +236,11 @@ class SandboxAuthService:
         # Stop the sandbox
         result = await self._sandbox_manager.stop_sandbox(sandbox_id)
 
-        # Transition agent to IDLE (best-effort — don't fail the stop)
+        # Signal agent SIGSTOP (transition to IDLE — best-effort)
         try:
-            await asyncio.to_thread(self._registry.transition, agent_id, "IDLE")
+            from nexus.contracts.process_types import ProcessSignal
+
+            await asyncio.to_thread(self._process_table.signal, agent_id, ProcessSignal.SIGSTOP)
         except Exception:
             logger.warning(
                 "[SANDBOX-AUTH] Failed to transition agent %s to IDLE after stop",

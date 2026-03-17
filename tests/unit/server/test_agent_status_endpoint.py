@@ -34,12 +34,12 @@ from nexus.server.api.v2.routers.agent_status import router
 def _create_test_app(mock_registry: Any) -> FastAPI:
     """Create a minimal FastAPI app with the agent_status router."""
     app = FastAPI()
-    app.state.async_agent_registry = mock_registry
+    app.state.process_table = mock_registry
 
-    # Override auth to be a no-op for testing
-    from nexus.server.api.v2.routers.agent_status import _get_async_agent_registry
+    # Override process_table dependency for testing
+    from nexus.server.api.v2.routers.agent_status import _get_process_table
 
-    app.dependency_overrides[_get_async_agent_registry] = lambda: mock_registry
+    app.dependency_overrides[_get_process_table] = lambda: mock_registry
     app.include_router(router)
     return app
 

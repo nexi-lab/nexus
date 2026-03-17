@@ -276,7 +276,6 @@ async def _boot_wired_services(
             metastore=nx.metadata,
             session_factory=_nx_session_factory,
             record_store=nx._record_store,
-            agent_registry=getattr(nx, "_agent_registry", None),
             entity_registry=system_services.entity_registry,
             rebac_manager=system_services.rebac_manager,
             wallet_provisioner=brick_services.wallet_provisioner,

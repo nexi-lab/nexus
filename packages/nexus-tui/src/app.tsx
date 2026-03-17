@@ -37,15 +37,15 @@ const ApiConsolePanel = lazy(() => import("./panels/api-console/api-console-pane
 
 const TABS: readonly Tab[] = [
   { id: "files", label: "Files", shortcut: "1" },
-  { id: "versions", label: "Versions", shortcut: "2" },
-  { id: "agents", label: "Agents", shortcut: "3" },
-  { id: "zones", label: "Zones", shortcut: "4" },
-  { id: "access", label: "Access", shortcut: "5" },
+  { id: "versions", label: "Ver", shortcut: "2" },
+  { id: "agents", label: "Agent", shortcut: "3" },
+  { id: "zones", label: "Zone", shortcut: "4" },
+  { id: "access", label: "ACL", shortcut: "5" },
   { id: "payments", label: "Pay", shortcut: "6" },
-  { id: "search", label: "Search", shortcut: "7" },
-  { id: "workflows", label: "Workflows", shortcut: "8" },
-  { id: "infrastructure", label: "Events", shortcut: "9" },
-  { id: "console", label: "Console", shortcut: "0" },
+  { id: "search", label: "Find", shortcut: "7" },
+  { id: "workflows", label: "Flow", shortcut: "8" },
+  { id: "infrastructure", label: "Event", shortcut: "9" },
+  { id: "console", label: "CLI", shortcut: "0" },
 ];
 
 function PanelRouter(): React.ReactNode {

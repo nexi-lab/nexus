@@ -280,7 +280,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
     ) -> int:
         """Register multiple services at once (skips ``None`` values).
 
-        Used by factory ``register_wired_services()`` for batch wiring.
+        Used by factory ``enlist_wired_services()`` for batch wiring.
         Returns the number of services actually registered.
         """
         count = 0

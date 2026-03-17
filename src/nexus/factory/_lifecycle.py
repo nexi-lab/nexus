@@ -29,7 +29,7 @@ async def _do_link(
 
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_wired_services
-    from nexus.factory.service_routing import register_wired_services
+    from nexus.factory.service_routing import enlist_wired_services
 
     # --- Wire non-hot-path facade attrs from containers (Issue #1570) ---
     # These 15 attrs are only accessed outside kernel (CLI, services, API).
@@ -120,28 +120,26 @@ async def _do_link(
         _brick_on,
     )
 
-    # Issue #1615: Create coordinator early so wired services are registered
-    # in both ServiceRegistry and BLM in one shot.
+    # Issue #1708: Coordinator is always created — BLM is optional.
+    # Single entry point for all service registration (no fallback path).
+    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+        ServiceLifecycleCoordinator,
+    )
+
     _blm = getattr(nx._system_services, "brick_lifecycle_manager", None)
-    if _blm is not None:
-        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-            ServiceLifecycleCoordinator,
-        )
+    coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
+    nx._service_coordinator = coordinator
+    await enlist_wired_services(coordinator, _wired)
 
-        coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
-        nx._service_coordinator = coordinator
-        register_wired_services(coordinator, _wired)
-
-        # Issue #1666: Register system-tier PersistentService instances so
-        # start_persistent_services() auto-discovers them at bootstrap.
-        _dpb = getattr(nx._system_services, "deferred_permission_buffer", None)
-        if _dpb is not None:
-            coordinator.register_service("deferred_permission_buffer", _dpb, exports=())
-        _dw = getattr(nx._system_services, "delivery_worker", None)
-        if _dw is not None:
-            coordinator.register_service("delivery_worker", _dw, exports=())
-    else:
-        register_wired_services(nx._service_registry, _wired)
+    # Issue #1666: Register system-tier PersistentService instances.
+    # These are Q3 (PersistentService) — registered via register_service()
+    # (NOT enlist) so start() is deferred to bootstrap, not link().
+    _dpb = getattr(nx._system_services, "deferred_permission_buffer", None)
+    if _dpb is not None:
+        coordinator.register_service("deferred_permission_buffer", _dpb, exports=())
+    _dw = getattr(nx._system_services, "delivery_worker", None)
+    if _dw is not None:
+        coordinator.register_service("delivery_worker", _dw, exports=())
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.

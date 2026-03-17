@@ -338,7 +338,7 @@ class WiredServices:
     """Tier 2b (WIRED) — services requiring NexusFS reference.
 
     Created by ``nexus.factory._wired._boot_wired_services()`` and registered
-    into ServiceRegistry via ``register_wired_services()``.
+    into ServiceRegistry via ``enlist_wired_services()``.
 
     Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
     """

@@ -36,8 +36,8 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
 
     Called by ``connect(profile="remote")`` after NexusFS construction.
 
-    Issue #1502: bind_wired_services() deleted — sole registration path is
-    now populate_service_registry() → ServiceRegistry.
+    Issue #1502: bind_wired_services() deleted — registration path is
+    now register_wired_services() → ServiceRegistry (Issue #1708).
 
     Args:
         nfs: The NexusFS instance to wire services onto.
@@ -47,11 +47,11 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
 
     proxy = RemoteServiceProxy(call_rpc, service_name="universal")
 
-    # Register all canonical services via ServiceRegistry (sole path)
-    from nexus.factory.service_routing import _CANONICAL_NAMES, populate_service_registry
+    # Register all canonical services via ServiceRegistry (Issue #1708)
+    from nexus.factory.service_routing import _CANONICAL_NAMES, register_wired_services
 
     wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
-    populate_service_registry(nfs._service_registry, wired_dict, is_remote=True)
+    register_wired_services(nfs._service_registry, wired_dict, is_remote=True)
 
     # BrickServices field not covered by WiredServices
     # Issue #1570: version_service is a facade attr wired by _do_link()

@@ -1,27 +1,17 @@
-"""Service wiring — populates ``ServiceRegistry`` from WiredServices.
+"""Service wiring — canonical service name & export maps.
 
 Issue #1502: ``bind_wired_services()`` and the setattr wiring path have been
 deleted.  All service access now goes through ``nx.service("name")``.
-The sole registration path is ``populate_service_registry()``.
 
-Issue #1615: ``populate_service_registry()`` accepts either a raw
-``ServiceRegistry`` or a ``ServiceLifecycleCoordinator`` — both expose
-``register_service(name, instance, *, exports, is_remote)``.  When a
-coordinator is provided, services are registered in both the Registry
-and BrickLifecycleManager in one shot.
+Issue #1615 / #1708: Services are registered via direct
+``coordinator.register_service()`` or ``registry.register_service()`` calls
+in ``_do_link()`` and ``_boot_remote_services()``.  This module provides
+only the data maps (``_CANONICAL_NAMES``, ``_CANONICAL_EXPORTS``).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from nexus.core.config import WiredServices
-    from nexus.core.service_registry import ServiceRegistry
-    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-        ServiceLifecycleCoordinator,
-    )
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # EXPORT_SYMBOL declarations: each service's public API surface
@@ -74,18 +64,19 @@ _CANONICAL_NAMES: dict[str, str] = {
 }
 
 
-def populate_service_registry(
-    registrar: "ServiceRegistry | ServiceLifecycleCoordinator",
-    wired: "WiredServices | dict[str, Any]",
+def register_wired_services(
+    registrar: Any,
+    wired: Any,
     *,
     is_remote: bool = False,
 ) -> int:
-    """Populate ServiceRegistry (or coordinator) from WiredServices.
+    """Register WiredServices into a registrar (coordinator or registry).
 
-    Accepts either a raw ``ServiceRegistry`` or a ``ServiceLifecycleCoordinator``.
-    Both duck-type on ``register_service(name, instance, *, exports, is_remote)``.
-    When a coordinator is provided, services are registered in both the
-    ServiceRegistry and BrickLifecycleManager in one shot (Issue #1615).
+    Iterates ``_CANONICAL_NAMES``, extracts each non-None service from
+    ``wired`` (WiredServices dataclass or dict), and calls
+    ``registrar.register_service()`` with canonical name + exports.
+
+    Issue #1708: Renamed from ``populate_service_registry()``.
 
     Returns the number of services registered.
     """

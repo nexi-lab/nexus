@@ -99,7 +99,7 @@ class TestRevokeHappyPath:
         service._update_delegation_status.assert_called_once_with("del-1", DelegationStatus.REVOKED)
         service._delete_worker_tuples.assert_called_once_with("worker-1", "root")
         service._revoke_worker_api_key.assert_called_once_with("worker-1")
-        service._process_table.unregister.assert_called_once_with("worker-1")
+        service._process_table.unregister_external.assert_called_once_with("worker-1")
 
 
 class TestRevokeAlreadyRevoked:

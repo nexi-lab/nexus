@@ -96,6 +96,7 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     "parsers": BrickRequirement(min_memory_mb=128),
     "snapshot": BrickRequirement(min_memory_mb=64),
     "acp": BrickRequirement(min_memory_mb=64),
+    "task_manager": BrickRequirement(min_memory_mb=32),
     # Kernel (always on, listed for completeness)
     "storage": BrickRequirement(min_memory_mb=0),
 }

@@ -421,6 +421,8 @@ class TestBrickServices:
             "governance_response_service",
             # DT_PIPE consumer (Issue #810)
             "zoekt_pipe_consumer",
+            # Task Manager DT_PIPE consumer
+            "task_dispatch_consumer",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

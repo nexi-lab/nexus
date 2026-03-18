@@ -203,10 +203,11 @@ def create_nexus_services(
         # Process table + ACP
         process_table=system_dict.get("process_table"),
         acp_service=system_dict.get("acp_service"),
+        # Distributed event bus — Tier 1 infrastructure (Issue #1701)
+        event_bus=brick_dict["event_bus"],
     )
 
     brick_services = _BrickServices(
-        event_bus=brick_dict["event_bus"],
         lock_manager=brick_dict["lock_manager"],
         workflow_engine=brick_dict["workflow_engine"],
         rebac_circuit_breaker=brick_dict["rebac_circuit_breaker"],
@@ -565,13 +566,13 @@ async def _register_vfs_hooks(
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.
-    # Late-binding (Issue #969, #1570): bus_provider=nx so that post-construction
-    # overrides of nx._event_bus (E2E test fixtures injecting a shared Redis bus)
-    # are picked up automatically.  _resolve_bus() also checks _brick_services
-    # as production fallback (factory no longer sets nx._event_bus via setattr).
+    # Issue #1701: event_bus is now Tier 1 (SystemServices).  Direct injection —
+    # no bus_provider late-binding needed.  Tests use swap_service() to replace.
     from nexus.system_services.event_bus.observer import EventBusObserver
 
-    _bus_observer = EventBusObserver(bus_provider=nx)
+    _bus_observer = EventBusObserver(
+        event_bus=nx._system_services.event_bus if nx._system_services else None
+    )
     await _enlist("event_bus_observer", _bus_observer)
 
     # EventsService observer: self-registered via HotSwappable.hook_spec()

@@ -69,7 +69,6 @@ class TestInitAppState:
         mock_fs = MagicMock()
         mock_fs._system_services = None
         mock_fs._brick_services = None
-        mock_fs._event_bus = None
         mock_fs._write_observer = None
         mock_fs._permission_enforcer = None
         init_app_state(app, nexus_fs=mock_fs)
@@ -91,9 +90,9 @@ class TestInitAppState:
         mock_sys.brick_reconciler = "br"
         mock_sys.eviction_manager = "em"
         mock_fs = MagicMock()
+        mock_sys.event_bus = "eb"
         mock_fs._system_services = mock_sys
         mock_fs._brick_services = "brk"
-        mock_fs._event_bus = "eb"
         mock_fs._write_observer = "wo"
         mock_fs._permission_enforcer = "pe"
 

@@ -3,18 +3,16 @@
 Registered in KernelDispatch OBSERVE phase. Replaces the direct
 ``_publish_file_event()`` calls that previously bypassed the observer pattern.
 
-Late-binding support (Issue #969):
-    The observer can be constructed with a *bus_provider* — any object
-    whose ``_event_bus`` attribute may be swapped after boot (e.g. the
-    NexusFS instance in E2E tests that inject a shared Redis bus after
-    factory construction).  When *bus_provider* is given, the event bus
-    is resolved at call time via ``bus_provider._event_bus``.
+Issue #1701: event_bus is Tier 1 (SystemServices). The observer is constructed
+with a direct ``event_bus`` reference at factory time — no late-binding needed.
+Tests that need a different bus use ``await nx.swap_service("event_bus_observer",
+EventBusObserver(event_bus=shared_bus))`` to hot-swap the observer atomically.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
@@ -31,13 +29,9 @@ class EventBusObserver:
     async ``event_bus.publish()`` is dispatched via ``fire_and_forget``,
     matching the existing fire-and-forget semantics.
 
-    Two construction modes:
-
-    1. **Direct**: ``EventBusObserver(event_bus)`` — bus is fixed at init.
-    2. **Late-binding**: ``EventBusObserver(event_bus, bus_provider=nx)``
-       — ``nx._event_bus`` is resolved on every ``on_mutation`` call,
-       so post-construction overrides (e.g. test fixtures injecting a
-       shared Redis bus) are picked up automatically.
+    Constructed with a direct ``event_bus`` reference (Issue #1701).
+    Use ``await nx.swap_service("event_bus_observer", EventBusObserver(...))``
+    to replace the bus at runtime (e.g. in E2E tests).
     """
 
     # ── HotSwappable protocol (Issue #1616) ────────────────────────────
@@ -53,39 +47,16 @@ class EventBusObserver:
     async def activate(self) -> None:
         pass
 
-    def __init__(
-        self,
-        event_bus: "EventBusProtocol | None" = None,
-        *,
-        bus_provider: Any = None,
-    ) -> None:
+    def __init__(self, event_bus: "EventBusProtocol | None" = None) -> None:
         self._event_bus = event_bus
-        self._bus_provider = bus_provider
 
-    def _resolve_bus(self) -> "EventBusProtocol | None":
-        """Return the effective event bus (late-binding aware).
-
-        Resolution order when bus_provider is set (Issue #1570):
-        1. nx._event_bus — test injection point (set directly post-construction)
-        2. nx._brick_services.event_bus — production path (factory no longer
-           sets nx._event_bus via setattr; bus lives in container instead)
-        """
-        if self._bus_provider is not None:
-            bus = getattr(self._bus_provider, "_event_bus", None)
-            if bus is None:
-                _brk = getattr(self._bus_provider, "_brick_services", None)
-                if _brk is not None:
-                    bus = getattr(_brk, "event_bus", None)
-            return bus
-        return self._event_bus
-
-    def on_mutation(self, event: FileEvent) -> None:
-        bus = self._resolve_bus()
-        if bus is None:
+    def on_mutation(self, event: "FileEvent") -> None:
+        if self._event_bus is None:
             return
 
         from nexus.lib.sync_bridge import fire_and_forget
 
+        bus = self._event_bus
         try:
             # Check if the bus is already started (e.g. test fixtures pre-start
             # the shared bus, or the server lifespan already started it).

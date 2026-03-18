@@ -263,6 +263,11 @@ class SystemServices:
     # ACP — stateless coding agent CLI caller
     acp_service: Any = None
 
+    # Distributed event bus — infrastructure messaging (Issue #1701: promoted from Tier 2)
+    # EventBusObserver (VFSObserver hook) publishes KernelDispatch OBSERVE events to Redis/NATS.
+    # Tier 1 because it is infrastructure (like write_observer), not an application feature.
+    event_bus: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure
@@ -282,7 +287,6 @@ class BrickServices:
     """
 
     # Infrastructure bricks
-    event_bus: Any = None
     lock_manager: Any = None
     workflow_engine: WorkflowProtocol | None = None
     rebac_circuit_breaker: Any = None

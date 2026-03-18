@@ -241,7 +241,7 @@ async def _boot_wired_services(
             from nexus.system_services.lifecycle.events_service import EventsService
 
             events_service = EventsService(
-                event_bus=brick_services.event_bus,
+                event_bus=system_services.event_bus,
                 lock_manager=brick_services.lock_manager,
             )
             logger.debug("[BOOT:WIRED] EventsService created")

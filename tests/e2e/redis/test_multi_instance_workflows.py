@@ -127,11 +127,11 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
         )
 
     # Use shared event bus (same Redis connection = events propagate).
-    # Issue #1701: event_bus is Tier 1 (SystemServices). Swap the EventBusObserver
-    # via swap_service() so the OBSERVE hook publishes to the shared bus.
-    from nexus.system_services.event_bus.observer import EventBusObserver
-
-    await nexus.swap_service("event_bus_observer", EventBusObserver(event_bus=shared_event_bus))
+    # Issue #1701: directly update _event_bus on the already-registered observer.
+    # swap_service() conflicts with BLM pre-bootstrap; direct attr set is correct here.
+    obs = nexus.service("event_bus_observer")
+    if obs is not None:
+        obs._event_bus = shared_event_bus
     nexus.service("events")._event_bus = shared_event_bus
 
     # Start cache invalidation (events from other instances will invalidate local cache)
@@ -171,11 +171,11 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
         )
 
     # Use shared event bus (same Redis connection = events propagate).
-    # Issue #1701: event_bus is Tier 1 (SystemServices). Swap the EventBusObserver
-    # via swap_service() so the OBSERVE hook publishes to the shared bus.
-    from nexus.system_services.event_bus.observer import EventBusObserver
-
-    await nexus.swap_service("event_bus_observer", EventBusObserver(event_bus=shared_event_bus))
+    # Issue #1701: directly update _event_bus on the already-registered observer.
+    # swap_service() conflicts with BLM pre-bootstrap; direct attr set is correct here.
+    obs = nexus.service("event_bus_observer")
+    if obs is not None:
+        obs._event_bus = shared_event_bus
     nexus.service("events")._event_bus = shared_event_bus
 
     # Start cache invalidation (events from other instances will invalidate local cache)

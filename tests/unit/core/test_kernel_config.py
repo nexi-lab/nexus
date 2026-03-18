@@ -370,7 +370,7 @@ class TestBrickServices:
     def test_frozen(self) -> None:
         bs = BrickServices()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            object.__setattr__(bs, "lock_manager", "x")
+            bs.lock_manager = "x"
 
     def test_construct_with_values(self) -> None:
         sentinel = object()

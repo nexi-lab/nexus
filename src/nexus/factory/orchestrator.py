@@ -565,14 +565,13 @@ async def _register_vfs_hooks(
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.
-    # Late-binding (Issue #969): always register with bus_provider=nx so that
-    # post-construction overrides of nx._event_bus (e.g. E2E test fixtures
-    # injecting a shared Redis bus) are picked up automatically.
+    # Late-binding (Issue #969, #1570): bus_provider=nx so that post-construction
+    # overrides of nx._event_bus (E2E test fixtures injecting a shared Redis bus)
+    # are picked up automatically.  _resolve_bus() also checks _brick_services
+    # as production fallback (factory no longer sets nx._event_bus via setattr).
     from nexus.system_services.event_bus.observer import EventBusObserver
 
-    _bus_observer = EventBusObserver(
-        event_bus=getattr(nx._brick_services, "event_bus", None) if nx._brick_services else None
-    )
+    _bus_observer = EventBusObserver(bus_provider=nx)
     await _enlist("event_bus_observer", _bus_observer)
 
     # EventsService observer: self-registered via HotSwappable.hook_spec()

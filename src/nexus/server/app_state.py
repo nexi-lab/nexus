@@ -177,7 +177,8 @@ def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
     # Direct NexusFS attrs
     app.state.system_services = getattr(nexus_fs, "_system_services", None)
     app.state.brick_services = getattr(nexus_fs, "_brick_services", None)
-    app.state.event_bus = getattr(nexus_fs, "_event_bus", None)
+    _sys = getattr(nexus_fs, "_system_services", None)
+    app.state.event_bus = getattr(_sys, "event_bus", None) if _sys is not None else None
     app.state.write_observer = getattr(nexus_fs, "_write_observer", None)
     app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
 

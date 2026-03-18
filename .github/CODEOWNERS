@@ -1,0 +1,6 @@
+# Kernel team — auto-assign kernel lead as reviewer
+/src/nexus/core/          @elfenlieds7
+/src/nexus/raft/          @elfenlieds7
+/src/nexus/contracts/     @elfenlieds7
+/src/nexus/lib/           @elfenlieds7
+/docs/architecture/       @elfenlieds7

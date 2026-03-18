@@ -202,6 +202,28 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Delegation routes: %s", e)
 
+    # ---- Agent registration router (Issue #3130) ----
+    try:
+        from nexus.server.api.v2.routers.agent_registration import (
+            router as agent_registration_router,
+        )
+
+        registry.add(
+            RouterEntry(
+                router=agent_registration_router, name="agent_registration", endpoint_count=1
+            )
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Agent registration routes: %s", e)
+
+    # ---- RLM inference router (Issue #1306) ----
+    try:
+        from nexus.server.api.v2.routers.rlm import router as rlm_router
+
+        registry.add(RouterEntry(router=rlm_router, name="rlm", endpoint_count=1))
+    except ImportError as e:
+        logger.warning("Failed to import RLM routes: %s", e)
+
     # ---- Workflows router (Issue #1522) ----
     try:
         from nexus.server.api.v2.routers.workflows import router as workflows_router

@@ -593,7 +593,9 @@ class TestSaveMountAutoPopulation:
         )
 
         # Retrieve the mount and verify owner was auto-populated
-        saved_mount = nx_with_permissions.mount_manager.get_mount("/mnt/auto_owner")
+        saved_mount = nx_with_permissions._system_services.mount_manager.get_mount(
+            "/mnt/auto_owner"
+        )
         assert saved_mount is not None
         assert saved_mount["owner_user_id"] == "user:alice@example.com"
         assert saved_mount["zone_id"] == "zone1"
@@ -619,7 +621,7 @@ class TestSaveMountAutoPopulation:
         )
 
         # Retrieve and verify zone was auto-populated
-        saved_mount = nx_with_permissions.mount_manager.get_mount("/mnt/auto_zone")
+        saved_mount = nx_with_permissions._system_services.mount_manager.get_mount("/mnt/auto_zone")
         assert saved_mount is not None
         assert saved_mount["zone_id"] == "acme_corp"
         assert saved_mount["owner_user_id"] == "user:bob@example.com"
@@ -647,7 +649,9 @@ class TestSaveMountAutoPopulation:
         )
 
         # Verify explicit values were used, not context values
-        saved_mount = nx_with_permissions.mount_manager.get_mount("/mnt/explicit_override")
+        saved_mount = nx_with_permissions._system_services.mount_manager.get_mount(
+            "/mnt/explicit_override"
+        )
         assert saved_mount is not None
         assert saved_mount["owner_user_id"] == "user:bob@example.com"
         assert saved_mount["zone_id"] == "zone2"
@@ -671,7 +675,9 @@ class TestSaveMountAutoPopulation:
         )
 
         # Verify agent subject_type is properly formatted
-        saved_mount = nx_with_permissions.mount_manager.get_mount("/mnt/agent_mount")
+        saved_mount = nx_with_permissions._system_services.mount_manager.get_mount(
+            "/mnt/agent_mount"
+        )
         assert saved_mount is not None
         assert saved_mount["owner_user_id"] == "agent:bot123"
         assert saved_mount["zone_id"] == "zone1"
@@ -740,7 +746,9 @@ class TestSaveMountAutoPopulation:
         )
 
         # Verify explicit values were used
-        saved_mount = nx_with_permissions.mount_manager.get_mount("/mnt/no_context")
+        saved_mount = nx_with_permissions._system_services.mount_manager.get_mount(
+            "/mnt/no_context"
+        )
         assert saved_mount is not None
         assert saved_mount["owner_user_id"] == "user:charlie@example.com"
         assert saved_mount["zone_id"] == "zone3"

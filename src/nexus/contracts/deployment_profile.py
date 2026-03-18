@@ -39,10 +39,10 @@ BRICK_STORAGE = "storage"
 # System services (gated by profile)
 BRICK_EVENTLOG = "eventlog"
 BRICK_NAMESPACE = "namespace"
-BRICK_AGENT_REGISTRY = "agent_registry"
 BRICK_PERMISSIONS = "permissions"
 BRICK_SCHEDULER = "scheduler"
 BRICK_AGENT_RUNTIME = "agent_runtime"
+BRICK_ACP = "acp"
 
 # Infrastructure bricks
 BRICK_CACHE = "cache"
@@ -71,6 +71,7 @@ BRICK_WORKSPACE = "workspace"
 BRICK_PORTABILITY = "portability"
 BRICK_PARSERS = "parsers"
 BRICK_SNAPSHOT = "snapshot"
+BRICK_TASK_MANAGER = "task_manager"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -81,7 +82,6 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_STORAGE,
         BRICK_EVENTLOG,
         BRICK_NAMESPACE,
-        BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_SCHEDULER,
         BRICK_CACHE,
@@ -108,8 +108,10 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_PORTABILITY,
         BRICK_PARSERS,
         BRICK_SNAPSHOT,
+        BRICK_TASK_MANAGER,
         BRICK_FEDERATION,
         BRICK_AGENT_RUNTIME,
+        BRICK_ACP,
     }
 )
 
@@ -176,7 +178,6 @@ _EMBEDDED_BRICKS: frozenset[str] = _MINIMAL_BRICKS | frozenset(
 _LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
     {
         BRICK_NAMESPACE,
-        BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_CACHE,
         BRICK_IPC,
@@ -196,6 +197,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_TASK_MANAGER,
         BRICK_OBSERVABILITY,
         BRICK_UPLOADS,
         BRICK_RESILIENCY,
@@ -209,6 +211,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_PORTABILITY,
         BRICK_PARSERS,
         BRICK_SNAPSHOT,
+        BRICK_ACP,
     }
 )
 

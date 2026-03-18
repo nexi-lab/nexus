@@ -153,7 +153,7 @@ def test_route_root_mount(router: PathRouter, temp_backend: CASLocalBackend) -> 
     assert result.mount_point == "/"
 
 
-def test_route_runtime_mount_without_metastore_entry(
+def test_route_mount_without_metastore_entry(
     router: PathRouter, temp_backend: CASLocalBackend
 ) -> None:
     """Route fallback should work for ephemeral runtime mounts."""

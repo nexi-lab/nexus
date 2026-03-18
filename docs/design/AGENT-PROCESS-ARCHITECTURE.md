@@ -19,7 +19,7 @@ subprocess/RPC overhead and enables direct async integration with the Nexus even
 
 **First milestone (complete):** One agent process that can receive a prompt, run a tool loop,
 read/write files via NexusFS, persist conversation state to CAS, and be managed
-(start/stop/suspend/resume) via the existing AgentRegistry.
+(start/stop/suspend/resume) via the ProcessTable.
 
 ---
 
@@ -286,7 +286,7 @@ class ProcessManagerProtocol(Protocol):
         """Create a new agent process (fork+exec).
 
         Allocates PID, creates fd_table, sets cwd, registers with
-        AgentRegistry, and starts the agent loop.
+        ProcessTable, and starts the agent loop.
         """
         ...
 
@@ -497,7 +497,7 @@ All relative paths in tool calls resolve against this.
 
 The `__proc__` virtual directory is implemented as a PRE-DISPATCH resolver
 in `KernelDispatch` (like Linux's procfs), reading live state from
-ProcessManager and AgentRegistry.
+ProcessTable.
 
 ---
 
@@ -664,7 +664,7 @@ async def agent_loop(
 |---|---|---|
 | `AgentRecord` | Add `ppid`, `checkpoint_path`, `cwd` fields | Process descriptor needs parent + fs state |
 | `AgentPhase` | Add `TERMINATED` phase | Zombie state for parent notification |
-| `AgentRegistryProtocol` | Add `list_children(pid)` method | Process tree traversal |
+| `ProcessTable` | Add `list_children(pid)` method | Process tree traversal |
 | `SchedulerProtocol` | No change needed | Already supports priority, QoS, deadline |
 | `SandboxProtocol` | No change needed | Already supports create/run/stop |
 | `NexusFS` | No change to syscalls | Existing 11 syscalls sufficient for agent I/O |
@@ -749,7 +749,7 @@ User prompt: "Fix the bug in auth.py and run tests"
 5. Session JSONL → sys_write to CAS (checkpoint)                   │
 6. ProcessManager.terminate(pid, exit_code=0)                      │
    │  Close all fds                                                │
-   │  AgentRegistry.transition(pid, IDLE)                          │
+   │  ProcessTable.signal(pid, SIGSTOP)                             │
    │  Notify parent (if sub-agent)                                 │
    └───────────────────────────────────────────────────────────────┘
 ```
@@ -997,7 +997,7 @@ The agent_runtime brick fits into the existing LEGO distro model:
 | D4 | Session JSONL in CAS | Content-addressed, immutable, federable, checkpointable |
 | D5 | `__proc__` as VFS resolver | Reuses existing KernelDispatch PRE-DISPATCH infrastructure |
 | D6 | No new storage pillar | Agent state maps cleanly to existing 4 pillars |
-| D7 | Reuse existing AgentRegistry | Extend, don't replace — add ppid + cwd fields |
+| D7 | Reuse ProcessTable | Kernel process table handles agent lifecycle directly |
 | D8 | Reuse existing Scheduler | Already has priority, QoS, deadline — no changes needed |
 | D9 | Reuse existing PipeManager | DT_PIPE ring buffer is the IPC primitive |
 | D10 | Reuse existing SandboxProtocol | bash tool → sandbox execution, already zone-isolated |

@@ -223,10 +223,6 @@ class SystemServices:
     # Original system services (all degradable)
     # =================================================================
 
-    # Agent identity (Issue #1502)
-    agent_registry: Any = None
-    async_agent_registry: Any = None
-
     # Namespace visibility (Issue #1502)
     namespace_manager: NamespaceManagerProtocol | None = None
     async_namespace_manager: Any = None
@@ -263,6 +259,9 @@ class SystemServices:
 
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
+
+    # ACP — stateless coding agent CLI caller
+    acp_service: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +313,9 @@ class BrickServices:
     # --- Search Brick (Issue #810) ---
     zoekt_pipe_consumer: Any = None  # DT_PIPE consumer for Zoekt index notifications
 
+    # --- Task Manager Brick ---
+    task_dispatch_consumer: Any = None  # TaskDispatchPipeConsumer (DT_PIPE lifecycle signals)
+
     # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
     parse_fn: Any = None  # Callable for parsing files (ParsersBrick)
     content_cache: Any = None  # ContentCache instance
@@ -339,7 +341,7 @@ class WiredServices:
     """Tier 2b (WIRED) — services requiring NexusFS reference.
 
     Created by ``nexus.factory._wired._boot_wired_services()`` and registered
-    into ServiceRegistry via ``populate_service_registry()``.
+    into ServiceRegistry via ``enlist_wired_services()``.
 
     Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
     """
@@ -364,6 +366,7 @@ class WiredServices:
     agent_rpc_service: Any = None
     user_provisioning_service: Any = None
     sandbox_rpc_service: Any = None
+    acp_rpc_service: Any = None
     metadata_export_service: Any = None
     descendant_checker: Any = None
 

@@ -6,7 +6,7 @@ pytest-asyncio dependency.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -45,7 +45,7 @@ def mock_mount_manager():
 def mock_nexus_fs():
     """Create a mock NexusFilesystem."""
     fs = MagicMock()
-    fs.sys_mkdir = AsyncMock()
+    fs.sys_mkdir = MagicMock()
     fs.sys_write = MagicMock()
     fs.metadata = MagicMock()
     fs.metadata.delete = MagicMock()

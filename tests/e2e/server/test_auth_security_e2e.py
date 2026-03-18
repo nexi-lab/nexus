@@ -614,8 +614,8 @@ class TestStaleSessionDetection:
         # Wire mock registry into enforcer
         perm_enforcer = getattr(nx, "_permission_enforcer", None)
         assert perm_enforcer is not None, "Permission enforcer not found on NexusFS"
-        original_registry = perm_enforcer.agent_registry
-        perm_enforcer.agent_registry = mock_registry
+        original_registry = perm_enforcer.process_table
+        perm_enforcer.process_table = mock_registry
 
         try:
             stale_ctx = OperationContext(
@@ -630,7 +630,7 @@ class TestStaleSessionDetection:
             with pytest.raises(StaleSessionError):
                 await nx.sys_read("/workspace/agent-test.txt", context=stale_ctx)
         finally:
-            perm_enforcer.agent_registry = original_registry
+            perm_enforcer.process_table = original_registry
 
     @pytest.mark.asyncio
     async def test_current_jwt_generation_passes(self, nexus_fs_enforced: NexusFS):
@@ -664,8 +664,8 @@ class TestStaleSessionDetection:
 
         perm_enforcer = getattr(nx, "_permission_enforcer", None)
         assert perm_enforcer is not None
-        original_registry = perm_enforcer.agent_registry
-        perm_enforcer.agent_registry = mock_registry
+        original_registry = perm_enforcer.process_table
+        perm_enforcer.process_table = mock_registry
 
         try:
             current_ctx = OperationContext(
@@ -680,7 +680,7 @@ class TestStaleSessionDetection:
             content = await nx.sys_read("/workspace/agent-ok.txt", context=current_ctx)
             assert content == b"ok"
         finally:
-            perm_enforcer.agent_registry = original_registry
+            perm_enforcer.process_table = original_registry
 
     @pytest.mark.asyncio
     async def test_deleted_agent_jwt_rejected(self, nexus_fs_enforced: NexusFS):
@@ -705,8 +705,8 @@ class TestStaleSessionDetection:
 
         perm_enforcer = getattr(nx, "_permission_enforcer", None)
         assert perm_enforcer is not None
-        original_registry = perm_enforcer.agent_registry
-        perm_enforcer.agent_registry = mock_registry
+        original_registry = perm_enforcer.process_table
+        perm_enforcer.process_table = mock_registry
 
         try:
             deleted_ctx = OperationContext(
@@ -721,7 +721,7 @@ class TestStaleSessionDetection:
             with pytest.raises(StaleSessionError):
                 await nx.sys_read("/workspace/deleted-agent.txt", context=deleted_ctx)
         finally:
-            perm_enforcer.agent_registry = original_registry
+            perm_enforcer.process_table = original_registry
 
     def test_jwt_roundtrip_with_agent_generation(self):
         """Full JWT roundtrip: create_token → authenticate → auth_result has generation."""

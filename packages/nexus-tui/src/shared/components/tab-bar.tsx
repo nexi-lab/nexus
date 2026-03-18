@@ -20,29 +20,32 @@ interface TabBarProps {
 }
 
 export function TabBar({ tabs, activeTab }: TabBarProps): React.ReactNode {
+  // Render all tabs as spans inside a single <text> to avoid flex layout
+  // width issues that can cause some tab labels to disappear.
   return (
-    <box height={1} width="100%" flexDirection="row">
-      {tabs.map((tab, index) => {
-        const isActive = tab.id === activeTab;
-        const suffix = index < tabs.length - 1 ? " │" : "";
-        return (
-          <text key={tab.id}>
-            {isActive ? (
-              <text>
-                <text foregroundColor={statusColor.info}>{"▸ "}</text>
-                <text dimColor>{`${tab.shortcut}:`}</text>
-                <text foregroundColor={statusColor.info} bold>{tab.label}</text>
-                <text dimColor>{suffix}</text>
-              </text>
-            ) : (
-              <text>
-                <text>{"  "}</text>
-                <text dimColor>{`${tab.shortcut}:${tab.label}${suffix}`}</text>
-              </text>
-            )}
-          </text>
-        );
-      })}
+    <box height={1} width="100%">
+      <text>
+        {tabs.map((tab, index) => {
+          const isActive = tab.id === activeTab;
+          const suffix = index < tabs.length - 1 ? " │ " : "";
+          if (isActive) {
+            return (
+              <span key={tab.id}>
+                <span foregroundColor="#00d4ff" bold>{"▸ "}</span>
+                <span foregroundColor="#888888">{`${tab.shortcut}:`}</span>
+                <span foregroundColor="#00d4ff" bold>{tab.label}</span>
+                <span foregroundColor="#555555">{suffix}</span>
+              </span>
+            );
+          }
+          return (
+            <span key={tab.id}>
+              <span foregroundColor="#999999">{`  ${tab.shortcut}:${tab.label}`}</span>
+              <span foregroundColor="#555555">{suffix}</span>
+            </span>
+          );
+        })}
+      </text>
     </box>
   );
 }

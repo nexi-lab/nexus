@@ -103,7 +103,7 @@ class TestServiceCommand:
         mock_cls = MagicMock(return_value=client)
         cli = _make_cli(client_cls=mock_cls)
         runner = CliRunner()
-        runner.invoke(cli, ["test-cmd", "--remote-url", MOCK_URL])
+        runner.invoke(cli, ["test-cmd", "--remote-url", MOCK_URL], env={"NEXUS_API_KEY": ""})
         mock_cls.assert_called_once_with(url=MOCK_URL, api_key=None)
 
     def test_error_handling(self) -> None:

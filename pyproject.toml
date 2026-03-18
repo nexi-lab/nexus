@@ -1,7 +1,7 @@
 # Nexus AI Filesystem
 [project]
 name = "nexus-ai-fs"
-version = "0.9.6"
+version = "0.9.7"
 description = "Nexus = filesystem/context plane."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -598,7 +598,7 @@ module = [
     "nexus.core.rebac_iterator_cache",
     "nexus.core.rebac_cache",
     "nexus.core.permission_boundary_cache",
-    "nexus.core.agent_registry",
+
     "nexus.bricks.identity.key_service",
     "nexus.core.reputation_service",
     "nexus.bricks.rebac.cache.iterator",

@@ -118,7 +118,7 @@ features:
   memory: true
   mcp: true
   skills: true
-  agent_registry: true
+
   scheduler: true
   sandbox: true
 

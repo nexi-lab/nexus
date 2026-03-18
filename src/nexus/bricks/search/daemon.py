@@ -1189,12 +1189,12 @@ class SearchDaemon:
                     import contextlib
 
                     try:
-                        content = self._file_reader.read_text(path)
+                        content = await self._file_reader.read_text(path)
                     except Exception as e:
                         logger.debug("File read failed for %s: %s, trying virtual path", path, e)
                         # Also try without zone prefix — best-effort fallback
                         with contextlib.suppress(OSError, ValueError):
-                            content = self._file_reader.read_text(virtual_path)
+                            content = await self._file_reader.read_text(virtual_path)
 
                 # Fallback: read from content_cache table
                 if not content and self._async_session:

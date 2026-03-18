@@ -105,7 +105,7 @@ class TestMinimalBootViaFactory:
 
         assert nx is not None
         # System services should be empty (no record store)
-        assert nx._rebac_manager is None
+        assert nx._system_services is None or nx._system_services.rebac_manager is None
         assert nx._permission_enforcer is None
 
     @pytest.mark.asyncio
@@ -352,9 +352,10 @@ class TestMinimalIntegrationViaConnect:
         )
 
         # Services should be empty
-        assert nx._rebac_manager is None
+        assert nx._system_services is None or nx._system_services.rebac_manager is None
         assert nx._permission_enforcer is None
-        assert nx._audit_store is None
+        # Issue #1570: audit_store accessed from container, not flat attr
+        assert getattr(nx._system_services, "audit_store", None) is None
 
         # File operations should work
         await nx.sys_write("/hello.txt", b"minimal mode")

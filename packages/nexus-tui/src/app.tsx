@@ -37,15 +37,15 @@ const ApiConsolePanel = lazy(() => import("./panels/api-console/api-console-pane
 
 const TABS: readonly Tab[] = [
   { id: "files", label: "Files", shortcut: "1" },
-  { id: "versions", label: "Versions", shortcut: "2" },
-  { id: "agents", label: "Agents", shortcut: "3" },
-  { id: "zones", label: "Zones", shortcut: "4" },
-  { id: "access", label: "Access", shortcut: "5" },
+  { id: "versions", label: "Ver", shortcut: "2" },
+  { id: "agents", label: "Agent", shortcut: "3" },
+  { id: "zones", label: "Zone", shortcut: "4" },
+  { id: "access", label: "ACL", shortcut: "5" },
   { id: "payments", label: "Pay", shortcut: "6" },
-  { id: "search", label: "Search", shortcut: "7" },
-  { id: "workflows", label: "Workflows", shortcut: "8" },
-  { id: "infrastructure", label: "Events", shortcut: "9" },
-  { id: "console", label: "Console", shortcut: "0" },
+  { id: "search", label: "Find", shortcut: "7" },
+  { id: "workflows", label: "Flow", shortcut: "8" },
+  { id: "infrastructure", label: "Event", shortcut: "9" },
+  { id: "console", label: "CLI", shortcut: "0" },
 ];
 
 function PanelRouter(): React.ReactNode {
@@ -82,10 +82,34 @@ function PanelRouter(): React.ReactNode {
 }
 
 /**
- * Graceful shutdown: kill child processes then exit (Decision 6A).
+ * Graceful shutdown: kill child processes, restore terminal, then exit (Decision 6A).
+ *
+ * We must manually reset the terminal before process.exit() because exit()
+ * bypasses OpenTUI's renderer.destroy() cleanup, leaving mouse tracking
+ * and alternate screen enabled — which causes raw escape sequences to leak
+ * into the shell after exit.
  */
 function shutdown(): void {
   killAllProcesses();
+
+  // Restore stdin from raw mode first (stops reading mouse input)
+  if (process.stdin.setRawMode) {
+    process.stdin.setRawMode(false);
+  }
+  process.stdin.pause();
+
+  // Restore terminal: disable mouse tracking, leave alternate screen, show cursor.
+  // Use writeSync via fd to guarantee the sequences are flushed before exit.
+  const fs = require("fs");
+  const reset = [
+    "\x1b[?1003l", // disable all-motion mouse tracking
+    "\x1b[?1006l", // disable SGR mouse mode
+    "\x1b[?1000l", // disable normal mouse tracking
+    "\x1b[?1049l", // switch back to main screen
+    "\x1b[?25h",   // show cursor
+  ].join("");
+  fs.writeSync(1, reset);
+
   process.exit(0);
 }
 
@@ -104,8 +128,10 @@ export function App(): React.ReactNode {
   const showWelcome = isFresh === true && !welcomeDismissed;
 
   // Determine if we should show the pre-connection screen (Decision 3A)
+  // Only hide it when fully connected — "connecting" still shows the pre-connection
+  // screen with a spinner to avoid flashing the main UI during connection attempts.
   const connState = detectConnectionState(connectionStatus, connectionError, config);
-  const showPreConnection = connState !== "ready" && connState !== "connecting";
+  const showPreConnection = connState !== "ready";
 
   const setOverlayActive = useUiStore((s) => s.setOverlayActive);
   useEffect(() => {
@@ -128,24 +154,30 @@ export function App(): React.ReactNode {
         }
       : identitySwitcherOpen || helpOpen || showWelcome
       ? {
-          // When an overlay is open, only its dismiss key works from app level.
+          // When an overlay is open, only dismiss keys work from app level.
           "ctrl+i": toggleIdentitySwitcher,
         }
       : {
-          "1": () => setActivePanel("files"),
-          "2": () => setActivePanel("versions"),
-          "3": () => setActivePanel("agents"),
-          "4": () => setActivePanel("zones"),
-          "5": () => setActivePanel("access"),
-          "6": () => setActivePanel("payments"),
-          "7": () => setActivePanel("search"),
-          "8": () => setActivePanel("workflows"),
-          "9": () => setActivePanel("infrastructure"),
-          "0": () => setActivePanel("console"),
+          // Check fileEditorOpen synchronously inside each handler so we don't
+          // depend on React re-render timing — OpenTUI broadcasts to ALL handlers.
+          "1": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("files"); },
+          "2": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("versions"); },
+          "3": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("agents"); },
+          "4": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("zones"); },
+          "5": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("access"); },
+          "6": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("payments"); },
+          "7": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("search"); },
+          "8": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("workflows"); },
+          "9": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("infrastructure"); },
+          "0": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("console"); },
           "ctrl+i": toggleIdentitySwitcher,
-          "z": () => toggleZoom(activePanel),
-          "?": () => setHelpOpen(true),
-          "q": shutdown,
+          "ctrl+d": () => {
+            // Disconnect and go back to setup menu
+            useGlobalStore.getState().setConnectionStatus("error", "Disconnected by user");
+          },
+          "z": () => { if (!useUiStore.getState().fileEditorOpen) toggleZoom(activePanel); },
+          "?": () => { if (!useUiStore.getState().fileEditorOpen) setHelpOpen(true); },
+          "q": () => { if (!useUiStore.getState().fileEditorOpen) shutdown(); },
         },
   );
 

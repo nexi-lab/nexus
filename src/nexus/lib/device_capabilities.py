@@ -81,7 +81,6 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     # System bricks (lightweight — always meet requirements in practice)
     "eventlog": BrickRequirement(min_memory_mb=32),
     "namespace": BrickRequirement(min_memory_mb=32),
-    "agent_registry": BrickRequirement(min_memory_mb=32),
     "agent_runtime": BrickRequirement(min_memory_mb=32),
     "permissions": BrickRequirement(min_memory_mb=32),
     "scheduler": BrickRequirement(min_memory_mb=32),
@@ -96,6 +95,8 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     "portability": BrickRequirement(min_memory_mb=64),
     "parsers": BrickRequirement(min_memory_mb=128),
     "snapshot": BrickRequirement(min_memory_mb=64),
+    "acp": BrickRequirement(min_memory_mb=64),
+    "task_manager": BrickRequirement(min_memory_mb=32),
     # Kernel (always on, listed for completeness)
     "storage": BrickRequirement(min_memory_mb=0),
 }

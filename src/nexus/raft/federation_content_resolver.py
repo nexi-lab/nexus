@@ -23,6 +23,7 @@ from nexus.contracts.backend_address import BackendAddress
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.metastore import MetastoreABC
     from nexus.security.tls.config import ZoneTlsConfig
 
@@ -66,6 +67,21 @@ class FederationContentResolver:
         self._self_address = self_address
         self._tls_config = tls_config
         self._timeout = timeout
+
+    # ------------------------------------------------------------------
+    # HotSwappable protocol (#1710) — enables coordinator.enlist()
+    # ------------------------------------------------------------------
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(resolvers=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     # ------------------------------------------------------------------
     # VFSPathResolver single-call try_* protocol (#1665)

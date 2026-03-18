@@ -1,5 +1,6 @@
-"""Tests for WiredServices dataclass and populate_service_registry (Issue #2133, #1381, #1452)."""
+"""Tests for WiredServices dataclass and enlist_wired_services (Issue #2133, #1381, #1452, #1708)."""
 
+import asyncio
 import dataclasses
 from typing import Any
 from unittest.mock import MagicMock
@@ -7,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core.config import WiredServices
-from nexus.factory.service_routing import populate_service_registry
+from nexus.factory.service_routing import enlist_wired_services
 
 
 class TestWiredServicesDataclass:
@@ -37,12 +38,12 @@ class TestWiredServicesDataclass:
         assert ws2.rebac_service == "b"
 
     def test_field_count(self) -> None:
-        """WiredServices should have 19 service fields."""
-        assert len(dataclasses.fields(WiredServices)) == 19
+        """WiredServices should have 20 service fields."""
+        assert len(dataclasses.fields(WiredServices)) == 20
 
 
-class TestPopulateServiceRegistryFromWired:
-    """Test populate_service_registry accepts both WiredServices and dict."""
+class TestEnlistWiredServices:
+    """Test enlist_wired_services accepts both WiredServices and dict (#1708)."""
 
     @pytest.fixture()
     def nx(self) -> Any:
@@ -60,18 +61,29 @@ class TestPopulateServiceRegistryFromWired:
         )
         return nx
 
-    def test_populate_from_dataclass(self, nx: Any) -> None:
+    @pytest.fixture()
+    def coordinator(self, nx: Any) -> Any:
+        """Create coordinator with BLM=None (Issue #1708)."""
+        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+            ServiceLifecycleCoordinator,
+        )
+
+        return ServiceLifecycleCoordinator(nx._service_registry, None, nx._dispatch)
+
+    def test_enlist_from_dataclass(self, nx: Any, coordinator: Any) -> None:
         mock_svc = MagicMock()
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
-        populate_service_registry(nx._service_registry, ws)
+        asyncio.run(enlist_wired_services(coordinator, ws))
         assert nx.service("rebac")._service_instance is mock_svc
         assert nx.service("mount")._service_instance is mock_svc
         assert nx.service("mcp") is None
 
-    def test_populate_from_dict(self, nx: Any) -> None:
+    def test_enlist_from_dict(self, nx: Any, coordinator: Any) -> None:
         mock_svc = MagicMock()
-        populate_service_registry(
-            nx._service_registry, {"rebac_service": mock_svc, "mount_service": mock_svc}
+        asyncio.run(
+            enlist_wired_services(
+                coordinator, {"rebac_service": mock_svc, "mount_service": mock_svc}
+            )
         )
         assert nx.service("rebac")._service_instance is mock_svc
         assert nx.service("mount")._service_instance is mock_svc

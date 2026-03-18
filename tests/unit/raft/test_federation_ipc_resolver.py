@@ -3,8 +3,7 @@
 Tests the PRE-DISPATCH resolver for remote DT_PIPE/DT_STREAM using mocks
 for metastore and gRPC stubs (no real network or Raft needed).
 
-After #1665: try_read/try_write/try_delete return result or None
-(single-call pattern, no matches() or match_ctx).
+Updated for the single-call try_* protocol (#1665).
 """
 
 from unittest.mock import MagicMock, patch
@@ -39,8 +38,8 @@ def _make_resolver(**kwargs):
     )
 
 
-class TestTryReadNonIPC:
-    """try_read returns None for non-IPC paths."""
+class TestTryReadDeclines:
+    """try_read() returns None for non-remote-IPC paths."""
 
     def test_no_metadata_returns_none(self):
         metastore = MagicMock()
@@ -63,10 +62,6 @@ class TestTryReadNonIPC:
         resolver = _make_resolver(metastore=metastore)
         assert resolver.try_read("/test/file.txt") is None
 
-
-class TestTryReadLocalPipe:
-    """try_read returns None for local pipes."""
-
     def test_local_pipe_returns_none(self):
         meta = _make_meta(f"pipe@{SELF_ADDR}", is_pipe=True)
         metastore = MagicMock()
@@ -80,10 +75,6 @@ class TestTryReadLocalPipe:
         metastore.get.return_value = meta
         resolver = _make_resolver(metastore=metastore)
         assert resolver.try_read("/ipc/my-pipe") is None
-
-
-class TestTryReadLocalStream:
-    """try_read returns None for local streams."""
 
     def test_local_stream_returns_none(self):
         meta = _make_meta(f"stream@{SELF_ADDR}", is_stream=True)
@@ -101,10 +92,10 @@ class TestTryReadLocalStream:
 
 
 class TestTryReadRemote:
-    """try_read returns content for remote pipes/streams."""
+    """try_read() fetches from remote peer via gRPC Call RPC."""
 
     @patch.object(FederationIPCResolver, "_read_remote")
-    def test_read_remote_pipe(self, mock_read):
+    def test_remote_pipe_returns_data(self, mock_read):
         mock_read.return_value = b"pipe data"
         meta = _make_meta(f"pipe@{REMOTE_ADDR}", is_pipe=True)
         metastore = MagicMock()
@@ -116,8 +107,12 @@ class TestTryReadRemote:
         assert result == b"pipe data"
         mock_read.assert_called_once_with(REMOTE_ADDR, "/ipc/remote-pipe")
 
+
+class TestTryReadRemoteStream:
+    """try_read() returns data for remote streams."""
+
     @patch.object(FederationIPCResolver, "_read_remote")
-    def test_read_remote_stream(self, mock_read):
+    def test_remote_stream_returns_data(self, mock_read):
         mock_read.return_value = b"stream data"
         meta = _make_meta(f"stream@{REMOTE_ADDR}", is_stream=True)
         metastore = MagicMock()
@@ -130,26 +125,8 @@ class TestTryReadRemote:
         mock_read.assert_called_once_with(REMOTE_ADDR, "/ipc/remote-stream")
 
 
-class TestTryWriteNonIPC:
-    """try_write returns None for non-IPC / local paths."""
-
-    def test_non_ipc_returns_none(self):
-        meta = _make_meta(f"cas_local@{REMOTE_ADDR}", is_pipe=False, is_stream=False)
-        metastore = MagicMock()
-        metastore.get.return_value = meta
-        resolver = _make_resolver(metastore=metastore)
-        assert resolver.try_write("/test/file.txt", b"data") is None
-
-    def test_local_pipe_returns_none(self):
-        meta = _make_meta(f"pipe@{SELF_ADDR}", is_pipe=True)
-        metastore = MagicMock()
-        metastore.get.return_value = meta
-        resolver = _make_resolver(metastore=metastore)
-        assert resolver.try_write("/ipc/my-pipe", b"data") is None
-
-
 class TestTryWriteRemote:
-    """try_write sends to remote peer via gRPC Call RPC."""
+    """try_write() sends to remote peer via gRPC Call RPC."""
 
     @patch.object(FederationIPCResolver, "_write_remote")
     def test_write_remote_pipe(self, mock_write):
@@ -177,27 +154,23 @@ class TestTryWriteRemote:
         assert result == {"offset": 42}
         mock_write.assert_called_once_with(REMOTE_ADDR, "/ipc/remote-stream", b"data")
 
-
-class TestTryDeleteNonIPC:
-    """try_delete returns None for non-IPC / local paths."""
-
-    def test_non_ipc_returns_none(self):
-        meta = _make_meta(f"cas_local@{REMOTE_ADDR}", is_pipe=False, is_stream=False)
-        metastore = MagicMock()
-        metastore.get.return_value = meta
-        resolver = _make_resolver(metastore=metastore)
-        assert resolver.try_delete("/test/file.txt") is None
-
-    def test_local_pipe_returns_none(self):
+    def test_write_local_pipe_returns_none(self):
         meta = _make_meta(f"pipe@{SELF_ADDR}", is_pipe=True)
         metastore = MagicMock()
         metastore.get.return_value = meta
         resolver = _make_resolver(metastore=metastore)
-        assert resolver.try_delete("/ipc/my-pipe") is None
+        assert resolver.try_write("/ipc/my-pipe", b"data") is None
+
+    def test_write_non_ipc_returns_none(self):
+        meta = _make_meta(f"cas_local@{REMOTE_ADDR}", is_pipe=False, is_stream=False)
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+        resolver = _make_resolver(metastore=metastore)
+        assert resolver.try_write("/test/file.txt", b"data") is None
 
 
 class TestTryDeleteRemote:
-    """try_delete destroys remote pipe/stream via gRPC Delete RPC."""
+    """try_delete() destroys remote pipe/stream via gRPC Delete RPC."""
 
     @patch.object(FederationIPCResolver, "_delete_remote")
     def test_delete_remote_pipe(self, mock_delete):
@@ -222,6 +195,19 @@ class TestTryDeleteRemote:
 
         assert result == {}
         mock_delete.assert_called_once_with(REMOTE_ADDR, "/ipc/remote-stream")
+
+    def test_delete_local_returns_none(self):
+        meta = _make_meta(f"pipe@{SELF_ADDR}", is_pipe=True)
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+        resolver = _make_resolver(metastore=metastore)
+        assert resolver.try_delete("/ipc/my-pipe") is None
+
+    def test_delete_non_ipc_returns_none(self):
+        metastore = MagicMock()
+        metastore.get.return_value = None
+        resolver = _make_resolver(metastore=metastore)
+        assert resolver.try_delete("/test/file.txt") is None
 
 
 class TestKernelDispatchIntegration:

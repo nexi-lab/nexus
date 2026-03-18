@@ -62,16 +62,17 @@ describe("keybinding consistency (from real registry)", () => {
       }
     });
 
-    it("x should only be used for revoke/cancel actions", () => {
+    it("x should only be used for revoke/cancel/cut actions", () => {
       const xBindings = findBindingsForKey("x");
       expect(xBindings.length).toBeGreaterThan(0);
       for (const { panel, action } of xBindings) {
-        const isRevoke =
+        const isAllowed =
           action.includes("revoke") ||
           action.includes("release") ||
           action.includes("reset") ||
-          action.includes("reject");
-        expect(isRevoke).toBe(true);
+          action.includes("reject") ||
+          action.includes("cut");
+        expect(isAllowed).toBe(true);
       }
     });
 

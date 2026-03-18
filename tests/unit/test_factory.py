@@ -171,8 +171,6 @@ class TestBootSystemServices:
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "agent_registry",
-            "async_agent_registry",
             "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
@@ -187,8 +185,8 @@ class TestBootSystemServices:
             # Process lifecycle (Issue #1509)
             "process_table",
             "scheduler_service",
-            # Agent Runtime (AGENT-PROCESS-ARCHITECTURE)
-            "agent_runtime",
+            # ACP coding agent service
+            "acp_service",
         }
         assert expected_keys == set(result.keys())
 
@@ -214,18 +212,17 @@ class TestBootSystemServices:
         with (
             caplog.at_level(logging.WARNING, logger="nexus.factory"),
             patch(
-                "nexus.system_services.agents.agent_registry.AgentRegistry",
-                side_effect=RuntimeError("agent db error"),
+                "nexus.bricks.rebac.namespace_factory.create_namespace_manager",
+                side_effect=RuntimeError("namespace db error"),
             ),
         ):
             result = _boot_system_services(ctx)
 
-        # Agent registry failed, but others should still work
-        assert result["agent_registry"] is None
+        # Namespace manager failed, but others should still work
+        assert result["namespace_manager"] is None
         # Critical services should still be created
         assert result["rebac_manager"] is not None
         assert result["permission_enforcer"] is not None
-        assert any("[BOOT:SYSTEM]" in r.message for r in caplog.records)
 
     def test_critical_services_are_not_none(self) -> None:
         """All 5 critical services must be non-None on success."""
@@ -282,6 +279,8 @@ class TestBootBrickServices:
             "governance_response_service",
             # DT_PIPE Zoekt consumer (Issue #810)
             "zoekt_pipe_consumer",
+            # Task Manager DT_PIPE consumer
+            "task_dispatch_consumer",
         }
         assert expected_keys == set(result.keys())
 

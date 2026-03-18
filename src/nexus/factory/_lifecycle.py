@@ -29,7 +29,11 @@ async def _do_link(
 
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_wired_services
-    from nexus.factory.service_routing import populate_service_registry
+    from nexus.factory.service_routing import enlist_wired_services
+
+    _sys = nx._system_services
+    _brk = nx._brick_services
+    nx._permission_enforcer = _sys.permission_enforcer  # Issue #1706: override sentinel
 
     _parsing = parsing if parsing is not None else nx._parse_config
 
@@ -75,7 +79,6 @@ async def _do_link(
 
     # Update kernel-side references set by __init__ from original BrickServices
     nx._virtual_view_parse_fn = _parse_fn
-    nx._parsers_brick = parsers_brick  # kept for BLM registration in initialize()
 
     # --- Resolve enabled_bricks for profile gating ---
     _resolved_bricks = enabled_bricks
@@ -97,28 +100,26 @@ async def _do_link(
         _brick_on,
     )
 
-    # Issue #1615: Create coordinator early so wired services are registered
-    # in both ServiceRegistry and BLM in one shot.
+    # Issue #1708: Coordinator is always created — BLM is optional.
+    # Single entry point for all service registration (no fallback path).
+    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+        ServiceLifecycleCoordinator,
+    )
+
     _blm = getattr(nx._system_services, "brick_lifecycle_manager", None)
-    if _blm is not None:
-        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-            ServiceLifecycleCoordinator,
-        )
+    coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
+    nx._service_coordinator = coordinator
+    await enlist_wired_services(coordinator, _wired)
 
-        coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
-        nx._service_coordinator = coordinator
-        populate_service_registry(coordinator, _wired)
-
-        # Issue #1666: Register system-tier PersistentService instances so
-        # start_persistent_services() auto-discovers them at bootstrap.
-        _dpb = getattr(nx, "_deferred_permission_buffer", None)
-        if _dpb is not None:
-            coordinator.register_service("deferred_permission_buffer", _dpb, exports=())
-        _dw = getattr(nx._system_services, "delivery_worker", None)
-        if _dw is not None:
-            coordinator.register_service("delivery_worker", _dw, exports=())
-    else:
-        populate_service_registry(nx._service_registry, _wired)
+    # Issue #1666: Register system-tier PersistentService instances.
+    # These are Q3 (PersistentService) — enlist() defers start() because
+    # coordinator is not yet bootstrapped (mark_bootstrapped at bootstrap).
+    _dpb = getattr(nx._system_services, "deferred_permission_buffer", None)
+    if _dpb is not None:
+        await coordinator.enlist("deferred_permission_buffer", _dpb)
+    _dw = getattr(nx._system_services, "delivery_worker", None)
+    if _dw is not None:
+        await coordinator.enlist("delivery_worker", _dw)
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.
@@ -130,14 +131,14 @@ async def _do_link(
     from nexus.bricks.rebac.checker import PermissionChecker as _PC
 
     nx._permission_checker = _PC(
-        permission_enforcer=nx._permission_enforcer,
+        permission_enforcer=_sys.permission_enforcer,
         metadata_store=nx.metadata,
         default_context=nx._default_context,
         enforce_permissions=nx._enforce_permissions,
     )
 
 
-def _do_initialize(nx: Any) -> None:
+async def _do_initialize(nx: Any) -> None:
     """Phase 2 implementation: one-time side effects.  NO background threads.
 
     Prepares resources but remains static — no active threads or async loops.
@@ -158,7 +159,7 @@ def _do_initialize(nx: Any) -> None:
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    _register_vfs_hooks(
+    await _register_vfs_hooks(
         nx,
         permission_checker=nx._permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
@@ -181,7 +182,7 @@ def _do_initialize(nx: Any) -> None:
     # implement PersistentService and are auto-started by the coordinator's
     # start_persistent_services() at bootstrap.  Manual callbacks deleted.
 
-    _zl = nx._zone_lifecycle
+    _zl = getattr(nx._system_services, "zone_lifecycle", None) if nx._system_services else None
     if _zl is not None and hasattr(_zl, "load_terminating_zones"):
 
         async def _load_zones() -> None:

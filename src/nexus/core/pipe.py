@@ -74,7 +74,7 @@ class PipeBackend(Protocol):
 
     Implementations:
         RingBuffer              — in-process SPSC ring buffer (Rust, ~0.5μs)
-        [Future] SharedMemoryPipeBackend — mmap'd ring buffer (~1–5μs)
+        SharedRingBuffer (shm_pipe.py) — cross-process mmap'd ring buffer (~1–5μs)
     """
 
     async def write(self, data: bytes, *, blocking: bool = True) -> int: ...

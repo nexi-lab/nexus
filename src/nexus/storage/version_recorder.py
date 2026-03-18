@@ -109,6 +109,7 @@ class VersionRecorder:
         from nexus.storage._metadata_mapper_generated import MetadataMapper
 
         values = MetadataMapper.to_file_path_values(metadata)
+
         file_path = FilePathModel(
             path_id=str(uuid.uuid4()),
             **values,

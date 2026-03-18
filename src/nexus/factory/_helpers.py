@@ -57,6 +57,7 @@ _FACTORY_SKIP: frozenset[str] = frozenset(
         "wallet_provisioner",  # nexus/factory/wallet
         "version_service",  # nexus/services/versioning/
         "zoekt_pipe_consumer",  # nexus/factory/zoekt_pipe_consumer
+        "task_dispatch_consumer",  # nexus/task_manager/dispatch_consumer
         # --- Stateless bricks (no start/stop — unmount is cosmetic) ---
         "manifest_resolver",  # nexus/bricks/context_manifest/
         "manifest_metrics",  # nexus/bricks/context_manifest/

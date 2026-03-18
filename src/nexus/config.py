@@ -61,7 +61,6 @@ class FeaturesConfig(BaseModel):
     # System services
     eventlog: bool | None = Field(default=None, description="Enable event log service")
     namespace: bool | None = Field(default=None, description="Enable namespace manager")
-    agent_registry: bool | None = Field(default=None, description="Enable agent registry")
     permissions: bool | None = Field(default=None, description="Enable permission enforcement")
     scheduler: bool | None = Field(default=None, description="Enable task scheduler")
 
@@ -132,8 +131,8 @@ class NexusConfig(BaseModel):
 
     # Backend selection
     backend: str = Field(
-        default="local",
-        description="Storage backend: 'local' for local filesystem, 'gcs' for Google Cloud Storage",
+        default="path_local",
+        description="Storage backend: 'path_local' for local filesystem, 'local' for CAS, 'gcs' for Google Cloud Storage",
     )
 
     # Local backend settings

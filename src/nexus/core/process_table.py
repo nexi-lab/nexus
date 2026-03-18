@@ -1,29 +1,27 @@
 """ProcessTable — kernel process lifecycle manager (Issue #1509).
 
-Manages generic process lifecycle for both internal agents (async
-coroutines) and external agents (OS processes via gRPC). Follows
-the PipeManager pattern: DI with MetastoreABC, in-memory hot state,
-metastore persistence, degradable boot.
+Pure in-memory process table, analogous to Linux task_struct array.
+No metastore persistence — process state is ephemeral (tied to OS
+process lifespan).  On nexusd restart, all processes are gone.
 
-    core/process_table.py = kernel/fork.c + kernel/exit.c + kernel/signal.c
+VFS visibility is provided by ProcResolver (procfs model): reading
+``/{zone}/proc/{pid}/status`` generates content from memory at
+read time, like Linux ``/proc/{pid}/status``.
+
+    core/process_table.py  = kernel/fork.c + kernel/exit.c + kernel/signal.c
+    system_services/proc/proc_resolver.py  = fs/proc/ (procfs virtual filesystem)
 
 Concurrency model:
   - spawn/kill/signal/get/list are synchronous (fast PID allocation
-    + metastore write). Safe under asyncio event loop (no await).
+    + in-memory dict write). Safe under asyncio event loop (no await).
   - wait() is async (blocks on asyncio.Event until target state).
   - State transitions are validated against VALID_PROCESS_TRANSITIONS.
-
-Persistence:
-  - Descriptor JSON stored via metastore.set_file_metadata() at
-    /{zone}/proc/{pid}/status using the __proc_descriptor__ key.
-  - Recovery on boot: scan metastore, rebuild in-memory table.
 
 See: contracts/process_types.py for ProcessDescriptor, ProcessState.
 """
 
 import asyncio
 import contextlib
-import json
 import logging
 import uuid
 from dataclasses import replace
@@ -45,19 +43,15 @@ from nexus.contracts.process_types import (
 
 logger = logging.getLogger(__name__)
 
-# Metastore custom-metadata key for process descriptors
-PROC_DESCRIPTOR_KEY = "__proc_descriptor__"
-
 
 class ProcessTable:
     """Manages process lifecycle — PID allocation, state machine, signals, wait().
 
-    Analogous to Linux's task_struct table + scheduler interaction.
-    In-memory dict is the hot path; metastore is the persistence layer.
+    Pure in-memory — analogous to Linux's task_struct table.
+    VFS visibility via ProcResolver (procfs), not metastore persistence.
     """
 
-    def __init__(self, metastore: Any, zone_id: str = ROOT_ZONE_ID) -> None:
-        self._metastore = metastore
+    def __init__(self, zone_id: str = ROOT_ZONE_ID) -> None:
         self._zone_id = zone_id
         self._processes: dict[str, ProcessDescriptor] = {}
         self._wait_events: dict[str, list[asyncio.Event]] = {}
@@ -69,41 +63,6 @@ class ProcessTable:
     def _alloc_pid(self) -> str:
         """Allocate a unique PID (UUID4 hex prefix)."""
         return uuid.uuid4().hex[:12]
-
-    # ------------------------------------------------------------------
-    # Metastore persistence
-    # ------------------------------------------------------------------
-
-    def _proc_path(self, pid: str, zone_id: str) -> str:
-        """VFS path for process status inode."""
-        return f"/{zone_id}/proc/{pid}/status"
-
-    def _persist(self, desc: ProcessDescriptor) -> None:
-        """Write descriptor to metastore."""
-        from nexus.contracts.metadata import DT_REG, FileMetadata
-
-        path = self._proc_path(desc.pid, desc.zone_id)
-
-        # Ensure inode exists
-        existing = self._metastore.get(path)
-        if existing is None:
-            meta = FileMetadata(
-                path=path,
-                backend_name="proc",
-                physical_path=f"proc://{desc.pid}",
-                size=0,
-                entry_type=DT_REG,
-                zone_id=desc.zone_id,
-                owner_id=desc.owner_id,
-            )
-            self._metastore.put(meta)
-
-        self._metastore.set_file_metadata(path, PROC_DESCRIPTOR_KEY, desc.to_json())
-
-    def _unpersist(self, desc: ProcessDescriptor) -> None:
-        """Remove descriptor from metastore."""
-        path = self._proc_path(desc.pid, desc.zone_id)
-        self._metastore.delete(path)
 
     # ------------------------------------------------------------------
     # State machine
@@ -124,7 +83,6 @@ class ProcessTable:
         now = datetime.now(UTC)
         updated = replace(desc, state=new_state, updated_at=now, **kwargs)
         self._processes[desc.pid] = updated
-        self._persist(updated)
         self._notify_waiters(desc.pid)
         return updated
 
@@ -152,7 +110,7 @@ class ProcessTable:
         external_info: ExternalProcessInfo | None = None,
         labels: dict[str, str] | None = None,
     ) -> ProcessDescriptor:
-        """Create a new process in CREATED state."""
+        """Create a new process in RUNNING state."""
         # Validate parent
         if parent_pid is not None:
             parent = self._processes.get(parent_pid)
@@ -170,6 +128,7 @@ class ProcessTable:
             zone_id=zone_id,
             kind=kind,
             state=ProcessState.RUNNING,
+            generation=1,
             cwd=cwd,
             external_info=external_info,
             labels=labels or {},
@@ -178,7 +137,6 @@ class ProcessTable:
         )
 
         self._processes[pid] = desc
-        self._persist(desc)
 
         # Update parent.children
         if parent_pid is not None:
@@ -189,7 +147,6 @@ class ProcessTable:
                 updated_at=now,
             )
             self._processes[parent_pid] = updated_parent
-            self._persist(updated_parent)
 
         logger.debug("process spawned: pid=%s name=%s kind=%s", pid, name, kind)
         return desc
@@ -227,7 +184,8 @@ class ProcessTable:
             case ProcessSignal.SIGSTOP:
                 return self._transition(desc, ProcessState.STOPPED)
             case ProcessSignal.SIGCONT:
-                return self._transition(desc, ProcessState.SLEEPING)
+                new_gen = desc.generation + 1
+                return self._transition(desc, ProcessState.SLEEPING, generation=new_gen)
             case ProcessSignal.SIGTERM:
                 return self.kill(pid)
             case ProcessSignal.SIGKILL:
@@ -242,7 +200,6 @@ class ProcessTable:
                     merged = {**desc.labels, **{k: str(v) for k, v in payload.items()}}
                     desc = replace(desc, labels=merged, updated_at=datetime.now(UTC))
                     self._processes[pid] = desc
-                    self._persist(desc)
                 self._notify_waiters(pid)
                 return desc
             case _:
@@ -323,6 +280,30 @@ class ProcessTable:
         return result
 
     # ------------------------------------------------------------------
+    # Convenience queries (Issue #1692)
+    # ------------------------------------------------------------------
+
+    def count_by_state(self, state: ProcessState, *, zone_id: str | None = None) -> int:
+        """Count processes in a given state."""
+        return len(self.list_processes(state=state, zone_id=zone_id))
+
+    def list_by_priority(
+        self,
+        *,
+        zone_id: str | None = None,
+        batch_size: int = 10,
+    ) -> list[ProcessDescriptor]:
+        """List RUNNING processes sorted by eviction priority (lowest first), then LRU."""
+        procs = self.list_processes(state=ProcessState.RUNNING, zone_id=zone_id)
+        procs.sort(
+            key=lambda p: (
+                int(p.labels.get("eviction_priority", "50")),
+                p.updated_at,
+            )
+        )
+        return procs[:batch_size]
+
+    # ------------------------------------------------------------------
     # External process management
     # ------------------------------------------------------------------
 
@@ -372,7 +353,6 @@ class ProcessTable:
         new_ext = replace(desc.external_info, last_heartbeat=now)
         updated = replace(desc, external_info=new_ext, updated_at=now)
         self._processes[pid] = updated
-        self._persist(updated)
         return updated
 
     def unregister_external(self, pid: str) -> None:
@@ -395,7 +375,6 @@ class ProcessTable:
         """Remove process from table and clean up parent.children."""
         pid = desc.pid
         self._processes.pop(pid, None)
-        self._unpersist(desc)
         self._wait_events.pop(pid, None)
 
         # Remove from parent's children list
@@ -409,56 +388,12 @@ class ProcessTable:
                     updated_at=datetime.now(UTC),
                 )
                 self._processes[desc.ppid] = updated_parent
-                self._persist(updated_parent)
 
         logger.debug("process reaped: pid=%s name=%s", pid, desc.name)
 
     # ------------------------------------------------------------------
-    # Recovery + shutdown
+    # Shutdown
     # ------------------------------------------------------------------
-
-    def recover(self) -> int:
-        """Recover processes from metastore on boot.
-
-        - RUNNING/SLEEPING/STOPPED/CREATED → ZOMBIE (crashed)
-        - ZOMBIE → kept as-is (waiting for wait())
-        - UNMANAGED → deleted entirely (must reconnect)
-
-        Returns number of recovered processes.
-        """
-        prefix = f"/{self._zone_id}/proc/"
-        recovered = 0
-
-        entries = self._metastore.list(prefix, recursive=True)
-        for entry in entries:
-            raw = self._metastore.get_file_metadata(entry.path, PROC_DESCRIPTOR_KEY)
-            if raw is None:
-                continue
-
-            try:
-                desc = ProcessDescriptor.from_json(raw)
-            except (json.JSONDecodeError, KeyError, ValueError) as exc:
-                logger.warning("skipping corrupt process at %s: %s", entry.path, exc)
-                continue
-
-            # External processes: clean slate on restart
-            if desc.kind == ProcessKind.UNMANAGED:
-                self._metastore.delete(entry.path)
-                logger.debug("removed stale unmanaged process: pid=%s", desc.pid)
-                continue
-
-            # Non-terminal processes: mark as crashed (ZOMBIE)
-            if desc.state != ProcessState.ZOMBIE:
-                now = datetime.now(UTC)
-                desc = replace(desc, state=ProcessState.ZOMBIE, exit_code=-1, updated_at=now)
-                self._metastore.set_file_metadata(entry.path, PROC_DESCRIPTOR_KEY, desc.to_json())
-
-            self._processes[desc.pid] = desc
-            recovered += 1
-
-        if recovered:
-            logger.info("ProcessTable recovered %d processes", recovered)
-        return recovered
 
     def close_all(self) -> None:
         """Shutdown: kill all processes, clear state."""

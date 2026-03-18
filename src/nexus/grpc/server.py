@@ -1,8 +1,8 @@
 """gRPC server lifecycle — start/stop for the unified Nexus gRPC server (#1249).
 
 Manages a single ``grpc.aio.server()`` hosting ``NexusVFSService``.
-The server is disabled by default (port 0) and enabled by setting
-``NEXUS_GRPC_PORT`` to a non-zero port number.
+The server defaults to port 2028 and can be changed via ``NEXUS_GRPC_PORT``.
+Set ``NEXUS_GRPC_PORT=0`` to disable.
 
 All agent messaging flows through a single port via VFS.
 """
@@ -68,7 +68,7 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
 
 async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio.Task]:
     """Start the gRPC server if configured."""
-    port = int(os.environ.get("NEXUS_GRPC_PORT", "0"))
+    port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
     if not port:
         return []
 

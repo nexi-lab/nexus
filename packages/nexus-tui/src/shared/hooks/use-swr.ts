@@ -4,9 +4,11 @@
  * - Immediately returns cached data if available (even if stale)
  * - Triggers background revalidation if data is stale
  * - Reports loading/error states
+ * - Aborts in-flight requests on key change or unmount (Issue #3102)
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { LruCache } from "../utils/lru-cache.js";
 
 interface SwrOptions {
   /** Time in ms before cached data is considered stale. Default: 30000 */
@@ -23,75 +25,23 @@ interface SwrResult<T> {
   readonly mutate: () => void;
 }
 
-interface CacheEntry<T> {
-  data: T;
-  fetchedAt: number;
-}
-
 // =============================================================================
-// LRU cache with eviction (Decision 16A)
+// Module-level cache shared across hook instances (Decision 7A)
 // =============================================================================
 
-const MAX_CACHE_SIZE = 200;
-
-let accessCounter = 0;
-
-class LruCache {
-  private readonly _map = new Map<string, { entry: CacheEntry<unknown>; accessOrder: number }>();
-
-  get(key: string): CacheEntry<unknown> | undefined {
-    const item = this._map.get(key);
-    if (!item) return undefined;
-    // Update access order for LRU tracking (monotonic counter avoids Date.now() ties)
-    item.accessOrder = ++accessCounter;
-    return item.entry;
-  }
-
-  set(key: string, entry: CacheEntry<unknown>): void {
-    this._map.set(key, { entry, accessOrder: ++accessCounter });
-    this._evictIfNeeded();
-  }
-
-  delete(key: string): void {
-    this._map.delete(key);
-  }
-
-  clear(): void {
-    this._map.clear();
-  }
-
-  private _evictIfNeeded(): void {
-    if (this._map.size <= MAX_CACHE_SIZE) return;
-
-    // Find and remove least-recently-accessed entries
-    const entries = [...this._map.entries()].sort(
-      (a, b) => a[1].accessOrder - b[1].accessOrder,
-    );
-
-    const toRemove = this._map.size - MAX_CACHE_SIZE;
-    for (let i = 0; i < toRemove; i++) {
-      this._map.delete(entries[i]![0]);
-    }
-  }
-}
-
-// Module-level cache shared across hook instances
 /** @internal Exported for testing LRU behavior */
-export const swrCache = new LruCache();
-
-// Keep backward-compatible local alias
-const cache = swrCache;
+export const swrCache = new LruCache(200);
 
 export function useSwr<T>(
   key: string,
-  fetcher: () => Promise<T>,
+  fetcher: (signal: AbortSignal) => Promise<T>,
   options?: SwrOptions,
 ): SwrResult<T> {
   const ttlMs = options?.ttlMs ?? 30_000;
   const enabled = options?.enabled ?? true;
 
   const [data, setData] = useState<T | undefined>(() => {
-    const cached = cache.get(key) as CacheEntry<T> | undefined;
+    const cached = swrCache.get(key) as { data: T; fetchedAt: number } | undefined;
     return cached?.data;
   });
   const [error, setError] = useState<Error | undefined>();
@@ -99,33 +49,44 @@ export function useSwr<T>(
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
-  // Track the active key so in-flight fetches for stale keys are discarded (Bug 2)
+  // Track the active key so in-flight fetches for stale keys are discarded
   const activeKeyRef = useRef(key);
   activeKeyRef.current = key;
 
-  // Reset data to cached value (or undefined) when key changes (Bug 3)
+  // Track the active AbortController for cancellation (Issue #3102, Decision 3A)
+  const controllerRef = useRef<AbortController | null>(null);
+
+  // Reset data to cached value (or undefined) when key changes
   useEffect(() => {
-    const cached = cache.get(key) as CacheEntry<T> | undefined;
+    const cached = swrCache.get(key) as { data: T; fetchedAt: number } | undefined;
     setData(cached?.data);
   }, [key]);
 
   const isStale = (() => {
-    const cached = cache.get(key);
+    const cached = swrCache.get(key);
     if (!cached) return true;
     return Date.now() - cached.fetchedAt > ttlMs;
   })();
 
   const doFetch = useCallback(async () => {
     const fetchKey = key; // capture for closure
+
+    // Abort any previous in-flight fetch
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+
     setIsLoading(true);
     setError(undefined);
     try {
-      const result = await fetcherRef.current();
+      const result = await fetcherRef.current(controller.signal);
       // Only update if this key is still the active one
       if (activeKeyRef.current !== fetchKey) return;
-      cache.set(key, { data: result, fetchedAt: Date.now() });
+      swrCache.set(key, { data: result, fetchedAt: Date.now() });
       setData(result);
     } catch (err) {
+      // Suppress AbortError — it's expected when we cancel
+      if (err instanceof DOMException && err.name === "AbortError") return;
       if (activeKeyRef.current !== fetchKey) return;
       setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
@@ -140,10 +101,15 @@ export function useSwr<T>(
     if (isStale) {
       doFetch();
     }
+
+    // Abort in-flight request on unmount or key change
+    return () => {
+      controllerRef.current?.abort();
+    };
   }, [key, enabled, isStale, doFetch]);
 
   const mutate = useCallback(() => {
-    cache.delete(key);
+    swrCache.delete(key);
     doFetch();
   }, [key, doFetch]);
 

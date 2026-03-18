@@ -17,6 +17,7 @@ import { executeLocalCommand, useCommandRunnerStore } from "../../services/comma
 import { CommandOutput } from "./command-output.js";
 import { Spinner } from "./spinner.js";
 import { statusColor } from "../theme.js";
+import { resolveConfig, FetchClient } from "@nexus/api-client";
 
 const AUTO_POLL_INTERVAL = 5_000; // 5 seconds (Decision 14A)
 
@@ -39,7 +40,9 @@ export function PreConnectionScreen(): React.ReactNode {
   const prevCommandStatus = useRef(commandStatus);
 
   // When a local command finishes (success or error), re-read config from disk
-  // so that `nexus init` creating nexus.yaml is picked up automatically.
+  // but DON'T auto-connect. The user should press R to retry or run more
+  // commands (e.g. D → Shift+U → P flow). Auto-connecting after `nexus init`
+  // would connect to a stale server with the wrong API key.
   useEffect(() => {
     const prev = prevCommandStatus.current;
     prevCommandStatus.current = commandStatus;
@@ -48,12 +51,19 @@ export function PreConnectionScreen(): React.ReactNode {
       (prev === "running") &&
       (commandStatus === "success" || commandStatus === "error")
     ) {
-      // Re-read config from disk — initConfig() calls resolveConfig() which
-      // searches ./nexus.yaml → ~/.nexus/config.yaml, then creates a new
-      // FetchClient if an API key is now present.
-      initConfig();
+      // Re-read config from disk without triggering connection test.
+      // resolveConfig() picks up new api_key/ports from nexus.yaml.
+      const config = resolveConfig({ transformKeys: false });
+      const client = config.apiKey ? new FetchClient(config) : null;
+      useGlobalStore.setState({
+        config,
+        client,
+        // Stay disconnected — user presses R when ready
+        connectionStatus: client ? "error" : "disconnected",
+        connectionError: client ? "Press R to connect after setup" : null,
+      });
     }
-  }, [commandStatus, initConfig]);
+  }, [commandStatus]);
 
   // Manual retry: re-read config from disk + test connection.
   // This is critical for the no-config → init → retry flow: after nexus init
@@ -91,6 +101,7 @@ export function PreConnectionScreen(): React.ReactNode {
   }, [urlInput, initConfig]);
 
   const isCommandRunning = commandStatus === "running";
+  const hasCommandOutput = commandStatus === "success" || commandStatus === "error";
 
   // Handle printable chars when editing URL
   const handleUnhandledKey = useCallback(
@@ -105,9 +116,21 @@ export function PreConnectionScreen(): React.ReactNode {
     [editingUrl],
   );
 
+  // Dismiss command output and return to menu
+  const dismissOutput = useCallback(() => {
+    useCommandRunnerStore.getState().reset();
+  }, []);
+
   useKeyboard(
     isCommandRunning
       ? {}
+      : hasCommandOutput
+      ? {
+          // After a command finishes, only allow Esc to dismiss or re-run shortcuts
+          escape: dismissOutput,
+          backspace: dismissOutput,
+          r: handleRetry,
+        }
       : editingUrl
       ? {
           return: handleConnectUrl,
@@ -125,10 +148,24 @@ export function PreConnectionScreen(): React.ReactNode {
             useCommandRunnerStore.getState().reset();
             executeLocalCommand("init", ["--preset", "shared"]);
           },
+          d: () => {
+            useCommandRunnerStore.getState().reset();
+            executeLocalCommand("init", ["--preset", "demo", "--force"]);
+          },
           u: () => {
             // Start server (nexus up)
             useCommandRunnerStore.getState().reset();
             executeLocalCommand("up", []);
+          },
+          "shift+u": () => {
+            // Start server with local build (nexus up --build)
+            useCommandRunnerStore.getState().reset();
+            executeLocalCommand("up", ["--build"]);
+          },
+          p: () => {
+            // Seed demo data (nexus demo init)
+            useCommandRunnerStore.getState().reset();
+            executeLocalCommand("demo", ["init"]);
           },
           c: () => {
             // Connect to a different URL
@@ -139,6 +176,44 @@ export function PreConnectionScreen(): React.ReactNode {
     isCommandRunning ? undefined : editingUrl ? handleUnhandledKey : undefined,
   );
 
+  // Full-screen command output view when a command is running or has output
+  if (commandStatus !== "idle") {
+    return (
+      <box height="100%" width="100%" flexDirection="column">
+        <scrollbox flexGrow={1}>
+          <box flexDirection="column" width="100%" padding={1}>
+            <CommandOutput />
+          </box>
+        </scrollbox>
+        <box height={1} width="100%">
+          {commandStatus === "success" ? (
+            <text>
+              <span foregroundColor="#4dff88" bold>{"  ✓ Done"}</span>
+              <span foregroundColor="#666666">{"  │  "}</span>
+              <span foregroundColor="#00d4ff">{"Esc"}</span>
+              <span foregroundColor="#888888">{":back  "}</span>
+              <span foregroundColor="#00d4ff">{"R"}</span>
+              <span foregroundColor="#888888">{":retry"}</span>
+            </text>
+          ) : commandStatus === "error" ? (
+            <text>
+              <span foregroundColor="#ff4444" bold>{"  ✗ Failed"}</span>
+              <span foregroundColor="#666666">{"  │  "}</span>
+              <span foregroundColor="#00d4ff">{"Esc"}</span>
+              <span foregroundColor="#888888">{":back  "}</span>
+              <span foregroundColor="#00d4ff">{"R"}</span>
+              <span foregroundColor="#888888">{":retry"}</span>
+            </text>
+          ) : (
+            <text>
+              <span foregroundColor="#ffaa00">{"  ◐ Running..."}</span>
+            </text>
+          )}
+        </box>
+      </box>
+    );
+  }
+
   return (
     <box height="100%" width="100%" justifyContent="center" alignItems="center">
       <box
@@ -147,44 +222,60 @@ export function PreConnectionScreen(): React.ReactNode {
         width={64}
         padding={1}
       >
-        <text bold foregroundColor={statusColor.info}>
-          {"    \u2554\u2557\u2554\u250C\u2500\u2510\u2500\u2510 \u2510\u252C\u2510 \u252C\u250C\u2500\u2510"}
+        {/* Logo with gradient: cyan → blue → magenta */}
+        <text bold foregroundColor="#00d4ff">
+          {"    _   _ _____ __  __ _   _ ____"}
         </text>
-        <text bold foregroundColor={statusColor.info}>
-          {"    \u2551\u2551\u2551\u251C\u2524 \u250C\u2524 \u2502 \u2502\u2502\u2514\u2500\u2510"}
+        <text bold foregroundColor="#00b8ff">
+          {"   | \\ | | ____|  \\/  | | | / ___|"}
         </text>
-        <text bold foregroundColor={statusColor.info}>
-          {"    \u255D\u255A\u255D\u2514\u2500\u2518\u2518\u2514 \u2514\u2500\u2518\u2514\u2500\u2518"}
+        <text bold foregroundColor="#4d8eff">
+          {"   |  \\| |  _|  >\\/< | | | \\___ \\"}
+        </text>
+        <text bold foregroundColor="#8066ff">
+          {"   | |\\  | |___/ /\\ \\| |_| |___) |"}
+        </text>
+        <text bold foregroundColor="#b44dff">
+          {"   |_| \\_|_____/_/  \\_\\\\___/|____/"}
         </text>
         <text>{""}</text>
 
         {/* Status-specific message */}
         {connState === "no-config" && (
           <>
-            <text foregroundColor={statusColor.warning}>{"  No API key configured"}</text>
+            <text>
+              <span foregroundColor="#ffaa00" bold>{"  ⚠ "}</span>
+              <span foregroundColor="#ffaa00" bold>{"No API key configured"}</span>
+            </text>
             <text>{""}</text>
-            <text dimColor>{"  Set NEXUS_API_KEY or add api_key to ~/.nexus/config.yaml"}</text>
-            <text dimColor>{"  Or press [I] to initialize a new project."}</text>
+            <text foregroundColor="#888888">{"  Set NEXUS_API_KEY or add api_key to ~/.nexus/config.yaml"}</text>
+            <text foregroundColor="#888888">{"  Or press [I] to initialize a new project."}</text>
           </>
         )}
 
         {connState === "no-server" && (
           <>
-            <text foregroundColor={statusColor.error}>{"  Cannot connect to server"}</text>
+            <text>
+              <span foregroundColor="#ff4444" bold>{"  ✗ "}</span>
+              <span foregroundColor="#ff4444" bold>{"Cannot connect to server"}</span>
+            </text>
             <text>{""}</text>
-            <text dimColor>{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
+            <text foregroundColor="#888888">{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
             {connectionError && (
-              <text dimColor>{`  Error: ${connectionError}`}</text>
+              <text foregroundColor="#ff6666">{`  Error: ${connectionError}`}</text>
             )}
           </>
         )}
 
         {connState === "auth-failed" && (
           <>
-            <text foregroundColor={statusColor.error}>{"  Authentication failed"}</text>
+            <text>
+              <span foregroundColor="#ff4444" bold>{"  ✗ "}</span>
+              <span foregroundColor="#ff4444" bold>{"Authentication failed"}</span>
+            </text>
             <text>{""}</text>
-            <text dimColor>{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
-            <text dimColor>{"  Check your API key or credentials."}</text>
+            <text foregroundColor="#888888">{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
+            <text foregroundColor="#ff6666">{"  Check your API key or credentials."}</text>
           </>
         )}
 
@@ -197,50 +288,63 @@ export function PreConnectionScreen(): React.ReactNode {
         {/* URL editor */}
         {editingUrl && (
           <>
-            <text>{"  Enter server URL:"}</text>
+            <text foregroundColor="#00d4ff">{"  Enter server URL:"}</text>
             <box height={1} width="100%">
-              <text>{`  > ${urlInput}\u2588`}</text>
+              <text foregroundColor="#ffffff">{`  > ${urlInput}\u2588`}</text>
             </box>
-            <text dimColor>{"  Enter to connect, Esc to cancel"}</text>
+            <text foregroundColor="#666666">{"  Enter to connect, Esc to cancel"}</text>
             <text>{""}</text>
           </>
         )}
 
         {/* Actions */}
-        {connState !== "connecting" && !isCommandRunning && !editingUrl && (
+        {connState !== "connecting" && !editingUrl && (
           <>
+            <text foregroundColor="#888888" bold>{"  Setup"}</text>
             <text>
-              <text foregroundColor={statusColor.info}>{"  [I]"}</text>
-              <text>{" Initialize local project (nexus init)"}</text>
+              <span foregroundColor="#00d4ff" bold>{"  [I] "}</span>
+              <span foregroundColor="#cccccc">{"Init local"}</span>
+              <span foregroundColor="#666666">{" (nexus init)"}</span>
             </text>
             <text>
-              <text foregroundColor={statusColor.info}>{"  [S]"}</text>
-              <text>{" Initialize shared project (nexus init --preset shared)"}</text>
+              <span foregroundColor="#00d4ff" bold>{"  [S] "}</span>
+              <span foregroundColor="#cccccc">{"Init shared Docker"}</span>
+              <span foregroundColor="#666666">{" (--preset shared)"}</span>
             </text>
             <text>
-              <text foregroundColor={statusColor.info}>{"  [U]"}</text>
-              <text>{" Start server (nexus up)"}</text>
+              <span foregroundColor="#00d4ff" bold>{"  [D] "}</span>
+              <span foregroundColor="#cccccc">{"Init demo Docker"}</span>
+              <span foregroundColor="#666666">{" (--preset demo)"}</span>
             </text>
             <text>
-              <text foregroundColor={statusColor.info}>{"  [C]"}</text>
-              <text>{" Connect to a different URL"}</text>
+              <span foregroundColor="#4dff88" bold>{"  [U] "}</span>
+              <span foregroundColor="#cccccc">{"Start server"}</span>
+              <span foregroundColor="#666666">{" (nexus up)"}</span>
             </text>
             <text>
-              <text foregroundColor={statusColor.info}>{"  [R]"}</text>
-              <text>{` Retry connection${retryCount > 0 ? ` (${retryCount})` : ""}`}</text>
+              <span foregroundColor="#4dff88" bold>{"  [⇧U] "}</span>
+              <span foregroundColor="#cccccc">{"Build from source"}</span>
+              <span foregroundColor="#666666">{" (nexus up --build)"}</span>
             </text>
             <text>
-              <text foregroundColor={autoPoll ? statusColor.success : statusColor.dim}>{"  [A]"}</text>
-              <text>{autoPoll ? " Auto-check: ON (every 5s)" : " Enable auto-check (every 5s)"}</text>
+              <span foregroundColor="#ffaa00" bold>{"  [P] "}</span>
+              <span foregroundColor="#cccccc">{"Seed demo data"}</span>
+              <span foregroundColor="#666666">{" (nexus demo init)"}</span>
             </text>
-          </>
-        )}
-
-        {/* Command output (when running nexus init etc.) */}
-        {commandStatus !== "idle" && (
-          <>
             <text>{""}</text>
-            <CommandOutput />
+            <text foregroundColor="#888888" bold>{"  Connection"}</text>
+            <text>
+              <span foregroundColor="#b44dff" bold>{"  [C] "}</span>
+              <span foregroundColor="#cccccc">{"Connect to a different URL"}</span>
+            </text>
+            <text>
+              <span foregroundColor="#b44dff" bold>{"  [R] "}</span>
+              <span foregroundColor="#cccccc">{`Retry connection${retryCount > 0 ? ` (${retryCount})` : ""}`}</span>
+            </text>
+            <text>
+              <span foregroundColor={autoPoll ? "#4dff88" : "#888888"} bold>{"  [A] "}</span>
+              <span foregroundColor={autoPoll ? "#4dff88" : "#cccccc"}>{autoPoll ? "Auto-check: ON (every 5s)" : "Enable auto-check (every 5s)"}</span>
+            </text>
           </>
         )}
       </box>

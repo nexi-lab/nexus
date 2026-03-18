@@ -131,6 +131,44 @@ def create_api_key(
     return (api_key.key_id, raw_key)
 
 
+def create_agent_api_key(
+    session: "Session",
+    agent_id: str,
+    agent_name: str,
+    owner_id: str,
+    zone_id: str | None = None,
+    expires_at: datetime | None = None,
+) -> tuple[str, str]:
+    """Create an API key for an agent identity.
+
+    Thin wrapper around ``create_api_key`` that hardcodes
+    ``subject_type="agent"`` and wires the agent_id as subject_id.
+
+    Used by both AgentRegistrationService and DelegationService to
+    avoid duplicating the key-creation pattern (Issue #3130).
+
+    Args:
+        session: SQLAlchemy session (caller manages commit/rollback).
+        agent_id: Unique agent identifier (becomes subject_id on the key).
+        agent_name: Human-readable name for the key label.
+        owner_id: User ID who owns the agent (becomes user_id on the key).
+        zone_id: Optional zone identifier.
+        expires_at: Optional expiry (None = permanent key).
+
+    Returns:
+        Tuple of (key_id, raw_key). Raw key is only returned once.
+    """
+    return create_api_key(
+        session,
+        user_id=owner_id,
+        name=f"agent:{agent_name}",
+        subject_type="agent",
+        subject_id=agent_id,
+        zone_id=zone_id,
+        expires_at=expires_at,
+    )
+
+
 def revoke_api_key(session: "Session", key_id: str) -> bool:
     """Revoke an API key by key_id.
 

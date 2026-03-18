@@ -1,7 +1,7 @@
 """Tests for kernel ProcessTable (Issue #1509).
 
-Uses DictMetastore (like test_pipe.py) for isolation.
-Covers: spawn, kill, signal, wait, external processes, recovery, serialization.
+Pure in-memory — no metastore persistence.
+Covers: spawn, kill, signal, wait, external processes, close_all, serialization.
 """
 
 from __future__ import annotations
@@ -22,8 +22,7 @@ from nexus.contracts.process_types import (
     ProcessSignal,
     ProcessState,
 )
-from nexus.core.process_table import PROC_DESCRIPTOR_KEY, ProcessTable
-from tests.helpers.dict_metastore import DictMetastore
+from nexus.core.process_table import ProcessTable
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,7 +33,7 @@ OWNER = "user-1"
 
 
 def _make_table() -> ProcessTable:
-    return ProcessTable(DictMetastore(), zone_id=ZONE)
+    return ProcessTable(zone_id=ZONE)
 
 
 # ---------------------------------------------------------------------------
@@ -124,17 +123,6 @@ class TestSpawn:
         pt._transition(desc, ProcessState.SLEEPING)
         assert len(pt.list_processes(state=ProcessState.RUNNING)) == 1
         assert len(pt.list_processes(state=ProcessState.SLEEPING)) == 1
-
-    def test_spawn_persists_to_metastore(self) -> None:
-        ms = DictMetastore()
-        pt = ProcessTable(ms, zone_id=ZONE)
-        desc = pt.spawn("agent", OWNER, ZONE)
-        path = f"/{ZONE}/proc/{desc.pid}/status"
-        raw = ms.get_file_metadata(path, PROC_DESCRIPTOR_KEY)
-        assert raw is not None
-        recovered = ProcessDescriptor.from_json(raw)
-        assert recovered.pid == desc.pid
-        assert recovered.name == "agent"
 
 
 # ---------------------------------------------------------------------------
@@ -408,47 +396,11 @@ class TestExternalProcesses:
 
 
 # ---------------------------------------------------------------------------
-# Recovery
+# Close All
 # ---------------------------------------------------------------------------
 
 
-class TestRecovery:
-    def test_recover_running_becomes_zombie(self) -> None:
-        ms = DictMetastore()
-        pt = ProcessTable(ms, zone_id=ZONE)
-        pt.spawn("a", OWNER, ZONE)  # RUNNING
-
-        # New ProcessTable on same metastore
-        pt2 = ProcessTable(ms, zone_id=ZONE)
-        recovered = pt2.recover()
-        assert recovered == 1
-        # Find the recovered process
-        procs = pt2.list_processes()
-        assert len(procs) == 1
-        assert procs[0].state == ProcessState.ZOMBIE
-
-    def test_recover_external_deleted(self) -> None:
-        ms = DictMetastore()
-        pt = ProcessTable(ms, zone_id=ZONE)
-        desc = pt.register_external("ext", OWNER, ZONE, connection_id="c1")
-
-        pt2 = ProcessTable(ms, zone_id=ZONE)
-        recovered = pt2.recover()
-        assert recovered == 0
-        assert pt2.get(desc.pid) is None
-
-    def test_recover_zombie_kept(self) -> None:
-        ms = DictMetastore()
-        pt = ProcessTable(ms, zone_id=ZONE)
-        parent = pt.spawn("parent", OWNER, ZONE)
-        child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt.kill(child.pid)  # ZOMBIE
-
-        pt2 = ProcessTable(ms, zone_id=ZONE)
-        recovered = pt2.recover()
-        # Both parent (now ZOMBIE from crash) and child (already ZOMBIE)
-        assert recovered >= 1
-
+class TestCloseAll:
     def test_close_all(self) -> None:
         pt = _make_table()
         pt.spawn("a", OWNER, ZONE)

@@ -39,7 +39,7 @@ class AgentRPCService:
         metastore: "MetastoreABC",
         session_factory: Any,
         record_store: Any | None = None,
-        agent_registry: Any | None = None,
+        process_table: Any | None = None,
         entity_registry: Any | None = None,
         rebac_manager: Any | None = None,
         wallet_provisioner: Any | None = None,
@@ -55,7 +55,7 @@ class AgentRPCService:
         self._metastore = metastore
         self._session_factory = session_factory
         self._record_store = record_store
-        self._agent_registry = agent_registry
+        self._process_table = process_table
         self._entity_registry = entity_registry
         self._rebac_manager = rebac_manager
         self._wallet_provisioner = wallet_provisioner
@@ -299,19 +299,9 @@ class AgentRPCService:
     # Registry Helpers
     # ------------------------------------------------------------------
 
-    def _ensure_agent_registry(self) -> None:
-        if self._agent_registry is not None:
-            return
-        if self._session_factory is None:
-            raise RuntimeError("AgentRegistry not initialized and no session_factory available.")
-        if self._record_store is None:
-            raise RuntimeError("record_store is required to initialize AgentRegistry")
-        from nexus.system_services.agents.agent_registry import AgentRegistry
-
-        self._agent_registry = AgentRegistry(
-            record_store=self._record_store,
-            entity_registry=self._entity_registry,
-        )
+    def _ensure_process_table(self) -> None:
+        if self._process_table is None:
+            raise RuntimeError("ProcessTable not available")
 
     def _check_agent_not_exists(self, agent_id: str, user_id: str, zone_id: str) -> None:
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
@@ -355,18 +345,26 @@ class AgentRPCService:
         agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
 
         self._check_agent_not_exists(agent_id, user_id, zone_id)
-        self._ensure_agent_registry()
-        assert self._agent_registry is not None
+        self._ensure_process_table()
+        assert self._process_table is not None
 
-        record = self._agent_registry.register(
-            agent_id=agent_id,
+        desc = self._process_table.register_external(
+            name=name,
             owner_id=user_id,
             zone_id=zone_id,
-            name=name,
-            metadata=metadata,
-            capabilities=capabilities,
+            connection_id=agent_id,
+            labels={"capabilities": ",".join(capabilities or [])},
         )
-        agent = record.to_dict()
+        agent = {
+            "agent_id": agent_id,
+            "owner_id": user_id,
+            "zone_id": zone_id,
+            "name": name,
+            "state": str(desc.state),
+            "generation": desc.generation,
+            "created_at": desc.created_at.isoformat(),
+            "updated_at": desc.updated_at.isoformat(),
+        }
 
         agent_did = self._provision_agent_identity(agent_id, agent, logger)
         self._provision_agent_wallet(agent_id, zone_id, logger)
@@ -699,9 +697,14 @@ class AgentRPCService:
             except Exception as e:
                 logger.warning("[WALLET] Failed to cleanup wallet for agent %s: %s", agent_id, e)
 
-        self._ensure_agent_registry()
-        assert self._agent_registry is not None
-        return bool(self._agent_registry.unregister(agent_id))
+        self._ensure_process_table()
+        assert self._process_table is not None
+        try:
+            self._process_table.unregister_external(agent_id)
+            return True
+        except Exception:
+            logger.warning("Failed to unregister process %s", agent_id)
+            return False
 
     # ------------------------------------------------------------------
     # Public RPC Methods — Agent Lifecycle
@@ -716,34 +719,48 @@ class AgentRPCService:
         context: dict | None = None,  # noqa: ARG002
     ) -> dict:
         """Transition an agent's lifecycle state with optimistic locking."""
-        if not self._agent_registry:
-            raise ValueError("AgentRegistry not available")
-        from nexus.system_services.agents.agent_record import AgentState
+        if not self._process_table:
+            raise ValueError("ProcessTable not available")
+        from nexus.contracts.process_types import (
+            InvalidTransitionError,
+            ProcessSignal,
+        )
 
-        try:
-            target = AgentState(target_state)
-        except ValueError as err:
+        # Map legacy state names to signals
+        _STATE_TO_SIGNAL = {
+            "CONNECTED": ProcessSignal.SIGCONT,
+            "IDLE": ProcessSignal.SIGSTOP,
+            "SUSPENDED": ProcessSignal.SIGSTOP,
+        }
+        sig = _STATE_TO_SIGNAL.get(target_state.upper())
+        if sig is None:
             raise ValueError(
                 f"Invalid target state '{target_state}'. Valid: CONNECTED, IDLE, SUSPENDED"
-            ) from err
+            )
 
-        record = self._agent_registry.transition(
-            agent_id=agent_id,
-            target_state=target,
-            expected_generation=expected_generation,
-        )
+        # CAS check if generation provided
+        if expected_generation is not None:
+            current = self._process_table.get(agent_id)
+            if current is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+            if current.generation != expected_generation:
+                raise InvalidTransitionError(
+                    f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
+                )
+
+        desc = self._process_table.signal(agent_id, sig)
         return {
-            "agent_id": record.agent_id,
-            "state": record.state.value,
-            "generation": record.generation,
+            "agent_id": desc.pid,
+            "state": str(desc.state),
+            "generation": desc.generation,
         }
 
     @rpc_expose(description="Record agent heartbeat")
     def agent_heartbeat(self, agent_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
         """Record a heartbeat for an active agent."""
-        if not self._agent_registry:
-            raise ValueError("AgentRegistry not available")
-        self._agent_registry.heartbeat(agent_id)
+        if not self._process_table:
+            raise ValueError("ProcessTable not available")
+        self._process_table.heartbeat(agent_id)
         return {"ok": True}
 
     @rpc_expose(description="List agents in a zone")
@@ -754,27 +771,40 @@ class AgentRPCService:
         context: dict | None = None,  # noqa: ARG002
     ) -> list[dict]:
         """List agents in a zone, optionally filtered by state."""
-        if not self._agent_registry:
-            raise ValueError("AgentRegistry not available")
+        if not self._process_table:
+            raise ValueError("ProcessTable not available")
+
         state_enum = None
         if state:
-            from nexus.system_services.agents.agent_record import AgentState
+            from nexus.contracts.process_types import ProcessState
 
-            try:
-                state_enum = AgentState(state)
-            except ValueError as err:
-                raise ValueError(f"Invalid state filter '{state}'") from err
+            # Map legacy state names
+            _STATE_MAP = {
+                "CONNECTED": ProcessState.RUNNING,
+                "IDLE": ProcessState.SLEEPING,
+                "SUSPENDED": ProcessState.STOPPED,
+            }
+            state_enum = _STATE_MAP.get(state.upper())
+            if state_enum is None:
+                try:
+                    state_enum = ProcessState(state.lower())
+                except ValueError as err:
+                    raise ValueError(f"Invalid state filter '{state}'") from err
 
-        records = self._agent_registry.list_by_zone(zone_id, state=state_enum)
+        records = self._process_table.list_processes(zone_id=zone_id, state=state_enum)
         return [
             {
-                "agent_id": r.agent_id,
+                "agent_id": r.pid,
                 "owner_id": r.owner_id,
                 "zone_id": r.zone_id,
                 "name": r.name,
-                "state": r.state.value,
+                "state": str(r.state),
                 "generation": r.generation,
-                "last_heartbeat": r.last_heartbeat.isoformat() if r.last_heartbeat else None,
+                "last_heartbeat": (
+                    r.external_info.last_heartbeat.isoformat()
+                    if r.external_info and r.external_info.last_heartbeat
+                    else None
+                ),
                 "created_at": r.created_at.isoformat(),
                 "updated_at": r.updated_at.isoformat(),
             }

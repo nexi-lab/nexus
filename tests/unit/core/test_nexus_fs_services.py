@@ -53,7 +53,7 @@ class TestNexusFSServiceComposition:
         fs = await _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify all services are instantiated
-        assert hasattr(fs, "version_service"), "VersionService not instantiated"
+        assert fs._brick_services.version_service is not None, "VersionService not instantiated"
         assert fs.service("rebac") is not None, "ReBACService not instantiated"
         assert fs.service("mount") is not None, "MountService not instantiated"
         assert fs.service("mcp") is not None, "MCPService not instantiated"
@@ -63,7 +63,7 @@ class TestNexusFSServiceComposition:
         assert fs.service("events") is not None, "EventsService not instantiated"
 
         # Verify services are not None
-        assert fs.version_service is not None
+        assert fs._brick_services.version_service is not None
         assert fs.service("rebac") is not None
         assert fs.service("mount") is not None
         assert fs.service("mcp") is not None
@@ -78,21 +78,21 @@ class TestNexusFSServiceComposition:
         fs = await _make_fs(tmp_path)
 
         # VersionService dependencies (injected by _make_fs, mimicking factory)
-        assert fs.version_service.metadata == fs.metadata
-        assert fs.version_service.cas == fs.router.route("/").backend
+        assert fs._brick_services.version_service.metadata == fs.metadata
+        assert fs._brick_services.version_service.cas == fs.router.route("/").backend
 
         # ReBACService should have rebac_manager
-        assert fs.service("rebac")._rebac_manager == fs._rebac_manager
+        assert fs.service("rebac")._rebac_manager == fs._system_services.rebac_manager
 
         # MountService should have router and mount_manager
         assert fs.service("mount").router == fs.router
-        assert fs.service("mount").mount_manager == fs.mount_manager
+        assert fs.service("mount").mount_manager == fs._system_services.mount_manager
 
         # Services that take filesystem should have it
         assert fs.service("mcp")._filesystem == fs
         # SearchService should have metadata and permission_enforcer
         assert fs.service("search").metadata == fs.metadata
-        assert fs.service("search")._permission_enforcer == fs._permission_enforcer
+        assert fs.service("search")._permission_enforcer == fs._system_services.permission_enforcer
 
         # ShareLinkService should have gateway
         assert fs.service("share_link")._gw is not None
@@ -106,5 +106,4 @@ class TestNexusFSServiceComposition:
         fs = await _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify version_service exists and is not None
-        assert hasattr(fs, "version_service"), "VersionService not instantiated"
-        assert fs.version_service is not None
+        assert fs._brick_services.version_service is not None, "VersionService not instantiated"

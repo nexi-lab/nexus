@@ -1,31 +1,35 @@
 """ServiceLifecycleCoordinator — bridge between ServiceRegistry and BrickLifecycleManager.
 
-Provides five Linux-inspired verbs for service lifecycle management:
+``enlist()`` is the **single public entry point** for all service registration.
+It auto-detects the service quadrant and applies appropriate lifecycle:
 
-    insmod  → register_service()   — register instance in both Registry and BLM
-    mount   → mount_service()      — BLM mount + register VFS hooks
-    umount  → unmount_service()    — unregister VFS hooks + BLM unmount
-    rmmod   → unregister_service() — remove from both Registry and BLM
-    swap    → swap_service()       — atomic replace + drain + hook swap
+    Q1 (static)         — register only
+    Q2 (HotSwappable)   — register + capture hook_spec + activate
+    Q3 (Persistent)     — register + start (deferred pre-bootstrap)
+    Q4 (both)           — register + start + hooks + activate
+
+Bootstrap-aware: Q3 ``start()`` is deferred during link phase and batch-started
+at ``start_persistent_services()``.  After ``mark_bootstrapped()``, late-enlisted
+Q3 services are auto-started immediately.
+
+Public API surface (9 methods):
+    enlist()                           — single registration entry point
+    unregister_service()               — rmmod — remove service
+    swap_service()                     — atomic hot-swap (Q2/Q4 only)
+    start_persistent_services()        — bootstrap batch start Q3
+    stop_persistent_services()         — shutdown batch stop Q3
+    activate_hot_swappable_services()  — bootstrap batch activate Q2
+    deactivate_hot_swappable_services()— shutdown batch deactivate Q2
+    mark_bootstrapped()                — phase transition signal
+    classify_all()                     — observability / diagnostics
 
 The coordinator lives at the System Services tier (not kernel) — it composes
-kernel-owned ServiceRegistry with system-service-tier BrickLifecycleManager.
-
-Hot-swap flow (HotSwappable services only):
-    1. Validate old service implements HotSwappable (TypeError if not)
-    2. Call old_service.drain() — stop accepting new work
-    3. Drain ServiceRef refcount → 0 (wait for in-flight calls)
-    4. Unregister old VFS hooks (from old_service.hook_spec())
-    5. Atomic replace in ServiceRegistry
-    6. BLM state transitions for old (unmount+unregister) and new (register+mount)
-    7. Register new VFS hooks (from new_service.hook_spec() if HotSwappable)
-    8. Call new_service.activate() if HotSwappable
-
-Static (non-HotSwappable) services cannot be hot-swapped — they raise TypeError.
-Use full restart instead.
+kernel-owned ServiceRegistry with optional BrickLifecycleManager.  Always
+created for all deployment profiles (Issue #1708).
 
 Issue #1452 Phase 3.
 Issue #1577: HotSwappable + PersistentService protocol integration.
+Issue #1570: enlist() as THE single entry point, API surface cleanup.
 """
 
 from __future__ import annotations
@@ -52,17 +56,25 @@ DEFAULT_DRAIN_TIMEOUT: float = 10.0
 
 
 class ServiceLifecycleCoordinator:
-    """Bridges ServiceRegistry + BrickLifecycleManager for unified service lifecycle.
+    """Bridges ServiceRegistry + optional BLM for unified service lifecycle.
 
     Kernel stays pure — this coordinator lives at system services tier.
+    Always instantiated for all profiles (Issue #1708); BLM is optional.
     """
 
-    __slots__ = ("_registry", "_blm", "_dispatch", "_hook_specs", "_hooks_on_dispatch")
+    __slots__ = (
+        "_registry",
+        "_blm",
+        "_dispatch",
+        "_hook_specs",
+        "_hooks_on_dispatch",
+        "_bootstrapped",
+    )
 
     def __init__(
         self,
         service_registry: ServiceRegistry,
-        lifecycle_manager: BrickLifecycleManager,
+        lifecycle_manager: BrickLifecycleManager | None,
         dispatch: KernelDispatch,
     ) -> None:
         self._registry = service_registry
@@ -73,12 +85,25 @@ class ServiceLifecycleCoordinator:
         # initialize() time by _enlist_hook().  activate_hot_swappable_services()
         # skips _register_hooks() for these to avoid double registration.
         self._hooks_on_dispatch: set[str] = set()
+        self._bootstrapped: bool = False
 
     # ------------------------------------------------------------------
-    # insmod — register service in both Registry and BLM
+    # mark_bootstrapped — phase transition signal
     # ------------------------------------------------------------------
 
-    def register_service(
+    def mark_bootstrapped(self) -> None:
+        """Mark that bootstrap() has completed.
+
+        After this, enlist() auto-starts Q3 PersistentService instances
+        immediately instead of deferring to start_persistent_services().
+        """
+        self._bootstrapped = True
+
+    # ------------------------------------------------------------------
+    # insmod — register service in both Registry and BLM (internal)
+    # ------------------------------------------------------------------
+
+    def _register_service(
         self,
         name: str,
         instance: Any,
@@ -98,12 +123,13 @@ class ServiceLifecycleCoordinator:
             exports=exports,
             is_remote=is_remote,
         )
-        self._blm.register(
-            name,
-            instance,
-            protocol_name=protocol_name or type(instance).__name__,
-            depends_on=depends_on,
-        )
+        if self._blm is not None:
+            self._blm.register(
+                name,
+                instance,
+                protocol_name=protocol_name or type(instance).__name__,
+                depends_on=depends_on,
+            )
         if hook_spec is not None:
             self._hook_specs[name] = hook_spec
         logger.info(
@@ -136,24 +162,22 @@ class ServiceLifecycleCoordinator:
         - **Q3** (PersistentService): register + ``start()``.
         - **Q4** (both): register + ``start()`` + capture hooks + activate.
 
-        Used by lifespan startup functions for services created *after*
-        ``NexusFS.bootstrap()`` has already been called.  For pre-bootstrap
-        factory services, ``register_service()`` + auto-lifecycle at bootstrap
-        is the equivalent path.
+        Post-bootstrap, Q3 services are auto-started immediately.
+        Pre-bootstrap, Q3 start() is deferred to start_persistent_services().
         """
-        self.register_service(name, instance, exports=exports, depends_on=depends_on)
+        self._register_service(name, instance, exports=exports, depends_on=depends_on)
 
-        # Q3 / Q4: auto-start persistent background work
-        if isinstance(instance, PersistentService):
+        # Q3 / Q4: auto-start persistent background work (only post-bootstrap)
+        if isinstance(instance, PersistentService) and self._bootstrapped:
             await instance.start()
             logger.info("[COORDINATOR] enlist %r — started (PersistentService)", name)
 
         # Q2 / Q4: auto-capture hooks and activate
         if isinstance(instance, HotSwappable):
-            spec = instance.hook_spec()
-            self._hook_specs[name] = spec
-            if not spec.is_empty:
+            spec = self._ensure_hook_spec(name, instance)
+            if spec is not None and not spec.is_empty:
                 self._register_hooks(name)
+                self._hooks_on_dispatch.add(name)
             await instance.activate()
             logger.info("[COORDINATOR] enlist %r — activated (HotSwappable)", name)
 
@@ -164,27 +188,32 @@ class ServiceLifecycleCoordinator:
     # mount — BLM mount + register VFS hooks
     # ------------------------------------------------------------------
 
-    async def mount_service(self, name: str, *, timeout: float = 5.0) -> None:
+    async def _mount_service(self, name: str, *, timeout: float = 5.0) -> None:
         """Mount a service: BLM state → ACTIVE, then register VFS hooks."""
-        await self._blm.mount(name, timeout=timeout)
+        if self._blm is not None:
+            await self._blm.mount(name, timeout=timeout)
 
-        from nexus.contracts.protocols.brick_lifecycle import BrickState
+            from nexus.contracts.protocols.brick_lifecycle import BrickState
 
-        status = self._blm.get_status(name)
-        if status is not None and status.state == BrickState.ACTIVE:
-            self._register_hooks(name)
-            logger.info("[COORDINATOR] mount %r — hooks registered", name)
+            status = self._blm.get_status(name)
+            if status is not None and status.state == BrickState.ACTIVE:
+                self._register_hooks(name)
+                logger.info("[COORDINATOR] mount %r — hooks registered", name)
+            else:
+                logger.warning("[COORDINATOR] mount %r — BLM not ACTIVE, hooks skipped", name)
         else:
-            logger.warning("[COORDINATOR] mount %r — BLM not ACTIVE, hooks skipped", name)
+            self._register_hooks(name)
+            logger.info("[COORDINATOR] mount %r — hooks registered (no BLM)", name)
 
     # ------------------------------------------------------------------
     # umount — unregister VFS hooks + BLM unmount
     # ------------------------------------------------------------------
 
-    async def unmount_service(self, name: str) -> None:
+    async def _unmount_service(self, name: str) -> None:
         """Unmount: unregister VFS hooks, then BLM unmount."""
         self._unregister_hooks(name)
-        await self._blm.unmount(name)
+        if self._blm is not None:
+            await self._blm.unmount(name)
         logger.info("[COORDINATOR] umount %r", name)
 
     # ------------------------------------------------------------------
@@ -193,16 +222,17 @@ class ServiceLifecycleCoordinator:
 
     async def unregister_service(self, name: str) -> None:
         """Fully remove a service: unmount if active, then unregister from both."""
-        from nexus.contracts.protocols.brick_lifecycle import BrickState
+        if self._blm is not None:
+            from nexus.contracts.protocols.brick_lifecycle import BrickState
 
-        status = self._blm.get_status(name)
-        if status is not None and status.state == BrickState.ACTIVE:
-            await self.unmount_service(name)
+            status = self._blm.get_status(name)
+            if status is not None and status.state == BrickState.ACTIVE:
+                await self._unmount_service(name)
 
-        # BLM: UNMOUNTED → UNREGISTERED
-        status = self._blm.get_status(name)
-        if status is not None and status.state == BrickState.UNMOUNTED:
-            await self._blm.unregister(name)
+            # BLM: UNMOUNTED → UNREGISTERED
+            status = self._blm.get_status(name)
+            if status is not None and status.state == BrickState.UNMOUNTED:
+                await self._blm.unregister(name)
 
         # ServiceRegistry: remove (with dependency guard)
         self._registry.unregister_service(name)
@@ -266,7 +296,7 @@ class ServiceLifecycleCoordinator:
             )
 
         # Snapshot old state
-        old_blm_spec = self._blm.get_spec(name)
+        old_blm_spec = self._blm.get_spec(name) if self._blm is not None else None
 
         # Resolve old hook spec: explicit retroactive > protocol auto-detect
         old_hook_spec = self._hook_specs.get(name)
@@ -291,24 +321,25 @@ class ServiceLifecycleCoordinator:
         logger.info("[COORDINATOR] swap %r — atomic replace done", name)
 
         # Step 5: BLM cycle for old → new
-        from nexus.contracts.protocols.brick_lifecycle import BrickState
+        if self._blm is not None:
+            from nexus.contracts.protocols.brick_lifecycle import BrickState
 
-        status = self._blm.get_status(name)
-        if status is not None and status.state == BrickState.ACTIVE:
-            await self._blm.unmount(name)
-        status = self._blm.get_status(name)
-        if status is not None and status.state == BrickState.UNMOUNTED:
-            await self._blm.unregister(name)
+            status = self._blm.get_status(name)
+            if status is not None and status.state == BrickState.ACTIVE:
+                await self._blm.unmount(name)
+            status = self._blm.get_status(name)
+            if status is not None and status.state == BrickState.UNMOUNTED:
+                await self._blm.unregister(name)
 
-        self._blm.register(
-            name,
-            new_instance,
-            protocol_name=old_blm_spec.protocol_name
-            if old_blm_spec
-            else type(new_instance).__name__,
-            depends_on=old_blm_spec.depends_on if old_blm_spec else (),
-        )
-        await self._blm.mount(name, timeout=timeout)
+            self._blm.register(
+                name,
+                new_instance,
+                protocol_name=old_blm_spec.protocol_name
+                if old_blm_spec
+                else type(new_instance).__name__,
+                depends_on=old_blm_spec.depends_on if old_blm_spec else (),
+            )
+            await self._blm.mount(name, timeout=timeout)
 
         # Step 6: Register new hooks — explicit param > protocol > clear
         new_hook_spec = hook_spec
@@ -320,8 +351,13 @@ class ServiceLifecycleCoordinator:
         elif name in self._hook_specs:
             del self._hook_specs[name]
 
-        status = self._blm.get_status(name)
-        if status is not None and status.state == BrickState.ACTIVE:
+        if self._blm is not None:
+            from nexus.contracts.protocols.brick_lifecycle import BrickState
+
+            status = self._blm.get_status(name)
+            if status is not None and status.state == BrickState.ACTIVE:
+                self._register_hooks(name)
+        else:
             self._register_hooks(name)
 
         # Step 7: Activate new service if HotSwappable
@@ -331,29 +367,18 @@ class ServiceLifecycleCoordinator:
         logger.info("[COORDINATOR] swap %r — complete", name)
 
     # ------------------------------------------------------------------
-    # Distro classification — persistent vs invocation-compatible
+    # Diagnostics — quadrant classification
     # ------------------------------------------------------------------
-
-    def classify_service(self, name: str) -> ServiceQuadrant:
-        """Return the quadrant classification for a registered service.
-
-        Raises:
-            KeyError: If service is not registered.
-        """
-        info = self._registry.service_info(name)
-        if info is None:
-            raise KeyError(f"classify_service: {name!r} not registered")
-        return ServiceQuadrant.of(info.instance)
 
     def classify_all(self) -> dict[str, ServiceQuadrant]:
         """Return quadrant classification for all registered services."""
         return {info.name: ServiceQuadrant.of(info.instance) for info in self._registry.list_all()}
 
     # ------------------------------------------------------------------
-    # Single-service activate / deactivate (with quadrant guard)
+    # Single-service activate / deactivate (internal, with quadrant guard)
     # ------------------------------------------------------------------
 
-    async def activate_service(self, name: str) -> None:
+    async def _activate_service(self, name: str) -> None:
         """Activate a single HotSwappable service: register hooks + activate().
 
         Raises:
@@ -369,16 +394,12 @@ class ServiceLifecycleCoordinator:
                 f"activate_service: {name!r} is {quadrant.label} — cannot activate. "
                 f"Only Q2/Q4 services (HotSwappable) support activate/drain."
             )
-        spec = self._hook_specs.get(name)
-        if spec is None:
-            spec = info.instance.hook_spec()
-            if spec is not None and not spec.is_empty:
-                self._hook_specs[name] = spec
+        self._ensure_hook_spec(name, info.instance)
         self._register_hooks(name)
         await info.instance.activate()
-        logger.info("[COORDINATOR] activate_service %r — done (%s)", name, quadrant.label)
+        logger.info("[COORDINATOR] _activate_service %r — done (%s)", name, quadrant.label)
 
-    async def deactivate_service(self, name: str) -> None:
+    async def _deactivate_service(self, name: str) -> None:
         """Deactivate a single HotSwappable service: drain + unregister hooks.
 
         Raises:
@@ -396,36 +417,7 @@ class ServiceLifecycleCoordinator:
             )
         await info.instance.drain()
         self._unregister_hooks(name)
-        logger.info("[COORDINATOR] deactivate_service %r — done (%s)", name, quadrant.label)
-
-    def classify_distro(self) -> tuple[bool, list[str]]:
-        """Determine whether this distro requires a persistent process.
-
-        Scans all registered services for ``PersistentService`` protocol.
-        Returns ``(is_persistent, service_names)`` where ``is_persistent``
-        is True if any service requires background workers.
-
-        Used by nexusd startup and CLI ``nexus info`` to report distro type.
-        """
-        persistent_names: list[str] = []
-        for info in self._registry.list_all():
-            if isinstance(info.instance, PersistentService):
-                persistent_names.append(info.name)
-        return bool(persistent_names), persistent_names
-
-    def classify_hot_swappable(self) -> tuple[list[str], list[str]]:
-        """Classify services into hot-swappable vs static.
-
-        Returns ``(hot_swappable_names, static_names)``.
-        """
-        hot: list[str] = []
-        static: list[str] = []
-        for info in self._registry.list_all():
-            if ServiceQuadrant.of(info.instance).is_hot_swappable:
-                hot.append(info.name)
-            else:
-                static.append(info.name)
-        return hot, static
+        logger.info("[COORDINATOR] _deactivate_service %r — done (%s)", name, quadrant.label)
 
     # ------------------------------------------------------------------
     # Auto-lifecycle — four-quadrant "one-click" management (Issue #1580)
@@ -505,11 +497,7 @@ class ServiceLifecycleCoordinator:
                 continue
             try:
                 # Auto-capture hook_spec from protocol if not already set
-                spec = self._hook_specs.get(name)
-                if spec is None:
-                    spec = info.instance.hook_spec()
-                    if spec is not None and not spec.is_empty:
-                        self._hook_specs[name] = spec
+                self._ensure_hook_spec(name, info.instance)
                 # Register hooks into dispatch (skip if pre-registered by _enlist_hook)
                 if name not in self._hooks_on_dispatch:
                     self._register_hooks(name)
@@ -556,25 +544,36 @@ class ServiceLifecycleCoordinator:
 
     def _ordered_names(self, *, reverse: bool = False) -> list[str]:
         """Return service names in BLM dependency order (or reverse for shutdown)."""
-        try:
-            if reverse:
-                levels = self._blm.compute_shutdown_order()
-            else:
-                levels = self._blm.compute_startup_order()
-            return [name for level in levels for name in level]
-        except Exception:
-            # Fallback: no ordering guarantee
-            return [info.name for info in self._registry.list_all()]
+        if self._blm is not None:
+            try:
+                if reverse:
+                    levels = self._blm.compute_shutdown_order()
+                else:
+                    levels = self._blm.compute_startup_order()
+                return [name for level in levels for name in level]
+            except Exception:
+                pass
+        # No BLM or BLM error: registry order (no ordering guarantee)
+        return [info.name for info in self._registry.list_all()]
 
     # ------------------------------------------------------------------
     # Hook spec management (retroactive spec capture for existing services)
     # ------------------------------------------------------------------
 
-    def set_hook_spec(self, name: str, spec: HookSpec) -> None:
+    def _ensure_hook_spec(self, name: str, instance: Any) -> HookSpec | None:
+        """Capture HookSpec from protocol if not already stored."""
+        spec = self._hook_specs.get(name)
+        if spec is None and isinstance(instance, HotSwappable):
+            spec = instance.hook_spec()
+            if spec is not None:
+                self._hook_specs[name] = spec
+        return spec
+
+    def _set_hook_spec(self, name: str, spec: HookSpec) -> None:
         """Set/replace the HookSpec for a service (retroactive capture)."""
         self._hook_specs[name] = spec
 
-    def get_hook_spec(self, name: str) -> HookSpec | None:
+    def _get_hook_spec(self, name: str) -> HookSpec | None:
         """Return the HookSpec for a service, or None."""
         return self._hook_specs.get(name)
 

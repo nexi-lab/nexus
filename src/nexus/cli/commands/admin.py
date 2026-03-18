@@ -100,6 +100,37 @@ def admin() -> None:
     pass
 
 
+def _parse_grants(grant_strings: tuple[str, ...]) -> list[dict[str, str]] | None:
+    """Parse --grant PATH:ROLE options into a list of grant dicts.
+
+    Returns None if no grants provided, or a list of {"path": ..., "role": ...}.
+    """
+    if not grant_strings:
+        return None
+    grants: list[dict[str, str]] = []
+    for g in grant_strings:
+        if ":" not in g:
+            raise click.BadParameter(
+                f"Invalid grant format: {g!r}. Expected PATH:ROLE (e.g. /workspace/*:editor)",
+                param_hint="--grant",
+            )
+        path, role = g.rsplit(":", 1)
+        if role not in ("viewer", "editor", "owner"):
+            raise click.BadParameter(
+                f"Invalid role: {role!r}. Must be viewer, editor, or owner",
+                param_hint="--grant",
+            )
+        grants.append({"path": path, "role": role})
+    return grants
+
+
+def _print_grants(grants: list[dict[str, str]]) -> None:
+    """Print created grants to console."""
+    console.print(f"\nGrants ({len(grants)}):")
+    for g in grants:
+        console.print(f"  {g['role']:8s} {g['path']}")
+
+
 @admin.command("create-user")
 @click.argument("user_id")
 @click.option("--name", required=True, help="Human-readable name for the API key")
@@ -108,6 +139,7 @@ def admin() -> None:
 @click.option("--expires-days", type=int, help="API key expiry in days")
 @click.option("--zone-id", default=ROOT_ZONE_ID, help="Zone ID (default: root)")
 @click.option("--subject-type", default="user", help="Subject type: user or agent")
+@click.option("--grant", "grants", multiple=True, help="Path grant as PATH:ROLE (repeatable)")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
@@ -119,6 +151,7 @@ def create_user(
     expires_days: int | None,
     zone_id: str,
     subject_type: str,
+    grants: tuple[str, ...],
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -135,8 +168,10 @@ def create_user(
         # Create admin user
         nexus admin create-user admin --name "Admin Key" --is-admin
 
-        # Create agent key
-        nexus admin create-user bot1 --name "Bot Agent" --subject-type agent
+        # Create scoped user with per-path grants
+        nexus admin create-user alice --name "Alice" \\
+            --grant "/workspace/project-a/*:editor" \\
+            --grant "/workspace/shared/*:viewer"
     """
     timing = CommandTiming()
     try:
@@ -157,6 +192,10 @@ def create_user(
         if expires_days is not None:
             params["expires_days"] = expires_days
 
+        parsed_grants = _parse_grants(grants)
+        if parsed_grants:
+            params["grants"] = parsed_grants
+
         # Call admin API
         with timing.phase("server"):
             result = call_rpc("admin_create_key", params)
@@ -173,6 +212,8 @@ def create_user(
             console.print(f"Admin:       {data['is_admin']}")
             if data.get("expires_at"):
                 console.print(f"Expires:     {data['expires_at']}")
+            if data.get("grants"):
+                _print_grants(data["grants"])
 
             if email:
                 console.print(f"\n[dim]Email: {email}[/dim]")
@@ -350,6 +391,7 @@ def revoke_key(
 @click.argument("user_id")
 @click.option("--name", required=True, help="Human-readable name for the new key")
 @click.option("--expires-days", type=int, help="API key expiry in days")
+@click.option("--grant", "grants", multiple=True, help="Path grant as PATH:ROLE (repeatable)")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
@@ -357,6 +399,7 @@ def create_key(
     user_id: str,
     name: str,
     expires_days: int | None,
+    grants: tuple[str, ...],
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -366,6 +409,10 @@ def create_key(
     \b
     Examples:
         nexus admin create-key alice --name "Alice's new laptop" --expires-days 90
+
+        # Create scoped key with grants
+        nexus admin create-key alice --name "Project key" \\
+            --grant "/workspace/project-a/*:editor"
     """
     timing = CommandTiming()
     try:
@@ -379,6 +426,10 @@ def create_key(
 
         if expires_days is not None:
             params["expires_days"] = expires_days
+
+        parsed_grants = _parse_grants(grants)
+        if parsed_grants:
+            params["grants"] = parsed_grants
 
         # Call admin API
         with timing.phase("server"):
@@ -394,6 +445,8 @@ def create_key(
             console.print(f"[bold]API Key:[/bold]     {data['api_key']}")
             if data.get("expires_at"):
                 console.print(f"Expires:     {data['expires_at']}")
+            if data.get("grants"):
+                _print_grants(data["grants"])
 
         render_output(
             data=result,
@@ -493,6 +546,7 @@ def get_user(
 @click.argument("agent_id")
 @click.option("--name", help="Human-readable name for the API key (default: 'Agent: <agent_id>')")
 @click.option("--expires-days", type=int, help="API key expiry in days")
+@click.option("--grant", "grants", multiple=True, help="Path grant as PATH:ROLE (repeatable)")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
@@ -501,6 +555,7 @@ def create_agent_key(
     agent_id: str,
     name: str | None,
     expires_days: int | None,
+    grants: tuple[str, ...],
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -516,8 +571,9 @@ def create_agent_key(
         # Create API key for alice's agent (1 day expiry)
         nexus admin create-agent-key alice alice_agent --expires-days 1
 
-        # Create API key with custom name
-        nexus admin create-agent-key alice alice_agent --name "Production Agent" --expires-days 90
+        # Create scoped agent key with grants
+        nexus admin create-agent-key alice alice_agent \\
+            --grant "/workspace/tools/*:editor" --expires-days 1
     """
     timing = CommandTiming()
     try:
@@ -538,6 +594,10 @@ def create_agent_key(
         if expires_days is not None:
             params["expires_days"] = expires_days
 
+        parsed_grants = _parse_grants(grants)
+        if parsed_grants:
+            params["grants"] = parsed_grants
+
         # Call admin API
         with timing.phase("server"):
             result = call_rpc("admin_create_key", params)
@@ -553,6 +613,8 @@ def create_agent_key(
             console.print(f"[bold]API Key:[/bold]     {data['api_key']}")
             if data.get("expires_at"):
                 console.print(f"Expires:     {data['expires_at']}")
+            if data.get("grants"):
+                _print_grants(data["grants"])
 
             console.print(
                 "\n[cyan]\u2139 Info:[/cyan] This agent can now authenticate independently."

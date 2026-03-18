@@ -1,6 +1,6 @@
 """Tests for write_mode query parameter on /write endpoint (Issue #2929)."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -12,15 +12,18 @@ from nexus.server.dependencies import get_auth_result
 
 @pytest.fixture()
 def mock_fs() -> MagicMock:
-    """Create a mock NexusFS."""
+    """Create a mock NexusFS with async methods."""
     fs = MagicMock()
-    fs.write.return_value = {
-        "etag": "abc123",
-        "version": 1,
-        "size": 11,
-        "modified_at": "2026-02-17T00:00:00Z",
-        "path": "/test.txt",
-    }
+    # write is async — must return a coroutine
+    fs.write = AsyncMock(
+        return_value={
+            "etag": "abc123",
+            "version": 1,
+            "size": 11,
+            "modified_at": "2026-02-17T00:00:00Z",
+            "path": "/test.txt",
+        }
+    )
     return fs
 
 

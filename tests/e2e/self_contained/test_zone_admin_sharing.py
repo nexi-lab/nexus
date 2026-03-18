@@ -86,7 +86,7 @@ class TestZoneAdminSharing:
         )
 
         # Add alice as zone admin
-        add_user_to_zone(nx._rebac_manager, "alice", zone_id, role="admin")
+        add_user_to_zone(nx._system_services.rebac_manager, "alice", zone_id, role="admin")
 
         # Alice (zone admin) should be able to share bob's file
         alice_context = {
@@ -136,7 +136,7 @@ class TestZoneAdminSharing:
         )
 
         # Add alice as zone owner
-        add_user_to_zone(nx._rebac_manager, "alice", zone_id, role="owner")
+        add_user_to_zone(nx._system_services.rebac_manager, "alice", zone_id, role="owner")
 
         # Alice (zone owner) should be able to share bob's file
         alice_context = {
@@ -187,7 +187,7 @@ class TestZoneAdminSharing:
         )
 
         # Add alice as admin of zone1 only
-        add_user_to_zone(nx._rebac_manager, "alice", "acme", role="admin")
+        add_user_to_zone(nx._system_services.rebac_manager, "alice", "acme", role="admin")
 
         # Alice should NOT be able to share files in zone2
         alice_context = {
@@ -229,7 +229,7 @@ class TestZoneAdminSharing:
         )
 
         # Add alice as regular member (not admin)
-        add_user_to_zone(nx._rebac_manager, "alice", zone_id, role="member")
+        add_user_to_zone(nx._system_services.rebac_manager, "alice", zone_id, role="member")
 
         # Alice (regular member) should NOT be able to share bob's file
         alice_context = {
@@ -285,7 +285,7 @@ class TestZoneAdminSharing:
         )
 
         # Add alice as zone admin
-        add_user_to_zone(nx._rebac_manager, "alice", zone_id, role="admin")
+        add_user_to_zone(nx._system_services.rebac_manager, "alice", zone_id, role="admin")
 
         # Alice (zone admin) should be able to share with group
         alice_context = {

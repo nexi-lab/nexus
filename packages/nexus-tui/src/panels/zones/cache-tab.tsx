@@ -1,4 +1,5 @@
 import React from "react";
+import { formatSize } from "../../shared/utils/format-size.js";
 
 interface CacheStats {
   readonly total_entries?: number;
@@ -23,16 +24,6 @@ interface CacheTabProps {
   readonly stats: unknown | null;
   readonly hotFiles: readonly unknown[];
   readonly loading: boolean;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-  if (bytes >= 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${bytes} B`;
 }
 
 function hitRateColor(rate: number): string | undefined {
@@ -67,7 +58,7 @@ export function CacheTab({ stats, hotFiles, loading }: CacheTabProps): React.Rea
         <box height={1} width="100%">
           <text>
             {"  Hit rate:        "}
-            <text foregroundColor={hitRateColor(s.hit_rate)}>{`${(s.hit_rate * 100).toFixed(1)}%`}</text>
+            <span foregroundColor={hitRateColor(s.hit_rate)}>{`${(s.hit_rate * 100).toFixed(1)}%`}</span>
           </text>
         </box>
       )}
@@ -97,7 +88,7 @@ export function CacheTab({ stats, hotFiles, loading }: CacheTabProps): React.Rea
             <box key={layer.name} height={1} width="100%">
               <text>
                 {`  ${layer.name.padEnd(19)}  ${String(layer.entries).padEnd(10)}  ${formatSize(layer.size_bytes).padEnd(11)}  `}
-                <text foregroundColor={hitRateColor(layer.hit_rate)}>{`${(layer.hit_rate * 100).toFixed(1)}%`}</text>
+                <span foregroundColor={hitRateColor(layer.hit_rate)}>{`${(layer.hit_rate * 100).toFixed(1)}%`}</span>
               </text>
             </box>
           ))}

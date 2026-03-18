@@ -5,9 +5,14 @@ looks up metadata once, decides local vs remote, and either handles the
 operation (remote → returns result) or declines (local/unknown → returns
 ``None``).
 
-Zero kernel coupling: the kernel sees a standard VFSPathResolver.
-Federation topology, gRPC channels, and IPC proxying are
-entirely encapsulated here.
+Implements the single-call ``try_*`` protocol (#1665):
+each method looks up metadata, decides local vs remote, and either
+handles the operation (remote → returns result) or declines
+(local/unknown → returns ``None``).
+
+This extracts ~200 lines of federation remote proxy from NexusFS (kernel) to the
+service layer, per federation-memo.md §6.6: "Federation is optional DI subsystem,
+NOT kernel."
 
 Design reference:
     - FederationContentResolver: same pattern for CAS content
@@ -23,6 +28,7 @@ from nexus.contracts.backend_address import BackendAddress
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.metastore import MetastoreABC
     from nexus.security.tls.config import ZoneTlsConfig
 
@@ -33,13 +39,8 @@ class FederationIPCResolver:
     """VFSPathResolver for remote DT_PIPE and DT_STREAM federation.
 
     Handles read/write/delete for pipes and streams hosted on remote nodes.
-    Local pipes/streams return None (not handled) and fall through
+    Local pipes/streams are not matched (returns None) and fall through
     to the kernel's PipeManager/StreamManager.
-
-    Implements the single-call ``try_*`` protocol (#1665):
-    each method looks up metadata, decides local vs remote, and either
-    handles the operation (remote → returns result) or declines
-    (local/unknown → returns ``None``).
 
     Args:
         metastore: MetastoreABC for metadata lookup.
@@ -63,18 +64,34 @@ class FederationIPCResolver:
         self._timeout = timeout
 
     # ------------------------------------------------------------------
-    # Internal: metadata check (shared by all try_* methods)
+    # HotSwappable protocol (#1710) — enables coordinator.enlist()
     # ------------------------------------------------------------------
 
-    def _resolve_remote_ipc(self, path: str) -> tuple[Any, str] | None:
-        """Check if path is a remote IPC entry.
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
 
-        Returns (metadata, origin_address) for remote, None for local/non-IPC.
+        return HookSpec(resolvers=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
+
+    # ------------------------------------------------------------------
+    # VFSPathResolver single-call try_* protocol (#1665)
+    # ------------------------------------------------------------------
+
+    def _resolve_remote(self, path: str) -> tuple[Any, str] | None:
+        """Shared metadata lookup + locality check.
+
+        Returns (meta, origin_address) for remote IPC, None otherwise.
         """
         meta = self._metastore.get(path)
         if meta is None or not meta.backend_name:
             return None
 
+        # Only handle DT_PIPE (entry_type=3) and DT_STREAM (entry_type=4)
         if not (meta.is_pipe or meta.is_stream):
             return None
 
@@ -85,11 +102,7 @@ class FederationIPCResolver:
         if self._self_address in addr.origins:
             return None  # origin is self → local
 
-        return meta, addr.origins[0]
-
-    # ------------------------------------------------------------------
-    # VFSPathResolver single-call try_* protocol (#1665)
-    # ------------------------------------------------------------------
+        return meta, addr.origins[0]  # remote IPC — resolver handles
 
     def try_read(
         self,
@@ -98,49 +111,39 @@ class FederationIPCResolver:
         return_metadata: bool = False,
         context: Any = None,
     ) -> bytes | dict[str, Any] | None:
-        """Single-call resolve: metadata lookup + local/remote decision for read.
+        """Read from remote DT_PIPE/DT_STREAM via gRPC Call RPC.
 
-        Returns:
-            bytes or dict — handled: content fetched from remote peer.
-            None           — not handled: local IPC or non-IPC path.
+        Returns None if path is not a remote IPC inode (decline).
         """
-        _ = (return_metadata, context)
-        resolved = self._resolve_remote_ipc(path)
+        _ = (return_metadata, context)  # Protocol-required; not used for IPC
+        resolved = self._resolve_remote(path)
         if resolved is None:
             return None
-        meta, origin = resolved
+        _meta, origin = resolved
         return self._read_remote(origin, path)
 
     def try_write(self, path: str, content: bytes) -> dict[str, Any] | None:
-        """Single-call resolve: metadata lookup + local/remote decision for write.
+        """Write to remote DT_PIPE/DT_STREAM via gRPC Call RPC.
 
-        Returns:
-            dict — handled: written to remote peer.
-            None — not handled: local IPC or non-IPC path.
+        Returns None if path is not a remote IPC inode (decline).
         """
-        resolved = self._resolve_remote_ipc(path)
+        resolved = self._resolve_remote(path)
         if resolved is None:
             return None
         meta, origin = resolved
         result = self._write_remote(origin, path, content)
+        # For streams, result may contain offset info
         if meta.is_stream:
             return {"offset": result}
         return {}
 
-    def try_delete(
-        self,
-        path: str,
-        *,
-        context: Any = None,
-    ) -> dict[str, Any] | None:
-        """Single-call resolve: metadata lookup + local/remote decision for delete.
+    def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None:
+        """Delete remote DT_PIPE/DT_STREAM via gRPC Delete RPC.
 
-        Returns:
-            dict — handled: remote peer destroyed the IPC entry.
-            None — not handled: local IPC or non-IPC path.
+        Returns None if path is not a remote IPC inode (decline).
         """
-        _ = context
-        resolved = self._resolve_remote_ipc(path)
+        _ = context  # Protocol-required; not used for IPC
+        resolved = self._resolve_remote(path)
         if resolved is None:
             return None
         _meta, origin = resolved

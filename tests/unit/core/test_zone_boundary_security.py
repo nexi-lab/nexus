@@ -153,7 +153,7 @@ class TestZoneBoundarySecurity:
         await nx.sys_write(test_file, b"acme data", context=system_admin)
 
         # Add alice as zone admin for acme
-        add_user_to_zone(nx._rebac_manager, "alice", "acme", role="admin")
+        add_user_to_zone(nx._system_services.rebac_manager, "alice", "acme", role="admin")
 
         # Zone admin from same zone should be able to access
         zone_admin_acme = OperationContext(

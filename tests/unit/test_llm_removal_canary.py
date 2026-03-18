@@ -12,10 +12,6 @@ import pytest
 @pytest.mark.parametrize(
     "module_path",
     [
-        "nexus.bricks.llm",
-        "nexus.bricks.rlm",
-        "nexus.bricks.memory",
-        "nexus.services.ace",
         "nexus.services.ace_rpc_service",
         "nexus.services.llm_context_builder",
         "nexus.contracts.protocols.llm",

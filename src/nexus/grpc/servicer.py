@@ -494,9 +494,10 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
     ) -> AsyncIterator["vfs_pb2.ReadChunk"]:
         """Server-side streaming read — chunked delivery for large files.
 
-        Note: Currently buffers the full file in memory before chunking.
-        A future iteration will stream directly from the storage layer
-        (see Issue #3063 follow-up).
+        Uses read_range() in a pread loop instead of loading the full file
+        into memory.  CAS backends with read_content_range() read only the
+        overlapping CDC chunks; other backends fall back to full-read + slice.
+        Memory usage: O(chunk_size) instead of O(file_size).  (Issue #1614)
         """
         _DEFAULT_CHUNK_SIZE = 1_048_576  # 1 MB
         _LARGE_FILE_WARNING = 256 * 1_048_576  # 256 MB
@@ -504,26 +505,18 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
             self._scope_path_for_zone(request, op_context.zone_id)
-            result = await self._nexus_fs.sys_read(
-                request.path,
-                op_context,
-                False,  # return_metadata
-                False,  # parsed
-            )
-            content = result if isinstance(result, bytes) else b""
-            if len(content) > _LARGE_FILE_WARNING:
-                logger.warning(
-                    "StreamRead buffering large file: %s (%d bytes). "
-                    "Consider true streaming in a future iteration.",
-                    request.path,
-                    len(content),
+
+            # Get file size via sys_stat — no content loaded.
+            stat = await self._nexus_fs.sys_stat(request.path, context=op_context)
+            if stat is None:
+                yield vfs_pb2.ReadChunk(
+                    is_error=True,
+                    error_payload=_error_payload(
+                        RPCErrorCode.FILE_NOT_FOUND, f"File not found: {request.path}"
+                    ),
                 )
-        except ZoneScopingError as e:
-            yield vfs_pb2.ReadChunk(
-                is_error=True,
-                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
-            )
-            return
+                return
+            file_size: int = stat.get("size", 0) or 0
         except NexusPermissionError as e:
             yield vfs_pb2.ReadChunk(
                 is_error=True,
@@ -552,19 +545,39 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             )
             return
 
+        # Empty file: yield a single empty chunk.
+        if file_size == 0:
+            yield vfs_pb2.ReadChunk(data=b"", offset=0, is_last=True)
+            return
+
         chunk_size = request.chunk_size if request.chunk_size > 0 else _DEFAULT_CHUNK_SIZE
         offset = 0
-        while offset < len(content):
+
+        # Chunked pread loop — memory is O(chunk_size), not O(file_size).
+        # read_range() is sync; run each chunk in a thread to avoid blocking
+        # the gRPC event loop.
+        while offset < file_size:
             if context.cancelled():
                 return
-            end = min(offset + chunk_size, len(content))
-            is_last = end >= len(content)
-            yield vfs_pb2.ReadChunk(data=content[offset:end], offset=offset, is_last=is_last)
+            end = min(offset + chunk_size, file_size)
+            try:
+                chunk = await asyncio.to_thread(
+                    self._nexus_fs.read_range,
+                    request.path,
+                    offset,
+                    end,
+                    op_context,
+                )
+            except Exception as e:
+                logger.warning("StreamRead chunk error at offset %d: %s", offset, e)
+                yield vfs_pb2.ReadChunk(
+                    is_error=True,
+                    error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, str(e)),
+                )
+                return
+            is_last = end >= file_size
+            yield vfs_pb2.ReadChunk(data=chunk, offset=offset, is_last=is_last)
             offset = end
-
-        # Empty file: yield a single empty chunk
-        if not content:
-            yield vfs_pb2.ReadChunk(data=b"", offset=0, is_last=True)
 
     async def Ping(
         self,

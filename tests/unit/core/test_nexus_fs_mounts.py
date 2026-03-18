@@ -323,7 +323,7 @@ class TestSaveMount:
 
         try:
             # Check if mount_manager is available
-            if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
+            if nx._system_services is None or nx._system_services.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
                     nx.service("mount_persist").save_mount(
                         mount_point="/mnt/test",
@@ -335,7 +335,7 @@ class TestSaveMount:
 
     async def test_save_mount_with_mount_manager(self, nx: NexusFS, temp_dir: Path) -> None:
         """Test save_mount when mount manager is available."""
-        if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
+        if nx._system_services is None or nx._system_services.mount_manager is None:
             pytest.skip("Mount manager not available in this configuration")
 
         mount_data_dir = temp_dir / "saved_mount"
@@ -373,7 +373,7 @@ class TestListSavedMounts:
         )
 
         try:
-            if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
+            if nx._system_services is None or nx._system_services.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
                     nx.service("mount_persist").list_saved_mounts()
         finally:
@@ -395,7 +395,7 @@ class TestLoadMount:
         )
 
         try:
-            if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
+            if nx._system_services is None or nx._system_services.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
                     nx.service("mount_persist").load_mount("/mnt/test")
         finally:
@@ -421,7 +421,7 @@ class TestDeleteSavedMount:
         )
 
         try:
-            if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
+            if nx._system_services is None or nx._system_services.mount_manager is None:
                 with pytest.raises(RuntimeError, match="Mount manager not available"):
                     nx.service("mount_persist").delete_saved_mount("/mnt/test")
         finally:
@@ -433,7 +433,7 @@ class TestLoadAllSavedMounts:
 
     async def test_load_all_saved_mounts_without_mount_manager(self, nx: NexusFS) -> None:
         """Test load_all_saved_mounts when mount manager is not available."""
-        if hasattr(nx, "mount_manager") and nx.mount_manager is not None:
+        if nx._system_services is not None and nx._system_services.mount_manager is not None:
             pytest.skip("Mount manager is available, test N/A")
 
         result = await nx.service("mount_persist").load_all_mounts()
@@ -441,7 +441,7 @@ class TestLoadAllSavedMounts:
 
     async def test_load_all_saved_mounts_empty(self, nx: NexusFS) -> None:
         """Test load_all_saved_mounts when no mounts are saved."""
-        if not hasattr(nx, "mount_manager") or nx.mount_manager is None:
+        if nx._system_services is None or nx._system_services.mount_manager is None:
             pytest.skip("Mount manager not available")
 
         result = await nx.service("mount_persist").load_all_mounts()

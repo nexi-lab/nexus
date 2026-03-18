@@ -272,7 +272,7 @@ async def connect(
         # method calls to the server via gRPC.
         from nexus.factory._remote import _boot_remote_services
 
-        _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+        await _boot_remote_services(nfs, call_rpc=transport.call_rpc)
         nfs._register_runtime_closeable(transport)
 
         return nfs
@@ -548,7 +548,7 @@ async def connect(
 
         # Register federation content resolver (PRE-DISPATCH, Issue #163)
         # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
-        _register_federation_resolver(nx_fs, zone_mgr)
+        await _register_federation_resolver(nx_fs, zone_mgr)
 
     # Restore saved mounts (application-layer startup I/O)
     await _restore_mounts(nx_fs)
@@ -556,15 +556,20 @@ async def connect(
     return nx_fs
 
 
-def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
-    """Register federation resolvers for remote IPC and content (#163, #1625).
+async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
+    """Register federation resolvers via coordinator.enlist() (#163, #1625, #1710).
 
     Registration order matters — IPC resolver is registered FIRST so remote
     DT_PIPE/DT_STREAM are intercepted before the content resolver.  Content
     resolver is registered LAST as a generic fallback for CAS-backed content.
+
+    Both resolvers implement HotSwappable and are enlisted via the unified
+    coordinator.enlist() entry point (#1710).
     """
     from nexus.raft.federation_content_resolver import FederationContentResolver
     from nexus.raft.federation_ipc_resolver import FederationIPCResolver
+
+    _coordinator = nx_fs._service_coordinator
 
     # IPC resolver — remote DT_PIPE/DT_STREAM (#1625)
     ipc_resolver = FederationIPCResolver(
@@ -572,7 +577,7 @@ def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
         self_address=zone_mgr.advertise_addr,
         tls_config=zone_mgr.tls_config,
     )
-    nx_fs._dispatch.register_resolver(ipc_resolver)
+    await _coordinator.enlist("federation_ipc", ipc_resolver)
 
     # Content resolver — remote CAS content (#163)
     content_resolver = FederationContentResolver(
@@ -580,7 +585,7 @@ def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
         self_address=zone_mgr.advertise_addr,
         tls_config=zone_mgr.tls_config,
     )
-    nx_fs._dispatch.register_resolver(content_resolver)
+    await _coordinator.enlist("federation_content", content_resolver)
 
     logger.info("Federation resolvers registered: IPC + Content (self=%s)", zone_mgr.advertise_addr)
 

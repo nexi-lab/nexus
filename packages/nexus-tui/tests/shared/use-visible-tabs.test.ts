@@ -69,7 +69,7 @@ const ZONE_TABS: readonly TabDef<ZoneTab>[] = [
 
 type AgentTab = "status" | "delegations" | "inbox";
 const AGENT_TABS: readonly TabDef<AgentTab>[] = [
-  { id: "status", label: "Status", brick: "agent_registry" },
+  { id: "status", label: "Status", brick: "agent_runtime" },
   { id: "delegations", label: "Delegations", brick: "delegation" },
   { id: "inbox", label: "Inbox", brick: "ipc" },
 ];
@@ -160,7 +160,7 @@ describe("filterTabs", () => {
       const allBricks = [
         "access_manifest", "governance", "auth", "delegation",
         "search", "catalog", "memory", "rlm",
-        "agent_registry", "ipc", "eventlog", "versioning",
+        "agent_runtime", "ipc", "eventlog", "versioning",
       ];
       const result = filterTabs(ACCESS_TABS, allBricks, true);
       expect(result).toEqual(ACCESS_TABS);
@@ -185,19 +185,19 @@ describe("filterTabs", () => {
 // Simulated brick sets for each deployment profile
 const PROFILE_BRICKS: Record<string, readonly string[]> = {
   full: [
-    "storage", "versioning", "agent_registry", "delegation", "ipc",
+    "storage", "versioning", "agent_runtime", "delegation", "ipc",
     "access_manifest", "governance", "auth", "pay", "search", "catalog",
     "memory", "rlm", "workflows", "scheduler", "eventlog", "reputation",
   ],
   lite: [
-    "storage", "versioning", "agent_registry", "delegation", "ipc",
+    "storage", "versioning", "agent_runtime", "delegation", "ipc",
     "access_manifest", "auth", "search", "catalog", "eventlog",
   ],
   embedded: [
     "storage", "versioning", "search", "catalog",
   ],
   cloud: [
-    "storage", "versioning", "agent_registry", "delegation", "ipc",
+    "storage", "versioning", "agent_runtime", "delegation", "ipc",
     "access_manifest", "governance", "auth", "pay", "search", "catalog",
     "memory", "rlm", "workflows", "scheduler", "eventlog", "reputation",
     "mcp", "workspace",

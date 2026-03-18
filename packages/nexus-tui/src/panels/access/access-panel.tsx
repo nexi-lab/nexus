@@ -597,7 +597,7 @@ export default function AccessPanel(): React.ReactNode {
                     <box key={`ring-${i}`} height={1} width="100%">
                       <text>
                         {"  "}
-                        <text foregroundColor={confColor} dimColor={conf < 0.4}>{confStr}</text>
+                        <span foregroundColor={confColor} dimColor={conf < 0.4}>{confStr}</span>
                         {`  [${ringType}]  ${members}`}
                       </text>
                     </box>

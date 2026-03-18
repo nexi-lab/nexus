@@ -1,347 +1,264 @@
-"""Agent loop — the core execution cycle (~100 LOC).
+"""AgentLoop — JSON-RPC 2.0 over PipeBackend base class.
 
-Sends messages+tools to LLM, dispatches tool calls, repeats until
-no more tool calls or turn limit reached.
+Generic agent subprocess communication loop:  read JSON-RPC from stdout
+pipe → dispatch → respond via stdin pipe.  Subclasses implement request
+and notification routing; the base class handles response matching,
+transport, and lifecycle.
 
-Uses Any.complete_async() for tool-call turns.
-Emits AgentEvent callbacks for streaming to the API layer.
+Placement rationale (KERNEL-ARCHITECTURE.md §6 decision tree):
+    Single-layer usage (services only) → stays in services layer.
+    Imports ``core.pipe`` (kernel primitive) → cannot be ``lib/``.
+    Has implementation logic → cannot be ``contracts/``.
 
-Design doc: docs/design/AGENT-PROCESS-ARCHITECTURE.md §7.
+    core/pipe.py                  = kernel (PipeBackend protocol)
+    core/stdio_pipe.py            = kernel (PipeBackend over OS pipes)
+    system_services/agent_loop.py = services (JSON-RPC protocol on top)
+
+Usage::
+
+    class MyAgentConnection(AgentLoop):
+        def _handle_request(self, msg): ...
+        def _handle_notification(self, msg): ...
+
+See: system_services/acp/connection.py for AcpConnection (first consumer).
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from abc import ABC, abstractmethod
+from typing import Any
 
-from nexus.contracts.llm_types import Message, MessageRole, ToolCall, ToolFunction
-from nexus.system_services.agent_runtime.types import (
-    Completed,
-    Error,
-    TextDelta,
-    ToolCallResult,
-    ToolCallStart,
-)
-
-# Message passed to the LLM; the provider's _format_messages() handles
-# serialisation (vision flags, tool-call flags, etc.), so we must hand
-# it real Message objects — NOT pre-serialised dicts.
-
-if TYPE_CHECKING:
-    from nexus.contracts.types import OperationContext
-    from nexus.system_services.agent_runtime.tool_dispatcher import ToolDispatcher
-    from nexus.system_services.agent_runtime.types import (
-        AgentContext,
-        AgentEvent,
-        AgentProcessConfig,
-    )
+from nexus.core.pipe import PipeBackend, PipeClosedError
 
 logger = logging.getLogger(__name__)
 
-# Tools that are safe to run concurrently (no filesystem mutations)
-_READ_ONLY_TOOLS = frozenset({"read_file", "grep", "glob", "list_dir"})
+
+class AgentRpcError(Exception):
+    """Error returned by an agent via JSON-RPC error response."""
+
+    def __init__(self, message: str, code: int = -1, data: Any = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.data = data
 
 
-async def agent_loop(
-    llm: Any,
-    dispatcher: ToolDispatcher,
-    context: AgentContext,
-    config: AgentProcessConfig,
-    ctx: OperationContext,
-    *,
-    on_event: Callable[[AgentEvent], Awaitable[None]] | None = None,
-    on_checkpoint: Callable[[list[Message]], Awaitable[None]] | None = None,
-    cwd: str | None = None,
-    sandbox_id: str | None = None,
-) -> list[Message]:
-    """Run the agent loop until LLM produces a final response or limits hit.
+class AgentLoop(ABC):
+    """JSON-RPC 2.0 client over PipeBackend (stdin/stdout).
 
-    Args:
-        llm: LLM provider for inference.
-        dispatcher: Tool call router (maps tool names to VFS/sandbox).
-        context: AgentContext with system prompt, messages, and tool schemas.
-        config: Process config with limits (max_turns, etc.).
-        ctx: OperationContext for VFS permission checks.
-        on_event: Optional async callback for streaming events.
-        on_checkpoint: Optional async callback to save messages after each tool
-            dispatch round. Enables crash recovery mid-conversation.
-        cwd: Agent's current working directory for path resolution.
-        sandbox_id: Sandbox ID for bash/python tool execution.
-
-    Returns:
-        Updated message list (includes all new assistant + tool messages).
+    Transport:
+        Write: ``json.dumps(msg, separators=(",",":")) + "\\n"`` → stdin pipe
+        Read:  ``PipeBackend.read()`` from stdout pipe, one JSON line per message
+        Matching: auto-incrementing int IDs + ``dict[int, asyncio.Future]``
     """
-    messages = list(context.messages)
-    tools = list(context.tools)
-    system_msg = Message(role=MessageRole.SYSTEM, content=context.system_prompt)
-    turn = 0
 
-    while turn < config.max_turns:
-        # Trim context window if over budget
-        llm_messages = _trim_to_budget(llm, system_msg, messages, config.max_context_tokens)
+    def __init__(
+        self,
+        *,
+        stdin_pipe: PipeBackend,
+        stdout_pipe: PipeBackend,
+        stderr_pipe: PipeBackend | None = None,
+        cwd: str | None = None,
+    ) -> None:
+        self._stdin = stdin_pipe
+        self._stdout = stdout_pipe
+        self._stderr = stderr_pipe
+        self._cwd = cwd
+        self._next_id: int = 1
+        self._pending: dict[int, asyncio.Future[Any]] = {}
+        self._reader_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._stderr_lines: list[str] = []
 
-        # Call LLM with tools
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        """Launch reader and stderr collector tasks."""
+        self._reader_task = asyncio.create_task(self._reader_loop(), name="agent-reader")
+        if self._stderr is not None:
+            self._stderr_task = asyncio.create_task(self._stderr_collector(), name="agent-stderr")
+
+    async def disconnect(self) -> None:
+        """Cancel reader tasks and close pipes."""
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+        if self._stderr_task and not self._stderr_task.done():
+            self._stderr_task.cancel()
+
+        with contextlib.suppress(Exception):
+            self._stdin.close()
+        with contextlib.suppress(Exception):
+            self._stdout.close()
+        if self._stderr is not None:
+            with contextlib.suppress(Exception):
+                self._stderr.close()
+
+        # Fail all pending futures
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(ConnectionError("Agent connection closed"))
+        self._pending.clear()
+
+    @property
+    def stderr_output(self) -> str:
+        """Collected stderr output."""
+        return "\n".join(self._stderr_lines)
+
+    # ------------------------------------------------------------------
+    # JSON-RPC transport
+    # ------------------------------------------------------------------
+
+    def _write(self, msg: dict[str, Any]) -> None:
+        """Write a JSON-RPC message to stdin pipe (fire-and-forget)."""
+        line = json.dumps(msg, separators=(",", ":")) + "\n"
+        self._stdin.write_nowait(line.encode())
+
+    async def _request(self, method: str, params: dict[str, Any], *, timeout: float = 30.0) -> Any:
+        """Send a JSON-RPC request and await the response."""
+        msg_id = self._next_id
+        self._next_id += 1
+
+        msg = {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "method": method,
+            "params": params,
+        }
+
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[Any] = loop.create_future()
+        self._pending[msg_id] = fut
+
+        # Write with drain (blocking=True flushes OS buffer).
+        line = json.dumps(msg, separators=(",", ":")) + "\n"
+        await self._stdin.write(line.encode())
+
         try:
-            response = await llm.complete_async(
-                llm_messages,
-                tools=tools if tools else None,
-            )
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except TimeoutError:
+            self._pending.pop(msg_id, None)
+            raise
+
+    def _respond(self, msg_id: int | str, result: Any) -> None:
+        """Send a JSON-RPC response to an incoming request."""
+        self._write({"jsonrpc": "2.0", "id": msg_id, "result": result})
+
+    def _respond_error(self, msg_id: int | str, message: str, code: int = -32000) -> None:
+        """Send a JSON-RPC error response."""
+        self._write(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {"code": code, "message": message},
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Reader loop
+    # ------------------------------------------------------------------
+
+    async def _reader_loop(self) -> None:
+        """Read JSON-RPC messages from stdout pipe."""
+        try:
+            while True:
+                data = await self._stdout.read()
+
+                line_str = data.decode("utf-8", errors="replace").strip()
+                if not line_str:
+                    continue
+
+                try:
+                    msg = json.loads(line_str)
+                except json.JSONDecodeError:
+                    logger.debug("AgentLoop: non-JSON line from stdout: %s", line_str[:200])
+                    continue
+
+                self._dispatch(msg)
+
+        except PipeClosedError:
+            pass
+        except asyncio.CancelledError:
+            pass
         except Exception as exc:
-            error_msg = f"LLM call failed: {exc}"
-            logger.error(error_msg)
-            if on_event:
-                await on_event(Error(error=error_msg))
-            break
+            logger.debug("AgentLoop reader loop error: %s", exc)
+        finally:
+            # Fail any remaining pending futures
+            for fut in self._pending.values():
+                if not fut.done():
+                    fut.set_exception(ConnectionError("Agent reader loop ended"))
 
-        # Extract tool calls and content from response
-        tool_calls = _extract_tool_calls(response)
-        content = _extract_content(response)
+    async def _stderr_collector(self) -> None:
+        """Collect stderr output via PipeBackend (DT_PIPE at fd/2)."""
+        assert self._stderr is not None
+        try:
+            while True:
+                data = await self._stderr.read()
+                text = data.decode("utf-8", errors="replace").rstrip()
+                if text:
+                    self._stderr_lines.append(text)
+                    logger.debug("Agent stderr: %s", text[:500])
+        except PipeClosedError:
+            pass
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
-        if tool_calls:
-            # Append assistant message with tool calls
-            assistant_msg = Message(
-                role=MessageRole.ASSISTANT,
-                content=content,
-                tool_calls=tool_calls,
-            )
-            messages.append(assistant_msg)
+    # ------------------------------------------------------------------
+    # Message dispatch
+    # ------------------------------------------------------------------
 
-            # Dispatch tools (parallel for read-only batches, sequential otherwise)
-            results = await _dispatch_tools(
-                dispatcher,
-                ctx,
-                tool_calls,
-                cwd=cwd,
-                sandbox_id=sandbox_id,
-                sandbox_timeout=config.sandbox_timeout,
-            )
+    def _dispatch(self, msg: dict[str, Any]) -> None:
+        """Route an incoming JSON-RPC message.
 
-            # Emit events and build tool result messages in original order
-            for tc, result in zip(tool_calls, results, strict=True):
-                if on_event:
-                    await on_event(ToolCallStart(tool_call=tc))
-                    await on_event(ToolCallResult(tool_call=tc, result=result))
-
-                messages.append(
-                    Message(
-                        role=MessageRole.TOOL,
-                        name=tc.function.name,
-                        content=result,
-                        tool_call_id=tc.id,
+        Response matching is handled generically.  Requests and
+        notifications are delegated to subclass abstract methods.
+        """
+        # Response to our request
+        if "id" in msg and ("result" in msg or "error" in msg):
+            msg_id = msg["id"]
+            fut = self._pending.pop(msg_id, None)
+            if fut is None or fut.done():
+                return
+            if "error" in msg:
+                fut.set_exception(
+                    AgentRpcError(
+                        msg["error"].get("message", "Unknown RPC error"),
+                        code=msg["error"].get("code", -1),
+                        data=msg["error"].get("data"),
                     )
                 )
-
-            # Checkpoint after each tool dispatch round for crash recovery
-            if on_checkpoint:
-                await on_checkpoint(messages)
-
-            turn += 1
-            continue
-
-        # No tool calls -> final response
-        if content:
-            messages.append(Message(role=MessageRole.ASSISTANT, content=content))
-            if on_event:
-                await on_event(TextDelta(text=content))
-
-        if on_event:
-            await on_event(Completed(message_count=len(messages)))
-        break
-
-    return messages
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _trim_to_budget(
-    llm: Any,
-    system_msg: Message,
-    messages: list[Message],
-    max_tokens: int,
-) -> list[Message]:
-    """Drop oldest messages if the conversation exceeds the token budget.
-
-    Keeps system message + as many recent messages as fit within *max_tokens*.
-    Returns the trimmed list ready to send to the LLM.
-    """
-    full = [system_msg, *messages]
-    try:
-        total = llm.count_tokens(full)
-    except Exception:
-        return full  # can't count → send everything
-
-    if total <= max_tokens:
-        return full
-
-    # Binary search for the earliest start index that fits within budget.
-    # Avoids O(n²) list.pop(0) and minimises count_tokens() calls to O(log n).
-    lo, hi = 0, len(messages) - 1  # keep at least the last message
-    best = hi  # worst case: only last message
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        candidate = [system_msg, *messages[mid:]]
-        try:
-            if llm.count_tokens(candidate) <= max_tokens:
-                best = mid
-                hi = mid - 1  # try keeping more messages
             else:
-                lo = mid + 1  # need to drop more
-        except Exception:
-            return candidate
-    # Align trim point to respect tool-call / tool-result boundaries.
-    # A tool-call group is: ASSISTANT(tool_calls) followed by one or more TOOL
-    # messages.  Splitting inside a group produces orphaned messages that
-    # cause LLM API errors.
-    best = _align_trim_boundary(messages, best)
+                fut.set_result(msg.get("result"))
+            return
 
-    return [system_msg, *messages[best:]]
+        # Notification (no id) or request from agent (has id, has method)
+        method = msg.get("method")
+        if method is None:
+            return
 
+        if "id" in msg:
+            self._handle_request(msg)
+        else:
+            self._handle_notification(msg)
 
-def _align_trim_boundary(messages: list[Message], idx: int) -> int:
-    """Adjust *idx* so the kept slice ``messages[idx:]`` never splits a
-    tool-call / tool-result group.
+    # ------------------------------------------------------------------
+    # Abstract — subclass routing
+    # ------------------------------------------------------------------
 
-    Rules
-    -----
-    * If ``messages[idx]`` is a TOOL message, move *idx* backwards to include
-      the preceding ASSISTANT message that owns the tool call.
-    * If ``messages[idx]`` is an ASSISTANT message **with** ``tool_calls``,
-      verify that all its TOOL results are present after it.  If not (i.e.
-      we are at the very end and some results were trimmed from the *right*,
-      which shouldn't happen in practice), skip past the group.
-    """
-    if idx <= 0 or idx >= len(messages):
-        return idx
+    @abstractmethod
+    def _handle_request(self, msg: dict[str, Any]) -> None:
+        """Handle an incoming JSON-RPC request from the agent.
 
-    # Case 1: trim point lands on a TOOL result — walk back to include
-    # the ASSISTANT message that started this group.
-    if messages[idx].role == MessageRole.TOOL:
-        while idx > 0 and messages[idx].role == MessageRole.TOOL:
-            idx -= 1
-        # idx now points at the ASSISTANT message (or another non-TOOL msg)
-        return idx
+        The subclass must route by ``msg["method"]`` and call
+        ``_respond()`` or ``_respond_error()`` to reply.
+        """
 
-    # Case 2: trim point lands on an ASSISTANT message with tool_calls but
-    # the following TOOL results would be cut.  This can't happen with our
-    # binary search (we keep messages[idx:] i.e. everything *after* idx),
-    # but guard defensively: if the next message is missing or isn't a TOOL,
-    # skip past this incomplete group.
-    msg = messages[idx]
-    has_tool_calls = msg.role == MessageRole.ASSISTANT and getattr(msg, "tool_calls", None)
-    if has_tool_calls and (idx + 1 >= len(messages) or messages[idx + 1].role != MessageRole.TOOL):
-        # Skip past this lonely assistant tool-call message
-        return idx + 1
-
-    return idx
-
-
-def _extract_tool_calls(response: object) -> list[ToolCall]:
-    """Extract ToolCall objects from an LLM response (various formats)."""
-    # Handle dict response
-    if isinstance(response, dict):
-        raw_calls = response.get("tool_calls") or []
-        return [_parse_tool_call(tc) for tc in raw_calls]
-
-    # Handle object with tool_calls attribute
-    raw = getattr(response, "tool_calls", None)
-    if raw:
-        return [_parse_tool_call(tc) for tc in raw]
-
-    # Handle object with choices (OpenAI-style)
-    choices = getattr(response, "choices", None)
-    if choices:
-        msg = getattr(choices[0], "message", None)
-        if msg:
-            raw = getattr(msg, "tool_calls", None)
-            if raw:
-                return [_parse_tool_call(tc) for tc in raw]
-
-    return []
-
-
-def _parse_tool_call(tc: object) -> ToolCall:
-    """Parse a single tool call from various formats into ToolCall."""
-    if isinstance(tc, ToolCall):
-        return tc
-
-    if isinstance(tc, dict):
-        fn = tc.get("function", {})
-        return ToolCall(
-            id=tc.get("id", ""),
-            function=ToolFunction(
-                name=fn.get("name", ""),
-                arguments=fn.get("arguments", "{}"),
-            ),
-        )
-
-    # Object with attributes
-    fn = getattr(tc, "function", None)
-    if fn:
-        return ToolCall(
-            id=getattr(tc, "id", ""),
-            function=ToolFunction(
-                name=getattr(fn, "name", ""),
-                arguments=getattr(fn, "arguments", "{}"),
-            ),
-        )
-
-    # Last resort: try JSON
-    try:
-        d = json.loads(str(tc))
-        return _parse_tool_call(d)
-    except (json.JSONDecodeError, TypeError):
-        return ToolCall(
-            id="unknown",
-            function=ToolFunction(name="unknown", arguments="{}"),
-        )
-
-
-async def _dispatch_tools(
-    dispatcher: ToolDispatcher,
-    ctx: OperationContext,
-    tool_calls: list[ToolCall],
-    **kwargs: Any,
-) -> list[str]:
-    """Dispatch tool calls — parallel for read-only batches, sequential otherwise."""
-    all_readonly = all(tc.function.name in _READ_ONLY_TOOLS for tc in tool_calls)
-    results: list[str] = [""] * len(tool_calls)
-
-    if all_readonly and len(tool_calls) > 1:
-        async with asyncio.TaskGroup() as tg:
-            for i, tc in enumerate(tool_calls):
-
-                async def _run(idx: int = i, tool: ToolCall = tc) -> None:
-                    results[idx] = await dispatcher.dispatch(ctx, tool, **kwargs)
-
-                tg.create_task(_run())
-    else:
-        for i, tc in enumerate(tool_calls):
-            results[i] = await dispatcher.dispatch(ctx, tc, **kwargs)
-
-    return results
-
-
-def _extract_content(response: object) -> str | None:
-    """Extract text content from an LLM response."""
-    if isinstance(response, dict):
-        return response.get("content")
-
-    # Direct content attribute
-    content = getattr(response, "content", None)
-    if content is not None:
-        return str(content) if not isinstance(content, str) else content
-
-    # OpenAI-style choices
-    choices = getattr(response, "choices", None)
-    if choices:
-        msg = getattr(choices[0], "message", None)
-        if msg:
-            return getattr(msg, "content", None)
-
-    return None
+    @abstractmethod
+    def _handle_notification(self, msg: dict[str, Any]) -> None:
+        """Handle an incoming JSON-RPC notification (no response)."""

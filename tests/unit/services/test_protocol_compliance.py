@@ -191,12 +191,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     ),
     # ── Async adapter protocols (Issue #1440) ─────────────────────────
     (
-        "AgentRegistryProtocol",
-        "nexus.contracts.protocols.agent_registry",
-        "nexus.system_services.agents.agent_registry.AsyncAgentRegistry",
-        True,
-    ),
-    (
         "NamespaceManagerProtocol",
         "nexus.contracts.protocols.namespace_manager",
         "nexus.bricks.rebac.namespace_manager.AsyncNamespaceManager",
@@ -335,7 +329,6 @@ def test_rebac_manager_satisfies_manager_methods() -> None:
 # =========================================================================
 
 _PROTOCOL_FILES: list[tuple[str, str]] = [
-    ("agent_registry", "nexus/contracts/protocols/agent_registry.py"),
     ("auth", "nexus/contracts/protocols/auth.py"),
     ("event_log", "nexus/system_services/event_log/protocol.py"),
     ("governance", "nexus/bricks/governance/protocols.py"),

@@ -2,6 +2,9 @@
  * Bottom status bar showing connection state, active identity, and path.
  *
  * Enhanced with semantic colors from theme.ts (Phase A1).
+ *
+ * Note: OpenTUI does not support nested <text> elements. Use <span> for
+ * inline styled segments inside a <text>.
  */
 
 import React from "react";
@@ -53,38 +56,39 @@ export function StatusBar(): React.ReactNode {
       flexDirection="row"
     >
       <text>
-        <text foregroundColor={connectionColor[status]}>{icon}</text>
-        <text dimColor>{` ${status} │ `}</text>
-        <text>{baseUrl}</text>
-        {identityParts.length > 0 && (
-          <text>
-            <text dimColor>{" │ "}</text>
-            <text foregroundColor={statusColor.identity}>{identityParts.join(", ")}</text>
-          </text>
-        )}
-        {serverVersion && (
-          <text>
-            <text dimColor>{" │ "}</text>
-            <text dimColor>{`v${serverVersion}`}</text>
-          </text>
-        )}
-        {zone && (
-          <text>
-            <text dimColor>{" │ "}</text>
-            <text foregroundColor={statusColor.reference}>{`zone:${zone}`}</text>
-          </text>
-        )}
-        {enabledBricks.length > 0 && (
-          <text>
-            <text dimColor>{" │ "}</text>
-            <text foregroundColor={statusColor.info}>{`${enabledBricks.length} bricks`}</text>
-          </text>
-        )}
-        <text dimColor>{" │ "}</text>
-        <text foregroundColor={statusColor.info}>{`[${activePanel}]`}</text>
-        {hasActiveFilter && (
-          <text foregroundColor="yellow">{" [filtered]"}</text>
-        )}
+        <span foregroundColor={connectionColor[status]}>{icon}</span>
+        <span dimColor>{` ${status} │ `}</span>
+        <span>{baseUrl}</span>
+        {identityParts.length > 0 ? (
+          <>
+            <span dimColor>{" │ "}</span>
+            <span foregroundColor={statusColor.identity}>{identityParts.join(", ")}</span>
+          </>
+        ) : ""}
+        {serverVersion ? (
+          <>
+            <span dimColor>{" │ "}</span>
+            <span dimColor>{`v${serverVersion}`}</span>
+          </>
+        ) : ""}
+        {zone ? (
+          <>
+            <span dimColor>{" │ "}</span>
+            <span foregroundColor={statusColor.reference}>{`zone:${zone}`}</span>
+          </>
+        ) : ""}
+        {enabledBricks.length > 0 ? (
+          <>
+            <span dimColor>{" │ "}</span>
+            <span foregroundColor={statusColor.info}>{`${enabledBricks.length} bricks`}</span>
+          </>
+        ) : ""}
+        <span dimColor>{" │ "}</span>
+        <span foregroundColor={statusColor.info}>{`[${activePanel}]`}</span>
+        {hasActiveFilter ? (
+          <span foregroundColor="yellow">{" [filtered]"}</span>
+        ) : ""}
+        <span foregroundColor="#555555">{" │ Ctrl+D:setup  ?:help"}</span>
       </text>
     </box>
   );

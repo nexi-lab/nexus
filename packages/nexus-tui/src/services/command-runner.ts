@@ -157,10 +157,30 @@ export function executeLocalCommand(command: string, args: readonly string[]): v
 
   const fullArgs = ["nexus", command, ...args];
 
+  // Read the TUI's own nexus.yaml (in CWD) to pass NEXUS_URL and NEXUS_API_KEY
+  // to subcommands like `nexus demo init`.
+  const spawnEnv = { ...process.env };
   try {
+    const fs = require("node:fs");
+    const yaml = fs.readFileSync("nexus.yaml", "utf-8") as string;
+    const portMatch = yaml.match(/ports:\s*\n(?:\s+\w+:[^\n]*\n)*?\s+http:\s*(\d+)/);
+    const keyMatch = yaml.match(/^api_key:\s*["']?([^"'\n]+)["']?/m);
+    if (portMatch?.[1] && !spawnEnv.NEXUS_URL) {
+      spawnEnv.NEXUS_URL = `http://localhost:${portMatch[1]}`;
+    }
+    if (keyMatch?.[1] && !spawnEnv.NEXUS_API_KEY) {
+      spawnEnv.NEXUS_API_KEY = keyMatch[1];
+    }
+  } catch {
+    // nexus.yaml not found yet (will be created by nexus init)
+  }
+
+  try {
+    // Commands run from CWD so each TUI instance gets its own nexus.yaml
     const proc = Bun.spawn(fullArgs, {
       stdout: "pipe",
       stderr: "pipe",
+      env: spawnEnv,
     });
 
     activeProcesses.add(proc);

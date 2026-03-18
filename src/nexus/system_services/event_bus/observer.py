@@ -63,9 +63,20 @@ class EventBusObserver:
         self._bus_provider = bus_provider
 
     def _resolve_bus(self) -> "EventBusProtocol | None":
-        """Return the effective event bus (late-binding aware)."""
+        """Return the effective event bus (late-binding aware).
+
+        Resolution order when bus_provider is set (Issue #1570):
+        1. nx._event_bus — test injection point (set directly post-construction)
+        2. nx._brick_services.event_bus — production path (factory no longer
+           sets nx._event_bus via setattr; bus lives in container instead)
+        """
         if self._bus_provider is not None:
-            return getattr(self._bus_provider, "_event_bus", None)
+            bus = getattr(self._bus_provider, "_event_bus", None)
+            if bus is None:
+                _brk = getattr(self._bus_provider, "_brick_services", None)
+                if _brk is not None:
+                    bus = getattr(_brk, "event_bus", None)
+            return bus
         return self._event_bus
 
     def on_mutation(self, event: FileEvent) -> None:

@@ -2,6 +2,7 @@
 
 import builtins
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Callable, Generator, Iterator
@@ -151,47 +152,12 @@ class NexusFS(  # type: ignore[misc]
             admin_capabilities=set(),
         )
 
-        # =====================================================================
-        # Tier 1: SYSTEM services — critical + degradable (Issue #2193)
-        # Moved from KernelServices to SystemServices per Liedtke's test.
-        # =====================================================================
-        self._rebac_manager = sys_svc.rebac_manager
-        self._dir_visibility_cache = sys_svc.dir_visibility_cache
-        self._audit_store = sys_svc.audit_store
-        self._entity_registry = sys_svc.entity_registry
-        self._permission_enforcer = sys_svc.permission_enforcer
-        self._hierarchy_manager = sys_svc.hierarchy_manager
-        self._deferred_permission_buffer = sys_svc.deferred_permission_buffer
-        self._workspace_registry = sys_svc.workspace_registry
-        self.mount_manager = sys_svc.mount_manager
-        self._workspace_manager = sys_svc.workspace_manager
+        # Issue #1706: sentinel — real value wired by factory._do_link().
+        # Kept as sentinel (not deleted) because 8 kernel methods access without hasattr guard.
+        self._permission_enforcer: Any = None
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
-
-        # =====================================================================
-        # Tier 1: SYSTEM services (Issue #2034: from SystemServices)
-        # =====================================================================
-        self._agent_registry = sys_svc.agent_registry
-        self._namespace_manager = sys_svc.namespace_manager
-        self._async_agent_registry = sys_svc.async_agent_registry
-        self._async_namespace_manager = sys_svc.async_namespace_manager
-        self._context_branch_service = sys_svc.context_branch_service
-        # Zone lifecycle — write gating during deprovisioning (Issue #2061)
-        self._zone_lifecycle = getattr(sys_svc, "zone_lifecycle", None)
-        # (PipeManager + StreamManager constructed above as kernel-internal primitives)
-        # Process lifecycle — kernel process table (Issue #1509)
-        self._process_table = sys_svc.process_table
-
-        # =====================================================================
-        # Tier 2: BRICK services (Issue #2034: from BrickServices)
-        # =====================================================================
-        self._event_bus = brk_svc.event_bus
-        self._lock_manager = brk_svc.lock_manager
-        self._wallet_provisioner = brk_svc.wallet_provisioner
-        self._snapshot_service = brk_svc.snapshot_service
-        self._api_key_creator = brk_svc.api_key_creator
-        # Version Brick (Issue #2034: moved from kernel)
-        self.version_service = brk_svc.version_service
+        # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
 
         # Lazy-init sentinels
         self._token_manager = None
@@ -239,7 +205,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Service registry — /proc/modules of Nexus (Issue #1452).
-        # Populated by factory via populate_service_registry() at link().
+        # Populated by factory via enlist_wired_services() at link().
         from nexus.core.service_registry import ServiceRegistry
 
         self._service_registry: ServiceRegistry = ServiceRegistry()
@@ -254,7 +220,7 @@ class NexusFS(  # type: ignore[misc]
         # Factory-injected lifecycle implementations.
         # Keeps nexus.core free of nexus.factory / nexus.bricks imports.
         self._link_fn: Callable[..., Any] | None = None
-        self._initialize_fn: Callable[..., None] | None = None
+        self._initialize_fn: Callable[..., Any] | None = None
 
     # =====================================================================
     # Lifecycle methods: link() → initialize() → bootstrap()
@@ -297,7 +263,9 @@ class NexusFS(  # type: ignore[misc]
         if not self._linked:
             await self.link()
         if self._initialize_fn is not None:
-            self._initialize_fn(self)
+            _result = self._initialize_fn(self)
+            if inspect.isawaitable(_result):
+                await _result
         self._initialized = True
 
     async def bootstrap(self) -> None:
@@ -320,6 +288,7 @@ class NexusFS(  # type: ignore[misc]
         if coord is not None:
             await coord.activate_hot_swappable_services()
             await coord.start_persistent_services()
+            coord.mark_bootstrapped()  # future enlist() calls auto-start Q3
         self._bootstrapped = True
 
     def _register_runtime_closeable(self, resource: Any) -> None:
@@ -346,7 +315,7 @@ class NexusFS(  # type: ignore[misc]
         return self._service_registry
 
     # Services accessed via self.service("name") → ServiceRegistry (Issue #1452).
-    # Registered by factory via populate_service_registry() at link().
+    # Registered by factory via enlist_wired_services() at link().
 
     @property
     def service_coordinator(self) -> Any | None:
@@ -404,11 +373,17 @@ class NexusFS(  # type: ignore[misc]
         """Raise ZoneTerminatingError if the zone is being deprovisioned.
 
         Issue #2061: Write-gating during zone finalization (Decision #4A).
+        Issue #1570: zone_lifecycle accessed from container, not flat attr.
         """
-        if self._zone_lifecycle is None:
+        _zl = (
+            getattr(self._system_services, "zone_lifecycle", None)
+            if self._system_services
+            else None
+        )
+        if _zl is None:
             return
         zone_id, _, _ = self._get_routing_params(context)
-        if zone_id and self._zone_lifecycle.is_zone_terminating(zone_id):
+        if zone_id and _zl.is_zone_terminating(zone_id):
             from nexus.contracts.exceptions import ZoneTerminatingError
 
             raise ZoneTerminatingError(zone_id)
@@ -481,14 +456,17 @@ class NexusFS(  # type: ignore[misc]
 
         for parent_dir in reversed(parents_to_create):
             self._create_directory_metadata(parent_dir, context=ctx)
-            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
+            _hier = (
+                getattr(self._system_services, "hierarchy_manager", None)
+                if self._system_services
+                else None
+            )
+            if _hier is not None:
                 try:
                     logger.debug(
                         f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                     )
-                    self._hierarchy_manager.ensure_parent_tuples(
-                        parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
-                    )
+                    _hier.ensure_parent_tuples(parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID)
                 except Exception as e:
                     logger.warning(
                         "mkdir: Failed to create parent tuples for %s: %s", parent_dir, e
@@ -608,12 +586,17 @@ class NexusFS(  # type: ignore[misc]
 
         ctx = context or self._default_context
 
-        if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
+        _hier = (
+            getattr(self._system_services, "hierarchy_manager", None)
+            if self._system_services
+            else None
+        )
+        if _hier is not None:
             try:
                 logger.debug(
                     f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
                 )
-                created_count = self._hierarchy_manager.ensure_parent_tuples(
+                created_count = _hier.ensure_parent_tuples(
                     path, zone_id=ctx.zone_id or ROOT_ZONE_ID
                 )
                 logger.debug("mkdir: Created %d parent tuples for %s", created_count, path)
@@ -632,12 +615,15 @@ class NexusFS(  # type: ignore[misc]
         # Grant direct_owner permission to the user who created the directory
         # Note: Use 'direct_owner' (not 'owner') as the base relation.
         # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
-        if self._rebac_manager and ctx.user_id and not ctx.is_system:
+        _rebac = (
+            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
+        )
+        if _rebac and ctx.user_id and not ctx.is_system:
             try:
                 logger.debug(
                     "mkdir: Granting direct_owner permission to %s for %s", ctx.user_id, path
                 )
-                self._rebac_manager.rebac_write(
+                _rebac.rebac_write(
                     subject=("user", ctx.user_id),
                     relation="direct_owner",
                     object=("file", path),
@@ -1130,7 +1116,11 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             OverlayConfig if overlay active for this path, None otherwise
         """
-        registry = getattr(self, "_workspace_registry", None)
+        registry = (
+            getattr(self._system_services, "workspace_registry", None)
+            if self._system_services
+            else None
+        )
         if registry is None:
             return None
 
@@ -1214,7 +1204,9 @@ class NexusFS(  # type: ignore[misc]
         """
         import asyncio
 
-        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
+        # Issue #1570: lock_manager accessed from container, not flat attr.
+        _lm = getattr(self._brick_services, "lock_manager", None) if self._brick_services else None
+        if _lm is None:
             raise RuntimeError(
                 "write(lock=True) called but distributed lock manager not configured. "
                 "Ensure NexusFS is initialized with enable_distributed_locks=True."
@@ -1239,7 +1231,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         async def acquire_lock() -> str | None:
-            return await self._lock_manager.acquire(
+            return await _lm.acquire(
                 zone_id=zone_id,
                 path=path,
                 timeout=timeout,
@@ -1264,7 +1256,9 @@ class NexusFS(  # type: ignore[misc]
         if not lock_id:
             return
 
-        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
+        # Issue #1570: lock_manager accessed from container, not flat attr.
+        _lm = getattr(self._brick_services, "lock_manager", None) if self._brick_services else None
+        if _lm is None:
             return
 
         zone_id = (
@@ -1274,7 +1268,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         async def release_lock() -> None:
-            await self._lock_manager.release(lock_id, zone_id, path)
+            await _lm.release(lock_id, zone_id, path)
 
         from nexus.lib.sync_bridge import run_sync
 
@@ -2548,7 +2542,12 @@ class NexusFS(  # type: ignore[misc]
         # permission operations in the background. Owner access is guaranteed by
         # owner_id in metadata (fast-path check).
         ctx = context if context is not None else self._default_context
-        deferred_buffer = getattr(self, "_deferred_permission_buffer", None)
+        # Issue #1570: deferred_permission_buffer accessed from container, not flat attr.
+        deferred_buffer = (
+            getattr(self._system_services, "deferred_permission_buffer", None)
+            if self._system_services
+            else None
+        )
 
         if deferred_buffer is not None:
             # DEFERRED PATH: Queue permission operations for background batch processing
@@ -2561,16 +2560,19 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning("write: Failed to queue deferred permissions for %s: %s", path, e)
         else:
             # SYNC PATH: Execute permission operations immediately (original behavior)
-            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
+            _hier = (
+                getattr(self._system_services, "hierarchy_manager", None)
+                if self._system_services
+                else None
+            )
+            if _hier is not None:
                 try:
                     logger.info(
                         "write: Calling ensure_parent_tuples for %s, zone_id=%s",
                         path,
                         ctx.zone_id or ROOT_ZONE_ID,
                     )
-                    created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, zone_id=ctx.zone_id or "root"
-                    )
+                    created_count = _hier.ensure_parent_tuples(path, zone_id=ctx.zone_id or "root")
                     logger.info("write: Created %d parent tuples for %s", created_count, path)
                 except Exception as e:
                     logger.warning(
@@ -2578,13 +2580,18 @@ class NexusFS(  # type: ignore[misc]
                     )
 
             # Issue #548: Grant direct_owner permission to the user who created the file
-            if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+            _rebac = (
+                getattr(self._system_services, "rebac_manager", None)
+                if self._system_services
+                else None
+            )
+            if meta is None and _rebac:
                 try:
                     if ctx.user_id and not ctx.is_system:
                         logger.debug(
                             f"write: Granting direct_owner permission to {ctx.user_id} for {path}"
                         )
-                        self._rebac_manager.rebac_write(
+                        _rebac.rebac_write(
                             subject=("user", ctx.user_id),
                             relation="direct_owner",
                             object=("file", path),
@@ -2599,13 +2606,16 @@ class NexusFS(  # type: ignore[misc]
                     )
 
         # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
-        # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
-        if self._snapshot_service is not None:
-            _txn_id = self._snapshot_service.is_tracked(path)
+        # Issue #1570: snapshot_service accessed from container, not flat attr.
+        _ss = (
+            getattr(self._brick_services, "snapshot_service", None)
+            if self._brick_services
+            else None
+        )
+        if _ss is not None:
+            _txn_id = _ss.is_tracked(path)
             if _txn_id is not None:
-                self._snapshot_service.track_write(
-                    _txn_id, path, snapshot_hash, metadata_snapshot, content_hash
-                )
+                _ss.track_write(_txn_id, path, snapshot_hash, metadata_snapshot, content_hash)
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         from nexus.contracts.vfs_hooks import WriteHookContext
@@ -2694,21 +2704,22 @@ class NexusFS(  # type: ignore[misc]
             ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
             ... )
         """
-        # Check if lock manager is available
-        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
+        # Issue #1570: lock_manager accessed from container, not flat attr.
+        _lm = getattr(self._brick_services, "lock_manager", None) if self._brick_services else None
+        if _lm is None:
             raise RuntimeError(
                 "atomic_update() requires distributed lock manager. "
                 "Set NEXUS_REDIS_URL environment variable "
                 "or pass coordination_url to NexusFS constructor."
             )
 
-        lock_id = await self._lock_manager.acquire(path, timeout=timeout, ttl=ttl)
+        lock_id = await _lm.acquire(path, timeout=timeout, ttl=ttl)
         try:
             content = await self.sys_read(path, context=context)
             new_content = update_fn(content)
             return await self.write(path, new_content, context=context)
         finally:
-            await self._lock_manager.release(lock_id, path)
+            await _lm.release(lock_id, path)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     async def append(
@@ -3209,13 +3220,14 @@ class NexusFS(  # type: ignore[misc]
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = time.perf_counter()
         all_paths = [path for path, _ in validated_files]
-        if (
-            hasattr(self, "_hierarchy_manager")
-            and self._hierarchy_manager is not None
-            and hasattr(self._hierarchy_manager, "ensure_parent_tuples_batch")
-        ):
+        _hier = (
+            getattr(self._system_services, "hierarchy_manager", None)
+            if self._system_services
+            else None
+        )
+        if _hier is not None and hasattr(_hier, "ensure_parent_tuples_batch"):
             try:
-                created_count = self._hierarchy_manager.ensure_parent_tuples_batch(
+                created_count = _hier.ensure_parent_tuples_batch(
                     all_paths, zone_id=zone_id_for_perms
                 )
                 logger.info(
@@ -3228,18 +3240,16 @@ class NexusFS(  # type: ignore[misc]
                 # Fallback to individual calls if batch fails
                 for path in all_paths:
                     try:
-                        self._hierarchy_manager.ensure_parent_tuples(
-                            path, zone_id=zone_id_for_perms
-                        )
+                        _hier.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
                     except Exception as e2:
                         logger.warning(
                             f"write_batch: Failed to create parent tuples for {path}: {e2}"
                         )
-        elif hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
+        elif _hier is not None:
             # No batch method available, use individual calls
             for path in all_paths:
                 try:
-                    self._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
+                    _hier.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
                 except Exception as e:
                     logger.warning(
                         "write_batch: Failed to create parent tuples for %s: %s", path, e
@@ -3248,12 +3258,10 @@ class NexusFS(  # type: ignore[misc]
 
         # PERF: Batch direct_owner grants (single transaction instead of N)
         _rebac_start = time.perf_counter()
-        if (
-            hasattr(self, "_rebac_manager")
-            and self._rebac_manager
-            and ctx.user_id
-            and not ctx.is_system
-        ):
+        _rebac = (
+            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
+        )
+        if _rebac and ctx.user_id and not ctx.is_system:
             # Collect all owner grants needed for new files
             owner_grants = []
             for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
@@ -3268,9 +3276,9 @@ class NexusFS(  # type: ignore[misc]
                         }
                     )
 
-            if owner_grants and hasattr(self._rebac_manager, "rebac_write_batch"):
+            if owner_grants and hasattr(_rebac, "rebac_write_batch"):
                 try:
-                    grant_count = self._rebac_manager.rebac_write_batch(owner_grants)
+                    grant_count = _rebac.rebac_write_batch(owner_grants)
                     logger.info("write_batch: Batch granted direct_owner to %d files", grant_count)
                 except Exception as e:
                     logger.warning(
@@ -3279,7 +3287,7 @@ class NexusFS(  # type: ignore[misc]
                     # Fallback to individual calls
                     for grant in owner_grants:
                         try:
-                            self._rebac_manager.rebac_write(
+                            _rebac.rebac_write(
                                 subject=grant["subject"],
                                 relation=grant["relation"],
                                 object=grant["object"],
@@ -3291,7 +3299,7 @@ class NexusFS(  # type: ignore[misc]
                 # No batch method available, use individual calls
                 for grant in owner_grants:
                     try:
-                        self._rebac_manager.rebac_write(
+                        _rebac.rebac_write(
                             subject=grant["subject"],
                             relation=grant["relation"],
                             object=grant["object"],
@@ -3396,11 +3404,16 @@ class NexusFS(  # type: ignore[misc]
         self._dispatch.intercept_pre_delete(_DHC(path=path, context=context))
 
         # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
-        # Issue #2131 (14A): Direct attribute access (set in __init__ via BrickServices)
-        if self._snapshot_service is not None:
-            _txn_id = self._snapshot_service.is_tracked(path)
+        # Issue #1570: snapshot_service accessed from container, not flat attr.
+        _ss = (
+            getattr(self._brick_services, "snapshot_service", None)
+            if self._brick_services
+            else None
+        )
+        if _ss is not None:
+            _txn_id = _ss.is_tracked(path)
             if _txn_id is not None:
-                self._snapshot_service.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
+                _ss.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         # Placed BEFORE physical content delete to preserve audit integrity.
@@ -3622,18 +3635,21 @@ class NexusFS(  # type: ignore[misc]
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
         logger.warning("[RENAME-REBAC] Starting ReBAC update: %s -> %s", old_path, new_path)
+        _rebac = (
+            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
+        )
         logger.warning(
-            f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"
+            f"[RENAME-REBAC] has rebac_manager: {_rebac is not None}, is truthy: {bool(_rebac)}"
         )
 
-        if hasattr(self, "_rebac_manager") and self._rebac_manager:
+        if _rebac:
             try:
                 logger.warning(
                     f"[RENAME-REBAC] Calling update_object_path: old={old_path}, new={new_path}, is_dir={is_directory}"
                 )
 
                 # Update all ReBAC tuples that reference this path
-                updated_count = self._rebac_manager.update_object_path(
+                updated_count = _rebac.update_object_path(
                     old_path=old_path,
                     new_path=new_path,
                     object_type="file",
@@ -3651,7 +3667,7 @@ class NexusFS(  # type: ignore[misc]
                     f"[RENAME-REBAC] FAILED to update ReBAC permissions: {e}", exc_info=True
                 )
         else:
-            logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
+            logger.warning("[RENAME-REBAC] SKIPPED - no rebac_manager available")
 
         # POST-INTERCEPT: post-rename hooks (Issue #900)
         self._dispatch.intercept_post_rename(_rename_ctx)
@@ -4429,6 +4445,15 @@ class NexusFS(  # type: ignore[misc]
         if alias is not None:
             svc_attr, svc_method = alias
             svc = self.__dict__.get(svc_attr)
+            # Fallback: check containers for attrs removed from instance dict (Issue #1570)
+            if svc is None:
+                _sys = object.__getattribute__(self, "_system_services")
+                _brk = object.__getattribute__(self, "_brick_services")
+                _bare = svc_attr.lstrip("_")
+                if _sys is not None:
+                    svc = getattr(_sys, _bare, None)
+                if svc is None and _brk is not None:
+                    svc = getattr(_brk, _bare, None)
             if svc is not None:
                 return getattr(svc, svc_method)
 
@@ -4436,6 +4461,15 @@ class NexusFS(  # type: ignore[misc]
         svc_attr_std = NexusFS._SERVICE_METHODS.get(name)
         if svc_attr_std is not None:
             svc = self.__dict__.get(svc_attr_std)
+            # Fallback: check containers for attrs removed from instance dict (Issue #1570)
+            if svc is None:
+                _sys = object.__getattribute__(self, "_system_services")
+                _brk = object.__getattribute__(self, "_brick_services")
+                _bare = svc_attr_std.lstrip("_")
+                if _sys is not None:
+                    svc = getattr(_sys, _bare, None)
+                if svc is None and _brk is not None:
+                    svc = getattr(_brk, _bare, None)
             if svc is not None:
                 return getattr(svc, name)
 
@@ -4720,7 +4754,19 @@ class NexusFS(  # type: ignore[misc]
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
             if details:
                 result.items = [
-                    {"path": e.path, "size": e.size, "etag": e.etag} for e in result.items
+                    {
+                        "path": e.path,
+                        "size": e.size,
+                        "etag": e.etag,
+                        "entry_type": 1
+                        if (
+                            not recursive
+                            and e.entry_type == 0
+                            and self.metadata.is_implicit_directory(e.path)
+                        )
+                        else e.entry_type,
+                    }
+                    for e in result.items
                 ]
             else:
                 result.items = [e.path for e in result.items]
@@ -4728,7 +4774,21 @@ class NexusFS(  # type: ignore[misc]
 
         entries = self.metadata.list(prefix=prefix, recursive=recursive)
         if details:
-            return [{"path": e.path, "size": e.size, "etag": e.etag} for e in entries]
+            return [
+                {
+                    "path": e.path,
+                    "size": e.size,
+                    "etag": e.etag,
+                    "entry_type": 1
+                    if (
+                        not recursive
+                        and e.entry_type == 0
+                        and self.metadata.is_implicit_directory(e.path)
+                    )
+                    else e.entry_type,
+                }
+                for e in entries
+            ]
         return [e.path for e in entries]
 
     # _run_async: replaced by direct run_sync() calls (Issue #1381)
@@ -4756,6 +4816,32 @@ class NexusFS(  # type: ignore[misc]
         """
         created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
+
+    @rpc_expose(description="Flush pending write observer events to DB", admin_only=True)
+    def flush_write_observer(
+        self,
+        _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
+    ) -> dict[str, Any]:
+        """Flush the async write observer so pending version/audit records are committed.
+
+        The PipedRecordStoreWriteObserver enqueues events asynchronously via
+        DT_PIPE.  This method drains the pipe and commits all pending events,
+        guaranteeing that subsequent queries (e.g. list_versions) see the data.
+
+        No-op when the synchronous RecordStoreWriteObserver is in use.
+
+        Returns:
+            Dict with ``flushed`` count.
+        """
+        wo = (
+            getattr(self._system_services, "write_observer", None)
+            if self._system_services
+            else None
+        )
+        if wo is None or not hasattr(wo, "flush"):
+            return {"flushed": 0}
+        flushed: int = NexusFS._run_async(wo.flush())
+        return {"flushed": flushed}
 
     # ------------------------------------------------------------------
     # DT_PIPE kernel primitives (§4.2)
@@ -4893,14 +4979,24 @@ class NexusFS(  # type: ignore[misc]
             self._stream_manager.close_all()
 
         # Close ProcessTable — kill all processes, clear state
-        if hasattr(self, "_process_table") and self._process_table is not None:
-            self._process_table.close_all()
+        # Issue #1570: accessed from container, not flat attr.
+        _pt = (
+            getattr(self._system_services, "process_table", None) if self._system_services else None
+        )
+        if _pt is not None:
+            _pt.close_all()
 
         # Stop DeferredPermissionBuffer first to flush pending permissions.
         # Uses _stop_sync() because close() is sync; async stop() is handled
         # by coordinator.stop_persistent_services() in aclose().
-        if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
-            self._deferred_permission_buffer._stop_sync()
+        # Issue #1570: accessed from container, not flat attr.
+        _dpb = (
+            getattr(self._system_services, "deferred_permission_buffer", None)
+            if self._system_services
+            else None
+        )
+        if _dpb:
+            _dpb._stop_sync()
 
         # Flush write observer pre-buffer (CLI mode: events buffered in memory
         # because PipeManager was never injected). Must happen before
@@ -4934,12 +5030,17 @@ class NexusFS(  # type: ignore[misc]
             self._record_store.close()
 
         # Close ReBACManager to release database connection
-        if hasattr(self, "_rebac_manager") and self._rebac_manager is not None:
-            self._rebac_manager.close()
+        _rebac = (
+            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
+        )
+        if _rebac is not None:
+            _rebac.close()
 
         # Close AuditStore to release database connection
-        if hasattr(self, "_audit_store") and self._audit_store is not None:
-            self._audit_store.close()
+        # Issue #1570: accessed from container, not flat attr.
+        _as = getattr(self._system_services, "audit_store", None) if self._system_services else None
+        if _as is not None:
+            _as.close()
 
         # Close TokenManager to release database connection
         if hasattr(self, "_token_manager") and self._token_manager is not None:

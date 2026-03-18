@@ -186,8 +186,6 @@ def create_nexus_services(
         mount_manager=system_dict["mount_manager"],
         workspace_manager=system_dict["workspace_manager"],
         # Original system services
-        agent_registry=system_dict["agent_registry"],
-        async_agent_registry=system_dict["async_agent_registry"],
         namespace_manager=system_dict["namespace_manager"],
         async_namespace_manager=system_dict["async_namespace_manager"],
         context_branch_service=system_dict.get("context_branch_service"),
@@ -202,6 +200,9 @@ def create_nexus_services(
         # constructed in NexusFS.__init__ — not injected via SystemServices.)
         # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
+        # Process table + ACP
+        process_table=system_dict.get("process_table"),
+        acp_service=system_dict.get("acp_service"),
     )
 
     brick_services = _BrickServices(
@@ -231,6 +232,8 @@ def create_nexus_services(
         governance_response_service=brick_dict["governance_response_service"],
         # Search Brick (Issue #810)
         zoekt_pipe_consumer=brick_dict.get("zoekt_pipe_consumer"),
+        # Task Manager Brick
+        task_dispatch_consumer=brick_dict.get("task_dispatch_consumer"),
     )
 
     return kernel_services, system_services, brick_services
@@ -388,75 +391,32 @@ async def create_nexus_fs(
     return nx
 
 
-def _register_vfs_hooks(
+async def _register_vfs_hooks(
     nx: "NexusFS",
     *,
     permission_checker: Any = None,
     auto_parse: bool = True,
     brick_on: "Callable[[str], bool] | None" = None,
 ) -> None:
-    """Register hooks + observers into kernel-owned dispatch (Issue #900).
+    """Register hooks + observers via coordinator.enlist() (Issue #900, #1709).
 
     Kernel creates KernelDispatch with empty callback lists at init.
     This function populates them at boot — modules register into
     kernel-owned infrastructure, kernel never auto-constructs hooks.
 
-    Called by ``create_nexus_fs()`` after NexusFS construction + wired
-    services binding, keeping the kernel free of service-layer imports.
-
-    Issue #1610/#1612/#1613/#1616: All hook classes now implement
-    HotSwappable — they self-describe via ``hook_spec()``.  When a
-    ServiceLifecycleCoordinator is available, hooks are registered as
-    services and dispatch-registered at bootstrap via
-    ``activate_hot_swappable_services()``.  Without coordinator,
-    hooks are registered directly on dispatch (backward compat).
+    Issue #1708/1709: All hooks enlisted via coordinator.enlist() —
+    single entry point, no fallback.  Coordinator is always available
+    (created in _do_link for local profiles, _boot_remote_services for REMOTE).
     """
-    dispatch = nx._dispatch
-
     from nexus.factory._helpers import _make_gate
 
     _on = _make_gate(brick_on)
 
-    # Coordinator: when available, hooks are registered as services AND
-    # immediately on dispatch.  Pre-caching the spec in coordinator._hook_specs
-    # ensures activate_hot_swappable_services() at bootstrap skips re-registration
-    # (it only calls _register_hooks for services whose spec was NOT already cached).
-    _coordinator = getattr(nx, "_service_coordinator", None)
+    _coordinator = nx._service_coordinator
 
-    def _enlist_hook(name: str, hook: Any) -> None:
-        """Register hook on dispatch immediately + as service when coordinator available."""
-        from nexus.contracts.protocols.service_hooks import HookSpec
-
-        spec: HookSpec = hook.hook_spec()
-
-        # Always register on dispatch — hooks must be active after initialize().
-        for h in spec.resolvers:
-            dispatch.register_resolver(h)
-        for h in spec.read_hooks:
-            dispatch.register_intercept_read(h)
-        for h in spec.write_hooks:
-            dispatch.register_intercept_write(h)
-        for h in spec.write_batch_hooks:
-            dispatch.register_intercept_write_batch(h)
-        for h in spec.delete_hooks:
-            dispatch.register_intercept_delete(h)
-        for h in spec.rename_hooks:
-            dispatch.register_intercept_rename(h)
-        for h in spec.mkdir_hooks:
-            dispatch.register_intercept_mkdir(h)
-        for h in spec.rmdir_hooks:
-            dispatch.register_intercept_rmdir(h)
-        for h in spec.observers:
-            dispatch.register_observe(h)
-
-        # Also register as service for lifecycle management (drain/activate/swap).
-        # Mark as pre-registered so activate_hot_swappable_services() skips
-        # _register_hooks() and avoids double dispatch registration.
-        if _coordinator is not None:
-            _coordinator.register_service(name, hook)
-            if not spec.is_empty:
-                _coordinator._hook_specs[name] = spec
-            _coordinator._hooks_on_dispatch.add(name)
+    async def _enlist(name: str, hook: Any) -> None:
+        """Enlist hook via coordinator — the single entry point."""
+        await _coordinator.enlist(name, hook)
 
     # ── Permission pre-intercept hook (Issue #899) ────────────────
     if permission_checker is not None:
@@ -467,10 +427,12 @@ def _register_vfs_hooks(
             metadata_store=nx.metadata,
             default_context=nx._default_context,
             enforce_permissions=nx._enforce_permissions,
-            permission_enforcer=nx._permission_enforcer,
+            permission_enforcer=nx._system_services.permission_enforcer
+            if nx._system_services
+            else None,
             descendant_checker=getattr(nx, "_descendant_checker", None),
         )
-        _enlist_hook("permission", _perm_hook)
+        await _enlist("permission", _perm_hook)
 
     # ── Audit write observer as interceptor (Issue #900) ──────────
     # Registered FIRST so it runs before other hooks (audit before side effects).
@@ -482,11 +444,12 @@ def _register_vfs_hooks(
 
         strict = getattr(write_observer, "_strict_mode", True)
         audit = AuditWriteInterceptor(write_observer, strict_mode=strict)
-        _enlist_hook("audit", audit)
+        await _enlist("audit", audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (
-        getattr(nx, "_rebac_manager", None) is not None
+        (getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None)
+        is not None
         and hasattr(nx, "get_dynamic_viewer_config")
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
@@ -499,12 +462,12 @@ def _register_vfs_hooks(
             get_viewer_config=nx.get_dynamic_viewer_config,
             apply_filter=nx.apply_dynamic_viewer_filter,
         )
-        _enlist_hook("viewer", _viewer_hook)
+        await _enlist("viewer", _viewer_hook)
 
     # ContentParserEngine (on-demand parsed reads — Issue #1383)
     from nexus.bricks.parsers.engine import ContentParserEngine
 
-    nx._parser_engine = ContentParserEngine(
+    ContentParserEngine(
         metadata=nx.metadata,
         provider_registry=nx._brick_services.provider_registry,
     )
@@ -520,10 +483,12 @@ def _register_vfs_hooks(
             parse_fn=parse_fn,
             metadata=nx.metadata,
         )
-        _enlist_hook("auto_parse", _auto_parse_hook)
+        await _enlist("auto_parse", _auto_parse_hook)
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
-    _rebac_mgr = getattr(nx, "_rebac_manager", None)
+    _rebac_mgr = (
+        getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None
+    )
     tiger_cache = getattr(_rebac_mgr, "_tiger_cache", None) if _rebac_mgr else None
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
@@ -539,14 +504,14 @@ def _register_vfs_hooks(
             tiger_cache=tiger_cache,
             metadata_list_iter=_metadata_list_iter,
         )
-        _enlist_hook("tiger_rename", _tiger_rename_hook)
+        await _enlist("tiger_rename", _tiger_rename_hook)
 
     # TigerCacheWriteHook (post-write: add new files to ancestor directory grants)
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
 
         _tiger_write_hook = TigerCacheWriteHook(tiger_cache=tiger_cache)
-        _enlist_hook("tiger_write", _tiger_write_hook)
+        await _enlist("tiger_write", _tiger_write_hook)
 
     # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
     from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
@@ -558,28 +523,56 @@ def _register_vfs_hooks(
         parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
         read_tracker_fn=None,
     )
-    _enlist_hook("virtual_view", _vview_resolver)
+    await _enlist("virtual_view", _vview_resolver)
 
-    # ── TaskWriteHook (post-write: emit task lifecycle events) ─────────
+    # ── ProcResolver (procfs virtual filesystem for ProcessTable — Issue #1570) ──
+    _proc_table = (
+        getattr(nx._system_services, "process_table", None) if nx._system_services else None
+    )
+    if _proc_table is not None:
+        try:
+            from nexus.system_services.proc.proc_resolver import ProcResolver
+
+            _proc_resolver = ProcResolver(_proc_table)
+            await _enlist("proc", _proc_resolver)
+        except Exception as exc:
+            logger.debug("[BOOT:HOOKS] ProcResolver unavailable: %s", exc)
+
+    # ── TaskWriteHook + TaskDispatchPipeConsumer + TaskAgentResolver ───────────
     if _on("task_manager"):
-        from nexus.bricks.task_manager.write_hook import TaskWriteHook
+        try:
+            from nexus.bricks.task_manager.service import TaskManagerService
+            from nexus.bricks.task_manager.task_agent_resolver import TaskAgentResolver
+            from nexus.bricks.task_manager.write_hook import TaskWriteHook
 
-        _task_write_hook = TaskWriteHook()
-        _enlist_hook("task_write", _task_write_hook)
-        nx._task_write_hook = _task_write_hook
+            _task_svc = TaskManagerService(nexus_fs=nx)
+            _task_write_hook = TaskWriteHook()
+
+            # Wire consumer from brick_services (created in _bricks.py)
+            _task_consumer = getattr(nx._brick_services, "task_dispatch_consumer", None)
+            if _task_consumer is not None:
+                _task_write_hook.register_handler(_task_consumer)
+                _task_consumer.set_task_service(_task_svc)
+
+            await _enlist("task_write", _task_write_hook)
+            await _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
+            nx._task_manager_service = _task_svc
+        except Exception as exc:
+            logger.warning("[BOOT:BRICK] task_manager wiring failed: %s", exc)
     else:
-        logger.debug("[BOOT:BRICK] TaskWriteHook disabled by profile")
+        logger.debug("[BOOT:BRICK] task_manager disabled by profile")
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.
-    # Late-binding (Issue #969): always register with bus_provider=nx so that
-    # post-construction overrides of nx._event_bus (e.g. E2E test fixtures
-    # injecting a shared Redis bus) are picked up automatically.
+    # Late-binding (Issue #969, #1570): bus_provider=nx so that post-construction
+    # overrides of nx._event_bus (E2E test fixtures injecting a shared Redis bus)
+    # are picked up automatically.  _resolve_bus() also checks _brick_services
+    # as production fallback (factory no longer sets nx._event_bus via setattr).
     from nexus.system_services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(bus_provider=nx)
-    _enlist_hook("event_bus_observer", _bus_observer)
+    await _enlist("event_bus_observer", _bus_observer)
 
     # EventsService observer: self-registered via HotSwappable.hook_spec()
     # at bootstrap() → activate_hot_swappable_services() (Issue #1611).
@@ -591,8 +584,7 @@ def _register_vfs_hooks(
 
     _rev_notifier = RevisionNotifier()
     _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
-    _enlist_hook("revision_tracking", _rev_observer)
-    nx._revision_notifier = _rev_notifier
+    await _enlist("revision_tracking", _rev_observer)
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.
@@ -601,4 +593,4 @@ def _register_vfs_hooks(
     if os.getenv("NEXUS_TEST_HOOKS") == "true":
         from nexus.core.test_hooks import register_test_hooks
 
-        register_test_hooks(dispatch)
+        register_test_hooks(nx._dispatch)

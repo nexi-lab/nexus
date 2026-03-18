@@ -62,7 +62,7 @@ def _get_delegation_service(request: Request) -> Any:
         rebac_manager=rebac_manager,
         namespace_manager=getattr(state, "namespace_manager", None),
         entity_registry=getattr(state, "entity_registry", None),
-        agent_registry=getattr(state, "agent_registry", None),
+        process_table=getattr(state, "process_table", None),
     )
     state._delegation_service = service
     return service
@@ -117,6 +117,12 @@ class DelegateRequest(BaseModel):
     scope: DelegationScopeModel | None = Field(
         default=None, description="Fine-grained scope constraints"
     )
+    auto_warmup: bool = Field(
+        default=True,
+        description="Automatically warm up the worker agent after delegation. "
+        "When True (default), the worker transitions from UNKNOWN to CONNECTED. "
+        "Set to False for advanced use cases where warmup is managed externally.",
+    )
 
 
 class DelegateResponse(BaseModel):
@@ -128,6 +134,10 @@ class DelegateResponse(BaseModel):
     mount_table: list[str]
     expires_at: datetime | None
     delegation_mode: str
+    warmup_success: bool | None = Field(
+        default=None,
+        description="Whether auto-warmup succeeded. None if auto_warmup was False.",
+    )
 
 
 class DelegationListItem(BaseModel):
@@ -210,9 +220,15 @@ class DelegationDetailResponse(BaseModel):
 # =============================================================================
 
 
+def _get_warmup_service(request: Request) -> Any | None:
+    """Get AgentWarmupService from app.state (optional)."""
+    return getattr(request.app.state, "agent_warmup_service", None)
+
+
 @router.post("", response_model=DelegateResponse)
 async def create_delegation(
     body: DelegateRequest,
+    request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     service: Any = Depends(_get_delegation_service),
 ) -> DelegateResponse:
@@ -220,6 +236,11 @@ async def create_delegation(
 
     The caller must be an agent (not a user, not a delegated agent unless
     can_sub_delegate=True on its own delegation).
+
+    When ``auto_warmup`` is True (default), the worker agent is automatically
+    warmed up after delegation, transitioning from UNKNOWN to CONNECTED.
+    Warmup failure does NOT roll back the delegation — the worker exists
+    but may need manual warmup via POST /agents/{id}/warmup.
     """
     # Validate caller is an agent
     subject_type = auth_result.get("subject_type", "")
@@ -280,6 +301,31 @@ async def create_delegation(
         _handle_delegation_error(e)
         raise  # unreachable, but satisfies type checker
 
+    # Auto-warmup: best-effort, does NOT roll back delegation on failure
+    warmup_success: bool | None = None
+    if body.auto_warmup:
+        warmup_service = _get_warmup_service(request)
+        if warmup_service is not None:
+            try:
+                warmup_result = await warmup_service.warmup(result.worker_agent_id)
+                warmup_success = warmup_result.success
+                if not warmup_result.success:
+                    logger.warning(
+                        "[Delegation] Auto-warmup failed for worker=%s: step=%s error=%s",
+                        result.worker_agent_id,
+                        warmup_result.failed_step,
+                        warmup_result.error,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[Delegation] Auto-warmup exception for worker=%s: %s",
+                    result.worker_agent_id,
+                    e,
+                )
+                warmup_success = False
+        else:
+            logger.debug("[Delegation] Warmup service not available, skipping auto-warmup")
+
     return DelegateResponse(
         delegation_id=result.delegation_id,
         worker_agent_id=result.worker_agent_id,
@@ -287,6 +333,7 @@ async def create_delegation(
         mount_table=result.mount_table,
         expires_at=result.expires_at,
         delegation_mode=result.delegation_mode.value,
+        warmup_success=warmup_success,
     )
 
 

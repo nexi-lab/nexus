@@ -173,6 +173,8 @@ class TestStatusCommand:
             "server_health": None,
             "docker_services": [],
         }
-        result = cli_runner.invoke(status, ["--url", "http://remote:3000"])
+        result = cli_runner.invoke(
+            status, ["--url", "http://remote:3000"], env={"NEXUS_API_KEY": ""}
+        )
         assert result.exit_code == 0
         mock_collect.assert_called_once_with("http://remote:3000", None, None)

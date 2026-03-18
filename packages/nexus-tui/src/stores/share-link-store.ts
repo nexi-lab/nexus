@@ -78,7 +78,7 @@ export const useShareLinkStore = create<ShareLinkState>((set, get) => ({
         },
       );
       return {
-        links: response.result ?? [],
+        links: Array.isArray(response?.result) ? response.result : [],
         selectedLinkIndex: 0,
       };
     },

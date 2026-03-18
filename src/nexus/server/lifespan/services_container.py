@@ -51,6 +51,9 @@ class LifespanServices:
     # --- Coordinator (post-bootstrap service registration) ---------------
     service_coordinator: Any = None  # ServiceLifecycleCoordinator
 
+    # --- Process table (kernel process lifecycle) -------------------------
+    process_table: Any = None
+
     # --- System services (from nexus_fs._system_services) ----------------
     brick_lifecycle_manager: Any = None
     brick_reconciler: Any = None
@@ -64,6 +67,7 @@ class LifespanServices:
 
     # --- DT_PIPE consumers (Issue #810) -----------------------------------
     zoekt_pipe_consumer: Any = None
+    task_dispatch_consumer: Any = None  # Task Manager DT_PIPE consumer
 
     # --- Brick services container ----------------------------------------
     brick_services: Any = None  # The whole BrickServices dataclass
@@ -105,6 +109,8 @@ class LifespanServices:
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
+            # Process table
+            process_table=getattr(app.state, "process_table", None),
             # Coordinator
             service_coordinator=_coord,
             # Configuration
@@ -124,6 +130,10 @@ class LifespanServices:
             pipe_manager=(getattr(nx, "_pipe_manager", None) if nx else None),
             # Issue #810: DT_PIPE Zoekt consumer
             zoekt_pipe_consumer=(getattr(_brk, "zoekt_pipe_consumer", None) if _brk else None),
+            # Task Manager DT_PIPE consumer
+            task_dispatch_consumer=(
+                getattr(_brk, "task_dispatch_consumer", None) if _brk else None
+            ),
             # Issue #2195: Scheduler
             scheduler_service=(getattr(_sys, "scheduler_service", None) if _sys else None),
             # Brick services
@@ -137,7 +147,10 @@ class LifespanServices:
             event_bus=getattr(nx, "_event_bus", None) if nx else None,
             coordination_client=(getattr(nx, "_coordination_client", None) if nx else None),
             workflow_engine=(getattr(nx, "workflow_engine", None) if nx else None),
-            snapshot_service=(getattr(nx, "_snapshot_service", None) if nx else None),
+            snapshot_service=(
+                getattr(_brk, "snapshot_service", None)
+                or (getattr(nx, "_snapshot_service", None) if nx else None)
+            ),
             namespace_manager=(getattr(nx, "_namespace_manager", None) if nx else None),
             nexus_config=getattr(nx, "config", None) if nx else None,
             observability_subsystem=(

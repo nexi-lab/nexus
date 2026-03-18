@@ -194,7 +194,7 @@ class TaskDispatchPipeConsumer:
             mission_id = payload.get("mission_id", "?")
 
             # Record audit via VFS
-            self._task_svc.create_audit_entry(task_id, "task_created", detail="task created")
+            await self._task_svc.create_audit_entry(task_id, "task_created", detail="task created")
 
             # Check if task is blocked
             blocked_by = payload.get("blocked_by") or []
@@ -227,7 +227,7 @@ class TaskDispatchPipeConsumer:
                     task_id,
                     status,
                 )
-                self._dispatch_unblocked_tasks()
+                await self._dispatch_unblocked_tasks()
             else:
                 logger.debug("[TASK-DISPATCH] task_id=%s status=%s (no action)", task_id, status)
         else:
@@ -239,27 +239,27 @@ class TaskDispatchPipeConsumer:
         svc = self._task_svc
 
         try:
-            task = svc.get_task(task_id)
+            task = await svc.get_task(task_id)
             instruction = task.get("instruction", "do the task")
 
-            svc.update_task(task_id, status="running")
-            svc.create_audit_entry(
+            await svc.update_task(task_id, status="running")
+            await svc.create_audit_entry(
                 task_id, "status_changed", actor="worker", detail="task started by worker"
             )
 
             worker_response = await self._llm_fn(instruction)
 
-            svc.create_comment(task_id, "worker", worker_response)
-            svc.update_task(task_id, status="in_review")
-            svc.create_audit_entry(
+            await svc.create_comment(task_id, "worker", worker_response)
+            await svc.update_task(task_id, status="in_review")
+            await svc.create_audit_entry(
                 task_id, "status_changed", actor="worker", detail="submitted for review"
             )
         except Exception as e:
             logger.error("[TASK-DISPATCH] worker failed for task %s: %s", task_id, e)
             try:
-                svc.create_comment(task_id, "worker", f"Worker failed: {e}")
-                svc.update_task(task_id, status="failed")
-                svc.create_audit_entry(
+                await svc.create_comment(task_id, "worker", f"Worker failed: {e}")
+                await svc.update_task(task_id, status="failed")
+                await svc.create_audit_entry(
                     task_id, "status_changed", actor="worker", detail=f"task failed: {e}"
                 )
             except Exception:
@@ -273,24 +273,24 @@ class TaskDispatchPipeConsumer:
         svc = self._task_svc
 
         try:
-            comments = svc.get_comments(task_id)
+            comments = await svc.get_comments(task_id)
             last_content = comments[-1].get("content", "") if comments else "(no worker comment)"
 
             review = await self._llm_fn(
                 f"Review this worker output and give brief feedback:\n\n{last_content}"
             )
 
-            svc.create_comment(task_id, "copilot", review)
-            svc.update_task(task_id, status="completed")
-            svc.create_audit_entry(
+            await svc.create_comment(task_id, "copilot", review)
+            await svc.update_task(task_id, status="completed")
+            await svc.create_audit_entry(
                 task_id, "status_changed", actor="copilot", detail="task completed by copilot"
             )
         except Exception as e:
             logger.error("[TASK-DISPATCH] copilot review failed for task %s: %s", task_id, e)
             try:
-                svc.create_comment(task_id, "copilot", f"Review failed: {e}")
-                svc.update_task(task_id, status="failed")
-                svc.create_audit_entry(
+                await svc.create_comment(task_id, "copilot", f"Review failed: {e}")
+                await svc.update_task(task_id, status="failed")
+                await svc.create_audit_entry(
                     task_id, "status_changed", actor="copilot", detail=f"review failed: {e}"
                 )
             except Exception:
@@ -298,12 +298,12 @@ class TaskDispatchPipeConsumer:
                     "[TASK-DISPATCH] cleanup after copilot failure also failed", exc_info=True
                 )
 
-    def _dispatch_unblocked_tasks(self) -> None:
+    async def _dispatch_unblocked_tasks(self) -> None:
         """Check for dispatchable tasks (created + unblocked) and start them."""
         assert self._task_svc is not None
 
         try:
-            dispatchable = self._task_svc.list_dispatchable_tasks()
+            dispatchable = await self._task_svc.list_dispatchable_tasks()
         except Exception:
             logger.warning("[TASK-DISPATCH] failed to list dispatchable tasks", exc_info=True)
             return

@@ -193,8 +193,8 @@ def stats(
                     cache_stats["content_cache"] = cc.get_stats()
 
             # Permission cache stats
-            if hasattr(nx, "_rebac_manager"):
-                rm = nx._rebac_manager
+            rm = getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
+            if rm is not None:
                 if hasattr(rm, "_permission_cache") and rm._permission_cache:
                     pc = rm._permission_cache
                     if hasattr(pc, "get_stats"):
@@ -311,8 +311,8 @@ def clear(
 
         # Clear permission cache
         if permissions or clear_all:
-            if hasattr(nx, "_rebac_manager"):
-                rm = nx._rebac_manager
+            rm = getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
+            if rm is not None:
                 if hasattr(rm, "_permission_cache") and rm._permission_cache:
                     pc = rm._permission_cache
                     if hasattr(pc, "clear"):

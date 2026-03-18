@@ -1,27 +1,16 @@
-"""Service wiring — populates ``ServiceRegistry`` from WiredServices.
+"""Service wiring — canonical service name & export maps.
 
 Issue #1502: ``bind_wired_services()`` and the setattr wiring path have been
 deleted.  All service access now goes through ``nx.service("name")``.
-The sole registration path is ``populate_service_registry()``.
 
-Issue #1615: ``populate_service_registry()`` accepts either a raw
-``ServiceRegistry`` or a ``ServiceLifecycleCoordinator`` — both expose
-``register_service(name, instance, *, exports, is_remote)``.  When a
-coordinator is provided, services are registered in both the Registry
-and BrickLifecycleManager in one shot.
+Issue #1708: Single entry point via ``enlist_wired_services()`` which calls
+``coordinator.enlist()`` for each service.  Coordinator is always available
+for all deployment profiles (BLM optional).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from nexus.core.config import WiredServices
-    from nexus.core.service_registry import ServiceRegistry
-    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-        ServiceLifecycleCoordinator,
-    )
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # EXPORT_SYMBOL declarations: each service's public API surface
@@ -43,6 +32,17 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     "operations": (),
     "workspace_rpc": (),
     "agent_rpc": (),
+    "acp_rpc": (
+        "acp_call",
+        "acp_list_agents",
+        "acp_list_processes",
+        "acp_kill",
+        "acp_set_system_prompt",
+        "acp_get_system_prompt",
+        "acp_set_enabled_skills",
+        "acp_get_enabled_skills",
+        "acp_history",
+    ),
     "user_provisioning": (),
     "sandbox_rpc": (),
     "metadata_export": (),
@@ -68,26 +68,24 @@ _CANONICAL_NAMES: dict[str, str] = {
     "operations_service": "operations",
     "workspace_rpc_service": "workspace_rpc",
     "agent_rpc_service": "agent_rpc",
+    "acp_rpc_service": "acp_rpc",
     "user_provisioning_service": "user_provisioning",
     "sandbox_rpc_service": "sandbox_rpc",
     "metadata_export_service": "metadata_export",
 }
 
 
-def populate_service_registry(
-    registrar: "ServiceRegistry | ServiceLifecycleCoordinator",
-    wired: "WiredServices | dict[str, Any]",
-    *,
-    is_remote: bool = False,
-) -> int:
-    """Populate ServiceRegistry (or coordinator) from WiredServices.
+async def enlist_wired_services(coordinator: Any, wired: Any) -> int:
+    """Enlist WiredServices via coordinator.enlist() (#1708).
 
-    Accepts either a raw ``ServiceRegistry`` or a ``ServiceLifecycleCoordinator``.
-    Both duck-type on ``register_service(name, instance, *, exports, is_remote)``.
-    When a coordinator is provided, services are registered in both the
-    ServiceRegistry and BrickLifecycleManager in one shot (Issue #1615).
+    Iterates ``_CANONICAL_NAMES``, extracts each non-None service from
+    ``wired`` (WiredServices dataclass or dict), and calls
+    ``await coordinator.enlist()`` with canonical name + exports.
 
-    Returns the number of services registered.
+    All wired services are Q1 (static) — no HotSwappable or PersistentService
+    — so enlist() auto-detects and registers them without lifecycle side effects.
+
+    Returns the number of services enlisted.
     """
     count = 0
     for src_key, canonical in _CANONICAL_NAMES.items():
@@ -95,11 +93,6 @@ def populate_service_registry(
         if val is None:
             continue
         exports = _CANONICAL_EXPORTS.get(canonical, ())
-        registrar.register_service(
-            canonical,
-            val,
-            exports=exports,
-            is_remote=is_remote,
-        )
+        await coordinator.enlist(canonical, val, exports=exports)
         count += 1
     return count

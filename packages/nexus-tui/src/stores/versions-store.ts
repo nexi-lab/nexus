@@ -181,7 +181,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
       const transactions = response.transactions ?? [];
       set({ transactions, isLoading: false });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch transactions";
+      const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch transactions");
       set({
         isLoading: false,
         error: message,
@@ -221,7 +221,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
       );
       set({ entries: entries ?? [], entriesLoading: false });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch entries";
+      const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch entries");
       set({
         entries: [],
         entriesLoading: false,
@@ -252,7 +252,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         diffLoading: false,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch diff";
+      const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch diff");
       set({
         diffContent: null,
         diffLoading: false,
@@ -280,7 +280,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         get().selectTransaction(fresh);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to begin transaction";
+      const message = err instanceof Error ? err.message : String(err ?? "Failed to begin transaction");
       set({ error: message });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
@@ -294,9 +294,11 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         `/api/v2/snapshots/${encodeURIComponent(txnId)}/commit`,
         {},
       );
+      // Clear selection since transaction is no longer active
+      set({ selectedTransaction: null });
       await get().fetchTransactions(client);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to commit transaction";
+      const message = err instanceof Error ? err.message : String(err ?? "Failed to commit transaction");
       set({ error: message });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
@@ -310,9 +312,11 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         `/api/v2/snapshots/${encodeURIComponent(txnId)}/rollback`,
         {},
       );
+      // Clear selection since transaction is no longer active
+      set({ selectedTransaction: null });
       await get().fetchTransactions(client);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to rollback transaction";
+      const message = err instanceof Error ? err.message : String(err ?? "Failed to rollback transaction");
       set({ error: message });
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
@@ -330,7 +334,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         conflictsLoading: false,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch conflicts";
+      const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch conflicts");
       set({
         conflicts: [],
         conflictsLoading: false,

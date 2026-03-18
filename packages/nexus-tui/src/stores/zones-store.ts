@@ -86,7 +86,7 @@ interface ZonesListResponse {
 // Tab type
 // =============================================================================
 
-export type ZoneTab = "zones" | "bricks" | "drift" | "reindex" | "workspaces" | "memories" | "mcp" | "cache";
+export type ZoneTab = "zones" | "bricks" | "drift" | "reindex" | "workspaces" | "mcp" | "cache";
 
 // =============================================================================
 // Store

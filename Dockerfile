@@ -22,6 +22,7 @@ FROM python:3.13-slim AS builder
 # 设置国内镜像环境变量（默认 false，国外环境不使用）
 ARG USE_CHINA_MIRROR
 ARG TORCH_VARIANT
+ARG TARGETARCH
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- 系统依赖 ----------
@@ -77,6 +78,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         "txtai[ann]>=9.0" \
         "sentence-transformers>=5.3"
 
+# On arm64, uninstall hnswlib after txtai[ann] pulls it in.
+# hnswlib 0.8.0's C extension executes SVE2 instructions that SIGILL on
+# Apple Silicon Docker (M-chips do not implement SVE). Confirmed via:
+#   python3 -c "from hnswlib import Index"  →  exit 132 (SIGILL)
+#   python3 -c "import txtai.ann.dense.hnsw" →  SIGILL (last import before crash)
+# txtai falls back gracefully to faiss or pgvector ANN without hnswlib.
+# torch, sentence-transformers, faiss, and all other imports are unaffected.
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+        pip uninstall -y hnswlib || true; \
+    fi
+
 # ---------- Build Rust extensions (Issue #3125) ----------
 # On arm64, disable SimSIMD SVE backends at compile time. Apple Silicon does
 # not implement SVE, and simsimd's runtime mrs-based SVE detection can misfire
@@ -85,7 +97,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY proto/ ./proto/
 COPY rust/ ./rust/
 
-ARG TARGETARCH
 ENV CARGO_TARGET_DIR=/build/target
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
@@ -135,7 +146,7 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 COPY --from=zoekt-builder /go/bin/zoekt-index /usr/local/bin/zoekt-index
 COPY --from=zoekt-builder /go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 
-# ---------- Build-time smoke tests (Issue #2946, #3125) ----------
+# ---------- Build-time smoke tests (Issue #2946, #3125, #3134) ----------
 # Verify critical native imports are installed correctly.
 # The SIMD test exercises simsimd code paths so that a cross-architecture
 # cache mismatch or mis-compiled SVE backend surfaces as a build failure

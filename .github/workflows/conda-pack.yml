@@ -138,8 +138,14 @@ jobs:
         shell: bash -el {0}
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          OUTPUT="${{ matrix.artifact_name }}-${VERSION}.tar.gz"
-          echo "Packing environment to: ${OUTPUT}"
+          OUTPUT="${{ matrix.artifact_name }}.tar.gz"
+
+          # Write a VERSION file into the conda env so users know what
+          # version they downloaded after extraction.
+          CONDA_ENV_PREFIX=$(conda run -n nexus python -c "import sys; print(sys.prefix)")
+          echo "${VERSION}" > "${CONDA_ENV_PREFIX}/VERSION"
+
+          echo "Packing environment to: ${OUTPUT}  (version: ${VERSION})"
           conda-pack -n nexus -o "${OUTPUT}"
           ls -lh "${OUTPUT}"
 
@@ -147,7 +153,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}-*.tar.gz
+          path: ${{ matrix.artifact_name }}.tar.gz
           if-no-files-found: error
 
   # ── Attach to GitHub Release ──────────────────────────────────────────────

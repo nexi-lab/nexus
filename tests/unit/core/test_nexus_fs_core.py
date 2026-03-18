@@ -23,7 +23,7 @@ from nexus.core.nexus_fs import NexusFS
 
 CORE_READ_METHODS = {
     "sys_read": {"params": ["path", "count", "offset", "context"], "async": True},
-    "read_range": {"params": ["path", "start", "end", "context"], "async": False},
+    "read_range": {"params": ["path", "start", "end", "context"], "async": True},
     "stream": {"params": ["path", "chunk_size", "context"], "async": False},
 }
 
@@ -32,7 +32,7 @@ CORE_WRITE_METHODS = {
         "params": ["path", "buf", "count", "offset", "context"],
         "async": True,
     },
-    "write_stream": {"params": ["path", "chunks", "context"], "async": False},
+    "write_stream": {"params": ["path", "chunks", "context"], "async": True},
     "append": {"params": ["path", "content", "context", "if_match", "force"], "async": True},
     "edit": {
         "params": ["path", "edits", "context", "if_match", "fuzzy_threshold", "preview"],

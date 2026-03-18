@@ -632,7 +632,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #900: Unified two-phase dispatch for mkdir
         from nexus.contracts.vfs_hooks import MkdirHookContext
 
-        self._dispatch.intercept_post_mkdir(
+        await self._dispatch.intercept_post_mkdir(
             MkdirHookContext(
                 path=path,
                 context=ctx,
@@ -640,7 +640,7 @@ class NexusFS(  # type: ignore[misc]
                 agent_id=ctx.agent_id,
             )
         )
-        self._dispatch.notify(
+        await self._dispatch.notify(
             FileEvent(
                 type=FileEventType.DIR_CREATE,
                 path=path,
@@ -796,7 +796,7 @@ class NexusFS(  # type: ignore[misc]
 
         from nexus.contracts.vfs_hooks import RmdirHookContext
 
-        self._dispatch.intercept_post_rmdir(
+        await self._dispatch.intercept_post_rmdir(
             RmdirHookContext(
                 path=path,
                 context=ctx,
@@ -805,7 +805,7 @@ class NexusFS(  # type: ignore[misc]
                 recursive=recursive,
             )
         )
-        self._dispatch.notify(
+        await self._dispatch.notify(
             FileEvent(
                 type=FileEventType.DIR_DELETE,
                 path=path,
@@ -1267,7 +1267,7 @@ class NexusFS(  # type: ignore[misc]
         except Exception as e:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
-    def _resolve_and_read(
+    async def _resolve_and_read(
         self,
         path: str,
         context: OperationContext | None = None,
@@ -1372,7 +1372,7 @@ class NexusFS(  # type: ignore[misc]
                 content=content,
                 content_hash=meta.etag,
             )
-            self._dispatch.intercept_post_read(_read_ctx)
+            await self._dispatch.intercept_post_read(_read_ctx)
             content = _read_ctx.content or content
 
         return (content, meta, route, zone_id, agent_id)
@@ -1528,7 +1528,7 @@ class NexusFS(  # type: ignore[misc]
                 content=content,
                 content_hash=meta.etag,
             )
-            self._dispatch.intercept_post_read(_read_ctx)
+            await self._dispatch.intercept_post_read(_read_ctx)
             content = _read_ctx.content or content  # hooks may have filtered content
 
         # Apply count/offset slicing (POSIX pread semantics)
@@ -1895,7 +1895,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Read a byte range from a file")
-    def read_range(
+    async def read_range(
         self,
         path: str,
         start: int,
@@ -1994,7 +1994,7 @@ class NexusFS(  # type: ignore[misc]
                 return route.backend.read_content_range(meta.etag, start, end, context=read_context)
 
         # FALLBACK: full read via _resolve_and_read + slice
-        content, _meta, _route, _zone_id, _agent_id = self._resolve_and_read(path, context)
+        content, _meta, _route, _zone_id, _agent_id = await self._resolve_and_read(path, context)
         return content[start:end]
 
     @rpc_expose(description="Stream file content in chunks")
@@ -2101,7 +2101,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
     @rpc_expose(description="Write file content from stream")
-    def write_stream(
+    async def write_stream(
         self,
         path: str,
         chunks: Iterator[bytes],
@@ -2204,7 +2204,7 @@ class NexusFS(  # type: ignore[misc]
             is_new_file=(meta is None),
             metadata=new_meta,
         )
-        self._dispatch.intercept_post_write(_ws_ctx)
+        await self._dispatch.intercept_post_write(_ws_ctx)
 
         return {
             "etag": content_hash,
@@ -2278,7 +2278,7 @@ class NexusFS(  # type: ignore[misc]
             offset = self._stream_write(path, buf)
             return {"path": path, "bytes_written": len(buf), "created": False, "offset": offset}
 
-        self._write_internal(path=path, content=buf, context=context)
+        await self._write_internal(path=path, content=buf, context=context)
         return {"path": path, "bytes_written": len(buf), "created": _meta is None}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
@@ -2371,9 +2371,9 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return _result
 
-        return self._write_internal(path=path, content=buf, context=context)
+        return await self._write_internal(path=path, content=buf, context=context)
 
-    def _write_internal(
+    async def _write_internal(
         self,
         path: str,
         content: bytes,
@@ -2512,7 +2512,7 @@ class NexusFS(  # type: ignore[misc]
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        self._dispatch.notify(
+        await self._dispatch.notify(
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=path,
@@ -2614,7 +2614,7 @@ class NexusFS(  # type: ignore[misc]
             old_metadata=meta,
             new_version=new_version,
         )
-        self._dispatch.intercept_post_write(_write_ctx)
+        await self._dispatch.intercept_post_write(_write_ctx)
 
         # Return metadata for optimistic concurrency control
         return {
@@ -3171,7 +3171,7 @@ class NexusFS(  # type: ignore[misc]
         items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
-        self._dispatch.intercept_post_write_batch(
+        await self._dispatch.intercept_post_write_batch(
             items,
             zone_id=zone_id,
             agent_id=agent_id,
@@ -3180,7 +3180,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         for metadata in metadata_list:
             is_new = existing_metadata.get(metadata.path) is None
-            self._dispatch.notify(
+            await self._dispatch.notify(
                 FileEvent(
                     type=FileEventType.FILE_WRITE,
                     path=metadata.path,
@@ -3411,7 +3411,7 @@ class NexusFS(  # type: ignore[misc]
             agent_id=agent_id,
             metadata=meta,
         )
-        self._dispatch.intercept_post_delete(_delete_ctx)
+        await self._dispatch.intercept_post_delete(_delete_ctx)
 
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
         # Like Linux i_rwsem: held for I/O duration only, released before observers.
@@ -3435,7 +3435,7 @@ class NexusFS(  # type: ignore[misc]
         # --- Lock released — event dispatch (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        self._dispatch.notify(
+        await self._dispatch.notify(
             FileEvent(
                 type=FileEventType.FILE_DELETE,
                 path=path,
@@ -3607,7 +3607,7 @@ class NexusFS(  # type: ignore[misc]
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        self._dispatch.notify(
+        await self._dispatch.notify(
             FileEvent(
                 type=FileEventType.FILE_RENAME,
                 path=old_path,
@@ -3652,7 +3652,7 @@ class NexusFS(  # type: ignore[misc]
             logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
 
         # POST-INTERCEPT: post-rename hooks (Issue #900)
-        self._dispatch.intercept_post_rename(_rename_ctx)
+        await self._dispatch.intercept_post_rename(_rename_ctx)
 
         return {}
 

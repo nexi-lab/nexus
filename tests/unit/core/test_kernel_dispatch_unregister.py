@@ -87,7 +87,7 @@ class TestUnregisterObserve:
     def test_unregister_missing(self, dispatch: KernelDispatch) -> None:
         assert dispatch.unregister_observe(MagicMock()) is False
 
-    def test_multiple_observers(self, dispatch: KernelDispatch) -> None:
+    async def test_multiple_observers(self, dispatch: KernelDispatch) -> None:
         obs1, obs2, obs3 = MagicMock(), MagicMock(), MagicMock()
         dispatch.register_observe(obs1)
         dispatch.register_observe(obs2)
@@ -100,7 +100,7 @@ class TestUnregisterObserve:
         from nexus.core.file_events import FileEvent, FileEventType
 
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
-        dispatch.notify(event)
+        await dispatch.notify(event)
         obs1.on_mutation.assert_called_once_with(event)
         obs3.on_mutation.assert_called_once_with(event)
         obs2.on_mutation.assert_not_called()

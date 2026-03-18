@@ -537,6 +537,7 @@ def up(
                     [
                         "docker",
                         "build",
+                        "--no-cache",
                         "-t",
                         image_ref,
                         "-f",

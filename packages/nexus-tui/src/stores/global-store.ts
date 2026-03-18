@@ -97,7 +97,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   featuresLastFetched: 0,
 
   initConfig: (overrides) => {
-    const config = resolveConfig(overrides);
+    const config = resolveConfig({ transformKeys: false, ...overrides });
     const client = config.apiKey ? new FetchClient(config) : null;
     set({ config, client, connectionStatus: client ? "connecting" : "disconnected" });
 

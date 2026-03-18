@@ -35,12 +35,14 @@ from pydantic import BaseModel, Field
 
 from nexus.bricks.search.primitives.glob_fast import glob_filter
 from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
+from nexus.bricks.snapshot.errors import TransactionConflictError as _TransactionConflictError
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.lib.path_utils import validate_path as _normalize_path
 
 logger = logging.getLogger(__name__)
 
@@ -370,6 +372,10 @@ def create_async_files_router(
             None,
             description="Write consistency mode: 'sync' (default, strong) or 'async' (eventual)",
         ),
+        transaction_id: str | None = Query(
+            None,
+            description="Active transaction ID to track this write in (from snapshots API)",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -384,6 +390,37 @@ def create_async_files_router(
         """
         try:
             fs = await _get_fs()
+
+            # Snapshot tracking setup: validate conflict + capture original state BEFORE write
+            _ss = None
+            _norm_path: str | None = None
+            _original_hash: str | None = None
+            _original_metadata: dict[str, Any] | None = None
+            if transaction_id:
+                _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
+                if _ss is not None:
+                    _norm_path = _normalize_path(request.path)
+                    _ss.validate_path_available(transaction_id, _norm_path)
+                    # Capture original state for rollback
+                    try:
+                        _orig_meta = fs.metadata.get(_norm_path)
+                        if _orig_meta:
+                            _original_hash = _orig_meta.etag
+                            _original_metadata = {
+                                "size": _orig_meta.size,
+                                "version": _orig_meta.version,
+                                "modified_at": _orig_meta.modified_at.isoformat()
+                                if _orig_meta.modified_at
+                                else None,
+                                "backend_name": getattr(_orig_meta, "backend_name", None),
+                            }
+                    except Exception:
+                        _original_hash = None
+                else:
+                    logger.warning(
+                        "txn track: snapshot_service unavailable, skipping txn=%s", transaction_id
+                    )
+
             # Decode content based on encoding
             if request.encoding == "base64":
                 content = base64.b64decode(request.content)
@@ -412,6 +449,25 @@ def create_async_files_router(
             # fs.write is async — call directly
             result = await fs.write(**write_kwargs)
 
+            # Track write in transaction AFTER successful write.
+            # Skip if _write_internal already tracked it (path already in registry).
+            if (
+                _ss is not None
+                and _norm_path is not None
+                and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
+            ):
+                try:
+                    _ss.track_write(
+                        transaction_id=transaction_id,
+                        path=_norm_path,
+                        original_hash=_original_hash,
+                        original_metadata=_original_metadata,
+                        new_hash=result.get("etag"),
+                    )
+                    logger.info("txn tracked write: txn=%s path=%s", transaction_id, _norm_path)
+                except Exception as _track_err:
+                    logger.warning("txn track write failed: %s", _track_err)
+
             modified = result["modified_at"]
             if hasattr(modified, "isoformat"):
                 modified = modified.isoformat()
@@ -435,6 +491,8 @@ def create_async_files_router(
         except ConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except _TransactionConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Write error: {e}")
@@ -523,12 +581,57 @@ def create_async_files_router(
     @router.delete("/delete", response_model=DeleteResponse)
     async def delete_file(
         path: str = Query(..., description="Path to delete"),
+        transaction_id: str | None = Query(
+            None,
+            description="Active transaction ID to track this delete in",
+        ),
         context: Any = Depends(get_context),
     ) -> DeleteResponse:
         """Delete a file."""
         try:
             fs = await _get_fs()
+
+            _ss = None
+            _norm_path: str | None = None
+            _original_hash: str | None = None
+            _original_metadata: dict[str, Any] | None = None
+            if transaction_id:
+                _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
+                if _ss is not None:
+                    _norm_path = _normalize_path(path)
+                    _ss.validate_path_available(transaction_id, _norm_path)
+                    try:
+                        _orig_meta = fs.metadata.get(_norm_path)
+                        if _orig_meta:
+                            _original_hash = _orig_meta.etag
+                            _original_metadata = {
+                                "size": _orig_meta.size,
+                                "version": _orig_meta.version,
+                                "modified_at": _orig_meta.modified_at.isoformat()
+                                if _orig_meta.modified_at
+                                else None,
+                                "backend_name": getattr(_orig_meta, "backend_name", None),
+                            }
+                    except Exception:
+                        _original_hash = None
+
             await fs.sys_unlink(path, context=context)
+
+            if (
+                _ss is not None
+                and _norm_path is not None
+                and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
+            ):
+                try:
+                    _ss.track_delete(
+                        transaction_id=transaction_id,
+                        path=_norm_path,
+                        original_hash=_original_hash,
+                        original_metadata=_original_metadata,
+                    )
+                except Exception as _track_err:
+                    logger.warning("txn track delete failed: %s", _track_err)
+
             return DeleteResponse(deleted=True, path=path)
 
         except NexusPermissionError as e:
@@ -537,6 +640,8 @@ def create_async_files_router(
             raise HTTPException(status_code=404, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except _TransactionConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Delete error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e

@@ -204,7 +204,7 @@ class TransactionalSnapshotService:
     ) -> None:
         """Internal: track a filesystem operation within a transaction."""
         # Hold CAS reference to prevent GC of original content
-        if original_hash is not None:
+        if original_hash is not None and hasattr(self._cas_store, "hold_reference"):
             held = self._cas_store.hold_reference(original_hash)
             if not held:
                 logger.warning(
@@ -218,7 +218,7 @@ class TransactionalSnapshotService:
         tracked = self._registry.track_path(transaction_id, path)
         if not tracked:
             # Release the hold we just acquired since we can't track
-            if original_hash is not None:
+            if original_hash is not None and hasattr(self._cas_store, "release"):
                 self._cas_store.release(original_hash)
             raise TransactionConflictError(
                 conflicts=[
@@ -249,7 +249,7 @@ class TransactionalSnapshotService:
                 transaction_id,
             )
             # Release CAS hold to prevent ref_count leak (CRITICAL-2 fix)
-            if original_hash is not None:
+            if original_hash is not None and hasattr(self._cas_store, "release"):
                 try:
                     self._cas_store.release(original_hash)
                 except Exception:
@@ -468,12 +468,41 @@ class TransactionalSnapshotService:
         for entry in reversed(entries):
             try:
                 if entry.original_hash is not None and entry.original_metadata is not None:
-                    # Restore file to pre-transaction state
+                    # Restore file to pre-transaction state (full metadata available)
                     restored = self._restore_metadata_from_snapshot(
                         entry.path, entry.original_hash, entry.original_metadata
                     )
                     self._metadata_store.put(restored)
                     logger.debug("Restored file: path=%s hash=%s", entry.path, entry.original_hash)
+                elif entry.original_hash is not None and entry.original_metadata is None:
+                    # Restore with minimal metadata (original_metadata was not captured)
+                    if self._metadata_factory is not None:
+                        current_meta = self._metadata_store.get(entry.path)
+                        restored = self._metadata_factory(
+                            path=entry.path,
+                            backend_name=getattr(current_meta, "backend_name", "local")
+                            if current_meta
+                            else "local",
+                            physical_path=entry.original_hash,
+                            size=getattr(current_meta, "size", 0) if current_meta else 0,
+                            etag=entry.original_hash,
+                            created_at=getattr(current_meta, "created_at", None)
+                            or datetime.now(UTC),
+                            modified_at=datetime.now(UTC),
+                            version=(getattr(current_meta, "version", 1) if current_meta else 1),
+                            zone_id=getattr(current_meta, "zone_id", "root")
+                            if current_meta
+                            else "root",
+                            owner_id=getattr(current_meta, "owner_id", None)
+                            if current_meta
+                            else None,
+                        )
+                        self._metadata_store.put(restored)
+                        logger.debug(
+                            "Restored file (minimal): path=%s hash=%s",
+                            entry.path,
+                            entry.original_hash,
+                        )
                 elif entry.operation == "write" and entry.original_hash is None:
                     # New file created during transaction — delete it
                     try:

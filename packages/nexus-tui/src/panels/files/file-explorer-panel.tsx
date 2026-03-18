@@ -31,6 +31,7 @@ import { Breadcrumb } from "../../shared/components/breadcrumb.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { FileTree, flattenVisibleNodes, LOAD_MORE_SENTINEL } from "./file-tree.js";
 import { FilePreview } from "./file-preview.js";
+import { FileEditor } from "./file-editor.js";
 import { FileMetadata } from "./file-metadata.js";
 import { FileAspects } from "./file-aspects.js";
 import { FileSchema } from "./file-schema.js";
@@ -66,7 +67,7 @@ const ALL_TABS: readonly TabDef<FilesTab>[] = [
 // Input mode types
 // =============================================================================
 
-type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest";
+type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest" | "create";
 
 // =============================================================================
 // Keybinding builders — one function per mode (Decision 6A)
@@ -133,6 +134,8 @@ interface BindingContext {
   readonly setSearchResults: (v: readonly { path: string; line?: number; content?: string }[] | null) => void;
   // Paste destination input
   readonly setInputModeWithCallback: (mode: InputMode, onSubmit: (value: string) => void) => void;
+  // Editor
+  readonly openEditor: (path: string) => void;
 }
 
 /** Navigation bindings for the currently active tab (Decision 5A). */
@@ -229,6 +232,21 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
         ctx.setInputMode("rename");
         ctx.setInputBuffer(ctx.selectedItem.name);
       }
+    },
+    // Edit existing file: open full-screen editor
+    e: () => {
+      if (ctx.selectedItem && !ctx.selectedItem.isDirectory) {
+        ctx.openEditor(ctx.selectedItem.path);
+      }
+    },
+    // Create new file: prompt for filename, then open editor
+    "shift+e": () => {
+      const dir = ctx.selectedItem?.isDirectory
+        ? ctx.selectedItem.path
+        : ctx.currentPath;
+      const prefix = dir === "/" ? "/" : dir + "/";
+      ctx.setInputMode("create");
+      ctx.setInputBuffer(prefix);
     },
     // Copy path to system clipboard
     y: () => {
@@ -390,6 +408,18 @@ function getInputModeBindings(
         },
       };
 
+    case "create":
+      return {
+        ...baseBindings,
+        return: () => {
+          const filePath = ctx.filterQuery.trim();
+          if (!filePath) { resetInput(); return; }
+          // Open editor for the new path (editor handles creation on save)
+          ctx.openEditor(filePath);
+          resetInput();
+        },
+      };
+
     default:
       return {};
   }
@@ -400,9 +430,10 @@ function getKeyBindings(
   inputMode: InputMode,
   overlayActive: boolean,
   confirmDelete: boolean,
+  editorOpen: boolean,
   ctx: BindingContext,
 ): Record<string, () => void> {
-  if (overlayActive || confirmDelete) return {};
+  if (overlayActive || confirmDelete || editorOpen) return {};
 
   if (inputMode !== "none") {
     return getInputModeBindings(inputMode, ctx);
@@ -432,6 +463,7 @@ function getInputLabel(mode: InputMode, buffer: string): string {
     case "filter": return `/${buffer}\u2588`;
     case "search": return `Search (g: glob, r: grep): ${buffer}\u2588`;
     case "paste-dest": return `Paste to: ${buffer}\u2588`;
+    case "create": return `New file path: ${buffer}\u2588`;
     default: return "";
   }
 }
@@ -465,8 +497,9 @@ function getHelpText(
     if (clipboard) {
       parts.push(`p:paste ${clipboard.paths.length} ${clipboard.operation === "cut" ? "cut" : "copied"}`, "P:paste to path");
     }
-    parts.push("d:del", "N:mkdir", "R:rename");
+    parts.push("d:del", "N:mkdir", "R:rename", "e:edit", "E:new file");
     if (catalogAvailable) parts.push("m/a/s:meta");
+    parts.push("?:help");
     return parts.join("  ");
   }
 
@@ -542,6 +575,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   const uiFocusPane = useUiStore((s) => s.getFocusPane("files"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
   const overlayActive = useUiStore((s) => s.overlayActive);
+  const setOverlayActive = useUiStore((s) => s.setOverlayActive);
 
   // Catalog brick availability
   const { available: catalogAvailable } = useBrickAvailable("catalog");
@@ -602,6 +636,17 @@ export default function FileExplorerPanel(): React.ReactNode {
 
   // Clipboard copy (system)
   const { copy, copied } = useCopy();
+
+  // Editor overlay state — suppress global panel-switch keys while editor is open
+  const [editorPath, setEditorPath] = useState<string | null>(null);
+  const openEditor = useCallback((path: string) => {
+    useUiStore.getState().setFileEditorOpen(true);
+    setEditorPath(path);
+  }, []);
+  const closeEditor = useCallback(() => {
+    useUiStore.getState().setFileEditorOpen(false);
+    setEditorPath(null);
+  }, []);
 
   // Dialog state
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -704,11 +749,12 @@ export default function FileExplorerPanel(): React.ReactNode {
     executeSearch,
     searchResults, setSearchResults,
     setInputModeWithCallback: setInputMode as BindingContext["setInputModeWithCallback"],
+    openEditor,
   };
 
   useKeyboard(
-    getKeyBindings(inputMode, overlayActive, confirmDelete, ctx),
-    !overlayActive && inputMode !== "none" ? handleUnhandledKey : undefined,
+    getKeyBindings(inputMode, overlayActive, confirmDelete, editorPath !== null, ctx),
+    !overlayActive && inputMode !== "none" && editorPath === null ? handleUnhandledKey : undefined,
   );
 
   const handleConfirmDelete = (): void => {
@@ -740,6 +786,11 @@ export default function FileExplorerPanel(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
+      {/* Full-screen file editor */}
+      {editorPath ? (
+        <FileEditor path={editorPath} onClose={closeEditor} />
+      ) : <>
+
       {/* Panel-level tab bar */}
       <box height={1} width="100%">
         <text>
@@ -886,6 +937,7 @@ export default function FileExplorerPanel(): React.ReactNode {
         onConfirm={handleConfirmDelete}
         onCancel={handleCancelDelete}
       />
+    </>}
     </box>
   );
 }

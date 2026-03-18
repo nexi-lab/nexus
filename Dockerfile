@@ -78,16 +78,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         "txtai[ann]>=9.0" \
         "sentence-transformers>=5.3"
 
-# On arm64, uninstall hnswlib after txtai[ann] pulls it in.
-# hnswlib 0.8.0's C extension executes SVE2 instructions that SIGILL on
-# Apple Silicon Docker (M-chips do not implement SVE). Confirmed via:
-#   python3 -c "from hnswlib import Index"  →  exit 132 (SIGILL)
-#   python3 -c "import txtai.ann.dense.hnsw" →  SIGILL (last import before crash)
-# txtai falls back gracefully to faiss or pgvector ANN without hnswlib.
-# torch, sentence-transformers, faiss, and all other imports are unaffected.
-RUN if [ "${TARGETARCH}" = "arm64" ]; then \
-        pip uninstall -y hnswlib || true; \
-    fi
+# NOTE: hnswlib removal moved to after the final pip install (line ~121)
+# to ensure it's not re-introduced by any subsequent install step.
 
 # ---------- Build Rust extensions (Issue #3125) ----------
 # On arm64, disable SimSIMD SVE backends at compile time. Apple Silicon does
@@ -118,6 +110,17 @@ COPY alembic/ ./alembic/
 COPY alembic/alembic.ini ./alembic.ini
 RUN rm -rf src/*.egg-info build/ && \
     pip install --no-cache-dir --no-deps --force-reinstall .
+
+# On arm64, remove hnswlib LAST — after all pip installs are done.
+# hnswlib 0.8.0's C extension executes SVE2 instructions that SIGILL on
+# Apple Silicon Docker (M-chips do not implement SVE). txtai falls back
+# gracefully to faiss/pgvector ANN without hnswlib.
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+        pip uninstall -y hnswlib && \
+        rm -f /usr/local/lib/python3.13/site-packages/hnswlib*.so && \
+        echo "✓ hnswlib removed (ARM64 SIGILL fix)"; \
+    fi
 
 # ---------- Production image ----------
 FROM python:3.13-slim

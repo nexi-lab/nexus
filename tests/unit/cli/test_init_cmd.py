@@ -77,7 +77,7 @@ class TestPresetConfig:
 
     def test_default_channel_and_accelerator(self) -> None:
         for preset in VALID_PRESETS:
-            assert PRESETS[preset].image_channel == "stable"
+            assert PRESETS[preset].image_channel == "edge"
             assert PRESETS[preset].image_accelerator == "cpu"
 
 
@@ -226,7 +226,7 @@ class TestBuildConfig:
         cfg = _build_config("shared", "./data", False, {}, ())
         assert "image_ref" in cfg
         assert cfg["image_ref"].startswith("ghcr.io/nexi-lab/nexus:")
-        assert cfg["image_channel"] == "stable"
+        assert cfg["image_channel"] == "edge"
         assert cfg["image_accelerator"] == "cpu"
 
     def test_demo_preset(self) -> None:
@@ -338,7 +338,7 @@ class TestInitCliCommand:
         assert cfg["auth"] == "static"
         assert "postgres" in cfg["services"]
         assert "image_ref" in cfg
-        assert cfg["image_channel"] == "stable"
+        assert cfg["image_channel"] == "edge"
 
     def test_shared_preset_with_channel(
         self, runner: CliRunner, tmp_project: Path, _compose_file: Path

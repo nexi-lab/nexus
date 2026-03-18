@@ -84,17 +84,6 @@ jobs:
         shell: bash -el {0}
         run: rustup component add rustfmt clippy
 
-      # protoc is required by tonic_build in nexus_raft/build.rs when the
-      # `grpc` feature (part of `full`) is enabled.
-      # Pin to 3.x: the `protobuf-build` crate used by `raft-proto` does a
-      # lexicographic version check, so protoc 23.x fails ">=3.1.0" because
-      # "2" < "3". Using 3.20.3 passes the check on all platforms.
-      - name: Setup protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "3.20.3"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       # Cache compiled Rust artifacts across runs to speed up re-builds.
       - name: Rust build cache
         uses: Swatinem/rust-cache@v2
@@ -122,11 +111,15 @@ jobs:
             --out build/dist \
             -m rust/nexus_pyo3/Cargo.toml
 
-      - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
+      # Use --features python only: consensus + grpc are EXPERIMENTAL and
+      # "not used in production" (see Cargo.toml). Skipping them avoids
+      # the protobuf-build protoc version-check bug entirely.
+      - name: Build nexus_raft wheel  (rust/nexus_raft --features python)
         shell: bash -el {0}
         run: |
+          mkdir -p build/dist
           conda run -n nexus maturin build --release \
-            --features full \
+            --features python \
             --out build/dist \
             -m rust/nexus_raft/Cargo.toml
 

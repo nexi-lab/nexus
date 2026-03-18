@@ -541,7 +541,6 @@ async def _register_vfs_hooks(
             from nexus.bricks.task_manager.write_hook import TaskWriteHook
 
             _task_svc = TaskManagerService(nexus_fs=nx)
-            await _task_svc.ensure_dirs()
             _task_write_hook = TaskWriteHook()
 
             # Wire consumer from brick_services (created in _bricks.py)
@@ -551,7 +550,7 @@ async def _register_vfs_hooks(
                 _task_consumer.set_task_service(_task_svc)
 
             await _enlist("task_write", _task_write_hook)
-            await _enlist("task_agent_resolver", TaskAgentResolver(_task_svc, _proc_table))
+            await _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
             nx._task_write_hook = _task_write_hook
             nx._task_manager_service = _task_svc
         except Exception as exc:

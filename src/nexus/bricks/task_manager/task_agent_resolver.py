@@ -15,7 +15,6 @@ import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.bricks.task_manager.service import TaskManagerService
     from nexus.contracts.protocols.service_hooks import HookSpec
 
 _AGENT_STATUS_RE = re.compile(r"^/\.tasks/tasks/([^/]+)/agent/status$")
@@ -29,9 +28,9 @@ class TaskAgentResolver:
     Write and delete raise PermissionError (read-only virtual path).
     """
 
-    def __init__(self, task_svc: "TaskManagerService", process_table: Any) -> None:
-        self._task_svc = task_svc
+    def __init__(self, process_table: Any) -> None:
         self._process_table = process_table
+        self._worker_pids: dict[str, int] = {}  # task_id → worker_pid (sync cache)
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
@@ -43,6 +42,10 @@ class TaskAgentResolver:
 
     async def activate(self) -> None:
         pass
+
+    def notify_worker_assigned(self, task_id: str, worker_pid: int) -> None:
+        """Called by dispatch consumer when a worker is assigned to a task."""
+        self._worker_pids[task_id] = worker_pid
 
     def _match_task_id(self, path: str) -> str | None:
         m = _AGENT_STATUS_RE.match(path)
@@ -61,12 +64,7 @@ class TaskAgentResolver:
         if task_id is None:
             return None  # not our path — pass through
 
-        try:
-            task = self._task_svc.get_task(task_id)
-        except Exception:
-            return None  # task not found — let VFS 404 handle it
-
-        worker_pid = task.get("worker_pid")
+        worker_pid = self._worker_pids.get(task_id)
         if not worker_pid:
             payload: dict[str, Any] = {"status": "no_worker", "task_id": task_id}
         else:

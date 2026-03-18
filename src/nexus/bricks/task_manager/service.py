@@ -67,6 +67,7 @@ class TaskManagerService:
 
     def __init__(self, nexus_fs: Any) -> None:
         self._fs = nexus_fs
+        self._dirs_ready = False
 
     # ------------------------------------------------------------------
     # Path helpers
@@ -102,6 +103,7 @@ class TaskManagerService:
         return result
 
     async def _write_json(self, path: str, data: dict[str, Any]) -> None:
+        await self._ensure_dirs()
         await self._fs.sys_write(path, json.dumps(data, default=str))
 
     @staticmethod
@@ -112,8 +114,10 @@ class TaskManagerService:
     def _audit_path(task_id: str, entry_id: str) -> str:
         return f"/.tasks/audit/{task_id}/{entry_id}.json"
 
-    async def ensure_dirs(self) -> None:
-        """Create required VFS directories (must be called after init)."""
+    async def _ensure_dirs(self) -> None:
+        """Create required VFS directories on first use."""
+        if self._dirs_ready:
+            return
         for d in (
             "/.tasks",
             "/.tasks/missions",
@@ -123,6 +127,7 @@ class TaskManagerService:
             "/.tasks/audit",
         ):
             await self._fs.sys_mkdir(d, parents=True, exist_ok=True)
+        self._dirs_ready = True
 
     def _now(self) -> str:
         return datetime.now(UTC).isoformat()

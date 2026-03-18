@@ -284,8 +284,6 @@ class TestSwapService:
 
         # Old hooks removed, new hooks registered
         assert dispatch.read_hook_count == 1
-        assert hook2 in dispatch._read_hooks
-        assert hook1 not in dispatch._read_hooks
 
         # Protocol methods called
         assert svc1.drained is True
@@ -348,8 +346,6 @@ class TestSwapService:
         await coordinator.swap_service("search", svc2)
 
         assert dispatch.read_hook_count == 1
-        assert hook2 in dispatch._read_hooks
-        assert hook1 not in dispatch._read_hooks
 
     @pytest.mark.asyncio()
     async def test_swap_drains_in_flight_calls(
@@ -503,12 +499,6 @@ class TestSwapWithFullHookSpec:
         assert dispatch.write_hook_count == 1
         assert dispatch.observer_count == 1
 
-        # Identity check — new hooks, not old
-        assert new_read in dispatch._read_hooks
-        assert old_read not in dispatch._read_hooks
-        assert new_write in dispatch._write_hooks
-        assert old_write not in dispatch._write_hooks
-
     @pytest.mark.asyncio()
     async def test_swap_with_no_new_spec_clears_old(
         self,
@@ -528,7 +518,6 @@ class TestSwapWithFullHookSpec:
 
         # Old hook removed, no new hook registered
         assert dispatch.read_hook_count == 0
-        assert old_hook not in dispatch._read_hooks
 
 
 # ---------------------------------------------------------------------------

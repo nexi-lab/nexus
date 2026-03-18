@@ -18,7 +18,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -50,7 +50,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 
 
 @pytest.fixture
-def mock_notify(nx: NexusFS) -> MagicMock:
+def mock_notify(nx: NexusFS) -> AsyncMock:
     """Replace _dispatch with a mock and return the mock's .notify attribute."""
     mock_dispatch = MagicMock()
     # resolve_* methods must return (handled=False, None) so sys_ methods
@@ -58,6 +58,14 @@ def mock_notify(nx: NexusFS) -> MagicMock:
     mock_dispatch.resolve_read.return_value = (False, None)
     mock_dispatch.resolve_write.return_value = (False, None)
     mock_dispatch.resolve_delete.return_value = (False, None)
+    # All post-dispatch and notify methods are now async
+    mock_dispatch.notify = AsyncMock()
+    mock_dispatch.intercept_post_write = AsyncMock()
+    mock_dispatch.intercept_post_delete = AsyncMock()
+    mock_dispatch.intercept_post_rename = AsyncMock()
+    mock_dispatch.intercept_post_mkdir = AsyncMock()
+    mock_dispatch.intercept_post_rmdir = AsyncMock()
+    mock_dispatch.intercept_post_write_batch = AsyncMock()
     nx._dispatch = mock_dispatch
     return mock_dispatch.notify
 
@@ -182,7 +190,8 @@ class TestWriteBatchCallsDispatch:
 class TestWriteStreamCallsDispatch:
     """write_stream() calls _dispatch.intercept_post_write() directly."""
 
-    def test_write_stream_calls_intercept(self, nx: NexusFS) -> None:
+    @pytest.mark.asyncio
+    async def test_write_stream_calls_intercept(self, nx: NexusFS) -> None:
         if not hasattr(nx, "write_stream"):
             pytest.skip("write_stream not available")
 
@@ -190,9 +199,12 @@ class TestWriteStreamCallsDispatch:
         mock_dispatch.resolve_read.return_value = (False, None)
         mock_dispatch.resolve_write.return_value = (False, None)
         mock_dispatch.resolve_delete.return_value = (False, None)
+        # All post-dispatch methods are now async
+        mock_dispatch.intercept_post_write = AsyncMock()
+        mock_dispatch.notify = AsyncMock()
         nx._dispatch = mock_dispatch
 
-        nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]))
+        await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]))
 
         mock_dispatch.intercept_post_write.assert_called_once()
         ctx = mock_dispatch.intercept_post_write.call_args.args[0]

@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from nexus.bricks.delegation.grant_helpers import (
+from nexus.contracts.grant_helpers import (
     MAX_REGISTRATION_GRANTS,
     GrantInput,
 )

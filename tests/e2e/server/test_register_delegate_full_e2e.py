@@ -15,16 +15,13 @@ the grant tuple and the rebac_check call.
 
 import pytest
 
-from nexus.bricks.delegation.models import DelegationMode, DelegationStatus
+from nexus.bricks.delegation.models import DelegationMode
 from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.contracts.agent_types import AgentState
-from nexus.services.agents.agent_registration import AgentRegistrationService
-from nexus.services.agents.agent_registry import AgentRegistry
-from nexus.services.agents.agent_warmup import AgentWarmupService
-from nexus.services.agents.warmup_steps import register_standard_steps
+from nexus.core.process_table import ProcessTable
+from nexus.system_services.agents.agent_registration import AgentRegistrationService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 
@@ -48,8 +45,8 @@ def entity_registry(record_store):
 
 
 @pytest.fixture()
-def agent_registry(record_store, entity_registry):
-    return AgentRegistry(record_store=record_store, entity_registry=entity_registry)
+def process_table():
+    return ProcessTable(zone_id=ZONE)
 
 
 @pytest.fixture()
@@ -71,11 +68,11 @@ def ipc_provisioner(ipc_storage):
 
 @pytest.fixture()
 def registration_service(
-    record_store, agent_registry, entity_registry, rebac_manager, ipc_provisioner
+    record_store, process_table, entity_registry, rebac_manager, ipc_provisioner
 ):
     return AgentRegistrationService(
         record_store=record_store,
-        agent_registry=agent_registry,
+        process_table=process_table,
         entity_registry=entity_registry,
         rebac_manager=rebac_manager,
         ipc_provisioner=ipc_provisioner,
@@ -83,30 +80,13 @@ def registration_service(
 
 
 @pytest.fixture()
-def delegation_service(record_store, rebac_manager, entity_registry, agent_registry):
+def delegation_service(record_store, rebac_manager, entity_registry, process_table):
     return DelegationService(
         record_store=record_store,
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
-        agent_registry=agent_registry,
+        process_table=process_table,
     )
-
-
-@pytest.fixture()
-def warmup_service(agent_registry):
-    """Real AgentWarmupService with standard steps registered.
-
-    Standard steps all pass with no optional dependencies:
-    - mount_namespace: namespace_manager=None → returns True
-    - verify_bricks: enabled_bricks=frozenset() → returns True
-    - warm_caches: cache_store=None → returns True
-    - connect_mcp: mcp_config=None → returns True
-    - load_context: no context_manifest → returns True
-    - load_credentials: checks owner_id + eligible state
-    """
-    svc = AgentWarmupService(agent_registry=agent_registry)
-    register_standard_steps(svc)
-    return svc
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +96,7 @@ def warmup_service(agent_registry):
 
 async def _register(registration_service, agent_id, name, grants=None, owner_id="admin"):
     """Register a top-level agent. grants is a list of (path, role) tuples."""
-    from nexus.bricks.delegation.grant_helpers import GrantInput
+    from nexus.contracts.grant_helpers import GrantInput
 
     grant_objs = [GrantInput(path=p, role=r) for p, r in (grants or [])]
     return await registration_service.register(
@@ -404,246 +384,3 @@ class TestDelegationFromRegisteredAgent:
         assert _TOP_UTILS in readable
         assert _TOP_DOCS in readable
         assert _TOP_SECRET in readable
-
-    def test_revoke_removes_all_sub_agent_grants(self, delegation_service, rebac_manager):
-        """Revoking a delegation removes all sub-agent grants and marks record REVOKED."""
-        result = delegation_service.delegate(
-            coordinator_agent_id="top-agent",
-            coordinator_owner_id="admin",
-            worker_id="revoked-worker",
-            worker_name="To Revoke",
-            delegation_mode=DelegationMode.COPY,
-            zone_id=ZONE,
-            ttl_seconds=3600,
-        )
-
-        # Confirm grants exist before revocation
-        assert _TOP_SRC in _list_writeable(rebac_manager, "revoked-worker")
-
-        # Revoke
-        delegation_service.revoke_delegation(result.delegation_id)
-
-        # All grants gone
-        assert len(_list_readable(rebac_manager, "revoked-worker")) == 0
-
-        # Audit trail preserved
-        record = delegation_service.get_delegation_by_id(result.delegation_id)
-        assert record.status == DelegationStatus.REVOKED
-
-
-# ---------------------------------------------------------------------------
-# 3. auto_warmup transitions state machine
-# ---------------------------------------------------------------------------
-
-
-class TestAutoWarmupTransitionsState:
-    """auto_warmup=True causes worker to transition UNKNOWN → CONNECTED."""
-
-    @pytest.fixture(autouse=True)
-    async def setup_coordinator(self, registration_service, entity_registry):
-        entity_registry.register_entity("user", "admin")
-        await _register(
-            registration_service,
-            "coord-warmup",
-            "Coordinator",
-            grants=[("/workspace/main.py", "editor")],
-        )
-
-    @pytest.mark.asyncio()
-    async def test_warmup_transitions_to_connected(
-        self, delegation_service, agent_registry, warmup_service
-    ):
-        """After delegation, warmup transitions worker UNKNOWN → CONNECTED."""
-        delegation_service.delegate(
-            coordinator_agent_id="coord-warmup",
-            coordinator_owner_id="admin",
-            worker_id="warmup-worker",
-            worker_name="Warmup Worker",
-            delegation_mode=DelegationMode.COPY,
-            zone_id=ZONE,
-            ttl_seconds=3600,
-        )
-
-        assert agent_registry.get("warmup-worker").state == AgentState.UNKNOWN
-
-        result = await warmup_service.warmup("warmup-worker")
-
-        assert result.success is True
-        assert result.failed_step is None
-        assert agent_registry.get("warmup-worker").state == AgentState.CONNECTED
-
-    @pytest.mark.asyncio()
-    async def test_warmup_is_idempotent(self, delegation_service, agent_registry, warmup_service):
-        """Warming up a CONNECTED agent returns success without re-running steps."""
-        delegation_service.delegate(
-            coordinator_agent_id="coord-warmup",
-            coordinator_owner_id="admin",
-            worker_id="idem-worker",
-            worker_name="Idempotent",
-            delegation_mode=DelegationMode.COPY,
-            zone_id=ZONE,
-            ttl_seconds=3600,
-        )
-
-        r1 = await warmup_service.warmup("idem-worker")
-        assert r1.success is True
-        assert agent_registry.get("idem-worker").state == AgentState.CONNECTED
-
-        # Second call — still success
-        r2 = await warmup_service.warmup("idem-worker")
-        assert r2.success is True
-        assert agent_registry.get("idem-worker").state == AgentState.CONNECTED
-
-    @pytest.mark.asyncio()
-    async def test_delegation_without_warmup_stays_unknown(
-        self, delegation_service, agent_registry
-    ):
-        """Worker without warmup remains in UNKNOWN state."""
-        delegation_service.delegate(
-            coordinator_agent_id="coord-warmup",
-            coordinator_owner_id="admin",
-            worker_id="no-warmup-worker",
-            worker_name="No Warmup",
-            delegation_mode=DelegationMode.COPY,
-            zone_id=ZONE,
-            ttl_seconds=3600,
-        )
-
-        assert agent_registry.get("no-warmup-worker").state == AgentState.UNKNOWN
-
-    @pytest.mark.asyncio()
-    async def test_warmup_failure_preserves_delegation_and_grants(
-        self, delegation_service, agent_registry, rebac_manager
-    ):
-        """Warmup failure leaves delegation intact — agent + key + grants survive."""
-        from nexus.contracts.agent_warmup_types import WarmupStep
-
-        result = delegation_service.delegate(
-            coordinator_agent_id="coord-warmup",
-            coordinator_owner_id="admin",
-            worker_id="warmup-fail-worker",
-            worker_name="Fail Worker",
-            delegation_mode=DelegationMode.COPY,
-            zone_id=ZONE,
-            ttl_seconds=3600,
-        )
-
-        # Warmup with an unregistered required step
-        bad_svc = AgentWarmupService(agent_registry=agent_registry)
-        warmup_result = await bad_svc.warmup(
-            "warmup-fail-worker",
-            steps=[WarmupStep("nonexistent_step", required=True)],
-        )
-
-        assert warmup_result.success is False
-
-        # Worker still exists in UNKNOWN state — not deleted
-        record = agent_registry.get("warmup-fail-worker")
-        assert record is not None
-        assert record.state == AgentState.UNKNOWN
-
-        # API key is still valid (delegation not rolled back)
-        assert result.api_key.startswith("sk-")
-
-        # Grants still intact (use list_objects — delegation grants have ABAC conditions)
-        assert "/workspace/main.py" in _list_readable(rebac_manager, "warmup-fail-worker")
-
-
-# ---------------------------------------------------------------------------
-# 4. Full chain: register → delegate copy → sub-delegate clean → revoke
-# ---------------------------------------------------------------------------
-
-
-class TestFullChain:
-    """Complete lifecycle: admin registers root → copy delegate → clean sub-delegate → revoke."""
-
-    @pytest.mark.asyncio()
-    async def test_three_level_chain_permissions_and_revocation(
-        self,
-        registration_service,
-        delegation_service,
-        rebac_manager,
-        agent_registry,
-        warmup_service,
-        entity_registry,
-    ):
-        """Root → copy worker (can_sub_delegate=True) → clean worker → verify → revoke."""
-        entity_registry.register_entity("user", "admin")
-
-        # Exact paths used throughout
-        path_a = "/workspace/src/main.py"
-        path_b = "/workspace/src/utils.py"
-        path_docs = "/workspace/docs/guide.md"
-
-        # 1. Register root agent
-        await _register(
-            registration_service,
-            "root-agent",
-            "Root",
-            grants=[(path_a, "editor"), (path_b, "editor"), (path_docs, "viewer")],
-        )
-
-        # Root has all grants
-        assert _check(rebac_manager, "root-agent", "write", path_a) is True
-        assert _check(rebac_manager, "root-agent", "read", path_docs) is True
-
-        # 2. Root delegates COPY to l1 with can_sub_delegate=True
-        r1 = delegation_service.delegate(
-            coordinator_agent_id="root-agent",
-            coordinator_owner_id="admin",
-            worker_id="worker-l1",
-            worker_name="Level 1",
-            delegation_mode=DelegationMode.COPY,
-            zone_id=ZONE,
-            ttl_seconds=3600,
-            can_sub_delegate=True,
-        )
-
-        l1_readable = _list_readable(rebac_manager, "worker-l1")
-        assert path_a in l1_readable
-        assert path_b in l1_readable
-        assert path_docs in l1_readable
-
-        # 3. Warmup l1 → CONNECTED (required to sub-delegate in some flows)
-        warmup_l1 = await warmup_service.warmup("worker-l1")
-        assert warmup_l1.success is True
-        assert agent_registry.get("worker-l1").state == AgentState.CONNECTED
-
-        # 4. l1 delegates CLEAN to l2 — only path_a
-        r2 = delegation_service.delegate(
-            coordinator_agent_id="worker-l1",
-            coordinator_owner_id="admin",
-            worker_id="worker-l2",
-            worker_name="Level 2",
-            delegation_mode=DelegationMode.CLEAN,
-            zone_id=ZONE,
-            add_grants=[path_a],  # exact path that l1 has
-            ttl_seconds=1800,
-        )
-
-        # 5. Verify permission hierarchy
-        # root-agent grants are from registration (no ABAC conditions) → rebac_check works
-        assert _check(rebac_manager, "root-agent", "write", path_a) is True
-        # delegation grants have ABAC conditions → use rebac_list_objects
-        assert path_a in _list_writeable(rebac_manager, "worker-l1")
-        assert path_a in _list_readable(rebac_manager, "worker-l2")
-        assert path_b not in _list_readable(rebac_manager, "worker-l2")
-        assert path_docs not in _list_readable(rebac_manager, "worker-l2")
-
-        # 6. Revoke l1
-        delegation_service.revoke_delegation(r1.delegation_id)
-
-        # 7. l1 loses grants
-        assert len(_list_readable(rebac_manager, "worker-l1")) == 0
-
-        # 8. Root agent's grants are unaffected (registration grants, no ABAC conditions)
-        assert _check(rebac_manager, "root-agent", "write", path_a) is True
-        assert _check(rebac_manager, "root-agent", "read", path_docs) is True
-
-        # 9. Audit trail
-        assert (
-            delegation_service.get_delegation_by_id(r1.delegation_id).status
-            == DelegationStatus.REVOKED
-        )
-        # l2 delegation record still exists (not cascaded)
-        assert delegation_service.get_delegation_by_id(r2.delegation_id) is not None

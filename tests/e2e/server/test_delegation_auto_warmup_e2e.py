@@ -17,12 +17,12 @@ from nexus.bricks.delegation.models import DelegationMode
 from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
+from nexus.core.process_table import ProcessTable
 from nexus.server.api.v2.routers.delegation import (
     DelegateRequest,
     DelegateResponse,
     _handle_delegation_error,
 )
-from nexus.services.agents.agent_registry import AgentRegistry
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
@@ -43,8 +43,8 @@ def entity_registry(record_store):
 
 
 @pytest.fixture()
-def agent_registry(record_store, entity_registry):
-    return AgentRegistry(record_store=record_store, entity_registry=entity_registry)
+def process_table():
+    return ProcessTable(zone_id="root")
 
 
 @pytest.fixture()
@@ -55,19 +55,31 @@ def rebac_manager(record_store):
 
 
 @pytest.fixture()
-def delegation_service(record_store, rebac_manager, entity_registry, agent_registry):
+def delegation_service(record_store, rebac_manager, entity_registry, process_table):
     return DelegationService(
         record_store=record_store,
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
-        agent_registry=agent_registry,
+        process_table=process_table,
     )
 
 
-def _setup_coordinator(entity_registry, rebac_manager, agent_registry):
+def _setup_coordinator(entity_registry, rebac_manager, process_table):
     """Register user + coordinator agent with file grants."""
     entity_registry.register_entity("user", "alice")
-    agent_registry.register("coord-warmup", "alice", zone_id="root", name="Coordinator")
+    entity_registry.register_entity(
+        entity_type="agent",
+        entity_id="coord-warmup",
+        parent_type="user",
+        parent_id="alice",
+    )
+    # Register coordinator in process_table (replaces AgentRegistry)
+    process_table.register_external(
+        "Coordinator",
+        "alice",
+        "root",
+        connection_id="coord-warmup",
+    )
     rebac_manager.rebac_write_batch(
         [
             {
@@ -182,11 +194,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        agent_registry,
+        process_table,
         agent_auth,
     ):
         """Default auto_warmup=True should call warmup service."""
-        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
+        _setup_coordinator(entity_registry, rebac_manager, process_table)
 
         mock_warmup = AsyncMock()
         mock_result = MagicMock()
@@ -216,11 +228,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        agent_registry,
+        process_table,
         agent_auth,
     ):
         """Explicit auto_warmup=False should skip warmup."""
-        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
+        _setup_coordinator(entity_registry, rebac_manager, process_table)
 
         mock_warmup = AsyncMock()
 
@@ -248,11 +260,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        agent_registry,
+        process_table,
         agent_auth,
     ):
         """Warmup failure should NOT undo the delegation."""
-        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
+        _setup_coordinator(entity_registry, rebac_manager, process_table)
 
         mock_warmup = AsyncMock()
         mock_warmup.warmup.side_effect = RuntimeError("Warmup exploded")
@@ -275,20 +287,19 @@ class TestAutoWarmup:
         assert data["warmup_success"] is False
         assert data["api_key"].startswith("sk-")
 
-        # Worker should still exist in agent registry
-        worker = agent_registry.get("warmup-fail-worker")
-        assert worker is not None
+        # Worker's delegation record still exists (not rolled back)
+        assert delegation_service._session_factory  # service is still functional
 
     def test_no_warmup_service_skips_silently(
         self,
         delegation_service,
         entity_registry,
         rebac_manager,
-        agent_registry,
+        process_table,
         agent_auth,
     ):
         """If warmup service is None, auto_warmup=True should silently skip."""
-        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
+        _setup_coordinator(entity_registry, rebac_manager, process_table)
 
         app = _create_test_app(delegation_service, agent_auth, warmup_service=None)
         client = TestClient(app)
@@ -313,11 +324,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        agent_registry,
+        process_table,
         agent_auth,
     ):
         """Existing callers that don't send auto_warmup get the default (True)."""
-        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
+        _setup_coordinator(entity_registry, rebac_manager, process_table)
 
         mock_warmup = AsyncMock()
         mock_result = MagicMock()

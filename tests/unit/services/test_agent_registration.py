@@ -8,13 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.bricks.delegation.grant_helpers import GrantInput
+from nexus.contracts.grant_helpers import GrantInput
 from nexus.system_services.agents.agent_registration import (
     AgentAlreadyExistsError,
     AgentRegistrationService,
     RegistrationResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -59,7 +58,11 @@ def mock_ipc_provisioner():
 
 @pytest.fixture()
 def service(
-    mock_record_store, mock_entity_registry, mock_process_table, mock_rebac_manager, mock_ipc_provisioner
+    mock_record_store,
+    mock_entity_registry,
+    mock_process_table,
+    mock_rebac_manager,
+    mock_ipc_provisioner,
 ):
     return AgentRegistrationService(
         record_store=mock_record_store,

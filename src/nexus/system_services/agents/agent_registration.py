@@ -18,16 +18,16 @@ Design follows the DelegationService saga pattern: ordered steps with
 manual compensation via try/except.
 """
 
+import contextlib
 import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from nexus.bricks.delegation.grant_helpers import GrantInput, grants_to_rebac_tuples
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.grant_helpers import GrantInput, grants_to_rebac_tuples
 
 if TYPE_CHECKING:
-    from nexus.bricks.ipc.provisioning import AgentProvisioner
     from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
     from nexus.core.process_table import ProcessTable
     from nexus.storage.record_store import RecordStoreABC
@@ -69,7 +69,7 @@ class AgentRegistrationService:
         entity_registry: EntityRegistry for persistent agent identity.
         process_table: ProcessTable for runtime agent liveness.
         rebac_manager: EnhancedReBACManager for permission tuples.
-        ipc_provisioner: Optional AgentProvisioner for IPC directories.
+        ipc_provisioner: Optional IPC provisioner (AgentProvisioner) for IPC directories.
         key_service: Optional KeyService for Ed25519 public key storage.
     """
 
@@ -79,7 +79,7 @@ class AgentRegistrationService:
         entity_registry: "EntityRegistryProtocol | None" = None,
         process_table: "ProcessTable | None" = None,
         rebac_manager: Any = None,
-        ipc_provisioner: "AgentProvisioner | None" = None,
+        ipc_provisioner: Any = None,
         key_service: Any = None,
     ) -> None:
         self._session_factory = record_store.session_factory
@@ -148,8 +148,6 @@ class AgentRegistrationService:
             )
 
         # ── Step 2: Runtime liveness in ProcessTable ─────────────────
-        import uuid
-
         if self._process_table is not None:
             self._process_table.register_external(
                 name,
@@ -216,15 +214,11 @@ class AgentRegistrationService:
                         cleanup_exc,
                     )
             if self._process_table is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._process_table.unregister_external(agent_id)
-                except Exception:
-                    pass
             if self._entity_registry is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._entity_registry.delete_entity("agent", agent_id)
-                except Exception:
-                    pass
             raise
 
         # ── Step 5: Provision IPC (filesystem, after DB commit) ──────

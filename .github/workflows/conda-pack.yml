@@ -30,16 +30,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # nexus_pyo3 (shm_pipe/shm_stream) uses POSIX-only APIs (fcntl, pipe,
+          # O_NONBLOCK) that do not exist on Windows. Skip that wheel on Windows;
+          # nexus_raft still compiles and is included.
           - os: windows-latest
             artifact_name: nexus-windows-x86_64
+            build_pyo3: false
 
           # Intel Mac (x86_64) — matches the runner used in release.yml
           - os: macos-15-intel
             artifact_name: nexus-macos-x86_64
+            build_pyo3: true
 
           # Apple Silicon (arm64)
           - os: macos-14
             artifact_name: nexus-macos-arm64
+            build_pyo3: true
 
     steps:
       - name: Checkout code
@@ -78,11 +84,15 @@ jobs:
         shell: bash -el {0}
         run: rustup component add rustfmt clippy
 
-      # protoc is required by tonic_build in nexus_raft/build.rs when
-      # the `grpc` feature (part of `full`) is enabled.
+      # protoc is required by tonic_build in nexus_raft/build.rs when the
+      # `grpc` feature (part of `full`) is enabled.
+      # Pin to 3.x: the `protobuf-build` crate used by `raft-proto` does a
+      # lexicographic version check, so protoc 23.x fails ">=3.1.0" because
+      # "2" < "3". Using 3.20.3 passes the check on all platforms.
       - name: Setup protoc
         uses: arduino/setup-protoc@v3
         with:
+          version: "3.20.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Cache compiled Rust artifacts across runs to speed up re-builds.
@@ -102,7 +112,9 @@ jobs:
         run: |
           conda run -n nexus pip install maturin
 
+      # Skipped on Windows: shm_pipe.rs / shm_stream.rs use POSIX-only APIs.
       - name: Build nexus_fast wheel  (rust/nexus_pyo3)
+        if: matrix.build_pyo3
         shell: bash -el {0}
         run: |
           mkdir -p build/dist

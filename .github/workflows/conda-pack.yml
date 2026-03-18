@@ -5,6 +5,13 @@ name: Conda Pack
 # Artifacts are attached to the GitHub Release created by release.yml.
 # softprops/action-gh-release@v2 safely updates an existing release,
 # so there is no conflict between this workflow and release.yml.
+#
+# Build order per runner:
+#   1. Create nexus conda env (Python 3.13) + pip install .
+#   2. Compile nexus_fast  (rust/nexus_pyo3) via maturin
+#   3. Compile nexus_raft  (rust/nexus_raft --features full) via maturin
+#   4. pip install both .whl files into the nexus env
+#   5. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
 
 on:
   push:
@@ -18,7 +25,7 @@ jobs:
   conda-pack:
     name: conda-pack / ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90        # Rust compilation can be slow on macOS/Windows runners
     strategy:
       fail-fast: false
       matrix:
@@ -38,8 +45,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ── Python / Conda ────────────────────────────────────────────────────
       # Sets up Miniconda and configures bash as a login shell with conda
-      # initialized. All subsequent steps that touch conda use
+      # initialized. All subsequent steps that touch conda must use
       # `shell: bash -el {0}` to inherit this environment.
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
@@ -60,6 +68,65 @@ jobs:
         run: |
           conda run -n nexus pip install .
 
+      # ── Rust toolchain ────────────────────────────────────────────────────
+      # Reads the required toolchain version from rust-toolchain.toml
+      # automatically. No need to specify the version explicitly.
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Add rustfmt and clippy components
+        shell: bash -el {0}
+        run: rustup component add rustfmt clippy
+
+      # protoc is required by tonic_build in nexus_raft/build.rs when
+      # the `grpc` feature (part of `full`) is enabled.
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Cache compiled Rust artifacts across runs to speed up re-builds.
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: conda-pack-rust-${{ matrix.os }}
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+
+      # ── maturin builds ───────────────────────────────────────────────────
+      # Install maturin inside the nexus env so it automatically uses the
+      # correct Python interpreter when building the extension modules.
+      - name: Install maturin into nexus environment
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus pip install maturin
+
+      - name: Build nexus_fast wheel  (rust/nexus_pyo3)
+        shell: bash -el {0}
+        run: |
+          mkdir -p build/dist
+          conda run -n nexus maturin build --release \
+            --out build/dist \
+            -m rust/nexus_pyo3/Cargo.toml
+
+      - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus maturin build --release \
+            --features full \
+            --out build/dist \
+            -m rust/nexus_raft/Cargo.toml
+
+      # ── Install wheels into the nexus env ────────────────────────────────
+      - name: Install Rust wheels into nexus environment
+        shell: bash -el {0}
+        run: |
+          echo "=== Built wheels ==="
+          ls -lh build/dist/
+          conda run -n nexus pip install build/dist/*.whl
+
+      # ── conda-pack ───────────────────────────────────────────────────────
       - name: Install conda-pack into base environment
         shell: bash -el {0}
         run: |
@@ -81,9 +148,9 @@ jobs:
           path: ${{ matrix.artifact_name }}-*.tar.gz
           if-no-files-found: error
 
-  # Attaches all three tarballs to the GitHub Release.
-  # Runs after every conda-pack job succeeds. The release itself is created
-  # by release.yml — this job simply appends files to it.
+  # ── Attach to GitHub Release ──────────────────────────────────────────────
+  # Runs after all three conda-pack jobs succeed. The release itself is
+  # created by release.yml — this job simply appends the three tarballs.
   attach-to-release:
     name: Attach conda packs to GitHub Release
     needs: conda-pack

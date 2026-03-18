@@ -456,14 +456,17 @@ class NexusFS(  # type: ignore[misc]
 
         for parent_dir in reversed(parents_to_create):
             self._create_directory_metadata(parent_dir, context=ctx)
-            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
+            _hier = (
+                getattr(self._system_services, "hierarchy_manager", None)
+                if self._system_services
+                else None
+            )
+            if _hier is not None:
                 try:
                     logger.debug(
                         f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                     )
-                    self._hierarchy_manager.ensure_parent_tuples(
-                        parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID
-                    )
+                    _hier.ensure_parent_tuples(parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID)
                 except Exception as e:
                     logger.warning(
                         "mkdir: Failed to create parent tuples for %s: %s", parent_dir, e
@@ -583,12 +586,17 @@ class NexusFS(  # type: ignore[misc]
 
         ctx = context or self._default_context
 
-        if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
+        _hier = (
+            getattr(self._system_services, "hierarchy_manager", None)
+            if self._system_services
+            else None
+        )
+        if _hier is not None:
             try:
                 logger.debug(
                     f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
                 )
-                created_count = self._hierarchy_manager.ensure_parent_tuples(
+                created_count = _hier.ensure_parent_tuples(
                     path, zone_id=ctx.zone_id or ROOT_ZONE_ID
                 )
                 logger.debug("mkdir: Created %d parent tuples for %s", created_count, path)
@@ -607,17 +615,15 @@ class NexusFS(  # type: ignore[misc]
         # Grant direct_owner permission to the user who created the directory
         # Note: Use 'direct_owner' (not 'owner') as the base relation.
         # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
-        if (
-            hasattr(self, "_rebac_manager")
-            and self._rebac_manager
-            and ctx.user_id
-            and not ctx.is_system
-        ):
+        _rebac = (
+            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
+        )
+        if _rebac and ctx.user_id and not ctx.is_system:
             try:
                 logger.debug(
                     "mkdir: Granting direct_owner permission to %s for %s", ctx.user_id, path
                 )
-                self._rebac_manager.rebac_write(
+                _rebac.rebac_write(
                     subject=("user", ctx.user_id),
                     relation="direct_owner",
                     object=("file", path),
@@ -1110,7 +1116,11 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             OverlayConfig if overlay active for this path, None otherwise
         """
-        registry = getattr(self, "_workspace_registry", None)
+        registry = (
+            getattr(self._system_services, "workspace_registry", None)
+            if self._system_services
+            else None
+        )
         if registry is None:
             return None
 
@@ -2550,16 +2560,19 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning("write: Failed to queue deferred permissions for %s: %s", path, e)
         else:
             # SYNC PATH: Execute permission operations immediately (original behavior)
-            if hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
+            _hier = (
+                getattr(self._system_services, "hierarchy_manager", None)
+                if self._system_services
+                else None
+            )
+            if _hier is not None:
                 try:
                     logger.info(
                         "write: Calling ensure_parent_tuples for %s, zone_id=%s",
                         path,
                         ctx.zone_id or ROOT_ZONE_ID,
                     )
-                    created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, zone_id=ctx.zone_id or "root"
-                    )
+                    created_count = _hier.ensure_parent_tuples(path, zone_id=ctx.zone_id or "root")
                     logger.info("write: Created %d parent tuples for %s", created_count, path)
                 except Exception as e:
                     logger.warning(
@@ -2567,13 +2580,18 @@ class NexusFS(  # type: ignore[misc]
                     )
 
             # Issue #548: Grant direct_owner permission to the user who created the file
-            if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+            _rebac = (
+                getattr(self._system_services, "rebac_manager", None)
+                if self._system_services
+                else None
+            )
+            if meta is None and _rebac:
                 try:
                     if ctx.user_id and not ctx.is_system:
                         logger.debug(
                             f"write: Granting direct_owner permission to {ctx.user_id} for {path}"
                         )
-                        self._rebac_manager.rebac_write(
+                        _rebac.rebac_write(
                             subject=("user", ctx.user_id),
                             relation="direct_owner",
                             object=("file", path),
@@ -3202,13 +3220,14 @@ class NexusFS(  # type: ignore[misc]
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = time.perf_counter()
         all_paths = [path for path, _ in validated_files]
-        if (
-            hasattr(self, "_hierarchy_manager")
-            and self._hierarchy_manager is not None
-            and hasattr(self._hierarchy_manager, "ensure_parent_tuples_batch")
-        ):
+        _hier = (
+            getattr(self._system_services, "hierarchy_manager", None)
+            if self._system_services
+            else None
+        )
+        if _hier is not None and hasattr(_hier, "ensure_parent_tuples_batch"):
             try:
-                created_count = self._hierarchy_manager.ensure_parent_tuples_batch(
+                created_count = _hier.ensure_parent_tuples_batch(
                     all_paths, zone_id=zone_id_for_perms
                 )
                 logger.info(
@@ -3221,18 +3240,16 @@ class NexusFS(  # type: ignore[misc]
                 # Fallback to individual calls if batch fails
                 for path in all_paths:
                     try:
-                        self._hierarchy_manager.ensure_parent_tuples(
-                            path, zone_id=zone_id_for_perms
-                        )
+                        _hier.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
                     except Exception as e2:
                         logger.warning(
                             f"write_batch: Failed to create parent tuples for {path}: {e2}"
                         )
-        elif hasattr(self, "_hierarchy_manager") and self._hierarchy_manager is not None:
+        elif _hier is not None:
             # No batch method available, use individual calls
             for path in all_paths:
                 try:
-                    self._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
+                    _hier.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
                 except Exception as e:
                     logger.warning(
                         "write_batch: Failed to create parent tuples for %s: %s", path, e
@@ -3241,12 +3258,10 @@ class NexusFS(  # type: ignore[misc]
 
         # PERF: Batch direct_owner grants (single transaction instead of N)
         _rebac_start = time.perf_counter()
-        if (
-            hasattr(self, "_rebac_manager")
-            and self._rebac_manager
-            and ctx.user_id
-            and not ctx.is_system
-        ):
+        _rebac = (
+            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
+        )
+        if _rebac and ctx.user_id and not ctx.is_system:
             # Collect all owner grants needed for new files
             owner_grants = []
             for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
@@ -3261,9 +3276,9 @@ class NexusFS(  # type: ignore[misc]
                         }
                     )
 
-            if owner_grants and hasattr(self._rebac_manager, "rebac_write_batch"):
+            if owner_grants and hasattr(_rebac, "rebac_write_batch"):
                 try:
-                    grant_count = self._rebac_manager.rebac_write_batch(owner_grants)
+                    grant_count = _rebac.rebac_write_batch(owner_grants)
                     logger.info("write_batch: Batch granted direct_owner to %d files", grant_count)
                 except Exception as e:
                     logger.warning(
@@ -3272,7 +3287,7 @@ class NexusFS(  # type: ignore[misc]
                     # Fallback to individual calls
                     for grant in owner_grants:
                         try:
-                            self._rebac_manager.rebac_write(
+                            _rebac.rebac_write(
                                 subject=grant["subject"],
                                 relation=grant["relation"],
                                 object=grant["object"],
@@ -3284,7 +3299,7 @@ class NexusFS(  # type: ignore[misc]
                 # No batch method available, use individual calls
                 for grant in owner_grants:
                     try:
-                        self._rebac_manager.rebac_write(
+                        _rebac.rebac_write(
                             subject=grant["subject"],
                             relation=grant["relation"],
                             object=grant["object"],
@@ -3620,18 +3635,21 @@ class NexusFS(  # type: ignore[misc]
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
         logger.warning("[RENAME-REBAC] Starting ReBAC update: %s -> %s", old_path, new_path)
+        _rebac = (
+            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
+        )
         logger.warning(
-            f"[RENAME-REBAC] has _rebac_manager: {hasattr(self, '_rebac_manager')}, is truthy: {bool(getattr(self, '_rebac_manager', None))}"
+            f"[RENAME-REBAC] has rebac_manager: {_rebac is not None}, is truthy: {bool(_rebac)}"
         )
 
-        if hasattr(self, "_rebac_manager") and self._rebac_manager:
+        if _rebac:
             try:
                 logger.warning(
                     f"[RENAME-REBAC] Calling update_object_path: old={old_path}, new={new_path}, is_dir={is_directory}"
                 )
 
                 # Update all ReBAC tuples that reference this path
-                updated_count = self._rebac_manager.update_object_path(
+                updated_count = _rebac.update_object_path(
                     old_path=old_path,
                     new_path=new_path,
                     object_type="file",
@@ -3649,7 +3667,7 @@ class NexusFS(  # type: ignore[misc]
                     f"[RENAME-REBAC] FAILED to update ReBAC permissions: {e}", exc_info=True
                 )
         else:
-            logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
+            logger.warning("[RENAME-REBAC] SKIPPED - no rebac_manager available")
 
         # POST-INTERCEPT: post-rename hooks (Issue #900)
         self._dispatch.intercept_post_rename(_rename_ctx)
@@ -4427,6 +4445,15 @@ class NexusFS(  # type: ignore[misc]
         if alias is not None:
             svc_attr, svc_method = alias
             svc = self.__dict__.get(svc_attr)
+            # Fallback: check containers for attrs removed from instance dict (Issue #1570)
+            if svc is None:
+                _sys = object.__getattribute__(self, "_system_services")
+                _brk = object.__getattribute__(self, "_brick_services")
+                _bare = svc_attr.lstrip("_")
+                if _sys is not None:
+                    svc = getattr(_sys, _bare, None)
+                if svc is None and _brk is not None:
+                    svc = getattr(_brk, _bare, None)
             if svc is not None:
                 return getattr(svc, svc_method)
 
@@ -4434,6 +4461,15 @@ class NexusFS(  # type: ignore[misc]
         svc_attr_std = NexusFS._SERVICE_METHODS.get(name)
         if svc_attr_std is not None:
             svc = self.__dict__.get(svc_attr_std)
+            # Fallback: check containers for attrs removed from instance dict (Issue #1570)
+            if svc is None:
+                _sys = object.__getattribute__(self, "_system_services")
+                _brk = object.__getattribute__(self, "_brick_services")
+                _bare = svc_attr_std.lstrip("_")
+                if _sys is not None:
+                    svc = getattr(_sys, _bare, None)
+                if svc is None and _brk is not None:
+                    svc = getattr(_brk, _bare, None)
             if svc is not None:
                 return getattr(svc, name)
 
@@ -4994,8 +5030,11 @@ class NexusFS(  # type: ignore[misc]
             self._record_store.close()
 
         # Close ReBACManager to release database connection
-        if hasattr(self, "_rebac_manager") and self._rebac_manager is not None:
-            self._rebac_manager.close()
+        _rebac = (
+            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
+        )
+        if _rebac is not None:
+            _rebac.close()
 
         # Close AuditStore to release database connection
         # Issue #1570: accessed from container, not flat attr.

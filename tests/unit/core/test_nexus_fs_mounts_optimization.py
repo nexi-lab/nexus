@@ -214,8 +214,8 @@ class TestMountDatabaseVsConfig:
         )
 
         # Save to database
-        if hasattr(nx, "mount_manager") and nx.mount_manager:
-            nx.mount_manager.save_mount(
+        if nx._system_services and nx._system_services.mount_manager:
+            nx._system_services.mount_manager.save_mount(
                 mount_point="/mnt/test",
                 backend_type="cas_local",
                 backend_config={"data_dir": str(temp_dir / "backend1")},
@@ -223,7 +223,7 @@ class TestMountDatabaseVsConfig:
             )
 
             # Verify mount is in database
-            saved_mount = nx.mount_manager.get_mount("/mnt/test")
+            saved_mount = nx._system_services.mount_manager.get_mount("/mnt/test")
             assert saved_mount is not None
             assert saved_mount["mount_point"] == "/mnt/test"
 

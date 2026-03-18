@@ -33,17 +33,19 @@ def nx_with_db(tmp_path):
     nx.SessionLocal = session_factory
 
     # Mock entity registry
+    from dataclasses import replace
+
     mock_registry = MagicMock()
     mock_registry.get_entity.return_value = None
-    nx._entity_registry = mock_registry
+    nx._system_services = replace(nx._system_services, entity_registry=mock_registry)
 
     # Mock API key creator
     mock_key_creator = MagicMock()
     mock_key_creator.create_key.return_value = ("key-123", "nxk-test-api-key")
-    nx._api_key_creator = mock_key_creator
+    nx._brick_services = replace(nx._brick_services, api_key_creator=mock_key_creator)
 
     # Mock ReBAC so we don't need real ReBAC setup
-    nx._rebac_manager = MagicMock()
+    nx._system_services = replace(nx._system_services, rebac_manager=MagicMock())
 
     # Issue #2133: service_wiring.py deleted — explicitly create UserProvisioningService
     from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
@@ -56,7 +58,7 @@ def nx_with_db(tmp_path):
             entity_registry=mock_registry,
             api_key_creator=mock_key_creator,
             backend=nx.router.route("/").backend,
-            rebac_manager=nx._rebac_manager,
+            rebac_manager=nx._system_services.rebac_manager,
             rmdir_fn=nx.sys_rmdir,
             rebac_create_fn=MagicMock(),
             rebac_delete_fn=MagicMock(),
@@ -184,7 +186,7 @@ class TestProvisionUserHappyPath:
         assert result["api_key"] is not None
         assert result["key_id"] is not None
         # With agents disabled, only the user's API key is created
-        nx_with_db._api_key_creator.create_key.assert_called_once()
+        nx_with_db._brick_services.api_key_creator.create_key.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_skip_api_key_creation(self, nx_with_db):
@@ -197,7 +199,7 @@ class TestProvisionUserHappyPath:
             import_skills=False,
         )
         assert result["api_key"] is None
-        nx_with_db._api_key_creator.create_key.assert_not_called()
+        nx_with_db._brick_services.api_key_creator.create_key.assert_not_called()
 
 
 class TestProvisionUserIdempotency:
@@ -265,7 +267,9 @@ class TestProvisionUserPartialFailure:
 
     @pytest.mark.asyncio
     async def test_api_key_creator_not_injected(self, nx_with_db):
-        nx_with_db._api_key_creator = None
+        from dataclasses import replace
+
+        nx_with_db._brick_services = replace(nx_with_db._brick_services, api_key_creator=None)
         # Also update the service (Issue #2033: provision_user delegated to service)
         ups = nx_with_db.service("user_provisioning")
         if ups is not None:
@@ -286,7 +290,9 @@ class TestProvisionUserPartialFailure:
         nx = make_test_nexus(tmp_path)
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = None
-        nx._entity_registry = mock_registry
+        from dataclasses import replace
+
+        nx._system_services = replace(nx._system_services, entity_registry=mock_registry)
         # Issue #2133: explicitly create service with session_factory=None
         nx._service_registry.register_service(
             "user_provisioning",

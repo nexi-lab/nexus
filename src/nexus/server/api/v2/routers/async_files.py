@@ -390,19 +390,29 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
 
-            # Snapshot tracking setup: validate conflict + capture original hash BEFORE write
+            # Snapshot tracking setup: validate conflict + capture original state BEFORE write
             _ss = None
             _norm_path: str | None = None
             _original_hash: str | None = None
+            _original_metadata: dict[str, Any] | None = None
             if transaction_id:
                 _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
                 if _ss is not None:
                     _norm_path = _normalize_path(request.path)
                     _ss.validate_path_available(transaction_id, _norm_path)
-                    # Capture original hash for CAS hold (enables proper rollback)
+                    # Capture original state for rollback
                     try:
                         _orig_meta = fs.metadata.get(_norm_path)
-                        _original_hash = _orig_meta.etag if _orig_meta else None
+                        if _orig_meta:
+                            _original_hash = _orig_meta.etag
+                            _original_metadata = {
+                                "size": _orig_meta.size,
+                                "version": _orig_meta.version,
+                                "modified_at": _orig_meta.modified_at.isoformat()
+                                if _orig_meta.modified_at
+                                else None,
+                                "backend_name": getattr(_orig_meta, "backend_name", None),
+                            }
                     except Exception:
                         _original_hash = None
                 else:
@@ -446,7 +456,7 @@ def create_async_files_router(
                         transaction_id=transaction_id,
                         path=_norm_path,
                         original_hash=_original_hash,
-                        original_metadata=None,
+                        original_metadata=_original_metadata,
                         new_hash=result.get("etag"),
                     )
                     logger.info("txn tracked write: txn=%s path=%s", transaction_id, _norm_path)
@@ -577,6 +587,7 @@ def create_async_files_router(
             _ss = None
             _norm_path: str | None = None
             _original_hash: str | None = None
+            _original_metadata: dict[str, Any] | None = None
             if transaction_id:
                 _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
                 if _ss is not None:
@@ -584,7 +595,16 @@ def create_async_files_router(
                     _ss.validate_path_available(transaction_id, _norm_path)
                     try:
                         _orig_meta = fs.metadata.get(_norm_path)
-                        _original_hash = _orig_meta.etag if _orig_meta else None
+                        if _orig_meta:
+                            _original_hash = _orig_meta.etag
+                            _original_metadata = {
+                                "size": _orig_meta.size,
+                                "version": _orig_meta.version,
+                                "modified_at": _orig_meta.modified_at.isoformat()
+                                if _orig_meta.modified_at
+                                else None,
+                                "backend_name": getattr(_orig_meta, "backend_name", None),
+                            }
                     except Exception:
                         _original_hash = None
 
@@ -596,7 +616,7 @@ def create_async_files_router(
                         transaction_id=transaction_id,
                         path=_norm_path,
                         original_hash=_original_hash,
-                        original_metadata=None,
+                        original_metadata=_original_metadata,
                     )
                 except Exception as _track_err:
                     logger.warning("txn track delete failed: %s", _track_err)

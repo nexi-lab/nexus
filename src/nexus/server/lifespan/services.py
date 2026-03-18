@@ -32,6 +32,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_agent_lifecycle(app, svc)
     _startup_key_service(app, svc)
     _startup_credential_service(app, svc)
+    _startup_task_manager(app, svc)
     _startup_delegation_from_bricks(app, svc)
     _startup_governance(app, svc)
     _startup_sandbox_auth(app, svc)
@@ -400,6 +401,16 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
         )
 
 
+def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Wire TaskManagerService from factory to app.state (PR #3124)."""
+    if svc.nexus_fs is None:
+        return
+    task_svc = getattr(svc.nexus_fs, "_task_manager_service", None)
+    app.state.task_manager_service = task_svc
+    if task_svc is not None:
+        logger.info("[TASK-MGR] TaskManagerService wired to app.state")
+
+
 def _startup_transactional_snapshot(app: "FastAPI", svc: "LifespanServices") -> None:
     """Expose TransactionalSnapshotService on app.state for REST API (Issue #1752)."""
     snap_svc = svc.snapshot_service
@@ -622,9 +633,42 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
 
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
+    # Fallback: create consumer if not provided by factory (e.g. no record_store)
+    if tdc is None:
+        nx = svc.nexus_fs
+        if nx is not None:
+            try:
+                from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
+
+                _task_svc = getattr(nx, "_task_manager_service", None)
+                # AcpService lives on AcpRPCService (created in _boot_wired_services)
+                _acp_svc = None
+                _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
+                if _acp_rpc_ref is not None:
+                    _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
+                    _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
+                _proc_tbl = app.state.process_table
+                if _task_svc is not None:
+                    tdc = TaskDispatchPipeConsumer(
+                        acp_service=_acp_svc,
+                        process_table=_proc_tbl,
+                    )
+                    tdc.set_task_service(_task_svc)
+                    # Wire into existing TaskWriteHook
+                    _twh = getattr(nx, "_task_write_hook", None)
+                    if _twh is not None:
+                        _twh.register_handler(tdc)
+                    logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
+            except Exception as e:
+                logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
     if tdc is not None and hasattr(tdc, "set_pipe_manager"):
         try:
             tdc.set_pipe_manager(pipe_manager)
+            # Inject server base URL so enriched worker prompts can reference the API
+            if hasattr(tdc, "set_server_info"):
+                _port = os.environ.get("NEXUS_PORT", "2026")
+                _host = os.environ.get("NEXUS_HOST", "127.0.0.1")
+                tdc.set_server_info(f"http://{_host}:{_port}", "")
             await tdc.start()
             app.state.task_dispatch_consumer = tdc
             logger.info("[PIPE] TaskDispatchPipeConsumer started")

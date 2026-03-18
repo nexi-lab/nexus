@@ -232,6 +232,8 @@ def create_nexus_services(
         governance_response_service=brick_dict["governance_response_service"],
         # Search Brick (Issue #810)
         zoekt_pipe_consumer=brick_dict.get("zoekt_pipe_consumer"),
+        # Task Manager Brick
+        task_dispatch_consumer=brick_dict.get("task_dispatch_consumer"),
     )
 
     return kernel_services, system_services, brick_services
@@ -548,8 +550,9 @@ async def _register_vfs_hooks(
                 _task_consumer.set_task_service(_task_svc)
 
             await _enlist("task_write", _task_write_hook)
-            await _enlist("task_agent_resolver", TaskAgentResolver(_task_svc, _proc_table))
+            await _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
             nx._task_write_hook = _task_write_hook
+            nx._task_manager_service = _task_svc
         except Exception as exc:
             logger.warning("[BOOT:BRICK] task_manager wiring failed: %s", exc)
     else:

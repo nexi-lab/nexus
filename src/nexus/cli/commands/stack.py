@@ -204,6 +204,24 @@ def _compose_profiles(compose_file: str) -> set[str]:
     return profiles
 
 
+def _find_repo_dockerfile() -> Path | None:
+    """Walk up from CWD to find a Dockerfile in a nexus repo checkout."""
+    cwd = Path.cwd()
+    for parent in (cwd, *cwd.parents):
+        candidate = parent / "Dockerfile"
+        if candidate.exists() and (parent / "pyproject.toml").exists():
+            # Verify it's actually a nexus repo (not some random Dockerfile)
+            try:
+                text = (parent / "pyproject.toml").read_text(errors="ignore")
+                if "nexus" in text.lower():
+                    return candidate
+            except OSError:
+                pass
+        if parent == parent.parent:
+            break
+    return None
+
+
 def _compose_has_build(compose_file: str) -> bool:
     """Return True if the nexus service in the compose file has a ``build:`` directive."""
     try:
@@ -503,11 +521,41 @@ def up(
         if _compose_has_build(cf):
             compose_env.pop("NEXUS_IMAGE_REF", None)
         else:
-            console.print(
-                "[yellow]Warning:[/yellow] --build ignored — compose file "
-                f"({Path(cf).name}) has no build: directive."
-            )
-            build = False
+            # No build: directive in compose file.  Fall back to building
+            # the Docker image from the repo Dockerfile if one exists,
+            # then tag it so compose uses it (Issue #3134).
+            repo_dockerfile = _find_repo_dockerfile()
+            if repo_dockerfile:
+                image_ref = compose_env.get(
+                    "NEXUS_IMAGE_REF", config.get("image_ref", "ghcr.io/nexi-lab/nexus:latest")
+                )
+                console.print(
+                    f"[cyan]Nexus:[/cyan] building image from {repo_dockerfile.relative_to(repo_dockerfile.parent.parent)} "
+                    f"→ {image_ref}"
+                )
+                build_result = subprocess.run(
+                    [
+                        "docker",
+                        "build",
+                        "-t",
+                        image_ref,
+                        "-f",
+                        str(repo_dockerfile),
+                        str(repo_dockerfile.parent),
+                    ],
+                    env={**os.environ, **compose_env},
+                )
+                if build_result.returncode != 0:
+                    console.print("[red]Error:[/red] Docker build failed.")
+                    raise SystemExit(1)
+                console.print(f"[green]Nexus:[/green] built image {image_ref} from source")
+                build = False  # don't pass --build to compose (no build: directive)
+            else:
+                console.print(
+                    "[yellow]Warning:[/yellow] --build ignored — compose file "
+                    f"({Path(cf).name}) has no build: directive and no Dockerfile found."
+                )
+                build = False
 
     data_dir = compose_env["NEXUS_HOST_DATA_DIR"]
 

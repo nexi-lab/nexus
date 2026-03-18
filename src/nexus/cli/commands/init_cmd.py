@@ -50,7 +50,7 @@ class PresetConfig:
     auth: str
     compose_profiles: tuple[str, ...]
     port_keys: tuple[str, ...]
-    image_channel: str = "stable"
+    image_channel: str = "edge"
     image_accelerator: str = "cpu"
 
 
@@ -146,7 +146,7 @@ def _build_config(
     addons: tuple[str, ...],
     compose_file_override: str | None = None,
     *,
-    channel: str = "stable",
+    channel: str = "edge",
     accelerator: str = "cpu",
     image_tag: str | None = None,
     image_digest: str | None = None,
@@ -431,7 +431,7 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
 @click.option(
     "--channel",
     type=click.Choice(VALID_CHANNELS),
-    default="stable",
+    default="edge",
     show_default=True,
     help="Release channel for the prebuilt image.",
 )

@@ -430,9 +430,10 @@ function getKeyBindings(
   inputMode: InputMode,
   overlayActive: boolean,
   confirmDelete: boolean,
+  editorOpen: boolean,
   ctx: BindingContext,
 ): Record<string, () => void> {
-  if (overlayActive || confirmDelete) return {};
+  if (overlayActive || confirmDelete || editorOpen) return {};
 
   if (inputMode !== "none") {
     return getInputModeBindings(inputMode, ctx);
@@ -752,8 +753,8 @@ export default function FileExplorerPanel(): React.ReactNode {
   };
 
   useKeyboard(
-    getKeyBindings(inputMode, overlayActive, confirmDelete, ctx),
-    !overlayActive && inputMode !== "none" ? handleUnhandledKey : undefined,
+    getKeyBindings(inputMode, overlayActive, confirmDelete, editorPath !== null, ctx),
+    !overlayActive && inputMode !== "none" && editorPath === null ? handleUnhandledKey : undefined,
   );
 
   const handleConfirmDelete = (): void => {

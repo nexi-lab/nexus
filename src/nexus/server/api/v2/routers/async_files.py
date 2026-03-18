@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 
 from nexus.bricks.search.primitives.glob_fast import glob_filter
 from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
+from nexus.bricks.snapshot.errors import TransactionConflictError as _TransactionConflictError
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -448,9 +449,13 @@ def create_async_files_router(
             # fs.write is async — call directly
             result = await fs.write(**write_kwargs)
 
-            # Track write in transaction AFTER successful write (direct call, bypasses
-            # is_tracked() timing issues in _write_internal)
-            if _ss is not None and _norm_path is not None:
+            # Track write in transaction AFTER successful write.
+            # Skip if _write_internal already tracked it (path already in registry).
+            if (
+                _ss is not None
+                and _norm_path is not None
+                and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
+            ):
                 try:
                     _ss.track_write(
                         transaction_id=transaction_id,
@@ -486,6 +491,8 @@ def create_async_files_router(
         except ConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except _TransactionConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Write error: {e}")
@@ -610,7 +617,11 @@ def create_async_files_router(
 
             await fs.sys_unlink(path, context=context)
 
-            if _ss is not None and _norm_path is not None:
+            if (
+                _ss is not None
+                and _norm_path is not None
+                and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
+            ):
                 try:
                     _ss.track_delete(
                         transaction_id=transaction_id,
@@ -629,6 +640,8 @@ def create_async_files_router(
             raise HTTPException(status_code=404, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except _TransactionConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Delete error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e

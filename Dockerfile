@@ -77,14 +77,26 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         "txtai[ann]>=9.0" \
         "sentence-transformers>=5.3"
 
-# ---------- Build Rust extensions (shared target dir for dep reuse) ----------
+# ---------- Build Rust extensions (Issue #3125) ----------
+# On arm64, disable SimSIMD SVE backends at compile time. Apple Silicon does
+# not implement SVE, and simsimd's runtime mrs-based SVE detection can misfire
+# inside Docker Desktop's Virtualization.framework VM, causing SIGILL.
+# Cache is scoped per TARGETARCH so amd64/arm64 builds never share artifacts.
 COPY proto/ ./proto/
 COPY rust/ ./rust/
 
+ARG TARGETARCH
 ENV CARGO_TARGET_DIR=/build/target
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/build/target \
+    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+        export SIMSIMD_TARGET_SVE=0 \
+               SIMSIMD_TARGET_SVE2=0 \
+               SIMSIMD_TARGET_SVE_BF16=0 \
+               SIMSIMD_TARGET_SVE_F16=0 \
+               SIMSIMD_TARGET_SVE_I8=0; \
+    fi && \
     maturin build --release --out /build/dist -m rust/nexus_pyo3/Cargo.toml && \
     maturin build --release --features full --out /build/dist -m rust/nexus_raft/Cargo.toml && \
     pip install --no-cache-dir /build/dist/nexus_fast-*.whl /build/dist/nexus_raft-*.whl
@@ -123,8 +135,11 @@ COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 COPY --from=zoekt-builder /go/bin/zoekt-index /usr/local/bin/zoekt-index
 COPY --from=zoekt-builder /go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 
-# ---------- Build-time smoke tests (Issue #2946) ----------
+# ---------- Build-time smoke tests (Issue #2946, #3125) ----------
 # Verify critical native imports are installed correctly.
+# The SIMD test exercises simsimd code paths so that a cross-architecture
+# cache mismatch or mis-compiled SVE backend surfaces as a build failure
+# (SIGILL) instead of a runtime crash (Issue #3125).
 # On ARM64 (Apple Silicon Docker), PyTorch's libc10.so may fail with
 # "cannot allocate memory in static TLS block" — a known glibc/TLS
 # limitation on aarch64 (see pytorch/pytorch#76689, OpenContracts#230).
@@ -139,6 +154,13 @@ import docker; \
 import fastembed; \
 import psutil; \
 print('✓ Core imports passed')"
+RUN python3 -c "\
+from nexus_fast import cosine_similarity_f32, dot_product_f32; \
+s = cosine_similarity_f32([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]); \
+assert abs(s - 1.0) < 0.01, f'cosine self-similarity failed: {s}'; \
+d = dot_product_f32([1.0, 2.0], [3.0, 4.0]); \
+assert abs(d - 11.0) < 0.01, f'dot product failed: {d}'; \
+print('✓ SIMD smoke test passed')"
 RUN python3 -c "\
 import txtai; \
 print('✓ txtai/torch import passed')" \
@@ -171,10 +193,9 @@ RUN mkdir -p /app/data && chown -R nexus:nexus /app
 USER nexus
 
 # ---------- Environment variables ----------
-# Prevent faiss SVE auto-detection crash on aarch64 in Docker containers
-# where /proc or /sys may not expose CPU feature flags correctly.
-# OMP_NUM_THREADS=1 avoids the OpenMP runtime conflict between faiss-cpu
-# and PyTorch on ARM (libiomp5 vs libomp).
+# ARM64-specific mitigations (FAISS_OPT_LEVEL, OMP_NUM_THREADS, GLIBC_TUNABLES)
+# are applied conditionally at runtime in docker-entrypoint.sh to avoid
+# regressing x86_64 throughput (Issue #3125).
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
@@ -185,9 +206,6 @@ ENV PYTHONUNBUFFERED=1 \
     ZOEKT_URL=http://localhost:6070 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data \
-    FAISS_OPT_LEVEL=generic \
-    OMP_NUM_THREADS=1 \
-    GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384 \
     NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2 \
     NEXUS_TXTAI_SPARSE=true
 

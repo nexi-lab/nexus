@@ -6,6 +6,23 @@
 set -e
 set -o pipefail
 
+# ---------------------------------------------------------------------------
+# ARM64 mitigations (Issue #3125)
+# Applied only on aarch64 to avoid regressing x86_64 throughput.
+#   FAISS_OPT_LEVEL=generic  — prevent faiss SVE auto-detection crash in
+#                               Docker where CPU feature flags may be masked.
+#   OMP_NUM_THREADS=1        — avoid OpenMP runtime conflict between faiss-cpu
+#                               and PyTorch on ARM (libiomp5 vs libomp).
+#   GLIBC_TUNABLES           — work around PyTorch libc10.so TLS allocation
+#                               failure on aarch64 (pytorch/pytorch#76689).
+# Users can still override by setting the variable before starting the container.
+# ---------------------------------------------------------------------------
+if [ "$(uname -m)" = "aarch64" ]; then
+    export FAISS_OPT_LEVEL="${FAISS_OPT_LEVEL:-generic}"
+    export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+    export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
+fi
+
 # Load helpers (same directory as this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=dockerfiles/entrypoint-helpers.sh

@@ -926,7 +926,7 @@ class TestPipeManagerSelfAddress:
         addr = BackendAddress.parse(f"pipe@{SELF_ADDR}")
         assert addr.backend_type == "pipe"
         assert addr.has_origin is True
-        assert addr.origin == SELF_ADDR
+        assert addr.origins == (SELF_ADDR,)
 
     def test_backend_address_parse_plain_pipe(self) -> None:
         """Verify BackendAddress handles plain 'pipe' (no origin)."""
@@ -935,4 +935,4 @@ class TestPipeManagerSelfAddress:
         addr = BackendAddress.parse("pipe")
         assert addr.backend_type == "pipe"
         assert addr.has_origin is False
-        assert addr.origin is None
+        assert addr.origins == ()

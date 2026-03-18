@@ -1,18 +1,13 @@
-"""FederationIPCResolver — PRE-DISPATCH resolver for remote DT_PIPE/DT_STREAM (#1625).
+"""FederationIPCResolver — PRE-DISPATCH resolver for remote DT_PIPE/DT_STREAM (#1625, #1665).
 
-Registered as a VFSPathResolver in KernelDispatch.  On every read/write/delete,
-``matches()`` looks up metadata and checks:
+Registered as a VFSPathResolver in KernelDispatch.  Each ``try_*`` method
+looks up metadata once, decides local vs remote, and either handles the
+operation (remote → returns result) or declines (local/unknown → returns
+``None``).
 
-    1. Is this a DT_PIPE or DT_STREAM inode? (entry_type check)
-    2. Is the pipe/stream hosted on a remote node? (locality check via backend_name)
-
-If both are true, the resolver handles the operation entirely via gRPC Call/Delete
-RPCs to the origin peer.  Local pipes/streams return None from matches() and fall
-through to the kernel's normal IPC dispatch.
-
-This extracts ~200 lines of federation remote proxy from NexusFS (kernel) to the
-service layer, per federation-memo.md §6.6: "Federation is optional DI subsystem,
-NOT kernel."
+Zero kernel coupling: the kernel sees a standard VFSPathResolver.
+Federation topology, gRPC channels, and IPC proxying are
+entirely encapsulated here.
 
 Design reference:
     - FederationContentResolver: same pattern for CAS content
@@ -38,8 +33,13 @@ class FederationIPCResolver:
     """VFSPathResolver for remote DT_PIPE and DT_STREAM federation.
 
     Handles read/write/delete for pipes and streams hosted on remote nodes.
-    Local pipes/streams are not matched (returns None) and fall through
+    Local pipes/streams return None (not handled) and fall through
     to the kernel's PipeManager/StreamManager.
+
+    Implements the single-call ``try_*`` protocol (#1665):
+    each method looks up metadata, decides local vs remote, and either
+    handles the operation (remote → returns result) or declines
+    (local/unknown → returns ``None``).
 
     Args:
         metastore: MetastoreABC for metadata lookup.
@@ -63,20 +63,18 @@ class FederationIPCResolver:
         self._timeout = timeout
 
     # ------------------------------------------------------------------
-    # VFSPathResolver protocol
+    # Internal: metadata check (shared by all try_* methods)
     # ------------------------------------------------------------------
 
-    def matches(self, path: str) -> Any:
-        """Check if path refers to a remote DT_PIPE or DT_STREAM.
+    def _resolve_remote_ipc(self, path: str) -> tuple[Any, str] | None:
+        """Check if path is a remote IPC entry.
 
-        Returns metadata (truthy) for remote IPC, None otherwise.
-        The metadata is passed as ``match_ctx`` to read/write/delete.
+        Returns (metadata, origin_address) for remote, None for local/non-IPC.
         """
         meta = self._metastore.get(path)
         if meta is None or not meta.backend_name:
             return None
 
-        # Only handle DT_PIPE (entry_type=3) and DT_STREAM (entry_type=4)
         if not (meta.is_pipe or meta.is_stream):
             return None
 
@@ -84,47 +82,70 @@ class FederationIPCResolver:
         if not addr.has_origin:
             return None  # legacy "pipe"/"stream" without origin → local
 
-        if addr.origin == self._self_address:
+        if self._self_address in addr.origins:
             return None  # origin is self → local
 
-        return meta  # remote IPC — resolver handles
+        return meta, addr.origins[0]
 
-    def read(
+    # ------------------------------------------------------------------
+    # VFSPathResolver single-call try_* protocol (#1665)
+    # ------------------------------------------------------------------
+
+    def try_read(
         self,
         path: str,
         *,
-        match_ctx: Any = None,
         return_metadata: bool = False,
         context: Any = None,
-    ) -> bytes | dict[str, Any]:
-        """Read from remote DT_PIPE/DT_STREAM via gRPC Call RPC."""
-        _ = (return_metadata, context)  # Protocol-required; not used for IPC federation
-        meta = match_ctx
-        addr = BackendAddress.parse(meta.backend_name)
-        assert addr.origin is not None
+    ) -> bytes | dict[str, Any] | None:
+        """Single-call resolve: metadata lookup + local/remote decision for read.
 
-        return self._read_remote(addr.origin, path)
+        Returns:
+            bytes or dict — handled: content fetched from remote peer.
+            None           — not handled: local IPC or non-IPC path.
+        """
+        _ = (return_metadata, context)
+        resolved = self._resolve_remote_ipc(path)
+        if resolved is None:
+            return None
+        meta, origin = resolved
+        return self._read_remote(origin, path)
 
-    def write(self, path: str, content: bytes, *, match_ctx: Any = None) -> dict[str, Any]:
-        """Write to remote DT_PIPE/DT_STREAM via gRPC Call RPC."""
-        meta = match_ctx
-        addr = BackendAddress.parse(meta.backend_name)
-        assert addr.origin is not None
+    def try_write(self, path: str, content: bytes) -> dict[str, Any] | None:
+        """Single-call resolve: metadata lookup + local/remote decision for write.
 
-        result = self._write_remote(addr.origin, path, content)
-        # For streams, result may contain offset info
+        Returns:
+            dict — handled: written to remote peer.
+            None — not handled: local IPC or non-IPC path.
+        """
+        resolved = self._resolve_remote_ipc(path)
+        if resolved is None:
+            return None
+        meta, origin = resolved
+        result = self._write_remote(origin, path, content)
         if meta.is_stream:
             return {"offset": result}
         return {}
 
-    def delete(self, path: str, *, match_ctx: Any = None, context: Any = None) -> None:
-        """Delete remote DT_PIPE/DT_STREAM via gRPC Delete RPC."""
-        _ = context  # Protocol-required; not used for IPC federation
-        meta = match_ctx
-        addr = BackendAddress.parse(meta.backend_name)
-        assert addr.origin is not None
+    def try_delete(
+        self,
+        path: str,
+        *,
+        context: Any = None,
+    ) -> dict[str, Any] | None:
+        """Single-call resolve: metadata lookup + local/remote decision for delete.
 
-        self._delete_remote(addr.origin, path)
+        Returns:
+            dict — handled: remote peer destroyed the IPC entry.
+            None — not handled: local IPC or non-IPC path.
+        """
+        _ = context
+        resolved = self._resolve_remote_ipc(path)
+        if resolved is None:
+            return None
+        _meta, origin = resolved
+        self._delete_remote(origin, path)
+        return {}
 
     # ------------------------------------------------------------------
     # gRPC remote operations

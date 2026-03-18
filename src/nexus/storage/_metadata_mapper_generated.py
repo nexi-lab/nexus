@@ -177,11 +177,6 @@ class MetadataMapper:
         # Strip unknown keys (forward compatibility with older/newer proto versions)
         obj = {k: v for k, v in obj.items() if k in _KNOWN_FIELDS}
 
-        # Ensure required fields have defaults (forward compatibility)
-        obj.setdefault("backend_name", "")
-        obj.setdefault("physical_path", "")
-        obj.setdefault("size", 0)
-
         if obj.get("created_at"):
             obj["created_at"] = datetime.fromisoformat(obj["created_at"])
         if obj.get("modified_at"):

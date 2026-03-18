@@ -53,6 +53,7 @@ class MetastoreMountStore:
         owner_user_id: str | None = None,
         zone_id: str | None = None,
         description: str | None = None,
+        replication: str | None = None,
     ) -> str:
         """Save a mount configuration. Raises ValueError if mount_point already exists."""
         self._validate(mount_point, backend_type, backend_config)
@@ -74,6 +75,7 @@ class MetastoreMountStore:
                 "owner_user_id": owner_user_id,
                 "zone_id": zone_id,
                 "description": description,
+                "replication": replication,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -93,6 +95,7 @@ class MetastoreMountStore:
         backend_config: dict[str, Any] | None = None,
         readonly: bool | None = None,
         description: str | None = None,
+        replication: str | None = None,
     ) -> bool:
         """Update an existing mount configuration. Returns False if not found."""
         key = f"{_MNT_PREFIX}{mount_point}"
@@ -111,6 +114,8 @@ class MetastoreMountStore:
             data["readonly"] = readonly
         if description is not None:
             data["description"] = description
+        if replication is not None:
+            data["replication"] = replication
         data["updated_at"] = datetime.now(UTC).isoformat()
 
         fm = FileMetadata(

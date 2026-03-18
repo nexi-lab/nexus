@@ -7,6 +7,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod bitmap;
 mod bloom;
 mod cache;
+mod dispatch;
 mod glob;
 mod hash;
 mod io;
@@ -92,5 +93,8 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<shm_pipe::SharedRingBufferCore>()?;
     m.add_class::<shm_stream::SharedStreamBufferCore>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
+    // Dispatch (Issue #1317)
+    m.add_class::<dispatch::PathTrie>()?;
+    m.add_class::<dispatch::HookRegistry>()?;
     Ok(())
 }

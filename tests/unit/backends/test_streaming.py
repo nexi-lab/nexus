@@ -496,9 +496,9 @@ class TestReadRangeRPC:
             await nx.sys_write("/test.txt", content)
 
             # Read ranges
-            assert nx.read_range("/test.txt", 0, 5) == b"01234"
-            assert nx.read_range("/test.txt", 5, 10) == b"56789"
-            assert nx.read_range("/test.txt", 10, 16) == b"ABCDEF"
+            assert await nx.read_range("/test.txt", 0, 5) == b"01234"
+            assert await nx.read_range("/test.txt", 5, 10) == b"56789"
+            assert await nx.read_range("/test.txt", 10, 16) == b"ABCDEF"
         finally:
             nx.close()
 
@@ -522,11 +522,11 @@ class TestReadRangeRPC:
 
             # Negative start should raise
             with pytest.raises(ValueError, match="non-negative"):
-                nx.read_range("/test.txt", -1, 5)
+                await nx.read_range("/test.txt", -1, 5)
 
             # end < start should raise
             with pytest.raises(ValueError, match="end.*must be >= start"):
-                nx.read_range("/test.txt", 10, 5)
+                await nx.read_range("/test.txt", 10, 5)
         finally:
             nx.close()
 
@@ -550,7 +550,7 @@ class TestReadRangeRPC:
             await nx.sys_write("/test.txt", content)
 
             # Empty range should return empty bytes
-            assert nx.read_range("/test.txt", 5, 5) == b""
+            assert await nx.read_range("/test.txt", 5, 5) == b""
         finally:
             nx.close()
 
@@ -574,7 +574,7 @@ class TestReadRangeRPC:
             await nx.sys_write("/test.txt", content)
 
             # Range beyond file size should return available content
-            result = nx.read_range("/test.txt", 0, len(content) + 100)
+            result = await nx.read_range("/test.txt", 0, len(content) + 100)
             assert result == content
         finally:
             nx.close()

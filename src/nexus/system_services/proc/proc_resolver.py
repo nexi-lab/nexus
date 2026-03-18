@@ -38,6 +38,8 @@ class ProcResolver:
     Write and delete raise PermissionError (read-only, like /proc).
     """
 
+    TRIE_PATTERN = "/{}/proc/{}/status"
+
     def __init__(self, process_table: ProcessTable) -> None:
         self._process_table = process_table
 

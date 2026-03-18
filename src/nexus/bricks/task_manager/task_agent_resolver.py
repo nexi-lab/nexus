@@ -28,6 +28,8 @@ class TaskAgentResolver:
     Write and delete raise PermissionError (read-only virtual path).
     """
 
+    TRIE_PATTERN = "/.tasks/tasks/{}/agent/status"
+
     def __init__(self, process_table: Any) -> None:
         self._process_table = process_table
         self._worker_pids: dict[str, int] = {}  # task_id → worker_pid (sync cache)

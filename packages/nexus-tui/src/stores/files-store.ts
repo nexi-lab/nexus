@@ -149,6 +149,7 @@ export interface FilesState {
   readonly renameFile: (oldPath: string, newPath: string, client: FetchClient) => Promise<void>;
   readonly getCachedFiles: (path: string) => readonly FileItem[] | undefined;
   readonly abortAllInFlight: () => void;
+  readonly clearCache: () => void;
 
   // Selection actions
   readonly toggleSelect: (path: string) => void;
@@ -226,6 +227,11 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   },
 
   abortAllInFlight,
+
+  clearCache: () => {
+    fileCache.clear();
+    set({ fileCacheRevision: get().fileCacheRevision + 1, treeNodes: new Map() });
+  },
 
   fetchFiles: async (path, client) => {
     // Check SWR cache

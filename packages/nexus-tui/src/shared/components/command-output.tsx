@@ -11,6 +11,26 @@ import { StyledText } from "./styled-text.js";
 import { Spinner } from "./spinner.js";
 import { statusColor } from "../theme.js";
 
+const ERROR_HINTS: ReadonlyArray<{ pattern: RegExp; hint: string }> = [
+  { pattern: /authentication required|unauthorized|401/i, hint: "Check your API key (NEXUS_API_KEY or nexus.yaml api_key)" },
+  { pattern: /connection refused/i, hint: "Is the server running? Try Shift+U to start it" },
+  { pattern: /grpc.*unavailable|failed to connect/i, hint: "gRPC endpoint unreachable — check server logs" },
+  { pattern: /timed? ?out|deadline exceeded/i, hint: "Request timed out — the server may be overloaded" },
+  { pattern: /address already in use|EADDRINUSE/i, hint: "Port is already in use — stop the existing process or change ports" },
+  { pattern: /permission denied|EACCES/i, hint: "Permission denied — check file/directory permissions" },
+  { pattern: /no such file|ENOENT|not found/i, hint: "File or command not found — check paths and installation" },
+];
+
+function findErrorHint(lines: readonly string[]): string | null {
+  const tail = lines.slice(-20);
+  for (const line of tail) {
+    for (const { pattern, hint } of ERROR_HINTS) {
+      if (pattern.test(line)) return hint;
+    }
+  }
+  return null;
+}
+
 export function CommandOutput(): React.ReactNode {
   const status = useCommandRunnerStore((s) => s.status);
   const outputLines = useCommandRunnerStore((s) => s.outputLines);
@@ -61,6 +81,14 @@ export function CommandOutput(): React.ReactNode {
           <text foregroundColor={statusColor.error}>{`Command failed with exit code ${exitCode}`}</text>
         </box>
       )}
+      {status === "error" && (() => {
+        const hint = findErrorHint(outputLines);
+        return hint ? (
+          <box height={1} width="100%">
+            <text foregroundColor={statusColor.warning}>{`  Hint: ${hint}`}</text>
+          </box>
+        ) : null;
+      })()}
     </box>
   );
 }

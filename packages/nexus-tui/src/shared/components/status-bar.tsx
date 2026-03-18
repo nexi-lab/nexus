@@ -27,6 +27,8 @@ export function StatusBar(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
   const userInfo = useGlobalStore((s) => s.userInfo);
   const enabledBricks = useGlobalStore((s) => s.enabledBricks);
+  const profile = useGlobalStore((s) => s.profile);
+  const mode = useGlobalStore((s) => s.mode);
 
   // Check if events panel has active filters
   const eventFilters = useEventsStore((s) => s.filters);
@@ -68,7 +70,7 @@ export function StatusBar(): React.ReactNode {
         {serverVersion ? (
           <>
             <span dimColor>{" │ "}</span>
-            <span dimColor>{`v${serverVersion}`}</span>
+            <span dimColor>{`v${serverVersion}${profile ? `/${profile}` : ""}${mode ? `/${mode}` : ""}`}</span>
           </>
         ) : ""}
         {zone ? (

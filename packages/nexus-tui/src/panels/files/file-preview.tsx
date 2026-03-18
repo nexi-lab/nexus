@@ -13,6 +13,7 @@ export function FilePreview(): React.ReactNode {
   const previewPath = useFilesStore((s) => s.previewPath);
   const previewContent = useFilesStore((s) => s.previewContent);
   const previewLoading = useFilesStore((s) => s.previewLoading);
+  const previewError = useFilesStore((s) => s.error);
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
 
   useEffect(() => {
@@ -39,8 +40,11 @@ export function FilePreview(): React.ReactNode {
 
   if (previewContent === null) {
     return (
-      <box height="100%" width="100%">
+      <box height="100%" width="100%" flexDirection="column">
         <text>Unable to load preview</text>
+        {previewError && (
+          <text dimColor>{previewError}</text>
+        )}
       </box>
     );
   }

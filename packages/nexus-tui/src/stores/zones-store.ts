@@ -162,15 +162,30 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
   // Actions migrated to createApiAction
   // =========================================================================
 
-  fetchZones: createApiAction<ZonesState, [FetchClient]>(set, {
-    loadingKey: "zonesLoading",
-    source: SOURCE,
-    errorMessage: "Failed to fetch zones",
-    action: async (client) => {
-      const response = await client.get<ZonesListResponse>("/api/zones");
-      return { zones: response.zones ?? [] };
-    },
-  }),
+  fetchZones: async (client) => {
+    set({ zonesLoading: true, error: null });
+    try {
+      // Use rawRequest to avoid the FetchClient's automatic 3× retry on 503.
+      // The /api/zones endpoint returns 503 when DatabaseLocalAuth is not
+      // configured, which is expected for API-key-only server setups.
+      const raw = await client.rawRequest("GET", "/api/zones");
+      if (raw.status === 503) {
+        // Auth provider not available — treat as "no zones"
+        set({ zones: [], zonesLoading: false });
+        return;
+      }
+      if (!raw.ok) {
+        const body = await raw.json().catch(() => ({ detail: `HTTP ${raw.status}` })) as { detail?: string };
+        throw new Error(body.detail ?? `HTTP ${raw.status}`);
+      }
+      const data = (await raw.json()) as { zones?: ZoneResponse[] };
+      set({ zones: data.zones ?? [], zonesLoading: false });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to fetch zones";
+      set({ zones: [], zonesLoading: false, error: message });
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    }
+  },
 
   fetchBricks: createApiAction<ZonesState, [FetchClient]>(set, {
     loadingKey: "isLoading",

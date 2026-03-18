@@ -90,10 +90,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     errorMessage: "Failed to fetch workspaces",
     action: async (client) => {
       const response = await client.get<{
-        workspaces: readonly WorkspaceInfo[];
+        items: readonly WorkspaceInfo[];
       }>("/api/v2/registry/workspaces");
       return {
-        workspaces: response.workspaces ?? [],
+        workspaces: response.items ?? [],
         selectedWorkspaceIndex: 0,
       };
     },

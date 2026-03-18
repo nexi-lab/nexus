@@ -427,7 +427,9 @@ async def _register_vfs_hooks(
             metadata_store=nx.metadata,
             default_context=nx._default_context,
             enforce_permissions=nx._enforce_permissions,
-            permission_enforcer=nx._permission_enforcer,
+            permission_enforcer=nx._system_services.permission_enforcer
+            if nx._system_services
+            else None,
             descendant_checker=getattr(nx, "_descendant_checker", None),
         )
         await _enlist("permission", _perm_hook)
@@ -446,7 +448,8 @@ async def _register_vfs_hooks(
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (
-        getattr(nx, "_rebac_manager", None) is not None
+        (getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None)
+        is not None
         and hasattr(nx, "get_dynamic_viewer_config")
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
@@ -464,7 +467,7 @@ async def _register_vfs_hooks(
     # ContentParserEngine (on-demand parsed reads — Issue #1383)
     from nexus.bricks.parsers.engine import ContentParserEngine
 
-    nx._parser_engine = ContentParserEngine(
+    ContentParserEngine(
         metadata=nx.metadata,
         provider_registry=nx._brick_services.provider_registry,
     )
@@ -483,7 +486,9 @@ async def _register_vfs_hooks(
         await _enlist("auto_parse", _auto_parse_hook)
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
-    _rebac_mgr = getattr(nx, "_rebac_manager", None)
+    _rebac_mgr = (
+        getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None
+    )
     tiger_cache = getattr(_rebac_mgr, "_tiger_cache", None) if _rebac_mgr else None
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
@@ -551,7 +556,6 @@ async def _register_vfs_hooks(
 
             await _enlist("task_write", _task_write_hook)
             await _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
-            nx._task_write_hook = _task_write_hook
             nx._task_manager_service = _task_svc
         except Exception as exc:
             logger.warning("[BOOT:BRICK] task_manager wiring failed: %s", exc)
@@ -566,7 +570,9 @@ async def _register_vfs_hooks(
     # injecting a shared Redis bus) are picked up automatically.
     from nexus.system_services.event_bus.observer import EventBusObserver
 
-    _bus_observer = EventBusObserver(bus_provider=nx)
+    _bus_observer = EventBusObserver(
+        event_bus=getattr(nx._brick_services, "event_bus", None) if nx._brick_services else None
+    )
     await _enlist("event_bus_observer", _bus_observer)
 
     # EventsService observer: self-registered via HotSwappable.hook_spec()
@@ -580,7 +586,6 @@ async def _register_vfs_hooks(
     _rev_notifier = RevisionNotifier()
     _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
     await _enlist("revision_tracking", _rev_observer)
-    nx._revision_notifier = _rev_notifier
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.

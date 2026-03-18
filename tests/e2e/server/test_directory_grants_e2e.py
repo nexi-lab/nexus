@@ -110,11 +110,12 @@ async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     )
 
     # Add migration tables after NexusFS creates its database
-    if hasattr(nx, "_rebac_manager") and nx._rebac_manager:
-        engine = nx._rebac_manager.engine
+    _rebac_mgr = nx._system_services.rebac_manager if nx._system_services else None
+    if nx._system_services is not None and _rebac_mgr is not None:
+        engine = _rebac_mgr.engine
         add_migration_tables(engine)
         # Connect the metadata store to ReBAC manager for directory expansion
-        nx._rebac_manager.set_metadata_store(nx.metadata)
+        _rebac_mgr.set_metadata_store(nx.metadata)
 
     # Create admin context for tests
     admin_context = OperationContext(
@@ -149,7 +150,7 @@ class TestDirectoryGrantExpansion:
         )
 
         # Check that the grant was recorded in tiger_directory_grants
-        with nx._rebac_manager.engine.connect() as conn:
+        with nx._system_services.rebac_manager.engine.connect() as conn:
             result = conn.execute(
                 text(
                     """
@@ -208,7 +209,7 @@ class TestDirectoryGrantExpansion:
         time.sleep(0.2)
 
         # Check if Tiger Cache is available (PostgreSQL only)
-        tiger_cache = getattr(nx._rebac_manager, "_tiger_cache", None)
+        tiger_cache = getattr(nx._system_services.rebac_manager, "_tiger_cache", None)
         if tiger_cache is not None:
             # Tiger Cache is available - verify bitmap was populated
             bitmap = tiger_cache.get_bitmap(
@@ -233,7 +234,7 @@ class TestDirectoryGrantExpansion:
         nx = nexus_fs_with_tiger
 
         # Check if Tiger Cache is available (PostgreSQL only)
-        tiger_cache = getattr(nx._rebac_manager, "_tiger_cache", None)
+        tiger_cache = getattr(nx._system_services.rebac_manager, "_tiger_cache", None)
         if tiger_cache is None:
             pytest.skip("Tiger Cache requires PostgreSQL - skipping new file inheritance test")
 
@@ -276,7 +277,7 @@ class TestDirectoryGrantExpansion:
         nx = nexus_fs_with_tiger
 
         # Check if Tiger Cache is available (PostgreSQL only)
-        tiger_cache = getattr(nx._rebac_manager, "_tiger_cache", None)
+        tiger_cache = getattr(nx._system_services.rebac_manager, "_tiger_cache", None)
         if tiger_cache is None:
             pytest.skip("Tiger Cache requires PostgreSQL - skipping move permission test")
 
@@ -502,7 +503,7 @@ class TestTigerCacheIntegration:
         time.sleep(0.1)
 
         # Check Tiger Cache bitmap directly
-        tiger_cache = getattr(nx._rebac_manager, "_tiger_cache", None)
+        tiger_cache = getattr(nx._system_services.rebac_manager, "_tiger_cache", None)
         if tiger_cache:
             bitmap = tiger_cache.get_bitmap(
                 subject_type="user",

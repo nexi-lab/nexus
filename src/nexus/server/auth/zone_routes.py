@@ -156,10 +156,15 @@ async def create_zone_endpoint(
 
             # Add authenticated user as zone owner via ReBAC
             nx = get_nexus_instance()
-            if nx and hasattr(nx, "_rebac_manager"):
+            _rebac_mgr = (
+                getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
+                if nx
+                else None
+            )
+            if nx and _rebac_mgr is not None:
                 try:
                     add_user_to_zone(
-                        rebac_manager=nx._rebac_manager,
+                        rebac_manager=_rebac_mgr,
                         user_id=user_id,
                         zone_id=zone_id,
                         role="owner",

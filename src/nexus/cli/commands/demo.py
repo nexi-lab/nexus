@@ -246,7 +246,7 @@ def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any])
             created = _seed_permissions_rpc(config, tuples)
     else:
         # Local path — direct rebac_manager access
-        rebac = getattr(nx, "_rebac_manager", None) or getattr(nx, "rebac_manager", None)
+        rebac = getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
         if rebac is None:
             logger.debug("No rebac_manager available — skipping permission seeding")
             manifest["permissions_seeded"] = True
@@ -658,7 +658,7 @@ def _delete_permissions(nx: Any, config: dict[str, Any]) -> int:
         return max(deleted, 0)
 
     # Local path — direct rebac_manager access
-    rebac = getattr(nx, "_rebac_manager", None) or getattr(nx, "rebac_manager", None)
+    rebac = getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
     if rebac is None:
         return 0
 

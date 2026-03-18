@@ -81,7 +81,7 @@ async def _boot_wired_services(
             enable_audit_logging=True,
             circuit_breaker=brick_services.rebac_circuit_breaker,
             file_reader=nx.sys_read,
-            permission_enforcer=nx._permission_enforcer,
+            permission_enforcer=system_services.permission_enforcer,
         )
         logger.debug("[BOOT:WIRED] ReBACService created")
     except Exception as exc:
@@ -200,7 +200,7 @@ async def _boot_wired_services(
 
         search_service = SearchService(
             metadata_store=nx.metadata,
-            permission_enforcer=getattr(nx, "_permission_enforcer", None),
+            permission_enforcer=system_services.permission_enforcer,
             router=kernel_services.router,
             rebac_manager=system_services.rebac_manager,
             enforce_permissions=getattr(nx, "_enforce_permissions", True),

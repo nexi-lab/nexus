@@ -31,28 +31,9 @@ async def _do_link(
     from nexus.factory._wired import _boot_wired_services
     from nexus.factory.service_routing import enlist_wired_services
 
-    # --- Wire non-hot-path facade attrs from containers (Issue #1570) ---
-    # These 15 attrs are only accessed outside kernel (CLI, services, API).
-    # Kernel-referenced attrs (zone_lifecycle, snapshot_service, lock_manager,
-    # process_table, audit_store, deferred_permission_buffer) use container
-    # access — getattr(self._system_services/brick_services, ...).
     _sys = nx._system_services
     _brk = nx._brick_services
-    nx._entity_registry = _sys.entity_registry
-    nx._workspace_registry = _sys.workspace_registry
-    nx.mount_manager = _sys.mount_manager
-    nx._workspace_manager = _sys.workspace_manager
-    nx._namespace_manager = _sys.namespace_manager
-    nx._async_namespace_manager = _sys.async_namespace_manager
-    nx._context_branch_service = _sys.context_branch_service
-    nx._dir_visibility_cache = _sys.dir_visibility_cache  # Issue #1703: facade, not kernel
-    nx._hierarchy_manager = _sys.hierarchy_manager  # Issue #1704: facade, not kernel
-    nx._rebac_manager = _sys.rebac_manager  # Issue #1705: facade, not kernel
     nx._permission_enforcer = _sys.permission_enforcer  # Issue #1706: override sentinel
-    nx._event_bus = _brk.event_bus
-    nx._wallet_provisioner = _brk.wallet_provisioner
-    nx._api_key_creator = _brk.api_key_creator
-    nx.version_service = _brk.version_service
 
     _parsing = parsing if parsing is not None else nx._parse_config
 
@@ -98,7 +79,6 @@ async def _do_link(
 
     # Update kernel-side references set by __init__ from original BrickServices
     nx._virtual_view_parse_fn = _parse_fn
-    nx._parsers_brick = parsers_brick  # kept for BLM registration in initialize()
 
     # --- Resolve enabled_bricks for profile gating ---
     _resolved_bricks = enabled_bricks
@@ -151,7 +131,7 @@ async def _do_link(
     from nexus.bricks.rebac.checker import PermissionChecker as _PC
 
     nx._permission_checker = _PC(
-        permission_enforcer=nx._permission_enforcer,
+        permission_enforcer=_sys.permission_enforcer,
         metadata_store=nx.metadata,
         default_context=nx._default_context,
         enforce_permissions=nx._enforce_permissions,

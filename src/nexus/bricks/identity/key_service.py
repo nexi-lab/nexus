@@ -23,6 +23,12 @@ from nexus.bricks.identity.crypto import IdentityCrypto
 from nexus.bricks.identity.did import create_did_key
 from nexus.storage.models import AgentKeyModel
 
+# Sentinel stored in encrypted_private_key for client-held keys (Issue #3130).
+# The server stores the client's public key for verification but never holds
+# the private key. This sentinel satisfies the NOT NULL schema constraint and
+# is checked explicitly in ensure_keypair() and decrypt_private_key().
+_CLIENT_HELD_SENTINEL = "CLIENT_HELD"
+
 
 def _utcnow_naive() -> datetime:
     """Return current UTC time as a naive datetime.
@@ -111,8 +117,10 @@ class KeyService:
         if not agent_id:
             raise ValueError("agent_id is required")
 
-        # Check for existing active key (DB read)
-        existing = self.get_active_keys(agent_id)
+        # Check for existing server-held active key (DB read).
+        # CLIENT_HELD keys are excluded: they have no decryptable private key
+        # and must not be returned as a usable signing keypair.
+        existing = self.get_server_held_active_keys(agent_id)
         if existing:
             return existing[0]  # Newest first
 
@@ -125,11 +133,13 @@ class KeyService:
         now = _utcnow_naive()
 
         with self._get_session() as session:
-            # Double-check inside transaction to prevent races (FOR UPDATE on PostgreSQL)
+            # Double-check inside transaction to prevent races (FOR UPDATE on PostgreSQL).
+            # Excludes CLIENT_HELD keys — they have no decryptable private key.
             existing_model = session.execute(
                 select(AgentKeyModel)
                 .where(AgentKeyModel.agent_id == agent_id)
                 .where(AgentKeyModel.is_active == 1)
+                .where(AgentKeyModel.encrypted_private_key != _CLIENT_HELD_SENTINEL)
                 .order_by(AgentKeyModel.created_at.desc())
                 .limit(1)
                 .with_for_update()
@@ -200,6 +210,103 @@ class KeyService:
                 records.append(self._model_to_record(m))
 
         return records
+
+    def get_server_held_active_keys(self, agent_id: str) -> list[AgentKeyRecord]:
+        """Get active keys that have a server-held private key, newest first.
+
+        Excludes CLIENT_HELD keys (registered by the agent for verification
+        only — the server never holds their private key).
+
+        Used by ensure_keypair() to decide whether to generate a new keypair.
+
+        Args:
+            agent_id: Agent identifier.
+
+        Returns:
+            List of server-held active AgentKeyRecord snapshots.
+        """
+        now = _utcnow_naive()
+        with self._get_session() as session:
+            models = list(
+                session.execute(
+                    select(AgentKeyModel)
+                    .where(AgentKeyModel.agent_id == agent_id)
+                    .where(AgentKeyModel.is_active == 1)
+                    .where(AgentKeyModel.encrypted_private_key != _CLIENT_HELD_SENTINEL)
+                    .order_by(AgentKeyModel.created_at.desc())
+                )
+                .scalars()
+                .all()
+            )
+            records = []
+            for m in models:
+                if m.expires_at is not None and m.expires_at < now:
+                    continue
+                records.append(self._model_to_record(m))
+        return records
+
+    def register_public_key(self, agent_id: str, public_key_bytes: bytes) -> AgentKeyRecord:
+        """Register a client-supplied Ed25519 public key for an agent.
+
+        The server stores only the public key for verification purposes.
+        The private key is held by the client and never transits the server.
+
+        The stored key is active and usable for signature verification
+        (POST /agents/{id}/verify) but will not be returned by
+        ensure_keypair() and cannot be used by decrypt_private_key().
+
+        Args:
+            agent_id: Agent identifier.
+            public_key_bytes: Raw 32-byte Ed25519 public key.
+
+        Returns:
+            AgentKeyRecord for the stored public key.
+
+        Raises:
+            ValueError: If public_key_bytes is not exactly 32 bytes.
+        """
+        if len(public_key_bytes) != 32:
+            raise ValueError(
+                f"Ed25519 public key must be exactly 32 bytes, got {len(public_key_bytes)}"
+            )
+
+        public_key = IdentityCrypto.public_key_from_bytes(public_key_bytes)
+        did = create_did_key(public_key)
+        key_id = str(uuid.uuid4())
+        now = _utcnow_naive()
+
+        with self._get_session() as session:
+            model = AgentKeyModel(
+                key_id=key_id,
+                agent_id=agent_id,
+                algorithm="Ed25519",
+                public_key_bytes=public_key_bytes,
+                encrypted_private_key=_CLIENT_HELD_SENTINEL,
+                did=did,
+                is_active=1,
+                created_at=now,
+            )
+            session.add(model)
+            session.flush()
+
+        logger.info(
+            "[KYA] Registered client-held public key for agent %s (key_id=%s, did=%s)",
+            agent_id,
+            key_id,
+            did,
+        )
+
+        return AgentKeyRecord(
+            key_id=key_id,
+            agent_id=agent_id,
+            algorithm="Ed25519",
+            public_key_bytes=public_key_bytes,
+            did=did,
+            is_active=True,
+            created_at=now,
+            expires_at=None,
+            revoked_at=None,
+        )
 
     def get_public_key(self, key_id: str) -> AgentKeyRecord | None:
         """Lookup a key by key_id (for RFC 9421 keyid parameter).
@@ -375,6 +482,13 @@ class KeyService:
 
             if not model.is_active:
                 raise ValueError(f"Key '{key_id}' is not active")
+
+            if model.encrypted_private_key == _CLIENT_HELD_SENTINEL:
+                raise ValueError(
+                    f"Key '{key_id}' is a client-held key: "
+                    "the private key was never stored on the server. "
+                    "The client must sign with their own private key."
+                )
 
             return self._crypto.decrypt_private_key(model.encrypted_private_key)
 

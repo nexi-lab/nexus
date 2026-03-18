@@ -155,7 +155,24 @@ export function executeLocalCommand(command: string, args: readonly string[]): v
     commandLabel: `nexus ${command} ${args.join(" ")}`.trim(),
   });
 
-  const fullArgs = ["nexus", command, ...args];
+  // Prefer .venv/bin/nexus (project venv) over system PATH to avoid picking up
+  // stale installs (e.g. /opt/anaconda3/bin/nexus which lacks the `up` command).
+  // Walk up from CWD to find .venv/bin/nexus (TUI may run from packages/nexus-tui/).
+  const path = require("node:path");
+  const nodeFs = require("node:fs");
+  let nexusBin = "nexus";
+  let searchDir = process.cwd();
+  for (let i = 0; i < 5; i++) {
+    const candidate = path.join(searchDir, ".venv", "bin", "nexus");
+    if (nodeFs.existsSync(candidate)) {
+      nexusBin = candidate;
+      break;
+    }
+    const parent = path.dirname(searchDir);
+    if (parent === searchDir) break;
+    searchDir = parent;
+  }
+  const fullArgs = [nexusBin, command, ...args];
 
   // Read the TUI's own nexus.yaml (in CWD) to pass NEXUS_URL and NEXUS_API_KEY
   // to subcommands like `nexus demo init`.

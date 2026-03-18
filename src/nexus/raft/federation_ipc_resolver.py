@@ -99,11 +99,10 @@ class FederationIPCResolver:
         if not addr.has_origin:
             return None  # legacy "pipe"/"stream" without origin → local
 
-        if addr.origin == self._self_address:
+        if self._self_address in addr.origins:
             return None  # origin is self → local
 
-        assert addr.origin is not None
-        return meta, addr.origin  # remote IPC — resolver handles
+        return meta, addr.origins[0]  # remote IPC — resolver handles
 
     def try_read(
         self,

@@ -12,10 +12,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.raft.federation_content_resolver import FederationContentResolver
 
 SELF_ADDR = "10.0.0.1:50051"
 REMOTE_ADDR = "10.0.0.2:50051"
+REMOTE_ADDR_2 = "10.0.0.3:50051"
 
 
 def _make_meta(backend_name: str, etag: str = "abc123", version: int = 1, size: int = 100):
@@ -51,8 +53,19 @@ class TestTryReadLocalContent:
 
         assert result is None
 
+    def test_self_in_multi_origin_returns_none(self):
+        """If self is ANY of the origins, content is local — return None."""
+        meta = _make_meta(f"local@{REMOTE_ADDR},{SELF_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_read("/test/file.txt")
+
+        assert result is None
+
     def test_no_origin_returns_none(self):
-        """Legacy backend_name without origin → treated as local."""
+        """Legacy backend_name without origin -> treated as local."""
         meta = _make_meta("local")
         metastore = MagicMock()
         metastore.get.return_value = meta
@@ -143,6 +156,39 @@ class TestTryReadRemoteContent:
         mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/small.txt")
 
 
+class TestTryReadMultiOriginFailover:
+    """try_read fails over to next origin when one is unreachable."""
+
+    @patch.object(FederationContentResolver, "_fetch_from_peer")
+    def test_failover_to_second_origin(self, mock_fetch):
+        """First origin fails, second succeeds."""
+        mock_fetch.side_effect = [
+            NexusFileNotFoundError("/test/file.txt", "peer unreachable"),
+            b"from second",
+        ]
+        meta = _make_meta(f"local@{REMOTE_ADDR},{REMOTE_ADDR_2}", size=100)
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_read("/test/file.txt")
+
+        assert result == b"from second"
+        assert mock_fetch.call_count == 2
+
+    @patch.object(FederationContentResolver, "_fetch_from_peer")
+    def test_all_origins_fail_raises(self, mock_fetch):
+        """All origins fail -> raises NexusFileNotFoundError."""
+        mock_fetch.side_effect = NexusFileNotFoundError("/test/file.txt", "unreachable")
+        meta = _make_meta(f"local@{REMOTE_ADDR},{REMOTE_ADDR_2}", size=100)
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        with pytest.raises(NexusFileNotFoundError, match="All origins unreachable"):
+            resolver.try_read("/test/file.txt")
+
+
 class TestTryWritePassthrough:
     """try_write always returns None (content writes are local)."""
 
@@ -158,6 +204,16 @@ class TestTryDeleteLocalContent:
 
     def test_local_origin_returns_none(self):
         meta = _make_meta(f"local@{SELF_ADDR}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result is None
+
+    def test_self_in_multi_origin_returns_none(self):
+        meta = _make_meta(f"local@{REMOTE_ADDR},{SELF_ADDR}")
         metastore = MagicMock()
         metastore.get.return_value = meta
 
@@ -221,8 +277,23 @@ class TestTryDeleteRemoteContent:
         metastore.get.return_value = meta
 
         resolver = _make_resolver(metastore=metastore)
-        with pytest.raises(Exception, match="network error"):
-            resolver.try_delete("/test/file.txt")
+        # Single origin — all origins fail, returns {} (logged warning)
+        result = resolver.try_delete("/test/file.txt")
+        assert result == {}
+
+    @patch.object(FederationContentResolver, "_delete_on_peer")
+    def test_multi_origin_delete_failover(self, mock_delete):
+        """First origin fails, second succeeds."""
+        mock_delete.side_effect = [Exception("network error"), None]
+        meta = _make_meta(f"local@{REMOTE_ADDR},{REMOTE_ADDR_2}")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result == {}
+        assert mock_delete.call_count == 2
 
 
 class TestKernelDispatchIntegration:

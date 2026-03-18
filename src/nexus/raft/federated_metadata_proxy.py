@@ -132,15 +132,26 @@ class FederatedMetadataProxy(MetastoreABC):
         Kernel writes ``backend_name="local"``; the proxy transparently
         enriches to ``"local@10.0.0.5:50051"`` so FederationContentResolver
         can locate which peer owns the content.
+
+        For already-enriched entries (multi-origin), ensures self_address
+        is present in the origins list (idempotent).
         """
         if not self._self_address or not metadata.backend_name:
             return metadata
-        if "@" in metadata.backend_name:
-            return metadata  # already enriched
-        return replace(
-            metadata,
-            backend_name=f"{metadata.backend_name}@{self._self_address}",
-        )
+        if "@" not in metadata.backend_name:
+            # Fresh entry from kernel — add self as first origin
+            return replace(
+                metadata,
+                backend_name=f"{metadata.backend_name}@{self._self_address}",
+            )
+        # Already enriched — ensure self_address is in origins (idempotent)
+        from nexus.contracts.backend_address import BackendAddress
+
+        addr = BackendAddress.parse(metadata.backend_name)
+        updated = addr.with_origin(self._self_address)
+        if updated is addr:
+            return metadata  # already present
+        return replace(metadata, backend_name=str(updated))
 
     # =========================================================================
     # MetastoreABC — abstract methods

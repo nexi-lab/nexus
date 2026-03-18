@@ -77,18 +77,18 @@ class FileMetadata:
 
     @property
     def backend_address(self) -> BackendAddress:
-        """Parse backend_name into typed BackendAddress (type + origin node).
+        """Parse backend_name into typed BackendAddress (type + origin nodes).
 
         Returns:
-            BackendAddress with backend_type and optional origin.
+            BackendAddress with backend_type and origins tuple.
 
         Example:
             >>> meta = FileMetadata(path="/a", backend_name="local@10.0.0.5:50051",
             ...                     physical_path="abc", size=0)
             >>> meta.backend_address.backend_type
             'local'
-            >>> meta.backend_address.origin
-            '10.0.0.5:50051'
+            >>> meta.backend_address.origins
+            ('10.0.0.5:50051',)
         """
         return BackendAddress.parse(self.backend_name)
 

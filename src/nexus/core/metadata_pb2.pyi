@@ -12,11 +12,13 @@ class DirEntryType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DT_DIR: _ClassVar[DirEntryType]
     DT_MOUNT: _ClassVar[DirEntryType]
     DT_PIPE: _ClassVar[DirEntryType]
+    DT_STREAM: _ClassVar[DirEntryType]
 
 DT_REG: DirEntryType
 DT_DIR: DirEntryType
 DT_MOUNT: DirEntryType
 DT_PIPE: DirEntryType
+DT_STREAM: DirEntryType
 
 class FileMetadata(_message.Message):
     __slots__ = (
@@ -34,7 +36,6 @@ class FileMetadata(_message.Message):
         "owner_id",
         "entry_type",
         "target_zone_id",
-        "i_links_count",
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
     BACKEND_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -50,7 +51,6 @@ class FileMetadata(_message.Message):
     OWNER_ID_FIELD_NUMBER: _ClassVar[int]
     ENTRY_TYPE_FIELD_NUMBER: _ClassVar[int]
     TARGET_ZONE_ID_FIELD_NUMBER: _ClassVar[int]
-    I_LINKS_COUNT_FIELD_NUMBER: _ClassVar[int]
     path: str
     backend_name: str
     physical_path: str
@@ -65,7 +65,6 @@ class FileMetadata(_message.Message):
     owner_id: str
     entry_type: DirEntryType
     target_zone_id: str
-    i_links_count: int
     def __init__(
         self,
         path: str | None = ...,
@@ -82,5 +81,4 @@ class FileMetadata(_message.Message):
         owner_id: str | None = ...,
         entry_type: DirEntryType | str | None = ...,
         target_zone_id: str | None = ...,
-        i_links_count: int | None = ...,
     ) -> None: ...

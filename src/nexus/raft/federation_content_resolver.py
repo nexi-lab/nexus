@@ -106,36 +106,44 @@ class FederationContentResolver:
             return None
 
         addr = BackendAddress.parse(meta.backend_name)
-        if not addr.has_origin or addr.origin == self._self_address:
+        if not addr.has_origin or self._self_address in addr.origins:
             return None  # local content — kernel handles
 
-        # Remote content — fetch from origin peer
-        assert addr.origin is not None  # guaranteed by has_origin check above
+        # Remote content — try each origin until one responds
         file_size = meta.size or 0
         use_streaming = file_size > _STREAMING_THRESHOLD
-        logger.info(
-            "Federation read: %s -> %s (etag=%s, size=%d, streaming=%s)",
-            path,
-            addr.origin,
-            (meta.etag or "")[:12],
-            file_size,
-            use_streaming,
-        )
+        last_err: Exception | None = None
 
-        if use_streaming:
-            content = self._fetch_from_peer_streaming(addr.origin, path)
-        else:
-            content = self._fetch_from_peer(addr.origin, path)
+        for origin in addr.origins:
+            logger.info(
+                "Federation read: %s -> %s (etag=%s, size=%d, streaming=%s)",
+                path,
+                origin,
+                (meta.etag or "")[:12],
+                file_size,
+                use_streaming,
+            )
+            try:
+                if use_streaming:
+                    content = self._fetch_from_peer_streaming(origin, path)
+                else:
+                    content = self._fetch_from_peer(origin, path)
 
-        if return_metadata:
-            return {
-                "content": content,
-                "etag": meta.etag,
-                "version": meta.version,
-                "modified_at": meta.modified_at,
-                "size": len(content),
-            }
-        return content
+                if return_metadata:
+                    return {
+                        "content": content,
+                        "etag": meta.etag,
+                        "version": meta.version,
+                        "modified_at": meta.modified_at,
+                        "size": len(content),
+                    }
+                return content
+            except NexusFileNotFoundError as exc:
+                last_err = exc
+                logger.warning("Federation read from %s failed, trying next origin", origin)
+                continue
+
+        raise NexusFileNotFoundError(path, f"All origins unreachable for {path}") from last_err
 
     def try_write(self, _path: str, _content: bytes) -> dict[str, Any] | None:
         """Content writes are always local — return None to pass through."""
@@ -162,18 +170,25 @@ class FederationContentResolver:
             return None
 
         addr = BackendAddress.parse(meta.backend_name)
-        if not addr.has_origin or addr.origin == self._self_address:
+        if not addr.has_origin or self._self_address in addr.origins:
             return None  # local content — kernel handles
 
-        # Remote content — delegate full sys_unlink to origin peer
-        assert addr.origin is not None
-        logger.info(
-            "Federation delete: %s -> %s (etag=%s)",
-            path,
-            addr.origin,
-            (meta.etag or "")[:12],
-        )
-        self._delete_on_peer(addr.origin, path)
+        # Remote content — delegate delete to first reachable origin
+        for origin in addr.origins:
+            logger.info(
+                "Federation delete: %s -> %s (etag=%s)",
+                path,
+                origin,
+                (meta.etag or "")[:12],
+            )
+            try:
+                self._delete_on_peer(origin, path)
+                return {}
+            except Exception:
+                logger.warning("Federation delete to %s failed, trying next origin", origin)
+                continue
+
+        logger.warning("Federation delete: all origins unreachable for %s", path)
         return {}
 
     # === gRPC Remote Operations ===

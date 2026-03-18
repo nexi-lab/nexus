@@ -87,6 +87,8 @@ class TaskDispatchPipeConsumer:
         self._llm_fn: LLMCallable = llm_fn or _no_llm  # used by copilot review
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
+        self._server_base_url: str = "http://127.0.0.1:2026"
+        self._api_key: str = ""
 
     # ------------------------------------------------------------------
     # Deferred injection
@@ -105,6 +107,11 @@ class TaskDispatchPipeConsumer:
 
     def set_process_table(self, process_table: Any) -> None:
         self._process_table = process_table
+
+    def set_server_info(self, base_url: str, api_key: str) -> None:
+        """Inject server base URL and API key for enriched worker prompts."""
+        self._server_base_url = base_url
+        self._api_key = api_key
 
     # ------------------------------------------------------------------
     # TaskSignalHandler (producer side)
@@ -208,7 +215,7 @@ class TaskDispatchPipeConsumer:
             mission_id = payload.get("mission_id", "?")
 
             # Record audit via VFS
-            self._task_svc.create_audit_entry(task_id, "task_created", detail="task created")
+            await self._task_svc.create_audit_entry(task_id, "task_created", detail="task created")
 
             # Check if task is blocked
             blocked_by = payload.get("blocked_by") or []
@@ -241,11 +248,48 @@ class TaskDispatchPipeConsumer:
                     task_id,
                     status,
                 )
-                self._dispatch_unblocked_tasks()
+                await self._dispatch_unblocked_tasks()
             else:
                 logger.debug("[TASK-DISPATCH] task_id=%s status=%s (no action)", task_id, status)
         else:
             logger.warning("[TASK-DISPATCH] unknown signal type: %s", signal_type)
+
+    def _build_worker_prompt(self, task_id: str, instruction: str) -> str:
+        """Build an enriched prompt that gives the worker agent API context."""
+        base = self._server_base_url
+        return f"""\
+You are a worker agent assigned to task {task_id}.
+
+## Your Task
+{instruction}
+
+## When Done
+After completing your work, use curl to report results:
+
+1. Add a comment with your work output:
+   curl -X POST {base}/api/v2/comments \\
+     -H "Content-Type: application/json" \\
+     -d '{{"task_id":"{task_id}","author":"worker","content":"YOUR_RESULT"}}'
+
+2. Update the task status to "in_review":
+   curl -X PATCH {base}/api/v2/tasks/{task_id} \\
+     -H "Content-Type: application/json" \\
+     -d '{{"status":"in_review"}}'
+
+## API Reference
+Base URL: {base}
+
+| Method | Endpoint                              | Body                                          |
+|--------|---------------------------------------|-----------------------------------------------|
+| GET    | /api/v2/tasks/{task_id}               | —                                             |
+| PATCH  | /api/v2/tasks/{task_id}               | {{status, output_refs}}                         |
+| POST   | /api/v2/comments                      | {{task_id, author, content, artifact_refs?}}    |
+| GET    | /api/v2/comments?task_id={task_id}    | —                                             |
+| POST   | /api/v2/tasks/{task_id}/audit         | {{action, actor, detail}}                       |
+| GET    | /api/v2/tasks/{task_id}/history       | —                                             |
+
+Status flow: created → running → in_review → completed
+"""
 
     async def _start_worker(self, task_id: str) -> None:
         """Spawn worker agent via AcpService — environment-driven completion."""
@@ -253,81 +297,150 @@ class TaskDispatchPipeConsumer:
         svc = self._task_svc
 
         try:
-            task = svc.get_task(task_id)
+            task = await svc.get_task(task_id)
             instruction = task.get("instruction", "do the task")
-            agent_id = task.get("worker_type") or "claude-code"
+            agent_id = task.get("worker_type") or "claude"
 
-            svc.update_task(task_id, status="running")
-            svc.create_audit_entry(task_id, "status_changed", actor="system", detail="task started")
+            await svc.update_task(task_id, status="running")
+            await svc.create_audit_entry(
+                task_id, "status_changed", actor="system", detail="task started"
+            )
 
             if self._acp_service is None:
                 logger.error("[TASK-DISPATCH] AcpService not wired for task %s", task_id)
-                svc.update_task(task_id, status="failed")
-                svc.create_audit_entry(
+                await svc.update_task(task_id, status="failed")
+                await svc.create_audit_entry(
                     task_id, "status_changed", actor="system", detail="AcpService unavailable"
                 )
                 return
 
             from nexus.contracts.constants import ROOT_ZONE_ID
 
+            enriched_prompt = self._build_worker_prompt(task_id, instruction)
+
             result = await self._acp_service.call_agent(
                 agent_id=agent_id,
-                prompt=instruction,
+                prompt=enriched_prompt,
                 owner_id="task_manager",
                 zone_id=ROOT_ZONE_ID,
                 labels={"task_id": task_id},
             )
 
             agent_label = f"{result.agent_id}:{result.pid}"
-            svc.update_task(task_id, worker_pid=result.pid, agent_name=result.agent_id)
-            svc.create_comment(task_id, agent_label, result.response)
-            svc.create_audit_entry(
+            await svc.update_task(task_id, worker_pid=result.pid, agent_name=result.agent_id)
+
+            # Ensure status advances — agent may not have called the PATCH curl
+            current = await svc.get_task(task_id)
+            if current.get("status") not in ("in_review", "completed", "failed"):
+                await svc.update_task(task_id, status="in_review")
+                await svc.create_audit_entry(
+                    task_id, "status_changed", actor="system", detail="worker done → in_review"
+                )
+            final_status = (await svc.get_task(task_id)).get("status")
+            logger.info(
+                "[TASK-DISPATCH] worker done for task %s (agent=%s, status=%s)",
                 task_id,
-                "status_changed",
-                actor=agent_label,
-                detail="worker completed, pending review",
+                agent_label,
+                final_status,
             )
-            svc.update_task(task_id, status="in_review")
 
         except Exception as e:
             logger.error("[TASK-DISPATCH] worker failed for task %s: %s", task_id, e)
             try:
-                svc.create_comment(task_id, "system", f"Worker failed: {e}")
-                svc.update_task(task_id, status="failed")
-                svc.create_audit_entry(
+                await svc.create_comment(task_id, "system", f"Worker failed: {e}")
+                await svc.update_task(task_id, status="failed")
+                await svc.create_audit_entry(
                     task_id, "status_changed", actor="system", detail=f"task failed: {e}"
                 )
             except Exception:
                 logger.error("[TASK-DISPATCH] cleanup after failure also failed", exc_info=True)
 
     async def _copilot_review(self, task_id: str) -> None:
-        """Copilot reviews the worker output and completes or fails the task.
-
-        TODO: migrate to AcpService.call_agent() — spawn copilot agent subprocess
-        instead of calling LLM directly.
-        """
+        """Copilot reviews the worker output via ACP (gemini) and completes or fails the task."""
         assert self._task_svc is not None
         svc = self._task_svc
 
         try:
-            comments = svc.get_comments(task_id)
+            task = await svc.get_task(task_id)
+            instruction = task.get("instruction", "")
+            comments = await svc.get_comments(task_id)
             last_content = comments[-1].get("content", "") if comments else "(no worker comment)"
 
-            review = await self._llm_fn(
-                f"Review this worker output and give brief feedback:\n\n{last_content}"
+            if self._acp_service is None:
+                logger.warning(
+                    "[TASK-DISPATCH] AcpService not wired for copilot review on task %s", task_id
+                )
+                await svc.create_comment(
+                    task_id, "copilot", "(copilot review skipped — AcpService unavailable)"
+                )
+                await svc.update_task(task_id, status="completed")
+                await svc.create_audit_entry(
+                    task_id, "status_changed", actor="copilot", detail="auto-completed (no ACP)"
+                )
+                return
+
+            from nexus.contracts.constants import ROOT_ZONE_ID
+
+            base = self._server_base_url
+            review_prompt = f"""\
+You are a copilot reviewer for task {task_id}.
+
+## Original Task Instruction
+{instruction}
+
+## Worker Output
+{last_content}
+
+## Your Job
+Review the worker's output above. Check if it adequately addresses the task instruction.
+Give brief feedback (2-3 sentences). Then decide: approve or reject.
+
+## When Done
+1. Add your review comment:
+   curl -X POST {base}/api/v2/comments \\
+     -H "Content-Type: application/json" \\
+     -d '{{"task_id":"{task_id}","author":"copilot","content":"YOUR_REVIEW"}}'
+
+2. If approved, mark completed:
+   curl -X PATCH {base}/api/v2/tasks/{task_id} \\
+     -H "Content-Type: application/json" \\
+     -d '{{"status":"completed"}}'
+
+   If rejected, mark failed:
+   curl -X PATCH {base}/api/v2/tasks/{task_id} \\
+     -H "Content-Type: application/json" \\
+     -d '{{"status":"failed"}}'
+"""
+            result = await self._acp_service.call_agent(
+                agent_id="gemini",
+                prompt=review_prompt,
+                owner_id="task_manager",
+                zone_id=ROOT_ZONE_ID,
+                labels={"task_id": task_id, "role": "copilot"},
             )
 
-            svc.create_comment(task_id, "copilot", review)
-            svc.update_task(task_id, status="completed")
-            svc.create_audit_entry(
-                task_id, "status_changed", actor="copilot", detail="task completed by copilot"
+            copilot_label = f"{result.agent_id}:{result.pid}"
+
+            # Ensure status advances — agent may not have called the PATCH curl
+            current = await svc.get_task(task_id)
+            if current.get("status") not in ("completed", "failed"):
+                await svc.update_task(task_id, status="completed")
+                await svc.create_audit_entry(
+                    task_id, "status_changed", actor="copilot", detail="review done → completed"
+                )
+            final_status = (await svc.get_task(task_id)).get("status")
+            logger.info(
+                "[TASK-DISPATCH] copilot done for task %s (agent=%s, status=%s)",
+                task_id,
+                copilot_label,
+                final_status,
             )
         except Exception as e:
             logger.error("[TASK-DISPATCH] copilot review failed for task %s: %s", task_id, e)
             try:
-                svc.create_comment(task_id, "copilot", f"Review failed: {e}")
-                svc.update_task(task_id, status="failed")
-                svc.create_audit_entry(
+                await svc.create_comment(task_id, "copilot", f"Review failed: {e}")
+                await svc.update_task(task_id, status="failed")
+                await svc.create_audit_entry(
                     task_id, "status_changed", actor="copilot", detail=f"review failed: {e}"
                 )
             except Exception:
@@ -335,12 +448,12 @@ class TaskDispatchPipeConsumer:
                     "[TASK-DISPATCH] cleanup after copilot failure also failed", exc_info=True
                 )
 
-    def _dispatch_unblocked_tasks(self) -> None:
+    async def _dispatch_unblocked_tasks(self) -> None:
         """Check for dispatchable tasks (created + unblocked) and start them."""
         assert self._task_svc is not None
 
         try:
-            dispatchable = self._task_svc.list_dispatchable_tasks()
+            dispatchable = await self._task_svc.list_dispatchable_tasks()
         except Exception:
             logger.warning("[TASK-DISPATCH] failed to list dispatchable tasks", exc_info=True)
             return

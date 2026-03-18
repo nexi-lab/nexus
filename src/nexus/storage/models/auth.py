@@ -163,6 +163,8 @@ class APIKeyModel(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    grant_tuple_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     revoked: Mapped[int] = mapped_column(Integer, default=0, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

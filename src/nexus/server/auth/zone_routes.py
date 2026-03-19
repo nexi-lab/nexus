@@ -340,7 +340,18 @@ async def list_zones(
                 .offset(offset)
             )
             zones = session.scalars(stmt).all()
-            total = len(user_zone_ids)
+            # Use actual DB count (user_zone_ids may include terminated zones)
+            total = (
+                session.scalar(
+                    select(func.count())
+                    .select_from(ZoneModel)
+                    .where(
+                        ZoneModel.phase != "Terminated",
+                        ZoneModel.zone_id.in_(user_zone_ids),
+                    )
+                )
+                or 0
+            )
 
         return ZoneListResponse(
             zones=[_zone_to_response(t) for t in zones],

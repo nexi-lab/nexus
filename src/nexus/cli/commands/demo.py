@@ -660,7 +660,10 @@ def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
                 logger.debug("Could not write %s: %s", research_path, e)
         logger.debug("Wrote %d files to /workspace/research/", research_files_written)
 
-    manifest["zones_seeded"] = True
+    # Only mark as seeded if we actually created zones — otherwise future
+    # runs will skip zone seeding even if the docker path was unavailable.
+    if created > 0:
+        manifest["zones_seeded"] = True
     return created
 
 

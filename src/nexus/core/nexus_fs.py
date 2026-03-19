@@ -560,6 +560,13 @@ class NexusFS(  # type: ignore[misc]
             # so the target path already exists in metastore but the parent
             # directories (e.g. /mnt for /mnt/test) have no metadata yet.
             if existing is not None:
+                # Update zone_id if context specifies a different zone
+                _ctx_zone = getattr(ctx, "zone_id", None)
+                if _ctx_zone and existing.zone_id != _ctx_zone:
+                    from dataclasses import replace as _replace
+
+                    updated = _replace(existing, zone_id=_ctx_zone)
+                    self.metadata.put(updated)
                 if parents:
                     self._ensure_parent_directories(path, ctx)
                 return

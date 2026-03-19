@@ -2274,6 +2274,13 @@ class NexusFS(  # type: ignore[misc]
         if count is not None:
             buf = buf[:count]
 
+        # DT_PIPE fast-path: skip validate/metastore/dispatch (~400ns vs ~21μs)
+        # PipeManager._buffers is the authoritative pipe registry; paths are
+        # validated at pipe creation time, so re-validation is unnecessary.
+        if self._pipe_manager is not None and path in self._pipe_manager._buffers:
+            n = self._pipe_write(path, buf)
+            return {"path": path, "bytes_written": n, "created": False}
+
         path = self._validate_path(path)
         self._check_zone_writable(context)  # Issue #2061: write-gating
 
@@ -2288,6 +2295,7 @@ class NexusFS(  # type: ignore[misc]
         # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
         _meta = self.metadata.get(path)
         if _meta is not None and _meta.is_pipe:
+            # Fallback for pipes not in PipeManager (e.g. federation remote pipes)
             n = self._pipe_write(path, buf)
             return {"path": path, "bytes_written": n, "created": False}
         if _meta is not None and _meta.is_stream:

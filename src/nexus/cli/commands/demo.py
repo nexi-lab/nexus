@@ -612,7 +612,7 @@ def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     # is enforced via ReBAC permissions, not storage boundaries.
     research_files_written = 0
     if created > 0:
-        # Create research directories first
+        # Create research directories first (with zone header)
         for dirname in [
             "/workspace/research",
             "/workspace/research/employees",
@@ -626,6 +626,7 @@ def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
                     headers={
                         "Authorization": f"Bearer {admin_key}",
                         "Content-Type": "application/json",
+                        "X-Nexus-Zone-ID": "research",
                     },
                     data=body,
                 )
@@ -648,6 +649,7 @@ def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
                     headers={
                         "Authorization": f"Bearer {admin_key}",
                         "Content-Type": "application/json",
+                        "X-Nexus-Zone-ID": "research",
                     },
                     data=body,
                 )

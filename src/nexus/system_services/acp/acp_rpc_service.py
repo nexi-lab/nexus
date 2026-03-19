@@ -75,17 +75,18 @@ class AcpRPCService:
         return dataclasses.asdict(result)
 
     @rpc_expose(description="List available ACP agent configurations")
-    def acp_list_agents(self, context: dict | None = None) -> list[dict]:  # noqa: ARG002
-        """List built-in and registered agent configs."""
-        agents = self._acp.agent_configs
+    async def acp_list_agents(self, context: dict | None = None) -> list[dict]:
+        """List agent configs from VFS (/{zone}/agents/*/agent.json)."""
+        zone_id = self._zone_id(context)
+        configs = await self._acp.list_agent_configs(zone_id=zone_id)
         return [
             {
-                "agent_id": cfg.agent_id,
-                "name": cfg.name,
-                "command": cfg.command,
-                "enabled": cfg.enabled,
+                "agent_id": cfg.get("agent_id", ""),
+                "name": cfg.get("name", ""),
+                "command": cfg.get("command", ""),
+                "enabled": cfg.get("enabled", True),
             }
-            for cfg in agents.values()
+            for cfg in configs
         ]
 
     @rpc_expose(description="List running ACP processes")

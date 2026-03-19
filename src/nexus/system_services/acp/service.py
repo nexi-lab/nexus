@@ -32,7 +32,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.process_types import ProcessDescriptor, ProcessKind
 from nexus.core.stdio_pipe import StdioPipe
 
-from .agents import BUILTIN_AGENTS, AgentConfig
+from .agents import AgentConfig
 from .connection import AcpConnection, AcpPromptResult, AcpRpcError, FsReadFn, FsWriteFn
 
 if TYPE_CHECKING:
@@ -90,9 +90,6 @@ class AcpService:
         self._zone_id = zone_id
         self._nexus_fs: VFSOperations | None = None
         self._pipe_manager: Any | None = None
-        self._agents: dict[str, AgentConfig] = {
-            k: v for k, v in BUILTIN_AGENTS.items() if v.enabled
-        }
         self._connections: dict[str, _ActiveAgent] = {}
 
     # ------------------------------------------------------------------
@@ -104,11 +101,6 @@ class AcpService:
         """The default zone ID for this service instance."""
         return self._zone_id
 
-    @property
-    def agent_configs(self) -> dict[str, AgentConfig]:
-        """Registered agent configurations (agent_id → config)."""
-        return dict(self._agents)
-
     # ------------------------------------------------------------------
     # Late-binding NexusFS (``everything is a file``)
     # ------------------------------------------------------------------
@@ -117,15 +109,8 @@ class AcpService:
         """Bind NexusFS for VFS-routed file I/O and result persistence.
 
         Called after NexusFS construction (factory ``_wired.py`` phase).
-        Also loads any VFS-persisted agent configs (``agent.json`` files)
-        that override or extend the built-in defaults.
         """
         self._nexus_fs = nexus_fs
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._load_persisted_agents(), name="acp-load-agents")
-        except RuntimeError:
-            pass  # No running loop — agents loaded on first call_agent instead
         logger.debug("AcpService: NexusFS bound for VFS-backed file I/O")
 
     def bind_pipe_manager(self, pipe_manager: Any) -> None:
@@ -158,7 +143,7 @@ class AcpService:
         If *session_id* is provided, resumes the previous session instead
         of creating a new one (``session/load`` vs ``session/new``).
         """
-        config = self._agents.get(agent_id)
+        config = await self._read_agent_config(agent_id, zone_id)
         if config is None:
             raise ValueError(f"Unknown agent_id: {agent_id!r}")
 
@@ -393,36 +378,40 @@ class AcpService:
         )
         return [p for p in procs if p.labels.get("service") == "acp"]
 
-    async def register_agent(self, config: AgentConfig) -> None:
-        """Register a custom agent config and persist to VFS.
+    async def _read_agent_config(self, agent_id: str, zone_id: str) -> AgentConfig | None:
+        """Read agent config from VFS — single source of truth.
 
-        Writes the config as JSON to ``/{zone}/agents/{id}/agent.json``
-        via ``sys_write`` so it survives restarts.
-        """
-        self._agents[config.agent_id] = config
-        if self._nexus_fs is not None:
-            path = f"/{self._zone_id}/agents/{config.agent_id}/agent.json"
-            try:
-                content = json.dumps(config.to_dict(), ensure_ascii=False, indent=2)
-                await self._nexus_fs.sys_write(path, content.encode("utf-8"))
-            except Exception as exc:
-                logger.warning("Failed to persist agent config %s: %s", config.agent_id, exc)
-        logger.debug("ACP agent registered: %s (%s)", config.agent_id, config.command)
-
-    async def _load_persisted_agents(self) -> None:
-        """Load VFS-persisted agent configs from ``/{zone}/agents/*/agent.json``.
-
-        Called once from ``bind_fs()``.  VFS configs override built-in defaults
-        with the same ``agent_id``.
+        Reads ``/{zone}/agents/{agent_id}/agent.json`` via ``sys_read``.
+        Returns None if the file does not exist or NexusFS is not bound.
         """
         if self._nexus_fs is None:
-            return
-        agents_dir = f"/{self._zone_id}/agents"
+            return None
+        path = f"/{zone_id}/agents/{agent_id}/agent.json"
+        try:
+            data: bytes = await self._nexus_fs.sys_read(path)
+            if not data:
+                return None
+            return AgentConfig.from_dict(json.loads(data.decode("utf-8")))
+        except FileNotFoundError:
+            return None
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning("Invalid agent config at %s: %s", path, exc)
+            return None
+
+    async def list_agent_configs(self, zone_id: str | None = None) -> list[dict]:
+        """List agent configs from VFS — reads ``/{zone}/agents/*/agent.json``.
+
+        Returns a list of parsed config dicts (agent_id, name, command, enabled).
+        """
+        if self._nexus_fs is None:
+            return []
+        zone_id = zone_id or self._zone_id
+        agents_dir = f"/{zone_id}/agents"
+        configs: list[dict] = []
         try:
             entries = await self._nexus_fs.sys_readdir(agents_dir)
         except (FileNotFoundError, Exception):
-            return
-        loaded = 0
+            return []
         for entry in entries:
             entry_path = getattr(entry, "path", None) or str(entry)
             config_path = (
@@ -432,17 +421,15 @@ class AcpService:
             )
             try:
                 data: bytes = await self._nexus_fs.sys_read(config_path)
-                if not data:
-                    continue
-                cfg = AgentConfig.from_dict(json.loads(data.decode("utf-8")))
-                self._agents[cfg.agent_id] = cfg
-                loaded += 1
-            except (FileNotFoundError, json.JSONDecodeError, KeyError):
+                if data:
+                    cfg = json.loads(data.decode("utf-8"))
+                    if isinstance(cfg, dict) and "agent_id" in cfg:
+                        configs.append(cfg)
+            except (FileNotFoundError, json.JSONDecodeError):
                 continue
-            except Exception as exc:
-                logger.debug("Failed to load agent config from %s: %s", config_path, exc)
-        if loaded:
-            logger.debug("AcpService: loaded %d persisted agent config(s) from VFS", loaded)
+            except Exception:
+                continue
+        return configs
 
     # ------------------------------------------------------------------
     # System prompt management (VFS-backed via sys_write/sys_read)

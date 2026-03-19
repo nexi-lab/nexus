@@ -80,9 +80,13 @@ def _boot_system_services(
             from nexus.bricks.rebac.consistency.metastore_version_store import (
                 MetastoreVersionStore,
             )
+            from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+                MetastoreNamespaceStore,
+            )
             from nexus.bricks.rebac.manager import ReBACManager
 
             _version_store = MetastoreVersionStore(ctx.metadata_store)
+            _namespace_store = MetastoreNamespaceStore(ctx.metadata_store)
 
             rebac_manager = ReBACManager(
                 engine=ctx.engine,
@@ -94,6 +98,7 @@ def _boot_system_services(
                 read_engine=ctx.read_engine,
                 is_postgresql=_is_pg,
                 version_store=_version_store,
+                namespace_store=_namespace_store,
             )
 
             # --- Audit Store ---

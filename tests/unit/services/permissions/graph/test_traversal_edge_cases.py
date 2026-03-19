@@ -27,6 +27,7 @@ from freezegun import freeze_time
 from sqlalchemy import create_engine
 
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
+from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
 from nexus.bricks.rebac.domain import NamespaceConfig
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
@@ -51,6 +52,7 @@ def mgr(engine):
         cache_ttl_seconds=300,
         max_depth=10,
         version_store=MetastoreVersionStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield m
     m.close()
@@ -64,6 +66,7 @@ def mgr_shallow(engine):
         cache_ttl_seconds=300,
         max_depth=3,
         version_store=MetastoreVersionStore(DictMetastore()),
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield m
     m.close()

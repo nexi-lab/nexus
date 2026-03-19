@@ -560,21 +560,6 @@ class NexusFS(  # type: ignore[misc]
             # so the target path already exists in metastore but the parent
             # directories (e.g. /mnt for /mnt/test) have no metadata yet.
             if existing is not None:
-                # Update zone_id only if: (1) admin, (2) directory has no
-                # explicit owner (system-created), and (3) zone actually differs.
-                # This prevents non-admin callers from re-tagging directories
-                # they don't own — the metastore is keyed by path, not (zone, path).
-                _ctx_zone = getattr(ctx, "zone_id", None)
-                if (
-                    _ctx_zone
-                    and existing.zone_id != _ctx_zone
-                    and ctx.is_admin
-                    and not existing.owner_id
-                ):
-                    from dataclasses import replace as _replace
-
-                    updated = _replace(existing, zone_id=_ctx_zone)
-                    self.metadata.put(updated)
                 if parents:
                     self._ensure_parent_directories(path, ctx)
                 return

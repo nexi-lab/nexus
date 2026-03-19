@@ -612,14 +612,15 @@ def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     # is enforced via ReBAC permissions, not storage boundaries.
     research_files_written = 0
     if created > 0:
-        # Create research directories first (with zone header)
+        # Create research directories with zone header.
+        # Use parents=false to avoid retagging /workspace (root zone) to research.
         for dirname in [
             "/workspace/research",
             "/workspace/research/employees",
             "/workspace/research/products",
         ]:
             try:
-                body = json.dumps({"path": dirname}).encode()
+                body = json.dumps({"path": dirname, "parents": False}).encode()
                 req = urllib.request.Request(
                     f"{base_url}/api/v2/files/mkdir",
                     method="POST",

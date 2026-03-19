@@ -698,6 +698,18 @@ impl PyZoneManager {
         use crate::transport::{RaftGrpcServer, ServerConfig, TlsConfig};
         use std::sync::Arc;
 
+        // Initialize Rust tracing (once) so gRPC server logs are visible.
+        // Uses RUST_LOG env var (e.g., "info,nexus_raft=debug").
+        static TRACING_INIT: std::sync::Once = std::sync::Once::new();
+        TRACING_INIT.call_once(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive("info".parse().unwrap()),
+                )
+                .try_init();
+        });
+
         // Parse TLS config from file paths (all-or-nothing)
         let tls_config = match (tls_cert_path, tls_key_path, tls_ca_path) {
             (Some(cert), Some(key), Some(ca)) => {

@@ -242,6 +242,162 @@ class TestBloomFilter:
         assert not backend.content_exists("deadbeef" * 8)
 
 
+# === Incremental Chunk Write (Dedup) ===
+
+
+class TestIncrementalChunkWrite:
+    """Tests for CAS+CDC incremental write optimization (#1763).
+
+    Uses low threshold + small fixed chunks for fast testing.
+    """
+
+    @pytest.fixture
+    def cdc_backend(self, tmp_path):
+        b = CASLocalBackend(root_path=tmp_path)
+        b._cdc.threshold = 1024  # 1KB threshold
+        b._cdc.min_chunk = 256
+        b._cdc.avg_chunk = 512
+        b._cdc.max_chunk = 1024
+        return b
+
+    def test_incremental_write_skips_existing_chunks(self, cdc_backend):
+        """Second write of identical content should skip put_blob for all chunks."""
+        content = b"A" * 2048  # Above threshold, will be chunked
+
+        cdc_backend.write_content(content)
+
+        # Patch put_blob to count non-meta blob writes on second write
+        original_put_blob = cdc_backend._transport.put_blob
+        blob_writes = []
+
+        def counting_put_blob(key, data, *args, **kwargs):
+            if not key.endswith(".meta"):
+                blob_writes.append(key)
+            return original_put_blob(key, data, *args, **kwargs)
+
+        cdc_backend._transport.put_blob = counting_put_blob
+
+        # Second write — chunks already exist, should be deduped
+        cdc_backend.write_content(content)
+
+        # Only manifest blob should be written (chunk blobs skipped via dedup)
+        assert len(blob_writes) == 1, (
+            f"Expected 1 blob write (manifest only), got {len(blob_writes)}: {blob_writes}"
+        )
+
+    def test_incremental_write_ref_count_correct(self, cdc_backend):
+        """Writing same content twice → chunk ref_counts should double."""
+        # Use varied content so each chunk has a unique hash
+        content = bytes(range(256)) * 8  # 2048 bytes, varied
+
+        r1 = cdc_backend.write_content(content)
+
+        # Record ref_counts after first write
+        from nexus.backends.engines.cdc import ChunkedReference
+
+        manifest_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r1.content_hash))[0]
+        manifest = ChunkedReference.from_json(manifest_data)
+
+        first_counts = {}
+        for ci in manifest.chunks:
+            first_counts[ci.chunk_hash] = cdc_backend._read_meta(ci.chunk_hash)["ref_count"]
+
+        # Second write
+        r2 = cdc_backend.write_content(content)
+        assert r1.content_hash == r2.content_hash
+
+        for ci in manifest.chunks:
+            meta = cdc_backend._read_meta(ci.chunk_hash)
+            expected = first_counts[ci.chunk_hash] * 2
+            assert meta["ref_count"] == expected, (
+                f"Chunk {ci.chunk_hash[:16]} ref_count={meta['ref_count']}, expected {expected}"
+            )
+
+    def test_incremental_write_partial_overlap(self, cdc_backend):
+        """Two files sharing some chunks → shared ref_count=2, unique ref_count=1."""
+        # Use fixed chunking (avg_chunk=512) so we get predictable boundaries
+        # File A: [AAAA][BBBB][CCCC][DDDD] (4 chunks of 512)
+        chunk_a = b"A" * 512
+        chunk_b = b"B" * 512
+        chunk_c = b"C" * 512
+        chunk_d = b"D" * 512
+        chunk_e = b"E" * 512
+
+        content_a = chunk_a + chunk_b + chunk_c + chunk_d  # 2048 bytes
+        content_b = chunk_a + chunk_b + chunk_e + chunk_d  # shares chunks a, b, d
+
+        cdc_backend.write_content(content_a)
+        r_b = cdc_backend.write_content(content_b)
+
+        from nexus.backends.engines.cdc import ChunkedReference
+
+        manifest_b_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r_b.content_hash))[
+            0
+        ]
+        manifest_b = ChunkedReference.from_json(manifest_b_data)
+
+        from nexus.core.hash_fast import hash_content
+
+        shared_hashes = {hash_content(chunk_a), hash_content(chunk_b), hash_content(chunk_d)}
+        unique_hashes = {hash_content(chunk_e)}
+
+        for ci in manifest_b.chunks:
+            meta = cdc_backend._read_meta(ci.chunk_hash)
+            if ci.chunk_hash in shared_hashes:
+                assert meta["ref_count"] == 2, "Shared chunk ref_count should be 2"
+            elif ci.chunk_hash in unique_hashes:
+                assert meta["ref_count"] == 1, "Unique chunk ref_count should be 1"
+
+    def test_delete_after_incremental_write(self, cdc_backend):
+        """Write twice (ref=2), delete once (ref=1, readable), delete again (gone)."""
+        content = bytes(range(256)) * 8  # 2048 bytes, varied
+
+        r = cdc_backend.write_content(content)
+        cdc_backend.write_content(content)  # ref_count = 2
+
+        # Delete once — ref_count drops to 1, still readable
+        cdc_backend.delete_content(r.content_hash)
+        assert cdc_backend.content_exists(r.content_hash)
+        assert cdc_backend.read_content(r.content_hash) == content
+
+        # Delete again — ref_count = 0, gone
+        cdc_backend.delete_content(r.content_hash)
+        assert not cdc_backend.content_exists(r.content_hash)
+
+    def test_no_bloom_skips_optimization(self, tmp_path):
+        """Backend without bloom filter should always write (backward compat)."""
+        b = CASLocalBackend(root_path=tmp_path)
+        b._cdc.threshold = 1024
+        b._cdc.min_chunk = 256
+        b._cdc.avg_chunk = 512
+        b._cdc.max_chunk = 1024
+        b._bloom = None  # Disable bloom
+
+        content = b"N" * 2048
+        b.write_content(content)
+
+        # Patch put_blob to count non-meta blob writes on second write
+        original_put_blob = b._transport.put_blob
+        blob_writes = []
+
+        def counting_put_blob(key, data, *args, **kwargs):
+            if not key.endswith(".meta"):
+                blob_writes.append(key)
+            return original_put_blob(key, data, *args, **kwargs)
+
+        b._transport.put_blob = counting_put_blob
+
+        r2 = b.write_content(content)
+
+        # Without bloom, all chunk blobs + manifest should be written
+        meta = b._read_meta(r2.content_hash)
+        chunk_count = meta.get("chunk_count", 0)
+        assert len(blob_writes) == chunk_count + 1, (
+            f"Without bloom, expected {chunk_count + 1} blob writes "
+            f"(all chunks + manifest), got {len(blob_writes)}"
+        )
+
+
 # === On-Write Callback ===
 
 

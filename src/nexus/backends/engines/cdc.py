@@ -230,9 +230,12 @@ class CDCEngine:
                 futures[future] = (offset, length)
 
             results: dict[int, ChunkInfo] = {}
+            dedup_count = 0
             for future in as_completed(futures):
                 offset, length = futures[future]
-                chunk_hash = future.result()
+                chunk_hash, was_deduped = future.result()
+                if was_deduped:
+                    dedup_count += 1
                 results[offset] = ChunkInfo(chunk_hash=chunk_hash, offset=offset, length=length)
 
         for offset in sorted(results.keys()):
@@ -264,19 +267,33 @@ class CDCEngine:
         if updated.get("ref_count", 0) == 1 and b._bloom is not None:
             b._bloom.add(manifest_hash)
 
+        written = len(chunk_infos) - dedup_count
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(
-            f"Wrote chunked content: {len(content)} bytes -> {len(chunk_infos)} chunks "
-            f"in {elapsed_ms:.1f}ms (manifest={manifest_hash[:16]}...)"
+            "Wrote chunked: %d bytes -> %d chunks (%d written, %d deduped) in %.1fms",
+            len(content),
+            len(chunk_infos),
+            written,
+            dedup_count,
+            elapsed_ms,
         )
         return manifest_hash
 
-    def _write_single_chunk(self, chunk_bytes: bytes) -> str:
+    def _write_single_chunk(self, chunk_bytes: bytes) -> tuple[str, bool]:
+        """Write a single chunk to CAS. Returns (chunk_hash, was_deduped)."""
         b = self._backend
         chunk_hash = hash_content(chunk_bytes)
         key = b._blob_key(chunk_hash)
-        b._transport.put_blob(key, chunk_bytes)
 
+        # Skip put_blob if chunk already exists in local CAS
+        deduped = False
+        if b._bloom is not None and b._bloom.might_exist(chunk_hash):
+            deduped = b._transport.blob_exists(key)
+
+        if not deduped:
+            b._transport.put_blob(key, chunk_bytes)
+
+        # ref_count MUST always increment (new manifest references this chunk)
         def _update(meta: dict[str, Any]) -> dict[str, Any]:
             meta["ref_count"] = meta.get("ref_count", 0) + 1
             meta["size"] = len(chunk_bytes)
@@ -287,7 +304,7 @@ class CDCEngine:
         is_new = updated.get("ref_count", 0) == 1
         if is_new and b._bloom is not None:
             b._bloom.add(chunk_hash)
-        return chunk_hash
+        return chunk_hash, deduped
 
     # === Read ===
 

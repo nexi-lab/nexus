@@ -868,6 +868,7 @@ class ZoneManager:
         try:
             import grpc
 
+            from nexus.raft import commands_pb2 as _  # noqa: F811,F401 — must load before transport
             from nexus.raft import transport_pb2, transport_pb2_grpc
 
             target = leader_addr.replace("http://", "").replace("https://", "")

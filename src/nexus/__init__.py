@@ -335,9 +335,33 @@ async def connect(
         advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
 
-        # Auto-join cluster if NEXUS_JOIN_TOKEN + NEXUS_PEER are set and certs don't exist yet
+        # Auto-join cluster if NEXUS_JOIN_TOKEN is set and certs don't exist yet.
+        # NEXUS_PEER (singular) specifies the leader address for TLS provisioning.
+        # If not set, infer it from NEXUS_PEERS by picking the first peer that
+        # isn't this node — avoids a confusing NEXUS_PEER vs NEXUS_PEERS distinction.
         join_token = os.environ.get("NEXUS_JOIN_TOKEN")
         join_peer = os.environ.get("NEXUS_PEER")
+        if join_token and not join_peer:
+            # Infer leader from NEXUS_PEERS (exclude self)
+            peers_env = os.environ.get("NEXUS_PEERS", "")
+            for entry in peers_env.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                # Format: "id@host:port" — skip our own node_id
+                if "@" in entry:
+                    peer_id_str, peer_addr = entry.split("@", 1)
+                    if peer_id_str.strip() != str(node_id):
+                        join_peer = peer_addr
+                        break
+                else:
+                    join_peer = entry
+                    break
+            if join_peer:
+                logger.info(
+                    "NEXUS_PEER not set; inferred leader address %s from NEXUS_PEERS",
+                    join_peer,
+                )
         tls_dir_check = Path(zones_dir) / "tls"
         if join_token and join_peer and not (tls_dir_check / "node.pem").exists():
             from nexus.security.tls.cluster_join import join_cluster_sync

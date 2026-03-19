@@ -268,6 +268,11 @@ class SystemServices:
     # Tier 1 because it is infrastructure (like write_observer), not an application feature.
     event_bus: Any = None
 
+    # Distributed lock manager — infrastructure locking (Issue #1702: promoted from Tier 2)
+    # Used in kernel write path for distributed mutual exclusion (Redis/Raft).
+    # Tier 1 because it is infrastructure (like vfs_lock_manager), not an application feature.
+    lock_manager: Any = None
+
 
 # ---------------------------------------------------------------------------
 # BrickServices — Tier 2: optional, silent on failure
@@ -287,7 +292,6 @@ class BrickServices:
     """
 
     # Infrastructure bricks
-    lock_manager: Any = None
     workflow_engine: WorkflowProtocol | None = None
     rebac_circuit_breaker: Any = None
 

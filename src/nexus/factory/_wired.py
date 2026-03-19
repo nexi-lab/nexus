@@ -241,7 +241,7 @@ async def _boot_wired_services(
 
             events_service = EventsService(
                 event_bus=system_services.event_bus,
-                lock_manager=brick_services.lock_manager,
+                lock_manager=system_services.lock_manager,
             )
             logger.debug("[BOOT:WIRED] EventsService created")
         except Exception as exc:

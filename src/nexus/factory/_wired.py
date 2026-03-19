@@ -219,6 +219,15 @@ async def _boot_wired_services(
     if mount_service is not None and search_service is not None:
         mount_service._search_service = search_service
 
+    # Wire MountService -> WorkflowServices for scheduled sync (Issue #3148)
+    if mount_service is not None:
+        workflow_engine = getattr(nx, "workflow_engine", None)
+        if workflow_engine is not None:
+            _wf_services = getattr(workflow_engine, "_services", None)
+            if _wf_services is not None and hasattr(_wf_services, "mount_sync"):
+                _wf_services.mount_sync = mount_service
+                logger.debug("[BOOT:WIRED] MountService -> WorkflowServices.mount_sync")
+
     # --- ShareLinkService: Share link operations ---
     share_link_service: Any = None
     if _on("discovery"):

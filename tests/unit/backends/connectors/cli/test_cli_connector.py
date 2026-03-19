@@ -148,8 +148,8 @@ class TestWriteContent:
         # CLI args should include the command
         assert "test-cli" in connector._last_args
 
-    def test_auth_token_not_mixed_into_stdin(self) -> None:
-        """Codex fix: token goes via env/flag, not mixed into YAML stdin."""
+    def test_auth_token_via_env_not_args(self) -> None:
+        """Token goes via env var, never in CLI args (visible in ps)."""
         connector = FakeCLIConnector()
         # Simulate having a token
         connector._token_manager = type(
@@ -163,8 +163,11 @@ class TestWriteContent:
         # stdin should contain ONLY the YAML payload, NOT the token
         assert "secret-tok-123" not in connector._last_stdin
         assert "title: Auth Test" in connector._last_stdin
-        # Token should be in auth args (--access-token flag for non-gh CLIs)
-        assert "secret-tok-123" in connector._last_args
+        # Token must NOT appear in CLI args (would be visible in ps)
+        assert "secret-tok-123" not in connector._last_args
+        # Token should be in env vars
+        assert connector._last_env is not None
+        assert any("secret-tok-123" in v for v in connector._last_env.values())
 
     def test_missing_context_raises(self) -> None:
         connector = FakeCLIConnector()

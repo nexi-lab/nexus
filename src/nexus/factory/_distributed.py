@@ -93,13 +93,16 @@ def _create_distributed_infra(
 
 
 def _create_workflow_engine(
-    record_store: Any, glob_match_fn: Any = None
+    record_store: Any,
+    glob_match_fn: Any = None,
+    mount_sync: Any = None,
 ) -> "WorkflowProtocol | None":
     """Create workflow engine with async store and DI.
 
     Args:
         record_store: RecordStoreABC instance (has async_session_factory property).
         glob_match_fn: Optional glob match function (Rust glob_fast in production).
+        mount_sync: Optional MountSyncProtocol for scheduled sync (Issue #3148).
 
     Returns workflow engine or None if unavailable.
     """
@@ -119,7 +122,7 @@ def _create_workflow_engine(
             execution_model=WorkflowExecutionModel,
             zone_id=ROOT_ZONE_ID,
         )
-        services = WorkflowServices(glob_match=glob_match_fn)
+        services = WorkflowServices(glob_match=glob_match_fn, mount_sync=mount_sync)
         return WorkflowEngine(workflow_store=workflow_store, services=services)
     except Exception as e:
         logger.warning("Failed to create workflow engine: %s", e)

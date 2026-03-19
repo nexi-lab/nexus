@@ -18,17 +18,31 @@ from nexus.backends.connectors.gws.schemas import (
 )
 
 __all__ = [
-    # Sheets
+    # Connectors
+    "SheetsConnector",
+    "DocsConnector",
+    "ChatConnector",
+    "DriveConnector",
+    # Sheets schemas
     "AppendRowsSchema",
     "UpdateCellsSchema",
-    # Docs
+    # Docs schemas
     "InsertTextSchema",
     "ReplaceTextSchema",
-    # Chat
+    # Chat schemas
     "SendMessageSchema",
     "CreateSpaceSchema",
-    # Drive
+    # Drive schemas
     "UploadFileSchema",
     "UpdateFileSchema",
     "DeleteFileSchema",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazy-load connector classes to avoid circular imports."""
+    if name in ("SheetsConnector", "DocsConnector", "ChatConnector", "DriveConnector"):
+        from nexus.backends.connectors.gws import connector
+
+        return getattr(connector, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

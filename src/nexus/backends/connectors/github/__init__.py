@@ -19,9 +19,19 @@ from nexus.backends.connectors.github.schemas import (
 )
 
 __all__ = [
+    "GitHubConnector",
     "CloseIssueSchema",
     "CommentIssueSchema",
     "CreateIssueSchema",
     "CreatePRSchema",
     "MergePRSchema",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazy-load connector class."""
+    if name == "GitHubConnector":
+        from nexus.backends.connectors.github.connector import GitHubConnector
+
+        return GitHubConnector
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -93,8 +93,8 @@ class CLIConnector(
     CLI_SERVICE: str = ""
     """Service within the CLI (e.g., 'gmail', 'issue')."""
 
-    CLI_AUTH_FLAG: ClassVar[str] = "--access-token"
-    """CLI flag for auth token (token piped via stdin, not arg)."""
+    # Auth is ALWAYS via environment variables (never CLI flags).
+    # See _build_auth_env() for the mapping.
 
     _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = (
         CLI_CONNECTOR_CAPABILITIES | OAUTH_CONNECTOR_CAPABILITIES
@@ -312,7 +312,6 @@ class CLIConnector(
         auth_env: dict[str, str] = {}
         if token:
             auth_env = self._build_auth_env(token)
-            cli_args = self._add_auth_args(cli_args, token)
 
         # Execute with payload on stdin and auth via env/flag
         result = self._execute_cli(cli_args, stdin=payload_yaml, context=context, env=auth_env)
@@ -389,36 +388,24 @@ class CLIConnector(
     def _build_auth_env(self, token: str) -> dict[str, str]:
         """Build environment variables for CLI auth.
 
-        Different CLIs use different auth transports:
-        - gh: GH_TOKEN environment variable
-        - gws: --access-token flag (handled in _add_auth_args)
+        All auth is via environment variables — NEVER via CLI flags,
+        which would expose tokens in ``ps`` / ``/proc`` output.
+
+        Known CLI env vars:
+        - gh: GH_TOKEN
+        - gws: GWS_ACCESS_TOKEN (or GOOGLE_ACCESS_TOKEN)
+        - Generic fallback: NEXUS_CLI_ACCESS_TOKEN
 
         Subclasses can override for custom auth transports.
         """
         cli = self.CLI_NAME.lower()
         if cli == "gh":
             return {"GH_TOKEN": token}
-        # gws and others use flag-based auth, handled in _add_auth_args
-        return {}
-
-    def _add_auth_args(self, args: list[str], token: str) -> list[str]:
-        """Add auth flag to CLI args if the CLI uses flag-based auth.
-
-        Decision #2: token piped via stdin was the original plan, but
-        real CLIs use either env vars (gh) or flags (gws). This method
-        handles flag-based auth. Env-based auth is in _build_auth_env.
-
-        Token is NEVER passed as a bare positional argument visible in ps.
-        """
-        cli = self.CLI_NAME.lower()
-        if cli == "gh":
-            # gh uses GH_TOKEN env var, not a flag
-            return args
-        # gws and similar: use the configured auth flag
-        auth_flag = self.CLI_AUTH_FLAG
-        if self._config and self._config.auth:
-            auth_flag = self._config.auth.flag
-        return [*args, auth_flag, token]
+        if cli == "gws":
+            return {"GWS_ACCESS_TOKEN": token}
+        # Generic fallback — connector-specific env var
+        env_key = f"{self.CLI_NAME.upper().replace('-', '_')}_ACCESS_TOKEN"
+        return {env_key: token}
 
     # --- CLI execution (subclasses must implement) ---
 

@@ -71,6 +71,23 @@ class WorkflowProtocol(Protocol):
 # ---------------------------------------------------------------------------
 
 
+@runtime_checkable
+class MountSyncProtocol(Protocol):
+    """Narrow sync-only interface for workflow scheduled sync (Issue #3148).
+
+    Exposes only what workflows need — sync a mount. Does NOT expose
+    add_mount, remove_mount, or other mount lifecycle operations.
+    MountService implements this.
+    """
+
+    async def sync_mount(
+        self,
+        mount_point: str | None = None,
+        recursive: bool = True,
+        generate_embeddings: bool = False,
+    ) -> dict[str, Any]: ...
+
+
 @dataclass
 class WorkflowServices:
     """Services injected into workflow context for action execution.
@@ -82,3 +99,4 @@ class WorkflowServices:
     nexus_ops: NexusOperationsProtocol | None = None
     metadata_store: MetadataStoreProtocol | None = None
     glob_match: GlobMatchFn | None = None
+    mount_sync: MountSyncProtocol | None = None

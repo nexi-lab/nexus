@@ -161,8 +161,8 @@ class TestIdempotency:
         manifest: dict = {}
 
         created = _seed_permissions(mock_nx, config, manifest)
-        assert created == 3
-        assert mock_rebac.rebac_write.call_count == 3
+        assert created == 4
+        assert mock_rebac.rebac_write.call_count == 4
 
     @patch("nexus.cli.commands.demo._seed_permissions_docker", return_value=3)
     def test_seed_permissions_shared_preset_uses_docker(self, mock_docker: MagicMock) -> None:
@@ -279,8 +279,8 @@ class TestSeedIdentities:
         with patch.dict("sys.modules", {"nexus.cli.commands.admin": mock_admin_module}):
             created = _seed_identities(config, manifest)
 
-        # Should create demo_user (skip admin) + demo_agent = 2
-        assert created == 2
+        # Should create demo_user (skip admin) + demo_agent + coordinator = 3
+        assert created == 3
         assert manifest["identities_seeded"] is True
         assert "identity_keys" in manifest
         # identity_keys stores dicts with api_key and key_id

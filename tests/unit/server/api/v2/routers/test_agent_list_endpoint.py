@@ -14,10 +14,18 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.server.api.v2.routers.agent_status import (
+    _get_nexus_fs,
     _get_process_table,
     router,
 )
 from nexus.server.dependencies import require_auth
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalInfo:
+    """Test stand-in for ExternalProcessInfo."""
+
+    connection_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +38,7 @@ class ProcessRecord:
     name: str | None
     state: str
     generation: int
+    external_info: ExternalInfo | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +92,7 @@ _auth_result = {
 
 _test_app.dependency_overrides[require_auth] = lambda: _auth_result
 _test_app.dependency_overrides[_get_process_table] = _override_process_table
+_test_app.dependency_overrides[_get_nexus_fs] = lambda: None
 
 client = TestClient(_test_app)
 

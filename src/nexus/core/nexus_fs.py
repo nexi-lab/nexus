@@ -2430,16 +2430,6 @@ class NexusFS(  # type: ignore[misc]
         now = datetime.now(UTC)
         meta = self.metadata.get(path)
 
-        # Capture snapshot before operation for undo capability
-        snapshot_hash = meta.etag if meta else None
-        metadata_snapshot = None
-        if meta:
-            metadata_snapshot = {
-                "size": meta.size,
-                "version": meta.version,
-                "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            }
-
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         # Hook handles existing-file (owner fast-path) vs new-file (parent check)
         from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
@@ -2540,88 +2530,6 @@ class NexusFS(  # type: ignore[misc]
                 is_new=(meta is None),
             )
         )
-
-        # P0-3: Create parent relationship tuples for file inheritance
-        # This enables permission inheritance from parent directories
-        # Issue #1071: Use deferred buffer for async permission operations if available
-        # This reduces single-file write latency from ~36ms to ~10ms by batching
-        # permission operations in the background. Owner access is guaranteed by
-        # owner_id in metadata (fast-path check).
-        ctx = context if context is not None else self._default_context
-        # Issue #1570: deferred_permission_buffer accessed from container, not flat attr.
-        deferred_buffer = (
-            getattr(self._system_services, "deferred_permission_buffer", None)
-            if self._system_services
-            else None
-        )
-
-        if deferred_buffer is not None:
-            # DEFERRED PATH: Queue permission operations for background batch processing
-            # Owner can still access file immediately via owner_id fast-path
-            try:
-                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "root")
-                if meta is None and ctx.user_id and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user_id, path, ctx.zone_id or "root")
-            except Exception as e:
-                logger.warning("write: Failed to queue deferred permissions for %s: %s", path, e)
-        else:
-            # SYNC PATH: Execute permission operations immediately (original behavior)
-            _hier = (
-                getattr(self._system_services, "hierarchy_manager", None)
-                if self._system_services
-                else None
-            )
-            if _hier is not None:
-                try:
-                    logger.info(
-                        "write: Calling ensure_parent_tuples for %s, zone_id=%s",
-                        path,
-                        ctx.zone_id or ROOT_ZONE_ID,
-                    )
-                    created_count = _hier.ensure_parent_tuples(path, zone_id=ctx.zone_id or "root")
-                    logger.info("write: Created %d parent tuples for %s", created_count, path)
-                except Exception as e:
-                    logger.warning(
-                        f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
-                    )
-
-            # Issue #548: Grant direct_owner permission to the user who created the file
-            _rebac = (
-                getattr(self._system_services, "rebac_manager", None)
-                if self._system_services
-                else None
-            )
-            if meta is None and _rebac:
-                try:
-                    if ctx.user_id and not ctx.is_system:
-                        logger.debug(
-                            f"write: Granting direct_owner permission to {ctx.user_id} for {path}"
-                        )
-                        _rebac.rebac_write(
-                            subject=("user", ctx.user_id),
-                            relation="direct_owner",
-                            object=("file", path),
-                            zone_id=ctx.zone_id or "root",
-                        )
-                        logger.debug(
-                            f"write: Granted direct_owner permission to {ctx.user_id} for {path}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"write: Failed to grant direct_owner permission for {path}: {e}"
-                    )
-
-        # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
-        # Issue #1570: snapshot_service accessed from container, not flat attr.
-        _ss = (
-            getattr(self._brick_services, "snapshot_service", None)
-            if self._brick_services
-            else None
-        )
-        if _ss is not None:
-            _txn_id = _ss.is_tracked(path)
-            if _txn_id is not None:
-                _ss.track_write(_txn_id, path, snapshot_hash, metadata_snapshot, content_hash)
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         from nexus.contracts.vfs_hooks import WriteHookContext
@@ -3396,32 +3304,10 @@ class NexusFS(  # type: ignore[misc]
         if meta is None:
             raise NexusFileNotFoundError(path)
 
-        # Capture snapshot before operation for undo capability
-        snapshot_hash = meta.etag
-        metadata_snapshot = {
-            "size": meta.size,
-            "version": meta.version,
-            "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            "backend_name": meta.backend_name,
-            "physical_path": meta.physical_path,
-        }
-
         # PRE-INTERCEPT: pre-delete hooks (Issue #899)
         from nexus.contracts.vfs_hooks import DeleteHookContext as _DHC
 
         self._dispatch.intercept_pre_delete(_DHC(path=path, context=context))
-
-        # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
-        # Issue #1570: snapshot_service accessed from container, not flat attr.
-        _ss = (
-            getattr(self._brick_services, "snapshot_service", None)
-            if self._brick_services
-            else None
-        )
-        if _ss is not None:
-            _txn_id = _ss.is_tracked(path)
-            if _txn_id is not None:
-                _ss.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         # Placed BEFORE physical content delete to preserve audit integrity.
@@ -4990,18 +4876,6 @@ class NexusFS(  # type: ignore[misc]
         )
         if _pt is not None:
             _pt.close_all()
-
-        # Stop DeferredPermissionBuffer first to flush pending permissions.
-        # Uses _stop_sync() because close() is sync; async stop() is handled
-        # by coordinator.stop_persistent_services() in aclose().
-        # Issue #1570: accessed from container, not flat attr.
-        _dpb = (
-            getattr(self._system_services, "deferred_permission_buffer", None)
-            if self._system_services
-            else None
-        )
-        if _dpb:
-            _dpb._stop_sync()
 
         # Flush write observer pre-buffer (CLI mode: events buffered in memory
         # because PipeManager was never injected). Must happen before

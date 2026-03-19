@@ -564,6 +564,37 @@ async def _register_vfs_hooks(
     else:
         logger.debug("[BOOT:BRICK] task_manager disabled by profile")
 
+    # ── Snapshot write tracker (Issue #1770) ─────────────────────────
+    _snapshot_svc = getattr(nx._brick_services, "snapshot_service", None)
+    if _snapshot_svc is not None:
+        from nexus.bricks.snapshot.snapshot_hook import SnapshotWriteHook
+
+        await _enlist("snapshot_write", SnapshotWriteHook(_snapshot_svc))
+
+    # ── Deferred permission buffer (Issue #1773) ──────────────────────
+    _dpb = (
+        getattr(nx._system_services, "deferred_permission_buffer", None)
+        if nx._system_services
+        else None
+    )
+    if _dpb is not None:
+        from nexus.bricks.rebac.deferred_permission_hook import DeferredPermissionHook
+
+        await _enlist("deferred_permission", DeferredPermissionHook(_dpb))
+    else:
+        # Sync fallback — same logic, runs as post-write hook instead of inline kernel code
+        _hier = (
+            getattr(nx._system_services, "hierarchy_manager", None) if nx._system_services else None
+        )
+        _rebac = getattr(nx, "_rebac_manager", None)
+        if _hier is not None or _rebac is not None:
+            from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
+
+            await _enlist(
+                "sync_permission",
+                SyncPermissionWriteHook(hierarchy_manager=_hier, rebac_manager=_rebac),
+            )
+
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.

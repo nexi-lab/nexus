@@ -212,6 +212,21 @@ async def list_inbox(
             status_code=404, detail=f"Inbox not found for agent {agent_id!r}"
         ) from exc
 
+    # Fallback: if metadata list returns empty, try the backend directly.
+    # The /agents mount writes to a LocalConnector that may not be indexed
+    # in the metadata store used by sys_readdir.
+    if not files:
+        try:
+            nx = getattr(storage, "_nx", None)
+            if nx is not None:
+                route = nx.router.route(path, is_admin=True, check_write=False)
+                import asyncio
+
+                backend_files = await asyncio.to_thread(route.backend.list_dir, route.backend_path)
+                files = [f for f in backend_files if "/" not in f]
+        except Exception:
+            pass  # best-effort fallback
+
     messages = [InboxMessageSummary(filename=f) for f in files if f.endswith(".json")]
     return InboxListResponse(agent_id=agent_id, messages=messages, total=len(messages))
 

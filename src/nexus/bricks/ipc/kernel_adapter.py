@@ -14,7 +14,6 @@ Issue: #1178
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -80,12 +79,13 @@ class KernelVFSAdapter:
     async def sys_read(self, path: str, zone_id: str) -> bytes:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        return await asyncio.to_thread(self._nx.sys_read, path, context=ctx)
+        result: bytes = await self._nx.sys_read(path, context=ctx)
+        return result
 
     async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        await asyncio.to_thread(self._nx.sys_write, path, data, context=ctx)
+        await self._nx.sys_write(path, data, context=ctx)
 
     async def list_dir(self, path: str, zone_id: str) -> list[str]:
         self._require_bound()
@@ -116,12 +116,12 @@ class KernelVFSAdapter:
     async def rename(self, src: str, dst: str, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        await asyncio.to_thread(self._nx.rename, src, dst, context=ctx)
+        await self._nx.rename(src, dst, context=ctx)
 
     async def sys_mkdir(self, path: str, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        await asyncio.to_thread(self._nx.sys_mkdir, path, parents=True, exist_ok=True, context=ctx)
+        await self._nx.sys_mkdir(path, parents=True, exist_ok=True, context=ctx)
 
     # Alias for backward compatibility
     mkdir = sys_mkdir
@@ -129,7 +129,8 @@ class KernelVFSAdapter:
     async def sys_access(self, path: str, zone_id: str) -> bool:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        return await asyncio.to_thread(self._nx.sys_access, path, context=ctx)
+        result: bool = await self._nx.sys_access(path, context=ctx)
+        return result
 
     # Alias for backward compatibility
     exists = sys_access

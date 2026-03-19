@@ -35,6 +35,7 @@ from nexus.cli.commands.demo_data import (
     DEMO_IPC_PROCESSED,
     DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
+    DEMO_ZONES,
     HERB_CORPUS,
     MANIFEST_FILENAME,
     PLAN_VERSIONS,
@@ -490,6 +491,174 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
 
     manifest["identities_seeded"] = True
     manifest["identity_keys"] = identity_keys
+    return created
+
+
+def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
+    """Seed demo zones and populate them with data.
+
+    Creates a 'research' zone with HERB employee/product data, separate
+    from customer data in the root zone. This enables cross-zone semantic
+    search demos.
+    """
+    if manifest.get("zones_seeded"):
+        return 0
+
+    import urllib.request
+
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    base_url = f"http://localhost:{http_port}"
+
+    admin_key = _resolve_admin_key(config)
+    if not admin_key:
+        return 0
+
+    created = 0
+    for zone in DEMO_ZONES:
+        # Create zone record in DB via direct SQL (zone creation API requires
+        # DatabaseLocalAuth which may not be configured)
+        try:
+            # Use the files/write endpoint with zone header to seed data
+            # First check if zone already exists in the zones list
+            req = urllib.request.Request(
+                f"{base_url}/api/zones",
+                headers={"Authorization": f"Bearer {admin_key}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                zones_data = json.loads(resp.read())
+                existing_ids = [z.get("zone_id") for z in zones_data.get("zones", [])]
+                if zone["zone_id"] in existing_ids:
+                    created += 1
+                    continue
+        except Exception:
+            pass
+
+        # Insert zone record via docker exec on the postgres container.
+        # The zone metadata record needs to exist in the zones table first.
+        # Use docker exec to insert if in Docker mode, otherwise skip.
+        # Insert zone record via docker exec on the postgres container.
+        # Find the postgres container by name pattern (handles any compose project).
+        preset = config.get("preset", "local")
+        if preset in ("shared", "demo"):
+            try:
+                # Find postgres container for this stack
+                # Find postgres container matching our stack's port
+                pg_port = str(ports.get("postgres", 5433))
+                ps_result = subprocess.run(
+                    [
+                        "docker",
+                        "ps",
+                        "--filter",
+                        "name=postgres",
+                        "--filter",
+                        f"publish={pg_port}",
+                        "--format",
+                        "{{.Names}}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                pg_containers = [
+                    c.strip() for c in ps_result.stdout.strip().split("\n") if c.strip()
+                ]
+                if not pg_containers:
+                    # Fallback: any postgres container
+                    ps_result = subprocess.run(
+                        ["docker", "ps", "--filter", "name=postgres", "--format", "{{.Names}}"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    pg_containers = [
+                        c.strip() for c in ps_result.stdout.strip().split("\n") if c.strip()
+                    ]
+                pg_container = pg_containers[0] if pg_containers else None
+                if pg_container:
+                    insert_sql = (
+                        f"INSERT INTO zones (zone_id, name, description, phase, finalizers, created_at, updated_at) "
+                        f"VALUES ('{zone['zone_id']}', '{zone['name']}', "
+                        f"'{zone['description'][:200]}', 'Active', '[]', NOW(), NOW()) "
+                        f"ON CONFLICT (zone_id) DO NOTHING;"
+                    )
+                    result = subprocess.run(
+                        [
+                            "docker",
+                            "exec",
+                            pg_container,
+                            "psql",
+                            "-U",
+                            "postgres",
+                            "-d",
+                            "nexus",
+                            "-c",
+                            insert_sql,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if result.returncode == 0:
+                        created += 1
+                        logger.debug(
+                            "Created zone '%s' via docker exec on %s", zone["zone_id"], pg_container
+                        )
+            except Exception as e:
+                logger.debug("Could not create zone via docker: %s", e)
+
+    # Seed HERB employees + products into /workspace/research/
+    # In standalone mode, all files live in the same backend — zone isolation
+    # is enforced via ReBAC permissions, not storage boundaries.
+    research_files_written = 0
+    if created > 0:
+        # Create research directories first
+        for dirname in [
+            "/workspace/research",
+            "/workspace/research/employees",
+            "/workspace/research/products",
+        ]:
+            try:
+                body = json.dumps({"path": dirname}).encode()
+                req = urllib.request.Request(
+                    f"{base_url}/api/v2/files/mkdir",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {admin_key}",
+                        "Content-Type": "application/json",
+                    },
+                    data=body,
+                )
+                urllib.request.urlopen(req, timeout=10)
+            except Exception:
+                pass
+
+        herb_research_files = [
+            item
+            for item in HERB_CORPUS
+            if "/herb/employees/" in item[0] or "/herb/products/" in item[0]
+        ]
+        for path, content, _desc in herb_research_files:
+            research_path = path.replace("/workspace/demo/herb/", "/workspace/research/")
+            try:
+                body = json.dumps({"path": research_path, "content": content}).encode()
+                req = urllib.request.Request(
+                    f"{base_url}/api/v2/files/write",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {admin_key}",
+                        "Content-Type": "application/json",
+                    },
+                    data=body,
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        research_files_written += 1
+            except Exception as e:
+                logger.debug("Could not write %s: %s", research_path, e)
+        logger.debug("Wrote %d files to /workspace/research/", research_files_written)
+
+    manifest["zones_seeded"] = True
     return created
 
 
@@ -1289,6 +1458,13 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     except Exception as e:
         logger.debug("Agent coordination seeding failed: %s", e)
 
+    # 5c. Seed zones (best-effort)
+    zones_created = 0
+    try:
+        zones_created = _seed_zones(config, manifest)
+    except Exception as e:
+        logger.debug("Zone seeding failed: %s", e)
+
     # 6. Initialize semantic search and index demo files (best-effort)
     semantic_ready = False
     if not skip_semantic:
@@ -1341,6 +1517,10 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
         )
     else:
         console.print("  Agents:       skipped (coordination not available)")
+    if zones_created > 0:
+        console.print(f"  Zones:        {zones_created} created (research zone with HERB data)")
+    else:
+        console.print("  Zones:        skipped")
     if skip_semantic:
         console.print("  Semantic:     skipped")
     elif semantic_ready:

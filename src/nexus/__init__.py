@@ -366,14 +366,21 @@ async def connect(
         if join_token and join_peer and not (tls_dir_check / "node.pem").exists():
             from nexus.security.tls.cluster_join import join_cluster_sync
 
-            logger.info("NEXUS_JOIN_TOKEN + NEXUS_PEER set — joining cluster before startup")
-            join_cluster_sync(
-                peer_address=join_peer,
-                token=join_token,
-                node_id=node_id,
-                tls_dir=tls_dir_check,
+            logger.info(
+                "NEXUS_JOIN_TOKEN set — joining cluster via %s before startup",
+                join_peer,
             )
-            logger.info("Cluster join complete — continuing with ZoneManager init")
+            try:
+                join_cluster_sync(
+                    peer_address=join_peer,
+                    token=join_token,
+                    node_id=node_id,
+                    tls_dir=tls_dir_check,
+                )
+                logger.info("Cluster join complete — continuing with ZoneManager init")
+            except Exception:
+                logger.exception("TLS provisioning failed via %s — cannot join cluster", join_peer)
+                raise
 
         zone_mgr = ZoneManager(
             node_id=node_id,

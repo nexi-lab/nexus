@@ -47,13 +47,22 @@ def join_cluster_sync(
 
     logger.info("Joining cluster via %s (node_id=%d)...", peer_address, node_id)
 
-    # Connect via gRPC (server-TLS only — no client cert)
+    # Connect via gRPC — the leader uses a self-signed CA that we don't
+    # have yet (we're trying to obtain it).  Fetch the server's TLS cert
+    # first, then use it as root_certificates for the gRPC channel.
+    # Security comes from the join token: after receiving the CA cert
+    # we verify its SHA256 fingerprint matches the token.
+    import ssl
+
     import grpc
 
-    channel_creds = grpc.ssl_channel_credentials()
     target = peer_address.replace("https://", "").replace("http://", "")
 
     try:
+        # Fetch server's TLS certificate (TOFU — trust on first use)
+        host, port_str = target.rsplit(":", 1)
+        server_cert_pem = ssl.get_server_certificate((host, int(port_str))).encode()
+        channel_creds = grpc.ssl_channel_credentials(root_certificates=server_cert_pem)
         channel = grpc.secure_channel(target, channel_creds)
 
         from nexus.contracts.constants import ROOT_ZONE_ID

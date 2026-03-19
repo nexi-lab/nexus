@@ -94,6 +94,39 @@ export const agentPhaseColor: Record<string, string> = {
 };
 
 // =============================================================================
+// Agent state → color mapping (for agent list)
+// =============================================================================
+
+export const agentStateColor: Record<string, string> = {
+  registered: statusColor.info,
+  delegated: statusColor.identity,
+  running: statusColor.healthy,
+  connected: statusColor.healthy,
+  disconnected: statusColor.dim,
+};
+
+// =============================================================================
+// Delegation mode → color mapping
+// =============================================================================
+
+export const delegationModeColor: Record<string, string> = {
+  shared: statusColor.info,
+  copy: statusColor.warning,
+  clean: statusColor.error,
+};
+
+// =============================================================================
+// Delegation status → color mapping
+// =============================================================================
+
+export const delegationStatusColor: Record<string, string> = {
+  active: statusColor.healthy,
+  revoked: statusColor.error,
+  expired: statusColor.dim,
+  completed: statusColor.info,
+};
+
+// =============================================================================
 // Focus / UI chrome colors
 // =============================================================================
 

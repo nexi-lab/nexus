@@ -6,6 +6,7 @@ import React, { useEffect, useState } from "react";
 import type { DelegationItem } from "../../stores/agents-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { delegationModeColor, delegationStatusColor, statusColor } from "../../shared/theme.js";
 
 interface DelegationListProps {
   readonly delegations: readonly DelegationItem[];
@@ -113,14 +114,24 @@ export function DelegationList({
         {delegations.map((d, i) => {
           const isSelected = i === selectedIndex;
           const badge = STATUS_BADGES[d.status] ?? "?";
-          const arrow = `${shortId(d.agent_id)}->${shortId(d.parent_agent_id)}`;
-          const intent = d.intent.length > 19 ? `${d.intent.slice(0, 16)}...` : d.intent;
+          const badgeColor = delegationStatusColor[d.status] ?? statusColor.dim;
+          const modeColor = delegationModeColor[d.delegation_mode] ?? statusColor.dim;
           const prefix = isSelected ? "> " : "  ";
 
           return (
             <box key={d.delegation_id} height={1} width="100%">
               <text>
-                {`${prefix}${badge}   ${shortId(d.delegation_id).padEnd(10)}  ${d.delegation_mode.padEnd(6)}  ${arrow.padEnd(19)}  ${intent.padEnd(19)}  ${String(d.depth).padEnd(5)}  ${formatExpiry(d.lease_expires_at)}`}
+                <span>{prefix}</span>
+                <span foregroundColor={badgeColor}>{badge}</span>
+                <span dimColor>{`   ${shortId(d.delegation_id).padEnd(10)}  `}</span>
+                <span foregroundColor={modeColor}>{d.delegation_mode.padEnd(6)}</span>
+                <span>{"  "}</span>
+                <span foregroundColor={statusColor.identity}>{shortId(d.agent_id)}</span>
+                <span dimColor>{"→"}</span>
+                <span>{shortId(d.parent_agent_id).padEnd(12)}</span>
+                <span dimColor>{"  "}</span>
+                <span>{(d.intent.length > 19 ? `${d.intent.slice(0, 16)}...` : d.intent).padEnd(19)}</span>
+                <span dimColor>{`  ${String(d.depth).padEnd(5)}  ${formatExpiry(d.lease_expires_at)}`}</span>
               </text>
             </box>
           );

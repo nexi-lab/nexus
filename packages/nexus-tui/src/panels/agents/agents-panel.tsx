@@ -22,7 +22,7 @@ import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { CommandOutput } from "../../shared/components/command-output.js";
 import { useCommandRunnerStore, executeLocalCommand } from "../../services/command-runner.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { focusColor } from "../../shared/theme.js";
+import { agentStateColor, focusColor, statusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
 const ALL_TABS: readonly TabDef<AgentTab>[] = [
@@ -350,10 +350,16 @@ export default function AgentsPanel(): React.ReactNode {
                   const prefix = isSelected ? "> " : "  ";
                   const suffix = isActive ? " *" : "";
                   const agentEntry = agents.find((a) => a.agent_id === agentId);
-                  const stateLabel = agentEntry ? ` [${agentEntry.state}]` : "";
+                  const state = agentEntry?.state ?? "";
+                  const stateColor = agentStateColor[state] ?? statusColor.dim;
                   return (
                     <box key={agentId} height={1} width="100%">
-                      <text>{`${prefix}${agentId}${stateLabel}${suffix}`}</text>
+                      <text>
+                        <span>{prefix}</span>
+                        <span bold={isActive}>{agentId}</span>
+                        {state ? <span foregroundColor={stateColor}>{` [${state}]`}</span> : ""}
+                        <span dimColor>{suffix}</span>
+                      </text>
                     </box>
                   );
                 })}

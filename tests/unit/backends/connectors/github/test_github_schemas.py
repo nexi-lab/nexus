@@ -416,3 +416,45 @@ class TestGitHubConfigYAML:
         config = load_connector_config(GITHUB_CONFIG_PATH)
         ops = [op.operation for op in config.write]
         assert len(ops) == len(set(ops))
+
+
+# ---------------------------------------------------------------------------
+# GitHubConnector command construction
+# ---------------------------------------------------------------------------
+
+
+class TestGitHubConnectorCommands:
+    """Verify GitHubConnector builds correct gh CLI invocations."""
+
+    def test_cli_service_is_empty(self) -> None:
+        """gh has no service subcommand — CLI_SERVICE must be empty."""
+        from nexus.backends.connectors.github.connector import GitHubConnector
+
+        assert GitHubConnector.CLI_SERVICE == ""
+
+    def test_build_cli_args_no_service_prefix(self) -> None:
+        """gh commands should be ['gh', 'issue', 'create'], NOT ['gh', 'github', 'issue create']."""
+        from unittest.mock import MagicMock
+
+        from nexus.backends.connectors.github.connector import GitHubConnector
+
+        connector = GitHubConnector()
+        args = connector._build_cli_args("create_issue", MagicMock(), "issues/_new.yaml")
+
+        # Must start with 'gh', must NOT include 'github' as second element
+        assert args[0] == "gh"
+        assert "github" not in args
+        # 'issue create' must be split into separate args
+        assert "issue" in args
+        assert "create" in args
+
+    def test_build_cli_args_merge_pr(self) -> None:
+        """'pr merge' command must be split into ['pr', 'merge']."""
+        from unittest.mock import MagicMock
+
+        from nexus.backends.connectors.github.connector import GitHubConnector
+
+        connector = GitHubConnector()
+        args = connector._build_cli_args("merge_pr", MagicMock(), "pulls/_merge.yaml")
+
+        assert args == ["gh", "pr", "merge"]

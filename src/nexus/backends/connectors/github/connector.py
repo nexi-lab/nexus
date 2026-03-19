@@ -36,7 +36,7 @@ class GitHubConnector(CLIConnector):
 
     SKILL_NAME = "github"
     CLI_NAME = "gh"
-    CLI_SERVICE = "github"
+    CLI_SERVICE = ""  # gh has no service subcommand — commands are "gh issue create", not "gh github issue create"
 
     SCHEMAS: dict[str, type] = {
         "create_issue": CreateIssueSchema,

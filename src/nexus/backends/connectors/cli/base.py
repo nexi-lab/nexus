@@ -151,11 +151,14 @@ class CLIConnector(
             ]
         self._error_mapper = CLIErrorMapper(extra_patterns=extra_patterns)
 
-        # Apply config to class attributes if provided
+        # Apply config values only if the subclass didn't explicitly set them.
+        # We check __dict__ to distinguish "subclass set CLI_SERVICE = ''" from
+        # "inherited the default ''" — GitHubConnector explicitly sets "" to mean
+        # "no service subcommand".
         if config:
-            if not self.CLI_NAME:
+            if "CLI_NAME" not in type(self).__dict__:
                 self.CLI_NAME = config.cli
-            if not self.CLI_SERVICE:
+            if "CLI_SERVICE" not in type(self).__dict__:
                 self.CLI_SERVICE = config.service
 
     # --- Backend identity ---
@@ -376,11 +379,12 @@ class CLIConnector(
         if self.CLI_SERVICE:
             args.append(self.CLI_SERVICE)
 
-        # Find the command from config
+        # Find the command from config — split multi-word commands into
+        # separate argv elements (e.g., "issue create" → ["issue", "create"])
         if self._config:
             for write_op in self._config.write:
                 if write_op.operation == operation:
-                    args.append(write_op.command)
+                    args.extend(write_op.command.split())
                     break
 
         return args

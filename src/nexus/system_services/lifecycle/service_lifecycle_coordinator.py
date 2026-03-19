@@ -3,7 +3,7 @@
 ``enlist()`` is the **single public entry point** for all service registration.
 It auto-detects the service quadrant and applies appropriate lifecycle:
 
-    Q1 (static)         — register only
+    Q1 (restart-required) — register only
     Q2 (HotSwappable)   — register + capture hook_spec + activate
     Q3 (Persistent)     — register + start (deferred pre-bootstrap)
     Q4 (both)           — register + start + hooks + activate
@@ -182,7 +182,7 @@ class ServiceLifecycleCoordinator:
             logger.info("[COORDINATOR] enlist %r — activated (HotSwappable)", name)
 
         if not isinstance(instance, PersistentService) and not isinstance(instance, HotSwappable):
-            logger.info("[COORDINATOR] enlist %r — registered (Q1 static)", name)
+            logger.info("[COORDINATOR] enlist %r — registered (Q1 restart-required)", name)
 
     # ------------------------------------------------------------------
     # mount — BLM mount + register VFS hooks
@@ -255,7 +255,7 @@ class ServiceLifecycleCoordinator:
     ) -> None:
         """Hot-swap a service: validate → drain → hook swap → BLM cycle.
 
-        Only HotSwappable services can be swapped.  Static services raise
+        Only HotSwappable services can be swapped.  Restart-required services raise
         TypeError — use full restart instead.
 
         Flow for HotSwappable services:

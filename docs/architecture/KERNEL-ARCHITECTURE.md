@@ -109,15 +109,15 @@ Services satisfy the contract by implementing the methods — no inheritance
 required (structural typing).
 
 ```
-                  Invocation-only          Persistent-required
-             ┌─────────────────────┬─────────────────────────┐
-  Static     │ Q1: register only   │ Q3: auto start()/stop() │
-             │ (SearchService)     │ (EventDeliveryWorker)   │
-             ├─────────────────────┼─────────────────────────┤
-  HotSwap    │ Q2: auto hooks +   │ Q4: hooks + activate +  │
-             │     activate()      │     start()/stop()      │
-             │ (ReBACService)      │ (future)                │
-             └─────────────────────┴─────────────────────────┘
+                      On-demand                Persistent-required
+                 ┌─────────────────────┬─────────────────────────┐
+  Restart-req.   │ Q1: register only   │ Q3: auto start()/stop() │
+                 │ (SearchService)     │ (EventDeliveryWorker)   │
+                 ├─────────────────────┼─────────────────────────┤
+  HotSwappable   │ Q2: auto hooks +   │ Q4: hooks + activate +  │
+                 │     activate()      │     start()/stop()      │
+                 │ (ReBACService)      │ (future)                │
+                 └─────────────────────┴─────────────────────────┘
 ```
 
 | Protocol | Methods | Kernel auto-manages |

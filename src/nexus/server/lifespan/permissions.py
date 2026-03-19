@@ -281,7 +281,7 @@ async def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> N
         brk = svc.brick_services
         app.state.rebac_circuit_breaker = getattr(brk, "rebac_circuit_breaker", None)
         app.state.manifest_resolver = getattr(brk, "manifest_resolver", None) if brk else None
-        # Enlist Q1 — static, no lifecycle
+        # Enlist Q1 — restart-required, no lifecycle
         coord = svc.service_coordinator
         if coord is not None:
             if app.state.rebac_circuit_breaker is not None:

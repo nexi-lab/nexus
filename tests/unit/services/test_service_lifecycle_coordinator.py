@@ -795,7 +795,7 @@ class TestAutoLifecycleQ4BothProtocols:
         dispatch: KernelDispatch,
     ) -> None:
         """All four quadrants coexist — each gets its appropriate lifecycle."""
-        # Q1: static + invocation
+        # Q1: restart-required + on-demand
         q1 = _FakeService()
         coordinator._register_service("q1_search", q1)
 
@@ -977,7 +977,7 @@ class TestServiceQuadrant:
         from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
 
         q = ServiceQuadrant.of(_FakeService())
-        assert q == ServiceQuadrant.Q1_STATIC
+        assert q == ServiceQuadrant.Q1_RESTART_REQUIRED
         assert not q.is_hot_swappable
         assert not q.is_persistent
         assert "Q1" in q.label
@@ -1018,7 +1018,7 @@ class TestServiceQuadrant:
 
         result = coordinator.classify_all()
         assert result == {
-            "q1": ServiceQuadrant.Q1_STATIC,
+            "q1": ServiceQuadrant.Q1_RESTART_REQUIRED,
             "q2": ServiceQuadrant.Q2_HOT_SWAPPABLE,
             "q3": ServiceQuadrant.Q3_PERSISTENT,
         }
@@ -1036,7 +1036,7 @@ class TestQuadrantGuards:
         coordinator._register_service("svc", _FakeService())
         await coordinator._mount_service("svc")
 
-        with pytest.raises(TypeError, match="Q1.*static.*cannot hot-swap"):
+        with pytest.raises(TypeError, match="Q1.*restart-required.*cannot hot-swap"):
             await coordinator.swap_service("svc", _FakeServiceV2())
 
     @pytest.mark.asyncio
@@ -1094,7 +1094,7 @@ class TestQuadrantGuards:
     ) -> None:
         """activate_service on Q1 raises TypeError with quadrant info."""
         coordinator._register_service("svc", _FakeService())
-        with pytest.raises(TypeError, match="Q1.*static.*cannot activate"):
+        with pytest.raises(TypeError, match="Q1.*restart-required.*cannot activate"):
             await coordinator._activate_service("svc")
 
     @pytest.mark.asyncio
@@ -1136,7 +1136,7 @@ class TestQuadrantGuards:
     ) -> None:
         """deactivate_service on Q1 raises TypeError."""
         coordinator._register_service("svc", _FakeService())
-        with pytest.raises(TypeError, match="Q1.*static.*cannot deactivate"):
+        with pytest.raises(TypeError, match="Q1.*restart-required.*cannot deactivate"):
             await coordinator._deactivate_service("svc")
 
     @pytest.mark.asyncio

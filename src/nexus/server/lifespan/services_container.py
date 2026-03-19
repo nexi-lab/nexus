@@ -109,13 +109,8 @@ class LifespanServices:
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
-            # Process table — read from system_services (where it's created),
-            # falling back to app.state for backwards compatibility
-            process_table=(
-                getattr(_sys, "process_table", None)
-                if _sys
-                else getattr(app.state, "process_table", None)
-            ),
+            # Process table
+            process_table=getattr(app.state, "process_table", None),
             # Coordinator
             service_coordinator=_coord,
             # Configuration

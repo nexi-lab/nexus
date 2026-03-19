@@ -90,10 +90,8 @@ class KernelVFSAdapter:
     async def list_dir(self, path: str, zone_id: str) -> list[str]:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        raw: list[Any] = await self._nx.sys_readdir(
-            path, recursive=False, details=True, context=ctx
-        )
-        # sys_readdir returns dicts with "name"/"path" keys; extract filenames
+        raw: list[Any] = await asyncio.to_thread(self._nx.list, path, recursive=False, context=ctx)
+        # NexusFS.list returns full paths or dicts; strip to filenames
         prefix = path.rstrip("/") + "/"
         result: list[str] = []
         for entry in raw:

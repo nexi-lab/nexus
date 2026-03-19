@@ -245,11 +245,15 @@ async def list_agents(
     show as "registered".
     """
     # 1. Running agents from ProcessTable (if available)
+    #    Use connection_id (real agent name) as key when available,
+    #    so delegation-created workers show as "researcher" not "35c2c87cb31d"
     running_map: dict[str, Any] = {}
     if process_table is not None:
         for a in process_table.list_processes(zone_id=zone_id):
-            running_map[a.pid] = AgentListItem(
-                agent_id=a.pid,
+            ext = a.external_info
+            agent_id = ext.connection_id if ext and ext.connection_id else a.pid
+            running_map[agent_id] = AgentListItem(
+                agent_id=agent_id,
                 owner_id=a.owner_id,
                 zone_id=a.zone_id,
                 name=a.name,
@@ -258,15 +262,30 @@ async def list_agents(
             )
 
     # 2. Registered agents from API key database (best-effort)
+    #    Cross-reference with delegation_records to distinguish top-level
+    #    registered agents from delegation-created workers.
     try:
         session_factory = getattr(nexus_fs, "SessionLocal", None) if nexus_fs else None
         if session_factory is not None:
             from sqlalchemy import select
 
+            from nexus.storage.models.agents import DelegationRecordModel
             from nexus.storage.models.auth import APIKeyModel
 
             session = session_factory()
             try:
+                # Find all delegated worker agent IDs
+                delegated_ids: set[str] = set()
+                try:
+                    deleg_rows = session.scalars(
+                        select(DelegationRecordModel.agent_id).where(
+                            DelegationRecordModel.status == "active"
+                        )
+                    ).all()
+                    delegated_ids = set(deleg_rows)
+                except Exception:
+                    pass
+
                 rows = session.scalars(
                     select(APIKeyModel).where(
                         APIKeyModel.subject_type == "agent",
@@ -276,12 +295,13 @@ async def list_agents(
                 for key in rows:
                     aid = key.subject_id
                     if aid and aid not in running_map:
+                        state = "delegated" if aid in delegated_ids else "registered"
                         running_map[aid] = AgentListItem(
                             agent_id=aid,
                             owner_id=key.user_id or "",
                             zone_id=key.zone_id or zone_id,
                             name=key.name or aid,
-                            state="registered",
+                            state=state,
                             generation=0,
                         )
             finally:

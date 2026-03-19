@@ -78,6 +78,8 @@ class ZoneManager:
                 "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
             )
 
+        from nexus.security.tls.config import ZoneTlsConfig
+
         # TLS bootstrap logic:
         # 1. Existing certs on disk → use them (normal restart)
         # 2. NEXUS_PEERS set + no certs → 2-phase mode (start plaintext, bootstrap TLS after leader election)

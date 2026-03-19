@@ -29,12 +29,8 @@ class RebacCreateResult:
 
     Example:
         result = nx.rebac_create(subject, relation, object)
-        # Use result.revision for immediate verification
-        allowed = nx.rebac_check(
-            subject, permission, object,
-            consistency_mode="at_least_as_fresh",
-            min_revision=result.revision
-        )
+        # Use result.revision for audit trail
+        allowed = nx.rebac_check(subject, permission, object)
     """
 
     tuple_id: str

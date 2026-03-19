@@ -1,7 +1,7 @@
 """PostgreSQL cache backend implementations.
 
 This module provides PostgreSQL-backed cache implementations that use
-the existing rebac_check_cache, tiger_cache, and tiger_resource_map tables.
+the existing tiger_cache and tiger_resource_map tables.
 
 These serve as the cache backend when Dragonfly is not configured.
 PostgreSQL-only (no SQLite branching) — SQLite users fall back to NullCacheStore.
@@ -10,88 +10,23 @@ Engine modes (Issue #1524, Decision #5A):
     - AsyncEngine (preferred): fully non-blocking I/O via asyncpg
     - Engine (legacy): sync calls wrapped in asyncio.to_thread()
 
+Note: The rebac_check_cache table (L2 permission cache) has been removed.
+PostgresPermissionCache is now a no-op stub that always returns cache miss.
+The L2 SQL cache is replaced by CacheStoreABC (task #234).
+
 Extracted from:
-    - rebac_manager.py (PermissionCache)
+    - rebac_manager.py (PermissionCache) — now a no-op
     - tiger_cache.py (TigerCache, ResourceMapCache)
 """
 
 import asyncio
 import logging
-import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import column, delete, text
 from sqlalchemy import table as sa_table
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# SQL Queries — Permission Cache (rebac_check_cache table)
-# ---------------------------------------------------------------------------
-
-_PERM_GET = text("""
-    SELECT result, expires_at
-    FROM rebac_check_cache
-    WHERE zone_id = :zone_id
-      AND subject_type = :subject_type AND subject_id = :subject_id
-      AND permission = :permission
-      AND object_type = :object_type AND object_id = :object_id
-      AND expires_at > :now
-""")
-
-_PERM_DELETE_EXACT = text("""
-    DELETE FROM rebac_check_cache
-    WHERE zone_id = :zone_id
-      AND subject_type = :subject_type AND subject_id = :subject_id
-      AND permission = :permission
-      AND object_type = :object_type AND object_id = :object_id
-""")
-
-_PERM_INSERT = text("""
-    INSERT INTO rebac_check_cache (
-        cache_id, zone_id, subject_type, subject_id, permission,
-        object_type, object_id, result, computed_at, expires_at
-    )
-    VALUES (
-        :cache_id, :zone_id, :subject_type, :subject_id, :permission,
-        :object_type, :object_id, :result, :computed_at, :expires_at
-    )
-""")
-
-_PERM_DELETE_SUBJECT = text("""
-    DELETE FROM rebac_check_cache
-    WHERE zone_id = :zone_id
-      AND subject_type = :subject_type AND subject_id = :subject_id
-""")
-
-_PERM_DELETE_OBJECT = text("""
-    DELETE FROM rebac_check_cache
-    WHERE zone_id = :zone_id
-      AND object_type = :object_type AND object_id = :object_id
-""")
-
-_PERM_DELETE_SUBJECT_OBJECT = text("""
-    DELETE FROM rebac_check_cache
-    WHERE zone_id = :zone_id
-      AND subject_type = :subject_type AND subject_id = :subject_id
-      AND object_type = :object_type AND object_id = :object_id
-""")
-
-_PERM_DELETE_ZONE = text("""
-    DELETE FROM rebac_check_cache
-    WHERE zone_id = :zone_id
-""")
-
-_PERM_DELETE_ALL = text("""
-    DELETE FROM rebac_check_cache
-""")
-
-_PERM_COUNT_VALID = text("""
-    SELECT COUNT(*) as count
-    FROM rebac_check_cache
-    WHERE expires_at > :now
-""")
 
 # ---------------------------------------------------------------------------
 # SQL Queries — Tiger Cache (tiger_cache table)
@@ -161,20 +96,19 @@ def _is_async_engine(engine: Any) -> bool:
 
 
 # ===========================================================================
-# PostgresPermissionCache
+# PostgresPermissionCache (no-op stub)
 # ===========================================================================
 
 
 class PostgresPermissionCache:
-    """PostgreSQL-backed permission cache using rebac_check_cache table.
+    """No-op permission cache stub.
 
-    Implements PermissionCacheProtocol via structural subtyping.
-
-    Accepts either ``AsyncEngine`` (preferred, non-blocking) or sync ``Engine``
-    (legacy, wrapped in ``asyncio.to_thread()``).
-
-    Extracted from rebac_manager.py:3841-4575 and rebac_manager_zone_aware.py:909-992.
-    All queries include zone_id for multi-zone isolation (P0 security).
+    The rebac_check_cache table (L2 SQL permission cache) has been removed
+    as part of the CacheStoreABC migration (Issue #186, task #234).
+    The ORM model ReBACCheckCacheModel no longer exists, so the table is not
+    created. This stub preserves the PermissionCacheProtocol interface so
+    existing callers (CacheFactory, health_check) continue to work without
+    code changes. All operations are safe no-ops (cache miss / 0 rows).
     """
 
     def __init__(
@@ -184,7 +118,6 @@ class PostgresPermissionCache:
         denial_ttl: int = 60,
     ):
         self._engine = engine
-        self._is_async = _is_async_engine(engine)
         self._ttl = ttl
         self._denial_ttl = denial_ttl
 
@@ -197,34 +130,8 @@ class PostgresPermissionCache:
         object_id: str,
         zone_id: str,
     ) -> bool | None:
-        """Get cached permission result. Returns True/False/None."""
-        now = datetime.now(UTC)
-        params = {
-            "zone_id": zone_id,
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-            "permission": permission,
-            "object_type": object_type,
-            "object_id": object_id,
-            "now": now,
-        }
-        if self._is_async:
-            async with self._engine.connect() as conn:
-                result = await conn.execute(_PERM_GET, params)
-                row = result.fetchone()
-                if row:
-                    return bool(row.result)
-                return None
-        else:
-            return await asyncio.to_thread(self._get_sync, params)
-
-    def _get_sync(self, params: dict[str, Any]) -> bool | None:
-        with self._engine.connect() as conn:
-            result = conn.execute(_PERM_GET, params)
-            row = result.fetchone()
-            if row:
-                return bool(row.result)
-            return None
+        """Always returns None (cache miss) — L2 SQL table removed."""
+        return None
 
     async def set(
         self,
@@ -236,39 +143,7 @@ class PostgresPermissionCache:
         result: bool,
         zone_id: str,
     ) -> None:
-        """Cache permission result with appropriate TTL."""
-        now = datetime.now(UTC)
-        ttl = self._ttl if result else self._denial_ttl
-        expires_at = now + timedelta(seconds=ttl)
-        cache_id = str(uuid.uuid4())
-
-        params: dict[str, Any] = {
-            "zone_id": zone_id,
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-            "permission": permission,
-            "object_type": object_type,
-            "object_id": object_id,
-        }
-        insert_params = {
-            **params,
-            "cache_id": cache_id,
-            "result": int(result),
-            "computed_at": now,
-            "expires_at": expires_at,
-        }
-
-        if self._is_async:
-            async with self._engine.begin() as conn:
-                await conn.execute(_PERM_DELETE_EXACT, params)
-                await conn.execute(_PERM_INSERT, insert_params)
-        else:
-            await asyncio.to_thread(self._set_sync, params, insert_params)
-
-    def _set_sync(self, params: dict[str, Any], insert_params: dict[str, Any]) -> None:
-        with self._engine.begin() as conn:
-            conn.execute(_PERM_DELETE_EXACT, params)
-            conn.execute(_PERM_INSERT, insert_params)
+        """No-op — L2 SQL table removed."""
 
     async def invalidate_subject(
         self,
@@ -276,17 +151,8 @@ class PostgresPermissionCache:
         subject_id: str,
         zone_id: str,
     ) -> int:
-        """Invalidate all cached permissions for a subject."""
-        params = {
-            "zone_id": zone_id,
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-        }
-        if self._is_async:
-            async with self._engine.begin() as conn:
-                result = await conn.execute(_PERM_DELETE_SUBJECT, params)
-                return int(result.rowcount)
-        return await asyncio.to_thread(self._invalidate_sync, _PERM_DELETE_SUBJECT, params)
+        """No-op — returns 0 rows affected."""
+        return 0
 
     async def invalidate_object(
         self,
@@ -294,17 +160,8 @@ class PostgresPermissionCache:
         object_id: str,
         zone_id: str,
     ) -> int:
-        """Invalidate all cached permissions for an object."""
-        params = {
-            "zone_id": zone_id,
-            "object_type": object_type,
-            "object_id": object_id,
-        }
-        if self._is_async:
-            async with self._engine.begin() as conn:
-                result = await conn.execute(_PERM_DELETE_OBJECT, params)
-                return int(result.rowcount)
-        return await asyncio.to_thread(self._invalidate_sync, _PERM_DELETE_OBJECT, params)
+        """No-op — returns 0 rows affected."""
+        return 0
 
     async def invalidate_subject_object(
         self,
@@ -314,48 +171,17 @@ class PostgresPermissionCache:
         object_id: str,
         zone_id: str,
     ) -> int:
-        """Invalidate cached permissions for a specific subject-object pair."""
-        params = {
-            "zone_id": zone_id,
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-            "object_type": object_type,
-            "object_id": object_id,
-        }
-        if self._is_async:
-            async with self._engine.begin() as conn:
-                result = await conn.execute(_PERM_DELETE_SUBJECT_OBJECT, params)
-                return int(result.rowcount)
-        return await asyncio.to_thread(self._invalidate_sync, _PERM_DELETE_SUBJECT_OBJECT, params)
-
-    def _invalidate_sync(self, stmt: Any, params: dict[str, Any]) -> int:
-        with self._engine.begin() as conn:
-            result = conn.execute(stmt, params)
-            return int(result.rowcount)
+        """No-op — returns 0 rows affected."""
+        return 0
 
     async def clear(self, zone_id: str | None = None) -> int:
-        """Clear cached permissions. If zone_id given, only that zone."""
-        if self._is_async:
-            async with self._engine.begin() as conn:
-                if zone_id is not None:
-                    result = await conn.execute(_PERM_DELETE_ZONE, {"zone_id": zone_id})
-                else:
-                    result = await conn.execute(_PERM_DELETE_ALL)
-                return int(result.rowcount)
-        return await asyncio.to_thread(self._clear_sync, zone_id)
-
-    def _clear_sync(self, zone_id: str | None) -> int:
-        with self._engine.begin() as conn:
-            if zone_id is not None:
-                result = conn.execute(_PERM_DELETE_ZONE, {"zone_id": zone_id})
-            else:
-                result = conn.execute(_PERM_DELETE_ALL)
-            return int(result.rowcount)
+        """No-op — returns 0 rows affected."""
+        return 0
 
     async def health_check(self) -> bool:
-        """Check if cache backend is healthy."""
+        """Check if the underlying engine is healthy (SELECT 1)."""
         try:
-            if self._is_async:
+            if _is_async_engine(self._engine):
                 async with self._engine.connect() as conn:
                     await conn.execute(text("SELECT 1"))
                 return True
@@ -369,32 +195,13 @@ class PostgresPermissionCache:
         return True
 
     async def get_stats(self) -> dict:
-        """Get cache statistics including count of valid entries."""
-        now = datetime.now(UTC)
-        count = 0
-        try:
-            if self._is_async:
-                async with self._engine.connect() as conn:
-                    result = await conn.execute(_PERM_COUNT_VALID, {"now": now})
-                    row = result.fetchone()
-                    count = int(row[0]) if row else 0
-            else:
-                count = await asyncio.to_thread(self._get_stats_sync, now)
-        except Exception as e:
-            logger.warning("Failed to get permission cache stats: %s", e)
-
+        """Return empty stats — L2 SQL table removed."""
         return {
-            "backend": "postgres",
+            "backend": "postgres (no-op, L2 table removed)",
             "ttl_grants": self._ttl,
             "ttl_denials": self._denial_ttl,
-            "valid_entries": count,
+            "valid_entries": 0,
         }
-
-    def _get_stats_sync(self, now: datetime) -> int:
-        with self._engine.connect() as conn:
-            result = conn.execute(_PERM_COUNT_VALID, {"now": now})
-            row = result.fetchone()
-            return int(row[0]) if row else 0
 
 
 # ===========================================================================

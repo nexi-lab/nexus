@@ -5,6 +5,7 @@ with validation and error handling. Tests the methods directly
 via a lightweight stub to avoid the heavy NexusFS constructor.
 """
 
+import contextlib
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,6 +25,9 @@ class _StubFS:
         self._enforce_permissions = False
         self._default_context = OperationContext(user_id="test", groups=[], zone_id=ROOT_ZONE_ID)
         self._dispatch = MagicMock()  # KernelDispatch stub — intercept_pre_* are no-ops
+        self._dispatch.read_hook_count = 0
+        self._dispatch.resolve_read.return_value = (False, None)
+        self._overlay_resolver = None
 
     def _validate_path(self, path):
         if not path.startswith("/"):
@@ -35,11 +39,22 @@ class _StubFS:
     def _get_routing_params(self, context):
         return "default", None, False
 
+    def _parse_context(self, context):
+        return context
+
+    def _get_overlay_config(self, path):
+        return None
+
+    @contextlib.contextmanager
+    def _vfs_locked(self, path, mode):
+        yield
+
 
 # Graft VFS methods onto stub (Issue #899: dissolved from mixin into NexusFS)
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 
 _StubFS.read_range = NexusFS.read_range
+_StubFS._resolve_and_read = NexusFS._resolve_and_read
 _StubFS.stream_range = NexusFS.stream_range
 
 
@@ -49,10 +64,16 @@ def stub_fs():
     backend = MagicMock()
     backend.read_content.return_value = b"Hello, World! This is test content."
     backend.stream_range.return_value = iter([b"Hello", b", Wor", b"ld!"])
+    # Prevent MagicMock hasattr from matching read_content_range
+    del backend.read_content_range
+    # Stub needs explicit False for dynamic connector check
+    backend.user_scoped = False
+    backend.has_token_manager = False
 
     meta_entry = MagicMock()
     meta_entry.etag = "sha256:abc123"
     meta_entry.size = 34
+    meta_entry.physical_path = "sha256:abc123"
     metadata = MagicMock()
     metadata.get.return_value = meta_entry
 

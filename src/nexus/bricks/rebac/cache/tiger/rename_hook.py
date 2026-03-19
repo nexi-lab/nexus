@@ -3,12 +3,17 @@
 Issue #625: Lives in bricks/rebac/cache/tiger/ (service-layer, not kernel).
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.vfs_hooks import RenameHookContext
+
+if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +25,19 @@ class TigerCacheRenameHook:
       - tiger_cache:   The TigerCache instance (may be None)
       - metadata_list: (prefix, recursive, zone_id) -> Iterator[FileMetadata]
     """
+
+    # ── HotSwappable protocol (Issue #1610) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(rename_hooks=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(
         self,

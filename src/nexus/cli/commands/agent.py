@@ -3,11 +3,22 @@
 Manage AI agents for delegation and multi-agent workflows.
 """
 
+from typing import Any
+
 import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
+from nexus.cli.clients.agent_ext import AgentExtClient
+from nexus.cli.output import add_output_options
+from nexus.cli.service_command import ServiceResult, service_command
+from nexus.cli.utils import (
+    REMOTE_API_KEY_OPTION,
+    REMOTE_URL_OPTION,
+    add_backend_options,
+    get_filesystem,
+    handle_error,
+)
 
 console = Console()
 
@@ -43,13 +54,21 @@ def agent() -> None:
 @click.argument("name", type=str)
 @click.option("--with-api-key", is_flag=True, help="Generate API key for agent (not recommended)")
 @click.option("--description", "-d", default="", help="Agent description")
+@click.option(
+    "--if-not-exists",
+    is_flag=True,
+    default=False,
+    help="Succeed silently if agent exists, returning existing agent info",
+)
 @add_backend_options
 def register_cmd(
     agent_id: str,
     name: str,
     with_api_key: bool,
     description: str,
-    backend_config: BackendConfig,
+    if_not_exists: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Register a new AI agent.
 
@@ -63,19 +82,35 @@ def register_cmd(
         # Recommended: Register without API key
         nexus agent register alice "Data Analyst Agent"
 
+        # Idempotent: succeed if agent already exists
+        nexus agent register alice "Data Analyst Agent" --if-not-exists
+
         # Legacy: Register with API key
         nexus agent register alice "Data Analyst Agent" --with-api-key
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        # Register agent (context with user_id will be extracted from auth)
-        result = nx.register_agent(  # type: ignore[attr-defined]
-            agent_id=agent_id,
-            name=name,
-            description=description,
-            generate_api_key=with_api_key,
-        )
+        try:
+            result = nx.service("agent_rpc").register_agent(
+                agent_id=agent_id,
+                name=name,
+                description=description,
+                generate_api_key=with_api_key,
+            )
+        except Exception as reg_err:
+            if if_not_exists and "already exists" in str(reg_err).lower():
+                try:
+                    existing = nx.service("agent_rpc").get_agent(agent_id)
+                    console.print(f"[green]✓[/green] Agent already exists: {agent_id}")
+                    console.print(f"  Name: {existing.get('name', name)}")
+                    console.print(f"  Owner: {existing.get('user_id', 'unknown')}")
+                except Exception:
+                    console.print(f"[green]✓[/green] Agent already exists: {agent_id}")
+                nx.close()
+                return
+            nx.close()
+            raise
 
         console.print(f"[green]✓[/green] Registered agent: {result['agent_id']}")
         console.print(f"  Name: {result.get('name', name)}")
@@ -100,7 +135,8 @@ def register_cmd(
 @agent.command(name="list")
 @add_backend_options
 def list_cmd(
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all registered agents.
 
@@ -108,9 +144,9 @@ def list_cmd(
         nexus agent list
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        agents = nx.list_agents()  # type: ignore[attr-defined]
+        agents = nx.service("agent_rpc").list_agents()
 
         if not agents:
             console.print("[yellow]No agents registered[/yellow]")
@@ -156,7 +192,8 @@ def list_cmd(
 @add_backend_options
 def info_cmd(
     agent_id: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show detailed information about an agent.
 
@@ -164,9 +201,9 @@ def info_cmd(
         nexus agent info alice
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        agent = nx.get_agent(agent_id)  # type: ignore[attr-defined]
+        agent = nx.service("agent_rpc").get_agent(agent_id)
 
         if not agent:
             console.print(f"[red]✗[/red] Agent not found: {agent_id}")
@@ -196,7 +233,8 @@ def info_cmd(
 def delete_cmd(
     agent_id: str,
     yes: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Delete an agent.
 
@@ -207,7 +245,7 @@ def delete_cmd(
         nexus agent delete alice --yes
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx: Any = get_filesystem(remote_url, remote_api_key)
 
         # Confirm deletion
         if not yes:
@@ -222,7 +260,7 @@ def delete_cmd(
                 nx.close()
                 return
 
-        result = nx.delete_agent(agent_id)  # type: ignore[attr-defined]
+        result = nx.service("agent_rpc").delete_agent(agent_id)
 
         if result:
             console.print(f"[green]✓[/green] Deleted agent: {agent_id}")
@@ -233,6 +271,113 @@ def delete_cmd(
 
     except Exception as e:
         handle_error(e)
+
+
+@agent.command(name="status")
+@click.argument("agent_id", type=str)
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=AgentExtClient)
+def agent_status(client: AgentExtClient, agent_id: str) -> ServiceResult:
+    """Show agent lifecycle state, generation, and zone.
+
+    \b
+    Examples:
+        nexus agent status alice
+        nexus agent status alice --json
+    """
+    data = client.status(agent_id)
+
+    def _render(d: dict) -> None:
+        console.print(f"[bold cyan]Agent Status: {agent_id}[/bold cyan]")
+        console.print(f"  Phase:       {d.get('phase', 'N/A')}")
+        console.print(f"  Generation:  {d.get('observed_generation', 'N/A')}")
+        console.print(f"  Inbox:       {d.get('inbox_depth', 0)} message(s)")
+        console.print(f"  Context:     {d.get('context_usage_pct', 0):.1f}%")
+        if d.get("last_heartbeat"):
+            console.print(f"  Heartbeat:   {d['last_heartbeat'][:19]}")
+        if d.get("last_activity"):
+            console.print(f"  Activity:    {d['last_activity'][:19]}")
+        ru = d.get("resource_usage", {})
+        if ru:
+            console.print(f"  Tokens:      {ru.get('tokens_used', 0)}")
+            console.print(f"  Storage:     {ru.get('storage_used_mb', 0):.1f} MB")
+        conditions = d.get("conditions", [])
+        if conditions:
+            console.print("  Conditions:")
+            for c in conditions:
+                status_icon = "[green]OK[/green]" if c.get("status") == "True" else "[red]!![/red]"
+                console.print(f"    {status_icon} {c.get('type', '')}: {c.get('message', '')}")
+
+    return ServiceResult(data=data, human_formatter=_render)
+
+
+@agent.group(name="spec")
+def agent_spec() -> None:
+    """Agent capabilities specification."""
+
+
+@agent_spec.command(name="show")
+@click.argument("agent_id", type=str)
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=AgentExtClient)
+def agent_spec_show(client: AgentExtClient, agent_id: str) -> ServiceResult:
+    """Show agent capabilities spec.
+
+    \b
+    Examples:
+        nexus agent spec show alice --json
+    """
+    data = client.spec_show(agent_id)
+
+    def _render(d: dict) -> None:
+        import json
+
+        console.print(f"[bold cyan]Agent Spec: {agent_id}[/bold cyan]")
+        console.print(json.dumps(d, indent=2, default=str))
+
+    return ServiceResult(data=data, human_formatter=_render)
+
+
+@agent_spec.command(name="set")
+@click.argument("agent_id", type=str)
+@click.argument("spec_json", type=str)
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=AgentExtClient)
+def agent_spec_set(client: AgentExtClient, agent_id: str, spec_json: str) -> ServiceResult:
+    """Set agent capabilities spec (JSON string).
+
+    \b
+    Examples:
+        nexus agent spec set alice '{"tools": ["read", "write"]}'
+    """
+    import json
+
+    spec = json.loads(spec_json)
+    data = client.spec_set(agent_id, spec)
+    return ServiceResult(data=data, message=f"Spec updated for {agent_id}")
+
+
+@agent.command(name="warmup")
+@click.argument("agent_id", type=str)
+@add_output_options
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+@service_command(client_class=AgentExtClient)
+def agent_warmup(client: AgentExtClient, agent_id: str) -> ServiceResult:
+    """Pre-warm an agent.
+
+    \b
+    Examples:
+        nexus agent warmup alice
+    """
+    data = client.warmup(agent_id)
+    return ServiceResult(data=data, message=f"Agent {agent_id} warmup initiated")
 
 
 def register_commands(cli: click.Group) -> None:

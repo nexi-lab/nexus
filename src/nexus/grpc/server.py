@@ -1,11 +1,10 @@
 """gRPC server lifecycle — start/stop for the unified Nexus gRPC server (#1249).
 
 Manages a single ``grpc.aio.server()`` hosting ``NexusVFSService``.
-The server is disabled by default (port 0) and enabled by setting
-``NEXUS_GRPC_PORT`` to a non-zero port number.
+The server defaults to port 2028 and can be changed via ``NEXUS_GRPC_PORT``.
+Set ``NEXUS_GRPC_PORT=0`` to disable.
 
-A2A agent messaging is delivered over VFS (A2A-over-VFS), so there is
-no separate A2A gRPC servicer — all traffic flows through a single port.
+All agent messaging flows through a single port via VFS.
 """
 
 import asyncio
@@ -26,10 +25,16 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
     """Resolve TLS config from env vars, ZoneManager, or auto-detection.
 
     Priority:
+    0. NEXUS_GRPC_INSECURE=true → skip all TLS (for demo/local dev)
     1. Explicit env vars: NEXUS_TLS_CERT / NEXUS_TLS_KEY / NEXUS_TLS_CA
     2. ZoneManager.tls_config (auto-generated or passed via --tls-* flags)
     3. Auto-detect from {NEXUS_DATA_DIR}/tls/
     """
+    # 0. Allow explicit insecure mode for demo/dev (Issue #2961)
+    if os.environ.get("NEXUS_GRPC_INSECURE", "").lower() in ("true", "1", "yes"):
+        logger.debug("NEXUS_GRPC_INSECURE set — skipping TLS for gRPC")
+        return None
+
     from nexus.security.tls.config import ZoneTlsConfig
 
     # 1. Explicit env vars
@@ -63,7 +68,7 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
 
 async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio.Task]:
     """Start the gRPC server if configured."""
-    port = int(os.environ.get("NEXUS_GRPC_PORT", "0"))
+    port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
     if not port:
         return []
 
@@ -103,12 +108,31 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
         server.add_secure_port(f"[::]:{port}", creds)
         logger.info("gRPC server started on port %d (mTLS)", port)
     else:
-        server.add_insecure_port(f"[::]:{port}")
-        logger.info("gRPC server started on port %d (insecure)", port)
+        bind_all = os.environ.get("NEXUS_GRPC_BIND_ALL", "").lower() in ("true", "1")
+        bind_addr = "0.0.0.0" if bind_all else "127.0.0.1"
+        server.add_insecure_port(f"{bind_addr}:{port}")
+        if bind_all:
+            logger.warning(
+                "gRPC server started on port %d (insecure, all interfaces). "
+                "Use only in trusted networks or containers.",
+                port,
+            )
+        else:
+            logger.warning(
+                "gRPC server started on port %d (insecure, loopback only). "
+                "Configure TLS to bind on all interfaces.",
+                port,
+            )
 
     await server.start()
 
     app.state.grpc_server = server
+
+    # Enlist gRPC server (Q1 — infrastructure, manual start/stop)
+    coord = getattr(_svc, "service_coordinator", None)
+    if coord is not None:
+        await coord.enlist("grpc_server", server)
+
     return []
 
 

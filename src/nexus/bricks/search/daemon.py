@@ -109,6 +109,12 @@ class DaemonConfig:
     entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
 
+    # txtai backend config (Issue #2663)
+    txtai_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    txtai_reranker: str | None = None  # e.g. "cross-encoder/ms-marco-MiniLM-L-2-v2"
+    txtai_sparse: bool = False  # Enable SPLADE learned sparse retrieval
+    txtai_graph: bool = True  # Enable semantic graph
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -175,17 +181,19 @@ class SearchDaemon:
         # Index refresh task
         self._refresh_task: asyncio.Task | None = None
         self._pending_refresh_paths: set[str] = set()
+        self._pending_delete_paths: set[str] = set()
         self._refresh_lock = asyncio.Lock()
 
         # FileReaderProtocol reference for reading file content (set by FastAPI server)
         # Issue #1520: Replaces direct NexusFS dependency
         self._file_reader: Any = None
 
-        # Issue #2036: Injected adaptive-k provider (replaces lazy import)
-        self._adaptive_k_provider: Any = None
-
         # SPLADE learned sparse retrieval (optional, initialized in startup)
         self._splade: Any = None
+
+        # txtai backend (Issue #2663) — used for semantic/hybrid search + graph
+        self._backend: Any = None
+        self.last_search_timing: dict[str, float] = {}
 
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
@@ -199,12 +207,16 @@ class SearchDaemon:
     async def startup(self) -> None:
         """Initialize and pre-warm all search indexes.
 
-        This method should be called once at application startup.
-        It loads indexes into memory and warms connection pools.
+        Idempotent — safe to call multiple times (e.g., from both
+        startup_search and mount_all via lifecycle manager). Also safe
+        to call after shutdown() for remount cycles.
         """
         if self._initialized:
             logger.warning("SearchDaemon already initialized")
             return
+
+        # Reset shutdown flag for remount cycles (unmount → remount)
+        self._shutting_down = False
 
         start_time = time.perf_counter()
         logger.info("Starting SearchDaemon - pre-warming indexes...")
@@ -224,6 +236,26 @@ class SearchDaemon:
         await self._check_zoekt()
         await self._check_embedding_cache()
 
+        # Initialize txtai backend for semantic/hybrid/graph search (Issue #2663)
+        try:
+            from nexus.bricks.search.txtai_backend import TxtaiBackend
+
+            self._backend = TxtaiBackend(
+                database_url=self.config.database_url,
+                model=self.config.txtai_model,
+                hybrid=True,
+                graph=self.config.txtai_graph,
+                reranker_model=self.config.txtai_reranker,
+                sparse=self.config.txtai_sparse,
+            )
+            await self._backend.startup()
+            logger.info("txtai backend initialized successfully")
+        except Exception:
+            logger.warning(
+                "txtai backend init failed, falling back to legacy search", exc_info=True
+            )
+            self._backend = None
+
         # Initialize entropy-aware chunker if enabled (Issue #1024)
         if self.config.entropy_filtering:
             from nexus.bricks.search.chunking import EntropyAwareChunker
@@ -242,10 +274,16 @@ class SearchDaemon:
         from nexus.bricks.search.chunking import DocumentChunker
         from nexus.bricks.search.indexing import IndexingPipeline as _IP
 
+        _db_type = (
+            "postgresql"
+            if self.config.database_url and "postgresql" in self.config.database_url
+            else "sqlite"
+        )
         self._indexing_pipeline = _IP(
             chunker=DocumentChunker(),
             embedding_provider=self._embedding_provider,
             entropy_chunker=self._entropy_chunker,
+            db_type=_db_type,
             async_session_factory=self._async_session,
             max_concurrency=self.config.max_indexing_concurrency,
             cross_doc_batching=True,
@@ -255,13 +293,30 @@ class SearchDaemon:
         if self.config.refresh_enabled:
             self._refresh_task = asyncio.create_task(self._index_refresh_loop())
 
+        # If BM25S not loaded, count existing DB documents for stats
+        if not self._bm25s_index and self._async_session:
+            try:
+                from sqlalchemy import text as sa_text
+
+                session_factory = self._async_session
+                async with session_factory() as sess:
+                    row = (
+                        await sess.execute(
+                            sa_text("SELECT COUNT(DISTINCT path_id) FROM document_chunks")
+                        )
+                    ).first()
+                    self.stats.bm25_documents = int(row[0]) if row else 0
+            except Exception:
+                logger.debug("Could not count DB documents at startup")
+
         self._initialized = True
         self.stats.startup_time_ms = (time.perf_counter() - start_time) * 1000
 
         logger.info(
-            f"SearchDaemon ready in {self.stats.startup_time_ms:.1f}ms - "
-            f"BM25S: {self.stats.bm25_documents} docs, "
-            f"DB pool: {self.stats.db_pool_size} connections"
+            "SearchDaemon ready in %.1fms - keyword docs: %d, DB pool: %d connections",
+            self.stats.startup_time_ms,
+            self.stats.bm25_documents,
+            self.stats.db_pool_size,
         )
 
     async def shutdown(self) -> None:
@@ -281,6 +336,14 @@ class SearchDaemon:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
 
+        # Shutdown txtai backend (Issue #2663)
+        if self._backend is not None:
+            try:
+                await self._backend.shutdown()
+            except Exception as e:
+                logger.debug("txtai backend shutdown error: %s", e)
+            self._backend = None
+
         # Close database connections (only if we created them)
         if self._owns_engine:
             if self._record_store is not None:
@@ -293,6 +356,10 @@ class SearchDaemon:
 
         self._initialized = False
         logger.info("SearchDaemon shutdown complete")
+
+    # PersistentService protocol aliases
+    start = startup
+    stop = shutdown
 
     # =========================================================================
     # Initialization Methods
@@ -433,7 +500,8 @@ class SearchDaemon:
 
             if self.stats.zoekt_available:
                 logger.info("Zoekt trigram search available")
-        except Exception:
+        except Exception as e:
+            logger.debug("Zoekt availability check failed: %s", e)
             self.stats.zoekt_available = False
 
     async def _check_embedding_cache(self) -> None:
@@ -442,8 +510,8 @@ class SearchDaemon:
             try:
                 self.stats.embedding_cache_connected = await self._cache_brick.health_check()
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Embedding cache health check failed: %s", e)
         self.stats.embedding_cache_connected = False
 
     # =========================================================================
@@ -458,7 +526,6 @@ class SearchDaemon:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
-        adaptive_k: bool = False,
         zone_id: str | None = None,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
@@ -466,11 +533,10 @@ class SearchDaemon:
         Args:
             query: Search query text
             search_type: Type of search ("keyword", "semantic", "hybrid")
-            limit: Maximum number of results (used as k_base when adaptive_k=True)
+            limit: Maximum number of results
             path_filter: Optional path prefix filter
             alpha: Weight for semantic vs keyword (0.0 = all keyword, 1.0 = all semantic)
             fusion_method: Fusion algorithm for hybrid search ("rrf", "weighted", "rrf_weighted")
-            adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
 
         Returns:
             List of search results sorted by relevance
@@ -478,21 +544,64 @@ class SearchDaemon:
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
 
-        # Apply adaptive k if enabled (Issue #1021, #2036: protocol-based DI)
-        if adaptive_k and self._adaptive_k_provider is not None:
-            original_limit = limit
-            limit = self._adaptive_k_provider.calculate_k_dynamic(query, k_base=limit)
-            if limit != original_limit:
-                logger.info(
-                    "[SEARCH-DAEMON] Adaptive k applied: %d -> %d for query: %s",
-                    original_limit,
-                    limit,
-                    query[:50],
-                )
+        from nexus.contracts.constants import ROOT_ZONE_ID
 
+        effective_zone_id = zone_id or ROOT_ZONE_ID
         start = time.perf_counter()
+        self.last_search_timing = {}
 
         try:
+            # For keyword search: Zoekt first (code search), then txtai BM25
+            if search_type == "keyword" and self.stats.zoekt_available:
+                zoekt_results = await self._search_zoekt(query, limit, path_filter)
+                if zoekt_results:
+                    latency_ms = (time.perf_counter() - start) * 1000
+                    self._track_latency(latency_ms)
+                    self.last_search_timing["backend_ms"] = latency_ms
+                    return zoekt_results
+
+            # Delegate to txtai backend for all search types (Issue #2663)
+            if self._backend is not None:
+                backend_start = time.perf_counter()
+                backend_results = await self._backend.search(
+                    query,
+                    limit=limit,
+                    zone_id=effective_zone_id,
+                    search_type=search_type,
+                    path_filter=path_filter,
+                )
+                backend_ms = (time.perf_counter() - backend_start) * 1000
+                rerank_ms = getattr(self._backend, "last_rerank_ms", 0.0)
+                self.last_search_timing = {
+                    "backend_ms": backend_ms,
+                    "rerank_ms": rerank_ms,
+                }
+
+                if backend_results:
+                    results = [
+                        SearchResult(
+                            path=r.path,
+                            chunk_index=r.chunk_index,
+                            chunk_text=r.chunk_text,
+                            score=r.score,
+                            start_offset=r.start_offset,
+                            end_offset=r.end_offset,
+                            line_start=r.line_start,
+                            line_end=r.line_end,
+                            keyword_score=r.keyword_score,
+                            vector_score=r.vector_score,
+                            reranker_score=r.reranker_score,
+                            search_type=search_type,
+                        )
+                        for r in backend_results
+                    ]
+
+                    latency_ms = (time.perf_counter() - start) * 1000
+                    self._track_latency(latency_ms)
+                    return results
+                # txtai returned empty — fall through to legacy search
+
+            # Legacy fallback (txtai backend not available or returned no results)
             if search_type == "keyword":
                 results = await self._keyword_search(query, limit, path_filter, zone_id=zone_id)
             elif search_type == "semantic":
@@ -516,6 +625,52 @@ class SearchDaemon:
         except TimeoutError:
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
             return []
+
+    async def index_documents(
+        self,
+        documents: list[dict[str, Any]],
+        *,
+        zone_id: str | None = None,
+    ) -> int:
+        """Explicitly upsert documents into the active search backend.
+
+        This powers ``POST /api/v2/search/index`` for synthetic or externally
+        generated documents that do not rely on the file-refresh pipeline.
+        """
+        if not self._initialized:
+            raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
+
+        if not documents or self._backend is None:
+            return 0
+
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        effective_zone_id = zone_id or ROOT_ZONE_ID
+        count = int(await self._backend.upsert(documents, zone_id=effective_zone_id))
+        if count:
+            self.stats.last_index_refresh = time.time()
+        return count
+
+    async def delete_documents(
+        self,
+        ids: list[str],
+        *,
+        zone_id: str | None = None,
+    ) -> int:
+        """Delete indexed documents from the active search backend."""
+        if not self._initialized:
+            raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
+
+        if not ids or self._backend is None:
+            return 0
+
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        effective_zone_id = zone_id or ROOT_ZONE_ID
+        count = int(await self._backend.delete(ids, zone_id=effective_zone_id))
+        if count:
+            self.stats.last_index_refresh = time.time()
+        return count
 
     async def _keyword_search(
         self,
@@ -563,13 +718,36 @@ class SearchDaemon:
             # Get query embedding
             embedding = await self._get_query_embedding(query)
             if not embedding:
-                logger.warning("Could not generate query embedding")
+                if self._embedding_provider is None:
+                    logger.debug(
+                        "Legacy semantic search unavailable: no embedding provider configured"
+                    )
+                else:
+                    logger.warning("Could not generate query embedding")
                 return []
 
             from sqlalchemy import text
 
+            # Convert embedding list to pgvector string format for asyncpg
+            embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
+
             async with self._async_session() as session:
-                sql = text("""
+                # Build WHERE clause dynamically to avoid asyncpg
+                # AmbiguousParameterError with IS NULL patterns
+                where_parts = ["c.embedding IS NOT NULL"]
+                params: dict[str, Any] = {
+                    "embedding": embedding_str,
+                    "limit": limit,
+                }
+                if path_filter:
+                    where_parts.append("fp.virtual_path LIKE :path_pattern")
+                    params["path_pattern"] = f"{path_filter}%"
+                if zone_id:
+                    where_parts.append("fp.zone_id = :zone_id")
+                    params["zone_id"] = zone_id
+
+                where_clause = " AND ".join(where_parts)
+                sql = text(f"""
                     SELECT
                         c.chunk_index, c.chunk_text,
                         c.start_offset, c.end_offset, c.line_start, c.line_end,
@@ -577,23 +755,12 @@ class SearchDaemon:
                         1 - (c.embedding <=> CAST(:embedding AS halfvec)) as score
                     FROM document_chunks c
                     JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE c.embedding IS NOT NULL
-                      AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
-                      AND (:zone_id IS NULL OR fp.zone_id = :zone_id)
+                    WHERE {where_clause}
                     ORDER BY c.embedding <=> CAST(:embedding AS halfvec)
                     LIMIT :limit
                 """)
 
-                result = await session.execute(
-                    sql,
-                    {
-                        "embedding": embedding,
-                        "limit": limit,
-                        "path_filter": path_filter,
-                        "path_pattern": f"{path_filter}%" if path_filter else None,
-                        "zone_id": zone_id,
-                    },
-                )
+                result = await session.execute(sql, params)
 
                 return [
                     SearchResult(
@@ -645,118 +812,72 @@ class SearchDaemon:
         query: str,
         limit: int,
         path_filter: str | None,
-        alpha: float,
-        fusion_method: str,
+        alpha: float,  # noqa: ARG002
+        fusion_method: str,  # noqa: ARG002
         *,
         zone_id: str | None = None,
     ) -> list[SearchResult]:
-        """Hybrid search combining keyword, semantic, and optionally SPLADE results.
+        """Hybrid search combining keyword and semantic results via RRF.
 
-        Pipeline: BM25 + Dense + SPLADE(optional) -> N-way RRF -> results
+        Pipeline: BM25/Zoekt + Dense -> RRF fusion -> results
         """
-        from nexus.bricks.search.fusion import (
-            FusionConfig,
-            FusionMethod,
-            fuse_results,
-            rrf_multi_fusion,
+        # Run keyword and semantic in parallel
+        kw_task = asyncio.ensure_future(
+            self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id)
+        )
+        sem_task = asyncio.ensure_future(
+            self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id)
         )
 
-        def _to_dicts(results: list[SearchResult]) -> list[dict[str, Any]]:
-            return [
-                {
-                    "path": r.path,
-                    "chunk_index": r.chunk_index,
-                    "chunk_text": r.chunk_text,
-                    "score": r.score,
-                    "start_offset": r.start_offset,
-                    "end_offset": r.end_offset,
-                    "line_start": r.line_start,
-                    "line_end": r.line_end,
-                }
-                for r in results
-            ]
+        raw_results = await asyncio.gather(kw_task, sem_task, return_exceptions=True)
 
-        # Run all retrieval backends in parallel
-        tasks: list[asyncio.Task] = [
-            asyncio.ensure_future(
-                self._keyword_search(query, limit * 3, path_filter, zone_id=zone_id)
-            ),
-            asyncio.ensure_future(
-                self._semantic_search(query, limit * 3, path_filter, zone_id=zone_id)
-            ),
-        ]
-        has_splade = self._splade is not None
-        if has_splade:
-            tasks.append(asyncio.ensure_future(self._splade_search(query, limit * 3, path_filter)))
-
-        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Handle errors
         kw_results: list[SearchResult] = []
         sem_results: list[SearchResult] = []
-        splade_results: list[SearchResult] = []
 
         if isinstance(raw_results[0], BaseException):
-            logger.warning(f"Keyword search failed: {raw_results[0]}")
+            logger.warning("Keyword search failed: %s", raw_results[0])
         else:
             kw_results = raw_results[0]
         if isinstance(raw_results[1], BaseException):
-            logger.warning(f"Semantic search failed: {raw_results[1]}")
+            logger.warning("Semantic search failed: %s", raw_results[1])
         else:
             sem_results = raw_results[1]
-        if has_splade and len(raw_results) > 2:
-            if isinstance(raw_results[2], BaseException):
-                logger.warning(f"SPLADE search failed: {raw_results[2]}")
-            else:
-                splade_results = raw_results[2]
 
-        keyword_dicts = _to_dicts(kw_results)
-        semantic_dicts = _to_dicts(sem_results)
-        splade_dicts = _to_dicts(splade_results)
+        # RRF fusion (k=60)
+        rrf_k = 60
+        scores: dict[str, float] = {}
+        best: dict[str, SearchResult] = {}
 
-        # Use N-way RRF when SPLADE is available, else standard 2-way fusion
-        if splade_dicts:
-            fused = rrf_multi_fusion(
-                [
-                    ("keyword", keyword_dicts),
-                    ("vector", semantic_dicts),
-                    ("splade", splade_dicts),
-                ],
-                k=60,
-                limit=limit,
-                id_key=None,
-            )
-        else:
-            config = FusionConfig(
-                method=FusionMethod(fusion_method),
-                alpha=alpha,
-                rrf_k=60,
-            )
-            fused = fuse_results(
-                keyword_dicts,
-                semantic_dicts,
-                config=config,
-                limit=limit,
-                id_key=None,
-            )
+        for rank, r in enumerate(kw_results):
+            key = f"{r.path}:{r.chunk_index}"
+            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
+            if key not in best:
+                best[key] = r
 
-        # Convert back to SearchResult
+        for rank, r in enumerate(sem_results):
+            key = f"{r.path}:{r.chunk_index}"
+            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
+            if key not in best:
+                best[key] = r
+
+        # Sort by fused score, take top limit
+        sorted_keys = sorted(scores, key=lambda k: scores[k], reverse=True)[:limit]
+
         return [
             SearchResult(
-                path=r["path"],
-                chunk_index=r["chunk_index"],
-                chunk_text=r["chunk_text"],
-                score=r["score"],
-                start_offset=r.get("start_offset"),
-                end_offset=r.get("end_offset"),
-                line_start=r.get("line_start"),
-                line_end=r.get("line_end"),
-                keyword_score=r.get("keyword_score"),
-                vector_score=r.get("vector_score"),
-                splade_score=r.get("splade_score"),
+                path=best[k].path,
+                chunk_text=best[k].chunk_text,
+                score=scores[k],
+                chunk_index=best[k].chunk_index,
+                start_offset=best[k].start_offset,
+                end_offset=best[k].end_offset,
+                line_start=best[k].line_start,
+                line_end=best[k].line_end,
+                keyword_score=best[k].keyword_score,
+                vector_score=best[k].vector_score,
                 search_type="hybrid",
             )
-            for r in fused
+            for k in sorted_keys
         ]
 
     async def _search_zoekt(
@@ -844,8 +965,21 @@ class SearchDaemon:
             from sqlalchemy import text
 
             async with self._async_session() as session:
-                # PostgreSQL FTS query with zone isolation
-                sql = text("""
+                # Build WHERE clause dynamically to avoid asyncpg
+                # AmbiguousParameterError with IS NULL patterns
+                where_parts = [
+                    "to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)"
+                ]
+                params: dict[str, Any] = {"query": query, "limit": limit}
+                if path_filter:
+                    where_parts.append("fp.virtual_path LIKE :path_pattern")
+                    params["path_pattern"] = f"{path_filter}%"
+                if zone_id:
+                    where_parts.append("fp.zone_id = :zone_id")
+                    params["zone_id"] = zone_id
+
+                where_clause = " AND ".join(where_parts)
+                sql = text(f"""
                     SELECT
                         c.chunk_index, c.chunk_text,
                         c.start_offset, c.end_offset, c.line_start, c.line_end,
@@ -853,19 +987,10 @@ class SearchDaemon:
                         ts_rank(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) as score
                     FROM document_chunks c
                     JOIN file_paths fp ON c.path_id = fp.path_id
-                    WHERE to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)
-                      AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
-                      AND (:zone_id IS NULL OR fp.zone_id = :zone_id)
+                    WHERE {where_clause}
                     ORDER BY score DESC
                     LIMIT :limit
                 """)
-                params = {
-                    "query": query,
-                    "limit": limit,
-                    "path_filter": path_filter,
-                    "path_pattern": f"{path_filter}%" if path_filter else None,
-                    "zone_id": zone_id,
-                }
 
                 result = await session.execute(sql, params)
 
@@ -890,26 +1015,23 @@ class SearchDaemon:
             return []
 
     async def _get_query_embedding(self, query: str) -> list[float] | None:
-        """Get embedding for query text."""
+        """Get embedding for query text (legacy fallback path).
+
+        Note: With txtai backend active, this method is only called
+        by the legacy _semantic_search path which is bypassed.
+        """
         if self._embedding_provider:
             result = await self._embedding_provider.embed_text(query)
             return list(result) if result else None
 
-        # Try to get from environment/default provider
-        try:
-            from nexus.bricks.search.embeddings import create_embedding_provider
-
-            provider = create_embedding_provider()
-            return await provider.embed_text(query)
-        except Exception as e:
-            logger.debug(f"Could not get query embedding: {e}")
-            return None
+        logger.debug("No embedding provider available for legacy search path")
+        return None
 
     # =========================================================================
     # Index Refresh
     # =========================================================================
 
-    async def notify_file_change(self, path: str, _change_type: str = "update") -> None:
+    async def notify_file_change(self, path: str, change_type: str = "update") -> None:
         """Notify the daemon of a file change for index refresh.
 
         Changes are debounced and batched for efficiency.
@@ -922,7 +1044,12 @@ class SearchDaemon:
             return
 
         async with self._refresh_lock:
-            self._pending_refresh_paths.add(path)
+            if change_type == "delete":
+                self._pending_delete_paths.add(path)
+                self._pending_refresh_paths.discard(path)
+            else:
+                self._pending_refresh_paths.add(path)
+                self._pending_delete_paths.discard(path)
 
     async def _index_refresh_loop(self) -> None:
         """Background task to refresh indexes for changed files."""
@@ -931,14 +1058,33 @@ class SearchDaemon:
                 await asyncio.sleep(self.config.refresh_debounce_seconds)
 
                 async with self._refresh_lock:
-                    if not self._pending_refresh_paths:
+                    if not self._pending_refresh_paths and not self._pending_delete_paths:
                         continue
 
                     paths = list(self._pending_refresh_paths)
                     self._pending_refresh_paths.clear()
+                    delete_paths = list(self._pending_delete_paths)
+                    self._pending_delete_paths.clear()
+
+                # Delete removed files from the index
+                # Doc IDs are "zone:path" for non-root, plain path for root
+                if delete_paths and self._backend is not None:
+                    from nexus.contracts.constants import ROOT_ZONE_ID
+
+                    delete_ids = []
+                    for dp in delete_paths:
+                        vp = self._strip_zone_prefix(dp)
+                        # Infer zone from the scoped path prefix
+                        import re as _re_del
+
+                        zm = _re_del.match(r"^/zone/([^/]+)/", dp)
+                        zone = zm.group(1) if zm else ROOT_ZONE_ID
+                        delete_ids.append(f"{zone}:{vp}" if zone != ROOT_ZONE_ID else vp)
+                    await self.delete_documents(delete_ids, zone_id=ROOT_ZONE_ID)
 
                 # Refresh indexes for changed paths
-                await self._refresh_indexes(paths)
+                if paths:
+                    await self._refresh_indexes(paths)
                 self.stats.last_index_refresh = time.time()
 
             except asyncio.CancelledError:
@@ -946,65 +1092,207 @@ class SearchDaemon:
             except Exception as e:
                 logger.error(f"Index refresh error: {e}")
 
+    @staticmethod
+    def _strip_zone_prefix(path: str) -> str:
+        """Strip /zone/{zone_id} prefix from a path for DB virtual_path lookup.
+
+        DB stores virtual_path as '/test-search/...' not '/zone/root/test-search/...'.
+        """
+        import re
+
+        m = re.match(r"^/zone/[^/]+(/.*)", path)
+        return m.group(1) if m else path
+
+    async def _index_to_document_chunks(self, path_id: str, path: str, content: str) -> None:
+        """Insert content as document_chunks for FTS search."""
+        if not self._async_session:
+            return
+
+        try:
+            import uuid
+            from datetime import UTC, datetime
+
+            from sqlalchemy import text as sa_text
+
+            # Split into chunks (~1000 chars each for search granularity)
+            chunk_size = 1000
+            chunks = [content[i : i + chunk_size] for i in range(0, len(content), chunk_size)]
+            now = datetime.now(UTC).replace(tzinfo=None)
+
+            async with self._async_session() as sess:
+                # Delete existing chunks for this path
+                await sess.execute(
+                    sa_text("DELETE FROM document_chunks WHERE path_id = :pid"),
+                    {"pid": path_id},
+                )
+
+                for idx, chunk_text in enumerate(chunks):
+                    if not chunk_text.strip():
+                        continue
+                    # Compute approximate line numbers
+                    preceding = content[: idx * chunk_size]
+                    line_start = preceding.count("\n") + 1
+                    line_end = line_start + chunk_text.count("\n")
+                    # Approximate token count (~4 chars per token)
+                    chunk_tokens = max(1, len(chunk_text) // 4)
+
+                    await sess.execute(
+                        sa_text(
+                            "INSERT INTO document_chunks "
+                            "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, "
+                            "start_offset, end_offset, line_start, line_end, created_at) "
+                            "VALUES (:cid, :pid, :idx, :txt, :tokens, "
+                            ":s_off, :e_off, :ls, :le, :created)"
+                        ),
+                        {
+                            "cid": str(uuid.uuid4()),
+                            "pid": path_id,
+                            "idx": idx,
+                            "txt": chunk_text,
+                            "tokens": chunk_tokens,
+                            "s_off": idx * chunk_size,
+                            "e_off": idx * chunk_size + len(chunk_text),
+                            "ls": line_start,
+                            "le": line_end,
+                            "created": now,
+                        },
+                    )
+                await sess.commit()
+        except Exception as e:
+            logger.debug("Failed to index %s to document_chunks: %s", path, e)
+
     async def _refresh_indexes(self, paths: list[str]) -> None:
         """Refresh indexes for a batch of changed files.
 
-        Issue #1024: Uses entropy-aware chunking to filter redundant content
-        before indexing to BM25S.
+        Indexes to both BM25S (if available) and database document_chunks
+        (for FTS fallback). File content is read via _file_reader or
+        from the content_cache table.
         """
-        logger.debug(f"Refreshing indexes for {len(paths)} files")
+        logger.debug("Refreshing indexes for %d files", len(paths))
 
-        if not self._bm25s_index or not self._file_reader:
-            logger.debug("BM25S index or file reader not available, skipping refresh")
+        if not self._file_reader and not self._async_session:
+            logger.debug("No file reader or DB session, skipping refresh")
             return
 
         indexed_count = 0
-        filtered_chunks = 0
-        total_chunks = 0
+        # Collect documents for batched txtai upsert (Issue #2663)
+        _txtai_batch: dict[str, list[dict]] = {}  # zone_id -> docs
 
         for path in paths:
             try:
-                # Read file content (Issue #1520: FileReaderProtocol returns str)
-                content = self._file_reader.read_text(path)
+                # Strip /zone/{zone_id} prefix for DB virtual_path lookup
+                virtual_path = self._strip_zone_prefix(path)
+
+                # Read file content via file reader or database
+                content: str | None = None
+                if self._file_reader:
+                    import contextlib
+
+                    try:
+                        content = await self._file_reader.read_text(path)
+                    except Exception as e:
+                        logger.debug("File read failed for %s: %s, trying virtual path", path, e)
+                        # Also try without zone prefix — best-effort fallback
+                        with contextlib.suppress(OSError, ValueError):
+                            content = await self._file_reader.read_text(virtual_path)
+
+                # Fallback: read from content_cache table
+                if not content and self._async_session:
+                    try:
+                        from sqlalchemy import text as sa_text
+
+                        async with self._async_session() as sess:
+                            row = (
+                                await sess.execute(
+                                    sa_text(
+                                        "SELECT cc.content_text FROM content_cache cc "
+                                        "JOIN file_paths fp ON cc.path_id = fp.path_id "
+                                        "WHERE fp.virtual_path = :vp "
+                                        "AND cc.content_text IS NOT NULL "
+                                        "LIMIT 1"
+                                    ),
+                                    {"vp": virtual_path},
+                                )
+                            ).first()
+                            if row and row[0]:
+                                content = str(row[0])
+                    except Exception as db_err:
+                        logger.debug("DB content read failed for %s: %s", path, db_err)
+
                 if not content:
+                    logger.debug("No content found for %s", path)
                     continue
 
-                # Get path_id for indexing
-                path_id = path  # Use path as ID for now
+                # Resolve path_id from file_paths table
+                path_id = virtual_path  # fallback
+                if self._async_session:
+                    try:
+                        from sqlalchemy import text as sa_text
 
-                # Apply entropy filtering if enabled (Issue #1024)
-                if self._entropy_chunker:
-                    result = await self._entropy_chunker.chunk_with_filtering(
-                        content, path, compute_lines=True
-                    )
-                    total_chunks += result.original_count
-                    filtered_chunks += result.original_count - result.filtered_count
+                        async with self._async_session() as sess:
+                            row = (
+                                await sess.execute(
+                                    sa_text(
+                                        "SELECT path_id FROM file_paths "
+                                        "WHERE virtual_path = :vp LIMIT 1"
+                                    ),
+                                    {"vp": virtual_path},
+                                )
+                            ).first()
+                            if row:
+                                path_id = row[0]
+                    except Exception as e:
+                        logger.debug("path_id lookup failed for %s: %s", virtual_path, e)
 
-                    # Index only the filtered (non-redundant) content
-                    if result.chunks:
-                        # Combine filtered chunks for BM25S indexing
-                        filtered_content = "\n\n".join(c.text for c in result.chunks)
-                        await self._bm25s_index.index_document(path_id, path, filtered_content)
-                        indexed_count += 1
-                else:
-                    # Index full content without filtering
+                # Index to BM25S if available
+                if self._bm25s_index:
                     await self._bm25s_index.index_document(path_id, path, content)
-                    indexed_count += 1
+
+                # Index to database document_chunks for FTS
+                if self._async_session:
+                    await self._index_to_document_chunks(path_id, path, content)
+
+                indexed_count += 1
+
+                # Collect for batched txtai upsert (Issue #2663)
+                if self._backend is not None:
+                    import re as _re
+
+                    _zm = _re.match(r"^/zone/([^/]+)/", path)
+                    _zone = _zm.group(1) if _zm else "root"
+                    _doc_id = f"{_zone}:{virtual_path}" if _zone != "root" else virtual_path
+                    _txtai_batch.setdefault(_zone, []).append(
+                        {
+                            "id": _doc_id,
+                            "text": content,
+                            "path": virtual_path,
+                            "zone_id": _zone,
+                        }
+                    )
+
+                # Also run indexing pipeline for chunk + embedding storage
+                if self._indexing_pipeline and self._embedding_provider:
+                    try:
+                        await self._indexing_pipeline.index_document(path, content, path_id)
+                    except Exception as ie:
+                        logger.debug("Indexing pipeline error for %s: %s", path, ie)
 
             except Exception as e:
-                logger.warning(f"Failed to refresh index for {path}: {e}")
+                logger.warning("Failed to refresh index for %s: %s", path, e)
+
+        # Batched txtai upsert — one call per zone with all docs (Issue #2663)
+        if self._backend is not None and _txtai_batch:
+            for zone_id, docs in _txtai_batch.items():
+                try:
+                    await self._backend.upsert(docs, zone_id=zone_id)
+                    logger.debug("txtai batch upsert: %d docs for zone %s", len(docs), zone_id)
+                except Exception as te:
+                    logger.warning("txtai batch upsert failed for zone %s: %s", zone_id, te)
 
         if indexed_count > 0:
-            logger.info(
-                f"[DAEMON] Indexed {indexed_count}/{len(paths)} files"
-                + (
-                    f", filtered {filtered_chunks}/{total_chunks} redundant chunks"
-                    if self._entropy_chunker
-                    else ""
-                )
-            )
+            logger.info("[DAEMON] Indexed %d/%d files", indexed_count, len(paths))
 
-        # Update BM25S document count (include delta index)
+        # Update document count (BM25S index or DB FTS fallback)
         if self._bm25s_index:
             corpus_len = (
                 len(self._bm25s_index._corpus) if hasattr(self._bm25s_index, "_corpus") else 0
@@ -1015,6 +1303,22 @@ class SearchDaemon:
                 else 0
             )
             self.stats.bm25_documents = corpus_len + delta_len
+        elif self._async_session and indexed_count > 0:
+            # BM25S not available — count from DB document_chunks table
+            session_factory = self._async_session
+            try:
+                from sqlalchemy import text as sa_text
+
+                async with session_factory() as sess:
+                    row = (
+                        await sess.execute(
+                            sa_text("SELECT COUNT(DISTINCT path_id) FROM document_chunks")
+                        )
+                    ).first()
+                    self.stats.bm25_documents = int(row[0]) if row else 0
+            except Exception:
+                # If count fails, at least track that we indexed something
+                self.stats.bm25_documents += indexed_count
 
     # =========================================================================
     # Bulk Embedding (decoupled from BM25)
@@ -1038,7 +1342,7 @@ class SearchDaemon:
             Number of documents successfully embedded
         """
         import uuid
-        from datetime import datetime
+        from datetime import UTC, datetime
 
         if not self._bm25s_index:
             logger.warning("[BULK-EMBED] No BM25S index available")
@@ -1063,7 +1367,7 @@ class SearchDaemon:
         # Step 1: Build deterministic UUID5 path_ids for each virtual path
         ns = uuid.UUID("12345678-1234-5678-1234-567812345678")
         path_id_map: dict[str, str] = {}
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         unique_vpaths: list[str] = []
         for i in range(total):
@@ -1124,7 +1428,7 @@ class SearchDaemon:
             batch = docs_to_embed[batch_start : batch_start + batch_size]
             try:
                 await self._indexing_pipeline.index_documents(
-                    [(path_id, vpath, content) for vpath, content, path_id in batch]
+                    [(vpath, content, path_id) for vpath, content, path_id in batch]
                 )
                 embedded += len(batch)
                 if batch_start % (batch_size * 5) == 0:
@@ -1182,6 +1486,11 @@ class SearchDaemon:
                 "threshold": self.config.entropy_threshold,
                 "alpha": self.config.entropy_alpha,
             },
+            # Issue #2663: txtai backend
+            "backend": "txtai" if self._backend is not None else "legacy",
+            "txtai_model": self.config.txtai_model,
+            "txtai_reranker": self.config.txtai_reranker,
+            "txtai_graph": self.config.txtai_graph,
         }
 
     def get_health(self) -> dict[str, Any]:
@@ -1190,10 +1499,18 @@ class SearchDaemon:
         Returns:
             Health status dictionary
         """
+        # Keyword search is available via BM25S, Zoekt, or DB FTS fallback
+        keyword_ready = (
+            self._bm25s_index is not None
+            or self.stats.zoekt_available
+            or self._async_engine is not None
+        )
         return {
             "status": "healthy" if self._initialized else "starting",
+            "initialized": self._initialized,
             "daemon_initialized": self._initialized,
-            "bm25_index_loaded": self._bm25s_index is not None,
+            "backend": "txtai" if self._backend is not None else "legacy",
+            "bm25_index_loaded": keyword_ready,
             "db_pool_ready": self._async_engine is not None,
             "zoekt_available": self.stats.zoekt_available,
         }

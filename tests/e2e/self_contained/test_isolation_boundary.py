@@ -41,7 +41,7 @@ class SysModulesMutator:
         return "mutator"
 
     def connect(self, context=None):
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         sys.modules["__isolation_test_marker__"] = type(sys)("marker")
         return HandlerStatusResponse(success=True)
@@ -50,7 +50,7 @@ class SysModulesMutator:
         pass
 
     def check_connection(self, context=None):
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         present = "__isolation_test_marker__" in sys.modules
         return HandlerStatusResponse(success=present)
@@ -100,13 +100,13 @@ class GlobalMutator(SysModulesMutator):
         return "global_mutator"
 
     def connect(self, context=None):
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         GlobalMutator._GLOBAL_FLAG = True
         return HandlerStatusResponse(success=True)
 
     def check_connection(self, context=None):
-        from nexus.backends.backend import HandlerStatusResponse
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         return HandlerStatusResponse(success=GlobalMutator._GLOBAL_FLAG)
 

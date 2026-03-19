@@ -49,7 +49,7 @@ class TestCASHoldConcurrent:
 
     def test_concurrent_hold_reference(self) -> None:
         """Multiple threads calling hold_reference on same hash."""
-        from nexus.backends.cas_blob_store import _StripeLock
+        from nexus.backends.base.stripe_lock import _StripeLock
 
         # Create a mock CAS store with real stripe locks
         lock = _StripeLock(num_stripes=64)

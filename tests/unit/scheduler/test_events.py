@@ -6,7 +6,7 @@ Tests emitter handler calls, exception isolation, and handler management.
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
 
 
 def _make_event(**kwargs) -> AgentStateEvent:

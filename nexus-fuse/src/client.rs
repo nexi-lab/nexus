@@ -167,7 +167,9 @@ impl NexusClient {
         let rpc_resp: JsonRpcResponse<T> = resp.json()?;
 
         if let Some(err) = rpc_resp.error {
-            if err.message.contains("not found") || err.message.contains("Not Found") {
+            // Classify by structured error code (rpc_types.py RPCErrorCode),
+            // not message text. -32000 = FILE_NOT_FOUND per server contract.
+            if err.code == -32000 {
                 return Err(NexusClientError::NotFound(err.message));
             }
             return Err(NexusClientError::InvalidResponse(format!(
@@ -327,9 +329,6 @@ impl NexusClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().unwrap_or_default();
-            if status.as_u16() == 404 || text.contains("not found") || text.contains("Not Found") {
-                return Err(NexusClientError::NotFound("not found".to_string()));
-            }
             return Err(Self::status_to_error(status, text));
         }
 
@@ -357,8 +356,7 @@ impl NexusClient {
         let rpc_resp: JsonRpcReadResponse = resp.json()?;
 
         if let Some(err) = rpc_resp.error {
-            if err.message.contains("not found") || err.message.contains("Not Found")
-                || err.message.contains("CAS content not found") {
+            if err.code == -32000 {
                 return Err(NexusClientError::NotFound(err.message));
             }
             return Err(NexusClientError::InvalidResponse(format!(

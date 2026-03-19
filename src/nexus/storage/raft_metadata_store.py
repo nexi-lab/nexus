@@ -25,8 +25,8 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.metadata import FileMetadata, PaginatedResult
-from nexus.core.metastore import CasResult, MetastoreABC
+from nexus.contracts.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -182,28 +182,6 @@ class RaftMetadataStore(MetastoreABC):
             # Compiled PyO3 binary may not yet support the consistency parameter
             return self._engine.set_metadata(metadata.path, data)
 
-    def _cas_put_engine(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        """Atomic CAS via PyO3 cas_set_metadata (single redb txn, ~8μs).
-
-        Falls back to the ABC default (read-check-write) if the compiled
-        PyO3 binary does not yet expose ``cas_set_metadata``.
-        """
-        data = _serialize_metadata(metadata)
-        try:
-            success, current_version = self._engine.cas_set_metadata(
-                metadata.path, data, expected_version, consistency=consistency
-            )
-        except (TypeError, AttributeError):
-            # PyO3 binary doesn't support CAS yet — fall back to ABC default
-            return super().put_if_version(metadata, expected_version, consistency=consistency)
-        return CasResult(success=success, current_version=current_version)
-
     def _delete_engine(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata from the embedded sled engine.
 
@@ -307,29 +285,6 @@ class RaftMetadataStore(MetastoreABC):
         """
         return self._put_engine(metadata, consistency=consistency)
 
-    def put_if_version(
-        self,
-        metadata: FileMetadata,
-        expected_version: int,
-        *,
-        consistency: str = "sc",
-    ) -> CasResult:
-        """Atomic compare-and-swap on FileMetadata.version.
-
-        Overrides the ABC default with a true atomic CAS via the
-        embedded PyO3 engine (single redb write transaction).
-
-        Args:
-            metadata: The new metadata to store.
-            expected_version: Version that must match the current stored
-                version.  Use 0 for create-only semantics.
-            consistency: ``"sc"`` (default) or ``"ec"``.
-
-        Returns:
-            CasResult indicating success and the current version.
-        """
-        return self._cas_put_engine(metadata, expected_version, consistency=consistency)
-
     def is_committed(self, token: int) -> str | None:
         """Check if an EC write token has been replicated to a majority.
 
@@ -369,6 +324,15 @@ class RaftMetadataStore(MetastoreABC):
     def rename_path(self, old_path: str, new_path: str) -> None:
         """Rename a file by updating its path in metadata.
 
+        Ordering is put-first, then delete so that a crash between the two
+        operations leaves a recoverable duplicate (both old and new exist)
+        rather than an irrecoverable loss (neither exists).  Issue #3062.
+
+        Note: A true atomic rename requires a compound Raft proposal
+        (get+delete+put in a single log entry).  This requires adding a
+        ``rename_metadata`` command to the Rust engine.  Until then, this
+        two-step approach is the safest available.
+
         Args:
             old_path: Current path
             new_path: New path
@@ -380,7 +344,6 @@ class RaftMetadataStore(MetastoreABC):
         if metadata is None:
             raise FileNotFoundError(f"No metadata found for {old_path}")
 
-        # Create new metadata with updated path
         new_metadata = FileMetadata(
             path=new_path,
             backend_name=metadata.backend_name,
@@ -398,9 +361,9 @@ class RaftMetadataStore(MetastoreABC):
             owner_id=metadata.owner_id,
         )
 
-        # Delete old, put new
-        self.delete(old_path)
+        # Put new FIRST, then delete old — crash-safe ordering (Issue #3062)
         self.put(new_metadata)
+        self.delete(old_path)
 
     def is_implicit_directory(self, path: str) -> bool:
         """Check if a path is an implicit directory.
@@ -493,76 +456,62 @@ class RaftMetadataStore(MetastoreABC):
             metadata = _deserialize_metadata(data)
             yield metadata
 
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        zone_id: str | None = None,
-    ) -> PaginatedResult:
-        """List files with cursor-based pagination.
-
-        RaftMetadataStore is zone-local: each zone has its own sled database,
-        so zone_id filtering is inherent to the store instance.
-
-        Uses list_iter() to avoid loading all entries into memory.
-        Memory usage is O(limit) instead of O(total).
-        """
-        # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        # When prefix is already zone-scoped, zone_id is redundant.
-        if zone_id is not None and zone_id != ROOT_ZONE_ID:
-            if self._zone_id is None and not prefix.startswith(f"/zone/{zone_id}"):
-                raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
-        from itertools import islice
-
-        # Decode cursor if it's base64-encoded
-        cursor_path: str | None = None
-        if cursor:
-            cursor_path = cursor
-            try:
-                from nexus.lib.pagination import decode_cursor
-
-                filters = {
-                    "prefix": prefix,
-                    "recursive": recursive,
-                    "zone_id": zone_id,
-                }
-                decoded = decode_cursor(cursor, filters)
-                cursor_path = decoded.path
-            except Exception:
-                cursor_path = cursor
-
-        # Stream through entries, skipping past cursor
-        items_iter = self.list_iter(prefix, recursive, zone_id=zone_id)
-
-        if cursor_path:
-            # Skip entries up to and including cursor position
-            items_iter = (item for item in items_iter if item.path > cursor_path)
-
-        # Take limit + 1 to detect has_more without loading everything
-        page = list(islice(items_iter, limit + 1))
-        has_more = len(page) > limit
-        if has_more:
-            page = page[:limit]
-
-        next_cursor = page[-1].path if has_more and page else None
-
-        return PaginatedResult(
-            items=page,
-            next_cursor=next_cursor,
-            has_more=has_more,
-            total_count=None,  # Unavailable without full scan (use -1 for unknown)
-        )
-
     def close(self) -> None:
         """Close the metadata store and release resources."""
         if hasattr(self._engine, "shutdown"):
-            # ZoneHandle/ZoneManager: gracefully stop gRPC server + transport loop
+            # ZoneManager: gracefully stop gRPC server + transport loop
             self._engine.shutdown()
-        else:
-            # Metastore: just flush sled
+        elif hasattr(self._engine, "flush"):
+            # Metastore: flush redb to disk
             self._engine.flush()
+        # ZoneHandle: no explicit teardown needed (managed by ZoneManager)
+
+    # =========================================================================
+    # Zone-level reserved keys (federation ref counting)
+    # =========================================================================
+
+    _KEY_LINKS_COUNT = "__i_links_count__"
+
+    def get_zone_links_count(self) -> int:
+        """Get the zone's i_links_count (number of DT_MOUNT references).
+
+        Uses the __i_links_count__ reserved key in Raft metadata,
+        same SetMetadata command as regular metadata — no Rust changes needed.
+
+        Returns:
+            Current link count (0 if not set).
+        """
+        data = self._engine.get_metadata(self._KEY_LINKS_COUNT)
+        if data is None:
+            return 0
+        if isinstance(data, list):
+            data = bytes(data)
+        return int.from_bytes(data, "big")
+
+    def set_zone_links_count(self, count: int) -> None:
+        """Set the zone's i_links_count (Raft-replicated).
+
+        Must be called on the leader node. Uses the same SetMetadata
+        Raft command as regular file metadata.
+
+        Args:
+            count: New link count value.
+        """
+        self._engine.set_metadata(self._KEY_LINKS_COUNT, count.to_bytes(8, "big"))
+
+    def adjust_zone_links_count(self, delta: int) -> int:
+        """Atomically adjust the zone's i_links_count by delta.
+
+        Uses AdjustCounter Raft command — read-modify-write happens
+        in apply(), serialized by Raft. No lost updates under concurrency.
+
+        Args:
+            delta: Signed adjustment (+1 to increment, -1 to decrement).
+
+        Returns:
+            New count after adjustment.
+        """
+        return self._engine.adjust_counter(self._KEY_LINKS_COUNT, delta)
 
     # =========================================================================
     # Revision Counter (Issue #1330 Phase 4.2)
@@ -640,17 +589,28 @@ class RaftMetadataStore(MetastoreABC):
         serialized: list[tuple[str, bytes]] = [
             (m.path, _serialize_metadata(m)) for m in metadata_list
         ]
+        path_list = [path for path, _ in serialized]
 
-        # Phase 2: apply all writes in a single FFI call
+        # Phase 2: capture existing metadata for rollback (single FFI call)
+        if hasattr(self._engine, "get_metadata_multi"):
+            snapshots = self._engine.get_metadata_multi(path_list)
+        else:
+            snapshots = [(p, self._engine.get_metadata(p)) for p in path_list]
+
+        # Phase 3: apply all writes in a single FFI call
         try:
             self._engine.batch_set_metadata(serialized)
         except Exception as e:
-            # Best-effort rollback: delete entries that were written
-            paths_to_rollback = [path for path, _ in serialized]
+            # Best-effort rollback: restore pre-existing entries, delete new ones
+            restore_items = [(path, data) for path, data in snapshots if data is not None]
+            delete_paths = [path for path, data in snapshots if data is None]
             try:
-                self._engine.batch_delete_metadata(paths_to_rollback)
+                if restore_items:
+                    self._engine.batch_set_metadata(restore_items)
+                if delete_paths:
+                    self._engine.batch_delete_metadata(delete_paths)
             except Exception:
-                logger.warning("put_batch rollback failed for %d paths", len(paths_to_rollback))
+                logger.warning("put_batch rollback failed for %d paths", len(path_list))
             raise RuntimeError(f"put_batch failed writing {len(serialized)} entries: {e}") from e
 
     def delete_batch(self, paths: Sequence[str]) -> None:

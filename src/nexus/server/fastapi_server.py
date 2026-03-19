@@ -32,14 +32,13 @@ from fastapi import (
     Depends,
     FastAPI,
     HTTPException,
-    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
-from nexus.contracts.constants import DEFAULT_NEXUS_URL, ROOT_ZONE_ID
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import (
     NexusError,
 )
@@ -47,7 +46,6 @@ from nexus.server.auth.oauth_init import (  # noqa: E402
     initialize_oauth_provider as _initialize_oauth_provider,
 )
 from nexus.server.dependencies import (  # noqa: E402
-    get_auth_result,
     require_auth,
 )
 from nexus.server.error_handlers import (  # noqa: E402
@@ -169,7 +167,7 @@ def create_app(
         database_url: Database URL for async operations
         thread_pool_size: Thread pool size for sync operations (default: 200)
         operation_timeout: Timeout for sync operations in seconds (default: 30.0)
-        data_dir: Server data directory for persistent storage (A2A tasks, etc.)
+        data_dir: Server data directory for persistent storage
 
     Returns:
         Configured FastAPI application
@@ -182,7 +180,7 @@ def create_app(
     # Create app first so we can store state on it
     app = FastAPI(
         title="Nexus RPC Server",
-        description="AI-Native Distributed Filesystem API",
+        description="Nexus = filesystem/context plane.",
         version="1.0.0",
         lifespan=_modular_lifespan,
     )
@@ -217,7 +215,7 @@ def create_app(
 
     _profile_str = os.environ.get("NEXUS_PROFILE", "full")
     if _profile_str == "auto":
-        from nexus.core.device_capabilities import detect_capabilities, suggest_profile
+        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
 
         _caps = detect_capabilities()
         _profile = suggest_profile(_caps)
@@ -235,10 +233,10 @@ def create_app(
             logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
             _profile = DeploymentProfile.FULL
         # Warn if explicit profile may exceed device capabilities
-        from nexus.core.device_capabilities import (
+        from nexus.lib.device_capabilities import (
             detect_capabilities as _detect_caps,
         )
-        from nexus.core.device_capabilities import (
+        from nexus.lib.device_capabilities import (
             warn_if_profile_exceeds_device,
         )
 
@@ -278,7 +276,11 @@ def create_app(
     # Kept for backward compatibility with handlers not yet migrated.
     if _record_store is not None:
         app.state.session_factory = _record_store.session_factory
-    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+    elif (
+        nexus_fs is not None
+        and hasattr(nexus_fs, "SessionLocal")
+        and nexus_fs.SessionLocal is not None
+    ):
         app.state.session_factory = nexus_fs.SessionLocal
     else:
         app.state.session_factory = None
@@ -312,47 +314,60 @@ def create_app(
 
     # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
     # Services with @rpc_expose override kernel stubs (later sources win).
-    _brick_sources: list[Any] = []
-    for _attr_name in (
-        "skill_service",
-        "skill_package_service",
-        "task_queue_service",
-        "mcp_service",
-        "llm_service",
-        "oauth_service",
-        "mount_service",
-        "search_service",
-        "version_service",
-        "share_link_service",
-        "rebac_service",
-    ):
-        _brick_svc = getattr(nexus_fs, _attr_name, None)
-        if _brick_svc is not None:
-            _brick_sources.append(_brick_svc)
-    # AgentRPCService: stored as private attr _agent_rpc_service on NexusFS
-    _agent_rpc = getattr(nexus_fs, "_agent_rpc_service", None)
-    if _agent_rpc is not None:
-        _brick_sources.append(_agent_rpc)
-    # Issue #12: MemoryService lives outside kernel — created by factory, not on NexusFS
-    try:
-        from nexus.factory import create_memory_service
+    if nexus_fs is not None:
+        _brick_sources: list[Any] = []
+        for _svc_name in (
+            "mcp",
+            "oauth",
+            "mount",
+            "search",
+            "share_link",
+            "rebac",
+        ):
+            _brick_svc = nexus_fs.service(_svc_name)
+            if _brick_svc is not None:
+                _brick_sources.append(_brick_svc)
+        # version_service is on BrickServices, not in ServiceRegistry
+        _version_svc = getattr(nexus_fs, "version_service", None)
+        if _version_svc is not None:
+            _brick_sources.append(_version_svc)
+        # AgentRPCService
+        _agent_rpc = nexus_fs.service("agent_rpc")
+        if _agent_rpc is not None:
+            _brick_sources.append(_agent_rpc)
+        # WorkspaceRPCService
+        _workspace_rpc = nexus_fs.service("workspace_rpc")
+        if _workspace_rpc is not None:
+            _brick_sources.append(_workspace_rpc)
+        # AcpRPCService
+        _acp_rpc = nexus_fs.service("acp_rpc")
+        if _acp_rpc is not None:
+            _brick_sources.append(_acp_rpc)
+        # Issue #841: MetadataExportService lives outside kernel
+        try:
+            from nexus.factory import create_metadata_export_service
 
-        _memory_svc = create_memory_service(nexus_fs)
-        if _memory_svc is not None:
-            _brick_sources.append(_memory_svc)
-            app.state.memory_service = _memory_svc  # for cleanup in lifespan
-    except Exception as _exc:
-        logger.debug("MemoryService unavailable: %s", _exc)
-    # Issue #841: MetadataExportService lives outside kernel
-    try:
-        from nexus.factory import create_metadata_export_service
+            _meta_export_svc = create_metadata_export_service(nexus_fs)
+            if _meta_export_svc is not None:
+                _brick_sources.append(_meta_export_svc)
+        except Exception as _exc:
+            logger.debug("MetadataExportService unavailable: %s", _exc)
+        # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
+        _version_svc = getattr(nexus_fs, "version_service", None)
+        if _version_svc is not None:
+            _brick_sources.append(_version_svc)
+        # Issue #1520: FederationRPCService — zone lifecycle, share/join, mounts
+        _zone_mgr = getattr(nexus_fs, "_zone_mgr", None)
+        if _zone_mgr is not None:
+            from nexus.raft.federation import NexusFederation
+            from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
-        _meta_export_svc = create_metadata_export_service(nexus_fs)
-        if _meta_export_svc is not None:
-            _brick_sources.append(_meta_export_svc)
-    except Exception as _exc:
-        logger.debug("MetadataExportService unavailable: %s", _exc)
-    app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
+            _federation = NexusFederation(zone_manager=_zone_mgr)
+            _brick_sources.append(FederationRPCService(_zone_mgr, _federation))
+        app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
+    else:
+        logger.info("create_app() started without NexusFS; service discovery disabled")
+        app.state.exposed_methods = {}
 
     # Defaults for optional services are set by init_app_state() above (Issue #2135)
 
@@ -368,7 +383,7 @@ def create_app(
 
     # Initialize subscription manager if we have a metadata store
     try:
-        if hasattr(nexus_fs, "SessionLocal"):
+        if nexus_fs is not None and hasattr(nexus_fs, "SessionLocal"):
             from nexus.server.subscriptions import (
                 SubscriptionManager,
                 set_subscription_manager,
@@ -419,10 +434,10 @@ def create_app(
     import nexus.server.rate_limiting as _rate_limiting_mod
 
     global limiter
-    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in (
-        "true",
-        "1",
-        "yes",
+    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "true").lower() not in (
+        "false",
+        "0",
+        "no",
     )
     from nexus.lib.env import get_dragonfly_url, get_redis_url
 
@@ -462,9 +477,7 @@ def create_app(
             f"Premium: {RATE_LIMIT_PREMIUM}"
         )
     else:
-        logger.info(
-            "Rate limiting is DISABLED (default, set NEXUS_RATE_LIMIT_ENABLED=true to enable)"
-        )
+        logger.warning("Rate limiting is DISABLED (set NEXUS_RATE_LIMIT_ENABLED=true to re-enable)")
 
     # Initialize authentication provider for user registration/login endpoints
     if auth_provider is not None:
@@ -503,10 +516,11 @@ def create_app(
     # Register NexusFS instance for zone routes, migration, and user provisioning.
     # This must happen unconditionally (not only when OAuth is configured).
     try:
-        from nexus.server.auth.auth_routes import set_nexus_instance
+        if nexus_fs is not None:
+            from nexus.server.auth.auth_routes import set_nexus_instance
 
-        set_nexus_instance(nexus_fs)
-        logger.info("NexusFS instance registered for zone management")
+            set_nexus_instance(nexus_fs)
+            logger.info("NexusFS instance registered for zone management")
     except Exception as e:
         logger.warning(f"Failed to register NexusFS instance: {e}")
 
@@ -615,6 +629,16 @@ def _register_routes(app: FastAPI) -> None:
     app.add_middleware(VersionHeaderMiddleware)
     app.add_middleware(DeprecationMiddleware, registry=v2_registry)
 
+    # Dashboard: Task Manager UI (self-contained HTML)
+    from pathlib import Path
+
+    from fastapi.responses import HTMLResponse
+
+    @app.get("/dashboard/tasks", response_class=HTMLResponse, include_in_schema=False)
+    async def task_manager_dashboard() -> HTMLResponse:
+        html_path = Path(__file__).parent / "static" / "task_manager.html"
+        return HTMLResponse(html_path.read_text())
+
     # Request correlation middleware (Issue #1002).
     # MUST be the last add_middleware call — Starlette applies in reverse order,
     # so last-added = outermost = first to execute on each request.
@@ -631,48 +655,6 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Exchange protocol error handler registered")
     except ImportError as e:
         logger.warning(f"Failed to register Exchange error handler: {e}.")
-
-    # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
-    try:
-        from nexus.server.api.v2.routers.a2a import create_a2a_router
-
-        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
-        a2a_auth_required = bool(
-            getattr(app.state, "api_key", None) or getattr(app.state, "auth_provider", None)
-        )
-
-        # Auth adapter: server-side concern, NOT imported by the brick.
-        # Passes through the auth result for zone_id / agent_id extraction.
-        # Note: resolve_auth may return {"authenticated": False} for
-        # invalid tokens — this is consistent with the pre-existing
-        # behavior where the router checks for header presence, not
-        # token validity.  A separate fix for resolve_auth (#TBD) will
-        # tighten this.
-        async def _a2a_auth_adapter(request: Request) -> dict[str, Any] | None:
-            try:
-                return await get_auth_result(
-                    request=request,
-                    authorization=request.headers.get("Authorization"),
-                    x_agent_id=request.headers.get("X-Agent-ID"),
-                    x_nexus_subject=request.headers.get("X-Nexus-Subject"),
-                    x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
-                )
-            except Exception:
-                return None
-
-        a2a_router, a2a_task_manager = create_a2a_router(
-            nexus_fs=app.state.nexus_fs,
-            config=None,
-            base_url=a2a_base_url,
-            auth_required=a2a_auth_required,
-            auth_fn=_a2a_auth_adapter,
-            data_dir=getattr(app.state, "data_dir", None),
-        )
-        app.state.a2a_task_manager = a2a_task_manager  # Expose for gRPC transport
-        app.include_router(a2a_router)
-        logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
-    except ImportError as e:
-        logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
 
     # IPC Brick endpoints (Issue #1727, LEGO §8)
     try:

@@ -22,6 +22,8 @@ Issue #1249: Port consolidation — single gRPC server.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import hmac
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -40,9 +42,11 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
-from nexus.server.protocol import RPCErrorCode, parse_method_params
+from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
+from nexus.server.protocol import parse_method_params
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +114,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             return {}  # Will fail later
 
         # Static API key check
-        if self._api_key and token == self._api_key:
+        if self._api_key and hmac.compare_digest(token, self._api_key):
             return {
                 "authenticated": True,
                 "subject_type": "user",
@@ -123,7 +127,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         if self._auth_provider:
             result = await self._auth_provider.authenticate(token)
             if result:
-                return dict(result)
+                return (
+                    dataclasses.asdict(result)
+                    if hasattr(result, "__dataclass_fields__")
+                    else dict(result)
+                )
 
         return {}
 
@@ -137,7 +145,6 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         _context: grpc.aio.ServicerContext,
     ) -> "vfs_pb2.CallResponse":
         """Handle a generic VFS RPC call."""
-        from nexus.server.api.core.rpc import _scope_params_for_zone
         from nexus.server.dependencies import get_operation_context
         from nexus.server.rpc.dispatch import dispatch_method
 
@@ -168,7 +175,7 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             op_context = get_operation_context(auth_result)
 
             # 5. Zone scoping
-            _scope_params_for_zone(params, op_context.zone_id)
+            scope_params_for_zone(params, op_context.zone_id)
 
             # 6. Dispatch
             result = await dispatch_method(
@@ -187,6 +194,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 is_error=False,
             )
 
+        except ZoneScopingError as e:
+            return vfs_pb2.CallResponse(
+                payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+                is_error=True,
+            )
         except ValueError as e:
             return vfs_pb2.CallResponse(
                 payload=_error_payload(RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {e}"),
@@ -267,6 +279,14 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
     # Typed RPCs — content operations (Phase 2)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _scope_path_for_zone(request: Any, zone_id: str) -> None:
+        """Apply zone-scoping to typed gRPC request paths.
+
+        Delegates to the shared zone_scoping module (Issue #3063).
+        """
+        scope_params_for_zone(request, zone_id)
+
     async def Read(
         self,
         request: "vfs_pb2.ReadRequest",
@@ -275,12 +295,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         """Typed read — returns raw bytes, no JSON/base64 overhead."""
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
-            result = await asyncio.to_thread(
-                self._nexus_fs.sys_read,
+            self._scope_path_for_zone(request, op_context.zone_id)
+            result = await self._nexus_fs.read(
                 request.path,
-                op_context,
-                True,  # return_metadata — we need etag/size
-                False,  # parsed
+                context=op_context,
+                return_metadata=True,
             )
             if isinstance(result, dict):
                 content = result.get("content", b"")
@@ -293,6 +312,11 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 etag = ""
                 size = len(content)
             return vfs_pb2.ReadResponse(content=content, etag=etag, size=size)
+        except ZoneScopingError as e:
+            return vfs_pb2.ReadResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
         except NexusPermissionError as e:
             return vfs_pb2.ReadResponse(
                 is_error=True,
@@ -326,22 +350,40 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         request: "vfs_pb2.WriteRequest",
         _context: grpc.aio.ServicerContext,
     ) -> "vfs_pb2.WriteResponse":
-        """Typed write — accepts raw bytes, no JSON/base64 overhead."""
+        """Typed write — accepts raw bytes, no JSON/base64 overhead.
+
+        Uses write() (Tier 2) instead of sys_write() to get metadata back
+        (etag, version, size).  OCC is handled via occ_write() when the
+        client sends an etag — matching the JSON RPC handler pattern.
+
+        Issue #2787: sys_write() returns int (POSIX), not dict.
+        """
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
-            kwargs: dict[str, Any] = {"context": op_context}
+            self._scope_path_for_zone(request, op_context.zone_id)
+            content = bytes(request.content)
             if request.etag:
-                kwargs["if_match"] = request.etag
-            result = await asyncio.to_thread(
-                self._nexus_fs.sys_write, request.path, request.content, **kwargs
-            )
+                # OCC: compare-and-swap via lib helper (Issue #1323)
+                from nexus.lib.occ import occ_write
+
+                result = await occ_write(
+                    self._nexus_fs,
+                    request.path,
+                    content,
+                    context=op_context,
+                    if_match=request.etag,
+                )
+            else:
+                result = await self._nexus_fs.write(request.path, content, context=op_context)
+
             etag = result.get("etag", "") if isinstance(result, dict) else ""
-            size = (
-                result.get("size", len(request.content))
-                if isinstance(result, dict)
-                else len(request.content)
-            )
+            size = result.get("size", len(content)) if isinstance(result, dict) else len(content)
             return vfs_pb2.WriteResponse(etag=etag, size=size)
+        except ZoneScopingError as e:
+            return vfs_pb2.WriteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
         except NexusPermissionError as e:
             return vfs_pb2.WriteResponse(
                 is_error=True,
@@ -396,13 +438,27 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         """Typed delete — sys_unlink or sys_rmdir."""
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
-            if request.recursive:
-                await asyncio.to_thread(
-                    self._nexus_fs.sys_rmdir, request.path, recursive=True, context=op_context
+            self._scope_path_for_zone(request, op_context.zone_id)
+
+            # Determine entry type so directories always go through sys_rmdir
+            # (sys_unlink skips backend directory cleanup).
+            meta = await asyncio.to_thread(self._nexus_fs.metadata.get, request.path)
+            is_dir = meta is not None and getattr(meta, "mime_type", "") == "inode/directory"
+
+            if is_dir:
+                await self._nexus_fs.sys_rmdir(
+                    request.path,
+                    recursive=request.recursive,
+                    context=op_context,
                 )
             else:
-                await asyncio.to_thread(self._nexus_fs.sys_unlink, request.path, context=op_context)
+                await self._nexus_fs.sys_unlink(request.path, context=op_context)
             return vfs_pb2.DeleteResponse(success=True)
+        except ZoneScopingError as e:
+            return vfs_pb2.DeleteResponse(
+                is_error=True,
+                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
+            )
         except NexusPermissionError as e:
             return vfs_pb2.DeleteResponse(
                 is_error=True,
@@ -436,19 +492,31 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         request: "vfs_pb2.StreamReadRequest",
         context: grpc.aio.ServicerContext,
     ) -> AsyncIterator["vfs_pb2.ReadChunk"]:
-        """Server-side streaming read — chunked delivery for large files."""
+        """Server-side streaming read — chunked delivery for large files.
+
+        Uses read_range() in a pread loop instead of loading the full file
+        into memory.  CAS backends with read_content_range() read only the
+        overlapping CDC chunks; other backends fall back to full-read + slice.
+        Memory usage: O(chunk_size) instead of O(file_size).  (Issue #1614)
+        """
         _DEFAULT_CHUNK_SIZE = 1_048_576  # 1 MB
+        _LARGE_FILE_WARNING = 256 * 1_048_576  # 256 MB
 
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
-            result = await asyncio.to_thread(
-                self._nexus_fs.sys_read,
-                request.path,
-                op_context,
-                False,  # return_metadata
-                False,  # parsed
-            )
-            content = result if isinstance(result, bytes) else b""
+            self._scope_path_for_zone(request, op_context.zone_id)
+
+            # Get file size via sys_stat — no content loaded.
+            stat = await self._nexus_fs.sys_stat(request.path, context=op_context)
+            if stat is None:
+                yield vfs_pb2.ReadChunk(
+                    is_error=True,
+                    error_payload=_error_payload(
+                        RPCErrorCode.FILE_NOT_FOUND, f"File not found: {request.path}"
+                    ),
+                )
+                return
+            file_size: int = stat.get("size", 0) or 0
         except NexusPermissionError as e:
             yield vfs_pb2.ReadChunk(
                 is_error=True,
@@ -477,19 +545,39 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             )
             return
 
+        # Empty file: yield a single empty chunk.
+        if file_size == 0:
+            yield vfs_pb2.ReadChunk(data=b"", offset=0, is_last=True)
+            return
+
         chunk_size = request.chunk_size if request.chunk_size > 0 else _DEFAULT_CHUNK_SIZE
         offset = 0
-        while offset < len(content):
+
+        # Chunked pread loop — memory is O(chunk_size), not O(file_size).
+        # read_range() is sync; run each chunk in a thread to avoid blocking
+        # the gRPC event loop.
+        while offset < file_size:
             if context.cancelled():
                 return
-            end = min(offset + chunk_size, len(content))
-            is_last = end >= len(content)
-            yield vfs_pb2.ReadChunk(data=content[offset:end], offset=offset, is_last=is_last)
+            end = min(offset + chunk_size, file_size)
+            try:
+                chunk = await asyncio.to_thread(
+                    self._nexus_fs.read_range,
+                    request.path,
+                    offset,
+                    end,
+                    op_context,
+                )
+            except Exception as e:
+                logger.warning("StreamRead chunk error at offset %d: %s", offset, e)
+                yield vfs_pb2.ReadChunk(
+                    is_error=True,
+                    error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, str(e)),
+                )
+                return
+            is_last = end >= file_size
+            yield vfs_pb2.ReadChunk(data=chunk, offset=offset, is_last=is_last)
             offset = end
-
-        # Empty file: yield a single empty chunk
-        if not content:
-            yield vfs_pb2.ReadChunk(data=b"", offset=0, is_last=True)
 
     async def Ping(
         self,

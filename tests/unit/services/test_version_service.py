@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.versioning.version_service import VersionService
+from nexus.bricks.versioning.version_service import VersionService
 
 
 class TestVersionServiceInit:

@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING, Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 if TYPE_CHECKING:
-    from nexus.services.event_subsystem.bus.protocol import EventBusProtocol
-    from nexus.services.event_subsystem.subscriptions import ReactiveSubscriptionManager
-    from nexus.services.event_subsystem.types import FileEvent
+    from nexus.system_services.event_bus.protocol import EventBusProtocol
+    from nexus.system_services.event_bus.subscriptions import ReactiveSubscriptionManager
+    from nexus.system_services.event_bus.types import FileEvent
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class WebSocketManager:
         async with self._lock:
             for zone_connections in self._connections.values():
                 for conn_info in zone_connections.values():
-                    with suppress(Exception):
+                    with suppress(Exception):  # Best-effort close during shutdown
                         await conn_info.websocket.close(code=1001, reason="Server shutting down")
             self._connections.clear()
             self._connection_to_zone.clear()
@@ -383,7 +383,7 @@ class WebSocketManager:
             message: dict[str, Any] = {
                 "type": "batch_update",
                 "event": event_data,
-                "commit_id": event.revision,
+                "commit_id": None,
                 "timestamp": event.timestamp,
                 "updates": [
                     {
@@ -499,7 +499,7 @@ class WebSocketManager:
 
                 # Disconnect stale connections
                 for conn_id in stale_connections:
-                    with suppress(Exception):
+                    with suppress(Exception):  # Best-effort close of stale connection
                         stale_zone_id = self._connection_to_zone.get(conn_id)
                         if stale_zone_id:
                             stale_conn = self._connections.get(stale_zone_id, {}).get(conn_id)

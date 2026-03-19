@@ -6,7 +6,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
+from nexus.cli.utils import add_backend_options, get_filesystem, handle_error
 
 console = Console()
 
@@ -46,7 +46,8 @@ def commit_cmd(
     workspace: str,
     message: str | None,
     branch: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Create a snapshot and advance branch HEAD.
 
@@ -55,7 +56,7 @@ def commit_cmd(
         nexus context commit /workspace -m "Feature work" -b feature-x
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available (service not configured)[/red]")
@@ -81,7 +82,8 @@ def branch_cmd(
     workspace: str,
     name: str,
     from_branch: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Create a new named branch.
 
@@ -90,7 +92,7 @@ def branch_cmd(
         nexus context branch /workspace --name hotfix --from-branch main
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
@@ -114,7 +116,8 @@ def branch_cmd(
 def checkout_cmd(
     workspace: str,
     target: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Switch to a different branch and restore its workspace state.
 
@@ -123,7 +126,7 @@ def checkout_cmd(
         nexus context checkout /workspace --target main
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
@@ -157,7 +160,8 @@ def merge_cmd(
     source: str,
     target: str | None,
     strategy: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Merge a branch into another.
 
@@ -166,7 +170,7 @@ def merge_cmd(
         nexus context merge /workspace --source feature-x --target main --strategy source-wins
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
@@ -193,7 +197,8 @@ def merge_cmd(
 def log_cmd(
     workspace: str,
     limit: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show snapshot history for a workspace.
 
@@ -202,7 +207,7 @@ def log_cmd(
         nexus context log /workspace --limit 5
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
@@ -239,7 +244,8 @@ def log_cmd(
 def branches_cmd(
     workspace: str,
     show_all: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """List all branches for a workspace.
 
@@ -248,7 +254,7 @@ def branches_cmd(
         nexus context branches /workspace --all
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
@@ -294,7 +300,8 @@ def diff_cmd(
     workspace: str,
     from_ref: str,
     to_ref: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Compare two snapshots.
 
@@ -302,7 +309,7 @@ def diff_cmd(
         nexus context diff /workspace --from snap-id-1 --to snap-id-2
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
@@ -332,7 +339,8 @@ def diff_cmd(
 def explore_cmd(
     workspace: str,
     description: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Start an exploration: auto-commit + create branch + checkout.
 
@@ -340,7 +348,7 @@ def explore_cmd(
         nexus context explore /workspace -d "Try event sourcing"
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
@@ -377,7 +385,8 @@ def finish_cmd(
     branch: str,
     outcome: str,
     strategy: str,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Finish an exploration: merge or discard the branch.
 
@@ -386,7 +395,7 @@ def finish_cmd(
         nexus context finish /workspace -b bad-idea --outcome discard
     """
     try:
-        nx = get_filesystem(backend_config)
+        nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")

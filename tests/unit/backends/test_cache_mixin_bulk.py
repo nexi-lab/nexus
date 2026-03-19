@@ -8,7 +8,7 @@ Tests cover performance optimizations:
 from pathlib import Path
 from unittest.mock import patch
 
-from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 
 
 class MockBackend(CacheConnectorMixin):
@@ -90,7 +90,7 @@ class TestCacheMixinBulkOperations:
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
-        from nexus.backends.cache_mixin import CacheEntry
+        from nexus.backends.wrappers.cache_mixin import CacheEntry
         from nexus.storage.models import Base
 
         db_path = tmp_path / "test.db"
@@ -146,7 +146,7 @@ class TestCacheMixinBulkOperations:
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
-        from nexus.backends.cache_mixin import CacheEntry
+        from nexus.backends.wrappers.cache_mixin import CacheEntry
         from nexus.storage.models import Base
 
         db_path = tmp_path / "test.db"

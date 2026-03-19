@@ -1,12 +1,8 @@
-"""Cursor-based pagination utilities for Nexus APIs (Issue #937).
+"""Cursor encoding/decoding for brick-layer pagination (Issue #937).
 
-This module provides utilities for implementing cursor-based (keyset) pagination,
-enabling efficient traversal of large datasets at 1M+ file scale.
-
-Key features:
-- O(log n) performance for any page depth (vs O(n) for OFFSET)
-- Tamper-resistant cursors with filter hash validation
-- URL-safe Base64 encoding for cursor tokens
+Brick-layer utilities for tamper-resistant, URL-safe cursor tokens.
+Kernel pagination primitives (PaginatedResult, paginate_iter) live in
+``nexus.core.pagination``.
 """
 
 import base64
@@ -54,10 +50,6 @@ def encode_cursor(
 
     Returns:
         URL-safe base64-encoded cursor string
-
-    Example:
-        >>> cursor = encode_cursor("/files/doc999.txt", "uuid-123", {"prefix": "/files/"})
-        >>> # Returns: "eyJwIjoiL2ZpbGVzL2RvYzk5OS50eHQiLCJpIjoidXVpZC0xMjMiLCJoIjoiYWJjMTIzIn0="
     """
     filters_hash = _hash_filters(filters)
     data = {
@@ -86,24 +78,20 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
 
     Raises:
         CursorError: If cursor is malformed, expired, or filters changed
-
-    Example:
-        >>> data = decode_cursor(cursor, {"prefix": "/files/"})
-        >>> print(data.path)  # "/files/doc999.txt"
     """
     try:
-        # Decode base64
         json_bytes = base64.urlsafe_b64decode(cursor.encode("ascii"))
         data = json.loads(json_bytes.decode("utf-8"))
     except (ValueError, json.JSONDecodeError) as e:
         logger.debug(f"Failed to decode cursor: {e}")
         raise CursorError(f"Malformed cursor: {e}") from e
 
-    # Validate required fields
+    if not isinstance(data, dict):
+        raise CursorError("Malformed cursor: expected JSON object")
+
     if "p" not in data or "h" not in data:
         raise CursorError("Cursor missing required fields")
 
-    # Validate filters hash to detect tampering or query parameter changes
     expected_hash = _hash_filters(filters)
     if data["h"] != expected_hash:
         raise CursorError(
@@ -119,17 +107,6 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
 
 
 def _hash_filters(filters: dict[str, Any]) -> str:
-    """Create deterministic hash of filter parameters.
-
-    Used to detect if client changed query parameters between pages,
-    which would invalidate the cursor position.
-
-    Args:
-        filters: Dictionary of filter parameters
-
-    Returns:
-        16-character hex hash (truncated SHA-256)
-    """
-    # Sort keys for deterministic ordering
+    """Create deterministic hash of filter parameters."""
     canonical = json.dumps(filters, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]

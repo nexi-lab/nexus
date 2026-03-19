@@ -36,7 +36,7 @@ class MetadataHandler:
     def __init__(self, ctx: FUSESharedContext) -> None:
         self._ctx = ctx
 
-    def getattr(self, path: str, _fh: int | None = None) -> dict[str, Any]:
+    async def getattr(self, path: str, _fh: int | None = None) -> dict[str, Any]:
         """Get file attributes."""
         ctx = self._ctx
         start_time = time.time()
@@ -74,20 +74,20 @@ class MetadataHandler:
                 return attrs
 
         # Check if it's a directory
-        if ctx.nexus_fs.sys_is_directory(original_path, context=ctx.context):
-            metadata = get_metadata(ctx, original_path)
+        if await ctx.nexus_fs.sys_is_directory(original_path, context=ctx.context):
+            metadata = await get_metadata(ctx, original_path)
             return build_dir_attrs(metadata)
 
         # Validate namespace visibility
-        check_namespace_visible(ctx, original_path)
+        await check_namespace_visible(ctx, original_path)
 
-        if not ctx.nexus_fs.sys_access(original_path):
+        if not await ctx.nexus_fs.sys_access(original_path):
             import errno
 
             raise FuseOSError(errno.ENOENT)
 
         # Get file metadata
-        metadata = get_metadata(ctx, original_path)
+        metadata = await get_metadata(ctx, original_path)
 
         # Resolve file size
         file_size = self._resolve_file_size(original_path, metadata, view_type)
@@ -194,7 +194,7 @@ class MetadataHandler:
 
         return stat_size_fallback(ctx, path)
 
-    def readdir(self, path: str, _fh: int | None = None) -> list[str]:
+    async def readdir(self, path: str, _fh: int | None = None) -> list[str]:
         """Read directory contents."""
         ctx = self._ctx
         start_time = time.time()
@@ -217,9 +217,27 @@ class MetadataHandler:
             entries.append(".raw")
 
         # Rust delegation
-        ok, file_entries = try_rust(ctx, "READDIR", "list", path)
+        ok, file_entries = try_rust(ctx, "READDIR", "sys_readdir", path)
         if ok:
-            entries.extend([f.name for f in file_entries])
+            for f in file_entries:
+                name = f.name
+                if name and name not in entries:
+                    if is_os_metadata_file(name):
+                        continue
+                    entries.append(name)
+
+                    if (
+                        ctx.mode.value != "binary"
+                        and should_add_virtual_views(name)
+                        and f.entry_type != "directory"
+                    ):
+                        last_dot = name.rfind(".")
+                        if last_dot != -1:
+                            base_name = name[:last_dot]
+                            extension = name[last_dot:]
+                            parsed_name = f"{base_name}_parsed{extension}.md"
+                            entries.append(parsed_name)
+
             elapsed = time.time() - start_time
             logger.info(
                 f"[FUSE-PERF] readdir DONE via RUST: path={path}, "
@@ -231,7 +249,7 @@ class MetadataHandler:
 
         # Python path: list from filesystem
         list_start = time.time()
-        files_raw = ctx.nexus_fs.sys_readdir(
+        files_raw = await ctx.nexus_fs.sys_readdir(
             path, recursive=False, details=True, context=ctx.context
         )
         list_elapsed = time.time() - list_start
@@ -243,7 +261,7 @@ class MetadataHandler:
         for file_info in files:
             if isinstance(file_info, str):
                 file_path = file_info
-                is_dir = ctx.nexus_fs.sys_is_directory(file_path, context=ctx.context)
+                is_dir = await ctx.nexus_fs.sys_is_directory(file_path, context=ctx.context)
             else:
                 file_path = str(file_info.get("path", ""))
                 is_dir = file_info.get("is_directory", False)

@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from nexus.backends.backend import Backend
+from nexus.backends.base.backend import Backend
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.object_store import ObjectStoreABC, WriteResult
 

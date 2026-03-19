@@ -19,15 +19,15 @@ from nexus.server.api.v2.routers.scheduler import (
     get_scheduler_service,
     router,
 )
-from nexus.services.scheduler.constants import (
+from nexus.system_services.scheduler.constants import (
     TASK_STATUS_QUEUED,
     TASK_STATUS_RUNNING,
     PriorityTier,
 )
-from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
-from nexus.services.scheduler.models import ScheduledTask
-from nexus.services.scheduler.policies.fair_share import FairShareCounter
-from nexus.services.scheduler.service import SchedulerService
+from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.system_services.scheduler.models import ScheduledTask
+from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
+from nexus.system_services.scheduler.service import SchedulerService
 
 # =============================================================================
 # Fixtures
@@ -345,8 +345,8 @@ class TestFairShareE2E:
                 "task_type": "compute",
             },
         )
-        # Service raises ValueError → 500 (or could be wrapped to 429)
-        assert response.status_code == 500
+        # Service raises CapacityExceeded → 429 (Issue #2749)
+        assert response.status_code == 429
 
 
 # =============================================================================
@@ -529,7 +529,7 @@ class TestProtocolSubmitE2E:
     @pytest.mark.asyncio
     async def test_submit_via_protocol(self, scheduler_service, mock_queue):
         """Protocol submit(AgentRequest) should return task_id string."""
-        from nexus.services.protocols.scheduler import AgentRequest
+        from nexus.contracts.protocols.scheduler import AgentRequest
 
         req = AgentRequest(
             agent_id="agent-a",
@@ -554,7 +554,7 @@ class TestProtocolSubmitE2E:
     @pytest.mark.asyncio
     async def test_submit_critical_classifies_interactive(self, scheduler_service, mock_queue):
         """Protocol submit with critical priority → interactive class."""
-        from nexus.services.protocols.scheduler import AgentRequest
+        from nexus.contracts.protocols.scheduler import AgentRequest
 
         req = AgentRequest(
             agent_id="agent-a",

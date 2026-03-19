@@ -1,11 +1,11 @@
 # Nexus AI Filesystem
 [project]
 name = "nexus-ai-fs"
-version = "0.7.2.dev0"
-description = "AI-Native Distributed Filesystem Architecture"
+version = "0.9.7"
+description = "Nexus = filesystem/context plane."
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "Nexus Team", email = "team@nexus.example.com"}
 ]
@@ -14,6 +14,7 @@ maintainers = [
 ]
 keywords = [
     "filesystem",
+    "context",
     "ai",
     "agents",
     "storage",
@@ -25,7 +26,7 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
@@ -51,7 +52,8 @@ dependencies = [
     # Python 3.14 compatibility - pin transitive deps with wheels
     "aiohttp>=3.11.0",
     "frozenlist>=1.5.0",
-    "grpcio>=1.68.0",
+    "protobuf>=6.31.1",
+    "grpcio>=1.76.0",
     # HTTP server (FastAPI + ASGI)
     "fastapi>=0.124.0",
     "uvicorn[standard]>=0.38.0", # ASGI server
@@ -82,10 +84,7 @@ dependencies = [
     "google-auth-httplib2>=0.2.1", # Google auth HTTP adapter
     "google-auth-oauthlib>=1.2.0", # Google OAuth flow
     "slack-sdk>=3.39.0", # Slack API for Slack connector
-    # LLM Provider Abstraction
-    "litellm>=1.8.10", # Multi-provider LLM support
-    "tiktoken>=0.12", # Token counting for OpenAI models and chunking
-    "anthropic>=0.75", # Native Anthropic SDK for better Claude support
+    "tiktoken>=0.12", # Token counting for chunking
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
     "fastmcp>=2.0.0", # Model Context Protocol server
@@ -213,9 +212,6 @@ test = [
     "freezegun>=1.4.0",  # Time mocking for tests
     "hypothesis>=6.0.0",  # Property-based testing (kernel invariant tests)
     "pydantic-monty>=0.0.4",  # Monty sandbox integration/e2e tests (#1317)
-    # LangGraph integration tests
-    "langchain-core>=0.3.0",
-    "langgraph>=0.2.0",
 ]
 
 fuse = [
@@ -233,6 +229,11 @@ cloud-sql = [
 ]
 
 semantic-search = [
+    # txtai unified search: hybrid BM25+dense, semantic graph (Issue #2663)
+    # NOTE: txtai depends on faiss-cpu and large ML wheels; keep this opt-in.
+    # torch still has no supported macOS x86_64 path for this stack.
+    "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
     # Keyword search support - uses existing SQLite/PostgreSQL FTS
     # BM25S is now in core dependencies (Issue #796)
     # Vector database extensions for semantic/hybrid search:
@@ -288,6 +289,8 @@ all = [
     # Excludes: sentence-transformers (too heavy ~2GB), voyageai (specialized use case)
     # Note: fusepy removed - Rust nexus-fuse binary is bundled in the package
     # Note: bm25s is now in core dependencies (Issue #796)
+    "txtai[database,graph]>=9.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "faiss-cpu>=1.11.0; platform_machine=='x86_64' or platform_machine=='aarch64' or platform_machine=='arm64'",
     "psycopg2-binary>=2.9.9",
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
@@ -297,14 +300,13 @@ all = [
 
 [project.urls]
 Homepage = "https://github.com/nexi-lab/nexus"
-Documentation = "https://github.com/nexi-lab/nexus/blob/main/README.md"
+Documentation = "https://nexi-lab.github.io/nexus/"
 Repository = "https://github.com/nexi-lab/nexus"
 Issues = "https://github.com/nexi-lab/nexus/issues"
-Changelog = "https://github.com/nexi-lab/nexus/blob/main/CHANGELOG.md"
 
 [project.scripts]
-# CLI entry point - now separated from library code
 nexus = "nexus.cli:main"
+nexusd = "nexus.daemon:main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
@@ -312,6 +314,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"nexus.cli" = ["data/*.yml", "data/*.Dockerfile", "data/*.sql"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -421,22 +426,32 @@ disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gcs"
-# Legacy backend - not yet migrated to HandlerResponse
+# Legacy backend - return-type / override mismatches
 disable_error_code = ["attr-defined", "override", "return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gcs_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in connector methods
 disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
-module = [
-    "nexus.bricks.tools.langgraph.nexus_tools",
-    "nexus.tools.langgraph.nexus_tools",
-]
-# These modules call methods on RemoteServiceProxy that are
-# dispatched via __getattr__. The proxy returns Any for dynamically-dispatched
-# methods, triggering no-any-return warnings.
+module = "nexus.backends.transports.gcs_transport"
+# google-cloud-storage stubs return Any; attr-defined from google.cloud.storage
+disable_error_code = ["attr-defined", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.transports.s3_transport"
+# boto3 stubs return Any for all S3 client methods
+disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.cas_backend"
+# json.loads returns Any
+disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.tools.langgraph.nexus_tools"
+# RemoteServiceProxy dispatches via __getattr__, returning Any
 warn_return_any = false
 disable_error_code = ["no-any-return"]
 
@@ -457,33 +472,24 @@ warn_return_any = false
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.s3_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in connector methods
 disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.local"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in backend methods
 disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.hn_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in connector methods
 disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gdrive_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+# Return-type mismatch in connector methods
 disable_error_code = ["return-value"]
 
-[[tool.mypy.overrides]]
-module = "nexus.backends.base_blob_connector"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
-disable_error_code = ["return-value"]
-
-[[tool.mypy.overrides]]
-module = "nexus.backends.passthrough"
-# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
-disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.bricks.watch.file_watcher"
@@ -492,17 +498,17 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gmail_connector"
-# Legacy backend - not yet migrated to HandlerResponse
+# Legacy backend - return-type / override mismatches
 disable_error_code = ["override", "return-value", "no-any-return", "import-untyped", "unused-ignore"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.x_connector"
-# Legacy backend - not yet migrated to HandlerResponse
+# Legacy backend - return-type / override mismatches
 disable_error_code = ["override", "return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.slack_connector"
-# New backend - HandlerResponse migration in progress
+# Backend - return-type / override mismatches
 disable_error_code = ["override", "return-value", "arg-type", "no-any-return"]
 
 [[tool.mypy.overrides]]
@@ -537,12 +543,6 @@ disallow_untyped_defs = false
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-module = "nexus.bricks.llm.provider"
-# litellm's completion_cost has complex overloads that mypy can't resolve with **kwargs
-# Different mypy versions handle this differently, so we disable the check
-warn_unused_ignores = false
-
-[[tool.mypy.overrides]]
 module = "nexus.storage.cache"
 # cachetools library has complex generic types
 disable_error_code = ["no-any-return", "misc", "call-overload", "import-untyped"]
@@ -555,15 +555,12 @@ disable_error_code = ["override", "attr-defined"]
 [[tool.mypy.overrides]]
 module = [
     "nexus.bricks.workflows.loader",
-    "nexus.bricks.skills.manager",
-    "nexus.bricks.skills.skill_generator",
     "nexus.bricks.mcp.provider_registry",
     "nexus.bricks.mcp.middleware",
     "nexus.bricks.mcp.oauth_mappings",
     "nexus.bricks.mcp.profiles",
     "nexus.fuse.operations",
     "nexus.fuse.ops._shared",
-    "nexus.bricks.skills.parser",
     "nexus.bricks.workflows.storage",
     "nexus.bricks.workflows.engine",
 ]
@@ -571,15 +568,12 @@ module = [
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = ["nexus.bricks.mcp.server"]
-# cachetools stubs may or may not be installed; suppress both directions
+module = ["nexus.bricks.mcp.server", "nexus.bricks.mcp.mount"]
+# cachetools/yaml stubs may or may not be installed; suppress both directions
 disable_error_code = ["import-untyped", "no-any-return", "redundant-cast"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.bricks.memory.service",
-    "nexus.bricks.memory.router",
-    "nexus.bricks.memory.memory_provider",
     "nexus.migrations.migrate_identity_memory_v04",
 ]
 # EntityRegistry accepts SimpleNamespace duck-type for session_factory
@@ -604,8 +598,8 @@ module = [
     "nexus.core.rebac_iterator_cache",
     "nexus.core.rebac_cache",
     "nexus.core.permission_boundary_cache",
-    "nexus.core.agent_registry",
-    "nexus.identity.key_service",
+
+    "nexus.bricks.identity.key_service",
     "nexus.core.reputation_service",
     "nexus.bricks.rebac.cache.iterator",
     "nexus.bricks.rebac.cache.result_cache",
@@ -616,6 +610,9 @@ module = [
     "nexus.bricks.rebac.zone_graph_loader",
     "nexus.bricks.rebac.namespace_manager",
     "nexus.bricks.rebac.manager",
+    "nexus.system_services.event_subsystem.bus.redis",
+    "nexus.system_services.scheduler.policies.fair_share",
+    "nexus.system_services.scheduler.policies.rate_limiter",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -639,11 +636,6 @@ module = [
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
-module = "nexus.bricks.llm.message"
-# pydantic BaseModel.model_dump
-disable_error_code = ["no-any-return", "misc"]
-
-[[tool.mypy.overrides]]
 module = ["nexus.core._metadata_generated", "nexus.core._compact_generated"]
 # CompactFileMetadata.to_file_metadata() returns Any
 disable_error_code = ["no-any-return"]
@@ -655,8 +647,6 @@ module = [
     "nexus.raft.commands_pb2_grpc",
     "nexus.raft.transport_pb2",
     "nexus.raft.transport_pb2_grpc",
-    "nexus.bricks.a2a.a2a_pb2",
-    "nexus.bricks.a2a.a2a_pb2_grpc",
     "nexus.grpc.vfs.vfs_pb2",
     "nexus.grpc.vfs.vfs_pb2_grpc",
     "nexus.grpc.vfs",
@@ -672,11 +662,6 @@ module = "nexus.raft.client"
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
-module = ["nexus.bricks.a2a.grpc_server", "nexus.bricks.a2a.proto_converter"]
-# gRPC server and proto converter interact with generated a2a_pb2 module
-disable_error_code = ["attr-defined"]
-
-[[tool.mypy.overrides]]
 module = ["nexus.server.rpc.grpc_servicer", "nexus.remote.rpc_transport"]
 # VFS gRPC servicer and transport interact with generated vfs_pb2 module
 disable_error_code = ["attr-defined"]
@@ -689,14 +674,12 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
     "nexus",
-    "nexus.cli.commands.work",
     "nexus.cli.commands.search",
     "nexus.core.nexus_fs",
-    "nexus.core.nexus_fs_share_links",
     "nexus.core.nexus_fs_search",
-    "nexus.services.versioning.version_service",
-    "nexus.services.search.search_service",
-    "nexus.services.gateway",
+    "nexus.bricks.versioning.version_service",
+    "nexus.bricks.search.search_service",
+    "nexus.system_services.gateway",
     "nexus.server.fastapi_server",
     "nexus.storage.database",
     "nexus.factory.orchestrator",
@@ -711,21 +694,10 @@ module = "nexus.bricks.search.semantic"
 disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
 
-# --- Mixin classes: access `self.*` from host class (NexusFS/SearchService) ---
-[[tool.mypy.overrides]]
-module = [
-    "nexus.services.search_listing_mixin",
-    "nexus.services.search_grep_mixin",
-    "nexus.services.rebac_share_mixin",
-]
-# Mixin attr-defined + no-any-return: mypy can't resolve host-class attrs
-disable_error_code = ["attr-defined", "no-any-return", "import-untyped"]
-
-# --- Backend / driver return-type mismatches (HandlerResponse covariance) ---
+# --- Backend / driver return-type mismatches ---
 [[tool.mypy.overrides]]
 module = [
     "nexus.cache.backend_wrapper",
-    "nexus.isolation.backend",
     "nexus.ipc.driver",
 ]
 disable_error_code = ["return-value", "override"]
@@ -739,18 +711,10 @@ disable_error_code = ["no-any-return"]
 # --- Service modules with arg-type / return-value / misc issues ---
 [[tool.mypy.overrides]]
 module = [
-    "nexus.services.overlay_resolver",
-    "nexus.services.search_service",
-    "nexus.services.sync_service",
-    "nexus.services.workspace_manager",
-    "nexus.services.change_log_store",  # unused-ignore from suppressed no-any-return
-    "nexus.services.sync_backlog_store",
-    "nexus.services.version_service",
-    "nexus.services.mount_manager",
-    "nexus.services.mount_service",
-    "nexus.services.search_service",
-    "nexus.services.event_subsystem.log.exporters.factory",
-    "nexus.portability.import_service",
+    "nexus.bricks.mount.mount_manager",
+    "nexus.bricks.mount.mount_service",
+    "nexus.system_services.event_subsystem.log.exporters.factory",
+    "nexus.bricks.portability.import_service",
     "nexus.server.lifespan.realtime",
 ]
 # MetastoreABC arg-type / return-value mismatches from API evolution
@@ -762,13 +726,20 @@ warn_unused_ignores = false
 module = "nexus.core.metadata"
 disable_error_code = ["arg-type", "return-value"]
 
-[[tool.mypy.overrides]]
-module = "nexus.mcp.server"
-disable_error_code = ["arg-type", "assignment"]
 
 [[tool.mypy.overrides]]
-module = "nexus.search.embeddings"
-disable_error_code = ["override", "attr-defined"]
+module = "nexus.system_services.agents.agent_rpc_service"
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.cli.commands.init_cmd",
+    "nexus.cli.commands.stack",
+    "nexus.cli.commands.status",
+    "nexus.cli.commands.demo",
+]
+# PyYAML stubs — same as other CLI modules (config.py, config_resolver.py)
+disable_error_code = ["import-untyped", "no-any-return"]
 
 [tool.ruff]
 target-version = "py311"
@@ -778,8 +749,6 @@ exclude = [
     "src/nexus/core/_metadata_generated.py",  # Generated at install time
     "src/nexus/core/_compact_generated.py",    # Generated at install time
     "src/nexus/core/protocols/",               # Generated at install time
-    "src/nexus/bricks/a2a/a2a_pb2.py",         # Generated gRPC stub
-    "src/nexus/bricks/a2a/a2a_pb2_grpc.py",   # Generated gRPC stub
     "src/nexus/grpc/vfs/vfs_pb2.py",           # Generated gRPC stub
     "src/nexus/grpc/vfs/vfs_pb2_grpc.py",      # Generated gRPC stub
 ]
@@ -814,11 +783,12 @@ ignore = [
 "tests/e2e/self_contained/mcp/test_mcp_server_integration.py" = ["ARG", "S101", "B904"]  # raise from
 "alembic/*" = ["UP007", "E402"]  # Alembic: Union syntax, import order
 "src/nexus/backends/*.py" = ["ARG002"]  # Keep unused context params for API compatibility
+"src/nexus/cache/postgres.py" = ["ARG002"]  # No-op stub implements PermissionCacheProtocol interface
+"src/nexus/bricks/rebac/manager.py" = ["ARG002"]  # No-op cache stubs keep interface for callers
 "src/nexus/bricks/ipc/driver.py" = ["ARG002"]  # Backend ABC override — params required by interface
 "src/nexus/ipc/driver.py" = ["ARG002"]  # Backend ABC override — context params required by interface
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
-"src/nexus/bricks/skills/testing.py" = ["ARG002"]  # Protocol stub implementations — unused args by design
 "src/nexus/server/rpc/handlers/filesystem.py" = ["ARG001"]  # Handler signature requires context param
 "src/nexus/raft/transport_pb2_grpc.py" = ["ARG002"]  # Auto-generated gRPC stubs
 "src/nexus/raft/client.py" = ["SIM105"]  # datetime parsing with fallback
@@ -850,9 +820,7 @@ id = "brick-independence"
 name = "Bricks must not import from each other (LEGO Principle 3)"
 type = "independence"
 modules = [
-    "nexus.bricks.a2a",
     "nexus.bricks.access_manifest",
-    "nexus.bricks.artifact_index",
     "nexus.bricks.auth",
     "nexus.bricks.context_manifest",
     "nexus.bricks.delegation",
@@ -860,20 +828,15 @@ modules = [
     "nexus.bricks.governance",
     "nexus.bricks.identity",
     "nexus.bricks.ipc",
-    "nexus.bricks.llm",
     "nexus.bricks.mcp",
-    "nexus.bricks.memory",
+    "nexus.bricks.mount",
     "nexus.bricks.parsers",
     "nexus.bricks.pay",
     "nexus.bricks.portability",
     "nexus.bricks.rebac",
-    "nexus.bricks.reputation",
-    "nexus.bricks.rlm",
     "nexus.bricks.sandbox",
     "nexus.bricks.search",
-    "nexus.bricks.skills",
     "nexus.bricks.snapshot",
-    "nexus.bricks.tools",
     "nexus.bricks.workflows",
 ]
 # Known violations — ratchet baseline. Remove entries as fixes land.
@@ -882,119 +845,79 @@ ignore_imports = [
     # (removed: nexus.storage -> nexus.cache.protocols — both are non-brick pillar modules now)
     # cache -> rebac transitive chain (via nexus.server.telemetry, Issue #2179)
     "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
-    # a2a -> ipc: TYPE_CHECKING imports only (runtime imports now use importlib)
-    "nexus.bricks.a2a.messaging_adapters -> nexus.bricks.ipc.envelope",
     # mcp -> rebac: TYPE_CHECKING imports for middleware/profiles (Issue #2429)
     "nexus.bricks.mcp.middleware -> nexus.bricks.rebac.manager",
     "nexus.bricks.mcp.profiles -> nexus.bricks.rebac.manager",
+    # search -> rebac: permission enforcement + entity registry in search_service (moved from services/)
+    "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
+    "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
+    "nexus.bricks.search.search_service -> nexus.bricks.rebac.entity_registry",
+    # search -> gateway (TYPE_CHECKING): NexusFSGateway type hint — transitive to workflows/parsers
+    "nexus.bricks.search.search_service -> nexus.system_services.gateway",
+    # mount -> permission_utils -> gateway: transitive chain to workflows/parsers
+    "nexus.lib.permission_utils -> nexus.system_services.gateway",
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
     "nexus.bricks.parsers.validation.runner -> nexus.bricks.sandbox.sandbox_provider",
     "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",
     # portability -> * : export_service imports top-level nexus package (transitive hub, Issue #2436)
     "nexus.bricks.portability.export_service -> nexus",
-    # tools -> nexus: _client.py uses nexus.connect() — same transitive hub pattern (Issue #1065)
-    "nexus.bricks.tools._client -> nexus",
     # mcp -> nexus: server.py imports top-level nexus package — same transitive hub pattern
     "nexus.bricks.mcp.server -> nexus",
 ]
 unmatched_ignore_imports_alerting = "warn"
 
-# Contract 2: Four-tier layered architecture
-# tier-neutral (lib, contracts) < kernel (core) < services < bricks
+# Contract 2: Five-tier layered architecture
+# contracts (include/linux) < lib+security (lib/) < kernel (core) < system_services < bricks
+# contracts is the type-definition base — everyone can depend on it.
+# lib and security provide utilities that may use contract types, like Linux lib/ includes include/linux/.
+# security is tier-neutral (TLS, TOFU, prompt sanitizer) — zero kernel/service/brick deps.
 [[tool.importlinter.contracts]]
 id = "four-tier-layers"
-name = "Four-tier architecture: tier-neutral < kernel < services < bricks"
+name = "Five-tier architecture: contracts < lib+security < kernel < system_services < bricks"
 type = "layers"
 layers = [
     "nexus.bricks",
-    "nexus.services",
+    "nexus.system_services",
     "nexus.core",
-    "nexus.contracts | nexus.lib",
+    "nexus.lib | nexus.security",
+    "nexus.contracts",
 ]
 # Ratchet baseline — known violations. Remove entries as fixes land.
 # Run: lint-imports --contract four-tier-layers to check.
 ignore_imports = [
     # --- tier-neutral (contracts) importing core ---
     "nexus.contracts.metadata -> nexus.core._compact_generated",
-    # --- tier-neutral (contracts/lib) cross-imports ---
-    "nexus.lib.path_utils -> nexus.contracts.exceptions",
+    # --- tier-neutral (contracts/protocols) importing bricks ---
+    # chunked_upload protocol TYPE_CHECKING import for UploadSession return type
+    "nexus.contracts.protocols.chunked_upload -> nexus.bricks.upload.upload_session",
+    # process_manager protocol TYPE_CHECKING import for agent process types
+    "nexus.contracts.protocols.process_manager -> nexus.system_services.agent_runtime.types",
+    # --- contracts importing lib (upward — legacy, to be fixed) ---
+    "nexus.contracts.agent_utils -> nexus.storage.models",
     "nexus.contracts -> nexus.lib.validators",
     "nexus.contracts.deployment_profile -> nexus.lib.performance_tuning",
     "nexus.contracts.types -> nexus.storage.read_set",
     # WirableFS TYPE_CHECKING imports (cross-tier wiring contract, #2359)
-    "nexus.contracts.wirable_fs -> nexus.backends.backend",
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
-    "nexus.lib.context_utils -> nexus.contracts.types",
-    "nexus.lib.context_utils -> nexus.contracts.constants",
-    "nexus.lib.db_base -> nexus.contracts.constants",
-    "nexus.lib.zone -> nexus.contracts.constants",
-    "nexus.lib.performance_tuning -> nexus.contracts.deployment_profile",
-    "nexus.lib.performance_tuning -> nexus.contracts.qos",
-    "nexus.lib.response -> nexus.contracts.exceptions",
-    # --- kernel (core) importing services ---
-    "nexus.core.config -> nexus.services.protocols.namespace_manager",
-    "nexus.core.nexus_fs -> nexus.services.memory.memory_api",
-    "nexus.core.nexus_fs -> nexus.services.permissions.checker",
+    # --- lib importing system_services (upward — legacy, to be fixed) ---
+    "nexus.lib.permission_utils -> nexus.system_services.gateway",
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
-    "nexus.core.nexus_fs -> nexus.bricks.rebac.entity_registry",
-    "nexus.core.nexus_fs -> nexus.bricks.rebac.tiger_cache_manager",
-    # parsers fallback in __init__ — pre-existing, now visible after parsers/ → bricks/parsers/ move
-    "nexus.core.nexus_fs -> nexus.bricks.parsers.markitdown_parser",
-    "nexus.core.nexus_fs -> nexus.bricks.parsers.registry",
-    "nexus.core.nexus_fs -> nexus.bricks.parsers.providers.registry",
-    # --- services importing bricks ---
-    "nexus.services.ace.consolidation -> nexus.bricks.search.embeddings",
-    "nexus.services.oauth.oauth_service -> nexus.bricks.auth.oauth.credential_service",
-    "nexus.services.oauth_service -> nexus.bricks.auth.oauth.token_manager",
-    "nexus.services.oauth_service -> nexus.bricks.auth.oauth.factory",
-    "nexus.services.workspace_rpc_service -> nexus.bricks.workspace.workspace_registry",
-    # search_semantic direct TYPE_CHECKING imports (services → bricks)
-    "nexus.services.search.search_semantic -> nexus.bricks.search.indexing_service",
-    "nexus.services.search.search_semantic -> nexus.bricks.search.pipeline_indexer",
-    "nexus.services.search.search_semantic -> nexus.bricks.search.query_service",
+    # --- system_services importing bricks ---
+    "nexus.system_services.workspace.workspace_rpc_service -> nexus.bricks.workspace.workspace_registry",
+    "nexus.system_services.lifecycle.workflow_dispatch_service -> nexus.bricks.workflows.protocol",
+    "nexus.system_services.namespace.agent_namespace -> nexus.bricks.rebac.namespace_manager",
+    "nexus.system_services.namespace.namespace_fork_service -> nexus.bricks.rebac.namespace_manager",
     # search_semantic → factory._semantic_search → bricks (transitive chain)
-    "nexus.factory._semantic_search -> nexus.bricks.llm.llm_context_builder",
     "nexus.factory._semantic_search -> nexus.bricks.search.chunking",
-    "nexus.factory._semantic_search -> nexus.bricks.search.embeddings",
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing",
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing_service",
     "nexus.factory._semantic_search -> nexus.bricks.search.pipeline_indexer",
-    "nexus.factory._semantic_search -> nexus.bricks.search.query_service",
-    "nexus.factory._semantic_search -> nexus.bricks.search.vector_db",
-    # --- services importing bricks (rebac, Issue #2179, not yet converted) ---
-    "nexus.services.search.search_service -> nexus.bricks.rebac.enforcer",
-    "nexus.services.search.search_service -> nexus.bricks.rebac.manager",
-    "nexus.services.versioning.version_service -> nexus.bricks.rebac.async_permissions",
-    "nexus.services.delegation.service -> nexus.bricks.rebac.manager",
-    "nexus.services.memory.memory_api -> nexus.bricks.rebac.manager",
-    "nexus.services.memory.memory_router -> nexus.bricks.rebac.manager",
-    "nexus.services.governance.governance_wrapper -> nexus.bricks.pay.protocol",
-    "nexus.services.governance.governance_wrapper -> nexus.bricks.pay.audit_types",
-    "nexus.services.search_semantic -> nexus.factory",
-    "nexus.services.permissions.namespace_manager -> nexus.bricks.rebac.manager",
-    "nexus.services.permissions.permission_cache -> nexus.bricks.rebac.manager",
-    "nexus.services.permissions.permission_filter_chain -> nexus.bricks.rebac.manager",
-    # --- services importing bricks (rebac migration #1001) ---
-    "nexus.services.permissions.permission_cache -> nexus.bricks.rebac.cache.boundary",
-    "nexus.services.permissions.permission_cache -> nexus.bricks.rebac.hotspot_detector",
-    "nexus.services.memory.enrichment -> nexus.bricks.rebac.entity_extractor",
-    "nexus.services.memory.versioning -> nexus.bricks.rebac.memory_permission_enforcer",
-    "nexus.services.memory.memory_api -> nexus.bricks.rebac.entity_registry",
-    "nexus.services.memory.memory_api -> nexus.bricks.rebac.memory_permission_enforcer",
-    "nexus.services.memory.state -> nexus.bricks.rebac.memory_permission_enforcer",
-    "nexus.services.memory.memory_router -> nexus.bricks.rebac.entity_registry",
-    "nexus.services.delegation.service -> nexus.bricks.rebac.entity_registry",
-    "nexus.services.delegation.service -> nexus.bricks.rebac.namespace_manager",
-    "nexus.server.telemetry -> nexus.bricks.rebac.rebac_tracing",
-    # --- services importing non-layer modules ---
-    "nexus.services.mount.mount_persist_service -> nexus.system_services.sync.sync_service",
-    "nexus.services.mount.mount_core_service -> nexus.backends.service_map",
+    # (removed: services.delegation/memory/governance → bricks entries; modules relocated to bricks/)
+    # --- bricks importing non-layer modules ---
     # --- non-layer module chain hops ---
-    "nexus.backends.cache_mixin -> nexus.backends.sync_pipeline",
     "nexus.factory -> nexus.factory.orchestrator",
     "nexus.factory -> nexus.factory.wallet",
-    "nexus.factory.orchestrator -> nexus.cache.brick",
     "nexus.factory.wallet -> nexus.bricks.pay.constants",
     # (removed: nexus.system_services.sync.sync_service -> glob_fast; now uses importlib)
 ]
@@ -1004,6 +927,8 @@ unmatched_ignore_imports_alerting = "warn"
 dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
+    "mypy>=1.18.2",
+    "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "types-aiofiles>=25.1.0.20251011",
     "types-protobuf>=6.32.1.20251210",

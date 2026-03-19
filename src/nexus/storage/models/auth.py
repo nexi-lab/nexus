@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -76,6 +76,18 @@ class UserModel(Base):
         Index("idx_users_active", "is_active"),
         Index("idx_users_deleted", "deleted_at"),
         Index("idx_users_email_active_deleted", "email", "is_active", "deleted_at"),
+        # Issue #3062: Prevent duplicate verified emails for active users.
+        # Partial unique index — only enforced for active, verified, non-deleted users.
+        # Both postgresql_where and sqlite_where are needed so the index is
+        # created correctly regardless of whether Alembic or
+        # Base.metadata.create_all() builds the schema.
+        Index(
+            "uq_users_email_verified_active",
+            "email",
+            unique=True,
+            postgresql_where=text("is_active = 1 AND email_verified = 1 AND deleted_at IS NULL"),
+            sqlite_where=text("is_active = 1 AND email_verified = 1 AND deleted_at IS NULL"),
+        ),
     )
 
     def __repr__(self) -> str:
@@ -151,6 +163,8 @@ class APIKeyModel(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    grant_tuple_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     revoked: Mapped[int] = mapped_column(Integer, default=0, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

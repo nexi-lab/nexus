@@ -145,8 +145,8 @@ def nexus_server_pg(tmp_path, admin_api_key):
             sys.executable,
             "-c",
             (
-                "from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                "from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', '--auth-type', 'database'])"
             ),
         ],
@@ -264,8 +264,8 @@ def nexus_server_pg_with_users(tmp_path, admin_api_key, non_admin_api_key):
             sys.executable,
             "-c",
             (
-                "from nexus.cli import main; "
-                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                "from nexus.daemon.main import main; "
+                f"main(['--host', '127.0.0.1', '--port', '{port}', "
                 f"'--data-dir', '{tmp_path}', '--auth-type', 'database'])"
             ),
         ],
@@ -394,7 +394,7 @@ def sync_service_with_pg(pg_session_factory):
 @pytest.fixture()
 def local_connector_mount(tmp_path):
     """Create a real LocalConnectorBackend with test files."""
-    from nexus.backends.local_connector import LocalConnectorBackend
+    from nexus.backends.storage.local_connector import LocalConnectorBackend
 
     mount_dir = tmp_path / "external_mount"
     mount_dir.mkdir()

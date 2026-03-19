@@ -97,8 +97,7 @@ def check_permissions_bulk_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: "
-            "cd rust/nexus_fast && maturin develop --release"
+            "Rust acceleration not available. Install with: cd rust/nexus_pyo3 && maturin develop"
         )
 
     try:
@@ -228,14 +227,23 @@ def _compute_permission_simple(
     obj: "Entity",
     tuples: list[dict[str, Any]],
     namespaces: "dict[str, ReBACNamespaceConfig]",
+    _visited: set[str] | None = None,
 ) -> bool:
-    """
-    Simplified permission computation for fallback.
+    """Permission computation for Python fallback.
 
-    NOTE: This is a basic implementation. For production use, integrate with
-    the full ReBACManager._compute_permission method.
+    Expands both ``permissions`` (permission → usersets) and ``relations``
+    (relation → union members) from the namespace config, matching the
+    Zanzibar expansion model used by the Rust implementation.
     """
-    # Check direct relation
+    # Guard against infinite recursion from cyclic configs
+    if _visited is None:
+        _visited = set()
+    cache_key = f"{permission}:{obj.entity_type}:{obj.entity_id}"
+    if cache_key in _visited:
+        return False
+    _visited = {*_visited, cache_key}
+
+    # 1. Direct tuple match: does a tuple grant this exact relation?
     for tuple_dict in tuples:
         if (
             tuple_dict["subject_type"] == subject.entity_type
@@ -246,15 +254,24 @@ def _compute_permission_simple(
         ):
             return True
 
-    # Check namespace expansions (simplified)
     namespace = namespaces.get(obj.entity_type)
-    if namespace:
-        permissions_dict = namespace.config.get("permissions", {})
-        if permission in permissions_dict:
-            # Check if any userset grants the permission
-            for userset in permissions_dict[permission]:
-                if _compute_permission_simple(subject, userset, obj, tuples, namespaces):
-                    return True
+    if not namespace:
+        return False
+
+    # 2. Expand via permissions dict: permission → list of usersets
+    permissions_dict = namespace.config.get("permissions", {})
+    if permission in permissions_dict:
+        for userset in permissions_dict[permission]:
+            if _compute_permission_simple(subject, userset, obj, tuples, namespaces, _visited):
+                return True
+
+    # 3. Expand via relations dict: relation → union members
+    relations_dict = namespace.config.get("relations", {})
+    relation_def = relations_dict.get(permission)
+    if isinstance(relation_def, dict) and "union" in relation_def:
+        for member in relation_def["union"]:
+            if _compute_permission_simple(subject, member, obj, tuples, namespaces, _visited):
+                return True
 
     return False
 
@@ -313,15 +330,14 @@ def check_permission_single_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: "
-            "cd rust/nexus_fast && maturin develop --release"
+            "Rust acceleration not available. Install with: cd rust/nexus_pyo3 && maturin develop"
         )
 
     # compute_permission_single is only in the external module
     if _external_module is None:
         raise RuntimeError(
             "Rust single permission check not available. "
-            "Install nexus_fast: cd rust/nexus_fast && maturin develop --release"
+            "Install nexus_fast: cd rust/nexus_pyo3 && maturin develop"
         )
 
     try:
@@ -452,15 +468,14 @@ def expand_subjects_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: "
-            "cd rust/nexus_fast && maturin develop --release"
+            "Rust acceleration not available. Install with: cd rust/nexus_pyo3 && maturin develop"
         )
 
     # Use external module which has expand_subjects
     if _external_module is None:
         raise RuntimeError(
             "Rust expand_subjects not available. "
-            "Install nexus_fast: cd rust/nexus_fast && maturin develop --release"
+            "Install nexus_fast: cd rust/nexus_pyo3 && maturin develop"
         )
 
     try:
@@ -571,15 +586,14 @@ def list_objects_for_subject_rust(
     """
     if not RUST_AVAILABLE:
         raise RuntimeError(
-            "Rust acceleration not available. Install with: "
-            "cd rust/nexus_fast && maturin develop --release"
+            "Rust acceleration not available. Install with: cd rust/nexus_pyo3 && maturin develop"
         )
 
     # Use external module which has list_objects_for_subject
     if _external_module is None:
         raise RuntimeError(
             "Rust list_objects_for_subject not available. "
-            "Install nexus_fast: cd rust/nexus_fast && maturin develop --release"
+            "Install nexus_fast: cd rust/nexus_pyo3 && maturin develop"
         )
 
     try:

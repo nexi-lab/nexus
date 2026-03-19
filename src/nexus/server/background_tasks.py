@@ -48,25 +48,27 @@ async def sandbox_cleanup_task(sandbox_manager: Any, interval_seconds: int = 300
         await asyncio.sleep(interval_seconds)
 
 
-async def session_cleanup_task(session_factory: Any, interval_seconds: int = 3600) -> None:
+async def session_cleanup_task(
+    cache_session_store: Any,
+    session_factory: Any,
+    interval_seconds: int = 3600,
+) -> None:
     """Background task: Clean up expired sessions.
 
-    Runs periodically to delete expired sessions and their resources.
+    Runs periodically to delete expired sessions (CacheStore) and their
+    associated resources (PathRegistration, Memory in RecordStore).
 
     Args:
-        session_factory: SQLAlchemy session factory
+        cache_session_store: CacheSessionStore instance
+        session_factory: SQLAlchemy session factory (for resource cleanup)
         interval_seconds: How often to run cleanup (default: 3600 = 1 hour)
-
-    Examples:
-        >>> # Start cleanup task in server
-        >>> asyncio.create_task(session_cleanup_task(SessionLocal, 3600))
     """
     logger.info(f"Starting session cleanup task (interval: {interval_seconds}s)")
 
     while True:
         try:
             with session_factory() as db:
-                result = cleanup_expired_sessions(db)
+                result = await cleanup_expired_sessions(cache_session_store, db)
                 db.commit()
 
                 sessions_count = result["sessions"]
@@ -83,17 +85,19 @@ async def session_cleanup_task(session_factory: Any, interval_seconds: int = 360
 
 
 async def inactive_session_cleanup_task(
+    cache_session_store: Any,
     session_factory: Any,
     inactive_threshold: timedelta = timedelta(days=30),
     interval_seconds: int = 86400,  # 24 hours
 ) -> None:
     """Background task: Clean up inactive sessions.
 
-    Optional: Removes sessions that haven't been used in N days,
+    Removes sessions that haven't been used in N days,
     even if they haven't expired.
 
     Args:
-        session_factory: SQLAlchemy session factory
+        cache_session_store: CacheSessionStore instance
+        session_factory: SQLAlchemy session factory (for resource cleanup)
         inactive_threshold: Inactivity period (default: 30 days)
         interval_seconds: How often to run (default: 86400 = 24 hours)
     """
@@ -105,7 +109,7 @@ async def inactive_session_cleanup_task(
     while True:
         try:
             with session_factory() as db:
-                count = cleanup_inactive_sessions(db, inactive_threshold)
+                count = await cleanup_inactive_sessions(cache_session_store, db, inactive_threshold)
                 db.commit()
 
                 if count > 0:
@@ -303,44 +307,6 @@ async def hotspot_prefetch_task(
         await asyncio.sleep(interval_seconds)
 
 
-async def heartbeat_flush_task(agent_registry: Any, interval_seconds: int = 60) -> None:
-    """Periodically flush agent heartbeat buffer to database (Issue #1240).
-
-    Args:
-        agent_registry: AgentRegistry instance with flush_heartbeats() method
-        interval_seconds: Flush interval in seconds (default: 60)
-    """
-    while True:
-        await asyncio.sleep(interval_seconds)
-        try:
-            flushed = agent_registry.flush_heartbeats()
-            if flushed > 0:
-                logger.info(f"[HEARTBEAT] Flushed {flushed} agent heartbeats to database")
-        except Exception:
-            logger.exception("[HEARTBEAT] Failed to flush heartbeat buffer")
-
-
-async def stale_agent_detection_task(
-    agent_registry: Any, interval_seconds: int = 300, threshold_seconds: int = 300
-) -> None:
-    """Periodically detect agents with stale heartbeats (Issue #1240).
-
-    Args:
-        agent_registry: AgentRegistry instance with detect_stale() method
-        interval_seconds: Detection interval in seconds (default: 300)
-        threshold_seconds: Heartbeat age threshold for staleness (default: 300)
-    """
-    while True:
-        await asyncio.sleep(interval_seconds)
-        try:
-            stale = agent_registry.detect_stale(threshold_seconds=threshold_seconds)
-            if stale:
-                stale_ids = [a.agent_id for a in stale]
-                logger.warning(f"[HEARTBEAT] {len(stale)} stale agents detected: {stale_ids[:10]}")
-        except Exception:
-            logger.exception("[HEARTBEAT] Failed to detect stale agents")
-
-
 async def agent_eviction_task(
     eviction_manager: Any,
     interval_seconds: int = 300,
@@ -377,64 +343,32 @@ async def agent_eviction_task(
             logger.exception("[EVICTION] Eviction cycle failed")
 
 
-async def checkpoint_cleanup_task(
-    agent_registry: Any,
-    interval_seconds: int = 3600,
-    max_age_seconds: int = 86400,
-) -> None:
-    """Periodically clean up stale checkpoint data from SUSPENDED agents.
-
-    Args:
-        agent_registry: AgentRegistry with cleanup_stale_checkpoints() method.
-        interval_seconds: How often to run cleanup (default: 3600).
-        max_age_seconds: Maximum checkpoint age before removal (default: 86400).
-    """
-    while True:
-        await asyncio.sleep(interval_seconds)
-        try:
-            cleaned = await asyncio.to_thread(
-                agent_registry.cleanup_stale_checkpoints,
-                max_age_seconds=max_age_seconds,
-            )
-            if cleaned > 0:
-                logger.info(
-                    "[EVICTION] Cleaned %d stale checkpoints (max_age=%ds)",
-                    cleaned,
-                    max_age_seconds,
-                )
-        except Exception:
-            logger.exception("[EVICTION] Checkpoint cleanup failed")
-
-
 def start_background_tasks(
     record_store: Any,
     sandbox_manager: Any | None = None,
-    agent_registry: Any | None = None,
     *,
     is_postgresql: bool = False,
+    cache_session_store: Any | None = None,
 ) -> list:
     """Start all background tasks.
 
     Args:
         record_store: RecordStoreABC instance for database access.
         sandbox_manager: Optional SandboxManager for sandbox cleanup (Issue #372)
-        agent_registry: Optional AgentRegistry for heartbeat flush (Issue #1240)
         is_postgresql: Whether the database is PostgreSQL (config-time flag).
+        cache_session_store: Optional CacheSessionStore for session cleanup.
 
     Returns:
         List of asyncio tasks
-
-    Examples:
-        >>> # In server startup
-        >>> from nexus.server.background_tasks import start_background_tasks
-        >>> tasks = start_background_tasks(record_store, sandbox_mgr, agent_registry)
-        >>> # Tasks run in background
     """
-    tasks = [
-        asyncio.create_task(session_cleanup_task(record_store.session_factory)),
-        # Uncomment to enable inactive session cleanup:
-        # asyncio.create_task(inactive_session_cleanup_task(record_store.session_factory)),
-    ]
+    tasks = []
+
+    if cache_session_store is not None:
+        tasks.append(
+            asyncio.create_task(
+                session_cleanup_task(cache_session_store, record_store.session_factory)
+            )
+        )
 
     # Add sandbox cleanup if manager provided (Issue #372)
     if sandbox_manager is not None:
@@ -448,11 +382,6 @@ def start_background_tasks(
                 version_gc_task(record_store, gc_config, is_postgresql=is_postgresql)
             )
         )
-
-    # Add agent heartbeat flush and stale detection (Issue #1240)
-    if agent_registry is not None:
-        tasks.append(asyncio.create_task(heartbeat_flush_task(agent_registry)))
-        tasks.append(asyncio.create_task(stale_agent_detection_task(agent_registry)))
 
     logger.info(f"Started {len(tasks)} background tasks")
     return tasks

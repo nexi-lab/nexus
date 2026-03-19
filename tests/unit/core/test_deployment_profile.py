@@ -16,7 +16,6 @@ import pytest
 
 from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
-    BRICK_A2A,
     BRICK_CACHE,
     BRICK_EVENTLOG,
     BRICK_FEDERATION,
@@ -26,7 +25,6 @@ from nexus.contracts.deployment_profile import (
     BRICK_PERMISSIONS,
     BRICK_SANDBOX,
     BRICK_SEARCH,
-    BRICK_SKILLS,
     BRICK_STORAGE,
     BRICK_WORKFLOWS,
     DeploymentProfile,
@@ -43,6 +41,7 @@ class TestDeploymentProfileEnum:
         assert DeploymentProfile.LITE == "lite"
         assert DeploymentProfile.FULL == "full"
         assert DeploymentProfile.CLOUD == "cloud"
+        assert DeploymentProfile.INNOVATION == "innovation"
         assert DeploymentProfile.REMOTE == "remote"
 
     def test_enum_from_string(self) -> None:
@@ -82,7 +81,6 @@ class TestDefaultBrickSets:
         assert BRICK_SEARCH not in bricks
         assert BRICK_PAY not in bricks
         assert BRICK_LLM not in bricks
-        assert BRICK_SKILLS not in bricks
         assert BRICK_SANDBOX not in bricks
 
     def test_full_includes_all_except_federation(self) -> None:
@@ -90,10 +88,8 @@ class TestDefaultBrickSets:
         assert BRICK_SEARCH in bricks
         assert BRICK_PAY in bricks
         assert BRICK_LLM in bricks
-        assert BRICK_SKILLS in bricks
         assert BRICK_SANDBOX in bricks
         assert BRICK_WORKFLOWS in bricks
-        assert BRICK_A2A in bricks
         # Federation is cloud-only
         assert BRICK_FEDERATION not in bricks
 
@@ -117,13 +113,14 @@ class TestDefaultBrickSets:
         assert embedded.issubset(lite)
 
     def test_hierarchy_chain(self) -> None:
-        """embedded ⊂ lite ⊂ full ⊆ cloud."""
+        """embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation."""
         embedded = DeploymentProfile.EMBEDDED.default_bricks()
         lite = DeploymentProfile.LITE.default_bricks()
         full = DeploymentProfile.FULL.default_bricks()
         cloud = DeploymentProfile.CLOUD.default_bricks()
+        innovation = DeploymentProfile.INNOVATION.default_bricks()
 
-        assert embedded < lite < full <= cloud
+        assert embedded < lite < full <= cloud <= innovation
 
     def test_is_brick_enabled(self) -> None:
         assert DeploymentProfile.FULL.is_brick_enabled(BRICK_SEARCH)
@@ -221,6 +218,13 @@ class TestFeaturesConfigOverrides:
         overrides = fc.to_overrides()
         assert overrides == {"search": True, "pay": False}
 
+    def test_semantic_search_is_config_only_not_brick_override(self) -> None:
+        from nexus.config import FeaturesConfig
+
+        fc = FeaturesConfig(search=True, semantic_search=True)
+        overrides = fc.to_overrides()
+        assert overrides == {"search": True}
+
     def test_overrides_integrate_with_resolve(self) -> None:
         from nexus.config import FeaturesConfig
 
@@ -244,12 +248,60 @@ class TestNexusConfigProfile:
     def test_valid_profiles(self) -> None:
         from nexus.config import NexusConfig
 
-        for p in ["minimal", "embedded", "lite", "full", "cloud", "remote"]:
+        for p in ["minimal", "embedded", "lite", "full", "cloud", "innovation"]:
             cfg = NexusConfig(profile=p)
             assert cfg.profile == p
+        # "remote" requires url
+        cfg = NexusConfig(profile="remote", url="grpc://localhost:50051")
+        assert cfg.profile == "remote"
 
     def test_invalid_profile_raises(self) -> None:
         from nexus.config import NexusConfig
 
         with pytest.raises(ValueError, match="profile must be one of"):
             NexusConfig(profile="invalid")
+
+    def test_semantic_search_feature_flag_is_accepted(self) -> None:
+        from nexus.config import NexusConfig
+
+        cfg = NexusConfig(features={"semantic_search": True, "search": True})
+        assert cfg.features.semantic_search is True
+        assert cfg.features.search is True
+
+
+class TestInnovationProfile:
+    """Tests for the INNOVATION deployment profile (Issue #1667)."""
+
+    def test_innovation_enum_value(self) -> None:
+        assert DeploymentProfile("innovation") is DeploymentProfile.INNOVATION
+
+    def test_innovation_is_superset_of_cloud(self) -> None:
+        cloud = DeploymentProfile.CLOUD.default_bricks()
+        innovation = DeploymentProfile.INNOVATION.default_bricks()
+        assert cloud.issubset(innovation)
+
+    def test_innovation_includes_federation(self) -> None:
+        bricks = DeploymentProfile.INNOVATION.default_bricks()
+        assert BRICK_FEDERATION in bricks
+
+    def test_innovation_includes_all_full_bricks(self) -> None:
+        full = DeploymentProfile.FULL.default_bricks()
+        innovation = DeploymentProfile.INNOVATION.default_bricks()
+        assert full.issubset(innovation)
+
+    def test_innovation_config_accepted(self) -> None:
+        from nexus.config import NexusConfig
+
+        cfg = NexusConfig(profile="innovation")
+        assert cfg.profile == "innovation"
+
+    def test_innovation_overrides_work(self) -> None:
+        result = resolve_enabled_bricks(
+            DeploymentProfile.INNOVATION,
+            overrides={BRICK_SEARCH: False},
+        )
+        assert BRICK_SEARCH not in result
+
+    def test_innovation_tuning_resolves(self) -> None:
+        tuning = DeploymentProfile.INNOVATION.tuning()
+        assert tuning is not None

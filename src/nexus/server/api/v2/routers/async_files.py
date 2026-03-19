@@ -10,31 +10,83 @@ Provides file operations using NexusFS via asyncio.to_thread():
 - GET    /metadata        - Get file metadata
 - POST   /batch-read      - Batch read multiple files
 - GET    /stream          - Stream file content
+- POST   /rename          - Rename/move file
+- POST   /copy            - Copy file
+- POST   /rename-bulk     - Bulk rename/move files
+- POST   /copy-bulk       - Bulk copy files
+- GET    /glob            - Glob pattern search across files
+- GET    /grep            - Regex pattern search within files
 
-All operations use asyncio.to_thread() to run sync NexusFS calls
-in worker threads (io_uring pattern: async scheduling, sync kernel).
+Async NexusFS methods (read, write, sys_stat, sys_readdir, sys_unlink,
+sys_access, sys_mkdir) are awaited directly. Sync methods (read_bulk,
+stream, write_stream) use asyncio.to_thread() for thread offloading.
 All operations pass user context for permission enforcement.
 """
 
 import asyncio
 import base64
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.bricks.search.primitives.glob_fast import glob_filter
+from nexus.bricks.search.primitives.grep_fast import grep_files_mmap
+from nexus.bricks.snapshot.errors import TransactionConflictError as _TransactionConflictError
 from nexus.contracts.exceptions import (
     ConflictError,
     InvalidPathError,
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+from nexus.lib.path_utils import validate_path as _normalize_path
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
+    """Convert a sys_readdir details dict to a FileItemResponse.
+
+    sys_readdir(details=True) returns dicts with path, size, etag, entry_type.
+    entry_type: 0=file, 1=directory, 2=mount, 3=pipe, 4=stream.
+    """
+    raw_path: str = entry.get("path", "")
+    # Use entry_type if available: 1=dir, 2=mount (both act as directories).
+    # Also treat entries with trailing "/" as directories (legacy fallback).
+    # entry_type 0 with no etag and size 0 is likely an implicit directory
+    # (created by writing files underneath it in CAS-based storage).
+    et = entry.get("entry_type", 0)
+    is_dir = (
+        et in (1, 2)
+        or raw_path.endswith("/")
+        or (et == 0 and entry.get("size", 0) == 0 and not entry.get("etag"))
+    )
+    clean_path = raw_path.rstrip("/")
+    name = (
+        clean_path[len(prefix) :]
+        if clean_path.startswith(prefix)
+        else clean_path.rsplit("/", 1)[-1]
+    )
+
+    return FileItemResponse(
+        name=name,
+        path=clean_path,
+        is_directory=is_dir,
+        size=entry.get("size", 0) if not is_dir else 0,
+        modified_at=None,
+        etag=entry.get("etag"),
+        mime_type=None,
+        zone_id=None,
+    )
+
 
 # =============================================================================
 # Request/Response Models
@@ -83,10 +135,34 @@ class ExistsResponse(BaseModel):
     exists: bool
 
 
-class ListResponse(BaseModel):
-    """Response model for list directory."""
+class FileItemResponse(BaseModel):
+    """Single file/directory entry with metadata.
 
-    items: list[str]
+    Uses serialization_alias so JSON output matches the TUI's camelCase convention.
+    """
+
+    name: str
+    path: str
+    is_directory: bool = Field(default=False, serialization_alias="isDirectory")
+    size: int = 0
+    modified_at: str | None = Field(None, serialization_alias="modifiedAt")
+    etag: str | None = None
+    mime_type: str | None = Field(None, serialization_alias="mimeType")
+    version: int | None = None
+    owner: str | None = None
+    permissions: str | None = None
+    zone_id: str | None = Field(None, serialization_alias="zoneId")
+
+
+class ListResponse(BaseModel):
+    """Response model for list directory — supports cursor pagination.
+
+    @see Issue #3102, Decision 2A
+    """
+
+    items: list[FileItemResponse]
+    has_more: bool = False
+    next_cursor: str | None = None
 
 
 class MkdirRequest(BaseModel):
@@ -108,10 +184,131 @@ class MetadataResponse(BaseModel):
     modified_at: str | None = None
 
 
+class GlobResponse(BaseModel):
+    """Response model for glob search."""
+
+    matches: list[str]
+    total: int
+    truncated: bool
+    pattern: str
+    base_path: str
+
+
+class GrepMatch(BaseModel):
+    """A single grep match."""
+
+    file: str
+    line: int
+    content: str
+    match: str
+
+
+class GrepResponse(BaseModel):
+    """Response model for grep search."""
+
+    matches: list[GrepMatch]
+    total: int
+    truncated: bool
+    pattern: str
+    base_path: str
+
+
 class BatchReadRequest(BaseModel):
     """Request model for batch read."""
 
     paths: list[str] = Field(..., description="List of paths to read")
+
+
+class RenameRequest(BaseModel):
+    """Request model for rename/move operation."""
+
+    source: str = Field(..., description="Source path to rename from")
+    destination: str = Field(..., description="Destination path to rename to")
+
+
+class RenameResponse(BaseModel):
+    """Response model for rename operation."""
+
+    success: bool
+    source: str
+    destination: str
+
+
+class CopyRequest(BaseModel):
+    """Request model for copy operation."""
+
+    source: str = Field(..., description="Source path to copy from")
+    destination: str = Field(..., description="Destination path to copy to")
+
+
+class CopyResponse(BaseModel):
+    """Response model for copy operation."""
+
+    success: bool
+    source: str
+    destination: str
+    bytes_copied: int
+
+
+class RenameOperation(BaseModel):
+    """A single rename operation within a bulk request."""
+
+    source: str = Field(..., description="Source path to rename from")
+    destination: str = Field(..., description="Destination path to rename to")
+
+
+class RenameBulkRequest(BaseModel):
+    """Request model for bulk rename operations."""
+
+    operations: list[RenameOperation] = Field(
+        ..., description="List of rename operations (max 50)", max_length=50
+    )
+
+
+class BulkRenameResult(BaseModel):
+    """Result of a single rename within a bulk operation."""
+
+    source: str
+    destination: str
+    success: bool
+    error: str | None = None
+
+
+class RenameBulkResponse(BaseModel):
+    """Response model for bulk rename operations."""
+
+    results: list[BulkRenameResult]
+
+
+class CopyOperation(BaseModel):
+    """A single copy operation within a bulk request."""
+
+    source: str = Field(..., description="Source path to copy from")
+    destination: str = Field(..., description="Destination path to copy to")
+
+
+class CopyBulkRequest(BaseModel):
+    """Request model for bulk copy operations."""
+
+    operations: list[CopyOperation] = Field(
+        ..., description="List of copy operations (max 50)", max_length=50
+    )
+
+
+class BulkCopyResult(BaseModel):
+    """Result of a single copy within a bulk operation."""
+
+    source: str
+    destination: str
+    success: bool
+    bytes_copied: int | None = None
+    error: str | None = None
+
+
+class CopyBulkResponse(BaseModel):
+    """Response model for bulk copy operations."""
+
+    results: list[BulkCopyResult]
 
 
 # =============================================================================
@@ -161,13 +358,7 @@ def create_async_files_router(
     ) -> Any:
         """Get operation context from auth result."""
         if auth_result is None or not auth_result.get("authenticated"):
-            from nexus.contracts.types import OperationContext
-
-            return OperationContext(
-                user_id="anonymous",
-                groups=[],
-                zone_id=ROOT_ZONE_ID,
-            )
+            raise HTTPException(status_code=401, detail="Authentication required")
         return get_operation_context(auth_result)
 
     # =============================================================================
@@ -177,6 +368,14 @@ def create_async_files_router(
     @router.post("/write", response_model=WriteResponse)
     async def write_file(
         request: WriteRequest,
+        write_mode: str | None = Query(
+            None,
+            description="Write consistency mode: 'sync' (default, strong) or 'async' (eventual)",
+        ),
+        transaction_id: str | None = Query(
+            None,
+            description="Active transaction ID to track this write in (from snapshots API)",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -191,32 +390,100 @@ def create_async_files_router(
         """
         try:
             fs = await _get_fs()
+
+            # Snapshot tracking setup: validate conflict + capture original state BEFORE write
+            _ss = None
+            _norm_path: str | None = None
+            _original_hash: str | None = None
+            _original_metadata: dict[str, Any] | None = None
+            if transaction_id:
+                _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
+                if _ss is not None:
+                    _norm_path = _normalize_path(request.path)
+                    _ss.validate_path_available(transaction_id, _norm_path)
+                    # Capture original state for rollback
+                    try:
+                        _orig_meta = fs.metadata.get(_norm_path)
+                        if _orig_meta:
+                            _original_hash = _orig_meta.etag
+                            _original_metadata = {
+                                "size": _orig_meta.size,
+                                "version": _orig_meta.version,
+                                "modified_at": _orig_meta.modified_at.isoformat()
+                                if _orig_meta.modified_at
+                                else None,
+                                "backend_name": getattr(_orig_meta, "backend_name", None),
+                            }
+                    except Exception:
+                        _original_hash = None
+                else:
+                    logger.warning(
+                        "txn track: snapshot_service unavailable, skipping txn=%s", transaction_id
+                    )
+
             # Decode content based on encoding
             if request.encoding == "base64":
                 content = base64.b64decode(request.content)
             else:
                 content = request.content.encode("utf-8")
 
-            result = await asyncio.to_thread(
-                fs.write,
-                path=request.path,
-                content=content,
-                if_match=request.if_match,
-                if_none_match=request.if_none_match,
-                context=context,
-            )
+            # Build write kwargs with optional write_mode (Issue #2929)
+            write_kwargs: dict[str, Any] = {
+                "path": request.path,
+                "buf": content,
+                "context": context,
+            }
+            if write_mode is not None:
+                from nexus.contracts.types import WriteMode
 
+                try:
+                    mode = WriteMode(write_mode)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid write_mode: {write_mode!r}. "
+                        f"Valid values: {[m.value for m in WriteMode]}",
+                    ) from None
+                write_kwargs["consistency"] = mode.to_metastore_consistency()
+
+            # fs.write is async — call directly
+            result = await fs.write(**write_kwargs)
+
+            # Track write in transaction AFTER successful write.
+            # Skip if _write_internal already tracked it (path already in registry).
+            if (
+                _ss is not None
+                and _norm_path is not None
+                and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
+            ):
+                try:
+                    _ss.track_write(
+                        transaction_id=transaction_id,
+                        path=_norm_path,
+                        original_hash=_original_hash,
+                        original_metadata=_original_metadata,
+                        new_hash=result.get("etag"),
+                    )
+                    logger.info("txn tracked write: txn=%s path=%s", transaction_id, _norm_path)
+                except Exception as _track_err:
+                    logger.warning("txn track write failed: %s", _track_err)
+
+            modified = result["modified_at"]
+            if hasattr(modified, "isoformat"):
+                modified = modified.isoformat()
             response_data = WriteResponse(
                 etag=result["etag"],
                 version=result["version"],
                 size=result["size"],
-                modified_at=result["modified_at"],
+                modified_at=str(modified),
             )
             return Response(
                 content=response_data.model_dump_json(),
                 media_type="application/json",
             )
 
+        except HTTPException:
+            raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except InvalidPathError as e:
@@ -224,6 +491,8 @@ def create_async_files_router(
         except ConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except _TransactionConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Write error: {e}")
@@ -254,7 +523,7 @@ def create_async_files_router(
 
             # Get metadata first for ETag check
             if if_none_match:
-                meta = await asyncio.to_thread(fs.get_metadata, path)
+                meta = await fs.sys_stat(path)
                 if meta and meta.etag:
                     client_etag = if_none_match.strip('"')
                     if client_etag == meta.etag:
@@ -263,10 +532,8 @@ def create_async_files_router(
                             headers={"ETag": f'"{meta.etag}"'},
                         )
 
-            # Read content
-            result = await asyncio.to_thread(
-                fs.read, path, return_metadata=include_metadata, context=context
-            )
+            # Read content — fs.read is async, call directly
+            result = await fs.read(path, return_metadata=include_metadata, context=context)
 
             if include_metadata and isinstance(result, dict):
                 content = result["content"]
@@ -314,13 +581,58 @@ def create_async_files_router(
     @router.delete("/delete", response_model=DeleteResponse)
     async def delete_file(
         path: str = Query(..., description="Path to delete"),
+        transaction_id: str | None = Query(
+            None,
+            description="Active transaction ID to track this delete in",
+        ),
         context: Any = Depends(get_context),
     ) -> DeleteResponse:
         """Delete a file."""
         try:
             fs = await _get_fs()
-            result = await asyncio.to_thread(fs.delete, path, context=context)
-            return DeleteResponse(deleted=result["deleted"], path=result["path"])
+
+            _ss = None
+            _norm_path: str | None = None
+            _original_hash: str | None = None
+            _original_metadata: dict[str, Any] | None = None
+            if transaction_id:
+                _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
+                if _ss is not None:
+                    _norm_path = _normalize_path(path)
+                    _ss.validate_path_available(transaction_id, _norm_path)
+                    try:
+                        _orig_meta = fs.metadata.get(_norm_path)
+                        if _orig_meta:
+                            _original_hash = _orig_meta.etag
+                            _original_metadata = {
+                                "size": _orig_meta.size,
+                                "version": _orig_meta.version,
+                                "modified_at": _orig_meta.modified_at.isoformat()
+                                if _orig_meta.modified_at
+                                else None,
+                                "backend_name": getattr(_orig_meta, "backend_name", None),
+                            }
+                    except Exception:
+                        _original_hash = None
+
+            await fs.sys_unlink(path, context=context)
+
+            if (
+                _ss is not None
+                and _norm_path is not None
+                and _ss._registry.get_transaction_for_path(_norm_path) != transaction_id
+            ):
+                try:
+                    _ss.track_delete(
+                        transaction_id=transaction_id,
+                        path=_norm_path,
+                        original_hash=_original_hash,
+                        original_metadata=_original_metadata,
+                    )
+                except Exception as _track_err:
+                    logger.warning("txn track delete failed: %s", _track_err)
+
+            return DeleteResponse(deleted=True, path=path)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
@@ -328,6 +640,8 @@ def create_async_files_router(
             raise HTTPException(status_code=404, detail=str(e)) from e
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        except _TransactionConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Delete error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -344,7 +658,7 @@ def create_async_files_router(
         """Check if a file or directory exists."""
         try:
             fs = await _get_fs()
-            exists = await asyncio.to_thread(fs.exists, path, context=context)
+            exists = await fs.sys_access(path, context=context)
             return ExistsResponse(exists=exists)
 
         except NexusPermissionError as e:
@@ -359,24 +673,80 @@ def create_async_files_router(
     # List Directory Endpoint
     # =============================================================================
 
-    @router.get("/list", response_model=ListResponse)
+    @router.get("/list", response_model=ListResponse, response_model_by_alias=True)
     async def list_directory(
         path: str = Query(..., description="Directory path to list"),
+        limit: int | None = Query(
+            None, ge=1, le=1000, description="Max items per page (default: all)"
+        ),
+        cursor: str | None = Query(
+            None, description="Opaque cursor from previous response's next_cursor"
+        ),
         context: Any = Depends(get_context),
     ) -> ListResponse:
-        """List directory contents."""
+        """List directory contents with optional cursor pagination.
+
+        When ``limit`` is provided, returns at most ``limit`` items plus
+        ``has_more`` / ``next_cursor`` for fetching the next page.  Without
+        ``limit``, all entries are returned in a single response (backward
+        compatible).
+
+        @see Issue #3102, Decision 2A
+        """
         try:
             fs = await _get_fs()
 
-            # NexusFS.list() returns full paths; strip prefix to get names
-            full_paths = await asyncio.to_thread(fs.list, path, recursive=False, context=context)
-            prefix = path.rstrip("/") + "/"
-            items = [
-                fp[len(prefix) :] if fp.startswith(prefix) else fp.rsplit("/", 1)[-1]
-                for fp in full_paths
-            ]
-            return ListResponse(items=items)
+            # Decode opaque cursor (base64-encoded path)
+            cursor_path: str | None = None
+            if cursor is not None:
+                try:
+                    cursor_path = base64.b64decode(cursor).decode("utf-8")
+                except Exception:
+                    raise HTTPException(status_code=400, detail="Invalid cursor") from None
 
+            # sys_readdir is async — call it directly (not via to_thread)
+            result = await fs.sys_readdir(
+                path,
+                recursive=False,
+                details=True,
+                context=context,
+                limit=limit,
+                cursor=cursor_path,
+            )
+
+            prefix = path.rstrip("/") + "/"
+            # The listed path itself (e.g. "/" → empty name) must not appear
+            # in its own listing — that causes infinite recursion in tree UIs.
+            clean_path = path.rstrip("/") or "/"
+
+            # Paginated path: result is a PaginatedResult
+            if limit is not None:
+                file_items = [
+                    _to_file_item(entry, prefix)
+                    for entry in result.items
+                    if entry.get("path", "").rstrip("/") != clean_path.rstrip("/")
+                ]
+                next_cursor = (
+                    base64.b64encode(result.next_cursor.encode("utf-8")).decode("ascii")
+                    if result.next_cursor
+                    else None
+                )
+                return ListResponse(
+                    items=file_items,
+                    has_more=result.has_more,
+                    next_cursor=next_cursor,
+                )
+
+            # Non-paginated path (backward compat): result is list[dict]
+            file_items = [
+                _to_file_item(entry, prefix)
+                for entry in result
+                if entry.get("path", "").rstrip("/") != clean_path.rstrip("/")
+            ]
+            return ListResponse(items=file_items, has_more=False)
+
+        except HTTPException:
+            raise
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except NexusFileNotFoundError as e:
@@ -399,9 +769,8 @@ def create_async_files_router(
         """Create a directory."""
         try:
             fs = await _get_fs()
-            await asyncio.to_thread(
-                fs.mkdir, request.path, parents=request.parents, context=context
-            )
+            # fs.sys_mkdir is async — call directly
+            await fs.sys_mkdir(request.path, parents=request.parents, context=context)
             return {"created": True, "path": request.path}
 
         except NexusPermissionError as e:
@@ -428,7 +797,7 @@ def create_async_files_router(
         """Get file or directory metadata."""
         try:
             fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.get_metadata, path, context=context)
+            meta = await fs.sys_stat(path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -515,7 +884,7 @@ def create_async_files_router(
 
         try:
             fs = await _get_fs()
-            meta = await asyncio.to_thread(fs.get_metadata, path, context=context)
+            meta = await fs.sys_stat(path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
@@ -526,9 +895,9 @@ def create_async_files_router(
                     for i in range(0, len(data), cs):
                         yield data[i : i + cs]
 
-            def _full_generator() -> Iterator[bytes]:
+            async def _full_generator() -> AsyncIterator[bytes]:
                 """Sync generator wrapping NexusFS.read()."""
-                data = fs.sys_read(path, context=context)
+                data = await fs.sys_read(path, context=context)
                 if isinstance(data, bytes):
                     for i in range(0, len(data), chunk_size):
                         yield data[i : i + chunk_size]
@@ -555,6 +924,366 @@ def create_async_files_router(
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
             logger.exception(f"Stream error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Rename Endpoint
+    # =============================================================================
+
+    STREAMING_COPY_THRESHOLD = 10 * 1024 * 1024  # 10 MB
+
+    @router.post("/rename", response_model=RenameResponse)
+    async def rename_file(
+        request: RenameRequest,
+        context: Any = Depends(get_context),
+    ) -> RenameResponse:
+        """
+        Rename or move a file.
+
+        This is a metadata-only O(1) operation — file content is not copied.
+        Works instantly regardless of file size.
+        """
+        try:
+            fs = await _get_fs()
+            await fs.sys_rename(request.source, request.destination, context=context)
+            return RenameResponse(
+                success=True,
+                source=request.source,
+                destination=request.destination,
+            )
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except NexusFileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Rename error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Copy Endpoint
+    # =============================================================================
+
+    @router.post("/copy", response_model=CopyResponse)
+    async def copy_file(
+        request: CopyRequest,
+        context: Any = Depends(get_context),
+    ) -> CopyResponse:
+        """
+        Copy a file from source to destination.
+
+        Uses streaming for files >= 10 MB to avoid loading entire content
+        into memory. Smaller files are read/written in a single operation.
+        """
+        try:
+            fs = await _get_fs()
+
+            # Check source exists and get size
+            meta = await fs.sys_stat(request.source, context=context)
+            if meta is None:
+                raise NexusFileNotFoundError(path=request.source)
+
+            file_size = meta.get("size", 0) or 0
+
+            if file_size < STREAMING_COPY_THRESHOLD:
+                # Small file: read all then write all
+                content = await fs.sys_read(request.source, context=context)
+                await fs.write(request.destination, buf=content, context=context)
+                bytes_copied = len(content)
+            else:
+                # Large file: streaming copy
+                chunks = await asyncio.to_thread(fs.stream, request.source, context=context)
+                result = await asyncio.to_thread(
+                    fs.write_stream, request.destination, chunks, context=context
+                )
+                bytes_copied = result.get("size", file_size)
+
+            return CopyResponse(
+                success=True,
+                source=request.source,
+                destination=request.destination,
+                bytes_copied=bytes_copied,
+            )
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except NexusFileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Copy error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Bulk Rename Endpoint
+    # =============================================================================
+
+    @router.post("/rename-bulk", response_model=RenameBulkResponse)
+    async def rename_bulk(
+        request: RenameBulkRequest,
+        context: Any = Depends(get_context),
+    ) -> RenameBulkResponse:
+        """
+        Rename/move multiple files in a single request.
+
+        Each operation is processed independently — failures on one do not
+        affect others. Maximum 50 operations per request.
+        """
+        try:
+            fs = await _get_fs()
+            renames = [(op.source, op.destination) for op in request.operations]
+            raw_results = await fs.rename_bulk(renames, context=context)
+
+            results: list[BulkRenameResult] = []
+            for op in request.operations:
+                entry = raw_results.get(op.source, {})
+                results.append(
+                    BulkRenameResult(
+                        source=op.source,
+                        destination=op.destination,
+                        success=entry.get("success", False),
+                        error=entry.get("error"),
+                    )
+                )
+
+            return RenameBulkResponse(results=results)
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Bulk rename error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Bulk Copy Endpoint
+    # =============================================================================
+
+    @router.post("/copy-bulk", response_model=CopyBulkResponse)
+    async def copy_bulk(
+        request: CopyBulkRequest,
+        context: Any = Depends(get_context),
+    ) -> CopyBulkResponse:
+        """
+        Copy multiple files in a single request.
+
+        Each operation is processed independently — failures on one do not
+        affect others. Maximum 50 operations per request. Uses streaming
+        for files >= 10 MB.
+        """
+        try:
+            fs = await _get_fs()
+            results: list[BulkCopyResult] = []
+
+            for op in request.operations:
+                try:
+                    meta = await fs.sys_stat(op.source, context=context)
+                    if meta is None:
+                        results.append(
+                            BulkCopyResult(
+                                source=op.source,
+                                destination=op.destination,
+                                success=False,
+                                error=f"Source not found: {op.source}",
+                            )
+                        )
+                        continue
+
+                    file_size = meta.get("size", 0) or 0
+
+                    if file_size < STREAMING_COPY_THRESHOLD:
+                        content = await fs.sys_read(op.source, context=context)
+                        await fs.write(op.destination, buf=content, context=context)
+                        bytes_copied = len(content)
+                    else:
+                        chunks = await asyncio.to_thread(fs.stream, op.source, context=context)
+                        write_result = await asyncio.to_thread(
+                            fs.write_stream, op.destination, chunks, context=context
+                        )
+                        bytes_copied = write_result.get("size", file_size)
+
+                    results.append(
+                        BulkCopyResult(
+                            source=op.source,
+                            destination=op.destination,
+                            success=True,
+                            bytes_copied=bytes_copied,
+                        )
+                    )
+                except Exception as e:
+                    results.append(
+                        BulkCopyResult(
+                            source=op.source,
+                            destination=op.destination,
+                            success=False,
+                            error=str(e),
+                        )
+                    )
+
+            return CopyBulkResponse(results=results)
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Bulk copy error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Glob Search Endpoint
+    # =============================================================================
+
+    @router.get("/glob", response_model=GlobResponse)
+    async def glob_search(
+        pattern: str = Query(..., description="Glob pattern to match (e.g. '**/*.py')"),
+        path: str = Query("/", description="Base path to search under"),
+        limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
+        context: Any = Depends(get_context),
+    ) -> GlobResponse:
+        """
+        Search for files matching a glob pattern.
+
+        Uses Rust-accelerated glob matching when available, with automatic
+        fallback to Python fnmatch.
+        """
+        try:
+            fs = await _get_fs()
+
+            # List all files under the base path
+            # sys_readdir is async — call directly, not via to_thread
+            all_paths = await fs.sys_readdir(path, recursive=True, context=context)
+
+            # Apply glob pattern filter
+            matched = await asyncio.to_thread(glob_filter, all_paths, include_patterns=[pattern])
+
+            total = len(matched)
+            truncated = total > limit
+            result_paths = matched[:limit]
+
+            return GlobResponse(
+                matches=result_paths,
+                total=total,
+                truncated=truncated,
+                pattern=pattern,
+                base_path=path,
+            )
+
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Glob error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    # =============================================================================
+    # Grep Search Endpoint
+    # =============================================================================
+
+    @router.get("/grep", response_model=GrepResponse)
+    async def grep_search(
+        pattern: str = Query(..., description="Regex pattern to search for"),
+        path: str = Query("/", description="Base path to search under"),
+        ignore_case: bool = Query(False, description="Case-insensitive matching"),
+        limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
+        context: Any = Depends(get_context),
+    ) -> GrepResponse:
+        """
+        Search for content matching a regex pattern within files.
+
+        Uses Rust-accelerated mmap-based grep when available, with automatic
+        fallback to Python re module.
+        """
+        import re
+
+        try:
+            fs = await _get_fs()
+
+            # List all files under the base path
+            # sys_readdir is async — call directly, not via to_thread
+            all_paths = await fs.sys_readdir(path, recursive=True, context=context)
+
+            # Try Rust mmap grep first
+            results = await asyncio.to_thread(
+                grep_files_mmap, pattern, all_paths, ignore_case, limit
+            )
+
+            # Fallback to Python re if Rust is unavailable
+            if results is None:
+                flags = re.IGNORECASE if ignore_case else 0
+                try:
+                    compiled = re.compile(pattern, flags)
+                except re.error as e:
+                    raise HTTPException(
+                        status_code=400, detail=f"Invalid regex pattern: {e}"
+                    ) from e
+
+                results = []
+                for file_path in all_paths:
+                    if len(results) >= limit:
+                        break
+                    try:
+                        content = await fs.read(file_path, context=context)
+                        if isinstance(content, bytes):
+                            content = content.decode("utf-8", errors="replace")
+                        elif isinstance(content, dict):
+                            content = content.get("content", "")
+                            if isinstance(content, bytes):
+                                content = content.decode("utf-8", errors="replace")
+                        for line_num, line in enumerate(str(content).splitlines(), 1):
+                            m = compiled.search(line)
+                            if m:
+                                results.append(
+                                    {
+                                        "file": file_path,
+                                        "line": line_num,
+                                        "content": line,
+                                        "match": m.group(0),
+                                    }
+                                )
+                                if len(results) >= limit:
+                                    break
+                    except Exception:
+                        # Skip files that can't be read (binary, permissions, etc.)
+                        continue
+
+            total = len(results)
+            truncated = total >= limit
+            matches = [
+                GrepMatch(
+                    file=r["file"],
+                    line=r["line"],
+                    content=r["content"],
+                    match=r["match"],
+                )
+                for r in results[:limit]
+            ]
+
+            return GrepResponse(
+                matches=matches,
+                total=total,
+                truncated=truncated,
+                pattern=pattern,
+                base_path=path,
+            )
+
+        except HTTPException:
+            raise
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from e
+        except InvalidPathError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(f"Grep error: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     return router

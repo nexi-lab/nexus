@@ -43,7 +43,6 @@ class TestWorkflowServices:
         services = WorkflowServices()
         assert services.nexus_ops is None
         assert services.metadata_store is None
-        assert services.llm_provider is None
         assert services.glob_match is None
 
     def test_services_with_glob_match(self):

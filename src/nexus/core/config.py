@@ -28,12 +28,12 @@ from nexus.contracts.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
+    from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.protocols.entity_registry import EntityRegistryProtocol
     from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
     from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
     from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
-    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -223,10 +223,6 @@ class SystemServices:
     # Original system services (all degradable)
     # =================================================================
 
-    # Agent identity (Issue #1502)
-    agent_registry: Any = None
-    async_agent_registry: Any = None
-
     # Namespace visibility (Issue #1502)
     namespace_manager: NamespaceManagerProtocol | None = None
     async_namespace_manager: Any = None
@@ -255,14 +251,17 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
-    # DT_PIPE manager — VFS named-pipe IPC (Issue #809)
-    pipe_manager: Any = None
+    # (PipeManager + StreamManager are kernel-internal primitives,
+    # constructed in NexusFS.__init__ — not injected via SystemServices.)
 
-    # EventLog — append-only WAL for filesystem events (Issue #2195)
-    event_log: Any = None
+    # Process lifecycle — kernel process table (Issue #1509)
+    process_table: Any = None
 
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
+
+    # ACP — stateless coding agent CLI caller
+    acp_service: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -295,8 +294,6 @@ class BrickServices:
     tool_namespace_middleware: Any = None  # MCP brick
     api_key_creator: Any = None  # AUTH brick (Issue #1519, 3A)
     snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
-    task_queue_service: Any = None  # TASK_QUEUE brick (Issue #655)
-
     # --- Cache Brick (Issue #1524) ---
     cache_brick: Any = None  # CacheBrick — owns all cache domain services
 
@@ -307,29 +304,25 @@ class BrickServices:
     # --- Sandbox Brick (Issue #1307) ---
     agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
 
-    # --- Skills Brick (Issue #2035) ---
-    skill_service: Any = None  # SkillService (protocol-based)
-    skill_package_service: Any = None  # SkillPackageService
-
-    # --- Delegation & Reputation Bricks (Issue #2131) ---
+    # --- Delegation Brick (Issue #2131) ---
     delegation_service: Any = None  # DELEGATION brick
-    reputation_service: Any = None  # REPUTATION brick
 
     # --- Version Brick (Issue #2034: moved from KernelServices) ---
     version_service: Any = None  # VersionService (file history, rollback, diff)
 
-    # --- Memory Brick (Issue #2177) ---
-    memory_permission: Any = None  # MemoryPermissionProtocol adapter
-
     # --- Search Brick (Issue #810) ---
     zoekt_pipe_consumer: Any = None  # DT_PIPE consumer for Zoekt index notifications
+
+    # --- Task Manager Brick ---
+    task_dispatch_consumer: Any = None  # TaskDispatchPipeConsumer (DT_PIPE lifecycle signals)
 
     # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
     parse_fn: Any = None  # Callable for parsing files (ParsersBrick)
     content_cache: Any = None  # ContentCache instance
     parser_registry: Any = None  # ParserRegistry (file format detection)
     provider_registry: Any = None  # ProviderRegistry (parsing providers)
-    vfs_lock_manager: Any = None  # VFS lock manager (fine-grained file locks)
+    # NOTE: VFSLockManager is kernel-internal (created in NexusFS.__init__),
+    # not injected via BrickServices. See write-path-extraction-design.md.
 
     # --- Governance Brick (Issue #2129) ---
     governance_anomaly_service: Any = None
@@ -347,8 +340,8 @@ class BrickServices:
 class WiredServices:
     """Tier 2b (WIRED) — services requiring NexusFS reference.
 
-    Created by ``nexus.factory._wired._boot_wired_services()`` and bound
-    to NexusFS via ``_bind_wired_services()``.
+    Created by ``nexus.factory._wired._boot_wired_services()`` and registered
+    into ServiceRegistry via ``enlist_wired_services()``.
 
     Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
     """
@@ -356,21 +349,14 @@ class WiredServices:
     rebac_service: Any = None
     mount_service: Any = None
     gateway: Any = None
-    mount_core_service: Any = None
     sync_service: Any = None
     sync_job_service: Any = None
     mount_persist_service: Any = None
     mcp_service: Any = None
-    llm_service: Any = None
-    llm_subsystem: Any = None
     oauth_service: Any = None
-    skill_service: Any = None
-    skill_package_service: Any = None
     search_service: Any = None
     share_link_service: Any = None
     events_service: Any = None
-    task_queue_service: Any = None
-
     # Versioning services (Issue #882: session-managed facades)
     time_travel_service: Any = None
     operations_service: Any = None
@@ -380,10 +366,9 @@ class WiredServices:
     agent_rpc_service: Any = None
     user_provisioning_service: Any = None
     sandbox_rpc_service: Any = None
+    acp_rpc_service: Any = None
     metadata_export_service: Any = None
-    ace_rpc_service: Any = None
     descendant_checker: Any = None
-    memory_provider: Any = None
 
 
 # ---------------------------------------------------------------------------

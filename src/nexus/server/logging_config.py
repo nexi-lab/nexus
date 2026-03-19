@@ -196,7 +196,7 @@ def shutdown_logging() -> None:
     """
     import contextlib
 
-    with contextlib.suppress(Exception):
+    with contextlib.suppress(Exception):  # Shutdown cleanup — must not raise
         structlog.reset_defaults()
 
     root_logger = logging.getLogger()

@@ -381,11 +381,10 @@ def _register_plugin_commands(main: click.Group) -> None:
                             from nexus import connect
                             from nexus.plugins.registry import PluginRegistry as PR
 
-                            nx = connect()
-
-                            plugin_registry = PR(nx)
-
                             async def _load() -> Any:
+                                nonlocal nx
+                                nx = await connect()
+                                plugin_registry = PR(nx)
                                 await plugin_registry.discover()
                                 await plugin_registry.initialize_all()
                                 return await plugin_registry.get_plugin(p_name)

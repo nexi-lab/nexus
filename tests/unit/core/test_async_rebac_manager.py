@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.bricks.rebac.async_manager import AsyncReBACManager
+from nexus.bricks.rebac.manager import AsyncReBACManager
 
 
 class TestAsyncReBACManager:
@@ -49,7 +49,7 @@ class TestAsyncReBACManager:
         """Test rebac_check delegates to sync manager via to_thread."""
         mock_sync_manager.rebac_check.return_value = True
         with patch(
-            "nexus.bricks.rebac.async_manager.asyncio.to_thread", return_value=True
+            "nexus.bricks.rebac.manager.asyncio.to_thread", return_value=True
         ) as mock_thread:
             result = await async_manager.rebac_check(
                 ("user", "alice"), "read", ("file", "/test.txt")
@@ -64,7 +64,7 @@ class TestAsyncReBACManager:
         """Test rebac_delete delegates to sync manager via to_thread."""
         mock_sync_manager.rebac_delete.return_value = True
         with patch(
-            "nexus.bricks.rebac.async_manager.asyncio.to_thread", return_value=True
+            "nexus.bricks.rebac.manager.asyncio.to_thread", return_value=True
         ) as mock_thread:
             result = await async_manager.rebac_delete("tuple-123")
             assert result is True
@@ -76,7 +76,7 @@ class TestAsyncReBACManager:
     ) -> None:
         """Test close delegates to sync manager via to_thread."""
         with patch(
-            "nexus.bricks.rebac.async_manager.asyncio.to_thread", return_value=None
+            "nexus.bricks.rebac.manager.asyncio.to_thread", return_value=None
         ) as mock_thread:
             await async_manager.close()
             mock_thread.assert_called_once()

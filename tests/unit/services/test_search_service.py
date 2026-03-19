@@ -7,17 +7,18 @@ SearchService uses dependency injection with MetastoreABC,
 PermissionEnforcer, PathRouter, and NexusFSGateway.
 """
 
-from unittest.mock import MagicMock, patch
+import re
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.contracts.types import OperationContext
-from nexus.services.search.search_service import (
+from nexus.bricks.search.search_service import (
     DEFAULT_IGNORE_PATTERNS,
     SearchService,
     _filter_ignored_paths,
     _should_ignore_path,
 )
+from nexus.contracts.types import OperationContext
 
 # =============================================================================
 # Fixtures
@@ -61,7 +62,7 @@ def mock_router():
 def mock_gateway():
     """Create a mock NexusFSGateway."""
     gw = MagicMock()
-    gw.read_file.return_value = b"test content"
+    gw.read_file = AsyncMock(return_value=b"test content")
     gw.read_bulk.return_value = {}
     gw.get_routing_params.return_value = (None, None, False)
     gw.has_descendant_access.return_value = True
@@ -231,23 +232,23 @@ class TestIgnorePatterns:
 class TestGatewayDelegation:
     """Tests for gateway delegation methods."""
 
-    def test_read_delegates_to_gateway(self, service, mock_gateway):
+    async def test_read_delegates_to_gateway(self, service, mock_gateway):
         """_read delegates to gateway.read_file."""
         mock_gateway.read_file.return_value = b"file content"
-        result = service._read("/test.txt")
+        result = await service._read("/test.txt")
         assert result == b"file content"
         mock_gateway.read_file.assert_called_once()
 
-    def test_read_raises_without_gateway(self, mock_metadata_store):
+    async def test_read_raises_without_gateway(self, mock_metadata_store):
         """_read raises NotImplementedError without gateway."""
         svc = SearchService(metadata_store=mock_metadata_store)
         with pytest.raises(NotImplementedError, match="gateway not provided"):
-            svc._read("/test.txt")
+            await svc._read("/test.txt")
 
-    def test_read_converts_str_to_bytes(self, service, mock_gateway):
+    async def test_read_converts_str_to_bytes(self, service, mock_gateway):
         """_read converts string response to bytes."""
         mock_gateway.read_file.return_value = "string content"
-        result = service._read("/test.txt")
+        result = await service._read("/test.txt")
         assert result == b"string content"
 
     def test_read_bulk_delegates_to_gateway(self, service, mock_gateway):
@@ -432,15 +433,155 @@ class TestCrossZoneCache:
 class TestGrepValidation:
     """Tests for grep input validation."""
 
-    def test_invalid_regex_raises_value_error(self, service, context):
+    async def test_invalid_regex_raises_value_error(self, service, context):
         """grep raises ValueError for invalid regex patterns."""
         with pytest.raises(ValueError, match="Invalid regex pattern"):
-            service.grep(pattern="[invalid", context=context)
+            await service.grep(pattern="[invalid", context=context)
 
-    def test_valid_regex_accepted(self, service, mock_metadata_store, context):
+    async def test_valid_regex_accepted(self, service, mock_metadata_store, context):
         """grep accepts valid regex patterns."""
         mock_metadata_store.list_paths.return_value = []
         # list() returns empty so grep short-circuits
         with patch.object(service, "list", return_value=[]):
-            results = service.grep(pattern="def\\s+\\w+", context=context)
+            results = await service.grep(pattern="def\\s+\\w+", context=context)
             assert results == []
+
+
+# =============================================================================
+# grep context lines (_grep_lines)
+# =============================================================================
+
+
+class TestGrepContext:
+    """Tests for grep context line support (Issue #2811)."""
+
+    @staticmethod
+    def _make_lines():
+        """Sample file content for testing."""
+        return [
+            "line 1: header",
+            "line 2: import os",
+            "line 3: import sys",
+            "line 4:",
+            "line 5: def main():",
+            "line 6:     print('hello')",
+            "line 7:     return 0",
+            "line 8:",
+            "line 9: def helper():",
+            "line 10:    pass",
+        ]
+
+    def test_basic_match_no_context(self):
+        """Basic grep without context returns just matching lines."""
+        lines = self._make_lines()
+        regex = re.compile(r"def \w+")
+        results = SearchService._grep_lines(regex, lines, "/test.py")
+        assert len(results) == 2
+        assert results[0]["line"] == 5
+        assert results[0]["content"] == "line 5: def main():"
+        assert results[1]["line"] == 9
+        assert "before_context" not in results[0]
+        assert "after_context" not in results[0]
+
+    def test_after_context(self):
+        """After-context returns N lines after each match."""
+        lines = self._make_lines()
+        regex = re.compile(r"def main")
+        results = SearchService._grep_lines(regex, lines, "/test.py", after_context=2)
+        assert len(results) == 1
+        assert results[0]["line"] == 5
+        ctx = results[0]["after_context"]
+        assert len(ctx) == 2
+        assert ctx[0]["line"] == 6
+        assert ctx[1]["line"] == 7
+
+    def test_before_context(self):
+        """Before-context returns N lines before each match."""
+        lines = self._make_lines()
+        regex = re.compile(r"def main")
+        results = SearchService._grep_lines(regex, lines, "/test.py", before_context=2)
+        assert len(results) == 1
+        ctx = results[0]["before_context"]
+        assert len(ctx) == 2
+        assert ctx[0]["line"] == 3
+        assert ctx[1]["line"] == 4
+
+    def test_combined_context(self):
+        """Both before and after context."""
+        lines = self._make_lines()
+        regex = re.compile(r"def main")
+        results = SearchService._grep_lines(
+            regex, lines, "/test.py", before_context=1, after_context=1
+        )
+        assert len(results) == 1
+        assert len(results[0]["before_context"]) == 1
+        assert results[0]["before_context"][0]["line"] == 4
+        assert len(results[0]["after_context"]) == 1
+        assert results[0]["after_context"][0]["line"] == 6
+
+    def test_context_at_file_start(self):
+        """Before-context at line 1 doesn't go negative."""
+        lines = self._make_lines()
+        regex = re.compile(r"header")
+        results = SearchService._grep_lines(regex, lines, "/test.py", before_context=5)
+        assert len(results) == 1
+        assert results[0]["line"] == 1
+        assert results[0].get("before_context", []) == []
+
+    def test_context_at_file_end(self):
+        """After-context at last line doesn't go past end."""
+        lines = self._make_lines()
+        regex = re.compile(r"pass")
+        results = SearchService._grep_lines(regex, lines, "/test.py", after_context=5)
+        assert len(results) == 1
+        assert results[0]["line"] == 10
+        assert results[0].get("after_context", []) == []
+
+    def test_invert_match(self):
+        """Invert match returns non-matching lines."""
+        lines = self._make_lines()
+        regex = re.compile(r"def \w+")
+        results = SearchService._grep_lines(regex, lines, "/test.py", invert_match=True)
+        # 10 lines, 2 match "def", so 8 should be returned
+        assert len(results) == 8
+        for r in results:
+            assert "def " not in r["content"]
+
+    def test_invert_match_with_context(self):
+        """Invert match with context lines."""
+        lines = self._make_lines()
+        regex = re.compile(r"def \w+")
+        results = SearchService._grep_lines(
+            regex, lines, "/test.py", invert_match=True, after_context=1
+        )
+        assert len(results) == 8
+        # First result (line 1) should have after_context
+        assert results[0]["line"] == 1
+        assert len(results[0]["after_context"]) == 1
+
+    def test_max_results_limit(self):
+        """Max results is respected."""
+        lines = self._make_lines()
+        regex = re.compile(r"line")
+        results = SearchService._grep_lines(regex, lines, "/test.py", max_results=3)
+        assert len(results) == 3
+
+    def test_no_matches(self):
+        """No matches returns empty list."""
+        lines = self._make_lines()
+        regex = re.compile(r"NONEXISTENT")
+        results = SearchService._grep_lines(regex, lines, "/test.py")
+        assert results == []
+
+    def test_empty_lines(self):
+        """Empty file returns empty list."""
+        regex = re.compile(r"test")
+        results = SearchService._grep_lines(regex, [], "/test.py")
+        assert results == []
+
+    def test_match_includes_match_group(self):
+        """Match dict includes the matched text."""
+        lines = ["hello world"]
+        regex = re.compile(r"world")
+        results = SearchService._grep_lines(regex, lines, "/test.py")
+        assert results[0]["match"] == "world"

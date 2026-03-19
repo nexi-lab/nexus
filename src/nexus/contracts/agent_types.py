@@ -3,7 +3,7 @@
 Pure value objects for agent identity and lifecycle. These types have zero
 runtime dependencies on kernel, services, or bricks — only stdlib imports.
 
-Originally in ``nexus.services.agents.agent_record``; moved here so bricks
+Originally in ``nexus.system_services.agents.agent_record``; moved here so bricks
 can import them without violating the zero-core-imports rule.
 
 Issue #2169: Added AgentSpec/AgentStatus for declarative agent management
@@ -131,9 +131,6 @@ class AgentRecord:
         metadata: Arbitrary agent metadata (platform, endpoint_url, etc.)
         created_at: When the agent was first registered
         updated_at: When the agent record was last modified
-        context_manifest: Serialized context sources for deterministic pre-execution
-            (Issue #1341). Stored as tuple of dicts to keep kernel free of Pydantic.
-            Deserialized into ContextSource models at resolution time.
         qos: Agent QoS assignment with scheduling/eviction class and optional
             overrides (Issue #2171). Defaults to standard/standard.
     """
@@ -148,7 +145,6 @@ class AgentRecord:
     metadata: types.MappingProxyType[str, Any]
     created_at: datetime
     updated_at: datetime
-    context_manifest: tuple[dict[str, Any], ...] = ()
     qos: AgentQoS = field(default_factory=AgentQoS)
 
     def to_dict(self) -> dict[str, Any]:

@@ -1,8 +1,6 @@
 """PermissionEnforcer — ReBAC permission enforcement for Nexus (v0.6.0+).
 
-Canonical location: nexus.bricks.rebac.enforcer (moved from services/permissions/ per
-Issue #1847 — the enforcer is a brick-level component that belongs with the
-ReBAC manager, not in the services tier).
+Canonical location: nexus.bricks.rebac.enforcer (Issue #1847).
 """
 
 import logging
@@ -17,28 +15,24 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 
-def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
+def check_stale_session(process_table: Any, context: OperationContext) -> None:
     """Check for stale agent sessions and raise if the session is outdated.
 
     Compares the agent_generation from the JWT token (stored in context) against
-    the current generation in the agent registry (DB). A mismatch means a newer
+    the current generation in the process table. A mismatch means a newer
     session has superseded this one.
 
     Issue #1240 / #1445: Shared helper used by both sync and async enforcers.
 
     Args:
-        agent_registry: AgentRegistry instance (or None to skip check).
+        process_table: ProcessTable instance (or None to skip check).
         context: Operation context with agent_generation from JWT claims.
 
     Raises:
         StaleSessionError: If the session generation is stale or the agent
             record no longer exists (deleted agent with valid JWT).
     """
-    if (
-        agent_registry is None
-        or context.agent_generation is None
-        or context.subject_type != "agent"
-    ):
+    if process_table is None or context.agent_generation is None or context.subject_type != "agent":
         return
 
     agent_id = context.agent_id or context.subject_id
@@ -46,7 +40,7 @@ def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
         logger.warning("[STALE-SESSION] No agent_id in context, skipping check")
         return
 
-    current_record = agent_registry.get(agent_id)
+    current_record = process_table.get(agent_id)
 
     from nexus.contracts.exceptions import StaleSessionError
 
@@ -125,8 +119,8 @@ class PermissionEnforcer:
         enable_hotspot_tracking: bool = True,
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         namespace_manager: "NamespaceManager | None" = None,
-        # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
-        agent_registry: Any = None,
+        # Issue #1240: Process table for stale-session detection (Agent OS Phase 1)
+        process_table: Any = None,
     ):
         """Initialize permission enforcer.
 
@@ -145,7 +139,7 @@ class PermissionEnforcer:
             hotspot_detector: HotspotDetector for access pattern tracking (Issue #921)
             enable_hotspot_tracking: Enable hotspot tracking (default: True)
             namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
-            agent_registry: AgentRegistry for stale-session detection (Issue #1240)
+            process_table: ProcessTable for stale-session detection (Issue #1240)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: ReBACManager | None = rebac_manager
@@ -155,8 +149,8 @@ class PermissionEnforcer:
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         self.namespace_manager: NamespaceManager | None = namespace_manager
 
-        # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
-        self.agent_registry = agent_registry
+        # Issue #1240: Process table for stale-session detection (Agent OS Phase 1)
+        self.process_table = process_table
 
         # P0-4: Enhanced features
         self.allow_admin_bypass = allow_admin_bypass
@@ -477,7 +471,7 @@ class PermissionEnforcer:
                 )
 
         # Issue #1240 / #1445: Stale-session detection (Agent OS Phase 1)
-        check_stale_session(self.agent_registry, context)
+        check_stale_session(self.process_table, context)
 
         # Normal ReBAC check
         return self._check_rebac(path, permission, context)
@@ -520,7 +514,7 @@ class PermissionEnforcer:
         object_type = "file"  # Default
         # Unscope zone-prefixed paths so object_id matches how ReBAC tuples
         # are created (non-prefixed path + zone_id field for isolation).
-        from nexus.server.path_utils import unscope_internal_path
+        from nexus.lib.path_utils import unscope_internal_path
 
         object_id = unscope_internal_path(path)  # Strip /zone/{id}/ prefix
 
@@ -1050,3 +1044,88 @@ class PermissionEnforcer:
                 result.append(path)
 
         return result
+
+    def filter_search_results(
+        self,
+        paths: list[str],
+        *,
+        user_id: str,
+        zone_id: str,
+        is_admin: bool = False,
+    ) -> list[str]:
+        """Filter search result paths by read permission via bulk check.
+
+        Unlike filter_list(), this method:
+        1. Skips the NamespaceManager pre-filter (search paths lack mount entries)
+        2. Uses compute_permissions_bulk with fresh graph (unique tuple_version)
+           to check only the N search result paths — O(N) not O(total_zone_tuples)
+
+        Performance: 1 SQL query + 1 Rust graph build + N permission checks.
+        Scales with search result count, NOT zone size.
+
+        Args:
+            paths: Absolute paths from search results
+            user_id: The authenticated user's ID
+            zone_id: Zone ID for isolation
+            is_admin: Whether the user is an admin (bypasses checks)
+
+        Returns:
+            Filtered list of paths the user can read
+        """
+        if not paths:
+            return []
+
+        # Admin bypass
+        if is_admin and self.allow_admin_bypass:
+            return paths
+
+        if self.rebac_manager is None:
+            return []  # fail-closed: no manager = no access
+
+        try:
+            return self._filter_search_bulk(paths, user_id=user_id, zone_id=zone_id)
+        except Exception:
+            logger.warning(
+                "filter_search_results failed, denying all (fail-closed)",
+                exc_info=True,
+            )
+            return []  # fail-closed
+
+    def _filter_search_bulk(
+        self,
+        paths: list[str],
+        *,
+        user_id: str,
+        zone_id: str,
+    ) -> list[str]:
+        """Check only the given paths via Rust bulk permission check.
+
+        Uses a unique tuple_version (time_ns) to force a fresh graph build,
+        bypassing the stale GRAPH_CACHE bug in compute_permissions_bulk.
+        """
+        import time as time_module
+
+        from nexus.bricks.rebac.utils.fast import check_permissions_bulk_with_fallback
+
+        assert self.rebac_manager is not None  # caller already checked
+
+        # Fetch tuples for zone (1 SQL query) — includes cross-zone for user
+        tuples = self.rebac_manager._fetch_tuples_for_zone(
+            zone_id, include_cross_zone_for_user=user_id
+        )
+        namespace_configs = self.rebac_manager._get_namespace_configs_dict()
+
+        # Build checks: [(subject, permission, object), ...]
+        subject = ("user", user_id)
+        checks = [(subject, "read", ("file", p)) for p in paths]
+
+        # Use unique tuple_version to force fresh Rust graph (bypass stale cache)
+        results = check_permissions_bulk_with_fallback(
+            checks=checks,
+            tuples=tuples,
+            namespace_configs=namespace_configs,
+            tuple_version=time_module.time_ns(),
+        )
+
+        # results is dict[(subj_type, subj_id, perm, obj_type, obj_id) -> bool]
+        return [p for p in paths if results.get(("user", user_id, "read", "file", p), False)]

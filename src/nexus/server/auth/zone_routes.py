@@ -23,6 +23,7 @@ from nexus.bricks.auth.zone_helpers import (
 from nexus.lib.zone_helpers import (
     add_user_to_zone,
     get_user_zones,
+    is_zone_owner,
     user_belongs_to_zone,
 )
 from nexus.server.auth.auth_routes import (
@@ -377,17 +378,17 @@ async def delete_zone_endpoint(
 
     with auth.session_factory() as session:
         if not is_admin:
-            # Check if user is zone member via ReBAC
+            # Require zone *owner* (not mere member) for destructive operations
             rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
             if rebac_mgr is None:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Cannot verify zone ownership — ReBAC unavailable",
                 )
-            if not user_belongs_to_zone(rebac_mgr, user_id, zone_id):
+            if not is_zone_owner(rebac_mgr, user_id, zone_id):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Access denied: you are not a member of zone '{zone_id}'",
+                    detail=f"Access denied: you are not the owner of zone '{zone_id}'",
                 )
 
         zone = session.get(ZoneModel, zone_id)
@@ -395,6 +396,14 @@ async def delete_zone_endpoint(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Zone '{zone_id}' not found",
+            )
+
+        # Enforce ownership for zone deletion (not just membership)
+        _zone_owner: str | None = getattr(zone, "owner_id", None)
+        if not is_admin and _zone_owner is not None and _zone_owner != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the zone owner can delete a zone",
             )
 
         if zone.phase == "Terminated":

@@ -1,15 +1,14 @@
 """Tests for WorkspaceRegistry.
 
-These tests verify workspace and memory registration functionality.
+These tests verify workspace registration functionality.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from nexus.bricks.workspace.workspace_registry import (
-    MemoryConfig,
     WorkspaceConfig,
     WorkspaceRegistry,
 )
@@ -66,48 +65,6 @@ class TestWorkspaceConfig:
         assert result["created_at"] is None
 
 
-class TestMemoryConfig:
-    """Test MemoryConfig dataclass."""
-
-    def test_init_minimal(self) -> None:
-        """Test minimal initialization."""
-        config = MemoryConfig(path="/my-memory")
-        assert config.path == "/my-memory"
-        assert config.name is None
-        assert config.description == ""
-
-    def test_init_full(self) -> None:
-        """Test full initialization."""
-        now = datetime.now()
-        config = MemoryConfig(
-            path="/memory",
-            name="Knowledge Base",
-            description="Test memory",
-            created_at=now,
-            created_by="alice",
-            metadata={"type": "kb"},
-        )
-        assert config.path == "/memory"
-        assert config.name == "Knowledge Base"
-        assert config.description == "Test memory"
-        assert config.created_at == now
-        assert config.created_by == "alice"
-        assert config.metadata == {"type": "kb"}
-
-    def test_to_dict(self) -> None:
-        """Test to_dict conversion."""
-        now = datetime.now()
-        config = MemoryConfig(
-            path="/memory",
-            name="KB",
-            created_at=now,
-        )
-        result = config.to_dict()
-        assert result["path"] == "/memory"
-        assert result["name"] == "KB"
-        assert result["created_at"] == now.isoformat()
-
-
 class TestWorkspaceRegistry:
     """Test WorkspaceRegistry functionality."""
 
@@ -134,7 +91,6 @@ class TestWorkspaceRegistry:
         with patch("nexus.bricks.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
             reg = WorkspaceRegistry(mock_metadata, record_store=mock_record_store)
             reg._workspaces = {}
-            reg._memories = {}
             return reg
 
     def test_init(self, mock_metadata: MagicMock, mock_record_store: MagicMock) -> None:
@@ -170,15 +126,16 @@ class TestWorkspaceRegistry:
         with patch.object(registry, "_save_workspace_to_db"):
             registry.register_workspace("/workspace")
 
-        with patch.object(registry, "_delete_workspace_from_db"):
+        with patch.object(registry, "_delete_workspace_from_db", return_value=True):
             result = registry.unregister_workspace("/workspace")
             assert result is True
             assert "/workspace" not in registry._workspaces
 
     def test_unregister_workspace_not_found(self, registry: WorkspaceRegistry) -> None:
         """Test unregistering non-existent workspace."""
-        result = registry.unregister_workspace("/nonexistent")
-        assert result is False
+        with patch.object(registry, "_delete_workspace_from_db", return_value=False):
+            result = registry.unregister_workspace("/nonexistent")
+            assert result is False
 
     def test_get_workspace(self, registry: WorkspaceRegistry) -> None:
         """Test getting workspace by path."""
@@ -229,91 +186,6 @@ class TestWorkspaceRegistry:
         assert "/ws1" in paths
         assert "/ws2" in paths
 
-    def test_register_memory(self, registry: WorkspaceRegistry) -> None:
-        """Test memory registration."""
-        with patch.object(registry, "_save_memory_to_db"):
-            config = registry.register_memory(
-                path="/my-memory",
-                name="Test Memory",
-                description="A test memory",
-            )
-            assert config.path == "/my-memory"
-            assert config.name == "Test Memory"
-            assert config.description == "A test memory"
-            assert "/my-memory" in registry._memories
-
-    def test_register_memory_duplicate_raises(self, registry: WorkspaceRegistry) -> None:
-        """Test that registering duplicate memory raises."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/memory")
-
-        with pytest.raises(ValueError, match="already registered"):
-            registry.register_memory("/memory")
-
-    def test_unregister_memory(self, registry: WorkspaceRegistry) -> None:
-        """Test memory unregistration."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/memory")
-
-        with patch.object(registry, "_delete_memory_from_db"):
-            result = registry.unregister_memory("/memory")
-            assert result is True
-            assert "/memory" not in registry._memories
-
-    def test_unregister_memory_not_found(self, registry: WorkspaceRegistry) -> None:
-        """Test unregistering non-existent memory."""
-        result = registry.unregister_memory("/nonexistent")
-        assert result is False
-
-    def test_get_memory(self, registry: WorkspaceRegistry) -> None:
-        """Test getting memory by path."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/memory", name="KB")
-
-        config = registry.get_memory("/memory")
-        assert config is not None
-        assert config.name == "KB"
-
-    def test_get_memory_not_found(self, registry: WorkspaceRegistry) -> None:
-        """Test getting non-existent memory."""
-        config = registry.get_memory("/nonexistent")
-        assert config is None
-
-    def test_find_memory_for_path_exact(self, registry: WorkspaceRegistry) -> None:
-        """Test finding memory for exact path."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/my-memory")
-
-        config = registry.find_memory_for_path("/my-memory")
-        assert config is not None
-        assert config.path == "/my-memory"
-
-    def test_find_memory_for_path_nested(self, registry: WorkspaceRegistry) -> None:
-        """Test finding memory for nested path."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/my-memory")
-
-        config = registry.find_memory_for_path("/my-memory/docs/file.md")
-        assert config is not None
-        assert config.path == "/my-memory"
-
-    def test_find_memory_for_path_not_found(self, registry: WorkspaceRegistry) -> None:
-        """Test finding memory for unregistered path."""
-        config = registry.find_memory_for_path("/random/path")
-        assert config is None
-
-    def test_list_memories(self, registry: WorkspaceRegistry) -> None:
-        """Test listing memories."""
-        with patch.object(registry, "_save_memory_to_db"):
-            registry.register_memory("/mem1", name="M1")
-            registry.register_memory("/mem2", name="M2")
-
-        memories = registry.list_memories()
-        assert len(memories) == 2
-        paths = [m.path for m in memories]
-        assert "/mem1" in paths
-        assert "/mem2" in paths
-
     def test_register_workspace_with_context_dict(self, registry: WorkspaceRegistry) -> None:
         """Test workspace registration with context as dict."""
         with patch.object(registry, "_save_workspace_to_db"):
@@ -333,12 +205,112 @@ class TestWorkspaceRegistry:
             )
             assert config.metadata == {"key": "value", "count": 42}
 
-    def test_register_memory_with_context_dict(self, registry: WorkspaceRegistry) -> None:
-        """Test memory registration with context as dict."""
-        with patch.object(registry, "_save_memory_to_db"):
-            context = {"user_id": "bob", "zone_id": "team1"}
-            config = registry.register_memory(
-                path="/memory",
-                context=context,
-            )
-            assert config.created_by == "bob"
+
+_has_dry_helpers = hasattr(WorkspaceRegistry, "_extract_context")
+
+
+@pytest.mark.skipif(not _has_dry_helpers, reason="requires Issue #2987 refactor")
+class TestUpdateWorkspace:
+    """Tests for update_workspace() method (DB-first)."""
+
+    @pytest.fixture
+    def registry(self) -> WorkspaceRegistry:
+        mock_rs = MagicMock()
+        mock_session = MagicMock()
+        mock_session.__enter__ = lambda self: mock_session
+        mock_session.__exit__ = lambda self, *args: None
+        # Make the query chain return a proper mock model
+        mock_ws_model = MagicMock()
+        mock_ws_model.path = "/ws"
+        mock_ws_model.name = "Old"
+        mock_ws_model.description = "Also keep"
+        mock_ws_model.created_at = datetime.now()
+        mock_ws_model.created_by = "test"
+        mock_ws_model.extra_metadata = None
+        mock_session.execute.return_value.scalars.return_value.first.return_value = mock_ws_model
+        mock_rs.session_factory = MagicMock(return_value=mock_session)
+        with patch.object(WorkspaceRegistry, "_load_from_db"):
+            reg = WorkspaceRegistry(MagicMock(), record_store=mock_rs)
+            reg._workspaces = {}
+            reg._mock_ws_model = mock_ws_model  # stash for tests
+            return reg
+
+    def test_update_name(self, registry: WorkspaceRegistry) -> None:
+        with patch.object(registry, "_save_workspace_to_db"):
+            registry.register_workspace("/ws", name="Old")
+        config = registry.update_workspace("/ws", name="New")
+        assert config.name == "New"
+
+    def test_update_preserves_unchanged_fields(self, registry: WorkspaceRegistry) -> None:
+        with patch.object(registry, "_save_workspace_to_db"):
+            registry.register_workspace("/ws", name="Keep", description="Also keep")
+        config = registry.update_workspace("/ws", name="Changed")
+        assert config.name == "Changed"
+        assert config.description == "Also keep"
+
+    def test_update_nonexistent_raises(self, registry: WorkspaceRegistry) -> None:
+        # Make the DB return None for the query
+        session_mock = registry.metadata_session_factory()
+        session_mock.execute.return_value.scalars.return_value.first.return_value = None
+        with pytest.raises(ValueError, match="Workspace not found"):
+            registry.update_workspace("/nonexistent", name="X")
+
+
+@pytest.mark.skipif(not _has_dry_helpers, reason="requires Issue #2987 refactor")
+class TestDRYHelpers:
+    """Tests for extracted DRY helper methods (Issue #2987)."""
+
+    @pytest.fixture
+    def registry(self) -> WorkspaceRegistry:
+        mock_rs = MagicMock()
+        mock_session = MagicMock()
+        mock_session.__enter__ = lambda self: mock_session
+        mock_session.__exit__ = lambda self, *args: None
+        mock_rs.session_factory = MagicMock(return_value=mock_session)
+        with patch.object(WorkspaceRegistry, "_load_from_db"):
+            reg = WorkspaceRegistry(MagicMock(), record_store=mock_rs)
+            reg._workspaces = {}
+            return reg
+
+    def test_extract_context_none(self, registry: WorkspaceRegistry) -> None:
+        assert registry._extract_context(None) == (None, None, None)
+
+    def test_extract_context_dict(self, registry: WorkspaceRegistry) -> None:
+        ctx = {"user_id": "alice", "agent_id": "bot-1", "zone_id": "z1"}
+        assert registry._extract_context(ctx) == ("alice", "bot-1", "z1")
+
+    def test_extract_context_object(self, registry: WorkspaceRegistry) -> None:
+        ctx = MagicMock()
+        ctx.user_id = "bob"
+        ctx.agent_id = "agent-2"
+        ctx.zone_id = "z2"
+        assert registry._extract_context(ctx) == ("bob", "agent-2", "z2")
+
+    def test_validate_agent_ownership_no_agent(self, registry: WorkspaceRegistry) -> None:
+        registry._validate_agent_ownership(None, "alice")  # should not raise
+
+    def test_validate_agent_ownership_is_noop(self, registry: WorkspaceRegistry) -> None:
+        # method is a no-op — ownership validated via ReBAC
+        registry._validate_agent_ownership("agent-1", "alice")  # should not raise
+
+    def test_compute_expiry_none(self, registry: WorkspaceRegistry) -> None:
+        assert registry._compute_expiry(None) is None
+
+    def test_compute_expiry_timedelta(self, registry: WorkspaceRegistry) -> None:
+        result = registry._compute_expiry(timedelta(hours=1))
+        assert result is not None
+        assert isinstance(result, datetime)
+
+    def test_auto_grant_no_rebac(self, registry: WorkspaceRegistry) -> None:
+        registry.rebac_manager = None
+        registry._auto_grant_ownership("/ws", "alice", "z1")  # should not raise
+
+    def test_auto_grant_success(self, registry: WorkspaceRegistry) -> None:
+        registry.rebac_manager = MagicMock()
+        registry._auto_grant_ownership("/ws", "alice", "z1")
+        registry.rebac_manager.rebac_write.assert_called_once()
+
+    def test_auto_grant_error_is_nonfatal(self, registry: WorkspaceRegistry) -> None:
+        registry.rebac_manager = MagicMock()
+        registry.rebac_manager.rebac_write.side_effect = RuntimeError("DB error")
+        registry._auto_grant_ownership("/ws", "alice", "z1")  # should not raise

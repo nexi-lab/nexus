@@ -8,7 +8,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -51,7 +50,8 @@ def ops_diff(
     operation_1: str,
     operation_2: str,
     show_content: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Compare file state between two operation points.
 
@@ -62,10 +62,25 @@ def ops_diff(
         nexus ops diff /workspace/data.txt op_abc123 op_def456
         nexus ops diff /workspace/code.py op_abc123 op_def456 --show-content
     """
-    try:
-        nx = get_filesystem(backend_config)
+    import asyncio
 
-        time_travel = getattr(nx, "time_travel_service", None)
+    asyncio.run(
+        _async_ops_diff(path, operation_1, operation_2, show_content, remote_url, remote_api_key)
+    )
+
+
+async def _async_ops_diff(
+    path: str,
+    operation_1: str,
+    operation_2: str,
+    show_content: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        time_travel = nx.service("time_travel")
         if time_travel is None:
             console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
             nx.close()
@@ -174,7 +189,8 @@ def ops_log(
     path: str | None,
     status: str | None,
     limit: int,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Show operation log with optional filters.
 
@@ -186,18 +202,45 @@ def ops_log(
         nexus ops log --type write --path /workspace/data.txt
         nexus ops log --status failure
     """
-    try:
-        nx = get_filesystem(backend_config)
+    import asyncio
 
-        ops_service = getattr(nx, "operations_service", None)
+    asyncio.run(
+        _async_ops_log(agent, zone, op_type, path, status, limit, remote_url, remote_api_key)
+    )
+
+
+async def _async_ops_log(
+    agent: str | None,
+    zone: str | None,
+    op_type: str | None,
+    path: str | None,
+    status: str | None,
+    limit: int,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        ops_service = nx.service("operations")
         if ops_service is None:
             raise click.ClickException("Operation log requires a local NexusFS instance")
+
+        # Support prefix matching: --path /demo/ matches all paths under /demo/
+        # Use path_pattern (SQL LIKE with * → %) when path ends with /
+        # or contains *, otherwise exact match.
+        _path = path
+        _path_pattern = None
+        if path and (path.endswith("/") or "*" in path):
+            _path = None
+            _path_pattern = path.rstrip("/") + "/*" if path.endswith("/") else path
 
         operations = ops_service.list_operations(
             zone_id=zone,
             agent_id=agent,
             operation_type=op_type,
-            path=path,
+            path=_path,
+            path_pattern=_path_pattern,
             status=status,
             limit=limit,
         )
@@ -246,11 +289,75 @@ def ops_log(
         handle_error(e)
 
 
+@ops_group.command(name="replay")
+@click.option("--limit", "-n", type=int, default=10, help="Number of records to show")
+@click.option("--entity-urn", type=str, default=None, help="Filter by entity URN")
+@click.option("--from-sequence", type=int, default=0, help="Start from sequence number")
+@add_backend_options
+@click.pass_context
+def ops_replay(
+    ctx: click.Context,
+    limit: int,
+    entity_urn: str | None,
+    from_sequence: int,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Replay MCL records.
+
+    Shows metadata change log entries from the operation log, ordered
+    by sequence number. Useful for debugging and auditing.
+
+    Examples:
+        nexus ops replay --limit 5
+        nexus ops replay --entity-urn urn:nexus:file:default:abc123
+    """
+    from nexus.cli.api_client import get_api_client_from_options
+
+    profile_name = (ctx.obj or {}).get("profile")
+    client = get_api_client_from_options(remote_url, remote_api_key, profile_name=profile_name)
+
+    params: dict[str, str | int] = {
+        "from_sequence": from_sequence,
+        "limit": limit,
+    }
+    if entity_urn:
+        params["entity_urn"] = entity_urn
+
+    try:
+        result = client.get("/api/v2/ops/replay", params=params)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from e
+
+    records = result.get("records", [])
+    if not records:
+        console.print("[yellow]No MCL records found[/yellow]")
+        return
+
+    console.print(f"[bold]MCL Records (from seq {from_sequence}):[/bold]")
+    console.print()
+
+    for r in records:
+        seq = r.get("sequence_number", "?")
+        urn = r.get("entity_urn", "?")
+        aspect = r.get("aspect_name", "?")
+        change = r.get("change_type", "?")
+        ts = r.get("timestamp", "?")
+        console.print(f"  #{seq:>6}  {change:>12}  {aspect:20s}  {urn}")
+        console.print(f"          {ts}")
+        console.print()
+
+    if result.get("has_more"):
+        next_cursor = result.get("next_cursor", "?")
+        console.print(f"[dim]More records available. Use --from-sequence {next_cursor}[/dim]")
+
+
 @click.command(name="undo")
 @click.option("--agent", "-a", help="Filter by agent ID (undo last operation by this agent)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @add_backend_options
-def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
+def undo(agent: str | None, yes: bool, remote_url: str | None, remote_api_key: str | None) -> None:
     """Undo the last successful operation.
 
     Reverts the most recent filesystem operation.
@@ -260,10 +367,18 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
         nexus undo --agent my-agent
         nexus undo --yes
     """
-    try:
-        nx = get_filesystem(backend_config)
+    import asyncio
 
-        ops_service = getattr(nx, "operations_service", None)
+    asyncio.run(_async_undo(agent, yes, remote_url, remote_api_key))
+
+
+async def _async_undo(
+    agent: str | None, yes: bool, remote_url: str | None, remote_api_key: str | None
+) -> None:
+    try:
+        nx = await get_filesystem(remote_url, remote_api_key)
+
+        ops_service = nx.service("operations")
         if ops_service is None:
             raise click.ClickException("Undo requires a local NexusFS instance")
 

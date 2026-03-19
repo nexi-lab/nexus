@@ -104,6 +104,7 @@ class ProxyBrick:
             circuit=self._circuit,
             batch_size=self._config.replay_batch_size,
             poll_interval=self._config.replay_poll_interval,
+            on_replay_success=self._on_replay_success,
         )
         self._replay_task = asyncio.create_task(self._replay_engine.run())
 
@@ -142,11 +143,13 @@ class ProxyBrick:
 
     async def _do_forward(self, method: str, *, data: bytes | None = None, **kwargs: Any) -> Any:
         """Unified forward — handles both regular and streaming calls (#6-A)."""
+        payload_ref = base64.b64encode(data).decode() if data is not None else None
+
         allowed = await self._circuit.allow_request()
         if not allowed:
             if self._edge_sync is not None:
                 self._edge_sync.notify_disconnected()
-            queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+            queue_id = await self._queue.enqueue(method, kwargs=kwargs, payload_ref=payload_ref)
             self._wake_replay()
             logger.warning("Circuit open — operation '%s' queued (id=%d)", method, queue_id)
             raise CircuitOpenError(
@@ -168,7 +171,7 @@ class ProxyBrick:
                 await self._circuit.record_failure()
                 if self._edge_sync is not None:
                     self._edge_sync.notify_disconnected()
-                queue_id = await self._queue.enqueue(method, kwargs=kwargs)
+                queue_id = await self._queue.enqueue(method, kwargs=kwargs, payload_ref=payload_ref)
                 self._wake_replay()
                 logger.warning("Operation '%s' queued for offline replay (id=%d)", method, queue_id)
                 raise OfflineQueuedError(method, queue_id) from exc
@@ -186,6 +189,11 @@ class ProxyBrick:
         """Signal the replay engine to process the queue immediately."""
         if self._replay_engine is not None:
             self._replay_engine.wake()
+
+    def _on_replay_success(self) -> None:
+        """Called by ReplayEngine after a successful replay — advances reconnect state."""
+        if self._edge_sync is not None:
+            self._edge_sync.notify_connected()
 
     # ------------------------------------------------------------------
     # Properties
@@ -256,27 +264,6 @@ class ProxyVFSBrick(ProxyBrick):
         return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
 
 
-class ProxyEventLogBrick(ProxyBrick):
-    """Proxy for ``EventLogProtocol`` — forwards audit events to cloud."""
-
-    async def append(self, event: Any) -> Any:
-        return await self._forward("event_log.append", event=asdict(event))
-
-    async def read(
-        self,
-        *,
-        since_sequence: int = 0,
-        limit: int = 100,
-        zone_id: str | None = None,
-    ) -> list[Any]:
-        return await self._forward(  # type: ignore[no-any-return]
-            "event_log.read",
-            since_sequence=since_sequence,
-            limit=limit,
-            zone_id=zone_id,
-        )
-
-
 class ProxySchedulerBrick(ProxyBrick):
     """Proxy for ``SchedulerProtocol`` — forwards scheduling to cloud.
 
@@ -308,51 +295,3 @@ class ProxySchedulerBrick(ProxyBrick):
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         return await self._forward("scheduler.metrics", zone_id=zone_id)  # type: ignore[no-any-return]
-
-
-class ProxyAgentRegistryBrick(ProxyBrick):
-    """Proxy for ``AgentRegistryProtocol`` — forwards registry ops to cloud."""
-
-    async def register(
-        self,
-        agent_id: str,
-        owner_id: str,
-        *,
-        zone_id: str | None = None,
-        name: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> Any:
-        return await self._forward(
-            "agent_registry.register",
-            agent_id=agent_id,
-            owner_id=owner_id,
-            zone_id=zone_id,
-            name=name,
-            metadata=metadata,
-        )
-
-    async def get(self, agent_id: str) -> Any | None:
-        return await self._forward("agent_registry.get", agent_id=agent_id)
-
-    async def transition(
-        self,
-        agent_id: str,
-        target_state: str,
-        *,
-        expected_generation: int | None = None,
-    ) -> Any:
-        return await self._forward(
-            "agent_registry.transition",
-            agent_id=agent_id,
-            target_state=target_state,
-            expected_generation=expected_generation,
-        )
-
-    async def heartbeat(self, agent_id: str) -> None:
-        await self._forward("agent_registry.heartbeat", agent_id=agent_id)
-
-    async def list_by_zone(self, zone_id: str) -> list[Any]:
-        return await self._forward("agent_registry.list_by_zone", zone_id=zone_id)  # type: ignore[no-any-return]
-
-    async def unregister(self, agent_id: str) -> bool:
-        return await self._forward("agent_registry.unregister", agent_id=agent_id)  # type: ignore[no-any-return]

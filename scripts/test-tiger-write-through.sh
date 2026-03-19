@@ -53,7 +53,7 @@ from pathlib import Path
 
 sys.path.insert(0, 'src')
 
-from nexus import LocalBackend, NexusFS
+from nexus import CASLocalBackend, NexusFS
 from nexus.contracts.types import OperationContext
 
 PASS = "\033[92m✓\033[0m"
@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     print("Setting up NexusFS with Tiger Cache enabled...")
 
     nx = NexusFS(
-        backend=LocalBackend(tmpdir / "data"),
+        backend=CASLocalBackend(tmpdir / "data"),
         db_path=db_path,
         auto_parse=False,
         enforce_permissions=True,

@@ -45,19 +45,8 @@ pub struct FileCache {
 }
 
 impl FileCache {
-    /// Create or open a cache database.
-    pub fn new(server_url: &str) -> Result<Self> {
-        let cache_path = Self::cache_path(server_url)?;
-
-        // Ensure cache directory exists
-        if let Some(parent) = cache_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        info!("Opening cache at: {}", cache_path.display());
-
-        let conn = Connection::open(&cache_path)?;
-
+    /// Initialise a cache from an already-opened SQLite connection.
+    fn open_connection(conn: Connection) -> Result<Self> {
         // Configure SQLite for performance
         conn.execute_batch(
             "
@@ -104,19 +93,39 @@ impl FileCache {
         Ok(cache)
     }
 
+    /// Create or open a cache database.
+    pub fn new(server_url: &str) -> Result<Self> {
+        let cache_path = Self::cache_path(server_url)?;
+
+        // Ensure cache directory exists
+        if let Some(parent) = cache_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        info!("Opening cache at: {}", cache_path.display());
+
+        let conn = Connection::open(&cache_path)?;
+        Self::open_connection(conn)
+    }
+
     /// Get cache file path based on server URL.
+    ///
+    /// Uses a hash-based filename (Issue 19A) instead of lossy URL sanitization
+    /// which could collide for URLs differing only in special characters
+    /// (e.g. `http://a:8080` vs `http://a/8080` both became `http___a_8080`).
     fn cache_path(server_url: &str) -> Result<PathBuf> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
         let cache_dir = dirs::cache_dir()
             .ok_or_else(|| anyhow!("Could not determine cache directory"))?
             .join("nexus-fuse");
 
-        // Create a safe filename from the server URL
-        let safe_name: String = server_url
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '_' })
-            .collect();
+        let mut hasher = DefaultHasher::new();
+        server_url.hash(&mut hasher);
+        let hash = hasher.finish();
 
-        Ok(cache_dir.join(format!("{}.db", safe_name)))
+        Ok(cache_dir.join(format!("nexus_{:016x}.db", hash)))
     }
 
     /// Get current timestamp.
@@ -127,38 +136,63 @@ impl FileCache {
             .unwrap_or(0)
     }
 
-    /// Look up a file in the cache.
+    /// Look up a file in the cache using two-phase metadata-first query (Issue 16A).
+    ///
+    /// Phase 1: Query only lightweight metadata (etag, cached_at) to determine
+    ///          freshness without deserializing the (potentially large) BLOB.
+    /// Phase 2: Only fetch content if the entry is fresh; stale entries with an
+    ///          etag return NeedsRevalidation without touching the BLOB column.
     pub fn get(&self, path: &str) -> CacheLookup {
         let conn = self.conn.lock().unwrap();
         let now = Self::now();
 
-        let result: Option<(Vec<u8>, Option<String>, u64)> = conn
+        // Phase 1: metadata-only query — avoids reading the content BLOB
+        let meta: Option<(Option<String>, u64)> = conn
             .query_row(
-                "SELECT content, etag, cached_at FROM file_cache WHERE path = ?",
+                "SELECT etag, cached_at FROM file_cache WHERE path = ?",
                 params![path],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .ok()
             .flatten();
 
-        match result {
-            Some((content, etag, cached_at)) => {
+        match meta {
+            Some((etag, cached_at)) => {
                 let age = now.saturating_sub(cached_at);
 
                 if age < MAX_CACHE_AGE_SECS {
-                    // Fresh cache hit
-                    debug!("Cache hit for {} (age: {}s)", path, age);
-                    CacheLookup::Hit(CacheEntry {
-                        content,
-                        etag,
-                    })
+                    // Fresh — Phase 2: fetch content
+                    let content: Option<Vec<u8>> = conn
+                        .query_row(
+                            "SELECT content FROM file_cache WHERE path = ?",
+                            params![path],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .ok()
+                        .flatten();
+
+                    match content {
+                        Some(content) => {
+                            debug!("Cache hit for {} (age: {}s)", path, age);
+                            CacheLookup::Hit(CacheEntry { content, etag })
+                        }
+                        None => {
+                            // Shouldn't happen (metadata existed but content gone)
+                            debug!("Cache inconsistency for {} — metadata without content", path);
+                            CacheLookup::Miss
+                        }
+                    }
                 } else if let Some(etag) = etag {
-                    // Stale but has etag - can revalidate
-                    debug!("Cache stale for {} (age: {}s), needs revalidation", path, age);
+                    // Stale but has etag — can revalidate without fetching content
+                    debug!(
+                        "Cache stale for {} (age: {}s), needs revalidation",
+                        path, age
+                    );
                     CacheLookup::NeedsRevalidation { etag }
                 } else {
-                    // Stale with no etag - treat as miss
+                    // Stale with no etag — treat as miss
                     debug!("Cache stale for {} with no etag", path);
                     CacheLookup::Miss
                 }
@@ -208,7 +242,12 @@ impl FileCache {
         ) {
             error!("Failed to cache {}: {}", path, e);
         } else {
-            debug!("Cached {} ({} bytes, etag: {:?})", path, content.len(), etag);
+            debug!(
+                "Cached {} ({} bytes, etag: {:?})",
+                path,
+                content.len(),
+                etag
+            );
         }
     }
 
@@ -250,11 +289,10 @@ impl FileCache {
         )?;
 
         // Check total cache size
-        let total_size: u64 = conn.query_row(
-            "SELECT COALESCE(SUM(size), 0) FROM file_cache",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_size: u64 =
+            conn.query_row("SELECT COALESCE(SUM(size), 0) FROM file_cache", [], |row| {
+                row.get(0)
+            })?;
 
         if total_size > MAX_CACHE_SIZE {
             info!(
@@ -314,9 +352,10 @@ pub struct CacheStats {
 mod tests {
     use super::*;
 
-    /// Helper: create an in-memory cache for testing (unique URL per test).
-    fn test_cache(label: &str) -> FileCache {
-        FileCache::new(&format!("http://test-{}.local:2026", label)).unwrap()
+    /// Helper: create an in-memory cache for testing (no filesystem access).
+    fn test_cache(_label: &str) -> FileCache {
+        let conn = Connection::open_in_memory().unwrap();
+        FileCache::open_connection(conn).unwrap()
     }
 
     // ──────────────────────────────────────────────────────
@@ -614,6 +653,9 @@ mod tests {
         let cache = test_cache("inv-noop");
         // Should not panic or error
         cache.invalidate("/does-not-exist.txt");
-        assert!(matches!(cache.get("/does-not-exist.txt"), CacheLookup::Miss));
+        assert!(matches!(
+            cache.get("/does-not-exist.txt"),
+            CacheLookup::Miss
+        ));
     }
 }

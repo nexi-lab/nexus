@@ -108,7 +108,9 @@ def init_identity(node_id: int, listen_port: int = WG_DEFAULT_PORT) -> dict:
         "listen_port": listen_port,
         "ip": get_node_ip(node_id),
     }
-    identity_path.write_text(json.dumps(identity, indent=2))
+    from nexus.security.secret_file import write_secret_file
+
+    write_secret_file(identity_path, json.dumps(identity, indent=2))
     logger.info("Identity saved: node=%d ip=%s", node_id, identity["ip"])
     return identity
 

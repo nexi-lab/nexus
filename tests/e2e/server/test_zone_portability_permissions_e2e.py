@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.bricks.portability import (
     ConflictMode,
     ZoneImportOptions,
@@ -32,13 +32,13 @@ def temp_dir():
 
 
 @pytest.fixture
-def source_nexus_fs_with_permissions(temp_dir):
+async def source_nexus_fs_with_permissions(temp_dir):
     """Create source NexusFS with permissions enabled."""
     data_dir = temp_dir / "source_data"
     data_dir.mkdir()
 
-    fs = create_nexus_fs(
-        backend=LocalBackend(data_dir),
+    fs = await create_nexus_fs(
+        backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
@@ -49,26 +49,26 @@ def source_nexus_fs_with_permissions(temp_dir):
     admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
     # Create test files as admin
-    fs.sys_write(
+    await fs.sys_write(
         "/workspace/readme.md", b"# Test Project\n\nPermissions test.", context=admin_context
     )
-    fs.sys_write(
+    await fs.sys_write(
         "/workspace/src/main.py", b'print("Hello with permissions!")', context=admin_context
     )
-    fs.sys_write("/docs/guide.txt", b"User guide with permissions.", context=admin_context)
+    await fs.sys_write("/docs/guide.txt", b"User guide with permissions.", context=admin_context)
 
     yield fs
     fs.close()
 
 
 @pytest.fixture
-def target_nexus_fs_with_permissions(temp_dir):
+async def target_nexus_fs_with_permissions(temp_dir):
     """Create target NexusFS with permissions enabled."""
     data_dir = temp_dir / "target_data"
     data_dir.mkdir()
 
-    fs = create_nexus_fs(
-        backend=LocalBackend(data_dir),
+    fs = await create_nexus_fs(
+        backend=CASLocalBackend(data_dir),
         metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         parsing=ParseConfig(auto_parse=False),
@@ -137,7 +137,8 @@ class TestExportWithPermissions:
 class TestImportWithPermissions:
     """Tests for import with permissions enabled."""
 
-    def test_import_with_permissions_enabled(
+    @pytest.mark.asyncio
+    async def test_import_with_permissions_enabled(
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test that import works with permissions enabled on target."""
@@ -157,19 +158,20 @@ class TestImportWithPermissions:
         assert meta is not None, "File metadata not found for /workspace/readme.md"
 
         # Read content as admin
-        content = target_nexus_fs_with_permissions.sys_read(
+        content = await target_nexus_fs_with_permissions.sys_read(
             "/workspace/readme.md", context=admin_context
         )
         assert b"Permissions test" in content
 
-    def test_import_conflict_skip_with_permissions(
+    @pytest.mark.asyncio
+    async def test_import_conflict_skip_with_permissions(
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test SKIP conflict mode with permissions enabled."""
         admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
-        target_nexus_fs_with_permissions.sys_write(
+        await target_nexus_fs_with_permissions.sys_write(
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
@@ -186,19 +188,20 @@ class TestImportWithPermissions:
         assert result.files_created == 2
 
         # Original content preserved
-        content = target_nexus_fs_with_permissions.sys_read(
+        content = await target_nexus_fs_with_permissions.sys_read(
             "/workspace/readme.md", context=admin_context
         )
         assert content == b"Existing content"
 
-    def test_import_overwrite_with_permissions(
+    @pytest.mark.asyncio
+    async def test_import_overwrite_with_permissions(
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test OVERWRITE conflict mode with permissions enabled."""
         admin_context = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create existing file
-        target_nexus_fs_with_permissions.sys_write(
+        await target_nexus_fs_with_permissions.sys_write(
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
@@ -215,7 +218,7 @@ class TestImportWithPermissions:
         assert result.files_created == 2
 
         # Content should be from bundle
-        content = target_nexus_fs_with_permissions.sys_read(
+        content = await target_nexus_fs_with_permissions.sys_read(
             "/workspace/readme.md", context=admin_context
         )
         assert b"Permissions test" in content
@@ -224,7 +227,8 @@ class TestImportWithPermissions:
 class TestRoundTripWithPermissions:
     """Tests for export -> import round trip with permissions."""
 
-    def test_roundtrip_preserves_content_with_permissions(
+    @pytest.mark.asyncio
+    async def test_roundtrip_preserves_content_with_permissions(
         self, source_nexus_fs_with_permissions, target_nexus_fs_with_permissions, temp_dir
     ):
         """Test that content is preserved through export/import with permissions."""
@@ -251,6 +255,10 @@ class TestRoundTripWithPermissions:
 
         # Verify content matches
         for path in ["/workspace/readme.md", "/workspace/src/main.py", "/docs/guide.txt"]:
-            source_content = source_nexus_fs_with_permissions.sys_read(path, context=admin_context)
-            target_content = target_nexus_fs_with_permissions.sys_read(path, context=admin_context)
+            source_content = await source_nexus_fs_with_permissions.sys_read(
+                path, context=admin_context
+            )
+            target_content = await target_nexus_fs_with_permissions.sys_read(
+                path, context=admin_context
+            )
             assert source_content == target_content, f"Content mismatch for {path}"

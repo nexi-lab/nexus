@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 from nexus.contracts.exceptions import CircuitOpenError
+from nexus.lib.context_utils import get_subject_from_context
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -192,7 +193,7 @@ class ReBACService(ReBACShareMixin):
 
         Returns:
             Dict with tuple_id, revision, and consistency_token (Issue #1081).
-            Use revision with consistency_mode="at_least_as_fresh" for read-your-writes.
+            Use revision for audit trail.
 
         Raises:
             PermissionError: If caller lacks permission to grant
@@ -384,16 +385,12 @@ class ReBACService(ReBACShareMixin):
         object: tuple[str, str],
         context: Any = None,
         zone_id: str | None = None,
-        consistency_mode: str | None = None,  # Issue #1081
-        min_revision: int | None = None,  # Issue #1081
     ) -> bool:
-        """Check if subject has permission on object (Issue #1081).
+        """Check if subject has permission on object.
 
         Uses relationship graph traversal to determine access, supporting both
         direct relationships and inherited permissions through group membership.
-
-        Supports ABAC-style contextual conditions (time windows, IP allowlists, etc.)
-        and per-request consistency modes aligned with SpiceDB/Zanzibar.
+        Always uses cached (eventual) consistency.
 
         Args:
             subject: Subject tuple e.g., ("user", "alice")
@@ -401,11 +398,6 @@ class ReBACService(ReBACShareMixin):
             object: Object tuple e.g., ("file", "/doc.txt")
             context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
             zone_id: Zone ID for multi-zone isolation
-            consistency_mode: Per-request consistency mode (Issue #1081):
-                - "minimize_latency" (default): Use cache for fastest response
-                - "at_least_as_fresh": Cache must be >= min_revision
-                - "fully_consistent": Bypass cache entirely
-            min_revision: Minimum acceptable revision (required for at_least_as_fresh)
 
         Returns:
             True if permission granted, False otherwise
@@ -415,28 +407,10 @@ class ReBACService(ReBACShareMixin):
             RuntimeError: If ReBAC manager not available
 
         Examples:
-            # Check read access (default: minimize_latency)
             can_read = await rebac.rebac_check(
                 subject=("user", "alice"),
                 permission="read",
                 object=("file", "/doc.txt")
-            )
-
-            # Check after a write with read-your-writes guarantee
-            can_read = await rebac.rebac_check(
-                subject=("user", "alice"),
-                permission="read",
-                object=("file", "/doc.txt"),
-                consistency_mode="at_least_as_fresh",
-                min_revision=123  # From previous write result
-            )
-
-            # Security audit: bypass all caches
-            can_read = await rebac.rebac_check(
-                subject=("user", "alice"),
-                permission="read",
-                object=("file", "/doc.txt"),
-                consistency_mode="fully_consistent"
             )
         """
 
@@ -457,23 +431,7 @@ class ReBACService(ReBACShareMixin):
                 elif hasattr(context, "zone_id"):
                     effective_zone_id = context.zone_id
 
-            # Issue #1081: Build consistency requirement from API params
-            consistency = None
-            if consistency_mode or min_revision is not None:
-                from nexus.contracts.rebac_types import (
-                    ConsistencyMode,
-                    ConsistencyRequirement,
-                )
-
-                mode = ConsistencyMode.MINIMIZE_LATENCY
-                if consistency_mode == "at_least_as_fresh":
-                    mode = ConsistencyMode.AT_LEAST_AS_FRESH
-                elif consistency_mode == "fully_consistent":
-                    mode = ConsistencyMode.FULLY_CONSISTENT
-
-                consistency = ConsistencyRequirement(mode=mode, min_revision=min_revision)
-
-            # Check permission with optional ABAC context and consistency
+            # Check permission with optional ABAC context (always cached consistency)
             # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
             result: bool = self._rebac_manager.rebac_check(
@@ -482,7 +440,6 @@ class ReBACService(ReBACShareMixin):
                 object=object,
                 context=context,
                 zone_id=effective_zone_id,
-                consistency=consistency,
             )
 
             return result
@@ -1123,8 +1080,8 @@ class ReBACService(ReBACShareMixin):
             try:
                 await self._run_in_thread(self._rebac_manager.rebac_delete, obj_id)
                 deleted += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Best-effort cleanup failed for object '%s': %s", obj_id, exc)
         return deleted
 
     # =========================================================================
@@ -1599,61 +1556,6 @@ class ReBACService(ReBACShareMixin):
     # Helper Methods
     # =========================================================================
 
-    def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
-        """Extract subject from operation context.
-
-        Args:
-            context: Operation context (OperationContext or dict)
-
-        Returns:
-            Subject tuple (type, id) or None if not found
-
-        Examples:
-            >>> context = {"subject": ("user", "alice")}
-            >>> self._get_subject_from_context(context)
-            ('user', 'alice')
-
-            >>> context = OperationContext(user_id="alice", groups=[])
-            >>> self._get_subject_from_context(context)
-            ('user', 'alice')
-        """
-        if not context:
-            return None
-
-        # Handle dict format (used by RPC server and tests)
-        if isinstance(context, dict):
-            subject = context.get("subject")
-            if subject and isinstance(subject, tuple) and len(subject) == 2:
-                return (str(subject[0]), str(subject[1]))
-
-            # Construct from subject_type + subject_id
-            subject_type = context.get("subject_type", "user")
-            subject_id = context.get("subject_id") or context.get("user_id")
-            if subject_id:
-                return (subject_type, subject_id)
-
-            return None
-
-        # Handle OperationContext format - use get_subject() method
-        if hasattr(context, "get_subject") and callable(context.get_subject):
-            result = context.get_subject()
-            if result is not None:
-                return (str(result[0]), str(result[1]))
-            return None
-
-        # Fallback: construct from attributes
-        if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
-            subject_type = getattr(context, "subject_type", "user")
-            subject_id = getattr(context, "subject_id", None) or getattr(context, "user_id", None)
-            if subject_id:
-                return (subject_type, subject_id)
-
-        # Last resort: use user field
-        if hasattr(context, "user_id") and context.user_id:
-            return ("user", context.user_id)
-
-        return None
-
     def _check_share_permission(
         self,
         resource: tuple[str, str],
@@ -1730,7 +1632,7 @@ class ReBACService(ReBACShareMixin):
                     "ReBAC manager is not available. Ensure ReBACService is properly initialized."
                 )
             has_permission = self._rebac_manager.rebac_check(
-                subject=self._get_subject_from_context(context) or ("user", op_context.user_id),
+                subject=get_subject_from_context(context) or ("user", op_context.user_id),
                 permission="owner",  # Only owners can manage permissions
                 object=resource,
                 context=context,
@@ -1749,7 +1651,7 @@ class ReBACService(ReBACShareMixin):
             # If enforcer denied, also check direct ownership via ReBAC
             # (direct_owner relation may not imply execute in the permission graph)
             if not has_permission and self._rebac_manager:
-                subject = self._get_subject_from_context(context) or ("user", op_context.user_id)
+                subject = get_subject_from_context(context) or ("user", op_context.user_id)
                 has_permission = self._rebac_manager.rebac_check(
                     subject=subject,
                     permission="owner",

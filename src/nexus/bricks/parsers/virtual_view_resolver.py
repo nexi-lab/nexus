@@ -13,11 +13,14 @@ the original file from the underlying filesystem and returns a parsed
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import Permission
 from nexus.contracts.vfs_hooks import VFSPathResolver
+
+if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +28,16 @@ logger = logging.getLogger(__name__)
 class VirtualViewResolver(VFSPathResolver):
     """PRE-DISPATCH resolver for virtual parsed view paths.
 
-    Implements ``VFSPathResolver`` protocol:
-    - ``matches(path)`` — routing predicate
-    - ``read(path, ...)`` — read original file + parse to markdown
-    - ``write(path, content)`` — always raises (read-only)
-    - ``delete(path, ...)`` — always raises (read-only)
+    Implements ``VFSPathResolver`` single-call ``try_*`` protocol (#1665):
+    - ``try_read(path, ...)`` — check if virtual view, read + parse to markdown
+    - ``try_write(path, content)`` — raises if virtual view, else returns None
+    - ``try_delete(path, ...)`` — raises if virtual view, else returns None
 
     Dependencies injected via constructor:
     - metadata: MetastoreABC (file existence + metadata lookup)
     - path_router: PathRouter (CAS content routing)
     - permission_checker: PermissionChecker (read permission verification)
     - parse_fn: Optional callable for content parsing
-    - viewer_filter_fn: Optional callable for CSV dynamic viewer filtering
     - read_tracker_fn: Optional callable for dependency tracking (#1166)
     """
 
@@ -45,9 +46,21 @@ class VirtualViewResolver(VFSPathResolver):
         "_path_router",
         "_permission_checker",
         "_parse_fn",
-        "_viewer_filter_fn",
         "_read_tracker_fn",
     )
+
+    # ── HotSwappable protocol (Issue #1612) ────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(resolvers=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
 
     def __init__(
         self,
@@ -55,39 +68,29 @@ class VirtualViewResolver(VFSPathResolver):
         path_router: Any,
         permission_checker: Any,
         parse_fn: Any = None,
-        viewer_filter_fn: Any = None,
         read_tracker_fn: Any = None,
     ) -> None:
         self._metadata = metadata
         self._path_router = path_router
         self._permission_checker = permission_checker
         self._parse_fn = parse_fn
-        self._viewer_filter_fn = viewer_filter_fn
         self._read_tracker_fn = read_tracker_fn
 
     # ------------------------------------------------------------------
-    # VFSPathResolver protocol
+    # VFSPathResolver single-call try_* protocol (#1665)
     # ------------------------------------------------------------------
 
-    def matches(self, path: str) -> bool:
-        """Return True if *path* is a virtual parsed view."""
-        from nexus.lib.virtual_views import parse_virtual_path
-
-        _, view_type = parse_virtual_path(path, self._metadata.exists)
-        return view_type == "md"
-
-    def read(
+    def try_read(
         self, path: str, *, return_metadata: bool = False, context: Any = None
-    ) -> bytes | dict[str, Any]:
-        """Read virtual parsed view."""
+    ) -> bytes | dict[str, Any] | None:
+        """Read virtual parsed view, or return None if not a virtual view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
         original_path, view_type = parse_virtual_path(path, self._metadata.exists)
         if view_type != "md":
-            raise NexusFileNotFoundError(f"Not a virtual view: {path}")
+            return None
 
         # Permission check — resolver owns its permission semantics.
-        # The checker resolves virtual paths to the original file internally.
         self._permission_checker.check(path, Permission.READ, context)
 
         logger.info("read: Virtual view detected, reading original file: %s", original_path)
@@ -107,10 +110,6 @@ class VirtualViewResolver(VFSPathResolver):
             read_context = replace(context, backend_path=route.backend_path)
 
         content: bytes = route.backend.read_content(meta.etag, context=read_context)
-
-        # Apply dynamic viewer filter for CSV files (optional, ReBAC-specific)
-        if self._viewer_filter_fn is not None:
-            content = self._viewer_filter_fn(original_path, content, context)
 
         # Parse content to markdown
         content = get_parsed_content(
@@ -134,11 +133,23 @@ class VirtualViewResolver(VFSPathResolver):
             }
         return content
 
-    def write(self, path: str, content: bytes) -> dict[str, Any]:
-        """Virtual views are read-only."""
-        raise NexusFileNotFoundError(f"Cannot write to virtual view: {path} ({len(content)} bytes)")
+    def try_write(self, path: str, content: bytes) -> dict[str, Any] | None:
+        """Virtual views are read-only — raise if virtual view, else return None."""
+        from nexus.lib.virtual_views import parse_virtual_path
 
-    def delete(self, path: str, *, context: Any = None) -> None:
-        """Virtual views are read-only."""
-        _ = context  # Required by VFSPathResolver protocol
-        raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
+        _, view_type = parse_virtual_path(path, self._metadata.exists)
+        if view_type == "md":
+            raise NexusFileNotFoundError(
+                f"Cannot write to virtual view: {path} ({len(content)} bytes)"
+            )
+        return None
+
+    def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None:
+        """Virtual views are read-only — raise if virtual view, else return None."""
+        from nexus.lib.virtual_views import parse_virtual_path
+
+        _ = context
+        _, view_type = parse_virtual_path(path, self._metadata.exists)
+        if view_type == "md":
+            raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
+        return None

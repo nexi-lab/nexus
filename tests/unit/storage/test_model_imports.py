@@ -18,7 +18,6 @@ EXPECTED_MODELS = [
     # Filesystem
     "DirectoryEntryModel",
     "FileMetadataModel",
-    "ContentChunkModel",
     "WorkspaceSnapshotModel",
     "DocumentChunkModel",
     # Permissions
@@ -27,15 +26,12 @@ EXPECTED_MODELS = [
     "ReBACGroupClosureModel",
     "ReBACChangelogModel",
     "ReBACVersionSequenceModel",
-    "FileSystemVersionSequenceModel",
-    "ReBACCheckCacheModel",
     "TigerResourceMapModel",
     "TigerCacheModel",
     "TigerCacheQueueModel",
     "TigerDirectoryGrantsModel",
     # Memory
     "MemoryModel",
-    "MemoryConfigModel",
     "EntityRegistryModel",
     "EntityModel",
     "RelationshipModel",
@@ -61,32 +57,21 @@ EXPECTED_MODELS = [
     "ShareLinkAccessLogModel",
     # Infrastructure
     "SandboxMetadataModel",
-    "MountConfigModel",
     "SystemSettingsModel",
     "SubscriptionModel",
     "MigrationHistoryModel",
-    "WorkspaceConfigModel",
-    "UserSessionModel",
+    # Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)
+    "PathRegistrationModel",
     # Agents
     "AgentRecordModel",
     "AgentEventModel",
     # Delegation (Issue #1271)
     "DelegationRecordModel",
-    # ACE
-    "TrajectoryModel",
-    "TrajectoryFeedbackModel",
-    "PlaybookModel",
     # Sync
     "SyncJobModel",
     "BackendChangeLogModel",
     "SyncBacklogModel",
     "ConflictLogModel",
-    # Namespace
-    "PersistentNamespaceViewModel",
-    # Reputation & Trust (Issue #1356)
-    "DisputeModel",
-    "ReputationEventModel",
-    "ReputationScoreModel",
     # Chunked Uploads (Issue #788)
     "UploadSessionModel",
     # Spending Policy (Issue #1358)
@@ -106,8 +91,6 @@ EXPECTED_MODELS = [
     "AgentCredentialModel",
     # Permissions
     "AdminBypassAuditModel",
-    # A2A
-    "A2ATaskModel",
     # Dead Letter Queue (Issue #1138)
     "DeadLetterModel",
     # Transactional Snapshots (Issue #1752)
@@ -118,6 +101,9 @@ EXPECTED_MODELS = [
     # Credentials & Access Manifests (Issues #1753, #1754)
     "AgentCredentialModel",
     "AccessManifestModel",
+    # DataHub Knowledge Platform (Issue #2929)
+    "EntityAspectModel",
+    "MetadataChangeLogModel",
 ]
 
 

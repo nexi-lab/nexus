@@ -1,7 +1,7 @@
 """End-to-end tests for CDC Chunked Storage via FastAPI HTTP endpoints (Issue #1074).
 
 Tests chunked storage through actual HTTP API calls to verify the full stack:
-FastAPI -> NexusFS -> LocalBackend (chunked storage)
+FastAPI -> NexusFS -> CASLocalBackend (chunked storage)
 
 Run with:
     pytest tests/e2e/test_chunked_storage_api_e2e.py -v --override-ini="addopts="
@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from nexus.backends.chunked_storage import CDC_THRESHOLD_BYTES
+from nexus.backends.engines.cdc import CDC_THRESHOLD_BYTES
 
 
 def encode_bytes_param(data: bytes) -> dict:

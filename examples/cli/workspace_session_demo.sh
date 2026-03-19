@@ -366,12 +366,12 @@ import sys
 sys.path.insert(0, 'src')
 from datetime import timedelta
 from nexus.core.nexus_fs import NexusFS
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASCASLocalBackend
 
 print("✓ Python SDK imports successfully")
 
 # Create SDK instance (same as CLI uses internally)
-backend = LocalBackend(data_dir="./nexus-data")
+backend = CASLocalBackend(data_dir="./nexus-data")
 nx = NexusFS(backend)
 
 print("\n─── SDK Test: Register persistent workspace ───")

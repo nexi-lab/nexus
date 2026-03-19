@@ -1,20 +1,21 @@
 """Path routing for mapping virtual paths to storage backends.
 
-PathRouter = Linux VFS mount table. Routes virtual paths to storage backends
+PathRouter = Linux VFS mount table.  Routes virtual paths to storage backends
 using longest-prefix matching with mount-level access control (readonly,
-admin_only). No namespace or zone concepts — those belong in ReBAC and
+admin_only).  No namespace or zone concepts — those belong in ReBAC and
 federation layers respectively.
 
-Mount table is persisted in MetastoreABC as DT_MOUNT entries (source of truth).
-The only in-memory state is ``_backends`` — a registry of runtime backend
-instances that cannot be serialized to metastore.
+PathRouter is a pure in-memory routing table (like Linux VFS ``vfsmount``).
+DT_MOUNT persistence in the metastore is a separate concern owned by the
+mount subsystem (``MountService``, ``ZoneManager.mount``,
+``ensure_topology``).
 
 route() performs LPM by walking path components from deepest to shallowest,
-checking metastore for DT_MOUNT at each level. Metastore's Rust-level
+checking metastore for DT_MOUNT at each level.  Metastore's Rust-level
 in-memory cache (redb) provides ~5 μs reads — no Python cache needed.
 
 Architecture:
-    global_path → ZonePathResolver → (zone_id, local_path) → PathRouter.route() → (backend, backend_path)
+    path → PathRouter.route() → (backend, backend_path)
 """
 
 import posixpath
@@ -22,7 +23,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
-from nexus.contracts.metadata import DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
@@ -48,13 +48,36 @@ class _MountEntry:
 
 @dataclass
 class RouteResult:
-    """Result of path routing."""
+    """Result of path routing — dispatches to ObjectStoreABC backend."""
 
     backend: "ObjectStoreABC"
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
     io_profile: str = "balanced"  # I/O tuning profile (Issue #1413)
+
+
+@dataclass(frozen=True, slots=True)
+class PipeRouteResult:
+    """Route result for DT_PIPE — kernel dispatches to PipeManager.
+
+    Like Linux VFS dispatching to ``fifo_fops`` when ``S_ISFIFO``
+    on inode lookup.  Callers (sys_read, sys_write, sys_unlink)
+    check ``isinstance`` and dispatch to PipeManager.
+    """
+
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
+class StreamRouteResult:
+    """Route result for DT_STREAM — kernel dispatches to StreamManager.
+
+    Like ``PipeRouteResult`` but for append-only streams with
+    non-destructive offset-based reads.
+    """
+
+    path: str
 
 
 class PathRouter:
@@ -92,10 +115,12 @@ class PathRouter:
         admin_only: bool = False,
         io_profile: str = "balanced",
     ) -> None:
-        """Add a mount to the router.
+        """Register a backend at *mount_point* for path routing.
 
-        Writes a DT_MOUNT entry to metastore and registers the backend.
-        If a mount already exists at the same path, it is replaced.
+        Pure in-memory operation (like Linux VFS ``vfsmount`` insertion).
+        DT_MOUNT persistence in the metastore is a separate concern owned
+        by the mount subsystem (``MountService``, ``ZoneManager.mount``,
+        ``ensure_topology``).
 
         Args:
             mount_point: Virtual path prefix (must start with /).
@@ -108,18 +133,24 @@ class PathRouter:
             ValueError: If mount_point is invalid.
         """
         mount_point = self._normalize_path(mount_point)
-
-        # Persist DT_MOUNT entry in metastore (source of truth)
-        meta = FileMetadata(
-            path=mount_point,
-            backend_name=backend.name,
-            physical_path=mount_point,
-            size=0,
-            entry_type=DT_MOUNT,
+        self._register_mount_entry(
+            mount_point,
+            backend,
+            readonly=readonly,
+            admin_only=admin_only,
+            io_profile=io_profile,
         )
-        self._metastore.put(meta)
 
-        # Register runtime backend (Python objects, not a cache)
+    def _register_mount_entry(
+        self,
+        mount_point: str,
+        backend: "ObjectStoreABC",
+        *,
+        readonly: bool,
+        admin_only: bool,
+        io_profile: str,
+    ) -> None:
+        """Register the runtime mount entry for path routing."""
         self._backends[mount_point] = _MountEntry(
             backend=backend,
             readonly=readonly,
@@ -133,12 +164,17 @@ class PathRouter:
         *,
         is_admin: bool = False,
         check_write: bool = False,
-    ) -> RouteResult:
+    ) -> RouteResult | PipeRouteResult | StreamRouteResult:
         """Route virtual path to backend with mount-level access control.
 
         Algorithm: walk path components from deepest to shallowest, checking
         metastore for DT_MOUNT at each level (longest prefix match).  Each
         metastore.get() is ~5 μs with redb's Rust in-memory cache.
+
+        DT_PIPE / DT_STREAM inodes are detected at the exact target path
+        (first iteration) and short-circuit to ``PipeRouteResult`` /
+        ``StreamRouteResult`` — like Linux VFS dispatching to special
+        ``fops`` when the inode type matches.
 
         Args:
             virtual_path: Virtual path to route.
@@ -146,7 +182,8 @@ class PathRouter:
             check_write: Whether to check write permissions.
 
         Returns:
-            RouteResult with backend and relative path.
+            RouteResult for regular files, PipeRouteResult for DT_PIPE,
+            StreamRouteResult for DT_STREAM.
 
         Raises:
             PathNotMountedError: No mount found for path.
@@ -159,6 +196,16 @@ class PathRouter:
         current = virtual_path
         while True:
             meta = self._metastore.get(current)
+
+            # DT_PIPE / DT_STREAM: kernel-native IPC dispatch at exact
+            # target path. IPC inodes are endpoints (not prefixes), so
+            # only match on the first iteration (current == virtual_path).
+            if meta is not None and current == virtual_path:
+                if meta.is_pipe:
+                    return PipeRouteResult(path=virtual_path)
+                if meta.is_stream:
+                    return StreamRouteResult(path=virtual_path)
+
             # Primary: metastore DT_MOUNT (persistent, cross-session).
             # Fallback: _backends registry (in-memory, current session).
             # The fallback is required for REMOTE profile where the
@@ -226,40 +273,45 @@ class PathRouter:
                 mount_point=normalized,
                 readonly=entry.readonly,
                 admin_only=entry.admin_only,
+                backend=entry.backend,
             )
         except ValueError:
             return None
 
     def remove_mount(self, mount_point: str) -> bool:
-        """Remove a mount by its mount point.
+        """Remove a mount from the in-memory routing table.
 
-        Deletes the DT_MOUNT entry from metastore and unregisters the backend.
+        Pure in-memory operation.  DT_MOUNT cleanup in the metastore is
+        the caller's responsibility (MountService, ZoneManager, etc.).
 
         Returns:
             True if mount was removed, False if not found.
         """
         try:
             normalized = self._normalize_path(mount_point)
-            if normalized not in self._backends:
-                return False
-            del self._backends[normalized]
-            self._metastore.delete(normalized)
-            return True
+            if normalized in self._backends:
+                del self._backends[normalized]
+                return True
+            return False
         except ValueError:
             return False
 
     def list_mounts(self) -> "list[MountInfo]":
-        """List all active mounts as MountInfo protocol objects."""
+        """List all active mounts."""
         from nexus.core.protocols.vfs_router import MountInfo
 
-        return [
-            MountInfo(
-                mount_point=mp,
-                readonly=entry.readonly,
-                admin_only=entry.admin_only,
-            )
-            for mp, entry in sorted(self._backends.items())
-        ]
+        return sorted(
+            [
+                MountInfo(
+                    mount_point=mp,
+                    readonly=entry.readonly,
+                    admin_only=entry.admin_only,
+                    backend=entry.backend,
+                )
+                for mp, entry in self._backends.items()
+            ],
+            key=lambda m: m.mount_point,
+        )
 
     def get_backend_by_name(self, name: str) -> "ObjectStoreABC | None":
         """Look up backend by name.
@@ -290,7 +342,7 @@ class PathRouter:
         if "\0" in path:
             raise InvalidPathError(path, "Path contains null byte")
 
-        if any(ord(c) < 32 for c in path if c not in ("\t", "\n")):
+        if any(ord(c) < 32 for c in path):
             raise InvalidPathError(path, "Path contains control characters")
 
         # SECURITY: Normalize BEFORE checking for path traversal

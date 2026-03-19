@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
-from nexus.storage.models import Base, ContentChunkModel, FileMetadataModel, FilePathModel
+from nexus.storage.models import Base, FileMetadataModel, FilePathModel
 
 
 @pytest.fixture
@@ -58,16 +58,6 @@ class TestFilePathModel:
         assert file_path.virtual_path == "/test/file.txt"
         assert file_path.created_at is not None
         assert file_path.updated_at is not None
-
-    @pytest.mark.skip(reason="v0.5.0: zone_id removed - use ReBAC for multi-zone access control")
-    def test_unique_constraint_zone_virtual_path(self, session):
-        """Test that zone_id + virtual_path must be unique (deprecated)."""
-        pass
-
-    @pytest.mark.skip(reason="v0.5.0: zone_id removed - use ReBAC for multi-zone access control")
-    def test_different_zones_can_have_same_path(self, session):
-        """Test that different zones can have the same virtual path (deprecated)."""
-        pass
 
     def test_soft_delete(self, session):
         """Test soft delete functionality."""
@@ -187,86 +177,6 @@ class TestFileMetadataModel:
         assert len(file_path.metadata_entries) == 2
 
 
-class TestContentChunkModel:
-    """Test suite for ContentChunkModel."""
-
-    def test_create_content_chunk(self, session):
-        """Test creating a content chunk record."""
-        chunk = ContentChunkModel(
-            content_hash="abc123def456",
-            size_bytes=4096,
-            storage_path="/chunks/abc123def456",
-            ref_count=1,
-        )
-        session.add(chunk)
-        session.commit()
-
-        assert chunk.chunk_id is not None
-        assert chunk.content_hash == "abc123def456"
-        assert chunk.size_bytes == 4096
-        assert chunk.ref_count == 1
-        assert chunk.created_at is not None
-
-    def test_unique_content_hash(self, session):
-        """Test that content_hash must be unique."""
-        chunk1 = ContentChunkModel(
-            content_hash="abc123",
-            size_bytes=4096,
-            storage_path="/chunks/abc123-1",
-            ref_count=1,
-        )
-        session.add(chunk1)
-        session.commit()
-
-        # Try to create duplicate
-        chunk2 = ContentChunkModel(
-            content_hash="abc123",
-            size_bytes=8192,
-            storage_path="/chunks/abc123-2",
-            ref_count=2,
-        )
-        session.add(chunk2)
-
-        with pytest.raises(IntegrityError):
-            session.commit()
-
-    def test_ref_count_increment(self, session):
-        """Test incrementing reference count."""
-        chunk = ContentChunkModel(
-            content_hash="abc123",
-            size_bytes=4096,
-            storage_path="/chunks/abc123",
-            ref_count=1,
-        )
-        session.add(chunk)
-        session.commit()
-
-        # Increment ref count
-        chunk.ref_count += 1
-        session.commit()
-
-        assert chunk.ref_count == 2
-
-    def test_last_accessed_at(self, session):
-        """Test updating last accessed timestamp."""
-        chunk = ContentChunkModel(
-            content_hash="abc123",
-            size_bytes=4096,
-            storage_path="/chunks/abc123",
-            ref_count=1,
-        )
-        session.add(chunk)
-        session.commit()
-
-        assert chunk.last_accessed_at is None
-
-        # Update last accessed
-        chunk.last_accessed_at = datetime.now(UTC)
-        session.commit()
-
-        assert chunk.last_accessed_at is not None
-
-
 class TestModelIndexes:
     """Test that indexes are created correctly."""
 
@@ -289,9 +199,3 @@ class TestModelIndexes:
         index_names = [idx["name"] for idx in file_metadata_indexes]
         assert "idx_file_metadata_path_id" in index_names
         assert "idx_file_metadata_key" in index_names
-
-        # Check content_chunks indexes
-        content_chunks_indexes = inspector.get_indexes("content_chunks")
-        index_names = [idx["name"] for idx in content_chunks_indexes]
-        # Note: idx_content_chunks_hash was removed - content_hash lookups use unique constraint
-        assert "idx_content_chunks_ref_count" in index_names

@@ -13,7 +13,12 @@ from cachetools import LRUCache
 
 from nexus.bricks.workflows.actions import BUILTIN_ACTIONS
 from nexus.bricks.workflows.protocol import WorkflowServices
-from nexus.bricks.workflows.triggers import BUILTIN_TRIGGERS, TriggerFactory, TriggerManager
+from nexus.bricks.workflows.triggers import (
+    BUILTIN_TRIGGERS,
+    BaseTrigger,
+    TriggerFactory,
+    TriggerManager,
+)
 from nexus.bricks.workflows.types import (
     TriggerType,
     WorkflowContext,
@@ -47,6 +52,9 @@ class WorkflowEngine:
         self.workflow_ids: LRUCache[str, str] = LRUCache(maxsize=max_workflows)
         self.action_registry = BUILTIN_ACTIONS.copy()
         self.trigger_registry: dict[TriggerType, TriggerFactory] = BUILTIN_TRIGGERS.copy()
+        # Track triggers per workflow for proper cleanup on unload/disable
+        self._workflow_triggers: dict[str, list["BaseTrigger"]] = {}
+        self._started = False
 
         if plugin_registry:
             self._discover_plugin_extensions()
@@ -72,9 +80,16 @@ class WorkflowEngine:
                 )
 
     async def startup(self) -> None:
-        """Load workflows from storage (must be called post-construction in async context)."""
+        """Load workflows from storage (must be called post-construction in async context).
+
+        Idempotent — safe to call multiple times (e.g., from both
+        startup_services and mount_all via lifecycle manager).
+        """
+        if self._started:
+            return
         if not self.workflow_store:
             return
+        self._started = True
 
         try:
             workflows_list = await self.workflow_store.list_workflows()
@@ -95,7 +110,11 @@ class WorkflowEngine:
 
     def _register_triggers_for(self, definition: WorkflowDefinition) -> None:
         """Register triggers for a workflow definition."""
+        # Unregister any existing triggers first to prevent duplicates on reload
+        self._unregister_triggers_for(definition.name)
+
         glob_match = self._services.glob_match if self._services else None
+        triggers: list[BaseTrigger] = []
         for trigger_def in definition.triggers:
             trigger_class = self.trigger_registry.get(trigger_def.type)
             if not trigger_class:
@@ -103,6 +122,7 @@ class WorkflowEngine:
                 continue
 
             trigger = trigger_class(trigger_def.config, glob_match=glob_match)
+            triggers.append(trigger)
 
             async def trigger_callback(
                 event_context: dict[str, Any], wf_name: str = definition.name
@@ -110,6 +130,14 @@ class WorkflowEngine:
                 await self.trigger_workflow(wf_name, event_context)
 
             self.trigger_manager.register_trigger(trigger, trigger_callback)  # type: ignore[arg-type]
+
+        self._workflow_triggers[definition.name] = triggers
+
+    def _unregister_triggers_for(self, name: str) -> None:
+        """Unregister all triggers belonging to a workflow."""
+        triggers = self._workflow_triggers.pop(name, [])
+        for trigger in triggers:
+            self.trigger_manager.unregister_trigger(trigger)
 
     def load_workflow(self, definition: WorkflowDefinition, *, enabled: bool = True) -> bool:
         """Load a workflow definition."""
@@ -175,6 +203,9 @@ class WorkflowEngine:
             except Exception as e:
                 logger.error("Failed to delete workflow from storage: %s", e)
 
+        # Unregister triggers before removing the workflow
+        self._unregister_triggers_for(name)
+
         del self.workflows[name]
         self.enabled_workflows.pop(name, None)
         self.workflow_ids.pop(name, None)
@@ -186,6 +217,9 @@ class WorkflowEngine:
         """Enable a workflow."""
         if name in self.workflows:
             self.enabled_workflows[name] = True
+
+            # Re-register triggers so events are routed again
+            self._register_triggers_for(self.workflows[name])
 
             if self.workflow_store:
                 import asyncio
@@ -205,6 +239,9 @@ class WorkflowEngine:
         """Disable a workflow."""
         if name in self.workflows:
             self.enabled_workflows[name] = False
+
+            # Unregister triggers so disabled workflows don't fire
+            self._unregister_triggers_for(name)
 
             if self.workflow_store:
                 import asyncio

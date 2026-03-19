@@ -4,8 +4,7 @@ When an agent is registered, the provisioner creates the standard
 directory layout (inbox/, outbox/, processed/, dead_letter/) and
 writes an initial AGENT.json card.
 
-Triggered by AGENT_REGISTERED events from the EventBus — zero
-coupling to the AgentRegistry kernel component.
+Triggered by AGENT_REGISTERED events from the EventBus.
 """
 
 import json

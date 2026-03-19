@@ -93,8 +93,8 @@ class MarkItDownProvider(ParseProvider):
             from markitdown import MarkItDown  # noqa: F401
 
             return True
-        except ImportError:
-            logger.debug("markitdown not installed, MarkItDown provider unavailable")
+        except Exception:
+            logger.debug("markitdown not available, MarkItDown provider unavailable")
             return False
 
     def _get_markitdown(self) -> Any:

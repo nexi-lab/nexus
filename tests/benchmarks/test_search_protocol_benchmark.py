@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from nexus.services.protocols.search import SearchBrickProtocol
+from nexus.contracts.protocols.search import SearchBrickProtocol
 
 # =============================================================================
 # Mock search brick for benchmarking

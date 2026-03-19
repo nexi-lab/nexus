@@ -10,7 +10,7 @@ Part of: #1628 (Split CacheConnectorMixin into focused units)
 
 from unittest.mock import MagicMock, patch
 
-from nexus.backends.backend_io import BackendIOService
+from nexus.backends.misc.backend_io import BackendIOService
 
 
 class MockSimpleConnector:

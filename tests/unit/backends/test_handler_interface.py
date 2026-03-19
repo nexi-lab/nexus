@@ -11,8 +11,8 @@ Tests the new handler interface methods added to the Backend base class:
 
 import pytest
 
-from nexus.backends.backend import HandlerStatusResponse
-from nexus.backends.local import LocalBackend
+from nexus.backends.base.backend import HandlerStatusResponse
+from nexus.backends.storage.cas_local import CASLocalBackend
 
 
 class TestHandlerStatusResponse:
@@ -82,7 +82,7 @@ class TestBackendHandlerInterface:
     @pytest.fixture
     def local_backend(self, tmp_path):
         """Create a local backend for testing."""
-        return LocalBackend(root_path=tmp_path / "backend")
+        return CASLocalBackend(root_path=tmp_path / "backend")
 
     def test_is_connected_default(self, local_backend):
         """Test that is_connected defaults to True for stateless backends."""
@@ -161,8 +161,8 @@ class TestBackendHandlerInterfaceInheritance:
     """Test that handler interface is properly inherited."""
 
     def test_local_backend_inherits_interface(self, tmp_path):
-        """Test that LocalBackend properly inherits handler interface."""
-        backend = LocalBackend(root_path=tmp_path / "backend")
+        """Test that CASLocalBackend properly inherits handler interface."""
+        backend = CASLocalBackend(root_path=tmp_path / "backend")
 
         # Should have all handler interface methods
         assert hasattr(backend, "is_connected")

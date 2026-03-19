@@ -9,16 +9,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.services.protocols.scheduler import AgentRequest
-from nexus.services.scheduler.constants import (
+from nexus.contracts.protocols.scheduler import AgentRequest
+from nexus.system_services.scheduler.constants import (
     TASK_STATUS_RUNNING,
     PriorityClass,
     PriorityTier,
 )
-from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
-from nexus.services.scheduler.models import ScheduledTask
-from nexus.services.scheduler.policies.fair_share import FairShareCounter
-from nexus.services.scheduler.service import SchedulerService
+from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.system_services.scheduler.exceptions import CapacityExceeded
+from nexus.system_services.scheduler.models import ScheduledTask
+from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
+from nexus.system_services.scheduler.service import SchedulerService
 
 # =============================================================================
 # Fixtures
@@ -189,7 +190,7 @@ class TestFairShareRejection:
             executor_id="exec-1",
             task_type="compute",
         )
-        with pytest.raises(ValueError, match="at capacity"):
+        with pytest.raises(CapacityExceeded, match="at capacity"):
             await svc.submit(req)
 
 

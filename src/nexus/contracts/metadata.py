@@ -10,8 +10,7 @@ To modify FileMetadata:
 
 Contains:
   - FileMetadata: Core file metadata dataclass
-  - PaginatedResult: Cursor-based pagination container
-  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE: Directory entry type constants
+  - DT_REG, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM: Directory entry type constants
 """
 
 from __future__ import annotations
@@ -19,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+from nexus.contracts.backend_address import BackendAddress
 
 if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
@@ -29,37 +30,7 @@ DT_REG = 0
 DT_DIR = 1
 DT_MOUNT = 2
 DT_PIPE = 3
-
-
-@dataclass
-class PaginatedResult:
-    """Result container for paginated list operations.
-
-    Generated from: proto/nexus/core/metadata.proto
-
-    Supports cursor-based pagination for efficient traversal of large datasets
-    at 1M+ file scale without OOM or timeouts.
-
-    Attributes:
-        items: List of FileMetadata or dict items for current page
-        next_cursor: Opaque token for fetching next page (None if last page)
-        has_more: Whether more results exist beyond this page
-        total_count: Optional total count (expensive at scale, often None)
-    """
-
-    items: list[Any]
-    next_cursor: str | None
-    has_more: bool
-    total_count: int | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict for API response."""
-        return {
-            "items": self.items,
-            "next_cursor": self.next_cursor,
-            "has_more": self.has_more,
-            "total_count": self.total_count,
-        }
+DT_STREAM = 4
 
 
 @dataclass(slots=True)
@@ -83,7 +54,6 @@ class FileMetadata:
     owner_id: str | None = None
     entry_type: int = 0
     target_zone_id: str | None = None
-    i_links_count: int = 0
 
     @property
     def is_reg(self) -> bool:
@@ -100,6 +70,27 @@ class FileMetadata:
     @property
     def is_pipe(self) -> bool:
         return self.entry_type == 3
+
+    @property
+    def is_stream(self) -> bool:
+        return self.entry_type == 4
+
+    @property
+    def backend_address(self) -> BackendAddress:
+        """Parse backend_name into typed BackendAddress (type + origin node).
+
+        Returns:
+            BackendAddress with backend_type and optional origin.
+
+        Example:
+            >>> meta = FileMetadata(path="/a", backend_name="local@10.0.0.5:50051",
+            ...                     physical_path="abc", size=0)
+            >>> meta.backend_address.backend_type
+            'local'
+            >>> meta.backend_address.origin
+            '10.0.0.5:50051'
+        """
+        return BackendAddress.parse(self.backend_name)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict.
@@ -122,7 +113,6 @@ class FileMetadata:
             "owner_id": self.owner_id,
             "entry_type": self.entry_type,
             "target_zone_id": self.target_zone_id,
-            "i_links_count": self.i_links_count,
         }
 
     def validate(self) -> None:
@@ -142,8 +132,8 @@ class FileMetadata:
         if "\x00" in self.path:
             raise ValidationError("path contains null bytes", path=self.path)
 
-        # DT_PIPE inodes: in-memory ring buffer, no backend storage required
-        if self.entry_type == 3:  # DT_PIPE
+        # DT_PIPE/DT_STREAM inodes: in-memory buffers, no backend storage required
+        if self.entry_type in (3, 4):  # DT_PIPE, DT_STREAM
             return
 
         if not self.backend_name:

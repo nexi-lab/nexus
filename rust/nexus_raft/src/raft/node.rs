@@ -50,7 +50,9 @@ use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use raft::eraftpb::{ConfChange, ConfChangeType, ConfState, Entry, EntryType, Message, Snapshot};
+use raft::eraftpb::{
+    ConfChange, ConfChangeType, ConfChangeV2, ConfState, Entry, EntryType, Message, Snapshot,
+};
 use raft::{Config, RawNode, Storage};
 use slog::{o, Logger};
 use tokio::sync::{mpsc, oneshot, RwLock};
@@ -59,6 +61,26 @@ use super::replication_log::ReplicationLog;
 use super::state_machine::StateMachine;
 use super::storage::RaftStorage;
 use super::{Command, CommandResult, RaftError, Result};
+
+/// Capacity of the bounded channel between [`ZoneConsensus`] handles and the
+/// [`ZoneConsensusDriver`] actor. Provides backpressure under sustained
+/// overload or network partitions, preventing unbounded memory growth.
+/// 256 aligns with tokio's internal 32-message block allocation.
+const DRIVER_CHANNEL_CAPACITY: usize = 256;
+
+/// Convert a bounded channel `TrySendError` to a `RaftError`.
+fn channel_try_send_err<T>(e: mpsc::error::TrySendError<T>) -> RaftError {
+    match e {
+        mpsc::error::TrySendError::Full(_) => {
+            tracing::warn!(
+                capacity = DRIVER_CHANNEL_CAPACITY,
+                "raft driver channel full, applying backpressure"
+            );
+            RaftError::ChannelFull(DRIVER_CHANNEL_CAPACITY)
+        }
+        mpsc::error::TrySendError::Closed(_) => RaftError::ChannelClosed,
+    }
+}
 
 #[cfg(all(feature = "grpc", has_protos))]
 use crate::transport::{NodeAddress, SharedPeerMap};
@@ -226,8 +248,10 @@ pub enum RaftMsg {
 /// This type is `Clone + Send + Sync` and can be freely shared across
 /// gRPC handlers, PyO3, and other contexts.
 pub struct ZoneConsensus<S: StateMachine + 'static> {
-    /// Channel sender to the driver actor.
-    msg_tx: mpsc::UnboundedSender<RaftMsg>,
+    /// Bounded channel sender to the driver actor.
+    /// Capacity: [`DRIVER_CHANNEL_CAPACITY`]. Provides backpressure when
+    /// the driver cannot keep up with incoming messages.
+    msg_tx: mpsc::Sender<RaftMsg>,
     /// Shared state machine for read-only queries (no channel needed).
     state_machine: Arc<RwLock<S>>,
     /// Node configuration.
@@ -288,8 +312,8 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     proposal_id: Arc<AtomicU64>,
     /// Last tick time.
     last_tick: Instant,
-    /// Channel receiver — messages from the handle.
-    msg_rx: mpsc::UnboundedReceiver<RaftMsg>,
+    /// Bounded channel receiver — messages from the handle.
+    msg_rx: mpsc::Receiver<RaftMsg>,
     /// Cached role (shared with handle for reads).
     cached_role: Arc<AtomicU8>,
     /// Cached leader ID (shared with handle for reads).
@@ -392,8 +416,8 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let cached_leader_id = Arc::new(AtomicU64::new(0));
         let cached_term = Arc::new(AtomicU64::new(0));
 
-        // Channel
-        let (msg_tx, msg_rx) = mpsc::unbounded_channel();
+        // Bounded channel with backpressure
+        let (msg_tx, msg_rx) = mpsc::channel(DRIVER_CHANNEL_CAPACITY);
 
         let handle = ZoneConsensus {
             msg_tx,
@@ -506,12 +530,12 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         let (tx, rx) = oneshot::channel();
 
         self.msg_tx
-            .send(RaftMsg::Propose {
+            .try_send(RaftMsg::Propose {
                 data,
                 proposal_id: 0, // driver assigns real ID
                 tx,
             })
-            .map_err(|_| RaftError::ChannelClosed)?;
+            .map_err(channel_try_send_err)?;
 
         Ok(rx)
     }
@@ -549,9 +573,15 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
     /// True Local-First EC write — bypasses Raft entirely.
     ///
-    /// Applies the command directly to the local state machine, then appends
-    /// to the replication WAL. Returns the WAL sequence number as a write token.
-    /// Callers can later poll [`is_committed`] to check replication status.
+    /// Appends to the replication WAL first, then applies to the local state
+    /// machine. WAL-first ordering ensures crash safety: if we crash after
+    /// WAL append but before local apply, the entry is recoverable via
+    /// replication. The reverse order (apply-first) would leave local state
+    /// ahead of the WAL, permanently losing the write from replication.
+    ///
+    /// If local apply fails, the WAL entry is removed to prevent replicating
+    /// a write that the caller received as an error ("failed locally,
+    /// committed remotely" would violate caller expectations).
     ///
     /// Only metadata operations (SetMetadata, DeleteMetadata) are supported.
     /// Lock operations require linearizability and must use SC ([`propose`]).
@@ -565,14 +595,27 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         // Serialize command for WAL before acquiring lock
         let command_bytes = bincode::serialize(&command)?;
 
-        // Apply to local state machine (write lock)
+        // WAL-first: append to replication log before local apply.
+        let seq = repl_log.append(&command_bytes)?;
+
+        // Apply to local state machine (write lock).
+        // On failure, compensate by removing the WAL entry so that
+        // drain_unreplicated() does not ship a write the caller saw as failed.
         {
             let mut sm = self.state_machine.write().await;
-            sm.apply_local(&command)?;
+            if let Err(e) = sm.apply_local(&command) {
+                if let Err(cleanup_err) = repl_log.remove_entry(seq) {
+                    tracing::error!(
+                        seq,
+                        error = %cleanup_err,
+                        "failed to clean up WAL entry after apply_local failure"
+                    );
+                }
+                return Err(e);
+            }
         }
 
-        // Append to replication WAL → returns write token
-        repl_log.append(&command_bytes)
+        Ok(seq)
     }
 
     /// Apply an EC entry received from a peer (Phase C receiver side).
@@ -625,8 +668,8 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
         let (tx, rx) = oneshot::channel();
         self.msg_tx
-            .send(RaftMsg::ProposeConfChange { change: cc, tx })
-            .map_err(|_| RaftError::ChannelClosed)?;
+            .try_send(RaftMsg::ProposeConfChange { change: cc, tx })
+            .map_err(channel_try_send_err)?;
 
         match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
             Ok(Ok(result)) => result,
@@ -636,9 +679,17 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     }
 
     /// Process a message from another node (sends through channel to driver).
-    pub fn step(&self, msg: Message) -> Result<()> {
+    ///
+    /// Uses `send().await` (blocking until space is available) instead of
+    /// `try_send()` because Step messages carry Raft protocol traffic
+    /// (heartbeats, votes, append entries). Dropping them under load
+    /// destabilizes elections and replication. True backpressure is the
+    /// correct behavior: the peer's gRPC call blocks until the driver
+    /// can accept the message.
+    pub async fn step(&self, msg: Message) -> Result<()> {
         self.msg_tx
             .send(RaftMsg::Step { msg })
+            .await
             .map_err(|_| RaftError::ChannelClosed)
     }
 
@@ -646,8 +697,8 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     pub async fn campaign(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.msg_tx
-            .send(RaftMsg::Campaign { tx })
-            .map_err(|_| RaftError::ChannelClosed)?;
+            .try_send(RaftMsg::Campaign { tx })
+            .map_err(channel_try_send_err)?;
         rx.await.map_err(|_| RaftError::ProposalDropped)?
     }
 }
@@ -777,14 +828,15 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             messages.extend(ready.take_persisted_messages());
         }
 
-        // Handle committed entries — NO lock drop needed, we own raw_node
-        let committed = ready.take_committed_entries();
-        if !committed.is_empty() {
-            tracing::debug!(count = committed.len(), "raft.apply");
-            self.apply_entries(committed).await?;
-        }
+        // Ordering invariant (per raft-rs five_mem_node example / Raft paper §3):
+        //   1. Apply snapshot first — apply_snapshot() clears log entries,
+        //      so it must run before appending new entries.
+        //   2. Persist entries and hard state — durable BEFORE side-effects.
+        //   3. Apply committed entries to state machine — safe only after
+        //      the log is durable; committed_entries were persisted in a
+        //      prior round, so re-apply on crash is idempotent via last_applied.
 
-        // Handle snapshot (received from leader during catch-up / join)
+        // 1. Handle snapshot (received from leader during catch-up / join)
         if !ready.snapshot().is_empty() {
             let snapshot = ready.snapshot();
             tracing::info!(
@@ -806,7 +858,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
             }
         }
 
-        // Persist entries and hard state
+        // 2. Persist entries and hard state
         if !ready.entries().is_empty() {
             self.raw_node
                 .mut_store()
@@ -819,6 +871,13 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                 .mut_store()
                 .set_hard_state(hs)
                 .map_err(|e| RaftError::Storage(e.to_string()))?;
+        }
+
+        // 3. Apply committed entries — NO lock drop needed, we own raw_node
+        let committed = ready.take_committed_entries();
+        if !committed.is_empty() {
+            tracing::debug!(count = committed.len(), "raft.apply");
+            self.apply_entries(committed).await?;
         }
 
         // Advance the ready — NO TOCTOU: we never dropped ownership
@@ -894,7 +953,7 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                         let _ = proposal.tx.send(Ok(result));
                     }
                 }
-                EntryType::EntryConfChange | EntryType::EntryConfChangeV2 => {
+                EntryType::EntryConfChange => {
                     let cc: ConfChange = protobuf::Message::parse_from_bytes(&entry.data)
                         .map_err(|e| RaftError::Serialization(e.to_string()))?;
 
@@ -992,6 +1051,102 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
                     // Notify waiting JoinZone caller (if any)
                     if let Some(tx) = self.pending_conf_changes.remove(&cc.node_id) {
                         let _ = tx.send(Ok(cs));
+                    }
+                }
+                EntryType::EntryConfChangeV2 => {
+                    let cc: ConfChangeV2 = protobuf::Message::parse_from_bytes(&entry.data)
+                        .map_err(|e| RaftError::Serialization(e.to_string()))?;
+
+                    let cs = self
+                        .raw_node
+                        .apply_conf_change(&cc)
+                        .map_err(|e| RaftError::Raft(e.to_string()))?;
+
+                    self.raw_node
+                        .mut_store()
+                        .set_conf_state(&cs)
+                        .map_err(|e| RaftError::Storage(e.to_string()))?;
+
+                    let mut has_add = false;
+
+                    #[cfg(all(feature = "grpc", has_protos))]
+                    if let Some(ref peer_map) = self.peer_map {
+                        for single in &cc.changes {
+                            match single.get_change_type() {
+                                ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
+                                    has_add = true;
+                                    if !cc.context.is_empty() {
+                                        let address =
+                                            String::from_utf8_lossy(&cc.context).to_string();
+                                        let endpoint = if address.starts_with("http") {
+                                            address.clone()
+                                        } else {
+                                            format!("http://{}", address)
+                                        };
+                                        peer_map.write().unwrap().insert(
+                                            single.node_id,
+                                            NodeAddress::new(single.node_id, endpoint),
+                                        );
+                                    }
+                                }
+                                ConfChangeType::RemoveNode => {
+                                    peer_map.write().unwrap().remove(&single.node_id);
+                                }
+                            }
+                        }
+                    }
+
+                    // Without grpc feature, still detect AddNode for snapshot creation
+                    #[cfg(not(all(feature = "grpc", has_protos)))]
+                    {
+                        for single in &cc.changes {
+                            if matches!(
+                                single.get_change_type(),
+                                ConfChangeType::AddNode | ConfChangeType::AddLearnerNode
+                            ) {
+                                has_add = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    tracing::info!(
+                        index = entry.index,
+                        num_changes = cc.changes.len(),
+                        voters = ?cs.voters,
+                        "raft.conf_change_v2.applied",
+                    );
+
+                    if has_add {
+                        let sm_data = sm.snapshot().map_err(|e| {
+                            RaftError::Storage(format!("snapshot for new voter: {e}"))
+                        })?;
+                        let mut snapshot = Snapshot::new();
+                        {
+                            let meta = snapshot.mut_metadata();
+                            meta.index = entry.index;
+                            meta.term = entry.term;
+                            *meta.mut_conf_state() = cs.clone();
+                        }
+                        snapshot.data = sm_data.into();
+
+                        self.raw_node
+                            .mut_store()
+                            .store_snapshot(&snapshot)
+                            .map_err(|e| RaftError::Storage(format!("store snapshot: {e}")))?;
+                        self.raw_node
+                            .mut_store()
+                            .compact(entry.index)
+                            .map_err(|e| {
+                                RaftError::Storage(format!("compact after AddNode v2: {e}"))
+                            })?;
+                    }
+
+                    // Notify waiting JoinZone callers for each added node
+                    for single in &cc.changes {
+                        if let Some(tx) = self.pending_conf_changes.remove(&single.node_id) {
+                            let _ = tx.send(Ok(cs.clone()));
+                        }
                     }
                 }
             }
@@ -1121,7 +1276,7 @@ mod tests {
                     for msg in messages {
                         let target_idx = msg.to as usize - 1;
                         if target_idx < all_handles.len() && target_idx != my_idx {
-                            let _ = all_handles[target_idx].step(msg);
+                            let _ = all_handles[target_idx].step(msg).await;
                         }
                     }
                 }

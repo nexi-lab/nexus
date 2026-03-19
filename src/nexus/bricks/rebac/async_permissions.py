@@ -5,7 +5,7 @@ to work with FastAPI and async database operations.
 
 Example:
     from nexus.bricks.rebac.async_permissions import AsyncPermissionEnforcer
-    from nexus.bricks.rebac.async_manager import AsyncReBACManager
+    from nexus.bricks.rebac.manager import AsyncReBACManager
 
     enforcer = AsyncPermissionEnforcer(async_rebac_manager)
 
@@ -24,7 +24,7 @@ from nexus.contracts.types import OperationContext, Permission
 from nexus.lib.zone import normalize_zone_id
 
 if TYPE_CHECKING:
-    from nexus.bricks.rebac.async_manager import AsyncReBACManager
+    from nexus.bricks.rebac.manager import AsyncReBACManager
     from nexus.bricks.rebac.namespace_manager import NamespaceManager
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class AsyncPermissionEnforcer:
         rebac_manager: "AsyncReBACManager | None" = None,
         backends: dict[str, Any] | None = None,
         namespace_manager: "NamespaceManager | None" = None,
-        agent_registry: Any = None,
+        process_table: Any = None,
     ):
         """Initialize async permission enforcer.
 
@@ -50,12 +50,12 @@ class AsyncPermissionEnforcer:
             rebac_manager: Async ReBAC manager instance
             backends: Backend registry for determining object types
             namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
-            agent_registry: AgentRegistry for stale-session detection (Issue #1240)
+            process_table: ProcessTable for stale-session detection (Issue #1240)
         """
         self.rebac_manager = rebac_manager
         self.backends = backends or {}
         self.namespace_manager = namespace_manager
-        self.agent_registry = agent_registry
+        self.process_table = process_table
 
     async def check_permission(
         self,
@@ -103,7 +103,7 @@ class AsyncPermissionEnforcer:
                 )
 
         # Issue #1240 / #1445: Stale-session detection (Agent OS Phase 1)
-        check_stale_session(self.agent_registry, context)
+        check_stale_session(self.process_table, context)
 
         # No ReBAC manager = permissive mode
         if not self.rebac_manager:
@@ -251,14 +251,14 @@ class AsyncPermissionEnforcer:
         agent_id: str,
         _zone_id: str,
     ) -> tuple[str, str] | None:
-        """Get the owner of an agent via agent_registry lookup (async).
+        """Get the owner of an agent via process_table lookup (async).
 
         Returns (subject_type, subject_id) of the agent's owner, or None.
         ``_zone_id`` is accepted for future cross-zone agent resolution.
         """
-        if not self.agent_registry:
+        if not self.process_table:
             return None
-        record = await asyncio.to_thread(self.agent_registry.get, agent_id)
+        record = await asyncio.to_thread(self.process_table.get, agent_id)
         if record and getattr(record, "owner_id", None):
             return ("user", record.owner_id)
         return None

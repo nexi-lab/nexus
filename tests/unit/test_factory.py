@@ -171,12 +171,9 @@ class TestBootSystemServices:
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "agent_registry",
-            "async_agent_registry",
             "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
-            "async_vfs_router",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
@@ -184,11 +181,12 @@ class TestBootSystemServices:
             "brick_lifecycle_manager",
             "brick_reconciler",
             "zone_lifecycle",
-            # DT_PIPE manager (Issue #809)
-            "pipe_manager",
-            # Issue #2195, #2360
-            "event_log",
+            # (PipeManager is kernel-internal §4.2, not in SystemServices)
+            # Process lifecycle (Issue #1509)
+            "process_table",
             "scheduler_service",
+            # ACP coding agent service
+            "acp_service",
         }
         assert expected_keys == set(result.keys())
 
@@ -214,18 +212,17 @@ class TestBootSystemServices:
         with (
             caplog.at_level(logging.WARNING, logger="nexus.factory"),
             patch(
-                "nexus.services.agents.agent_registry.AgentRegistry",
-                side_effect=RuntimeError("agent db error"),
+                "nexus.bricks.rebac.namespace_factory.create_namespace_manager",
+                side_effect=RuntimeError("namespace db error"),
             ),
         ):
             result = _boot_system_services(ctx)
 
-        # Agent registry failed, but others should still work
-        assert result["agent_registry"] is None
+        # Namespace manager failed, but others should still work
+        assert result["namespace_manager"] is None
         # Critical services should still be created
         assert result["rebac_manager"] is not None
         assert result["permission_enforcer"] is not None
-        assert any("[BOOT:SYSTEM]" in r.message for r in caplog.records)
 
     def test_critical_services_are_not_none(self) -> None:
         """All 5 critical services must be non-None on success."""
@@ -271,22 +268,19 @@ class TestBootBrickServices:
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
-            "task_queue_service",
             "ipc_storage_driver",
             "ipc_provisioner",
-            "skill_service",
-            "skill_package_service",
             "delegation_service",
-            "reputation_service",
             "version_service",
             "rebac_circuit_breaker",
-            "memory_permission",
             "governance_anomaly_service",
             "governance_collusion_service",
             "governance_graph_service",
             "governance_response_service",
             # DT_PIPE Zoekt consumer (Issue #810)
             "zoekt_pipe_consumer",
+            # Task Manager DT_PIPE consumer
+            "task_dispatch_consumer",
         }
         assert expected_keys == set(result.keys())
 
@@ -300,7 +294,7 @@ class TestBootBrickServices:
         with (
             caplog.at_level(logging.DEBUG, logger="nexus.factory"),
             patch(
-                "nexus.services.versioning.version_service.VersionService",
+                "nexus.bricks.versioning.version_service.VersionService",
                 side_effect=RuntimeError("version db unavailable"),
             ),
         ):

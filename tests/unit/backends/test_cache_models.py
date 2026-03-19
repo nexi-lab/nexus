@@ -5,7 +5,7 @@ Part of: #1628 (Split CacheConnectorMixin into focused units)
 
 from datetime import UTC, datetime
 
-from nexus.backends.cache_models import (
+from nexus.backends.cache.models import (
     IMMUTABLE_VERSION,
     MAX_CACHE_FILE_SIZE,
     MAX_FULL_TEXT_SIZE,

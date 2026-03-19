@@ -433,7 +433,16 @@ class PgMonitor:
                 logger.warning(f"Table {table_name} not found")
                 return False
 
-            self.session.execute(text(f'ANALYZE "{table_name}"'))
+            # Issue #3062: Use sql.Identifier for safe identifier quoting
+            # instead of f-string interpolation.
+            from psycopg2 import sql as pg_sql
+
+            raw_conn = self.session.connection().connection
+            cur = raw_conn.cursor()
+            try:
+                cur.execute(pg_sql.SQL("ANALYZE {}").format(pg_sql.Identifier(table_name)))
+            finally:
+                cur.close()
             self.session.commit()
             return True
         except Exception as e:

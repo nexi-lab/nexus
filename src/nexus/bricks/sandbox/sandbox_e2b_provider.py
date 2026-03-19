@@ -671,7 +671,7 @@ try:
     import nexus
     from nexus.fuse.mount import NexusFUSE, MountMode
     log.info("Imports complete, connecting to server...")
-    nx = nexus.connect(config={{"mode": "remote", "url": "{nexus_url}", "api_key": api_key}})
+    nx = nexus.connect(config={{"profile": "remote", "url": "{nexus_url}", "api_key": api_key}})
     {"nx.agent_id = '" + agent_id + "'" if agent_id else ""}
     log.info("Creating FUSE mount...")
     fuse = NexusFUSE(nx, "{mount_path}", mode=MountMode.SMART)

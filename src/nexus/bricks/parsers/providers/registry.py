@@ -255,7 +255,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
             if markitdown_provider.is_available():
                 self.register(markitdown_provider)
                 registered += 1
-        except ImportError as e:
+        except Exception as e:
             logger.warning("MarkItDown provider not available: %s", e)
 
         logger.info("Auto-discovered %d parse providers", registered)

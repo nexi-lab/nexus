@@ -105,10 +105,10 @@ if not result.proceed:
 ArtifactCallback = Callable[[Any, str, str], Awaitable[None]]
 
 # 2. Pass callbacks at construction
-task_manager = TaskManager(artifact_observers=[on_index])
+manager = SomeManager(observers=[on_index])
 
 # 3. Call directly
-for observer in self._artifact_observers:
+for observer in self._observers:
     await observer(artifact, task_id, zone_id)
 ```
 

@@ -21,6 +21,7 @@ from nexus.contracts.exceptions import (
 )
 from nexus.core.hash_fast import hash_content
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.lib.zone_scoping import ZoneScopingError, scope_params_for_zone
 from nexus.server.dependencies import require_auth
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -33,35 +34,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Path attributes on RPC param dataclasses that must be zone-scoped.
-_ZONE_PATH_ATTRS = ("path", "old_path", "new_path")
-
-
-def _scope_params_for_zone(params: Any, zone_id: str) -> None:
-    """Prefix path attributes with ``/zone/{zone_id}/`` for zone isolation.
-
-    Mutates the params dataclass in place.  Only applies when *zone_id*
-    differs from ROOT_ZONE_ID — the root zone sees the full tree.
-    The reverse operation (stripping the prefix from results) is handled
-    by ``unscope_internal_path`` in ``path_utils.py``.
-    """
-    from nexus.contracts.constants import ROOT_ZONE_ID
-
-    if zone_id == ROOT_ZONE_ID:
-        return
-
-    prefix = f"/zone/{zone_id}"
-    for attr in _ZONE_PATH_ATTRS:
-        value = getattr(params, attr, None)
-        if not isinstance(value, str):
-            continue
-        # Don't double-scope paths that already carry a zone/tenant prefix
-        if value.startswith(("/zone/", "/tenant:")):
-            continue
-        if value.startswith("/"):
-            setattr(params, attr, f"{prefix}{value}")
-        else:
-            setattr(params, attr, f"{prefix}/{value}")
+# Zone-scoping logic is in nexus.lib.zone_scoping (shared with gRPC servicer).
+# The reverse operation (stripping the prefix from results) is handled
+# by ``unscope_internal_path`` in ``path_utils.py``.
 
 
 @router.post("/api/nfs/{method}")
@@ -117,7 +92,7 @@ async def rpc_endpoint(
         context = get_operation_context(auth_result)
 
         # Scope paths for zone isolation (prefix with /zone/{zone_id}/)
-        _scope_params_for_zone(params, context.zone_id)
+        scope_params_for_zone(params, context.zone_id)
 
         _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 
@@ -194,6 +169,8 @@ async def rpc_endpoint(
 
         return Response(content=encoded, media_type="application/json", headers=headers)
 
+    except ZoneScopingError as e:
+        return _error_response(None, RPCErrorCode.PERMISSION_ERROR, str(e))
     except ValueError as e:
         return _error_response(None, RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {e}")
     except NexusFileNotFoundError as e:
@@ -217,16 +194,16 @@ async def rpc_endpoint(
         )
     except DatabaseError as e:
         logger.warning("Database error in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Database error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
     except ConnectorError as e:
         logger.warning("Connector error in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Backend error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
     except NexusError as e:
         logger.warning("NexusError in method %s: %s", method, e)
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Nexus error: {e}")
-    except Exception as e:
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
+    except Exception:
         logger.exception(f"Error executing method {method}")
-        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}")
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, "Internal server error")
 
 
 def get_cache_headers(method: str, result: Any) -> dict[str, str]:

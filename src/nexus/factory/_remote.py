@@ -14,6 +14,7 @@ Deployment-profile invariant: any distro ≥ kernel.
 
 Issue #1171: Service-layer RPC proxy for REMOTE profile.
 Issue #844:  Part of NexusFS(profile=REMOTE) convergence.
+Issue #1708: Uses coordinator.enlist() — same entry point as all profiles.
 """
 
 from __future__ import annotations
@@ -27,45 +28,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# All fields accepted by NexusFS._bind_wired_services() (dict path).
-# Derived from nexus_fs.py:290-326.
-_WIRED_FIELDS: list[str] = [
-    # Services
-    "rebac_service",
-    "mount_service",
-    "gateway",
-    "mount_core_service",
-    "sync_service",
-    "sync_job_service",
-    "mount_persist_service",
-    "mcp_service",
-    "llm_service",
-    "llm_subsystem",
-    "oauth_service",
-    "skill_service",
-    "skill_package_service",
-    "search_service",
-    "share_link_service",
-    "events_service",
-    "task_queue_service",
-    "workspace_rpc_service",
-    "agent_rpc_service",
-    "user_provisioning_service",
-    "sandbox_rpc_service",
-    "metadata_export_service",
-    "ace_rpc_service",
-    "descendant_checker",
-    "memory_provider",
-]
 
-
-def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
-    """Wire RemoteServiceProxy instances as all service attributes.
+async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
+    """Wire RemoteServiceProxy instances via coordinator.enlist().
 
     Like ``mount -t nfs``: fills VFS service slots with RPC forwarders
     instead of local service implementations.
 
-    Called by ``connect(mode="remote")`` after NexusFS construction.
+    Called by ``connect(profile="remote")`` after NexusFS construction.
+
+    Issue #1708: Coordinator is always created (BLM=None for REMOTE).
+    Single entry point — no fallback to register_wired_services().
 
     Args:
         nfs: The NexusFS instance to wire services onto.
@@ -75,14 +48,25 @@ def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:
 
     proxy = RemoteServiceProxy(call_rpc, service_name="universal")
 
-    # Fill all wired service slots via _bind_wired_services (dict path)
-    wired_dict: dict[str, Any] = dict.fromkeys(_WIRED_FIELDS, proxy)
-    nfs._bind_wired_services(wired_dict)
+    # Issue #1708: Create coordinator for REMOTE profile (BLM=None).
+    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+        ServiceLifecycleCoordinator,
+    )
+
+    coordinator = ServiceLifecycleCoordinator(nfs._service_registry, None, nfs._dispatch)
+    setattr(nfs, "_service_coordinator", coordinator)  # noqa: B010
+
+    # Enlist all canonical services via coordinator (Issue #1708)
+    from nexus.factory.service_routing import _CANONICAL_NAMES, enlist_wired_services
+
+    wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
+    await enlist_wired_services(coordinator, wired_dict)
 
     # BrickServices field not covered by WiredServices
-    nfs.version_service = proxy
+    # Issue #1570: version_service is a facade attr wired by _do_link()
+    setattr(nfs, "version_service", proxy)  # noqa: B010
 
     logger.info(
         "REMOTE profile: wired %d service slots with RPC forwarders (kernel runs naturally)",
-        len(_WIRED_FIELDS) + 1,
+        len(_CANONICAL_NAMES) + 1,
     )

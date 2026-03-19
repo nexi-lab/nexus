@@ -672,3 +672,6 @@ class SubscriptionManager:
         logger.info("Closing SubscriptionManager")
         # Currently no persistent connections to close
         # Future: close any persistent HTTP clients or background tasks
+
+    # PersistentService-compatible alias (Q1 for now — no background loop)
+    stop = close

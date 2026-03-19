@@ -14,8 +14,9 @@ package nexus.core;
 enum DirEntryType {
   DT_REG = 0;     // Regular file (proto3 default)
   DT_DIR = 1;     // Directory
-  DT_MOUNT = 2;   // Mount point to another zone
+  DT_MOUNT = 2;   // Mount point (VFS namespace composition)
   DT_PIPE = 3;    // Kernel IPC ring buffer (same-node, SPSC)
+  DT_STREAM = 4;  // Append-only log with offset-based non-destructive reads
 }
 
 // FileMetadata represents the metadata for a single file or directory in Nexus.
@@ -59,19 +60,14 @@ message FileMetadata {
   // Owner ID for O(1) permission checks (posix_uid).
   string owner_id = 12;
 
-  // Entry type: DT_REG (0), DT_DIR (1), or DT_MOUNT (2).
-  // SSOT for file/directory/mount distinction.
+  // Entry type: DT_REG (0), DT_DIR (1), DT_MOUNT (2), DT_PIPE (3), DT_STREAM (4).
+  // SSOT for file/directory/mount/ipc distinction.
   DirEntryType entry_type = 13;
 
   // Target zone ID for DT_MOUNT entries. Only set when entry_type == DT_MOUNT.
   // Contains the zone_id of the mounted zone for cross-zone path resolution.
   string target_zone_id = 14;
 
-  // Reference count — number of DT_MOUNT entries pointing to this zone.
-  // Follows POSIX i_nlink semantics (cf. shared_ptr reference counting):
-  //   zone create  → i_links_count = 0   (no references yet)
-  //   mount        → i_links_count++     (like link() / shared_ptr copy)
-  //   unmount      → i_links_count--     (like unlink() / shared_ptr dtor)
-  //   count == 0   → zone is destroyable (like free inode / shared_ptr delete)
-  int32 i_links_count = 15;
+  // Field 15 reserved: i_links_count moved to zone-level __i_links_count__
+  // reserved key in Raft metadata (not per-file, per-zone).
 }

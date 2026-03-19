@@ -143,12 +143,12 @@ ADMIN_KEY=$(python3 << 'CREATE_KEY'
 import sys
 sys.path.insert(0, 'src')
 from nexus import NexusFS
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASCASLocalBackend
 from pathlib import Path
 
 # Connect to the database directly
 nx = NexusFS(
-    backend=LocalBackend(Path('/tmp/nexus-cascade-backend-$$')),
+    backend=CASLocalBackend(Path('/tmp/nexus-cascade-backend-$$')),
     db_path='$DB_PATH'
 )
 
@@ -305,13 +305,13 @@ python3 << 'CASCADE_TEST'
 import sys
 sys.path.insert(0, 'src')
 from nexus import NexusFS
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASCASLocalBackend
 from nexus.core.entity_registry import EntityRegistry
 from pathlib import Path
 
 # Connect to the database directly
 nx = NexusFS(
-    backend=LocalBackend(Path('/tmp/nexus-cascade-backend-test-$$')),
+    backend=CASLocalBackend(Path('/tmp/nexus-cascade-backend-test-$$')),
     db_path='$DB_PATH'
 )
 

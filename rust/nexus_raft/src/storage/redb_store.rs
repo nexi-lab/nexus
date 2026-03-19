@@ -26,12 +26,21 @@
 //! ```
 
 use serde::{de::DeserializeOwned, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use thiserror::Error;
 
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+
+/// Global deduplication map for leaked table name strings.
+///
+/// redb requires `&'static str` for TableDefinition. Rather than leaking a
+/// new allocation every time `tree()` is called with the same name, this map
+/// ensures each unique name is leaked exactly once.
+static LEAKED_TABLE_NAMES: LazyLock<Mutex<HashMap<String, &'static str>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The default table name for SledStore-compatible get/set/delete on the store itself.
 const DEFAULT_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("__default__");
@@ -135,13 +144,17 @@ impl RedbStore {
     ///
     /// # Memory
     ///
-    /// Uses `Box::leak` to satisfy redb's `&'static str` requirement for
-    /// table names. Each unique tree name leaks ~50-100 bytes for the process
-    /// lifetime. Acceptable because tree names are finite and known (typically
-    /// 5-10 per database). Do not call with dynamic/unbounded tree names.
+    /// Uses a global dedup map + `Box::leak` to satisfy redb's `&'static str`
+    /// requirement for table names. Each unique name is leaked exactly once
+    /// (~50-100 bytes). Repeated calls with the same name reuse the existing
+    /// allocation. Do not call with dynamic/unbounded tree names.
     pub fn tree(&self, name: &str) -> Result<RedbTree> {
-        // Ensure the table exists by opening a write transaction
-        let table_name = Box::leak(name.to_owned().into_boxed_str());
+        // Deduplicate: only leak each unique name once
+        let table_name = {
+            let mut map = LEAKED_TABLE_NAMES.lock().unwrap();
+            *map.entry(name.to_owned())
+                .or_insert_with(|| Box::leak(name.to_owned().into_boxed_str()))
+        };
         let table_def = TableDefinition::<&[u8], &[u8]>::new(table_name);
         let write_txn = self.db.begin_write()?;
         // Opening the table in a write transaction creates it if it doesn't exist
@@ -268,6 +281,16 @@ impl RedbTree {
     /// Create the TableDefinition for this tree.
     fn table_def(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
         TableDefinition::new(self.table_name)
+    }
+
+    /// Get the underlying database handle (for cross-tree atomic transactions).
+    pub fn raw_db(&self) -> &Database {
+        &self.db
+    }
+
+    /// Get the table name (for cross-tree atomic transactions).
+    pub fn name(&self) -> &'static str {
+        self.table_name
     }
 
     /// Get a value by key.
@@ -565,6 +588,76 @@ impl RedbTree {
                 })
                 .collect(),
             Err(e) => vec![Err(StorageError::Storage(e))],
+        }
+    }
+
+    /// Process entries matching a prefix within a transaction scope (zero-copy).
+    ///
+    /// Unlike `scan_prefix()` which materializes all results, this processes
+    /// entries in-place without copying key/value bytes. Use for performance-
+    /// sensitive operations like compaction where results don't need to outlive
+    /// the transaction.
+    pub fn for_each_prefix<F>(&self, prefix: &[u8], mut f: F) -> Result<()>
+    where
+        F: FnMut(&[u8], &[u8]) -> Result<bool>,
+    {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(self.table_def()) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+
+        let result = if let Some(upper) = prefix_upper_bound(prefix) {
+            table.range::<&[u8]>(prefix..upper.as_slice())
+        } else {
+            table.range::<&[u8]>(prefix..)
+        };
+
+        match result {
+            Ok(iter) => {
+                for entry_result in iter {
+                    let entry = entry_result.map_err(StorageError::Storage)?;
+                    let (k, v) = entry;
+                    let should_continue = f(k.value(), v.value())?;
+                    if !should_continue {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => Err(StorageError::Storage(e)),
+        }
+    }
+
+    /// Process all entries within a transaction scope (zero-copy).
+    ///
+    /// Like `for_each_prefix` but for the entire table. The closure receives
+    /// key and value references that are valid only during the callback.
+    pub fn for_each<F>(&self, mut f: F) -> Result<()>
+    where
+        F: FnMut(&[u8], &[u8]) -> Result<bool>,
+    {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(self.table_def()) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+
+        match table.iter() {
+            Ok(iter) => {
+                for entry_result in iter {
+                    let entry = entry_result.map_err(StorageError::Storage)?;
+                    let (k, v) = entry;
+                    let should_continue = f(k.value(), v.value())?;
+                    if !should_continue {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+            Err(e) => Err(StorageError::Storage(e)),
         }
     }
 
@@ -1011,5 +1104,106 @@ mod tests {
 
         // Single byte
         assert_eq!(prefix_upper_bound(b"a"), Some(b"b".to_vec()));
+    }
+
+    #[test]
+    fn test_db_accessor() {
+        let store = RedbStore::open_temporary().unwrap();
+        let tree = store.tree("db_accessor_test").unwrap();
+
+        // Verify we can get the db handle and use it for cross-table operations
+        let db = tree.raw_db();
+        let write_txn = db.begin_write().unwrap();
+        {
+            let table_def = redb::TableDefinition::<&[u8], &[u8]>::new("db_accessor_test");
+            let mut table = write_txn.open_table(table_def).unwrap();
+            table
+                .insert(b"cross_txn_key" as &[u8], b"cross_txn_value" as &[u8])
+                .unwrap();
+        }
+        write_txn.commit().unwrap();
+
+        assert_eq!(
+            tree.get(b"cross_txn_key").unwrap(),
+            Some(b"cross_txn_value".to_vec())
+        );
+    }
+
+    #[test]
+    fn test_for_each_prefix() {
+        let store = RedbStore::open_temporary().unwrap();
+        let tree = store.tree("foreach_test").unwrap();
+
+        tree.set(b"user:1", b"alice").unwrap();
+        tree.set(b"user:2", b"bob").unwrap();
+        tree.set(b"user:3", b"charlie").unwrap();
+        tree.set(b"item:1", b"book").unwrap();
+
+        let mut collected = Vec::new();
+        tree.for_each_prefix(b"user:", |k, v| {
+            collected.push((k.to_vec(), v.to_vec()));
+            Ok(true)
+        })
+        .unwrap();
+
+        assert_eq!(collected.len(), 3);
+    }
+
+    #[test]
+    fn test_for_each_prefix_early_stop() {
+        let store = RedbStore::open_temporary().unwrap();
+        let tree = store.tree("foreach_stop_test").unwrap();
+
+        for i in 0..10u32 {
+            tree.set(format!("key:{i:03}").as_bytes(), b"val").unwrap();
+        }
+
+        let mut count = 0;
+        tree.for_each_prefix(b"key:", |_k, _v| {
+            count += 1;
+            Ok(count < 3) // Stop after 3
+        })
+        .unwrap();
+
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_for_each_all() {
+        let store = RedbStore::open_temporary().unwrap();
+        let tree = store.tree("foreach_all_test").unwrap();
+
+        tree.set(b"a", b"1").unwrap();
+        tree.set(b"b", b"2").unwrap();
+        tree.set(b"c", b"3").unwrap();
+
+        let mut count = 0;
+        tree.for_each(|_k, _v| {
+            count += 1;
+            Ok(true)
+        })
+        .unwrap();
+
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_for_each_early_stop() {
+        let store = RedbStore::open_temporary().unwrap();
+        let tree = store.tree("early_stop_test").unwrap();
+
+        for i in 0..10u64 {
+            tree.set(&i.to_be_bytes(), format!("v{i}").as_bytes())
+                .unwrap();
+        }
+
+        let mut count = 0;
+        tree.for_each(|_k, _v| {
+            count += 1;
+            Ok(count < 3) // Stop after 3 entries
+        })
+        .unwrap();
+
+        assert_eq!(count, 3);
     }
 }

@@ -75,8 +75,16 @@ class DeferredPermissionBuffer:
         self._total_grants_flushed = 0
         self._flush_count = 0
 
-    def start(self) -> None:
-        """Start the background flush worker thread."""
+    async def start(self) -> None:
+        """Start the background flush worker thread (PersistentService protocol)."""
+        self._start_sync()
+
+    async def stop(self) -> None:
+        """Stop the buffer and flush remaining items (PersistentService protocol)."""
+        self._stop_sync()
+
+    def _start_sync(self) -> None:
+        """Sync start — spawns background flush thread."""
         if self._started:
             return
 
@@ -93,12 +101,8 @@ class DeferredPermissionBuffer:
             f"max_batch={self._max_batch_size})"
         )
 
-    def stop(self, timeout: float = 5.0) -> None:
-        """Stop the buffer and flush remaining items.
-
-        Args:
-            timeout: Maximum time to wait for final flush
-        """
+    def _stop_sync(self, timeout: float = 5.0) -> None:
+        """Sync stop — joins thread and flushes remaining items."""
         if not self._started:
             return
 

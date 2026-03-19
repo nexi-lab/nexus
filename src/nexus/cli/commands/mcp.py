@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, cast
 import click
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     get_filesystem,
@@ -178,7 +177,8 @@ def serve(
     host: str,
     port: int,
     api_key: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Start Nexus MCP server.
 
@@ -222,10 +222,20 @@ def serve(
         nexus mcp serve --url http://localhost:2026 --api-key YOUR_KEY
         # Or via environment:
         NEXUS_URL=http://localhost:2026 NEXUS_API_KEY=YOUR_KEY nexus mcp serve
-
-        # Use with local backend
-        nexus mcp serve --data-dir ./my-data
     """
+    import asyncio
+
+    asyncio.run(_async_serve(transport, host, port, api_key, remote_url, remote_api_key))
+
+
+async def _async_serve(
+    transport: str,
+    host: str,
+    port: int,
+    api_key: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         # Check if fastmcp is installed
         try:
@@ -255,21 +265,10 @@ def serve(
         # Get filesystem instance
         log_msg("Initializing Nexus MCP server...")
 
-        # Check if using remote URL
-        if backend_config.remote_url:
-            log_msg(f"  Remote URL: {backend_config.remote_url}")
-            if api_key:
-                log_msg(f"  API Key: {'*' * 8}")
-            nx = None
-            remote_url = backend_config.remote_url
-        else:
-            log_msg(f"  Backend: {backend_config.backend}")
-            if backend_config.backend == "gcs":
-                log_msg(f"  GCS Bucket: {backend_config.gcs_bucket}")
-            else:
-                log_msg(f"  Data Dir: {backend_config.data_dir}")
-            nx = get_filesystem(backend_config)
-            remote_url = None
+        log_msg(f"  Remote URL: {remote_url}")
+        if api_key:
+            log_msg(f"  API Key: {'*' * 8}")
+        nx = await get_filesystem(remote_url, remote_api_key)
 
         log_msg(f"  Transport: {transport}")
 
@@ -294,6 +293,7 @@ def serve(
                 "nexus_glob",
                 "nexus_grep",
                 "nexus_semantic_search",
+                "nexus_resolve_context",
                 "nexus_store_memory",
                 "nexus_query_memory",
                 "nexus_list_workflows",
@@ -319,8 +319,25 @@ def serve(
             console.print("[yellow]Press Ctrl+C to stop[/yellow]")
             console.print()
 
+        # Build manifest resolver callable if available (Issue #2984)
+        manifest_resolve_fn = None
+        if nx is not None:
+            _raw_resolver = getattr(nx, "manifest_resolver", None)
+            if _raw_resolver is not None:
+                try:
+                    from nexus.factory.manifest_adapter import build_manifest_resolve_fn
+
+                    manifest_resolve_fn = build_manifest_resolve_fn(_raw_resolver, nx)
+                except Exception:
+                    pass  # Graceful degradation — tool returns "unavailable"
+
         # Create and run MCP server
-        mcp_server = create_mcp_server(nx=nx, remote_url=remote_url, api_key=api_key)
+        mcp_server = await create_mcp_server(
+            nx=nx,
+            remote_url=remote_url,
+            api_key=api_key,
+            manifest_resolver=manifest_resolve_fn,
+        )
 
         # Add HTTP middleware and routes (for http/sse transports)
         if transport in ["http", "sse"]:
@@ -340,6 +357,36 @@ def serve(
         console.print("\n[yellow]MCP server stopped by user[/yellow]")
     except Exception as e:
         handle_error(e)
+
+
+@mcp.command(name="export-tools")
+def export_tools_cmd() -> None:
+    """Export CLI commands as MCP tool definitions (JSON Schema).
+
+    Walks the Click command tree and outputs MCP-compatible tool
+    definitions for every leaf command.  Each tool has a name,
+    description, and inputSchema suitable for use with the Model
+    Context Protocol.
+
+    Examples:
+        # Pretty-print to terminal
+        nexus mcp export-tools
+
+        # Pipe to file (auto-compact JSON)
+        nexus mcp export-tools > tools.json
+
+        # Filter with jq
+        nexus mcp export-tools | jq '.[].name'
+    """
+    import json
+
+    from nexus.cli.export_tools import walk_click_tree
+    from nexus.cli.main import main as cli_root
+
+    tools = walk_click_tree(cli_root, prefix="nexus")
+
+    indent = 2 if sys.stdout.isatty() else None
+    click.echo(json.dumps(tools, indent=indent, default=str))
 
 
 def register_commands(cli: click.Group) -> None:

@@ -66,8 +66,13 @@ class RemoteServiceProxy:
         from nexus.remote.rpc_proxy import RPCProxyBase
 
         def rpc_forwarder(*args: Any, **kwargs: Any) -> Any:
-            # Map positional args to keyword args using ABC signature
+            # Server exposes async @rpc_expose methods; client-side sync
+            # wrappers append "_sync" — strip suffix for RPC dispatch.
             rpc_name = name
+            if rpc_name.endswith("_sync"):
+                rpc_name = rpc_name[:-5]
+
+            # Map positional args to keyword args using ABC signature
             if args:
                 param_names = RPCProxyBase._get_param_names(rpc_name)
                 for i, val in enumerate(args):
@@ -78,12 +83,13 @@ class RemoteServiceProxy:
             kwargs.pop("context", None)
             kwargs.pop("_context", None)
 
-            # Server exposes async @rpc_expose methods; client-side sync
-            # wrappers append "_sync" — strip suffix for RPC dispatch.
-            if rpc_name.endswith("_sync"):
-                rpc_name = rpc_name[:-5]
+            # Extract timeout hint for gRPC transport deadline override.
+            # The timeout value stays in kwargs (sent as RPC param to server)
+            # AND is used as gRPC read_timeout so the channel doesn't kill
+            # long-running calls like ACP agent invocations.
+            read_timeout = kwargs.get("timeout")
 
-            return self._call_rpc(rpc_name, kwargs or None)
+            return self._call_rpc(rpc_name, kwargs or None, read_timeout=read_timeout)
 
         # Preserve method name for debugging
         rpc_forwarder.__name__ = name

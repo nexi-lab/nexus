@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Direct tests for the Rust VFSLockManager via nexus_fast (Issue #1398).
 
-Run after building with: maturin develop --release
+Run after building with: maturin develop
 Usage: python rust/nexus_pyo3/test_lock.py
 """
 

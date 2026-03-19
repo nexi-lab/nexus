@@ -27,7 +27,14 @@ from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 
 @pytest.fixture
 def mock_nexus_fs() -> MagicMock:
-    return MagicMock()
+    fs = MagicMock()
+    # Default async methods to AsyncMock so they can be awaited
+    fs.read = AsyncMock(return_value=b"")
+    fs.write = AsyncMock(return_value={})
+    fs.sys_stat = AsyncMock(return_value=None)
+    fs.sys_unlink = AsyncMock(return_value=None)
+    fs.sys_rmdir = AsyncMock(return_value=None)
+    return fs
 
 
 @pytest.fixture
@@ -277,18 +284,14 @@ class TestVFSServicerTypedRPCs:
 
     @pytest.mark.anyio
     async def test_read_success(self, servicer, mock_nexus_fs) -> None:
-        """Read returns content, etag, size from sys_read."""
-        mock_nexus_fs.sys_read.return_value = {
-            "content": b"hello world",
-            "etag": "sha256-abc",
-            "size": 11,
-        }
+        """Read returns content, etag, size from read()."""
+        mock_nexus_fs.read = AsyncMock(
+            return_value={"content": b"hello world", "etag": "sha256-abc", "size": 11}
+        )
         request = _make_typed_request("ReadRequest", path="/test.txt", auth_token="")
         context = MagicMock()
 
-        with patch("nexus.grpc.servicer.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
-            mock_thread.return_value = {"content": b"hello world", "etag": "sha256-abc", "size": 11}
-            response = await servicer.Read(request, context)
+        response = await servicer.Read(request, context)
 
         assert response.is_error is False
         assert response.content == b"hello world"
@@ -296,43 +299,73 @@ class TestVFSServicerTypedRPCs:
         assert response.size == 11
 
     @pytest.mark.anyio
-    async def test_read_not_found(self, servicer) -> None:
+    async def test_read_not_found(self, servicer, mock_nexus_fs) -> None:
         """Read returns is_error=True with FILE_NOT_FOUND on missing file."""
+        mock_nexus_fs.read = AsyncMock(side_effect=NexusFileNotFoundError("/missing.txt"))
         request = _make_typed_request("ReadRequest", path="/missing.txt", auth_token="")
         context = MagicMock()
 
-        with patch(
-            "nexus.grpc.servicer.asyncio.to_thread",
-            new_callable=AsyncMock,
-            side_effect=NexusFileNotFoundError("/missing.txt"),
-        ):
-            response = await servicer.Read(request, context)
+        response = await servicer.Read(request, context)
 
         assert response.is_error is True
         payload = decode_rpc_message(response.error_payload)
         assert payload["code"] == -32000
 
     @pytest.mark.anyio
-    async def test_write_success(self, servicer) -> None:
-        """Write returns etag and size from sys_write."""
+    async def test_write_success(self, servicer, mock_nexus_fs) -> None:
+        """Write returns etag and size from write() (Issue #2787)."""
+        mock_nexus_fs.write = AsyncMock(return_value={"etag": "sha256-xyz", "size": 4})
         request = _make_typed_request(
             "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag=""
         )
         context = MagicMock()
 
-        with patch(
-            "nexus.grpc.servicer.asyncio.to_thread",
-            new_callable=AsyncMock,
-            return_value={"etag": "sha256-xyz", "size": 4},
-        ):
-            response = await servicer.Write(request, context)
+        response = await servicer.Write(request, context)
 
         assert response.is_error is False
         assert response.etag == "sha256-xyz"
         assert response.size == 4
 
     @pytest.mark.anyio
-    async def test_write_conflict(self, servicer) -> None:
+    async def test_write_calls_write_not_sys_write(self, servicer, mock_nexus_fs) -> None:
+        """Write handler uses write() (returns dict) not sys_write() (returns int).
+
+        Issue #2787: sys_write() returns int (POSIX), so etag was always empty.
+        """
+        mock_nexus_fs.write = AsyncMock(return_value={"etag": "sha256-xyz", "size": 4})
+        mock_nexus_fs.sys_write = AsyncMock(return_value=4)
+        request = _make_typed_request(
+            "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag=""
+        )
+        context = MagicMock()
+
+        await servicer.Write(request, context)
+
+        # Verify write() was called (not sys_write)
+        mock_nexus_fs.write.assert_called_once()
+        mock_nexus_fs.sys_write.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_write_with_occ_etag(self, servicer, mock_nexus_fs) -> None:
+        """Write with etag uses occ_write() for compare-and-swap (Issue #2787)."""
+        request = _make_typed_request(
+            "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag="sha256-old"
+        )
+        context = MagicMock()
+
+        with patch(
+            "nexus.lib.occ.occ_write",
+            new_callable=AsyncMock,
+            return_value={"etag": "sha256-new", "size": 4},
+        ) as mock_occ:
+            response = await servicer.Write(request, context)
+
+        assert response.is_error is False
+        assert response.etag == "sha256-new"
+        mock_occ.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_write_conflict(self, servicer, mock_nexus_fs) -> None:
         """Write returns CONFLICT error on etag mismatch."""
         request = _make_typed_request(
             "WriteRequest", path="/file.txt", content=b"data", auth_token="", etag="old"
@@ -340,7 +373,7 @@ class TestVFSServicerTypedRPCs:
         context = MagicMock()
 
         with patch(
-            "nexus.grpc.servicer.asyncio.to_thread",
+            "nexus.lib.occ.occ_write",
             new_callable=AsyncMock,
             side_effect=ConflictError("/file.txt", expected_etag="old", current_etag="new"),
         ):
@@ -351,59 +384,60 @@ class TestVFSServicerTypedRPCs:
         assert payload["code"] == -32006
 
     @pytest.mark.anyio
-    async def test_delete_success(self, servicer) -> None:
-        """Delete returns success=True on sys_unlink."""
+    async def test_delete_success(self, servicer, mock_nexus_fs) -> None:
+        """Delete returns success=True on sys_unlink for files."""
         request = _make_typed_request(
             "DeleteRequest", path="/file.txt", auth_token="", recursive=False
         )
         context = MagicMock()
 
-        with patch(
-            "nexus.grpc.servicer.asyncio.to_thread",
-            new_callable=AsyncMock,
-            return_value=None,
-        ):
-            response = await servicer.Delete(request, context)
+        # metadata.get is still called via asyncio.to_thread (it's sync)
+        file_meta = MagicMock(mime_type="application/octet-stream")
+        mock_nexus_fs.metadata.get.return_value = file_meta
+        mock_nexus_fs.sys_unlink = AsyncMock(return_value=None)
+
+        response = await servicer.Delete(request, context)
 
         assert response.is_error is False
         assert response.success is True
+        mock_nexus_fs.sys_unlink.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_delete_recursive(self, servicer) -> None:
-        """Delete with recursive=True calls sys_rmdir."""
+    async def test_delete_recursive(self, servicer, mock_nexus_fs) -> None:
+        """Delete with recursive=True calls sys_rmdir for directories."""
         request = _make_typed_request("DeleteRequest", path="/dir", auth_token="", recursive=True)
         context = MagicMock()
 
-        with patch(
-            "nexus.grpc.servicer.asyncio.to_thread",
-            new_callable=AsyncMock,
-            return_value=None,
-        ) as mock_thread:
-            response = await servicer.Delete(request, context)
+        dir_meta = MagicMock(mime_type="inode/directory")
+        mock_nexus_fs.metadata.get.return_value = dir_meta
+        mock_nexus_fs.sys_rmdir = AsyncMock(return_value=None)
+
+        response = await servicer.Delete(request, context)
 
         assert response.success is True
-        # Verify sys_rmdir was called (not sys_unlink) — check mock name
-        call_args = mock_thread.call_args
-        func = call_args[0][0]
-        assert "sys_rmdir" in str(func)
+        mock_nexus_fs.sys_rmdir.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_stream_read_chunks(self, servicer) -> None:
-        """StreamRead yields chunks for large content."""
+    async def test_stream_read_chunks(self, servicer, mock_nexus_fs) -> None:
+        """StreamRead yields chunks via read_range pread loop (Issue #1614)."""
         request = _make_typed_request(
             "StreamReadRequest", path="/big.bin", auth_token="", chunk_size=5
         )
         context = MagicMock()
         context.cancelled.return_value = False
 
-        with patch(
-            "nexus.grpc.servicer.asyncio.to_thread",
-            new_callable=AsyncMock,
-            return_value=b"hello world!",  # 12 bytes
-        ):
-            chunks = []
-            async for chunk in servicer.StreamRead(request, context):
-                chunks.append(chunk)
+        # sys_stat returns file size (async)
+        mock_nexus_fs.sys_stat.return_value = {"size": 12}
+
+        # read_range is sync (called via asyncio.to_thread)
+        content = b"hello world!"
+        mock_nexus_fs.read_range = MagicMock(
+            side_effect=lambda path, start, end, ctx: content[start:end]
+        )
+
+        chunks = []
+        async for chunk in servicer.StreamRead(request, context):
+            chunks.append(chunk)
 
         # 12 bytes / 5 chunk_size = 3 chunks (5 + 5 + 2)
         assert len(chunks) == 3
@@ -415,7 +449,7 @@ class TestVFSServicerTypedRPCs:
         assert chunks[2].is_last is True
 
     @pytest.mark.anyio
-    async def test_stream_read_empty_file(self, servicer) -> None:
+    async def test_stream_read_empty_file(self, servicer, mock_nexus_fs) -> None:
         """StreamRead yields single empty chunk for empty file."""
         request = _make_typed_request(
             "StreamReadRequest", path="/empty.txt", auth_token="", chunk_size=0
@@ -423,35 +457,31 @@ class TestVFSServicerTypedRPCs:
         context = MagicMock()
         context.cancelled.return_value = False
 
-        with patch(
-            "nexus.grpc.servicer.asyncio.to_thread",
-            new_callable=AsyncMock,
-            return_value=b"",
-        ):
-            chunks = []
-            async for chunk in servicer.StreamRead(request, context):
-                chunks.append(chunk)
+        # sys_stat returns size=0
+        mock_nexus_fs.sys_stat.return_value = {"size": 0}
+
+        chunks = []
+        async for chunk in servicer.StreamRead(request, context):
+            chunks.append(chunk)
 
         assert len(chunks) == 1
         assert chunks[0].data == b""
         assert chunks[0].is_last is True
 
     @pytest.mark.anyio
-    async def test_stream_read_error(self, servicer) -> None:
+    async def test_stream_read_error(self, servicer, mock_nexus_fs) -> None:
         """StreamRead yields error chunk on file not found."""
         request = _make_typed_request(
             "StreamReadRequest", path="/missing.bin", auth_token="", chunk_size=0
         )
         context = MagicMock()
 
-        with patch(
-            "nexus.grpc.servicer.asyncio.to_thread",
-            new_callable=AsyncMock,
-            side_effect=NexusFileNotFoundError("/missing.bin"),
-        ):
-            chunks = []
-            async for chunk in servicer.StreamRead(request, context):
-                chunks.append(chunk)
+        # sys_stat raises NexusFileNotFoundError
+        mock_nexus_fs.sys_stat.side_effect = NexusFileNotFoundError("/missing.bin")
+
+        chunks = []
+        async for chunk in servicer.StreamRead(request, context):
+            chunks.append(chunk)
 
         assert len(chunks) == 1
         assert chunks[0].is_error is True

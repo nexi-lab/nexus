@@ -1,0 +1,276 @@
+# Dynamic Federation E2E Test — No static zone topology
+# =========================================================================
+# Same infrastructure as docker-compose.cross-platform-test.yml but WITHOUT
+# NEXUS_FEDERATION_ZONES and NEXUS_FEDERATION_MOUNTS env vars.
+#
+# Nodes start with only their root zone. The test suite dynamically creates
+# zones, mounts, and joins via JSON-RPC (federation_create_zone,
+# federation_mount, federation_join) to build the topology at runtime.
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml up -d
+#   docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml logs -f test
+#
+# Target topology (built dynamically by tests):
+#   /              (root zone — bootstrapped at startup)
+#   /corp/         → DT_MOUNT → zone "corp"       (created by test)
+#   /corp/eng/     → DT_MOUNT → zone "corp-eng"   (nested, created by test)
+#   /corp/sales/   → DT_MOUNT → zone "corp-sales" (created by test)
+#   /family/       → DT_MOUNT → zone "family"     (created by test)
+#   /family/work/  → DT_MOUNT → zone "corp"       (cross-link, created by test)
+
+services:
+  # ==========================================================================
+  # PostgreSQL 16 — Shared RecordStore
+  # ==========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexus-dyn-postgres
+    hostname: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c effective_io_concurrency=16
+      -c wal_compression=lz4
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - dyn_postgres_data:/var/lib/postgresql/data
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nexus}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ==========================================================================
+  # Dragonfly — CacheStore
+  # ==========================================================================
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: nexus-dyn-dragonfly
+    hostname: dragonfly
+    restart: unless-stopped
+    command: >
+      dragonfly
+      --maxmemory=256mb
+      --proactor_threads=2
+      --logtostderr
+      --cache_mode=true
+    ports:
+      - "${DRAGONFLY_PORT:-6379}:6379"
+    volumes:
+      - dyn_dragonfly_data:/data
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  # ==========================================================================
+  # NexusFS Node 1 — Full node (initial leader)
+  # NO NEXUS_FEDERATION_ZONES / NEXUS_FEDERATION_MOUNTS
+  # ==========================================================================
+  nexus-1:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: nexus-fullnode:latest
+    container_name: nexus-dyn-node-1
+    hostname: nexus-1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+    environment:
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 2026
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_PROFILE: cloud
+
+      # Raft — static peer list, but NO static zones
+      NEXUS_NODE_ID: 1
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
+
+      # RecordStore
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+
+      # CacheStore
+      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
+      NEXUS_ENABLE_TIGER_CACHE: "false"
+
+      # Auth
+      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}
+      NEXUS_ENFORCE_PERMISSIONS: "true"
+      NEXUS_ALLOW_ADMIN_BYPASS: "true"
+
+      # Backend
+      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
+
+      # Runtime
+      NEXUS_USE_UVLOOP: "true"
+      RUST_LOG: info,nexus_raft=debug
+
+      # NO NEXUS_FEDERATION_ZONES — topology built dynamically by tests
+      # NO NEXUS_FEDERATION_MOUNTS — mounts created via federation_mount RPC
+    ports:
+      - "${NEXUS_PORT:-2026}:2026"
+      - "2126:2126"
+    volumes:
+      - dyn_nexus1_data:/app/data
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  # ==========================================================================
+  # NexusFS Node 2 — Full node (follower)
+  # NO NEXUS_FEDERATION_ZONES / NEXUS_FEDERATION_MOUNTS
+  # ==========================================================================
+  nexus-2:
+    image: nexus-fullnode:latest
+    container_name: nexus-dyn-node-2
+    hostname: nexus-2
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+      nexus-1:
+        condition: service_started
+    environment:
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 2026
+      NEXUS_DATA_DIR: /app/data
+      NEXUS_PROFILE: cloud
+
+      NEXUS_NODE_ID: 2
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
+
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+
+      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
+      NEXUS_ENABLE_TIGER_CACHE: "false"
+
+      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}
+      NEXUS_ENFORCE_PERMISSIONS: "true"
+      NEXUS_ALLOW_ADMIN_BYPASS: "true"
+
+      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
+      NEXUS_USE_UVLOOP: "true"
+      RUST_LOG: info,nexus_raft=debug
+
+      # NO NEXUS_FEDERATION_ZONES / NEXUS_FEDERATION_MOUNTS
+    ports:
+      - "2027:2026"
+      - "2127:2126"
+    volumes:
+      - dyn_nexus2_data:/app/data
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  # ==========================================================================
+  # Raft Witness — vote-only node (no static zones)
+  # ==========================================================================
+  witness:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.raft-witness
+    container_name: nexus-dyn-witness
+    hostname: witness
+    restart: unless-stopped
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    environment:
+      NEXUS_NODE_ID: 3
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
+      NEXUS_DATA_DIR: /home/nexus/data
+      # NO NEXUS_FEDERATION_ZONES
+      RUST_LOG: info,nexus_raft=debug
+    ports:
+      - "2128:2126"
+    volumes:
+      - dyn_witness_data:/home/nexus/data
+    networks:
+      - dyn-nexus-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ==========================================================================
+  # E2E Test Runner — dynamic federation tests
+  # ==========================================================================
+  test:
+    image: nexus-fullnode:latest
+    container_name: nexus-dyn-test
+    working_dir: /app
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+      nexus-2:
+        condition: service_healthy
+    entrypoint: []
+    volumes:
+      - ..:/app
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app/src
+    command: >
+      bash -c '
+        echo "Installing test dependencies..."
+        pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf
+        echo "Running dynamic federation E2E tests..."
+        python -m pytest tests/e2e/docker/test_federation_dynamic_e2e.py -v --no-header -o "addopts=" -x --timeout=180
+      '
+    networks:
+      - dyn-nexus-network
+
+networks:
+  dyn-nexus-network:
+    name: nexus_dyn-nexus-network
+    driver: bridge
+
+volumes:
+  dyn_postgres_data:
+    name: nexus-dyn-postgres-data
+  dyn_nexus1_data:
+    name: nexus-dyn-node1-data
+  dyn_nexus2_data:
+    name: nexus-dyn-node2-data
+  dyn_witness_data:
+    name: nexus-dyn-witness-data
+  dyn_dragonfly_data:
+    name: nexus-dyn-dragonfly-data

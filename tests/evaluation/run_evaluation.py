@@ -409,7 +409,7 @@ async def run_evaluation_async(
     - These match the variables used by docker-compose.yml and MCP server
 
     **Before running evaluations**:
-    1. Start Docker containers: ./scripts/docker-demo.sh
+    1. Start Docker containers: ./scripts/nexus-docker.sh
     2. Verify MCP server: curl http://${MCP_HOST}:${MCP_PORT}/health
     3. Set NEXUS_API_KEY if authentication is enabled
     4. Override MCP_HOST/MCP_PORT for remote testing if needed

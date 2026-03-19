@@ -5,24 +5,28 @@ This guide shows how to integrate the high-performance Rust permission checker w
 ## Step 1: Install the Extension
 
 ```bash
-cd rust/nexus_fast
-maturin develop --release
+cd rust/nexus_pyo3
+maturin develop
 ```
 
-Or for production:
+Or for production (optimized):
 ```bash
-cd rust/nexus_fast
+cd rust/nexus_pyo3
 maturin build --release
 pip install target/wheels/nexus_fast-*.whl
 ```
 
-## Step 2: Add Optional Dependency
+## Step 2: Install `nexus-fast` in the Target Environment
 
-In the main `pyproject.toml`:
+Nexus loads `nexus_fast` opportunistically via import when it is present. Keep
+the extension as a separately installed package instead of advertising a root
+package extra that points at an unpublished registry artifact during
+development.
 
-```toml
-[project.optional-dependencies]
-fast = ["nexus-fast>=0.1.0"]
+For released environments:
+
+```bash
+pip install nexus-fast
 ```
 
 ## Step 3: Create Wrapper Module
@@ -236,7 +240,7 @@ If `maturin develop` fails:
 1. Check Rust installation: `rustc --version`
 2. Update Rust: `rustup update`
 3. Check Python version: `python --version` (3.8+ required)
-4. Try cleaning build: `cargo clean && maturin develop --release`
+4. Try cleaning build: `cargo clean && maturin develop`
 
 ### Import Errors
 
@@ -244,7 +248,7 @@ If `import nexus_fast` fails:
 
 1. Verify installation: `pip show nexus-fast`
 2. Check Python environment: `which python`
-3. Rebuild: `maturin develop --release`
+3. Rebuild: `maturin develop`
 
 ### Incorrect Results
 

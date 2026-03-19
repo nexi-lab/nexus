@@ -4,7 +4,7 @@ import tempfile
 
 import pytest
 
-from nexus.backends.local import LocalBackend
+from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 from nexus.core.router import PathRouter
 from tests.helpers.dict_metastore import DictMetastore
@@ -23,38 +23,48 @@ def router(metastore: DictMetastore) -> PathRouter:
 
 
 @pytest.fixture
-def temp_backend() -> LocalBackend:
-    """Create a temporary LocalBackend for testing."""
+def temp_backend() -> CASLocalBackend:
+    """Create a temporary CASLocalBackend for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        yield LocalBackend(tmpdir)
+        yield CASLocalBackend(tmpdir)
 
 
 # === Mount management tests ===
 
 
-def test_add_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_add_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test adding a mount to the router."""
     router.add_mount("/workspace", temp_backend)
     assert "/workspace" in router._backends
     assert router._backends["/workspace"].backend == temp_backend
 
 
-def test_add_mount_normalizes_path(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_add_mount_does_not_persist_metadata(
+    router: PathRouter, metastore: DictMetastore, temp_backend: CASLocalBackend
+) -> None:
+    """Runtime mounts should only populate the in-memory mount table."""
+    router.add_mount("/workspace", temp_backend)
+
+    assert "/workspace" in router._backends
+    assert metastore.get("/workspace") is None
+
+
+def test_add_mount_normalizes_path(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that mount points are normalized."""
     router.add_mount("/workspace/", temp_backend)  # Trailing slash
     assert "/workspace" in router._backends
 
 
-def test_add_mount_replaces_existing(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_add_mount_replaces_existing(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that adding a mount at the same path replaces it."""
     with tempfile.TemporaryDirectory() as tmpdir2:
-        backend2 = LocalBackend(tmpdir2)
+        backend2 = CASLocalBackend(tmpdir2)
         router.add_mount("/workspace", temp_backend)
         router.add_mount("/workspace", backend2)
         assert router._backends["/workspace"].backend == backend2
 
 
-def test_get_mount_points(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_get_mount_points(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test get_mount_points returns sorted active mount points."""
     router.add_mount("/workspace", temp_backend)
     router.add_mount("/shared", temp_backend)
@@ -63,14 +73,14 @@ def test_get_mount_points(router: PathRouter, temp_backend: LocalBackend) -> Non
     assert points == ["/external", "/shared", "/workspace"]
 
 
-def test_has_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_has_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test has_mount checks active mounts."""
     router.add_mount("/workspace", temp_backend)
     assert router.has_mount("/workspace") is True
     assert router.has_mount("/nonexistent") is False
 
 
-def test_remove_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_remove_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test removing a mount."""
     router.add_mount("/workspace", temp_backend)
     assert router.remove_mount("/workspace") is True
@@ -82,7 +92,7 @@ def test_remove_mount_nonexistent(router: PathRouter) -> None:
     assert router.remove_mount("/nonexistent") is False
 
 
-def test_list_mounts(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_list_mounts(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test list_mounts returns MountInfo objects."""
     router.add_mount("/workspace", temp_backend)
     router.add_mount("/shared", temp_backend, readonly=True)
@@ -94,7 +104,7 @@ def test_list_mounts(router: PathRouter, temp_backend: LocalBackend) -> None:
     assert shared_mount.readonly is True
 
 
-def test_get_backend_by_name(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_get_backend_by_name(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test get_backend_by_name looks up backend by its name attribute."""
     router.add_mount("/workspace", temp_backend)
     found = router.get_backend_by_name(temp_backend.name)
@@ -109,7 +119,7 @@ def test_get_backend_by_name_not_found(router: PathRouter) -> None:
 # === Route matching tests ===
 
 
-def test_route_exact_match(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_exact_match(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test routing with exact mount point match."""
     router.add_mount("/data", temp_backend)
 
@@ -121,7 +131,7 @@ def test_route_exact_match(router: PathRouter, temp_backend: LocalBackend) -> No
     assert result.readonly is False
 
 
-def test_route_prefix_match(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_prefix_match(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test routing with prefix match."""
     router.add_mount("/workspace", temp_backend)
 
@@ -132,8 +142,21 @@ def test_route_prefix_match(router: PathRouter, temp_backend: LocalBackend) -> N
     assert result.mount_point == "/workspace"
 
 
-def test_route_root_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_root_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test routing with root mount."""
+    router.add_mount("/", temp_backend)
+
+    result = router.route("/anything/goes/here.txt")
+
+    assert result.backend == temp_backend
+    assert result.backend_path == "anything/goes/here.txt"
+    assert result.mount_point == "/"
+
+
+def test_route_mount_without_metastore_entry(
+    router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
+    """Route fallback should work for ephemeral runtime mounts."""
     router.add_mount("/", temp_backend)
 
     result = router.route("/anything/goes/here.txt")
@@ -147,8 +170,8 @@ def test_route_longest_prefix_wins(metastore: DictMetastore) -> None:
     """Test that longest matching prefix wins."""
     router = PathRouter(metastore)
     with tempfile.TemporaryDirectory() as tmpdir1, tempfile.TemporaryDirectory() as tmpdir2:
-        backend1 = LocalBackend(tmpdir1)
-        backend2 = LocalBackend(tmpdir2)
+        backend1 = CASLocalBackend(tmpdir1)
+        backend2 = CASLocalBackend(tmpdir2)
 
         router.add_mount("/workspace", backend1)
         router.add_mount("/workspace/data", backend2)
@@ -160,7 +183,7 @@ def test_route_longest_prefix_wins(metastore: DictMetastore) -> None:
         assert result.mount_point == "/workspace/data"
 
 
-def test_route_no_match_raises_error(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_no_match_raises_error(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that routing with no mount raises error."""
     router.add_mount("/workspace", temp_backend)
 
@@ -170,7 +193,7 @@ def test_route_no_match_raises_error(router: PathRouter, temp_backend: LocalBack
     assert "/other/path" in str(exc_info.value)
 
 
-def test_route_readonly_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_readonly_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test routing to readonly mount."""
     router.add_mount("/readonly", temp_backend, readonly=True)
 
@@ -178,7 +201,7 @@ def test_route_readonly_mount(router: PathRouter, temp_backend: LocalBackend) ->
     assert result.readonly is True
 
 
-def test_route_readonly_rejects_writes(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_readonly_rejects_writes(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that readonly mounts reject write operations."""
     router.add_mount("/archives", temp_backend, readonly=True)
 
@@ -188,7 +211,7 @@ def test_route_readonly_rejects_writes(router: PathRouter, temp_backend: LocalBa
     assert "read-only" in str(exc_info.value)
 
 
-def test_route_readonly_allows_reads(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_readonly_allows_reads(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that readonly mounts allow read operations."""
     router.add_mount("/archives", temp_backend, readonly=True)
 
@@ -197,7 +220,7 @@ def test_route_readonly_allows_reads(router: PathRouter, temp_backend: LocalBack
     assert result.readonly is True
 
 
-def test_route_io_profile_propagated(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_io_profile_propagated(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that io_profile is propagated in RouteResult."""
     router.add_mount("/weights", temp_backend, io_profile="fast_read")
 
@@ -205,7 +228,7 @@ def test_route_io_profile_propagated(router: PathRouter, temp_backend: LocalBack
     assert result.io_profile == "fast_read"
 
 
-def test_route_default_io_profile(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_route_default_io_profile(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that default io_profile is 'balanced'."""
     router.add_mount("/data", temp_backend)
 
@@ -216,7 +239,9 @@ def test_route_default_io_profile(router: PathRouter, temp_backend: LocalBackend
 # === Admin-only mount tests ===
 
 
-def test_mount_admin_only_rejects_non_admin(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_mount_admin_only_rejects_non_admin(
+    router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that admin_only mount requires admin privileges."""
     router.add_mount("/system", temp_backend, admin_only=True)
 
@@ -226,7 +251,7 @@ def test_mount_admin_only_rejects_non_admin(router: PathRouter, temp_backend: Lo
     assert "requires admin" in str(exc_info.value)
 
 
-def test_mount_admin_only_allows_admin(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_mount_admin_only_allows_admin(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that admin can access admin_only mount."""
     router.add_mount("/system", temp_backend, admin_only=True)
 
@@ -234,7 +259,7 @@ def test_mount_admin_only_allows_admin(router: PathRouter, temp_backend: LocalBa
     assert result.backend == temp_backend
 
 
-def test_mount_admin_only_and_readonly(router: PathRouter, temp_backend: LocalBackend) -> None:
+def test_mount_admin_only_and_readonly(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that admin_only + readonly mount rejects admin writes."""
     router.add_mount("/system", temp_backend, admin_only=True, readonly=True)
 

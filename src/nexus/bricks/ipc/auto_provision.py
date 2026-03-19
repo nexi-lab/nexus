@@ -1,6 +1,6 @@
 """Auto-provision IPC directories on agent registration (Issue #2037).
 
-Hooks into AgentRegistry to automatically provision inbox/outbox/processed/dead_letter
+Hooks into agent creation events to automatically provision inbox/outbox/processed/dead_letter
 directories when an agent is created, eliminating the manual provisioning step.
 """
 
@@ -19,7 +19,7 @@ async def auto_provision_on_agent_create(
 ) -> None:
     """Auto-provision IPC directories when an agent is created.
 
-    Called as a hook/callback when AgentRegistry.register() is invoked.
+    Called as a hook/callback when an agent is registered.
 
     Args:
         agent_id: The newly created agent ID.

@@ -41,14 +41,28 @@ class RPCRequest:
     method: str = ""
     params: dict[str, Any] | None = None
 
+    # Keys that are part of the JSON-RPC envelope, not user params.
+    _ENVELOPE_KEYS = frozenset({"jsonrpc", "id", "method", "params"})
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RPCRequest":
-        """Create request from dict."""
+        """Create request from dict.
+
+        If the body contains an explicit ``"params"`` key, use it.
+        Otherwise treat any non-envelope keys in the body as bare params
+        so that ``POST /api/nfs/list_versions {"path": "/foo"}`` works
+        the same as ``{"params": {"path": "/foo"}}``.
+        """
+        explicit_params = data.get("params")
+        if explicit_params is None:
+            bare = {k: v for k, v in data.items() if k not in cls._ENVELOPE_KEYS}
+            if bare:
+                explicit_params = bare
         return cls(
             jsonrpc=data.get("jsonrpc", "2.0"),
             id=data.get("id"),
             method=data.get("method", ""),
-            params=data.get("params"),
+            params=explicit_params,
         )
 
     def to_dict(self) -> dict[str, Any]:

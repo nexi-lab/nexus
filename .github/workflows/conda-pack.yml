@@ -1,0 +1,180 @@
+name: Conda Pack
+
+# Build a self-contained conda environment tarball for each platform.
+# Triggered by the same v* tags as release.yml, runs in parallel.
+# Artifacts are attached to the GitHub Release created by release.yml.
+# softprops/action-gh-release@v2 safely updates an existing release,
+# so there is no conflict between this workflow and release.yml.
+#
+# Build order per runner:
+#   1. Create nexus conda env (Python 3.13) + pip install .
+#   2. Compile nexus_fast  (rust/nexus_pyo3) via maturin
+#   3. Compile nexus_raft  (rust/nexus_raft --features full) via maturin
+#   4. pip install both .whl files into the nexus env
+#   5. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  conda-pack:
+    name: conda-pack / ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90        # Rust compilation can be slow on macOS/Windows runners
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # nexus_pyo3 (shm_pipe/shm_stream) uses POSIX-only APIs (fcntl, pipe,
+          # O_NONBLOCK) that do not exist on Windows. That wheel is skipped on
+          # Windows via `if: matrix.os != 'windows-latest'` below.
+          - os: windows-latest
+            artifact_name: nexus-windows-x86_64
+
+          # Intel Mac (x86_64) — matches the runner used in release.yml
+          - os: macos-15-intel
+            artifact_name: nexus-macos-x86_64
+
+          # Apple Silicon (arm64)
+          - os: macos-14
+            artifact_name: nexus-macos-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Python / Conda ────────────────────────────────────────────────────
+      # Sets up Miniconda and configures bash as a login shell with conda
+      # initialized. All subsequent steps that touch conda must use
+      # `shell: bash -el {0}` to inherit this environment.
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniconda-version: latest
+          auto-activate-base: true
+          activate-environment: ""
+          channels: conda-forge,defaults
+          channel-priority: strict
+
+      - name: Create nexus conda environment (Python 3.13)
+        shell: bash -el {0}
+        run: |
+          conda create -n nexus python=3.13 -y
+
+      - name: Install project into nexus environment
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus pip install .
+
+      # ── Rust toolchain ────────────────────────────────────────────────────
+      # Reads the required toolchain version from rust-toolchain.toml
+      # automatically. No need to specify the version explicitly.
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Add rustfmt and clippy components
+        shell: bash -el {0}
+        run: rustup component add rustfmt clippy
+
+      # Cache compiled Rust artifacts across runs to speed up re-builds.
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: conda-pack-rust-${{ matrix.os }}
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+
+      # ── maturin builds ───────────────────────────────────────────────────
+      # Install maturin inside the nexus env so it automatically uses the
+      # correct Python interpreter when building the extension modules.
+      - name: Install maturin into nexus environment
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus pip install maturin
+
+      # Skipped on Windows: shm_pipe.rs / shm_stream.rs use POSIX-only APIs.
+      - name: Build nexus_fast wheel  (rust/nexus_pyo3)
+        if: matrix.os != 'windows-latest'
+        shell: bash -el {0}
+        run: |
+          mkdir -p build/dist
+          conda run -n nexus maturin build --release \
+            --out build/dist \
+            -m rust/nexus_pyo3/Cargo.toml
+
+      # Use --features python only: consensus + grpc are EXPERIMENTAL and
+      # "not used in production" (see Cargo.toml). Skipping them avoids
+      # the protobuf-build protoc version-check bug entirely.
+      - name: Build nexus_raft wheel  (rust/nexus_raft --features python)
+        shell: bash -el {0}
+        run: |
+          mkdir -p build/dist
+          conda run -n nexus maturin build --release \
+            --features python \
+            --out build/dist \
+            -m rust/nexus_raft/Cargo.toml
+
+      # ── Install wheels into the nexus env ────────────────────────────────
+      - name: Install Rust wheels into nexus environment
+        shell: bash -el {0}
+        run: |
+          echo "=== Built wheels ==="
+          ls -lh build/dist/
+          conda run -n nexus pip install build/dist/*.whl
+
+      # ── conda-pack ───────────────────────────────────────────────────────
+      - name: Install conda-pack into base environment
+        shell: bash -el {0}
+        run: |
+          conda install -n base -c conda-forge conda-pack -y
+
+      - name: Pack nexus environment
+        shell: bash -el {0}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          OUTPUT="${{ matrix.artifact_name }}.tar.gz"
+
+          # Write a VERSION file into the conda env so users know what
+          # version they downloaded after extraction.
+          CONDA_ENV_PREFIX=$(conda run -n nexus python -c "import sys; print(sys.prefix)")
+          echo "${VERSION}" > "${CONDA_ENV_PREFIX}/VERSION"
+
+          echo "Packing environment to: ${OUTPUT}  (version: ${VERSION})"
+          conda-pack -n nexus -o "${OUTPUT}"
+          ls -lh "${OUTPUT}"
+
+      - name: Upload packed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.tar.gz
+          if-no-files-found: error
+
+  # ── Attach to GitHub Release ──────────────────────────────────────────────
+  # Runs after all three conda-pack jobs succeed. The release itself is
+  # created by release.yml — this job simply appends the three tarballs.
+  attach-to-release:
+    name: Attach conda packs to GitHub Release
+    needs: conda-pack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all conda-pack artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded files
+        run: find artifacts -type f | sort
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

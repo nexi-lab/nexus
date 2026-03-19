@@ -4,12 +4,12 @@ Tests delegation to NexusFS for file ops, metadata, ReBAC,
 hierarchy, routing, and session access.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.services.gateway import NexusFSGateway
+from nexus.system_services.gateway import NexusFSGateway
 
 # =============================================================================
 # Fixtures
@@ -20,11 +20,13 @@ from nexus.services.gateway import NexusFSGateway
 def mock_fs():
     """Create a mock NexusFS instance."""
     fs = MagicMock()
-    fs.sys_mkdir = MagicMock()
-    fs.sys_write = MagicMock()
-    fs.sys_read = MagicMock(return_value=b"file content")
-    fs.sys_readdir = MagicMock(return_value=["file1.txt", "file2.txt"])
-    fs.sys_access = MagicMock(return_value=True)
+    fs.sys_mkdir = AsyncMock()
+    fs.sys_write = AsyncMock(
+        return_value={"path": "/test/file.txt", "bytes_written": 7, "created": True}
+    )
+    fs.sys_read = AsyncMock(return_value=b"file content")
+    fs.sys_readdir = AsyncMock(return_value=["file1.txt", "file2.txt"])
+    fs.sys_access = AsyncMock(return_value=True)
     fs.metadata = MagicMock()
     fs.metadata.get = MagicMock(return_value=MagicMock(path="/test"))
     fs.metadata.put = MagicMock()
@@ -32,17 +34,28 @@ def mock_fs():
     fs.metadata.delete = MagicMock()
     fs.metadata.delete_batch = MagicMock()
     fs.metadata.delete_directory_entries_recursive = MagicMock(return_value=5)
-    fs.rebac_service = MagicMock()
-    fs.rebac_service.rebac_create_sync = MagicMock(return_value={"tuple_id": "t1"})
-    fs.rebac_service.rebac_check_sync = MagicMock(return_value=True)
-    fs.rebac_service.rebac_list_tuples_sync = MagicMock(
+    mock_rebac_svc = MagicMock()
+    mock_rebac_svc.rebac_create_sync = MagicMock(return_value={"tuple_id": "t1"})
+    mock_rebac_svc.rebac_check_sync = MagicMock(return_value=True)
+    mock_rebac_svc.rebac_list_tuples_sync = MagicMock(
         return_value=[
             {"tuple_id": "t1"},
             {"tuple_id": "t2"},
             {"tuple_id": "t3"},
         ]
     )
-    fs.rebac_service.rebac_delete_sync = MagicMock(return_value=True)
+    mock_rebac_svc.rebac_delete_sync = MagicMock(return_value=True)
+    mock_descendant_checker = MagicMock()
+    mock_descendant_checker.has_access = MagicMock(return_value=True)
+
+    # Wire up fs.service() for ServiceRegistry lookups and
+    # fs._descendant_checker for kernel DI (Issue #1504).
+    _service_map = {
+        "rebac": mock_rebac_svc,
+    }
+    fs.service = MagicMock(side_effect=lambda name: _service_map.get(name, MagicMock()))
+    fs._descendant_checker = mock_descendant_checker
+
     fs._rebac_manager = MagicMock()
     fs._rebac_manager.rebac_delete = MagicMock()
     fs._hierarchy_manager = MagicMock()
@@ -51,12 +64,10 @@ def mock_fs():
     fs._hierarchy_manager.remove_parent_tuples = MagicMock(return_value=1)
     fs.router = MagicMock()
     fs.SessionLocal = MagicMock()
+    fs.read = AsyncMock(return_value={"content": b"data", "path": "/test/file.txt"})
     fs.read_bulk = MagicMock(return_value={"/a": b"data"})
     fs._get_routing_params = MagicMock(return_value=("zone1", "agent1", False))
-    fs._descendant_checker = MagicMock()
-    fs._descendant_checker.has_access = MagicMock(return_value=True)
     fs._get_backend_directory_entries = MagicMock(return_value={"file.txt"})
-    fs._record_read_if_tracking = MagicMock()
     fs.backend = MagicMock()
     return fs
 
@@ -101,53 +112,60 @@ class TestGatewayInit:
 class TestFileOperations:
     """Tests for file operation delegation."""
 
-    def test_mkdir_delegates(self, gateway, mock_fs, context):
+    @pytest.mark.asyncio
+    async def test_mkdir_delegates(self, gateway, mock_fs, context):
         """sys_mkdir delegates to NexusFS.sys_mkdir."""
-        gateway.sys_mkdir("/test/dir", parents=True, exist_ok=True, context=context)
+        await gateway.sys_mkdir("/test/dir", parents=True, exist_ok=True, context=context)
         mock_fs.sys_mkdir.assert_called_once_with(
             "/test/dir", parents=True, exist_ok=True, context=context
         )
 
-    def test_write_delegates_bytes(self, gateway, mock_fs, context):
-        """sys_write delegates bytes to NexusFS.sys_write."""
-        gateway.sys_write("/test/file.txt", b"content", context=context)
+    @pytest.mark.asyncio
+    async def test_write_delegates_bytes(self, gateway, mock_fs, context):
+        """sys_write delegates bytes to NexusFS.sys_write and returns dict."""
+        result = await gateway.sys_write("/test/file.txt", b"content", context=context)
         mock_fs.sys_write.assert_called_once_with("/test/file.txt", b"content", context=context)
+        assert result["bytes_written"] == 7
 
-    def test_write_converts_str_to_bytes(self, gateway, mock_fs, context):
-        """sys_write converts string content to bytes."""
-        gateway.sys_write("/test/file.txt", "text content", context=context)
-        mock_fs.sys_write.assert_called_once_with(
-            "/test/file.txt", b"text content", context=context
-        )
+    @pytest.mark.asyncio
+    async def test_write_delegates_str(self, gateway, mock_fs, context):
+        """sys_write passes str through to NexusFS (kernel handles encoding)."""
+        await gateway.sys_write("/test/file.txt", "text content", context=context)
+        mock_fs.sys_write.assert_called_once_with("/test/file.txt", "text content", context=context)
 
-    def test_read_delegates(self, gateway, mock_fs, context):
+    @pytest.mark.asyncio
+    async def test_read_delegates(self, gateway, mock_fs, context):
         """sys_read delegates to NexusFS.sys_read."""
-        result = gateway.sys_read("/test/file.txt", context=context)
+        result = await gateway.sys_read("/test/file.txt", context=context)
         assert result == b"file content"
         mock_fs.sys_read.assert_called_once()
 
-    def test_read_handles_dict_result(self, gateway, mock_fs, context):
-        """sys_read returns empty bytes for dict results (parsed content)."""
-        mock_fs.sys_read.return_value = {"parsed": True}
-        result = gateway.sys_read("/test/file.txt", context=context)
-        assert result == b""
+    @pytest.mark.asyncio
+    async def test_read_returns_bytes(self, gateway, mock_fs, context):
+        """sys_read always returns bytes (POSIX pread semantics)."""
+        mock_fs.sys_read.return_value = b"raw bytes"
+        result = await gateway.sys_read("/test/file.txt", context=context)
+        assert result == b"raw bytes"
 
-    def test_list_delegates(self, gateway, mock_fs, context):
+    @pytest.mark.asyncio
+    async def test_list_delegates(self, gateway, mock_fs, context):
         """sys_readdir delegates to NexusFS.sys_readdir."""
-        result = gateway.sys_readdir("/test", context=context)
+        result = await gateway.sys_readdir("/test", context=context)
         assert result == ["file1.txt", "file2.txt"]
 
-    def test_list_handles_paginated_result(self, gateway, mock_fs, context):
+    @pytest.mark.asyncio
+    async def test_list_handles_paginated_result(self, gateway, mock_fs, context):
         """sys_readdir handles PaginatedResult objects."""
         paginated = MagicMock()
         paginated.items = ["a.txt", "b.txt"]
         mock_fs.sys_readdir.return_value = paginated
-        result = gateway.sys_readdir("/test", context=context)
+        result = await gateway.sys_readdir("/test", context=context)
         assert result == ["a.txt", "b.txt"]
 
-    def test_exists_delegates(self, gateway, mock_fs, context):
+    @pytest.mark.asyncio
+    async def test_exists_delegates(self, gateway, mock_fs, context):
         """sys_access delegates to NexusFS.sys_access."""
-        assert gateway.sys_access("/test/file.txt", context=context) is True
+        assert await gateway.sys_access("/test/file.txt", context=context) is True
         mock_fs.sys_access.assert_called_once()
 
 
@@ -221,7 +239,7 @@ class TestReBACOperations:
             zone_id="z1",
         )
         assert result == {"tuple_id": "t1"}
-        mock_fs.rebac_service.rebac_create_sync.assert_called_once_with(
+        mock_fs.service("rebac").rebac_create_sync.assert_called_once_with(
             subject=("user", "alice"),
             relation="viewer",
             object=("file", "/test"),
@@ -238,25 +256,25 @@ class TestReBACOperations:
             zone_id="z1",
         )
         assert result is True
-        mock_fs.rebac_service.rebac_check_sync.assert_called_once()
+        mock_fs.service("rebac").rebac_check_sync.assert_called_once()
 
     def test_rebac_delete_object_tuples(self, gateway, mock_fs):
         """rebac_delete_object_tuples lists then deletes each tuple."""
         result = gateway.rebac_delete_object_tuples(object=("file", "/test"), zone_id="z1")
         assert result == 3
-        mock_fs.rebac_service.rebac_list_tuples_sync.assert_called_once()
-        assert mock_fs.rebac_service.rebac_delete_sync.call_count == 3
+        mock_fs.service("rebac").rebac_list_tuples_sync.assert_called_once()
+        assert mock_fs.service("rebac").rebac_delete_sync.call_count == 3
 
     def test_rebac_list_tuples(self, gateway, mock_fs):
         """rebac_list_tuples delegates to rebac_service."""
         gateway.rebac_list_tuples(subject=("user", "alice"), relation="viewer")
-        mock_fs.rebac_service.rebac_list_tuples_sync.assert_called()
+        mock_fs.service("rebac").rebac_list_tuples_sync.assert_called()
 
     def test_rebac_delete(self, gateway, mock_fs):
         """rebac_delete delegates to rebac_service."""
         result = gateway.rebac_delete("tuple-123")
         assert result is True
-        mock_fs.rebac_service.rebac_delete_sync.assert_called_with("tuple-123")
+        mock_fs.service("rebac").rebac_delete_sync.assert_called_with("tuple-123")
 
     def test_rebac_delete_no_manager(self, mock_fs):
         """rebac_delete delegates to rebac_service even without rebac_manager."""
@@ -346,10 +364,11 @@ class TestProperties:
 class TestSearchOperations:
     """Tests for search-related delegation."""
 
-    def test_read_file(self, gateway, mock_fs, context):
-        """read_file delegates to NexusFS sys_read."""
-        gateway.read_file("/test/file.txt", context=context, return_metadata=True)
-        mock_fs.sys_read.assert_called_once_with(
+    @pytest.mark.asyncio
+    async def test_read_file(self, gateway, mock_fs, context):
+        """read_file delegates to NexusFS read() (Tier 2 convenience)."""
+        await gateway.read_file("/test/file.txt", context=context, return_metadata=True)
+        mock_fs.read.assert_called_once_with(
             "/test/file.txt", context=context, return_metadata=True
         )
 
@@ -377,11 +396,6 @@ class TestSearchOperations:
         result = gateway.get_backend_directory_entries("/test")
         assert result == {"file.txt"}
 
-    def test_record_read_if_tracking(self, gateway, mock_fs, context):
-        """record_read_if_tracking delegates to NexusFS."""
-        gateway.record_read_if_tracking(context, "file", "/test/a.txt")
-        mock_fs._record_read_if_tracking.assert_called_once()
-
 
 # =============================================================================
 # Mount Operations
@@ -397,14 +411,14 @@ class TestMountOperations:
         mount_info.mount_point = "/mnt/test"
         mount_info.readonly = False
         mount_info.backend = MagicMock()
-        type(mount_info.backend).__name__ = "LocalBackend"
+        type(mount_info.backend).__name__ = "CASLocalBackend"
         mount_info.conflict_strategy = "latest"
         mock_fs.router.list_mounts.return_value = [mount_info]
 
         result = gateway.list_mounts()
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/test"
-        assert result[0]["backend_type"] == "LocalBackend"
+        assert result[0]["backend_type"] == "CASLocalBackend"
 
     def test_get_mount_for_path_found(self, gateway, mock_fs):
         """get_mount_for_path returns mount info."""

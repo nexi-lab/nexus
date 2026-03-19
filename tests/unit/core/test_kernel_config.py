@@ -266,8 +266,6 @@ class TestSystemServices:
         assert ss.mount_manager is None
         assert ss.workspace_manager is None
         # Original system services
-        assert ss.agent_registry is None
-        assert ss.async_agent_registry is None
         assert ss.namespace_manager is None
         assert ss.async_namespace_manager is None
         assert ss.context_branch_service is None
@@ -275,20 +273,19 @@ class TestSystemServices:
         assert ss.delivery_worker is None
         assert ss.observability_subsystem is None
         assert ss.resiliency_manager is None
-        # DT_PIPE manager (Issue #809)
-        assert ss.pipe_manager is None
+        # (PipeManager is kernel-internal §4.2, not in SystemServices)
 
     def test_frozen(self) -> None:
         ss = SystemServices()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            ss.agent_registry = "x"  # type: ignore[misc]
+            ss.namespace_manager = "x"
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
-        ss = SystemServices(agent_registry=sentinel, resiliency_manager=sentinel)
-        assert ss.agent_registry is sentinel
+        ss = SystemServices(namespace_manager=sentinel, resiliency_manager=sentinel)
+        assert ss.namespace_manager is sentinel
         assert ss.resiliency_manager is sentinel
-        assert ss.namespace_manager is None
+        assert ss.delivery_worker is None
 
     def test_replace(self) -> None:
         ss = SystemServices()
@@ -317,8 +314,6 @@ class TestSystemServices:
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "agent_registry",
-            "async_agent_registry",
             "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
@@ -329,9 +324,9 @@ class TestSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "zone_lifecycle",
-            "pipe_manager",
-            "event_log",
+            "process_table",
             "scheduler_service",
+            "acp_service",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
@@ -368,7 +363,6 @@ class TestBrickServices:
         assert bs.tool_namespace_middleware is None
         assert bs.api_key_creator is None
         assert bs.snapshot_service is None
-        assert bs.task_queue_service is None
         # DT_PIPE consumer (Issue #810)
         assert bs.zoekt_pipe_consumer is None
 
@@ -407,23 +401,19 @@ class TestBrickServices:
             "tool_namespace_middleware",
             "api_key_creator",
             "snapshot_service",
-            "task_queue_service",
             "cache_brick",
             "ipc_storage_driver",
             "ipc_provisioner",
             "agent_event_log",
-            "skill_service",
-            "skill_package_service",
             "delegation_service",
-            "reputation_service",
             "version_service",
-            "memory_permission",
             # Factory-created bricks (Issue #2134)
             "parse_fn",
             "content_cache",
             "parser_registry",
             "provider_registry",
-            "vfs_lock_manager",
+            # NOTE: vfs_lock_manager removed — now kernel-internal (NexusFS.__init__).
+            # See write-path-extraction-design.md.
             # Governance Brick (Issue #2129)
             "governance_anomaly_service",
             "governance_collusion_service",
@@ -431,6 +421,8 @@ class TestBrickServices:
             "governance_response_service",
             # DT_PIPE consumer (Issue #810)
             "zoekt_pipe_consumer",
+            # Task Manager DT_PIPE consumer
+            "task_dispatch_consumer",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"

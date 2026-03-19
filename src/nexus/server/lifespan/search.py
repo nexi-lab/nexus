@@ -1,6 +1,7 @@
-"""Search startup: Hot Search Daemon (Issue #951).
+"""Search startup: txtai-backed Search Daemon (Issue #2663).
 
 Extracted from fastapi_server.py (#1602).
+Rewritten for txtai backend (#2663).
 """
 
 import asyncio
@@ -36,37 +37,29 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
     try:
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
-        # Issue #2071: source max_indexing_concurrency from profile tuning
-        _search_tuning = svc.profile_tuning
-        _max_indexing = _search_tuning.search.search_max_concurrency if _search_tuning else None
-
-        _daemon_kwargs: dict = {
-            "database_url": svc.database_url,
-            "bm25s_index_dir": os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
-            "db_pool_min_size": int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
-            "db_pool_max_size": int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
-            "refresh_enabled": os.getenv("NEXUS_SEARCH_REFRESH", "true").lower()
-            in ("true", "1", "yes"),
-            # Issue #1024: Entropy-aware filtering for redundant content
-            "entropy_filtering": os.getenv("NEXUS_ENTROPY_FILTERING", "false").lower()
-            in ("true", "1", "yes"),
-            "entropy_threshold": float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
-            "entropy_alpha": float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
-        }
-        if _max_indexing is not None:
-            _daemon_kwargs["max_indexing_concurrency"] = _max_indexing
-
-        config = DaemonConfig(**_daemon_kwargs)
+        config = DaemonConfig(
+            database_url=svc.database_url,
+            query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
+            # txtai backend config (Issue #2663)
+            txtai_model=os.environ.get(
+                "NEXUS_TXTAI_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+            ),
+            txtai_reranker=os.environ.get("NEXUS_TXTAI_RERANKER") or None,
+            txtai_sparse=os.environ.get("NEXUS_TXTAI_SPARSE", "").lower() in ("true", "1", "yes"),
+            txtai_graph=os.environ.get("NEXUS_TXTAI_GRAPH", "true").lower()
+            not in ("false", "0", "no"),
+        )
 
         # Inject async_session_factory from RecordStoreABC when available
         _record_store = svc.record_store
         _async_sf = None
         if _record_store is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError):
                 _async_sf = _record_store.async_session_factory
 
-        # Issue #2188: Create ZoektClient via DI (no module-level globals)
+        # Issue #2188: Create ZoektClient + embedding provider via DI
         _zoekt_client = None
+        _search_cfg = None
         with contextlib.suppress(ImportError):
             from nexus.bricks.search.config import search_config_from_env
             from nexus.bricks.search.zoekt_client import ZoektClient
@@ -79,7 +72,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     enabled=True,
                 )
 
-        # CacheBrick is available from startup_permissions (runs before search)
+        # CacheBrick is available from startup_permissions
         _cache_brick = getattr(app.state, "cache_brick", None)
 
         app.state.search_daemon = SearchDaemon(
@@ -88,24 +81,90 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
         )
-        await app.state.search_daemon.startup()
+
+        # Embeddings are now handled by txtai backend (Issue #2663).
+        # The old nexus.bricks.search.embeddings module has been deleted.
+
+        coord = svc.service_coordinator
+        if coord is not None:
+            await coord.enlist("search_daemon", app.state.search_daemon)
+        else:
+            await app.state.search_daemon.startup()
         app.state.search_daemon_enabled = True
 
-        # Issue #1520: Set FileReaderProtocol for index refresh (replaces _nexus_fs)
-        from nexus.factory import _NexusFSFileReader
+        # Issue #1520: Set FileReaderProtocol for index refresh
+        with contextlib.suppress(ImportError, AttributeError):
+            from nexus.factory import _NexusFSFileReader
 
-        app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
+            app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
 
-        # Issue #2036: Inject AdaptiveKProtocol (LEGO compliance)
-        with contextlib.suppress(Exception):
-            from nexus.bricks.llm.llm_context_builder import ContextBuilder
+        # Wire SearchDaemon into SearchService so semantic_search queries
+        # use the txtai backend instead of falling back to SQL ILIKE.
+        with contextlib.suppress(AttributeError):
+            search_svc = svc.nexus_fs.service("search")
+            if search_svc is not None:
+                search_svc._search_daemon = app.state.search_daemon
 
-            app.state.search_daemon._adaptive_k_provider = ContextBuilder()
+        # Auto-index on write/delete/rename: register VFS hooks that notify
+        # the search daemon so the index stays fresh automatically.
+        with contextlib.suppress(AttributeError, ImportError):
+            _daemon_ref = app.state.search_daemon
+            _dispatch = getattr(svc.nexus_fs, "_dispatch", None)
+            if _dispatch is not None:
+                import asyncio as _asyncio
+
+                from nexus.contracts.vfs_hooks import (
+                    DeleteHookContext,
+                    RenameHookContext,
+                    WriteHookContext,
+                )
+
+                # Capture the event loop at registration time — VFS hooks fire from
+                # synchronous threads (asyncio.to_thread), so get_running_loop()
+                # would raise RuntimeError. call_soon_threadsafe is thread-safe.
+                _loop = _asyncio.get_running_loop()
+
+                def _notify(path: str, change_type: str) -> None:
+                    with contextlib.suppress(RuntimeError):  # Loop closed during shutdown
+                        _loop.call_soon_threadsafe(
+                            _loop.create_task,
+                            _daemon_ref.notify_file_change(path, change_type),
+                        )
+
+                class _SearchWriteHook:
+                    @property
+                    def name(self) -> str:
+                        return "search_auto_index"
+
+                    def on_post_write(self, ctx: WriteHookContext) -> None:
+                        _notify(ctx.path, "update")
+
+                class _SearchDeleteHook:
+                    @property
+                    def name(self) -> str:
+                        return "search_auto_delete"
+
+                    def on_post_delete(self, ctx: DeleteHookContext) -> None:
+                        _notify(ctx.path, "delete")
+
+                class _SearchRenameHook:
+                    @property
+                    def name(self) -> str:
+                        return "search_auto_rename"
+
+                    def on_post_rename(self, ctx: RenameHookContext) -> None:
+                        _notify(ctx.old_path, "delete")
+                        _notify(ctx.new_path, "update")
+
+                _dispatch.register_intercept_write(_SearchWriteHook())
+                _dispatch.register_intercept_delete(_SearchDeleteHook())
+                _dispatch.register_intercept_rename(_SearchRenameHook())
+                logger.info("Search auto-index hooks registered (write/delete/rename)")
 
         # Issue #2036: Register with BrickLifecycleManager
         _blm = svc.brick_lifecycle_manager
         if _blm is not None:
-            with contextlib.suppress(Exception):
+            try:
                 from nexus.bricks.search.lifecycle_adapter import (
                     SearchBrickLifecycleAdapter,
                 )
@@ -115,11 +174,17 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                     SearchBrickLifecycleAdapter(app.state.search_daemon),
                     protocol_name="SearchBrickProtocol",
                 )
+            except ImportError:
+                logger.debug("SearchBrickLifecycleAdapter not available, skipping registration")
+            except Exception:
+                logger.warning(
+                    "Failed to register search brick with lifecycle manager", exc_info=True
+                )
 
         stats = app.state.search_daemon.get_stats()
         logger.info(
-            "Search Daemon started: %d docs indexed, startup=%.1fms",
-            stats["bm25_documents"],
+            "Search Daemon started: backend=%s, startup=%.1fms",
+            stats.get("backend", "txtai"),
             stats["startup_time_ms"],
         )
     except Exception as e:

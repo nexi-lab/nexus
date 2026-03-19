@@ -10,8 +10,8 @@ layer — they MUST NOT call async code directly.
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
+from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.protocols.capabilities import ConnectorCapability
 from nexus.server.path_utils import (
     unscope_internal_dict,
     unscope_internal_path,
@@ -141,53 +141,42 @@ async def handle_read_async(
         if result:
             return result
 
-    # If not parsed, use sync read in thread with timeout
-    if not parsed:
-        read_result: bytes | dict[str, Any] = await to_thread_with_timeout(
-            nexus_fs.sys_read,
+    # Plain sys_read (Tier 1) — no metadata, no parsing
+    if not parsed and not return_metadata:
+        read_result: bytes = await nexus_fs.sys_read(
             params.path,
-            context,
-            return_metadata,
-            False,
+            context=context,
         )
-        if isinstance(read_result, dict):
-            read_result = unscope_internal_dict(read_result, ["path", "virtual_path"])
         return read_result
 
-    # For parsed reads, read raw content with timeout first
-    raw_result = await to_thread_with_timeout(
-        nexus_fs.sys_read,
+    # Read raw content via kernel
+    read_result_rich: bytes | dict[str, Any] = await nexus_fs.read(
         params.path,
-        context,
-        True,
-        False,
+        context=context,
+        return_metadata=return_metadata,
     )
 
-    content = raw_result.get("content", b"") if isinstance(raw_result, dict) else raw_result
+    # Apply parsed-content transform via ContentParserEngine (brick layer)
+    if parsed:
+        _engine = getattr(nexus_fs, "_parser_engine", None)
+        if _engine is not None:
+            raw = (
+                read_result_rich["content"]
+                if isinstance(read_result_rich, dict)
+                else read_result_rich
+            )
+            content, parse_info = _engine.get_parsed_content(params.path, raw)
+            if isinstance(read_result_rich, dict):
+                read_result_rich["content"] = content
+                read_result_rich["parsed"] = parse_info.get("parsed", False)
+                read_result_rich["parse_provider"] = parse_info.get("provider")
+                read_result_rich["parse_cached"] = parse_info.get("cached", False)
+            else:
+                read_result_rich = content
 
-    # Parse the content asynchronously
-    if hasattr(nexus_fs, "_get_parsed_content_async"):
-        parsed_content, parse_info = await nexus_fs._get_parsed_content_async(params.path, content)
-    else:
-        parsed_content, parse_info = await to_thread_with_timeout(
-            nexus_fs._get_parsed_content, params.path, content
-        )
-
-    if return_metadata:
-        result = {
-            "content": parsed_content,
-            "parsed": parse_info.get("parsed", False),
-            "provider": parse_info.get("provider"),
-            "cached": parse_info.get("cached", False),
-        }
-        if isinstance(raw_result, dict):
-            result["etag"] = raw_result.get("etag")
-            result["version"] = raw_result.get("version")
-            result["modified_at"] = raw_result.get("modified_at")
-            result["size"] = len(parsed_content)
-        return result
-
-    return parsed_content
+    if isinstance(read_result_rich, dict):
+        read_result_rich = unscope_internal_dict(read_result_rich, ["path", "virtual_path"])
+    return read_result_rich
 
 
 # ---------------------------------------------------------------------------
@@ -195,36 +184,53 @@ async def handle_read_async(
 # ---------------------------------------------------------------------------
 
 
-def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
-    """Handle write method."""
-    content = params.content
+async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+    """Handle write method.
+
+    OCC checks (if_match, if_none_match) are done here at the RPC layer
+    via ``occ_write()`` helper — not in the kernel. Distributed locking
+    is also NOT in write() — callers should use lock()/unlock() or
+    ``async with locked(path)`` explicitly.
+
+    Issue #1323: OCC + lock extracted from kernel.
+    """
+    content = getattr(params, "content", None) or getattr(params, "buf", None) or b""
     if isinstance(content, str):
         content = content.encode("utf-8")
 
-    kwargs: dict[str, Any] = {"context": context}
-    if hasattr(params, "if_match") and params.if_match:
-        kwargs["if_match"] = params.if_match
-    if hasattr(params, "if_none_match") and params.if_none_match:
-        kwargs["if_none_match"] = params.if_none_match
-    if hasattr(params, "force") and params.force:
-        kwargs["force"] = params.force
-    lock_val = getattr(params, "lock", None)
-    if lock_val:
-        kwargs["lock"] = lock_val
-    lock_timeout_val = getattr(params, "lock_timeout", None)
-    if lock_timeout_val is not None and lock_timeout_val != 30.0:
-        kwargs["lock_timeout"] = lock_timeout_val
+    # OCC: use lib/occ helper if CAS params present
+    if_match = getattr(params, "if_match", None) or None
+    if_none_match = getattr(params, "if_none_match", False)
+    force = getattr(params, "force", False)
 
-    bytes_written = nexus_fs.sys_write(params.path, content, **kwargs)
-    return {"bytes_written": bytes_written}
+    if (if_match or if_none_match) and not force:
+        from nexus.lib.occ import occ_write
+
+        write_result = await occ_write(
+            nexus_fs,
+            params.path,
+            content,
+            context=context,
+            if_match=if_match,
+            if_none_match=if_none_match,
+        )
+    else:
+        write_result = await nexus_fs.write(params.path, content, context=context)
+
+    # write() returns dict with metadata (etag, version, modified_at, size).
+    # Merge bytes_written into the response for backward compatibility.
+    result: dict[str, Any] = {"bytes_written": len(content)}
+    if isinstance(write_result, dict):
+        result.update(write_result)
+    return result
 
 
-def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
-    return {"exists": nexus_fs.sys_access(params.path, context=context)}
+    return {"exists": await nexus_fs.sys_access(params.path, context=context)}
 
 
-def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle list method with optional pagination support."""
     import time as _time
 
@@ -247,7 +253,11 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
         kwargs["cursor"] = cursor
 
     _list_start = _time.time()
-    result = nexus_fs.sys_readdir(params.path, **kwargs)
+    search = nexus_fs.service("search")
+    if search is not None:
+        result = search.list(path=params.path, **kwargs)
+    else:
+        result = await nexus_fs.sys_readdir(params.path, **kwargs)
     _list_elapsed = (_time.time() - _list_start) * 1000
 
     # Result is PaginatedResult when limit is provided
@@ -294,21 +304,21 @@ def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     return response
 
 
-def handle_delete(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_delete(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
     try:
-        nexus_fs.sys_unlink(params.path, context=context)
+        await nexus_fs.sys_unlink(params.path, context=context)
     except TypeError:
-        nexus_fs.sys_unlink(params.path)
+        await nexus_fs.sys_unlink(params.path)
     return {"deleted": True}
 
 
-def handle_rename(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_rename(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
     try:
-        nexus_fs.sys_rename(params.old_path, params.new_path, context=context)
+        await nexus_fs.sys_rename(params.old_path, params.new_path, context=context)
     except TypeError:
-        nexus_fs.sys_rename(params.old_path, params.new_path)
+        await nexus_fs.sys_rename(params.old_path, params.new_path)
     return {"renamed": True}
 
 
@@ -318,7 +328,7 @@ def handle_copy(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     return {"copied": True}
 
 
-def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle mkdir method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "parents") and params.parents is not None:
@@ -326,11 +336,11 @@ def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if hasattr(params, "exist_ok") and params.exist_ok is not None:
         kwargs["exist_ok"] = params.exist_ok
 
-    nexus_fs.sys_mkdir(params.path, **kwargs)
+    await nexus_fs.sys_mkdir(params.path, **kwargs)
     return {"created": True}
 
 
-def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle rmdir method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "recursive") and params.recursive is not None:
@@ -338,7 +348,7 @@ def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
     if hasattr(params, "force") and params.force is not None:
         kwargs["force"] = params.force
 
-    nexus_fs.sys_rmdir(params.path, **kwargs)
+    await nexus_fs.sys_rmdir(params.path, **kwargs)
     return {"removed": True}
 
 
@@ -347,51 +357,27 @@ def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, An
 # ---------------------------------------------------------------------------
 
 
-def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_get_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
-    metadata = nexus_fs.sys_stat(params.path, context=context)
+    metadata = await nexus_fs.sys_stat(params.path, context=context)
     if isinstance(metadata, dict):
         metadata = unscope_internal_dict(metadata, ["path"])
     return {"metadata": metadata}
 
 
-def handle_set_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_set_metadata(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle set_metadata — persist metadata from RemoteMetastore.put().
 
     Reconstructs a FileMetadata from the dict sent by the client and
     stores it via the server-side metastore.
     """
-    from nexus.contracts.metadata import FileMetadata
+    from nexus.storage._metadata_mapper_generated import MetadataMapper
 
     meta_dict: dict[str, Any] = params.metadata or {}
     # Ensure path is set (prefer params.path over dict contents)
     meta_dict["path"] = params.path
 
-    # Parse datetime strings back to datetime objects
-    from datetime import datetime
-
-    for dt_field in ("created_at", "modified_at"):
-        val = meta_dict.get(dt_field)
-        if isinstance(val, str):
-            meta_dict[dt_field] = datetime.fromisoformat(val)
-
-    file_meta = FileMetadata(
-        path=meta_dict.get("path", ""),
-        backend_name=meta_dict.get("backend_name", ""),
-        physical_path=meta_dict.get("physical_path", ""),
-        size=meta_dict.get("size", 0),
-        etag=meta_dict.get("etag"),
-        mime_type=meta_dict.get("mime_type"),
-        created_at=meta_dict.get("created_at"),
-        modified_at=meta_dict.get("modified_at"),
-        version=meta_dict.get("version", 1),
-        zone_id=meta_dict.get("zone_id"),
-        created_by=meta_dict.get("created_by"),
-        owner_id=meta_dict.get("owner_id"),
-        entry_type=meta_dict.get("entry_type", 0),
-        target_zone_id=meta_dict.get("target_zone_id"),
-        i_links_count=meta_dict.get("i_links_count", 0),
-    )
+    file_meta = MetadataMapper.from_json(meta_dict)
     nexus_fs.metadata.put(file_meta)
     return {"path": params.path, "ok": True}
 
@@ -402,12 +388,14 @@ def handle_glob(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     if hasattr(params, "path") and params.path:
         kwargs["path"] = params.path
 
-    matches = nexus_fs.glob(params.pattern, **kwargs)
+    search = nexus_fs.service("search")
+    assert search is not None, "SearchService required for glob"
+    matches = search.glob(params.pattern, **kwargs)
     matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 
 
-def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle grep method."""
     kwargs: dict[str, Any] = {"context": context}
     if hasattr(params, "path") and params.path:
@@ -421,7 +409,9 @@ def handle_grep(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any
     if hasattr(params, "search_mode") and params.search_mode is not None:
         kwargs["search_mode"] = params.search_mode
 
-    results = nexus_fs.grep(params.pattern, **kwargs)
+    search = nexus_fs.service("search")
+    assert search is not None, "SearchService required for grep"
+    results = await search.grep(params.pattern, **kwargs)
     results = [unscope_result(r) for r in results]
     return {"results": results}
 
@@ -443,29 +433,126 @@ def handle_search(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, A
 async def handle_semantic_search_index(
     nexus_fs: "NexusFS", params: Any, _context: Any
 ) -> dict[str, Any]:
-    """Handle semantic_search_index method."""
+    """Index documents for semantic search via the SearchDaemon's txtai backend.
+
+    Single indexing path: reads files via NexusFS, upserts through the daemon's
+    txtai backend which stores embeddings + BM25 tokens in pgvector. No separate
+    document_chunks table needed — txtai is the single source of truth.
+
+    Falls back to the SearchService pipeline if the daemon is unavailable.
+    """
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
     path = getattr(params, "path", "/")
     recursive = getattr(params, "recursive", True)
 
+    search = nexus_fs.service("search")
+    if search is None:
+        raise ValueError("SearchService required for semantic search")
+
+    # Prefer single-path indexing through the SearchDaemon's txtai backend.
+    daemon = getattr(search, "_search_daemon", None)
+    if daemon is not None and getattr(daemon, "_backend", None) is not None:
+        context = _context
+        zone_id = getattr(context, "zone_id", None) or "root"
+
+        # RPC may scope paths as /zone/{id}/...; DB stores unscoped virtual_path.
+        db_path = unscope_internal_path(path)
+
+        # Query file paths from the daemon's database connection
+        paths_to_index: list[str] = []
+        if hasattr(daemon, "_async_session") and daemon._async_session is not None:
+            from sqlalchemy import text as sa_text
+
+            async with daemon._async_session() as sess:
+                if recursive:
+                    # Match both the path itself (single file) and children (directory)
+                    like_pattern = db_path.rstrip("/") + "/%"
+                    result = await sess.execute(
+                        sa_text(
+                            "SELECT virtual_path FROM file_paths"
+                            " WHERE virtual_path LIKE :like OR virtual_path = :exact"
+                        ),
+                        {"like": like_pattern, "exact": db_path},
+                    )
+                    paths_to_index = [r[0] for r in result.fetchall()]
+                else:
+                    paths_to_index = [db_path]
+            _log.info(
+                "semantic_search_index: found %d files under %s", len(paths_to_index), db_path
+            )
+
+        # Read content and build documents for txtai
+        documents: list[dict[str, Any]] = []
+        read_errors = 0
+        total_chunks = 0
+        for file_path in paths_to_index:
+            try:
+                content = await nexus_fs.sys_read(file_path, context=context)
+                if isinstance(content, bytes):
+                    content_str = content.decode("utf-8", errors="replace")
+                else:
+                    content_str = content
+                if content_str.strip():
+                    doc_id = f"{zone_id}:{file_path}" if zone_id != "root" else file_path
+                    documents.append({"id": doc_id, "text": content_str, "path": file_path})
+            except Exception as read_err:
+                read_errors += 1
+                _log.warning("Skipping %s: %s", file_path, read_err)
+
+        _log.info(
+            "semantic_search_index: %d documents read (%d errors)", len(documents), read_errors
+        )
+
+        # Single upsert to txtai → pgvector (BM25 + dense embeddings + SPLADE)
+        results: dict[str, int] = {}
+        if documents:
+            await daemon.index_documents(documents, zone_id=zone_id)
+            # Estimate per-file chunk counts from content length (~2KB/chunk)
+            for doc in documents:
+                chunks = max(1, len(doc["text"]) // 2000)
+                results[doc["path"]] = chunks
+                total_chunks += chunks
+            _log.info(
+                "semantic_search_index: indexed %d docs (~%d chunks)", len(documents), total_chunks
+            )
+
+        return {"indexed": results, "total_files": len(documents), "total_chunks": total_chunks}
+
+    # Fallback: SearchService pipeline (when daemon is unavailable)
     try:
-        await nexus_fs.ainitialize_semantic_search()
+        await search.ainitialize_semantic_search(nx=nexus_fs, record_store_engine=None)
     except Exception as e:
-        raise ValueError(
-            f"Semantic search is not initialized and could not be auto-initialized: {e}"
-        ) from e
+        raise ValueError(f"Semantic search could not be initialized: {e}") from e
 
-    results = await nexus_fs.asemantic_search_index(path=path, recursive=recursive)
-
+    results = await search.semantic_search_index(path=path, recursive=recursive)
     total_chunks = 0
     for v in results.values():
         if isinstance(v, int):
             total_chunks += v
         elif isinstance(v, dict) and "chunks" in v:
             total_chunks += v["chunks"]
-
     return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
 
-def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
+async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any) -> dict[str, Any]:
+    """Handle semantic_search method — natural language search via SQL fallback."""
+    search = nexus_fs.service("search")
+    if search is None:
+        raise ValueError("SearchService not available")
+
+    results = await search.semantic_search(
+        query=params.query,
+        path=getattr(params, "path", "/"),
+        limit=getattr(params, "limit", 10),
+        search_mode=getattr(params, "search_mode", "semantic"),
+        context=_context,
+    )
+    return {"results": results}
+
+
+async def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
-    return {"is_directory": nexus_fs.sys_is_directory(params.path, context=context)}
+    return {"is_directory": await nexus_fs.sys_is_directory(params.path, context=context)}

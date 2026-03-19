@@ -46,8 +46,8 @@ class PortabilityFSProtocol(Protocol):
     defines the minimal surface the portability export/import services
     need from NexusFS.
 
-    Method names use the sys_ prefix to match NexusFS's POSIX-inspired
-    syscall API (sys_read, sys_write, sys_unlink, etc.).
+    Bricks access content/metadata through these properties, not through
+    the full NexusFilesystemABC syscall API.
     """
 
     @property
@@ -58,15 +58,4 @@ class PortabilityFSProtocol(Protocol):
     @property
     def backend(self) -> Any:
         """Backend for reading content blobs."""
-        ...
-
-    def sys_write(
-        self,
-        path: str,
-        content: bytes,
-        context: Any = None,
-        *,
-        force: bool = False,
-    ) -> Any:
-        """Write content to a file (POSIX write(2))."""
         ...

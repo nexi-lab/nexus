@@ -36,7 +36,7 @@ def _make_search_service(
     enforce_permissions: bool = False,
 ) -> Any:
     """Create a SearchService backed by the given store."""
-    from nexus.services.search.search_service import SearchService
+    from nexus.bricks.search.search_service import SearchService
 
     return SearchService(
         metadata_store=store,

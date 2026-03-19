@@ -28,7 +28,6 @@ class TestNexusAppState:
         assert state.auth_provider is None
         assert state.system_services is None
         assert state.brick_services is None
-        assert state.agent_registry is None
         assert state.search_daemon_enabled is False
 
     def test_deployment_defaults(self) -> None:

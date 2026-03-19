@@ -1,10 +1,10 @@
 """Benchmark tests for service delegation overhead (Issue #1287).
 
-Measures the cost of NexusFS → service delegation patterns:
+Measures the cost of NexusFS -> service delegation patterns:
 - Direct vs delegated file operations
 - Gateway method delegation overhead
 - Service instantiation time
-- Parameter transformation cost (zone_id → _zone_id renaming)
+- Parameter transformation cost (zone_id -> _zone_id renaming)
 - Result wrapping cost (SkillService dict construction)
 
 Run with: pytest tests/benchmarks/test_service_delegation.py -v --benchmark-only
@@ -17,11 +17,20 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.services.gateway import NexusFSGateway
+from nexus.core.service_registry import ServiceRegistry
+from nexus.system_services.gateway import NexusFSGateway
 
 # =============================================================================
 # Fixtures
 # =============================================================================
+
+
+@pytest.fixture
+def delegation_loop():
+    """Dedicated event loop for service delegation benchmarks."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest.fixture
@@ -32,48 +41,59 @@ def mock_nexus_fs():
     pre-defined values to isolate delegation overhead.
     """
     fs = object.__new__(NexusFS)
+    fs._service_registry = ServiceRegistry()
+    fs.metadata = MagicMock()
+    fs.metadata.list = MagicMock(return_value=[])
     fs.version_service = MagicMock()
     fs.version_service.get_version = AsyncMock(return_value=b"benchmark")
     fs.version_service.list_versions = AsyncMock(return_value=[{"v": 1}])
     fs.version_service.diff_versions = AsyncMock(return_value={"changed": False})
-    fs.rebac_service = MagicMock()
-    fs.rebac_service.rebac_check = AsyncMock(return_value=True)
-    fs.rebac_service.rebac_create = AsyncMock(return_value={"tuple_id": "t1"})
-    fs.rebac_service.rebac_list_tuples = AsyncMock(return_value=[])
-    fs.rebac_service.rebac_expand = AsyncMock(return_value=[])
-    fs.mcp_service = MagicMock()
-    fs.mcp_service.mcp_list_mounts = AsyncMock(return_value=[])
+    mock_rebac_svc = MagicMock()
+    mock_rebac_svc.rebac_check = AsyncMock(return_value=True)
+    mock_rebac_svc.rebac_create = AsyncMock(return_value={"tuple_id": "t1"})
+    mock_rebac_svc.rebac_list_tuples = AsyncMock(return_value=[])
+    mock_rebac_svc.rebac_expand = AsyncMock(return_value=[])
+    fs._service_registry.register_service("rebac", mock_rebac_svc)
+    mock_mcp_svc = MagicMock()
+    mock_mcp_svc.mcp_list_mounts = AsyncMock(return_value=[])
+    fs._service_registry.register_service("mcp", mock_mcp_svc)
     fs.skill_service = MagicMock()
     fs.skill_service.share = MagicMock(return_value="tuple-abc")
     fs.skill_service.discover = MagicMock(return_value=[])
     fs.skill_service.get_prompt_context = MagicMock(
         return_value=MagicMock(to_dict=MagicMock(return_value={}))
     )
-    fs.llm_service = MagicMock()
-    fs.llm_service.create_llm_reader = MagicMock()
-    fs.oauth_service = MagicMock()
-    fs.oauth_service.oauth_list_providers = AsyncMock(return_value=[])
-    fs.search_service = MagicMock()
-    fs.search_service.list = MagicMock(return_value=[])
-    fs.search_service.glob = MagicMock(return_value=[])
-    fs.search_service.grep = MagicMock(return_value=[])
-    fs.search_service.semantic_search = AsyncMock(return_value=[])
-    fs.share_link_service = MagicMock()
-    fs.share_link_service.create_share_link = AsyncMock(return_value=MagicMock())
-    fs.mount_service = MagicMock()
-    fs.mount_service.list_mounts = AsyncMock(return_value=[])
+    mock_oauth_svc = MagicMock()
+    mock_oauth_svc.oauth_list_providers = AsyncMock(return_value=[])
+    fs._service_registry.register_service("oauth", mock_oauth_svc)
+    mock_search_svc = MagicMock()
+    mock_search_svc.list = MagicMock(return_value=[])
+    mock_search_svc.glob = MagicMock(return_value=[])
+    mock_search_svc.grep = MagicMock(return_value=[])
+    mock_search_svc.semantic_search = AsyncMock(return_value=[])
+    fs._service_registry.register_service("search", mock_search_svc)
+    mock_share_link_svc = MagicMock()
+    mock_share_link_svc.create_share_link = AsyncMock(return_value=MagicMock())
+    fs._service_registry.register_service("share_link", mock_share_link_svc)
+    mock_mount_svc = MagicMock()
+    mock_mount_svc.list_mounts = AsyncMock(return_value=[])
+    fs._service_registry.register_service("mount", mock_mount_svc)
     return fs
 
 
 @pytest.fixture
 def mock_gateway():
-    """Create a NexusFSGateway with mock NexusFS for gateway benchmarks."""
+    """Create a NexusFSGateway with mock NexusFS for gateway benchmarks.
+
+    Gateway sys_* methods are async and await the underlying NexusFS methods,
+    so the mock NexusFS methods must be AsyncMock.
+    """
     mock_fs = MagicMock()
-    mock_fs.sys_read = MagicMock(return_value=b"data")
-    mock_fs.sys_write = MagicMock()
-    mock_fs.sys_mkdir = MagicMock()
-    mock_fs.sys_readdir = MagicMock(return_value=["a.txt", "b.txt"])
-    mock_fs.sys_access = MagicMock(return_value=True)
+    mock_fs.sys_read = AsyncMock(return_value=b"data")
+    mock_fs.sys_write = AsyncMock()
+    mock_fs.sys_mkdir = AsyncMock()
+    mock_fs.sys_readdir = AsyncMock(return_value=["a.txt", "b.txt"])
+    mock_fs.sys_access = AsyncMock(return_value=True)
     mock_fs.metadata = MagicMock()
     mock_fs.metadata.get = MagicMock(return_value=MagicMock())
     mock_fs.metadata.list = MagicMock(return_value=[])
@@ -88,7 +108,6 @@ def mock_gateway():
     mock_fs._get_routing_params = MagicMock(return_value=("z1", "a1", False))
     mock_fs._has_descendant_access = MagicMock(return_value=True)
     mock_fs._get_backend_directory_entries = MagicMock(return_value=set())
-    mock_fs._record_read_if_tracking = MagicMock()
     mock_fs.read_bulk = MagicMock(return_value={})
     return NexusFSGateway(mock_fs)
 
@@ -106,13 +125,13 @@ def context():
 
 
 # =============================================================================
-# NexusFS → Service Async Delegation Overhead
+# NexusFS -> Service Async Delegation Overhead
 # =============================================================================
 
 
 @pytest.mark.benchmark_ci
 class TestAsyncDelegationOverhead:
-    """Benchmark async delegation: NexusFS method → await service.method().
+    """Benchmark async delegation: NexusFS method -> await service.method().
 
     Measures the cost of the delegation wrapper around an async mock.
     """
@@ -126,11 +145,11 @@ class TestAsyncDelegationOverhead:
         benchmark(run)
 
     def test_rebac_check_delegation(self, benchmark, mock_nexus_fs):
-        """Benchmark arebac_check delegation overhead."""
+        """Benchmark rebac_check via rebac_service direct call."""
 
         def run():
             asyncio.run(
-                mock_nexus_fs.arebac_check(
+                mock_nexus_fs.service("rebac").rebac_check(
                     subject=("user", "alice"),
                     permission="read",
                     object=("file", "/doc.txt"),
@@ -141,11 +160,11 @@ class TestAsyncDelegationOverhead:
         benchmark(run)
 
     def test_rebac_list_tuples_with_param_rename(self, benchmark, mock_nexus_fs):
-        """Benchmark arebac_list_tuples with zone_id→_zone_id transformation."""
+        """Benchmark rebac_list_tuples via rebac_service direct call."""
 
         def run():
             asyncio.run(
-                mock_nexus_fs.arebac_list_tuples(
+                mock_nexus_fs.service("rebac").rebac_list_tuples(
                     subject=("user", "alice"),
                     zone_id="z1",
                     limit=100,
@@ -159,7 +178,7 @@ class TestAsyncDelegationOverhead:
         """Benchmark mcp_list_mounts via mcp_service direct call."""
 
         def run():
-            asyncio.run(mock_nexus_fs.mcp_service.mcp_list_mounts(_context=context))
+            asyncio.run(mock_nexus_fs.service("mcp").mcp_list_mounts(_context=context))
 
         benchmark(run)
 
@@ -167,19 +186,19 @@ class TestAsyncDelegationOverhead:
         """Benchmark oauth_list_providers via oauth_service direct call."""
 
         def run():
-            asyncio.run(mock_nexus_fs.oauth_service.oauth_list_providers(_context=context))
+            asyncio.run(mock_nexus_fs.service("oauth").oauth_list_providers(_context=context))
 
         benchmark(run)
 
 
 # =============================================================================
-# NexusFS → Service Sync Delegation Overhead
+# NexusFS -> Service Sync Delegation Overhead
 # =============================================================================
 
 
 @pytest.mark.benchmark_ci
 class TestSyncDelegationOverhead:
-    """Benchmark sync delegation: NexusFS method → service.method().
+    """Benchmark sync delegation: NexusFS method -> service.method().
 
     Measures pure Python call overhead for sync delegation.
     """
@@ -210,26 +229,30 @@ class TestSyncDelegationOverhead:
         )
         benchmark(mock_nexus_fs.skill_service.rpc_get_prompt_context, 50, context)
 
-    def test_search_list_delegation(self, benchmark, mock_nexus_fs, context):
+    def test_search_list_delegation(self, benchmark, mock_nexus_fs, context, delegation_loop):
         """Benchmark sys_readdir() delegation to SearchService."""
-        benchmark(
-            mock_nexus_fs.sys_readdir,
-            "/data",
-            True,
-            False,
-            None,
-            True,
-            context,
-        )
+
+        def run():
+            delegation_loop.run_until_complete(
+                mock_nexus_fs.sys_readdir(
+                    path="/data",
+                    recursive=True,
+                    details=False,
+                    show_parsed=True,
+                    context=context,
+                )
+            )
+
+        benchmark(run)
 
     def test_search_glob_delegation(self, benchmark, mock_nexus_fs, context):
         """Benchmark glob() delegation to SearchService."""
-        benchmark(mock_nexus_fs.glob, "*.py", "/src", context)
+        benchmark(mock_nexus_fs.service("search").glob, "*.py", "/src", context)
 
     def test_search_grep_delegation(self, benchmark, mock_nexus_fs, context):
         """Benchmark grep() delegation to SearchService."""
         benchmark(
-            mock_nexus_fs.grep,
+            mock_nexus_fs.service("search").grep,
             "import os",
             "/src",
             None,
@@ -238,10 +261,6 @@ class TestSyncDelegationOverhead:
             "auto",
             context,
         )
-
-    def test_create_llm_reader_delegation(self, benchmark, mock_nexus_fs):
-        """Benchmark create_llm_reader sync delegation via llm_service."""
-        benchmark(mock_nexus_fs.llm_service.create_llm_reader)
 
 
 # =============================================================================
@@ -253,28 +272,57 @@ class TestSyncDelegationOverhead:
 class TestGatewayDelegationOverhead:
     """Benchmark NexusFSGateway method delegation to NexusFS.
 
-    Measures the gateway facade's overhead for common operations.
+    Gateway sys_* methods are async, so we use a dedicated event loop
+    with run_until_complete() to drive them from sync benchmark functions.
     """
 
-    def test_gateway_read(self, benchmark, mock_gateway, context):
+    def test_gateway_read(self, benchmark, mock_gateway, context, delegation_loop):
         """Benchmark gateway.sys_read() delegation."""
-        benchmark(mock_gateway.sys_read, "/test/file.txt", context=context)
 
-    def test_gateway_write_bytes(self, benchmark, mock_gateway, context):
+        def run():
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_read("/test/file.txt", context=context)
+            )
+
+        benchmark(run)
+
+    def test_gateway_write_bytes(self, benchmark, mock_gateway, context, delegation_loop):
         """Benchmark gateway.sys_write() delegation with bytes."""
-        benchmark(mock_gateway.sys_write, "/test/file.txt", b"content", context=context)
 
-    def test_gateway_write_str_conversion(self, benchmark, mock_gateway, context):
-        """Benchmark gateway.sys_write() with str→bytes conversion."""
-        benchmark(mock_gateway.sys_write, "/test/file.txt", "text content", context=context)
+        def run():
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_write("/test/file.txt", b"content", context=context)
+            )
 
-    def test_gateway_exists(self, benchmark, mock_gateway, context):
+        benchmark(run)
+
+    def test_gateway_write_str_conversion(self, benchmark, mock_gateway, context, delegation_loop):
+        """Benchmark gateway.sys_write() with str->bytes conversion."""
+
+        def run():
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_write("/test/file.txt", "text content", context=context)
+            )
+
+        benchmark(run)
+
+    def test_gateway_exists(self, benchmark, mock_gateway, context, delegation_loop):
         """Benchmark gateway.sys_access() delegation."""
-        benchmark(mock_gateway.sys_access, "/test/file.txt", context=context)
 
-    def test_gateway_list(self, benchmark, mock_gateway, context):
+        def run():
+            delegation_loop.run_until_complete(
+                mock_gateway.sys_access("/test/file.txt", context=context)
+            )
+
+        benchmark(run)
+
+    def test_gateway_list(self, benchmark, mock_gateway, context, delegation_loop):
         """Benchmark gateway.sys_readdir() delegation."""
-        benchmark(mock_gateway.sys_readdir, "/test", context=context)
+
+        def run():
+            delegation_loop.run_until_complete(mock_gateway.sys_readdir("/test", context=context))
+
+        benchmark(run)
 
     def test_gateway_metadata_get(self, benchmark, mock_gateway):
         """Benchmark gateway.metadata_get() delegation."""
@@ -307,7 +355,7 @@ class TestServiceInstantiation:
 
     def test_share_link_service_construction(self, benchmark):
         """Benchmark ShareLinkService construction."""
-        from nexus.services.share_link.share_link_service import ShareLinkService
+        from nexus.bricks.share_link.share_link_service import ShareLinkService
 
         mock_gw = MagicMock()
         benchmark(ShareLinkService, gateway=mock_gw, enforce_permissions=True)
@@ -316,13 +364,11 @@ class TestServiceInstantiation:
         """Benchmark EventsService construction."""
         from nexus.system_services.lifecycle.events_service import EventsService
 
-        mock_backend = MagicMock()
-        mock_backend.is_passthrough = False
-        benchmark(EventsService, backend=mock_backend)
+        benchmark(EventsService)
 
     def test_version_service_construction(self, benchmark):
         """Benchmark VersionService construction."""
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.versioning.version_service import VersionService
 
         mock_metadata = MagicMock()
         mock_cas = MagicMock()
@@ -344,13 +390,13 @@ class TestContextExtractionOverhead:
 
     def test_extract_context_info(self, benchmark, context):
         """Benchmark ShareLinkService._extract_context_info."""
-        from nexus.services.share_link.share_link_service import ShareLinkService
+        from nexus.bricks.share_link.share_link_service import ShareLinkService
 
         benchmark(ShareLinkService._extract_context_info, context)
 
     def test_extract_context_info_none(self, benchmark):
         """Benchmark _extract_context_info with None context."""
-        from nexus.services.share_link.share_link_service import ShareLinkService
+        from nexus.bricks.share_link.share_link_service import ShareLinkService
 
         benchmark(ShareLinkService._extract_context_info, None)
 

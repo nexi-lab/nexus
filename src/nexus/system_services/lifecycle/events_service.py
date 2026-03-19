@@ -1,13 +1,21 @@
 """Events Service — file watching and advisory locking.
 
-Dual-track support:
+Dual-track event delivery for wait_for_changes():
 
-Layer 1 (Same-box): OS-native file watching (inotify/FSEvents) + in-memory locks
-Layer 2 (Distributed): EventBus (gRPC point-to-point / CacheStoreABC fan-out) + distributed locks
+- **Internal (OBSERVE)**: EventsService registers as a VFSObserver on
+  KernelDispatch.  Local mutations trigger ``on_mutation()`` which resolves
+  pending waiters via in-memory futures (~0µs).
+- **EventBus (distributed)**: Remote mutations arrive via Dragonfly/NATS
+  pub/sub through ``EventBusBase.wait_for_event()``.
 
-Per KERNEL-ARCHITECTURE.md §6 three-tier messaging:
-  - System tier: gRPC IPC (point-to-point)
-  - User Space tier: EventBus / CacheStoreABC (fan-out)
+When both paths are available, ``wait_for_changes()`` races them via
+``asyncio.wait(FIRST_COMPLETED)`` — local writes resolve instantly via
+the internal observer; remote writes arrive via EventBus.
+
+Known limitation: Raft apply on followers writes to redb directly via Rust
+and does NOT call dispatch.notify().  The EventBus path covers this gap.
+A future task should add a PyO3 callback from Rust apply → Python
+dispatch.notify() for full internal-only coverage.
 
 Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_events.py (836 lines)
@@ -17,68 +25,88 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
+import threading
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.core.path_utils import validate_path
-from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.bricks.watch.file_watcher import FileWatcher
     from nexus.contracts.types import OperationContext
-    from nexus.core.protocols.connector import ConnectorProtocol
+    from nexus.core.file_events import FileEvent
     from nexus.lib.distributed_lock import LockManagerBase
-    from nexus.services.event_bus.base import EventBusBase
+    from nexus.system_services.event_bus.base import EventBusBase
+
+
+@dataclasses.dataclass
+class _Waiter:
+    """Internal waiter for OBSERVE-path event delivery."""
+
+    path_pattern: str
+    future: asyncio.Future["FileEvent"]
+    loop: asyncio.AbstractEventLoop
 
 
 class EventsService:
-    """Independent events service extracted from NexusFS.
+    """Events service — file watching via kernel OBSERVE + EventBus.
 
-    Provides dual-track support for file watching and locking:
-    - Layer 1: Same-box mode using OS-native APIs (PassthroughBackend only)
-    - Layer 2: Distributed mode using EventBus + distributed locks (any backend)
+    Implements VFSObserver (``on_mutation``) so that KernelDispatch.notify()
+    delivers FileEvents directly.  Also consumes EventBus for remote writes.
 
     Architecture:
-        - Clean dependency injection for all external systems
-        - No direct NexusFS access required
-        - Dual-track selection based on available infrastructure
+        - Registers as VFSObserver on KernelDispatch (OBSERVE phase)
+        - on_mutation() resolves pending waiters in-memory (~0µs)
+        - EventBus covers remote writes (Raft followers)
+        - Races both when available (FIRST_COMPLETED)
     """
 
     def __init__(
         self,
-        backend: "ConnectorProtocol",
         event_bus: "EventBusBase | None" = None,
         lock_manager: "LockManagerBase | None" = None,
         zone_id: str | None = None,
     ):
-        """Initialize events service.
-
-        Args:
-            backend: Storage backend (needed for same-box detection)
-            event_bus: Distributed event bus (EventBus) or None
-            lock_manager: Distributed lock manager or None
-            zone_id: Default zone ID
-        """
-        self._backend = backend
         self._event_bus = event_bus
         self._lock_manager = lock_manager
-        self._file_watcher: FileWatcher | None = None  # lazy init in _get_file_watcher()
         self._zone_id = zone_id
         self._event_tasks: set[asyncio.Task[Any]] = set()
 
+        # OBSERVE-path waiter state (thread-safe: dispatch.notify is sync)
+        self._waiters: list[_Waiter] = []
+        self._waiters_lock = threading.Lock()
+        # Set to True after factory registers us as VFSObserver
+        self._observe_registered = False
+
         logger.info("[EventsService] Initialized")
+
+    # =========================================================================
+    # HotSwappable protocol (Q2 — Issue #1611)
+    # =========================================================================
+
+    def hook_spec(self) -> HookSpec:
+        """Declare VFS hooks: EventsService registers itself as an OBSERVE observer."""
+        return HookSpec(observers=(self,))
+
+    async def drain(self) -> None:
+        """Stop accepting new waiter registrations."""
+        self._observe_registered = False
+
+    async def activate(self) -> None:
+        """Resume accepting waiter registrations."""
+        self._observe_registered = True
 
     # =========================================================================
     # Infrastructure Detection
     # =========================================================================
 
-    def _is_same_box(self) -> bool:
-        """Check if we're in same-box mode (local file watching available)."""
-        return self._backend.is_passthrough is True
+    def _has_internal_observe(self) -> bool:
+        """Check if kernel OBSERVE path is active (registered as VFSObserver)."""
+        return self._observe_registered
 
     def _has_distributed_events(self) -> bool:
         """Check if distributed event bus is available."""
@@ -87,22 +115,6 @@ class EventsService:
     def _has_distributed_locks(self) -> bool:
         """Check if distributed lock manager is available."""
         return self._lock_manager is not None
-
-    def _get_file_watcher(self) -> "FileWatcher":
-        """Get or create the file watcher instance for same-box mode."""
-        if not self._is_same_box():
-            raise NotImplementedError(
-                "File watching is only available with PassthroughBackend (same-box mode). "
-                "For distributed scenarios, configure Redis for RedisEventBus."
-            )
-
-        if self._file_watcher is None:
-            import importlib as _il
-
-            FileWatcher = _il.import_module("nexus.bricks.watch.file_watcher").FileWatcher
-            self._file_watcher = FileWatcher()
-
-        return self._file_watcher
 
     def _get_zone_id(self, context: "OperationContext | None") -> str:
         """Get zone ID from context or default."""
@@ -113,23 +125,72 @@ class EventsService:
         return ROOT_ZONE_ID
 
     # =========================================================================
+    # VFSObserver implementation (OBSERVE phase)
+    # =========================================================================
+
+    def on_mutation(self, event: "FileEvent") -> None:
+        """Called by KernelDispatch.notify() on every local mutation.
+
+        Matches the event against pending waiters and resolves their futures.
+        Thread-safe: dispatch.notify() may be called from non-event-loop threads.
+        """
+        with self._waiters_lock:
+            for w in self._waiters:
+                if not w.future.done() and event.matches_path_pattern(w.path_pattern):
+                    w.loop.call_soon_threadsafe(w.future.set_result, event)
+
+    # =========================================================================
+    # Internal wait (OBSERVE path)
+    # =========================================================================
+
+    async def _wait_internal(
+        self,
+        path: str,
+        timeout: float,
+    ) -> "FileEvent | None":
+        """Wait for a local mutation via OBSERVE-path future."""
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future["FileEvent"] = loop.create_future()
+        waiter = _Waiter(path_pattern=path, future=future, loop=loop)
+
+        with self._waiters_lock:
+            self._waiters.append(waiter)
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except TimeoutError:
+            return None
+        finally:
+            with self._waiters_lock, contextlib.suppress(ValueError):
+                self._waiters.remove(waiter)
+
+    # =========================================================================
+    # EventBus wait (distributed path)
+    # =========================================================================
+
+    async def _wait_eventbus(
+        self,
+        zone_id: str,
+        path: str,
+        timeout: float,
+    ) -> "FileEvent | None":
+        """Wait for a remote mutation via EventBus subscription."""
+        event = await self._event_bus.wait_for_event(  # type: ignore[union-attr]
+            zone_id=zone_id,
+            path_pattern=path,
+            timeout=timeout,
+        )
+        return event
+
+    # =========================================================================
     # Cache Invalidation Hooks (used by multi-instance tests)
     # =========================================================================
 
     def _start_cache_invalidation(self) -> None:
-        """Start listening for events from other instances to invalidate local cache.
-
-        No-op placeholder — cache invalidation is handled by the event bus
-        subscription in the distributed event path.  Provided so that
-        multi-instance test fixtures can call it without AttributeError.
-        """
+        """No-op placeholder for multi-instance test fixtures."""
         logger.debug("[EventsService] _start_cache_invalidation (no-op)")
 
     def _stop_cache_invalidation(self) -> None:
-        """Stop cache invalidation listener.
-
-        No-op placeholder — see ``_start_cache_invalidation``.
-        """
+        """No-op placeholder — see ``_start_cache_invalidation``."""
         logger.debug("[EventsService] _stop_cache_invalidation (no-op)")
 
     # =========================================================================
@@ -154,19 +215,16 @@ class EventsService:
         self,
         path: str,
         timeout: float = 30.0,
-        since_revision: int | None = None,
         _context: "OperationContext | None" = None,
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
 
-        Dual-track implementation:
-        - Layer 2 (preferred): Uses EventBus (distributed)
-        - Layer 1 (fallback): Uses OS-native file watching (same-box only)
+        Uses kernel OBSERVE for local writes (~0µs) and EventBus for remote
+        writes.  When both are available, races them via FIRST_COMPLETED.
 
         Args:
-            path: Virtual path to watch
+            path: Virtual path to watch (supports glob patterns)
             timeout: Maximum time to wait in seconds (default: 30.0)
-            since_revision: Only return events with revision > this value
             _context: Operation context (optional)
 
         Returns:
@@ -177,75 +235,46 @@ class EventsService:
         path = validate_path(path, allow_root=True)
         zone_id = self._get_zone_id(_context)
 
-        # Layer 2: Distributed event bus (preferred)
-        if self._has_distributed_events():
-            logger.debug(f"Using distributed event bus for {path}")
-            event = await self._event_bus.wait_for_event(  # type: ignore[union-attr]
-                zone_id=zone_id,
-                path_pattern=path,
-                timeout=timeout,
-                since_revision=since_revision,
+        has_internal = self._has_internal_observe()
+        has_eventbus = self._has_distributed_events()
+
+        if has_internal and has_eventbus:
+            # Race both: local OBSERVE vs EventBus — first to fire wins
+            task_internal = asyncio.create_task(self._wait_internal(path, timeout))
+            task_eventbus = asyncio.create_task(self._wait_eventbus(zone_id, path, timeout))
+
+            done, pending = await asyncio.wait(
+                {task_internal, task_eventbus},
+                return_when=asyncio.FIRST_COMPLETED,
             )
+
+            for t in pending:
+                t.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await t
+
+            result_event = done.pop().result()
+            if result_event is None:
+                return None
+            return result_event.to_dict()
+
+        if has_internal:
+            event = await self._wait_internal(path, timeout)
             if event is None:
                 return None
-            return cast(dict[str, Any], event.to_dict())
+            return event.to_dict()
 
-        # Layer 1: Same-box local watching (fallback)
-        if self._is_same_box():
-            logger.debug(f"Using same-box file watcher for {path}")
-            from nexus.services.event_subsystem.types import FileEvent
-
-            assert isinstance(self._backend, PassthroughProtocol), (
-                "Backend must implement PassthroughProtocol for this operation"
-            )
-            pt_backend = self._backend
-
-            watch_path = path.rstrip("/")
-            if "*" in path or "?" in path:
-                import os
-
-                watch_path = os.path.dirname(watch_path.split("*")[0].split("?")[0])
-                if not watch_path:
-                    watch_path = "/"
-
-            physical_path = pt_backend.get_physical_path(watch_path)
-            watcher = self._get_file_watcher()
-
-            is_pattern = "*" in path or "?" in path or path.endswith("/")
-            deadline = None
-            if is_pattern:
-                deadline = asyncio.get_running_loop().time() + timeout
-
-            while True:
-                remaining_timeout = timeout
-                if deadline is not None:
-                    remaining_timeout = max(0, deadline - asyncio.get_running_loop().time())
-                    if remaining_timeout <= 0:
-                        return None
-
-                change = await watcher.wait_for_change(physical_path, timeout=remaining_timeout)
-                if change is None:
-                    return None
-
-                event = FileEvent.from_file_change(change, zone_id=zone_id)
-
-                if is_pattern:
-                    virtual_change_path = change.path
-                    if not virtual_change_path.startswith("/"):
-                        virtual_change_path = f"{watch_path.rstrip('/')}/{virtual_change_path}"
-                    event = dataclasses.replace(event, path=virtual_change_path)
-                    if event.matches_path_pattern(path):
-                        result: dict[str, Any] = event.to_dict()
-                        return result
-                    logger.debug(f"Event {event.path} didn't match pattern {path}, continuing...")
-                    continue
-
-                result_dict: dict[str, Any] = event.to_dict()
-                return result_dict
+        if has_eventbus:
+            logger.debug(f"Using distributed event bus for {path}")
+            event = await self._wait_eventbus(zone_id, path, timeout)
+            if event is None:
+                return None
+            return event.to_dict()
 
         raise NotImplementedError(
-            "No event source available. Either configure Redis for distributed events "
-            "or use PassthroughBackend for same-box file watching."
+            "No event source available. Either register EventsService as "
+            "VFSObserver on KernelDispatch or configure EventBus for "
+            "distributed events."
         )
 
     # =========================================================================
@@ -278,14 +307,11 @@ class EventsService:
         await self._ensure_distributed_system_ready()
 
         path = validate_path(path, allow_root=True)
-        zone_id = self._get_zone_id(_context)
 
-        # Layer 2: Distributed lock manager (preferred)
         if self._has_distributed_locks():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
             logger.debug(f"Using distributed lock manager for {path} ({mode})")
             lock_id = await self._lock_manager.acquire(  # type: ignore[union-attr]
-                zone_id=zone_id,
                 path=path,
                 timeout=timeout,
                 ttl=ttl,
@@ -297,25 +323,9 @@ class EventsService:
                 logger.warning(f"Distributed lock timeout on {path} after {timeout}s")
             return lock_id
 
-        # Layer 1: Same-box in-memory locking (fallback)
-        if self._is_same_box():
-            mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
-            logger.debug(f"Using same-box lock for {path} ({mode})")
-            assert isinstance(self._backend, PassthroughProtocol), (
-                "Backend must implement PassthroughProtocol for this operation"
-            )
-            pt_backend = self._backend
-            lock_id = pt_backend.lock(path, timeout=timeout, max_holders=max_holders)
-
-            if lock_id:
-                logger.debug(f"Same-box lock acquired on {path}: {lock_id}")
-            else:
-                logger.warning(f"Same-box lock timeout on {path} after {timeout}s")
-            return lock_id
-
         raise NotImplementedError(
-            "No lock manager available. Either configure Redis for distributed locks "
-            "or use PassthroughBackend for same-box locking."
+            "No lock manager available. Configure a metastore that implements "
+            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
         )
 
     @rpc_expose(description="Extend lock TTL (heartbeat)")
@@ -337,14 +347,10 @@ class EventsService:
         Returns:
             True if lock was extended, False if not found/owned
         """
-        zone_id = self._get_zone_id(_context)
-
-        # Layer 2: Distributed lock manager
         if self._has_distributed_locks():
             path = validate_path(path, allow_root=True)
             extended = await self._lock_manager.extend(  # type: ignore[union-attr]
                 lock_id=lock_id,
-                zone_id=zone_id,
                 path=path,
                 ttl=ttl,
             )
@@ -354,14 +360,9 @@ class EventsService:
                 logger.warning(f"Lock extend failed (not owned or expired): {lock_id}")
             return extended.success
 
-        # Layer 1: Same-box locks don't need extension (no TTL)
-        if self._is_same_box():
-            logger.debug(f"Same-box lock extend (no-op): {lock_id}")
-            return True
-
         raise NotImplementedError(
-            "No lock manager available. Either configure Redis for distributed locks "
-            "or use PassthroughBackend for same-box locking."
+            "No lock manager available. Configure a metastore that implements "
+            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
         )
 
     @rpc_expose(description="Release advisory lock")
@@ -381,16 +382,12 @@ class EventsService:
         Returns:
             True if lock was released, False if not found
         """
-        zone_id = self._get_zone_id(_context)
-
-        # Layer 2: Distributed lock manager
         if self._has_distributed_locks():
             if path is None:
                 raise ValueError("path is required for distributed unlock")
             path = validate_path(path, allow_root=True)
             released = await self._lock_manager.release(  # type: ignore[union-attr]
                 lock_id=lock_id,
-                zone_id=zone_id,
                 path=path,
             )
             if released:
@@ -399,22 +396,9 @@ class EventsService:
                 logger.warning(f"Distributed lock not found: {lock_id}")
             return released
 
-        # Layer 1: Same-box in-memory locking
-        if self._is_same_box():
-            assert isinstance(self._backend, PassthroughProtocol), (
-                "Backend must implement PassthroughProtocol for this operation"
-            )
-            pt_backend = self._backend
-            released = pt_backend.unlock(lock_id)
-            if released:
-                logger.debug(f"Same-box lock released: {lock_id}")
-            else:
-                logger.warning(f"Same-box lock not found: {lock_id}")
-            return released
-
         raise NotImplementedError(
-            "No lock manager available. Either configure Redis for distributed locks "
-            "or use PassthroughBackend for same-box locking."
+            "No lock manager available. Configure a metastore that implements "
+            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
         )
 
     # =========================================================================

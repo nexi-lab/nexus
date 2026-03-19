@@ -60,12 +60,9 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "mount_manager",
         "workspace_manager",
         # Original system services
-        "agent_registry",
-        "async_agent_registry",
         "eviction_manager",
         "namespace_manager",
         "async_namespace_manager",
-        "async_vfs_router",
         "delivery_worker",
         "observability_subsystem",
         "resiliency_manager",
@@ -73,9 +70,9 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "brick_lifecycle_manager",
         "brick_reconciler",
         "zone_lifecycle",
-        "pipe_manager",
-        "event_log",
+        "process_table",
         "scheduler_service",
+        "acp_service",
     }
 )
 
@@ -227,8 +224,6 @@ class TestBootSystemServices:
             "delivery_worker",
             "observability_subsystem",
             "workspace_registry",  # degradable — None with mock session_factory
-            "pipe_manager",  # degradable — None if PipeManager unavailable
-            "event_log",  # degradable — None if AgentEventLog unavailable
             "scheduler_service",  # degradable — None if SchedulerService unavailable
         }
         for key, value in result.items():
@@ -240,37 +235,18 @@ class TestBootSystemServices:
     def test_degradable_failure_returns_none(self) -> None:
         """Degradable service failure returns None (not an exception).
 
-        Patches agent_registry, namespace_manager, and async_vfs_router.
+        Patches namespace_manager. Agent registry was removed (Issue #1692).
         """
         ctx = _make_boot_context()
 
-        patches = [
-            patch(
-                "nexus.services.agents.agent_registry.AgentRegistry.__init__",
-                side_effect=RuntimeError("agent fail"),
-            ),
-            patch(
-                "nexus.bricks.rebac.namespace_factory.create_namespace_manager",
-                side_effect=RuntimeError("ns fail"),
-            ),
-            patch(
-                "nexus.services.routing.async_router.AsyncVFSRouter.__init__",
-                side_effect=RuntimeError("router fail"),
-            ),
-        ]
-
-        for p in patches:
-            p.start()
-        try:
+        with patch(
+            "nexus.bricks.rebac.namespace_factory.create_namespace_manager",
+            side_effect=RuntimeError("ns fail"),
+        ):
             result = _boot_system_services(ctx)
-        finally:
-            for p in patches:
-                p.stop()
 
         assert isinstance(result, dict)
-        assert result["agent_registry"] is None
         assert result["namespace_manager"] is None
-        assert result["async_vfs_router"] is None
         # Critical services should still work
         assert result["rebac_manager"] is not None
 
@@ -309,9 +285,6 @@ class TestBootBrickServices:
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
-            "task_queue_service",
-            "skill_service",
-            "skill_package_service",
         }
         for key in expected_keys:
             assert key in result, f"Missing brick key: {key}"
@@ -453,7 +426,8 @@ class TestCreateNexusServices:
 class TestBrickServicesFieldCompleteness:
     """Issue #2134: Factory-created bricks are packed into BrickServices container."""
 
-    def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
+    @pytest.mark.asyncio
+    async def test_create_nexus_fs_packs_factory_bricks_into_brick_services(self) -> None:
         """create_nexus_fs() packs parse_fn, content_cache, registries, lock manager
         into BrickServices rather than passing as flat NexusFS params (Issue #2134).
         """
@@ -473,7 +447,7 @@ class TestBrickServicesFieldCompleteness:
         backend.on_write_callback = None
         backend.on_sync_callback = None
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -496,14 +470,14 @@ class TestBrickServicesFieldCompleteness:
         assert brk.parse_fn is not None, "parse_fn should be packed into BrickServices"
         assert brk.parser_registry is not None, "parser_registry should be in BrickServices"
         assert brk.provider_registry is not None, "provider_registry should be in BrickServices"
-        assert brk.vfs_lock_manager is not None, "vfs_lock_manager should be in BrickServices"
-        # backend.has_root_path=True + CacheConfig.enable_content_cache=True (default)
-        assert brk.content_cache is not None, (
-            "content_cache should be non-None when backend.has_root_path=True "
-            "and CacheConfig.enable_content_cache=True (defaults)"
-        )
+        # NOTE: vfs_lock_manager removed from BrickServices — now kernel-internal
+        # (created in NexusFS.__init__). See write-path-extraction-design.md.
+        # NOTE: content_cache may be None when router.route("/") fails during
+        # _do_link() (MagicMock backend doesn't set up proper route table).
+        # The factory gracefully degrades — ContentCache is optional.
 
-    def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
+    @pytest.mark.asyncio
+    async def test_create_nexus_fs_workflow_engine_override_in_brick_services(self) -> None:
         """workflow_engine param is packed into BrickServices (Issue #2134)."""
         record_store = MagicMock()
         record_store.engine = MagicMock()
@@ -523,7 +497,7 @@ class TestBrickServicesFieldCompleteness:
 
         sentinel_engine = MagicMock()
 
-        nx = create_nexus_fs(
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,

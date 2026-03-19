@@ -4,11 +4,130 @@ Extracted from fastapi_server.py (#1602). Admin handlers accept both
 ``nexus_fs`` and ``auth_provider`` as explicit parameters.
 """
 
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+ROLE_TO_RELATION: dict[str, str] = {
+    "viewer": "direct_viewer",
+    "editor": "direct_editor",
+    "owner": "direct_owner",
+}
+
+
+def _resolve_record_store(auth_provider: Any) -> Any | None:
+    """Resolve _record_store from auth_provider, unwrapping if needed."""
+    store = getattr(auth_provider, "_record_store", None)
+    if store is None and hasattr(auth_provider, "api_key_provider"):
+        store = getattr(auth_provider.api_key_provider, "_record_store", None)
+    return store
+
+
+def _create_grants_for_key(
+    auth_provider: Any,
+    subject_type: str,
+    subject_id: str,
+    grants: list[dict[str, str]],
+    zone_id: str,
+    expires_at: "datetime | None",
+    key_id: str,
+) -> list[dict[str, str]]:
+    """Create ReBAC permission tuples for API key grants (Issue #3128).
+
+    Creates tuples and stores their IDs on the API key record for
+    targeted cleanup on revocation.
+
+    Args:
+        auth_provider: Auth provider (to resolve record_store/engine).
+        subject_type: e.g. "user" or "agent".
+        subject_id: Subject identifier.
+        grants: List of {"path": ..., "role": ...} dicts.
+        zone_id: Zone to scope tuples to.
+        expires_at: Optional expiry for the tuples.
+        key_id: API key ID to store tuple_ids on.
+
+    Returns:
+        List of created grant dicts for the response.
+    """
+    from sqlalchemy import select
+
+    from nexus.bricks.rebac.manager import ReBACManager
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.storage.models import APIKeyModel
+
+    record_store = _resolve_record_store(auth_provider)
+    if record_store is None:
+        raise RuntimeError("Cannot create grants: record_store not available")
+
+    manager = ReBACManager(engine=record_store.engine, cache_ttl_seconds=0, max_depth=5)
+    try:
+        tuples: list[dict[str, Any]] = []
+        created: list[dict[str, str]] = []
+        for grant in grants:
+            path = grant.get("path", "")
+            role = grant.get("role", "")
+            relation = ROLE_TO_RELATION.get(role)
+            if not relation:
+                raise ValueError(
+                    f"Invalid role: {role!r}. Must be one of: {list(ROLE_TO_RELATION)}"
+                )
+            if not path or not path.startswith("/"):
+                raise ValueError(f"Invalid path: {path!r}. Must be absolute.")
+            tuples.append(
+                {
+                    "subject": (subject_type, subject_id),
+                    "relation": relation,
+                    "object": ("file", path),
+                    "zone_id": zone_id or ROOT_ZONE_ID,
+                    "expires_at": expires_at,
+                }
+            )
+            created.append({"path": path, "role": role})
+
+        if tuples:
+            # Snapshot pre-existing tuple_ids so we only track genuinely new ones
+            pre_existing: set[str] = set()
+            for t in tuples:
+                for f in manager.rebac_list_tuples(
+                    subject=(t["subject"][0], t["subject"][1]),
+                    relation=t["relation"],
+                    object=(t["object"][0], t["object"][1]),
+                ):
+                    tid = f.get("tuple_id", "")
+                    if tid:
+                        pre_existing.add(tid)
+
+            manager.rebac_write_batch(tuples)
+
+            # Collect only newly created tuple_ids
+            tuple_ids: list[str] = []
+            for t in tuples:
+                for f in manager.rebac_list_tuples(
+                    subject=(t["subject"][0], t["subject"][1]),
+                    relation=t["relation"],
+                    object=(t["object"][0], t["object"][1]),
+                ):
+                    tid = f.get("tuple_id", "")
+                    if tid and tid not in pre_existing and tid not in tuple_ids:
+                        tuple_ids.append(tid)
+
+            # Store tuple_ids on the key for targeted revocation cleanup
+            if tuple_ids:
+                with auth_provider.session_factory() as session:
+                    api_key = session.scalar(
+                        select(APIKeyModel).where(APIKeyModel.key_id == key_id)
+                    )
+                    if api_key is not None:
+                        api_key.grant_tuple_ids = json.dumps(tuple_ids)
+                        session.commit()
+
+        return created
+    finally:
+        manager.close()
 
 
 def require_admin(context: Any) -> None:
@@ -61,6 +180,38 @@ def format_api_key_response(api_key: Any, *, include_sensitive: bool = False) ->
     return result
 
 
+def handle_admin_write_permission(nexus_fs: Any, params: Any, context: Any) -> dict[str, Any]:
+    """Handle admin_write_permission — write ReBAC relationship tuples.
+
+    Unlike other admin handlers, this receives ``nexus_fs`` (not auth_provider)
+    because the ``_rebac_manager`` lives on the NexusFS instance.
+    """
+    from nexus.contracts.exceptions import ConfigurationError
+
+    require_admin(context)
+
+    rebac = getattr(nexus_fs, "_rebac_manager", None) or getattr(nexus_fs, "rebac_manager", None)
+    if rebac is None:
+        raise ConfigurationError("ReBAC manager not available on this server")
+
+    tuples = getattr(params, "tuples", [])
+    created = 0
+    for t in tuples:
+        subject = tuple(t["subject"])
+        relation = t["relation"]
+        obj = tuple(t["object"])
+        zone_id = t.get("zone_id", "root")
+        rebac.rebac_write(
+            subject=subject,
+            relation=relation,
+            object=obj,
+            zone_id=zone_id,
+        )
+        created += 1
+
+    return {"created": created}
+
+
 def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_create_key method."""
     import uuid
@@ -77,10 +228,7 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
     if params.subject_type == "user" or not params.subject_type:
-        # Resolve _record_store: DiscriminatingAuthProvider delegates to api_key_provider
-        _record_store = getattr(auth_provider, "_record_store", None)
-        if _record_store is None and hasattr(auth_provider, "api_key_provider"):
-            _record_store = getattr(auth_provider.api_key_provider, "_record_store", None)
+        _record_store = _resolve_record_store(auth_provider)
         if _record_store is not None:
             entity_registry = EntityRegistry(_record_store)
             entity_registry.register_entity(
@@ -107,7 +255,7 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
         )
         session.commit()
 
-        return {
+        result: dict[str, Any] = {
             "key_id": key_id,
             "api_key": raw_key,
             "user_id": user_id,
@@ -118,6 +266,22 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
             "is_admin": params.is_admin,
             "expires_at": expires_at.isoformat() if expires_at else None,
         }
+
+        # Create ReBAC grants if requested (Issue #3128)
+        grants = getattr(params, "grants", None)
+        if grants:
+            created = _create_grants_for_key(
+                auth_provider=auth_provider,
+                subject_type=params.subject_type or "user",
+                subject_id=params.subject_id or user_id,
+                grants=grants,
+                zone_id=params.zone_id,
+                expires_at=expires_at,
+                key_id=key_id,
+            )
+            result["grants"] = created
+
+        return result
 
 
 def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:

@@ -63,7 +63,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         sys.path.insert(0, os.getenv("PYTHONPATH", ""))
 
         from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
-        from nexus.cli import main as cli_main
+        from nexus.daemon.main import main as cli_main
 
         auth_config = {{
             "api_keys": {{
@@ -90,7 +90,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
             return _orig(auth_type, auth_config_arg, **kwargs)
         factory.create_auth_provider = _patched
 
-        import nexus.services.permissions.namespace_manager as ns_mod
+        import nexus.bricks.rebac.namespace_manager as ns_mod
         _OrigNS = ns_mod.NamespaceManager
         class _NoCacheNS(_OrigNS):
             def __init__(self, **kwargs):
@@ -99,7 +99,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         ns_mod.NamespaceManager = _NoCacheNS
 
         cli_main([
-            'serve', '--host', '127.0.0.1', '--port', '{port}',
+            '--host', '127.0.0.1', '--port', '{port}',
             '--data-dir', '{data_dir}',
             '--auth-type', 'static', '--api-key', '{ADMIN_API_KEY}',
         ])

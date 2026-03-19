@@ -65,6 +65,7 @@ class ZoneManager:
         base_path: str,
         bind_addr: str = "0.0.0.0:2126",
         *,
+        advertise_addr: str | None = None,
         tls_cert_path: str | None = None,
         tls_key_path: str | None = None,
         tls_ca_path: str | None = None,
@@ -78,6 +79,8 @@ class ZoneManager:
 
         # Auto-generate TLS certs if none provided and none on disk (#1250)
         self._tls_config: ZoneTlsConfig | None = None
+        ca_key_path: str | None = None
+        join_token_hash: str | None = None
         if tls_cert_path is None and tls_key_path is None and tls_ca_path is None:
             auto = self._auto_generate_tls(base_path, node_id)
             if auto is not None:
@@ -85,6 +88,11 @@ class ZoneManager:
                 tls_key_path = str(auto.node_key_path)
                 tls_ca_path = str(auto.ca_cert_path)
                 self._tls_config = auto
+                # Read join token hash if this is the first node (has join-token-hash file)
+                hash_path = Path(base_path) / "tls" / "join-token-hash"
+                if hash_path.exists():
+                    join_token_hash = hash_path.read_text().strip()
+                    ca_key_path = str(Path(base_path) / "tls" / "ca-key.pem")
 
         self._py_mgr = PyZoneManager(
             node_id,
@@ -93,10 +101,13 @@ class ZoneManager:
             tls_cert_path=tls_cert_path,
             tls_key_path=tls_key_path,
             tls_ca_path=tls_ca_path,
+            ca_key_path=ca_key_path,
+            join_token_hash=join_token_hash,
         )
         self._stores: dict[str, RaftMetadataStore] = {}
         self._node_id = node_id
         self._base_path = base_path
+        self._advertise_addr = advertise_addr or bind_addr
         self._root_zone_id: str | None = None
         self._tls_cert_path = tls_cert_path
         self._tls_key_path = tls_key_path
@@ -121,6 +132,11 @@ class ZoneManager:
             )
         return None
 
+    @property
+    def advertise_addr(self) -> str:
+        """Routable address for peers to connect to this node."""
+        return self._advertise_addr
+
     @staticmethod
     def _auto_generate_tls(base_path: str, node_id: int) -> "ZoneTlsConfig | None":
         """Auto-generate TLS certs on first startup; reuse on subsequent starts."""
@@ -131,7 +147,7 @@ class ZoneManager:
             logger.debug("Auto-detected existing TLS certs in %s/tls/", base_path)
             return existing
 
-        # Generate new CA + node cert
+        # Generate new CA + node cert + join token
         try:
             from nexus.security.tls.certgen import (
                 cert_fingerprint,
@@ -139,20 +155,25 @@ class ZoneManager:
                 generate_zone_ca,
                 save_pem,
             )
+            from nexus.security.tls.join_token import generate_join_token
 
             tls_dir = Path(base_path) / "tls"
-            ca_cert, ca_key = generate_zone_ca("auto")
+            ca_cert, ca_key = generate_zone_ca("cluster")
             save_pem(tls_dir / "ca.pem", ca_cert)
             save_pem(tls_dir / "ca-key.pem", ca_key, is_private=True)
 
-            node_cert, node_key = generate_node_cert(node_id, "auto", ca_cert, ca_key)
+            node_cert, node_key = generate_node_cert(node_id, "cluster", ca_cert, ca_key)
             save_pem(tls_dir / "node.pem", node_cert)
             save_pem(tls_dir / "node-key.pem", node_key, is_private=True)
 
-            logger.info(
-                "Auto-generated TLS certs (CA fingerprint: %s)",
-                cert_fingerprint(ca_cert),
-            )
+            # Generate join token for K3s-style cluster bootstrap (#2694)
+            token, pw_hash = generate_join_token(ca_cert)
+            (tls_dir / "join-token").write_text(token)
+            (tls_dir / "join-token-hash").write_text(pw_hash)
+
+            fp = cert_fingerprint(ca_cert)
+            logger.info("Auto-generated TLS certs (CA fingerprint: %s)", fp)
+            logger.info("Join token: %s", token)
             return ZoneTlsConfig.from_data_dir(base_path)
         except Exception:
             logger.debug(
@@ -213,8 +234,8 @@ class ZoneManager:
 
         Only creates the Raft group + redb database. Does NOT create a
         root "/" entry — that's the responsibility of:
-        - Node bootstrap (root zone, i_links_count=1)
-        - mount() via _increment_links (lazy-creates "/" on first mount)
+        - Node bootstrap (root zone)
+        - share_subtree() / _apply_topology() for non-root zones
 
         Args:
             zone_id: Unique zone identifier.
@@ -304,10 +325,10 @@ class ZoneManager:
         if not force:
             store = self.get_store(zone_id)
             if store is not None:
-                root = store.get("/")
-                if root is not None and root.i_links_count > 0:
+                count = store.get_zone_links_count()
+                if count > 0:
                     raise ValueError(
-                        f"Zone '{zone_id}' still has {root.i_links_count} reference(s) "
+                        f"Zone '{zone_id}' still has {count} reference(s) "
                         f"(i_links_count > 0). Unmount all references first, "
                         f"or use force=True."
                     )
@@ -330,6 +351,8 @@ class ZoneManager:
         parent_zone_id: str,
         mount_path: str,
         target_zone_id: str,
+        *,
+        increment_links: bool = True,
     ) -> None:
         """Mount a zone at a path in another zone (NFS-style, strict).
 
@@ -349,6 +372,9 @@ class ZoneManager:
             mount_path: Path in parent zone where target is mounted.
                 Must already exist as DT_DIR.
             target_zone_id: Zone to mount.
+            increment_links: If True (default), increment i_links_count on
+                target zone. Set to False when the caller (e.g. JoinZone RPC
+                handler) has already incremented on the leader side.
 
         Raises:
             ValueError: If mount_path doesn't exist, is not DT_DIR, or
@@ -395,7 +421,8 @@ class ZoneManager:
         parent_store.put(mount_entry)
 
         # Increment target zone's i_links_count (POSIX: link() → nlink++)
-        self._increment_links(target_store, target_zone_id)
+        if increment_links:
+            self._increment_links(target_store)
 
         logger.info(
             "Mounted zone '%s' at '%s' in zone '%s'",
@@ -460,60 +487,30 @@ class ZoneManager:
     # =========================================================================
 
     @staticmethod
-    def _increment_links(store: "RaftMetadataStore", zone_id: str) -> int:
-        """Increment a zone's i_links_count on its root "/" entry.
+    def _increment_links(store: "RaftMetadataStore") -> int:
+        """Increment a zone's i_links_count via atomic Raft command.
 
         Returns the new count.
         """
-        from dataclasses import replace
-
-        root = store.get("/")
-        if root is None:
-            # Zone has no root entry yet — create one
-            root = FileMetadata(
-                path="/",
-                backend_name="virtual",
-                physical_path="",
-                size=0,
-                entry_type=DT_DIR,
-                zone_id=zone_id,
-                i_links_count=1,
-            )
-            store.put(root)
-            return 1
-
-        new_count = root.i_links_count + 1
-        store.put(replace(root, i_links_count=new_count))
-        return new_count
+        return store.adjust_zone_links_count(1)
 
     @staticmethod
     def _decrement_links(store: "RaftMetadataStore") -> int:
-        """Decrement a zone's i_links_count on its root "/" entry.
+        """Decrement a zone's i_links_count via atomic Raft command.
 
-        Returns the new count. Never goes below 0.
+        Returns the new count. Never goes below 0 (clamped in state machine).
         """
-        from dataclasses import replace
-
-        root = store.get("/")
-        if root is None:
-            return 0
-
-        new_count = max(0, root.i_links_count - 1)
-        store.put(replace(root, i_links_count=new_count))
-        return new_count
+        return store.adjust_zone_links_count(-1)
 
     def get_links_count(self, zone_id: str) -> int:
         """Get a zone's current i_links_count.
 
-        Returns 0 if zone or root entry doesn't exist.
+        Returns 0 if zone or store doesn't exist.
         """
         store = self.get_store(zone_id)
         if store is None:
             return 0
-        root = store.get("/")
-        if root is None:
-            return 0
-        return root.i_links_count
+        return store.get_zone_links_count()
 
     def share_subtree(
         self,
@@ -564,10 +561,17 @@ class ZoneManager:
         # Step 2: List all entries under path (including path itself if it's a dir)
         # Normalize: ensure path ends without trailing slash for prefix matching
         prefix = path.rstrip("/")
-        entries = list(parent_store.list_iter(prefix=prefix, recursive=True))
+        entries = [
+            e
+            for e in parent_store.list_iter(prefix=prefix, recursive=True)
+            if e.path == prefix or e.path.startswith(prefix + "/")
+        ]
 
         # Step 3: Copy entries to new zone with path rebasing
+        # Track nested DT_MOUNT targets so we can increment their link counts
         from dataclasses import replace
+
+        nested_mount_targets: list[str] = []
 
         for entry in entries:
             if entry.path == prefix:
@@ -577,7 +581,6 @@ class ZoneManager:
                     path="/",
                     zone_id=new_zone_id,
                     entry_type=DT_DIR,
-                    i_links_count=1,
                 )
             else:
                 # Rebase: /usr/alice/projectA/foo → /foo
@@ -585,7 +588,16 @@ class ZoneManager:
                 if not relative.startswith("/"):
                     relative = "/" + relative
                 rebased = replace(entry, path=relative, zone_id=new_zone_id)
+                # Track nested mounts for link count updates
+                if entry.is_mount and entry.target_zone_id:
+                    nested_mount_targets.append(entry.target_zone_id)
             new_store.put(rebased)
+
+        # Increment link counts for nested mount targets (Finding #4)
+        for nested_target_id in nested_mount_targets:
+            nested_store = self.get_store(nested_target_id)
+            if nested_store is not None:
+                self._increment_links(nested_store)
 
         # Ensure new zone has a root "/" even if no entries existed
         if new_store.get("/") is None:
@@ -596,7 +608,6 @@ class ZoneManager:
                 size=0,
                 entry_type=DT_DIR,
                 zone_id=new_zone_id,
-                i_links_count=1,
             )
             new_store.put(root_entry)
 
@@ -726,20 +737,22 @@ class ZoneManager:
         """Check if all pending mounts are fully applied on this node.
 
         Uses target zone's i_links_count as mount-complete indicator:
-        Phase B (_increment_links) sets i_links_count >= 1 on the target
-        zone. This is the LAST phase of a mount, so i_links_count >= 1
-        implies Phase A (DT_MOUNT) is also done.
+        Phase B (_increment_links) sets i_links_count on the target zone.
+        The expected count equals the number of mounts referencing that zone.
 
         Works on both leader and follower nodes (reads replicated state).
         """
         if not self._pending_mounts:
             return True
-        for target_zone_id in self._pending_mounts.values():
+        # Count expected links per target zone
+        from collections import Counter
+
+        expected_counts = Counter(self._pending_mounts.values())
+        for target_zone_id, expected in expected_counts.items():
             target_store = self.get_store(target_zone_id)
             if target_store is None:
                 return False
-            target_root = target_store.get("/")
-            if target_root is None or target_root.i_links_count < 1:
+            if target_store.get_zone_links_count() < expected:
                 return False
         return True
 
@@ -789,7 +802,6 @@ class ZoneManager:
                     size=0,
                     entry_type=DT_DIR,
                     zone_id=self._root_zone_id,
-                    i_links_count=1,
                 )
                 root_store.put(root_entry)
                 logger.info(
@@ -876,14 +888,16 @@ class ZoneManager:
                     continue
 
             # --- Phase B: i_links_count in target zone ---
-            target_root = target_store.get("/")
-            if target_root is None or target_root.i_links_count < 1:
+            # Count how many pending mounts reference this target zone.
+            # i_links_count must reflect ALL mount references, not just the first.
+            expected_links = sum(1 for _, tz in sorted_mounts if tz == target_zone_id)
+            if target_store.get_zone_links_count() < expected_links:
                 if not self._is_zone_leader(target_store):
                     remaining[global_path] = target_zone_id
                     active_mounts[global_path] = target_zone_id
                     continue
                 try:
-                    self._increment_links(target_store, target_zone_id)
+                    self._increment_links(target_store)
                     logger.debug("Phase B done: i_links_count for zone '%s'", target_zone_id)
                 except RuntimeError:
                     remaining[global_path] = target_zone_id

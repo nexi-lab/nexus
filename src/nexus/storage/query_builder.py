@@ -46,10 +46,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM ready_work_items"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -92,10 +94,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM pending_work_items"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -138,10 +142,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM blocked_work_items"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -185,10 +191,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM in_progress_work"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [
@@ -230,10 +238,12 @@ class WorkQueryBuilder:
         """
         try:
             query = "SELECT * FROM work_by_priority"
+            params: dict[str, Any] = {}
             if limit:
-                query += f" LIMIT {limit}"
+                query += " LIMIT :limit"
+                params["limit"] = int(limit)
 
-            result = session.execute(text(query))
+            result = session.execute(text(query), params)
             rows = result.fetchall()
 
             return [

@@ -245,20 +245,24 @@ class VFSObserver(Protocol):
 
 @runtime_checkable
 class VFSPathResolver(Protocol):
-    """PRE-DISPATCH resolver for virtual paths (Issue #889).
+    """PRE-DISPATCH resolver for virtual paths (Issue #889, #1665).
 
     Linux analogue: virtual filesystem dispatch (procfs, sysfs, devtmpfs).
-    When read()/write()/delete() is called on a path claimed by a resolver,
-    the resolver handles the entire operation — the normal VFS pipeline is
-    skipped.  Each resolver owns its own permission semantics.
+    When a path is claimed by a resolver, the resolver handles the entire
+    operation — the normal VFS pipeline is skipped.  Each resolver owns
+    its own permission semantics.
+
+    Single-call ``try_*`` pattern: each method returns ``None`` when the
+    resolver does not claim the path ("not my path"), or the operation
+    result when it does.  This eliminates the old two-phase
+    ``matches()`` + ``read/write/delete()`` dispatch.
 
     Registered at boot via factory into KernelDispatch.  Empty resolver
     chain = no-op = zero overhead when no resolvers registered.
     """
 
-    def matches(self, path: str) -> bool: ...
-    def read(
+    def try_read(
         self, path: str, *, return_metadata: bool = False, context: Any = None
-    ) -> bytes | dict: ...
-    def write(self, path: str, content: bytes) -> dict[str, Any]: ...
-    def delete(self, path: str, *, context: Any = None) -> None: ...
+    ) -> bytes | dict | None: ...
+    def try_write(self, path: str, content: bytes) -> dict[str, Any] | None: ...
+    def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None: ...

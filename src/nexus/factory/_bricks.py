@@ -12,7 +12,7 @@ from typing import Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.factory._boot_context import _BootContext
-from nexus.factory._helpers import _make_gate, _resolve_tasks_db_path, _safe_create
+from nexus.factory._helpers import _make_gate, _safe_create
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,7 @@ def _boot_independent_bricks(
     # === Manually-wired bricks (complex conditional logic) ===
 
     zoekt_pipe_consumer: Any = None  # Issue #810: DT_PIPE Zoekt consumer
+    task_dispatch_consumer: Any = None  # Task Manager: DT_PIPE lifecycle consumer
 
     # --- Search Brick Import Validation (Issue #1520) ---
     if _on("search"):
@@ -196,6 +197,23 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] Zoekt not available, skipping callback wiring")
     else:
         logger.debug("[BOOT:BRICK] Search brick disabled by profile")
+
+    # --- Task Manager Brick ---
+    if _on("task_manager"):
+        try:
+            from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
+
+            task_dispatch_consumer = TaskDispatchPipeConsumer(
+                acp_service=system.get("acp_service"),
+                process_table=system.get("process_table"),
+            )
+            # TaskManagerService and TaskWriteHook are registered in _register_vfs_hooks
+            # (needs NexusFS reference); consumer stored here for lifespan startup.
+            logger.debug("[BOOT:BRICK] TaskDispatchPipeConsumer created")
+        except Exception as exc:
+            logger.warning("[BOOT:BRICK] task_manager unavailable: %s", exc)
+    else:
+        logger.debug("[BOOT:BRICK] task_manager brick disabled by profile")
 
     # --- Wallet Provisioner (Issue #1210) ---
     wallet_provisioner: Any = None
@@ -288,7 +306,7 @@ def _boot_independent_bricks(
         try:
             import os as _os
 
-            from nexus.services.upload.chunked_upload_service import (
+            from nexus.bricks.upload.chunked_upload_service import (
                 ChunkedUploadConfig,
                 ChunkedUploadService,
             )
@@ -324,15 +342,31 @@ def _boot_independent_bricks(
     lock_manager: Any = None
     if not _on("ipc"):
         logger.debug("[BOOT:BRICK] IPC/EventBus brick disabled by profile")
-    elif ctx.dist.enable_locks or ctx.dist.enable_events:
-        from nexus.factory._distributed import _create_distributed_infra
+    else:
+        # Event bus requires explicit dist config
+        if ctx.dist.enable_locks or ctx.dist.enable_events:
+            from nexus.factory._distributed import _create_distributed_infra
 
-        event_bus, lock_manager = _create_distributed_infra(
-            ctx.dist,
-            ctx.metadata_store,
-            ctx.record_store,
-            ctx.dist.coordination_url,
-        )
+            event_bus, lock_manager = _create_distributed_infra(
+                ctx.dist,
+                ctx.metadata_store,
+                ctx.record_store,
+                ctx.dist.coordination_url,
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
+            )
+
+        # Always create lock manager if metastore satisfies LockStoreProtocol
+        # (standalone → LocalLockManager, Raft → RaftLockManager already created above)
+        if lock_manager is None:
+            try:
+                from nexus.lib.distributed_lock import LocalLockManager, LockStoreProtocol
+
+                if isinstance(ctx.metadata_store, LockStoreProtocol):
+                    _zone = ctx.zone_id or ROOT_ZONE_ID
+                    lock_manager = LocalLockManager(ctx.metadata_store, zone_id=_zone)
+                    logger.info("Local lock manager initialized (standalone, zone=%s)", _zone)
+            except Exception as _lm_exc:
+                logger.debug("[BOOT:BRICK] LocalLockManager unavailable: %s", _lm_exc)
 
     # --- Workflow engine ---
     workflow_engine: Any = None
@@ -371,21 +405,7 @@ def _boot_independent_bricks(
         except ImportError as _snap_exc:
             logger.debug("[BOOT:BRICK] TransactionalSnapshotService unavailable: %s", _snap_exc)
 
-    # --- ReputationService (Issue #2131: extracted to bricks) ---
-    reputation_service: Any = auto_results.pop("reputation_service", None)
-    if reputation_service is None and ctx.record_store is not None:
-        try:
-            from nexus.bricks.reputation.reputation_service import ReputationService
-
-            reputation_service = ReputationService(
-                record_store=ctx.record_store,
-            )
-            logger.debug("[BOOT:BRICK] ReputationService created")
-        except Exception as _rep_exc:
-            logger.debug("[BOOT:BRICK] ReputationService unavailable: %s", _rep_exc)
-
     # --- DelegationService (Issue #2131: extracted to bricks) ---
-    # Always recreate with reputation_service (cross-brick dep wired by kernel)
     auto_results.pop("delegation_service", None)
     delegation_service: Any = None
     if ctx.record_store is not None:
@@ -396,25 +416,10 @@ def _boot_independent_bricks(
                 record_store=ctx.record_store,
                 rebac_manager=system["rebac_manager"],
                 entity_registry=system.get("entity_registry"),
-                reputation_service=reputation_service,
             )
             logger.debug("[BOOT:BRICK] DelegationService created")
         except Exception as _del_exc:
             logger.debug("[BOOT:BRICK] DelegationService unavailable: %s", _del_exc)
-
-    # --- TaskQueueService (Issue #655) ---
-    task_queue_service: Any = None
-    if not _on("scheduler"):
-        logger.debug("[BOOT:BRICK] Scheduler/TaskQueue brick disabled by profile")
-    else:
-        try:
-            from nexus.system_services.lifecycle.task_queue_service import TaskQueueService
-
-            task_queue_service = TaskQueueService(
-                db_path=_resolve_tasks_db_path(ctx.backend),
-            )
-        except Exception as _tq_exc:
-            logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
     # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
     # IPC now goes through the kernel VFS (KernelVFSAdapter → NexusFS).
@@ -456,14 +461,10 @@ def _boot_independent_bricks(
         except Exception as _ael_exc:
             logger.debug("[BOOT:BRICK] AgentEventLog unavailable: %s", _ael_exc)
 
-    # --- Skills Brick (Issue #2035) ---
-    skill_service: Any = None
-    skill_package_service: Any = None
-
     # --- VersionService (Issue #2034: moved from kernel to brick tier) ---
     version_service: Any = None
     try:
-        from nexus.services.versioning.version_service import VersionService
+        from nexus.bricks.versioning.version_service import VersionService
 
         version_service = VersionService(
             metadata_store=ctx.metadata_store,
@@ -475,29 +476,6 @@ def _boot_independent_bricks(
         logger.debug("[BOOT:BRICK] VersionService created")
     except Exception as _vs_exc:
         logger.debug("[BOOT:BRICK] VersionService unavailable: %s", _vs_exc)
-
-    # --- Memory Brick (Issue #2177) ---
-    memory_router: Any = None
-    memory_permission: Any = None
-    try:
-        from nexus.bricks.memory.router import MemoryViewRouter as _MemoryViewRouter
-
-        memory_router = _MemoryViewRouter(
-            session_factory=ctx.record_store.session_factory,
-            entity_registry=system["entity_registry"],
-        )
-
-        from nexus.bricks.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
-
-        memory_permission = MemoryPermissionEnforcer(
-            metadata_store=ctx.metadata_store,
-            rebac_manager=system["rebac_manager"],
-            memory_router=memory_router,
-            entity_registry=system["entity_registry"],
-        )
-        logger.debug("[BOOT:BRICK] Memory brick created (router + permission)")
-    except Exception as _mem_exc:
-        logger.debug("[BOOT:BRICK] Memory brick unavailable: %s", _mem_exc)
 
     # --- Governance Brick (Issue #2129) ---
     governance_anomaly_service: Any = None
@@ -560,17 +538,12 @@ def _boot_independent_bricks(
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
-        "task_queue_service": task_queue_service,
         "ipc_storage_driver": ipc_storage_driver,
         "ipc_provisioner": ipc_provisioner,
         "agent_event_log": agent_event_log,
-        "skill_service": skill_service,
-        "skill_package_service": skill_package_service,
         "delegation_service": delegation_service,
-        "reputation_service": reputation_service,
         "version_service": version_service,
         "rebac_circuit_breaker": rebac_circuit_breaker,
-        "memory_permission": memory_permission,
         # Governance Brick (Issue #2129)
         "governance_anomaly_service": governance_anomaly_service,
         "governance_collusion_service": governance_collusion_service,
@@ -578,6 +551,8 @@ def _boot_independent_bricks(
         "governance_response_service": governance_response_service,
         # DT_PIPE consumers (Issue #810)
         "zoekt_pipe_consumer": zoekt_pipe_consumer,
+        # Task Manager Brick
+        "task_dispatch_consumer": task_dispatch_consumer,
     }
 
     elapsed = time.perf_counter() - t0
@@ -599,14 +574,10 @@ def _boot_dependent_bricks(
     """Boot Tier 2b (DEPENDENT BRICK) — requires services from independent bricks.
 
     Discovers ``brick_factory.py`` modules with ``TIER="dependent"`` and
-    collects their artifact callbacks into ``bricks["artifact_observers"]``.
+    collects their handler callbacks into ``bricks["artifact_observers"]``.
 
     Cross-brick factories (ToolInfo, GraphStore) are constructed here in the
     factory layer and injected into brick factories to respect LEGO Principle 3.
-
-    Currently handles:
-    - Artifact auto-indexing (Issue #1861): collects ``ArtifactCallback``
-      handlers for direct invocation by ``TaskManager``.
     """
     # Build cross-brick factories in the factory layer (not inside bricks)
     tool_info_factory: Callable[..., Any] | None = None
@@ -620,22 +591,9 @@ def _boot_dependent_bricks(
         logger.debug("[BOOT:BRICK:DEP] ToolInfo not available")
 
     if ctx.record_store is not None:
-        try:
-            from nexus.bricks.search.graph_store import GraphStore
-
-            _record_store = ctx.record_store
-            _zone_id = ctx.zone_id or ROOT_ZONE_ID
-
-            def _make_graph_store(session: Any) -> Any:
-                return GraphStore(
-                    record_store=_record_store,
-                    session=session,
-                    zone_id=_zone_id,
-                )
-
-            graph_store_factory = _make_graph_store
-        except ImportError:
-            logger.debug("[BOOT:BRICK:DEP] GraphStore not available")
+        # Removed: txtai handles this (Issue #2663)
+        # graph_store module was deleted; graph_store_factory stays None.
+        logger.debug("[BOOT:BRICK:DEP] GraphStore not available (deleted, Issue #2663)")
 
     def _create_dependent(descriptor: BrickFactoryDescriptor) -> Any:
         return descriptor.create_fn(

@@ -183,6 +183,27 @@ class TofuTrustStore:
         logger.info("TOFU: removed zone '%s' from trust store", zone_id)
         return True
 
+    def build_ca_bundle(self, local_ca_path: Path) -> Path:
+        """Write a combined CA bundle (local CA + all trusted zone CAs).
+
+        Returns the path to the bundle file, which can be used as
+        ``tls_ca_path`` for gRPC channels that need to trust multiple CAs.
+        """
+        bundle_path = self._path.parent / "ca-bundle.pem"
+        parts: list[str] = []
+
+        # Include local CA first
+        if local_ca_path.exists():
+            parts.append(local_ca_path.read_text().strip())
+
+        # Append all trusted zone CAs
+        for entry in self._entries.values():
+            parts.append(entry.ca_pem.strip())
+
+        bundle_path.parent.mkdir(parents=True, exist_ok=True)
+        bundle_path.write_text("\n".join(parts) + "\n" if parts else "")
+        return bundle_path
+
     def list_trusted(self) -> list[TrustedZone]:
         """List all trusted zones."""
         return list(self._entries.values())

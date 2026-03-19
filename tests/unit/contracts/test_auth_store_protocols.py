@@ -189,10 +189,11 @@ class TestProtocolConformance:
         store = SQLAlchemyZoneStore(session_factory)
         assert isinstance(store, ZoneStoreProtocol)
 
-    def test_settings_store_satisfies_protocol(self, session_factory):
-        from nexus.storage.auth_stores import SQLAlchemySettingsStore
+    def test_settings_store_satisfies_protocol(self):
+        from nexus.storage.auth_stores import MetastoreSettingsStore
+        from tests.helpers.dict_metastore import DictMetastore
 
-        store = SQLAlchemySettingsStore(session_factory)
+        store = MetastoreSettingsStore(DictMetastore())
         assert isinstance(store, SystemSettingsStoreProtocol)
 
     def test_session_factory_satisfies_protocol(self, session_factory):

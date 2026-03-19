@@ -11,7 +11,10 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
+    minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation
+
+INNOVATION extends CLOUD with all bricks enabled + experimental validation.
+Requires explicit opt-in (``nexusd --innovation`` or ``--profile innovation``).
 
 REMOTE is orthogonal — zero local bricks, all operations proxy via RemoteBackend:
     remote  (no local bricks — NFS-client model)
@@ -36,9 +39,10 @@ BRICK_STORAGE = "storage"
 # System services (gated by profile)
 BRICK_EVENTLOG = "eventlog"
 BRICK_NAMESPACE = "namespace"
-BRICK_AGENT_REGISTRY = "agent_registry"
 BRICK_PERMISSIONS = "permissions"
 BRICK_SCHEDULER = "scheduler"
+BRICK_AGENT_RUNTIME = "agent_runtime"
+BRICK_ACP = "acp"
 
 # Infrastructure bricks
 BRICK_CACHE = "cache"
@@ -51,13 +55,23 @@ BRICK_RESILIENCY = "resiliency"
 BRICK_SEARCH = "search"
 BRICK_PAY = "pay"
 BRICK_LLM = "llm"
-BRICK_SKILLS = "skills"
 BRICK_SANDBOX = "sandbox"
 BRICK_WORKFLOWS = "workflows"
-BRICK_A2A = "a2a"
 BRICK_DISCOVERY = "discovery"
 BRICK_MCP = "mcp"
 BRICK_MEMORY = "memory"
+BRICK_SKILLS = "skills"
+BRICK_ACCESS_MANIFEST = "access_manifest"
+BRICK_CATALOG = "catalog"
+BRICK_DELEGATION = "delegation"
+BRICK_IDENTITY = "identity"
+BRICK_SHARE_LINK = "share_link"
+BRICK_VERSIONING = "versioning"
+BRICK_WORKSPACE = "workspace"
+BRICK_PORTABILITY = "portability"
+BRICK_PARSERS = "parsers"
+BRICK_SNAPSHOT = "snapshot"
+BRICK_TASK_MANAGER = "task_manager"
 
 # Cloud-only
 BRICK_FEDERATION = "federation"
@@ -68,7 +82,6 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_STORAGE,
         BRICK_EVENTLOG,
         BRICK_NAMESPACE,
-        BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_SCHEDULER,
         BRICK_CACHE,
@@ -79,14 +92,26 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_SEARCH,
         BRICK_PAY,
         BRICK_LLM,
-        BRICK_SKILLS,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
-        BRICK_A2A,
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_SKILLS,
+        BRICK_ACCESS_MANIFEST,
+        BRICK_CATALOG,
+        BRICK_DELEGATION,
+        BRICK_IDENTITY,
+        BRICK_SHARE_LINK,
+        BRICK_VERSIONING,
+        BRICK_WORKSPACE,
+        BRICK_PORTABILITY,
+        BRICK_PARSERS,
+        BRICK_SNAPSHOT,
+        BRICK_TASK_MANAGER,
         BRICK_FEDERATION,
+        BRICK_AGENT_RUNTIME,
+        BRICK_ACP,
     }
 )
 
@@ -104,6 +129,7 @@ class DeploymentProfile(StrEnum):
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
+    - innovation: Experimental tier — cloud + all bricks, startup validation (Issue #1667)
     - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
     """
 
@@ -112,6 +138,7 @@ class DeploymentProfile(StrEnum):
     LITE = "lite"
     FULL = "full"
     CLOUD = "cloud"
+    INNOVATION = "innovation"
     REMOTE = "remote"
 
     def default_bricks(self) -> frozenset[str]:
@@ -151,11 +178,11 @@ _EMBEDDED_BRICKS: frozenset[str] = _MINIMAL_BRICKS | frozenset(
 _LITE_BRICKS: frozenset[str] = _EMBEDDED_BRICKS | frozenset(
     {
         BRICK_NAMESPACE,
-        BRICK_AGENT_REGISTRY,
         BRICK_PERMISSIONS,
         BRICK_CACHE,
         BRICK_IPC,
         BRICK_SCHEDULER,
+        BRICK_AGENT_RUNTIME,
     }
 )
 
@@ -167,13 +194,24 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
         BRICK_SKILLS,
         BRICK_SANDBOX,
         BRICK_WORKFLOWS,
-        BRICK_A2A,
         BRICK_DISCOVERY,
         BRICK_MCP,
         BRICK_MEMORY,
+        BRICK_TASK_MANAGER,
         BRICK_OBSERVABILITY,
         BRICK_UPLOADS,
         BRICK_RESILIENCY,
+        BRICK_ACCESS_MANIFEST,
+        BRICK_CATALOG,
+        BRICK_DELEGATION,
+        BRICK_IDENTITY,
+        BRICK_SHARE_LINK,
+        BRICK_VERSIONING,
+        BRICK_WORKSPACE,
+        BRICK_PORTABILITY,
+        BRICK_PARSERS,
+        BRICK_SNAPSHOT,
+        BRICK_ACP,
     }
 )
 
@@ -181,6 +219,10 @@ _CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset(
     {
         BRICK_FEDERATION,
     }
+)
+
+_INNOVATION_BRICKS: frozenset[str] = (
+    _CLOUD_BRICKS  # same as cloud; future experimental bricks added here
 )
 
 _REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client model
@@ -191,6 +233,7 @@ _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
     DeploymentProfile.LITE: _LITE_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,
     DeploymentProfile.CLOUD: _CLOUD_BRICKS,
+    DeploymentProfile.INNOVATION: _INNOVATION_BRICKS,
     DeploymentProfile.REMOTE: _REMOTE_BRICKS,
 }
 

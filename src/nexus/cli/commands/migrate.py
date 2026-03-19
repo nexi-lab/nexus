@@ -13,7 +13,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import (
-    BackendConfig,
     add_backend_options,
     console,
     handle_error,
@@ -42,8 +41,14 @@ def migrate() -> None:
 
 
 @migrate.command(name="status")
-@add_backend_options
-def status(backend_config: BackendConfig) -> None:
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    envvar="NEXUS_DATA_DIR",
+    help="Path to Nexus data directory",
+)
+def status(data_dir: str | None) -> None:
     """Show migration status and history.
 
     Displays:
@@ -59,10 +64,10 @@ def status(backend_config: BackendConfig) -> None:
         from nexus.config import NexusConfig
         from nexus.migrations import VersionManager
 
-        # Create config from backend_config
+        # Create config from data_dir
         config = NexusConfig(
-            data_dir=backend_config.data_dir,
-            db_path=backend_config.data_dir + "/nexus.db" if backend_config.data_dir else None,
+            data_dir=data_dir,
+            db_path=data_dir + "/nexus.db" if data_dir else None,
         )
 
         manager = VersionManager(config)
@@ -136,8 +141,14 @@ def status(backend_config: BackendConfig) -> None:
 @migrate.command(name="plan")
 @click.option("--from", "from_version", required=True, help="Source version")
 @click.option("--to", "to_version", required=True, help="Target version")
-@add_backend_options
-def plan(from_version: str, to_version: str, backend_config: BackendConfig) -> None:
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    envvar="NEXUS_DATA_DIR",
+    help="Path to Nexus data directory",
+)
+def plan(from_version: str, to_version: str, data_dir: str | None) -> None:
     """Show migration plan without executing (dry-run).
 
     Displays the steps that would be executed for a version upgrade.
@@ -150,8 +161,8 @@ def plan(from_version: str, to_version: str, backend_config: BackendConfig) -> N
         from nexus.migrations import VersionManager
 
         config = NexusConfig(
-            data_dir=backend_config.data_dir,
-            db_path=backend_config.data_dir + "/nexus.db" if backend_config.data_dir else None,
+            data_dir=data_dir,
+            db_path=data_dir + "/nexus.db" if data_dir else None,
         )
 
         manager = VersionManager(config)
@@ -200,13 +211,19 @@ def plan(from_version: str, to_version: str, backend_config: BackendConfig) -> N
 @click.option("--to", "to_version", required=True, help="Target version")
 @click.option("--backup/--no-backup", default=True, help="Create backup before migration")
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
-@add_backend_options
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    envvar="NEXUS_DATA_DIR",
+    help="Path to Nexus data directory",
+)
 def upgrade(
     from_version: str,
     to_version: str,
     backup: bool,
     dry_run: bool,
-    backend_config: BackendConfig,
+    data_dir: str | None,
 ) -> None:
     """Upgrade from one version to another.
 
@@ -223,8 +240,8 @@ def upgrade(
         from nexus.migrations import VersionManager
 
         config = NexusConfig(
-            data_dir=backend_config.data_dir,
-            db_path=backend_config.data_dir + "/nexus.db" if backend_config.data_dir else None,
+            data_dir=data_dir,
+            db_path=data_dir + "/nexus.db" if data_dir else None,
         )
 
         manager = VersionManager(config)
@@ -281,12 +298,18 @@ def upgrade(
 @click.option("--to-version", required=True, help="Target version to rollback to")
 @click.option("--from-backup", default=None, help="Restore from specific backup path")
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
-@add_backend_options
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    envvar="NEXUS_DATA_DIR",
+    help="Path to Nexus data directory",
+)
 def rollback(
     to_version: str,
     from_backup: str | None,
     dry_run: bool,
-    backend_config: BackendConfig,
+    data_dir: str | None,
 ) -> None:
     """Rollback to a previous version.
 
@@ -304,8 +327,8 @@ def rollback(
         from nexus.migrations import VersionManager
 
         config = NexusConfig(
-            data_dir=backend_config.data_dir,
-            db_path=backend_config.data_dir + "/nexus.db" if backend_config.data_dir else None,
+            data_dir=data_dir,
+            db_path=data_dir + "/nexus.db" if data_dir else None,
         )
 
         manager = VersionManager(config)
@@ -358,8 +381,14 @@ def rollback(
 
 @migrate.command(name="backup")
 @click.option("--list", "list_backups", is_flag=True, help="List available backups")
-@add_backend_options
-def backup_cmd(list_backups: bool, backend_config: BackendConfig) -> None:
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    envvar="NEXUS_DATA_DIR",
+    help="Path to Nexus data directory",
+)
+def backup_cmd(list_backups: bool, data_dir: str | None) -> None:
     """Create or list backups.
 
     Examples:
@@ -371,8 +400,8 @@ def backup_cmd(list_backups: bool, backend_config: BackendConfig) -> None:
         from nexus.migrations import VersionManager
 
         config = NexusConfig(
-            data_dir=backend_config.data_dir,
-            db_path=backend_config.data_dir + "/nexus.db" if backend_config.data_dir else None,
+            data_dir=data_dir,
+            db_path=data_dir + "/nexus.db" if data_dir else None,
         )
 
         manager = VersionManager(config)
@@ -408,8 +437,14 @@ def backup_cmd(list_backups: bool, backend_config: BackendConfig) -> None:
 @migrate.command(name="restore")
 @click.argument("backup_path", type=click.Path(exists=True))
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
-@add_backend_options
-def restore(backup_path: str, dry_run: bool, backend_config: BackendConfig) -> None:
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    default=None,
+    envvar="NEXUS_DATA_DIR",
+    help="Path to Nexus data directory",
+)
+def restore(backup_path: str, dry_run: bool, data_dir: str | None) -> None:
     """Restore from a backup.
 
     Examples:
@@ -421,8 +456,8 @@ def restore(backup_path: str, dry_run: bool, backend_config: BackendConfig) -> N
         from nexus.migrations import VersionManager
 
         config = NexusConfig(
-            data_dir=backend_config.data_dir,
-            db_path=backend_config.data_dir + "/nexus.db" if backend_config.data_dir else None,
+            data_dir=data_dir,
+            db_path=data_dir + "/nexus.db" if data_dir else None,
         )
 
         manager = VersionManager(config)
@@ -457,7 +492,8 @@ def import_s3(
     target: str,
     overwrite: bool,
     dry_run: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Import files from an S3 bucket.
 
@@ -467,6 +503,22 @@ def import_s3(
         nexus migrate import-s3 --bucket my-bucket --prefix /data/ --target /workspace/
         nexus migrate import-s3 --bucket my-bucket --target /imports/ --dry-run
     """
+    import asyncio
+
+    asyncio.run(
+        _async_import_s3(bucket, prefix, target, overwrite, dry_run, remote_url, remote_api_key)
+    )
+
+
+async def _async_import_s3(
+    bucket: str,
+    prefix: str,
+    target: str,
+    overwrite: bool,
+    dry_run: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         from nexus.cli.utils import get_filesystem
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
@@ -479,7 +531,7 @@ def import_s3(
         console.print(f"[bold]Target:[/bold] {target}")
         console.print()
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
         migrator = DataMigrator(nx)
 
         options = ImportOptions(
@@ -491,7 +543,7 @@ def import_s3(
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
 
-        result = migrator.import_from_s3(
+        result = await migrator.import_from_s3(
             bucket=bucket,
             prefix=prefix,
             target_path=target,
@@ -523,7 +575,8 @@ def import_gcs(
     overwrite: bool,
     dry_run: bool,
     credentials: str | None,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Import files from a Google Cloud Storage bucket.
 
@@ -533,6 +586,25 @@ def import_gcs(
         nexus migrate import-gcs --bucket my-bucket --prefix /data/ --target /workspace/
         nexus migrate import-gcs --bucket my-bucket --target /imports/ --credentials creds.json
     """
+    import asyncio
+
+    asyncio.run(
+        _async_import_gcs(
+            bucket, prefix, target, overwrite, dry_run, credentials, remote_url, remote_api_key
+        )
+    )
+
+
+async def _async_import_gcs(
+    bucket: str,
+    prefix: str,
+    target: str,
+    overwrite: bool,
+    dry_run: bool,
+    credentials: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         from nexus.cli.utils import get_filesystem
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
@@ -545,7 +617,7 @@ def import_gcs(
         console.print(f"[bold]Target:[/bold] {target}")
         console.print()
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
         migrator = DataMigrator(nx)
 
         options = ImportOptions(
@@ -557,7 +629,7 @@ def import_gcs(
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
 
-        result = migrator.import_from_gcs(
+        result = await migrator.import_from_gcs(
             bucket=bucket,
             prefix=prefix,
             target_path=target,
@@ -586,7 +658,8 @@ def import_fs(
     target: str,
     overwrite: bool,
     dry_run: bool,
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Import files from local filesystem.
 
@@ -594,6 +667,19 @@ def import_fs(
         nexus migrate import-fs --source /local/data --target /workspace/
         nexus migrate import-fs --source ./docs --target /docs/ --dry-run
     """
+    import asyncio
+
+    asyncio.run(_async_import_fs(source, target, overwrite, dry_run, remote_url, remote_api_key))
+
+
+async def _async_import_fs(
+    source: str,
+    target: str,
+    overwrite: bool,
+    dry_run: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         from nexus.cli.utils import get_filesystem
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
@@ -606,7 +692,7 @@ def import_fs(
         console.print(f"[bold]Target:[/bold] {target}")
         console.print()
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
         migrator = DataMigrator(nx)
 
         options = ImportOptions(
@@ -618,7 +704,7 @@ def import_fs(
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
 
-        result = migrator.import_from_local(
+        result = await migrator.import_from_local(
             source_path=source,
             target_path=target,
             options=options,
@@ -641,7 +727,8 @@ def import_fs(
 def validate(
     check_integrity: bool,
     sample_size: int,  # noqa: ARG001 - Reserved for future use
-    backend_config: BackendConfig,
+    remote_url: str | None,
+    remote_api_key: str | None,
 ) -> None:
     """Validate data integrity.
 
@@ -652,6 +739,16 @@ def validate(
         nexus migrate validate --check-integrity
         nexus migrate validate --check-integrity --sample-size 500
     """
+    import asyncio
+
+    asyncio.run(_async_validate(check_integrity, remote_url, remote_api_key))
+
+
+async def _async_validate(
+    check_integrity: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     try:
         from nexus.cli.utils import get_filesystem
         from nexus.migrations.validators import IntegrityValidator
@@ -659,16 +756,16 @@ def validate(
         console.print("[bold]Running validation checks...[/bold]")
         console.print()
 
-        nx = get_filesystem(backend_config)
+        nx = await get_filesystem(remote_url, remote_api_key)
         validator = IntegrityValidator(nx)
 
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
 
         if check_integrity:
-            result = validator.full_validation(progress_callback=progress_callback)
+            result = await validator.full_validation(progress_callback=progress_callback)
         else:
-            result = validator.validate_metadata_integrity()
+            result = await validator.validate_metadata_integrity()
 
         nx.close()
 

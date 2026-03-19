@@ -95,22 +95,32 @@ async def get_snapshot_context(request: Request) -> tuple[Any, str, str | None]:
     if nexus_fs is None:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
-    snapshot_service = getattr(nexus_fs, "_snapshot_service", None)
+    # Check app.state first (wired by lifespan), then fall back to nexus_fs attr
+    snapshot_service = getattr(request.app.state, "transactional_snapshot_service", None)
+    if snapshot_service is None:
+        snapshot_service = getattr(nexus_fs, "_snapshot_service", None)
     if snapshot_service is None:
         raise HTTPException(status_code=503, detail="Snapshot service not available")
 
     zone_id = ROOT_ZONE_ID
     agent_id = None
 
-    # Lazy import to avoid circular dependencies
-    from nexus.server.api.v2.dependencies import _get_require_auth
+    # Resolve auth directly (can't use Depends() in manual dependency functions)
+    from nexus.server.dependencies import resolve_auth
 
-    require_auth = _get_require_auth()
-    if require_auth:
-        auth_result = require_auth()
+    try:
+        auth_result = await resolve_auth(
+            app_state=request.app.state,
+            authorization=request.headers.get("Authorization"),
+            x_agent_id=request.headers.get("X-Agent-ID"),
+            x_nexus_subject=request.headers.get("X-Nexus-Subject"),
+            x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
+        )
         if auth_result:
             zone_id = auth_result.get("zone_id", ROOT_ZONE_ID)
             agent_id = auth_result.get("agent_id")
+    except Exception:
+        pass  # Auth is optional for listing snapshots
 
     return snapshot_service, zone_id, agent_id
 

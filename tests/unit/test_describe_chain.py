@@ -14,16 +14,24 @@ import pytest
 # Reusable test key for EncryptedStorage tests
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
-from nexus.backends.backend import Backend
-from nexus.backends.caching_backend_wrapper import (
+from nexus.backends.base.backend import Backend
+from nexus.backends.storage.delegating import DelegatingBackend
+from nexus.backends.wrappers.caching import (
     CacheWrapperConfig,
     CachingBackendWrapper,
 )
-from nexus.backends.compressed_wrapper import CompressedStorage, CompressedStorageConfig
-from nexus.backends.delegating import DelegatingBackend
-from nexus.backends.encrypted_wrapper import EncryptedStorage, EncryptedStorageConfig
-from nexus.backends.logging_wrapper import LoggingBackendWrapper
+from nexus.backends.wrappers.compressed import (
+    CompressedStorage,
+    CompressedStorageConfig,
+    is_zstd_available,
+)
+from nexus.backends.wrappers.encrypted import EncryptedStorage, EncryptedStorageConfig
+from nexus.backends.wrappers.logging import LoggingBackendWrapper
 from nexus.contracts.describable import Describable
+
+_skip_no_zstd = pytest.mark.skipif(
+    not is_zstd_available(), reason="zstd not available (install zstandard or use Python 3.14+)"
+)
 
 _TEST_KEY = AESGCMSIV.generate_key(bit_length=256)
 
@@ -68,6 +76,7 @@ class TestSingleWrapperDescribe:
         wrapper = EncryptedStorage(inner=leaf, config=config)
         assert wrapper.describe() == "encrypt(AES-256-GCM-SIV) → local"
 
+    @_skip_no_zstd
     def test_compressed_wrapper(self) -> None:
         leaf = _make_leaf("s3")
         config = CompressedStorageConfig(metrics_enabled=False)
@@ -113,6 +122,7 @@ class TestDeepChainDescribe:
         outer_cache = CachingBackendWrapper(inner=inner_cache, config=config)
         assert outer_cache.describe() == "cache → cache → s3"
 
+    @_skip_no_zstd
     def test_full_production_chain(self) -> None:
         """Recommended production chain: cache → compress → encrypt → leaf."""
         leaf = _make_leaf("s3")
@@ -154,6 +164,7 @@ class TestDescribableProtocol:
         wrapper = EncryptedStorage(inner=leaf, config=config)
         assert isinstance(wrapper, Describable)
 
+    @_skip_no_zstd
     def test_compressed_wrapper_is_describable(self) -> None:
         leaf = _make_leaf("local")
         config = CompressedStorageConfig(metrics_enabled=False)

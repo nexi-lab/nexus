@@ -14,17 +14,6 @@ from typing import Any
 
 __all__ = [
     "AccessShareLinkParams",
-    "AceAddFeedbackParams",
-    "AceCompleteTrajectoryParams",
-    "AceCreatePlaybookParams",
-    "AceGetEffectiveScoreParams",
-    "AceGetPlaybookParams",
-    "AceGetTrajectoryFeedbackParams",
-    "AceLogTrajectoryStepParams",
-    "AceMarkForRelearningParams",
-    "AceQueryPlaybooksParams",
-    "AceQueryTrajectoriesParams",
-    "AceStartTrajectoryParams",
     "AddMountParams",
     "AgentHeartbeatParams",
     "AgentListByZoneParams",
@@ -32,7 +21,6 @@ __all__ = [
     "AppendParams",
     "BackfillDirectoryIndexParams",
     "CancelSyncJobParams",
-    "CancelTaskParams",
     "CreateShareLinkParams",
     "DeleteAgentParams",
     "DeleteBulkParams",
@@ -44,13 +32,10 @@ __all__ = [
     "ExistsBatchParams",
     "GetAgentParams",
     "GetEtagParams",
-    "GetMemoryInfoParams",
     "GetMountParams",
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
     "GetSyncJobParams",
-    "GetTaskParams",
-    "GetTaskStatsParams",
     "GetTopLevelMountsParams",
     "GetVersionParams",
     "GetWorkspaceInfoParams",
@@ -65,7 +50,6 @@ __all__ = [
     "ListOutgoingSharesParams",
     "ListParams",
     "ListQueueTasksParams",
-    "ListRegisteredMemoriesParams",
     "ListSavedMountsParams",
     "ListShareLinksParams",
     "ListSyncJobsParams",
@@ -83,10 +67,6 @@ __all__ = [
     "MetadataBatchParams",
     "NamespaceDeleteParams",
     "NamespaceListParams",
-    "OAuthListCredentialsParams",
-    "OAuthListProvidersParams",
-    "OAuthRevokeCredentialParams",
-    "OAuthTestCredentialParams",
     "ProvisionUserParams",
     "ReadBulkParams",
     "RebacCheckParams",
@@ -97,7 +77,6 @@ __all__ = [
     "RebacListObjectsParams",
     "RebacListTuplesParams",
     "RegisterAgentParams",
-    "RegisterMemoryParams",
     "RegisterWorkspaceParams",
     "RemoveMountParams",
     "RenameBulkParams",
@@ -106,24 +85,14 @@ __all__ = [
     "RevokeShareParams",
     "RollbackParams",
     "SaveMountParams",
+    "SemanticSearchParams",
     "SemanticSearchIndexParams",
     "ShareWithUserParams",
-    "SkillsDiscoverParams",
-    "SkillsExportParams",
-    "SkillsGetPromptContextParams",
-    "SkillsImportParams",
-    "SkillsLoadParams",
-    "SkillsShareParams",
-    "SkillsSubscribeParams",
-    "SkillsUnshareParams",
-    "SkillsUnsubscribeParams",
-    "SkillsValidateZipParams",
     "SnapshotBeginParams",
     "SnapshotCommitParams",
     "SnapshotRollbackParams",
     "StatBulkParams",
     "StatParams",
-    "SubmitTaskParams",
     "SyncMountAsyncParams",
     "SyncMountParams",
     "SysAccessParams",
@@ -135,7 +104,6 @@ __all__ = [
     "SysStatParams",
     "SysUnlinkParams",
     "SysWriteParams",
-    "UnregisterMemoryParams",
     "UnregisterWorkspaceParams",
     "UpdateAgentParams",
     "UpdateWorkspaceParams",
@@ -155,114 +123,6 @@ class AccessShareLinkParams:
     password: str | None = None
     ip_address: str | None = None
     user_agent: str | None = None
-
-
-@dataclass
-class AceAddFeedbackParams:
-    """Parameters for ace_add_feedback(): Add feedback to a completed trajectory."""
-
-    trajectory_id: str
-    feedback_type: str
-    score: float | None = None
-    source: str | None = None
-    message: str | None = None
-    metrics: dict | None = None
-    context: dict | None = None
-
-
-@dataclass
-class AceCompleteTrajectoryParams:
-    """Parameters for ace_complete_trajectory(): Complete a trajectory with outcome."""
-
-    trajectory_id: str
-    status: str
-    success_score: float | None = None
-    error_message: str | None = None
-    context: dict | None = None
-
-
-@dataclass
-class AceCreatePlaybookParams:
-    """Parameters for ace_create_playbook(): Create a new playbook."""
-
-    name: str
-    description: str | None = None
-    scope: str = "agent"
-    context: dict | None = None
-
-
-@dataclass
-class AceGetEffectiveScoreParams:
-    """Parameters for ace_get_effective_score(): Get effective score for a trajectory."""
-
-    trajectory_id: str
-    strategy: str = "latest"
-    context: dict | None = None
-
-
-@dataclass
-class AceGetPlaybookParams:
-    """Parameters for ace_get_playbook(): Get playbook details."""
-
-    playbook_id: str
-    context: dict | None = None
-
-
-@dataclass
-class AceGetTrajectoryFeedbackParams:
-    """Parameters for ace_get_trajectory_feedback(): Get all feedback for a trajectory."""
-
-    trajectory_id: str
-    context: dict | None = None
-
-
-@dataclass
-class AceLogTrajectoryStepParams:
-    """Parameters for ace_log_trajectory_step(): Log a step in an execution trajectory."""
-
-    trajectory_id: str
-    step_type: str
-    description: str
-    result: Any = None
-    context: dict | None = None
-
-
-@dataclass
-class AceMarkForRelearningParams:
-    """Parameters for ace_mark_for_relearning(): Mark trajectory for re-learning."""
-
-    trajectory_id: str
-    reason: str
-    priority: int = 5
-    context: dict | None = None
-
-
-@dataclass
-class AceQueryPlaybooksParams:
-    """Parameters for ace_query_playbooks(): Query playbooks."""
-
-    scope: str | None = None
-    limit: int = 50
-    context: dict | None = None
-
-
-@dataclass
-class AceQueryTrajectoriesParams:
-    """Parameters for ace_query_trajectories(): Query execution trajectories."""
-
-    task_type: str | None = None
-    status: str | None = None
-    limit: int = 50
-    context: dict | None = None
-
-
-@dataclass
-class AceStartTrajectoryParams:
-    """Parameters for ace_start_trajectory(): Start tracking a new execution trajectory for ACE learning."""
-
-    task_description: str
-    task_type: str | None = None
-    context: dict | None = None
 
 
 @dataclass
@@ -323,13 +183,6 @@ class CancelSyncJobParams:
     """Parameters for cancel_sync_job(): Cancel a running sync job."""
 
     job_id: str
-
-
-@dataclass
-class CancelTaskParams:
-    """Parameters for cancel_task(): Cancel a pending or running task."""
-
-    task_id: int
 
 
 @dataclass
@@ -433,13 +286,6 @@ class GetEtagParams:
 
 
 @dataclass
-class GetMemoryInfoParams:
-    """Parameters for get_memory_info(): Get information about a registered memory."""
-
-    path: str
-
-
-@dataclass
 class GetMountParams:
     """Parameters for get_mount(): Get details about a specific mount."""
 
@@ -466,20 +312,6 @@ class GetSyncJobParams:
     """Parameters for get_sync_job(): Get the status and progress of a sync job."""
 
     job_id: str
-
-
-@dataclass
-class GetTaskParams:
-    """Parameters for get_task(): Get task status and details."""
-
-    task_id: int
-
-
-@dataclass
-class GetTaskStatsParams:
-    """Parameters for get_task_stats(): Get queue statistics."""
-
-    pass
 
 
 @dataclass
@@ -611,13 +443,6 @@ class ListQueueTasksParams:
     status: int | None = None
     limit: int = 50
     offset: int = 0
-
-
-@dataclass
-class ListRegisteredMemoriesParams:
-    """Parameters for list_registered_memories(): List all registered memory paths."""
-
-    pass
 
 
 @dataclass
@@ -768,37 +593,6 @@ class NamespaceListParams:
 
 
 @dataclass
-class OAuthListCredentialsParams:
-    """Parameters for oauth_list_credentials(): List all OAuth credentials for the current user."""
-
-    provider: str | None = None
-    include_revoked: bool = False
-
-
-@dataclass
-class OAuthListProvidersParams:
-    """Parameters for oauth_list_providers(): List all available OAuth providers from configuration."""
-
-    pass
-
-
-@dataclass
-class OAuthRevokeCredentialParams:
-    """Parameters for oauth_revoke_credential(): Revoke an OAuth credential."""
-
-    provider: str
-    user_email: str
-
-
-@dataclass
-class OAuthTestCredentialParams:
-    """Parameters for oauth_test_credential(): Test if an OAuth credential is valid and can be refreshed."""
-
-    provider: str
-    user_email: str
-
-
-@dataclass
 class ProvisionUserParams:
     """Parameters for provision_user(): Provision a new user with all default resources (Issue #820)."""
 
@@ -811,7 +605,7 @@ class ProvisionUserParams:
     api_key_name: str | None = None
     api_key_expires_at: str | None = None
     create_agents: bool = True
-    import_skills: bool = True
+    import_skills: bool = False
 
 
 @dataclass
@@ -832,8 +626,6 @@ class RebacCheckParams:
     object: tuple[str, str]
     context: Any = None
     zone_id: str | None = None
-    consistency_mode: str | None = None
-    min_revision: int | None = None
 
     def __post_init__(self) -> None:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
@@ -948,21 +740,6 @@ class RegisterAgentParams:
 
 
 @dataclass
-class RegisterMemoryParams:
-    """Parameters for register_memory(): Register a directory as a memory."""
-
-    path: str
-    name: str | None = None
-    description: str | None = None
-    created_by: str | None = None
-    tags: list[str] | None = None
-    metadata: dict[str, Any] | None = None
-    session_id: str | None = None
-    ttl: str | None = None
-    context: Any | None = None
-
-
-@dataclass
 class RegisterWorkspaceParams:
     """Parameters for register_workspace(): Register a directory as a workspace."""
 
@@ -1052,6 +829,17 @@ class SaveMountParams:
 
 
 @dataclass
+class SemanticSearchParams:
+    """Parameters for semantic_search(): Search documents using natural language queries."""
+
+    query: str = ""
+    path: str = "/"
+    limit: int = 10
+    filters: dict[str, Any] | None = None
+    search_mode: str = "semantic"
+
+
+@dataclass
 class SemanticSearchIndexParams:
     """Parameters for semantic_search_index(): Index documents for semantic search."""
 
@@ -1073,99 +861,6 @@ class ShareWithUserParams:
         """Convert lists to tuples (JSON deserializes tuples as lists)."""
         if isinstance(self.resource, list):
             object.__setattr__(self, "resource", tuple(self.resource))
-
-
-@dataclass
-class SkillsDiscoverParams:
-    """Parameters for skills_discover(): RPC wrapper for discover()."""
-
-    filter: str = "all"
-    context: Any | None = None
-
-
-@dataclass
-class SkillsExportParams:
-    """Parameters for skills_export(): Export a skill to .skill (ZIP) format."""
-
-    skill_path: str | None = None
-    skill_name: str | None = None
-    output_path: str | None = None
-    format: str = "generic"
-    include_dependencies: bool = False
-    context: Any | None = None
-
-
-@dataclass
-class SkillsGetPromptContextParams:
-    """Parameters for skills_get_prompt_context(): RPC wrapper for get_prompt_context()."""
-
-    max_skills: int = 50
-    context: Any | None = None
-
-
-@dataclass
-class SkillsImportParams:
-    """Parameters for skills_import(): Import a skill from .skill (ZIP) format."""
-
-    source_path: str | None = None
-    zip_bytes: bytes | str | None = None
-    zip_data: str | None = None
-    target_path: str | None = None
-    allow_overwrite: bool = False
-    context: Any | None = None
-    tier: str | None = None
-
-
-@dataclass
-class SkillsLoadParams:
-    """Parameters for skills_load(): RPC wrapper for load()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsShareParams:
-    """Parameters for skills_share(): RPC wrapper for share()."""
-
-    skill_path: str
-    share_with: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsSubscribeParams:
-    """Parameters for skills_subscribe(): RPC wrapper for subscribe()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsUnshareParams:
-    """Parameters for skills_unshare(): RPC wrapper for unshare()."""
-
-    skill_path: str
-    unshare_from: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsUnsubscribeParams:
-    """Parameters for skills_unsubscribe(): RPC wrapper for unsubscribe()."""
-
-    skill_path: str
-    context: Any | None = None
-
-
-@dataclass
-class SkillsValidateZipParams:
-    """Parameters for skills_validate_zip(): Validate a .skill (ZIP) package without importing it."""
-
-    source_path: str | None = None
-    zip_bytes: bytes | str | None = None
-    zip_data: str | None = None
-    context: Any | None = None
 
 
 @dataclass
@@ -1204,16 +899,6 @@ class StatBulkParams:
 
     paths: list[str]
     skip_errors: bool = True
-
-
-@dataclass
-class SubmitTaskParams:
-    """Parameters for submit_task(): Submit a task to the durable queue."""
-
-    task_type: str
-    params_json: str = "{}"
-    priority: int = 2
-    max_retries: int = 3
 
 
 @dataclass
@@ -1322,22 +1007,20 @@ class SysUnlinkParams:
 
 @dataclass
 class SysWriteParams:
-    """Parameters for sys_write(): Write content to a file with optional optimistic concurrency control."""
+    """Parameters for sys_write(): Write content to a file (POSIX pwrite(2))."""
 
     path: str
-    content: bytes | str
-    if_match: str | None = None
-    if_none_match: bool = False
-    force: bool = False
-    lock: bool = False
-    lock_timeout: float = 30.0
+    buf: bytes | str = b""
+    count: int | None = None
+    offset: int = 0
+    content: bytes | str = b""
 
-
-@dataclass
-class UnregisterMemoryParams:
-    """Parameters for unregister_memory(): Unregister a memory (does NOT delete files)."""
-
-    path: str
+    def __post_init__(self) -> None:
+        """Accept both 'buf' (POSIX) and 'content' (handler) as the payload field."""
+        if self.content and not self.buf:
+            self.buf = self.content
+        elif self.buf and not self.content:
+            self.content = self.buf
 
 
 @dataclass
@@ -1418,17 +1101,6 @@ class WriteBatchParams:
 
 METHOD_PARAMS: dict[str, type] = {
     "access_share_link": AccessShareLinkParams,
-    "ace_add_feedback": AceAddFeedbackParams,
-    "ace_complete_trajectory": AceCompleteTrajectoryParams,
-    "ace_create_playbook": AceCreatePlaybookParams,
-    "ace_get_effective_score": AceGetEffectiveScoreParams,
-    "ace_get_playbook": AceGetPlaybookParams,
-    "ace_get_trajectory_feedback": AceGetTrajectoryFeedbackParams,
-    "ace_log_trajectory_step": AceLogTrajectoryStepParams,
-    "ace_mark_for_relearning": AceMarkForRelearningParams,
-    "ace_query_playbooks": AceQueryPlaybooksParams,
-    "ace_query_trajectories": AceQueryTrajectoriesParams,
-    "ace_start_trajectory": AceStartTrajectoryParams,
     "add_mount": AddMountParams,
     "agent_heartbeat": AgentHeartbeatParams,
     "agent_list_by_zone": AgentListByZoneParams,
@@ -1436,7 +1108,6 @@ METHOD_PARAMS: dict[str, type] = {
     "append": AppendParams,
     "backfill_directory_index": BackfillDirectoryIndexParams,
     "cancel_sync_job": CancelSyncJobParams,
-    "cancel_task": CancelTaskParams,
     "create_share_link": CreateShareLinkParams,
     "delete_agent": DeleteAgentParams,
     "delete_bulk": DeleteBulkParams,
@@ -1448,13 +1119,10 @@ METHOD_PARAMS: dict[str, type] = {
     "exists_batch": ExistsBatchParams,
     "get_agent": GetAgentParams,
     "get_etag": GetEtagParams,
-    "get_memory_info": GetMemoryInfoParams,
     "get_mount": GetMountParams,
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
     "get_sync_job": GetSyncJobParams,
-    "get_task": GetTaskParams,
-    "get_task_stats": GetTaskStatsParams,
     "get_top_level_mounts": GetTopLevelMountsParams,
     "get_version": GetVersionParams,
     "get_workspace_info": GetWorkspaceInfoParams,
@@ -1469,7 +1137,6 @@ METHOD_PARAMS: dict[str, type] = {
     "list_mounts": ListMountsParams,
     "list_outgoing_shares": ListOutgoingSharesParams,
     "list_queue_tasks": ListQueueTasksParams,
-    "list_registered_memories": ListRegisteredMemoriesParams,
     "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
     "list_sync_jobs": ListSyncJobsParams,
@@ -1487,10 +1154,6 @@ METHOD_PARAMS: dict[str, type] = {
     "metadata_batch": MetadataBatchParams,
     "namespace_delete": NamespaceDeleteParams,
     "namespace_list": NamespaceListParams,
-    "oauth_list_credentials": OAuthListCredentialsParams,
-    "oauth_list_providers": OAuthListProvidersParams,
-    "oauth_revoke_credential": OAuthRevokeCredentialParams,
-    "oauth_test_credential": OAuthTestCredentialParams,
     "provision_user": ProvisionUserParams,
     "read_bulk": ReadBulkParams,
     "rebac_check": RebacCheckParams,
@@ -1501,7 +1164,6 @@ METHOD_PARAMS: dict[str, type] = {
     "rebac_list_objects": RebacListObjectsParams,
     "rebac_list_tuples": RebacListTuplesParams,
     "register_agent": RegisterAgentParams,
-    "register_memory": RegisterMemoryParams,
     "register_workspace": RegisterWorkspaceParams,
     "remove_mount": RemoveMountParams,
     "rename_bulk": RenameBulkParams,
@@ -1510,24 +1172,14 @@ METHOD_PARAMS: dict[str, type] = {
     "revoke_share_link": RevokeShareLinkParams,
     "rollback": RollbackParams,
     "save_mount": SaveMountParams,
+    "semantic_search": SemanticSearchParams,
     "semantic_search_index": SemanticSearchIndexParams,
     "share_with_user": ShareWithUserParams,
-    "skills_discover": SkillsDiscoverParams,
-    "skills_export": SkillsExportParams,
-    "skills_get_prompt_context": SkillsGetPromptContextParams,
-    "skills_import": SkillsImportParams,
-    "skills_load": SkillsLoadParams,
-    "skills_share": SkillsShareParams,
-    "skills_subscribe": SkillsSubscribeParams,
-    "skills_unshare": SkillsUnshareParams,
-    "skills_unsubscribe": SkillsUnsubscribeParams,
-    "skills_validate_zip": SkillsValidateZipParams,
     "snapshot_begin": SnapshotBeginParams,
     "snapshot_commit": SnapshotCommitParams,
     "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
-    "submit_task": SubmitTaskParams,
     "sync_mount": SyncMountParams,
     "sync_mount_async": SyncMountAsyncParams,
     "sys_access": SysAccessParams,
@@ -1539,7 +1191,6 @@ METHOD_PARAMS: dict[str, type] = {
     "sys_stat": SysStatParams,
     "sys_unlink": SysUnlinkParams,
     "sys_write": SysWriteParams,
-    "unregister_memory": UnregisterMemoryParams,
     "unregister_workspace": UnregisterWorkspaceParams,
     "update_agent": UpdateAgentParams,
     "update_workspace": UpdateWorkspaceParams,

@@ -25,9 +25,9 @@ from nexus.bricks.parsers.validation.script_builder import (
 from nexus.bricks.sandbox.sandbox_provider import CodeExecutionResult
 
 
-def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
+async def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     """Create a FastAPI app with real NexusFS for testing."""
-    from nexus.backends.local import LocalBackend
+    from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.core.config import PermissionConfig
     from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
@@ -37,12 +37,12 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
 
     storage_dir = tmp_path / "storage"
     storage_dir.mkdir(exist_ok=True)
-    backend = LocalBackend(root_path=str(storage_dir))
+    backend = CASLocalBackend(root_path=str(storage_dir))
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
 
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
 
-    nx = create_nexus_fs(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=None,
@@ -71,21 +71,21 @@ def _run_async(coro):
 
 
 @pytest.fixture
-def test_app(tmp_path):
+async def test_app(tmp_path):
     """Create test FastAPI app without permission enforcement."""
     from nexus.lib.sync_bridge import shutdown_sync_bridge
 
-    app, api_key, nx = _create_test_app(tmp_path, enforce_permissions=False)
+    app, api_key, nx = await _create_test_app(tmp_path, enforce_permissions=False)
     yield app, api_key, nx
     shutdown_sync_bridge()
 
 
 @pytest.fixture
-def test_app_with_perms(tmp_path):
+async def test_app_with_perms(tmp_path):
     """Create test FastAPI app with permission enforcement."""
     from nexus.lib.sync_bridge import shutdown_sync_bridge
 
-    app, api_key, nx = _create_test_app(tmp_path, enforce_permissions=True)
+    app, api_key, nx = await _create_test_app(tmp_path, enforce_permissions=True)
     yield app, api_key, nx
     shutdown_sync_bridge()
 

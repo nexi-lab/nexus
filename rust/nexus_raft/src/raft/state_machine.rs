@@ -9,6 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use redb::ReadableTable;
+
 use crate::storage::{RedbStorageError, RedbStore, RedbTree};
 
 use super::Result;
@@ -49,6 +51,10 @@ pub enum Command {
         ttl_secs: u32,
         /// Information about the holder (e.g., "agent:xxx").
         holder_info: String,
+        /// Wall-clock timestamp captured at proposal time (Unix secs).
+        /// All replicas use this value instead of local clocks to ensure
+        /// deterministic state machine application (Issue #3029 / Bug 1).
+        now_secs: u64,
     },
 
     /// Release a distributed lock.
@@ -67,6 +73,10 @@ pub enum Command {
         lock_id: String,
         /// New TTL in seconds (from now).
         new_ttl_secs: u32,
+        /// Wall-clock timestamp captured at proposal time (Unix secs).
+        /// All replicas use this value instead of local clocks to ensure
+        /// deterministic state machine application (Issue #3029 / Bug 1).
+        now_secs: u64,
     },
 
     /// Compare-and-swap metadata: write only if current version matches.
@@ -77,6 +87,18 @@ pub enum Command {
         value: Vec<u8>,
         /// Expected version (0 = create-only).
         expected_version: u32,
+    },
+
+    /// Atomically adjust a metadata counter by a signed delta.
+    ///
+    /// Read-modify-write happens in `apply()` — serial by Raft guarantee.
+    /// The value is stored as `i64` big-endian in the metadata tree.
+    /// Result is clamped to `>= 0`.
+    AdjustCounter {
+        /// The metadata key (e.g., `"__i_links_count__"`).
+        key: String,
+        /// Signed delta to add (positive = increment, negative = decrement).
+        delta: i64,
     },
 
     /// No-op command (used for leader election confirmation).
@@ -134,7 +156,7 @@ pub struct HolderInfo {
 }
 
 /// Lock entry stored in the state machine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LockInfo {
     /// Resource path.
     pub path: String,
@@ -338,16 +360,31 @@ pub struct WitnessStateMachine {
 
 impl WitnessStateMachine {
     /// Create a new witness state machine with storage.
+    ///
+    /// Handles endianness migration: existing deployments stored `last_index`
+    /// as little-endian, but the rest of the codebase uses big-endian. On load,
+    /// we detect the format by checking which interpretation yields a valid
+    /// Raft index (small positive number) and migrate to big-endian on next write.
     pub fn new(store: &RedbStore) -> Result<Self> {
         let log_tree = store.tree(TREE_WITNESS_LOG)?;
 
-        // Load last index from storage
+        // Load last index, auto-detecting LE vs BE encoding
         let last_index = log_tree
             .get(KEY_WITNESS_LAST_INDEX)?
             .map(|v| {
                 if v.len() == 8 {
                     let bytes: [u8; 8] = [v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]];
-                    u64::from_le_bytes(bytes)
+                    let be_val = u64::from_be_bytes(bytes);
+                    let le_val = u64::from_le_bytes(bytes);
+
+                    // Heuristic: valid Raft indices are small positive numbers.
+                    // If BE gives a huge number but LE gives a reasonable one,
+                    // the data is in the old LE format.
+                    if be_val > 1_000_000_000 && le_val <= 1_000_000_000 {
+                        le_val // old LE format — will be re-written as BE on next store
+                    } else {
+                        be_val // new BE format (or both are reasonable — BE is preferred)
+                    }
                 } else {
                     0
                 }
@@ -370,8 +407,9 @@ impl WitnessStateMachine {
 
         if index > self.last_index {
             self.last_index = index;
+            // Always write big-endian (consistent with rest of codebase)
             self.log_tree
-                .set(KEY_WITNESS_LAST_INDEX, &index.to_le_bytes())?;
+                .set(KEY_WITNESS_LAST_INDEX, &index.to_be_bytes())?;
         }
         Ok(())
     }
@@ -508,8 +546,9 @@ impl FullStateMachine {
         })
     }
 
-    /// Get current Unix timestamp.
-    fn now() -> u64 {
+    /// Get current Unix timestamp. Public so proposal sites can capture
+    /// the timestamp before it enters the replicated command.
+    pub fn now() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -522,40 +561,78 @@ impl FullStateMachine {
         Ok(CommandResult::Success)
     }
 
+    /// Apply AdjustCounter command — atomic read-modify-write in apply().
+    ///
+    /// Reads the current i64 value (0 if absent), adds delta, clamps to >= 0,
+    /// writes back. All within the serial `apply()` — no race possible.
+    /// Returns the new value as `Value(i64 big-endian bytes)`.
+    fn apply_adjust_counter(&self, key: &str, delta: i64) -> Result<CommandResult> {
+        let current = self
+            .metadata
+            .get(key.as_bytes())?
+            .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+            .map(i64::from_be_bytes)
+            .unwrap_or(0);
+        let new_val = (current + delta).max(0);
+        self.metadata.set(key.as_bytes(), &new_val.to_be_bytes())?;
+        Ok(CommandResult::Value(new_val.to_be_bytes().to_vec()))
+    }
+
     /// Apply CasSetMetadata command — atomic compare-and-swap on version.
     ///
-    /// Reads the current value, extracts its version, and only writes
-    /// if the version matches `expected_version`. All within a single
-    /// redb transaction (via RedbTree's internal write txn).
+    /// Reads the current value and conditionally writes within a **single
+    /// redb WriteTransaction**. This prevents TOCTOU races: no concurrent
+    /// writer can observe the same version and succeed.
     fn apply_cas_set_metadata(
         &self,
         key: &str,
         value: &[u8],
         expected_version: u32,
     ) -> Result<CommandResult> {
-        let current = self.metadata.get(key.as_bytes())?;
-        let current_version = match &current {
-            Some(bytes) => Self::extract_version(bytes),
-            None => 0,
-        };
+        let db = self.metadata.raw_db();
+        let table_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
+        let write_txn = db
+            .begin_write()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
 
-        if current_version != expected_version {
-            return Ok(CommandResult::CasResult {
-                success: false,
-                current_version,
-            });
+        let result;
+        {
+            let mut table = write_txn
+                .open_table(table_def)
+                .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+
+            let current_version = match table
+                .get(key.as_bytes())
+                .map_err(|e: redb::StorageError| super::RaftError::Storage(e.to_string()))?
+            {
+                Some(guard) => Self::extract_version(guard.value()),
+                None => 0,
+            };
+
+            if current_version != expected_version {
+                result = CommandResult::CasResult {
+                    success: false,
+                    current_version,
+                };
+            } else {
+                table
+                    .insert(key.as_bytes(), value)
+                    .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+
+                // The new version is embedded in `value` (serialized by Python).
+                // Return expected_version + 1 as a hint, but the authoritative
+                // version is in the serialized bytes.
+                result = CommandResult::CasResult {
+                    success: true,
+                    current_version: expected_version + 1,
+                };
+            }
         }
 
-        // Version matches — write the new value
-        self.metadata.set(key.as_bytes(), value)?;
-
-        // The new version is embedded in `value` (serialized by Python).
-        // Return expected_version + 1 as a hint, but the authoritative
-        // version is in the serialized bytes.
-        Ok(CommandResult::CasResult {
-            success: true,
-            current_version: expected_version + 1,
-        })
+        write_txn
+            .commit()
+            .map_err(|e| super::RaftError::Storage(e.to_string()))?;
+        Ok(result)
     }
 
     /// Extract the version field from serialized FileMetadata.
@@ -655,6 +732,9 @@ impl FullStateMachine {
     }
 
     /// Apply AcquireLock command.
+    ///
+    /// `now` is the wall-clock timestamp from the replicated command, ensuring
+    /// all replicas compute identical lock state (Issue #3029 / Bug 1).
     fn apply_acquire_lock(
         &self,
         path: &str,
@@ -662,8 +742,8 @@ impl FullStateMachine {
         max_holders: u32,
         ttl_secs: u32,
         holder_info: &str,
+        now: u64,
     ) -> Result<CommandResult> {
-        let now = Self::now();
         let expires_at = now + ttl_secs as u64;
 
         let new_holder = HolderInfo {
@@ -748,13 +828,16 @@ impl FullStateMachine {
     }
 
     /// Apply ExtendLock command.
+    ///
+    /// `now` is the wall-clock timestamp from the replicated command, ensuring
+    /// all replicas compute identical lock state (Issue #3029 / Bug 1).
     fn apply_extend_lock(
         &self,
         path: &str,
         lock_id: &str,
         new_ttl_secs: u32,
+        now: u64,
     ) -> Result<CommandResult> {
-        let now = Self::now();
         let new_expires_at = now + new_ttl_secs as u64;
 
         let mut lock_info: LockInfo = match self.locks.get(path.as_bytes())? {
@@ -775,12 +858,6 @@ impl FullStateMachine {
         } else {
             Ok(CommandResult::Error("Lock holder not found".to_string()))
         }
-    }
-
-    /// Save last_applied index to storage.
-    fn save_last_applied(&self, index: u64) -> Result<()> {
-        self.metadata.set(KEY_LAST_APPLIED, &index.to_be_bytes())?;
-        Ok(())
     }
 
     /// Get metadata by path.
@@ -862,8 +939,11 @@ struct Snapshot {
 impl FullStateMachine {
     /// Shared command dispatch — the actual redb operations.
     ///
-    /// Both `apply()` (SC/Raft) and `apply_local()` (EC) delegate here.
-    /// This is the SSOT for command→operation mapping.
+    /// Used by `apply_local()` (EC) and `apply_ec_with_lww()`. Each sub-method
+    /// opens its own redb transaction internally.
+    ///
+    /// For the Raft `apply()` path, use `execute_in_txn()` instead — it runs
+    /// inside a caller-provided transaction for atomicity with `last_applied`.
     fn execute(&self, command: &Command) -> Result<CommandResult> {
         match command {
             Command::SetMetadata { key, value } => self.apply_set_metadata(key, value),
@@ -879,13 +959,243 @@ impl FullStateMachine {
                 max_holders,
                 ttl_secs,
                 holder_info,
-            } => self.apply_acquire_lock(path, lock_id, *max_holders, *ttl_secs, holder_info),
+                now_secs,
+            } => self.apply_acquire_lock(
+                path,
+                lock_id,
+                *max_holders,
+                *ttl_secs,
+                holder_info,
+                *now_secs,
+            ),
             Command::ReleaseLock { path, lock_id } => self.apply_release_lock(path, lock_id),
             Command::ExtendLock {
                 path,
                 lock_id,
                 new_ttl_secs,
-            } => self.apply_extend_lock(path, lock_id, *new_ttl_secs),
+                now_secs,
+            } => self.apply_extend_lock(path, lock_id, *new_ttl_secs, *now_secs),
+            Command::AdjustCounter { key, delta } => self.apply_adjust_counter(key, *delta),
+            Command::Noop => Ok(CommandResult::Success),
+        }
+    }
+
+    /// Execute a command inside a caller-provided redb write transaction.
+    ///
+    /// This is the transactional variant of `execute()`, used by `apply()` to
+    /// ensure the command mutation and `last_applied` marker are persisted
+    /// atomically in a single redb transaction (matching etcd/CockroachDB/TiKV
+    /// practice). Without this, a crash between execute and save_last_applied
+    /// could cause non-idempotent commands (e.g. AdjustCounter) to replay.
+    fn execute_in_txn(
+        &self,
+        txn: &redb::WriteTransaction,
+        command: &Command,
+    ) -> Result<CommandResult> {
+        let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
+        let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
+
+        match command {
+            Command::SetMetadata { key, value } => {
+                let mut table = txn
+                    .open_table(meta_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open metadata: {e}")))?;
+                table
+                    .insert(key.as_bytes(), value.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert metadata: {e}")))?;
+                Ok(CommandResult::Success)
+            }
+
+            Command::CasSetMetadata {
+                key,
+                value,
+                expected_version,
+            } => {
+                let mut table = txn
+                    .open_table(meta_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open metadata: {e}")))?;
+                let current = table
+                    .get(key.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get metadata: {e}")))?
+                    .map(|v| v.value().to_vec());
+                let current_version = match &current {
+                    Some(bytes) => Self::extract_version(bytes),
+                    None => 0,
+                };
+                if current_version != *expected_version {
+                    return Ok(CommandResult::CasResult {
+                        success: false,
+                        current_version,
+                    });
+                }
+                table
+                    .insert(key.as_bytes(), value.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert metadata: {e}")))?;
+                Ok(CommandResult::CasResult {
+                    success: true,
+                    current_version: expected_version + 1,
+                })
+            }
+
+            Command::DeleteMetadata { key } => {
+                let mut table = txn
+                    .open_table(meta_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open metadata: {e}")))?;
+                table
+                    .remove(key.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("remove metadata: {e}")))?;
+                Ok(CommandResult::Success)
+            }
+
+            Command::AdjustCounter { key, delta } => {
+                let mut table = txn
+                    .open_table(meta_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open metadata: {e}")))?;
+                let current = table
+                    .get(key.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get metadata: {e}")))?
+                    .and_then(|v| <[u8; 8]>::try_from(v.value()).ok())
+                    .map(i64::from_be_bytes)
+                    .unwrap_or(0);
+                let new_val = (current + delta).max(0);
+                table
+                    .insert(key.as_bytes(), new_val.to_be_bytes().as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert counter: {e}")))?;
+                Ok(CommandResult::Value(new_val.to_be_bytes().to_vec()))
+            }
+
+            Command::AcquireLock {
+                path,
+                lock_id,
+                max_holders,
+                ttl_secs,
+                holder_info,
+                now_secs,
+            } => {
+                let expires_at = now_secs + *ttl_secs as u64;
+                let new_holder = HolderInfo {
+                    lock_id: lock_id.to_string(),
+                    holder_info: holder_info.to_string(),
+                    acquired_at: *now_secs,
+                    expires_at,
+                };
+
+                let mut table = txn
+                    .open_table(locks_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
+                let existing = table
+                    .get(path.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
+                    .map(|v| v.value().to_vec());
+
+                let mut lock_info: LockInfo = match existing {
+                    Some(bytes) => bincode::deserialize(&bytes)?,
+                    None => {
+                        let lock = LockInfo::new(path.to_string(), *max_holders, new_holder);
+                        let serialized = bincode::serialize(&lock)?;
+                        table
+                            .insert(path.as_bytes(), serialized.as_slice())
+                            .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                        return Ok(CommandResult::LockResult(lock.to_state(true)));
+                    }
+                };
+
+                lock_info.remove_expired(*now_secs);
+
+                if lock_info.has_holder(lock_id) {
+                    lock_info.extend_ttl(lock_id, expires_at);
+                    let serialized = bincode::serialize(&lock_info)?;
+                    table
+                        .insert(path.as_bytes(), serialized.as_slice())
+                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                    return Ok(CommandResult::LockResult(lock_info.to_state(true)));
+                }
+
+                if lock_info.max_holders != *max_holders {
+                    return Ok(CommandResult::LockResult(lock_info.to_state(false)));
+                }
+
+                if lock_info.can_acquire() {
+                    lock_info.add_holder(new_holder);
+                    let serialized = bincode::serialize(&lock_info)?;
+                    table
+                        .insert(path.as_bytes(), serialized.as_slice())
+                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                    Ok(CommandResult::LockResult(lock_info.to_state(true)))
+                } else {
+                    Ok(CommandResult::LockResult(lock_info.to_state(false)))
+                }
+            }
+
+            Command::ReleaseLock { path, lock_id } => {
+                let mut table = txn
+                    .open_table(locks_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
+                let existing = table
+                    .get(path.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
+                    .map(|v| v.value().to_vec());
+
+                let mut lock_info: LockInfo = match existing {
+                    Some(bytes) => bincode::deserialize(&bytes)?,
+                    None => {
+                        return Ok(CommandResult::Error("Lock not found".to_string()));
+                    }
+                };
+
+                if !lock_info.remove_holder(lock_id) {
+                    return Ok(CommandResult::Error("Lock holder not found".to_string()));
+                }
+
+                if lock_info.is_empty() {
+                    table
+                        .remove(path.as_bytes())
+                        .map_err(|e| super::RaftError::Storage(format!("remove lock: {e}")))?;
+                } else {
+                    let serialized = bincode::serialize(&lock_info)?;
+                    table
+                        .insert(path.as_bytes(), serialized.as_slice())
+                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                }
+
+                Ok(CommandResult::Success)
+            }
+
+            Command::ExtendLock {
+                path,
+                lock_id,
+                new_ttl_secs,
+                now_secs,
+            } => {
+                let new_expires_at = now_secs + *new_ttl_secs as u64;
+                let mut table = txn
+                    .open_table(locks_def)
+                    .map_err(|e| super::RaftError::Storage(format!("open locks: {e}")))?;
+                let existing = table
+                    .get(path.as_bytes())
+                    .map_err(|e| super::RaftError::Storage(format!("get lock: {e}")))?
+                    .map(|v| v.value().to_vec());
+
+                let mut lock_info: LockInfo = match existing {
+                    Some(bytes) => bincode::deserialize(&bytes)?,
+                    None => {
+                        return Ok(CommandResult::Error("Lock not found".to_string()));
+                    }
+                };
+
+                lock_info.remove_expired(*now_secs);
+
+                if lock_info.extend_ttl(lock_id, new_expires_at) {
+                    let serialized = bincode::serialize(&lock_info)?;
+                    table
+                        .insert(path.as_bytes(), serialized.as_slice())
+                        .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+                    Ok(CommandResult::Success)
+                } else {
+                    Ok(CommandResult::Error("Lock holder not found".to_string()))
+                }
+            }
+
             Command::Noop => Ok(CommandResult::Success),
         }
     }
@@ -950,18 +1260,80 @@ impl StateMachine for FullStateMachine {
     }
 
     fn apply(&mut self, index: u64, command: &Command) -> Result<CommandResult> {
-        // Skip if already applied (idempotent)
         if index <= self.last_applied {
             return Ok(CommandResult::Success);
         }
 
-        let result = self.execute(command);
+        // Atomic apply: execute the command AND persist last_applied in a
+        // single redb write transaction. This matches etcd (boltdb txn),
+        // CockroachDB (Pebble WriteBatch), and TiKV (RocksDB WriteBatch).
+        //
+        // Without atomicity, a crash between execute() and save_last_applied()
+        // would cause non-idempotent commands (e.g. AdjustCounter) to replay
+        // on restart, silently diverging from other replicas.
+        let db = self.metadata.raw_db();
+        let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
 
-        // Update last_applied
+        let write_txn = match db.begin_write() {
+            Ok(txn) => txn,
+            Err(e) => {
+                panic!(
+                    "Fatal: cannot begin write transaction for apply at index {}: {}. \
+                     Node must be restored from snapshot to recover.",
+                    index, e
+                );
+            }
+        };
+
+        // Execute the command within the transaction.
+        // Storage errors during apply of committed entries are non-deterministic
+        // and unrecoverable — if this replica fails but others succeed, state
+        // has diverged. Following etcd/CockroachDB: panic to prevent silent
+        // divergence (node must be restored from snapshot).
+        let result = match self.execute_in_txn(&write_txn, command) {
+            Ok(result) => result,
+            Err(e) => {
+                panic!(
+                    "Fatal: storage error applying committed entry at index {}: {}. \
+                     Node must be restored from snapshot to recover.",
+                    index, e
+                );
+            }
+        };
+
+        // Persist last_applied in the SAME transaction — atomic with the
+        // command mutation. On crash, either both are persisted or neither.
+        match write_txn.open_table(meta_def) {
+            Ok(mut table) => {
+                if let Err(e) = table.insert(KEY_LAST_APPLIED, index.to_be_bytes().as_slice()) {
+                    panic!(
+                        "Fatal: failed to write last_applied in apply txn at index {}: {}. \
+                         Node must be restored from snapshot to recover.",
+                        index, e
+                    );
+                }
+            }
+            Err(e) => {
+                panic!(
+                    "Fatal: failed to open metadata table for last_applied at index {}: {}. \
+                     Node must be restored from snapshot to recover.",
+                    index, e
+                );
+            }
+        }
+
+        if let Err(e) = write_txn.commit() {
+            panic!(
+                "Fatal: failed to commit apply transaction at index {}: {}. \
+                 Node must be restored from snapshot to recover.",
+                index, e
+            );
+        }
+
+        // Update in-memory state only after successful commit
         self.last_applied = index;
-        self.save_last_applied(index)?;
 
-        result
+        Ok(result)
     }
 
     fn snapshot(&self) -> Result<Vec<u8>> {
@@ -998,24 +1370,59 @@ impl StateMachine for FullStateMachine {
     fn restore_snapshot(&mut self, data: &[u8]) -> Result<()> {
         let snapshot: Snapshot = bincode::deserialize(data)?;
 
-        // Clear existing data
-        self.metadata.clear()?;
-        self.locks.clear()?;
+        // Atomic restore: all clears + inserts in a single redb transaction.
+        // If any step fails, the transaction rolls back and old state is preserved.
+        let db = self.metadata.raw_db();
+        let meta_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.metadata.name());
+        let locks_def = redb::TableDefinition::<&[u8], &[u8]>::new(self.locks.name());
 
-        // Restore metadata
-        for (path, value) in snapshot.metadata {
-            self.metadata.set(path.as_bytes(), &value)?;
+        let write_txn = db.begin_write().map_err(|e| {
+            super::RaftError::Storage(format!("begin_write for snapshot restore: {e}"))
+        })?;
+
+        {
+            // Clear and repopulate metadata table
+            write_txn
+                .delete_table(meta_def)
+                .map_err(|e| super::RaftError::Storage(format!("delete metadata table: {e}")))?;
+            let mut meta_table = write_txn
+                .open_table(meta_def)
+                .map_err(|e| super::RaftError::Storage(format!("open metadata table: {e}")))?;
+            for (path, value) in &snapshot.metadata {
+                meta_table
+                    .insert(path.as_bytes(), value.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert metadata: {e}")))?;
+            }
+            // Persist last_applied inside the same transaction
+            meta_table
+                .insert(
+                    KEY_LAST_APPLIED,
+                    snapshot.last_applied.to_be_bytes().as_slice(),
+                )
+                .map_err(|e| super::RaftError::Storage(format!("insert last_applied: {e}")))?;
+
+            // Clear and repopulate locks table
+            drop(meta_table);
+            write_txn
+                .delete_table(locks_def)
+                .map_err(|e| super::RaftError::Storage(format!("delete locks table: {e}")))?;
+            let mut locks_table = write_txn
+                .open_table(locks_def)
+                .map_err(|e| super::RaftError::Storage(format!("open locks table: {e}")))?;
+            for (path, lock_info) in &snapshot.locks {
+                let serialized = bincode::serialize(lock_info)?;
+                locks_table
+                    .insert(path.as_bytes(), serialized.as_slice())
+                    .map_err(|e| super::RaftError::Storage(format!("insert lock: {e}")))?;
+            }
         }
 
-        // Restore locks
-        for (path, lock_info) in snapshot.locks {
-            let serialized = bincode::serialize(&lock_info)?;
-            self.locks.set(path.as_bytes(), &serialized)?;
-        }
+        write_txn
+            .commit()
+            .map_err(|e| super::RaftError::Storage(format!("commit snapshot restore: {e}")))?;
 
-        // Restore last_applied
+        // Update in-memory state only after successful commit
         self.last_applied = snapshot.last_applied;
-        self.save_last_applied(snapshot.last_applied)?;
 
         Ok(())
     }
@@ -1060,6 +1467,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test".into(),
+            now_secs: 1000,
         };
 
         let serialized = bincode::serialize(&cmd).unwrap();
@@ -1072,15 +1480,106 @@ mod tests {
                 max_holders,
                 ttl_secs,
                 holder_info,
+                now_secs,
             } => {
                 assert_eq!(path, "/data/test.txt");
                 assert_eq!(lock_id, "uuid-123");
                 assert_eq!(max_holders, 3);
                 assert_eq!(ttl_secs, 30);
                 assert_eq!(holder_info, "agent:test");
+                assert_eq!(now_secs, 1000);
             }
             _ => panic!("wrong command type"),
         }
+    }
+
+    /// Determinism regression test (Issue #3029 / Bug 1):
+    /// Two state machines applying the same commands must produce byte-identical snapshots.
+    #[test]
+    fn test_state_machine_determinism() {
+        let store1 = RedbStore::open_temporary().unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm1 = FullStateMachine::new(&store1).unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+
+        // Build a sequence of commands with explicit timestamps
+        let commands: Vec<(u64, Command)> = vec![
+            (
+                1,
+                Command::SetMetadata {
+                    key: "/file1".into(),
+                    value: b"data1".to_vec(),
+                },
+            ),
+            (
+                2,
+                Command::AcquireLock {
+                    path: "/file1".into(),
+                    lock_id: "lock-1".into(),
+                    max_holders: 1,
+                    ttl_secs: 60,
+                    holder_info: "agent:a".into(),
+                    now_secs: 1000,
+                },
+            ),
+            (
+                3,
+                Command::AcquireLock {
+                    path: "/file2".into(),
+                    lock_id: "lock-2".into(),
+                    max_holders: 3,
+                    ttl_secs: 30,
+                    holder_info: "agent:b".into(),
+                    now_secs: 1001,
+                },
+            ),
+            (
+                4,
+                Command::ExtendLock {
+                    path: "/file1".into(),
+                    lock_id: "lock-1".into(),
+                    new_ttl_secs: 120,
+                    now_secs: 1010,
+                },
+            ),
+            (
+                5,
+                Command::ReleaseLock {
+                    path: "/file2".into(),
+                    lock_id: "lock-2".into(),
+                },
+            ),
+            // Acquire after TTL-based expiry cleanup
+            (
+                6,
+                Command::AcquireLock {
+                    path: "/file2".into(),
+                    lock_id: "lock-3".into(),
+                    max_holders: 1,
+                    ttl_secs: 60,
+                    holder_info: "agent:c".into(),
+                    now_secs: 2000, // well past lock-2's 30s TTL
+                },
+            ),
+        ];
+
+        // Apply identical commands to both state machines
+        for (idx, cmd) in &commands {
+            sm1.apply(*idx, cmd).unwrap();
+            sm2.apply(*idx, cmd).unwrap();
+        }
+
+        // Snapshots must be logically identical (HashMap serialization order may vary)
+        let snap1 = sm1.snapshot().unwrap();
+        let snap2 = sm2.snapshot().unwrap();
+        let decoded1: Snapshot = bincode::deserialize(&snap1).unwrap();
+        let decoded2: Snapshot = bincode::deserialize(&snap2).unwrap();
+        assert_eq!(decoded1.metadata, decoded2.metadata, "Metadata diverged");
+        assert_eq!(decoded1.locks, decoded2.locks, "Locks diverged");
+        assert_eq!(
+            decoded1.last_applied, decoded2.last_applied,
+            "last_applied diverged"
+        );
     }
 
     #[test]
@@ -1123,6 +1622,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1139,6 +1639,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(2, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1163,6 +1664,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(4, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1184,6 +1686,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1201,6 +1704,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(2, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1217,6 +1721,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test3".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(3, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1233,6 +1738,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test4".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(4, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1256,6 +1762,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test4".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(6, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1296,6 +1803,7 @@ mod tests {
                 max_holders: 1,
                 ttl_secs: 3600,
                 holder_info: "agent:test".into(),
+                now_secs: 1000,
             },
         )
         .unwrap();
@@ -1327,6 +1835,7 @@ mod tests {
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
 
@@ -1346,13 +1855,14 @@ mod tests {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        // Acquire a lock with 1-second TTL
+        // Acquire a lock with 1-second TTL at time 1000
         let cmd = Command::AcquireLock {
             path: "/test/expire".into(),
             lock_id: "holder-1".into(),
             max_holders: 1,
             ttl_secs: 1,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1361,16 +1871,15 @@ mod tests {
             panic!("Expected LockResult");
         }
 
-        // Wait for TTL to expire
-        std::thread::sleep(std::time::Duration::from_secs(2));
-
-        // Another holder should be able to acquire because the first expired
+        // Another holder acquires at time 1002 (after the 1s TTL expired)
+        // No sleep needed — deterministic timestamps from the command.
         let cmd2 = Command::AcquireLock {
             path: "/test/expire".into(),
             lock_id: "holder-2".into(),
             max_holders: 1,
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1002,
         };
         let result = sm.apply(2, &cmd2).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1396,6 +1905,7 @@ mod tests {
             max_holders: 3,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1411,6 +1921,7 @@ mod tests {
             max_holders: 1, // Mismatch: 1 != 3
             ttl_secs: 30,
             holder_info: "agent:test2".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(2, &cmd2).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1426,21 +1937,19 @@ mod tests {
         let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
-        // Acquire a lock with 1-second TTL
+        // Acquire a lock with 1-second TTL at time 1000 (expires at 1001)
         let cmd = Command::AcquireLock {
             path: "/test/snap-expire".into(),
             lock_id: "holder-1".into(),
             max_holders: 1,
             ttl_secs: 1,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         sm.apply(1, &cmd).unwrap();
 
-        // Wait for TTL to expire
-        std::thread::sleep(std::time::Duration::from_secs(2));
-
         // Take snapshot — should still include the expired holder
-        // (cleanup happens during acquire, not snapshot)
+        // (cleanup happens during acquire, not snapshot; the lock expired at 1001)
         let snapshot_data = sm.snapshot().unwrap();
 
         // Restore to a new state machine
@@ -1469,6 +1978,7 @@ mod tests {
             max_holders: u32::MAX,
             ttl_secs: 30,
             holder_info: "agent:test1".into(),
+            now_secs: 1000,
         };
         let result = sm.apply(1, &cmd).unwrap();
         if let CommandResult::LockResult(state) = result {
@@ -1654,5 +2164,246 @@ mod tests {
         } else {
             panic!("Expected CasResult");
         }
+    }
+
+    #[test]
+    fn test_adjust_counter() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Increment from zero
+        let result = sm
+            .apply(
+                1,
+                &Command::AdjustCounter {
+                    key: "__i_links_count__".into(),
+                    delta: 1,
+                },
+            )
+            .unwrap();
+        if let CommandResult::Value(bytes) = result {
+            let val = i64::from_be_bytes(bytes.try_into().unwrap());
+            assert_eq!(val, 1);
+        } else {
+            panic!("Expected Value result");
+        }
+
+        // Increment again
+        let result = sm
+            .apply(
+                2,
+                &Command::AdjustCounter {
+                    key: "__i_links_count__".into(),
+                    delta: 1,
+                },
+            )
+            .unwrap();
+        if let CommandResult::Value(bytes) = result {
+            let val = i64::from_be_bytes(bytes.try_into().unwrap());
+            assert_eq!(val, 2);
+        } else {
+            panic!("Expected Value result");
+        }
+
+        // Decrement
+        let result = sm
+            .apply(
+                3,
+                &Command::AdjustCounter {
+                    key: "__i_links_count__".into(),
+                    delta: -1,
+                },
+            )
+            .unwrap();
+        if let CommandResult::Value(bytes) = result {
+            let val = i64::from_be_bytes(bytes.try_into().unwrap());
+            assert_eq!(val, 1);
+        } else {
+            panic!("Expected Value result");
+        }
+
+        // Decrement below zero should clamp to 0
+        let result = sm
+            .apply(
+                4,
+                &Command::AdjustCounter {
+                    key: "__i_links_count__".into(),
+                    delta: -100,
+                },
+            )
+            .unwrap();
+        if let CommandResult::Value(bytes) = result {
+            let val = i64::from_be_bytes(bytes.try_into().unwrap());
+            assert_eq!(val, 0);
+        } else {
+            panic!("Expected Value result");
+        }
+    }
+
+    #[test]
+    fn test_apply_idempotency_guard() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        let cmd = Command::SetMetadata {
+            key: "/test".into(),
+            value: b"data".to_vec(),
+        };
+        sm.apply(1, &cmd).unwrap();
+        assert_eq!(sm.last_applied_index(), 1);
+        let result = sm
+            .apply(
+                1,
+                &Command::DeleteMetadata {
+                    key: "/test".into(),
+                },
+            )
+            .unwrap();
+        assert!(matches!(result, CommandResult::Success));
+        assert_eq!(sm.get_metadata("/test").unwrap(), Some(b"data".to_vec()));
+        assert_eq!(sm.last_applied_index(), 1);
+        let result = sm.apply(0, &Command::Noop).unwrap();
+        assert!(matches!(result, CommandResult::Success));
+        assert_eq!(sm.last_applied_index(), 1);
+    }
+
+    #[test]
+    fn test_apply_advances_last_applied_sequentially() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        for i in 1..=5 {
+            sm.apply(i, &Command::Noop).unwrap();
+            assert_eq!(sm.last_applied_index(), i);
+        }
+        let sm2 = FullStateMachine::new(&store).unwrap();
+        assert_eq!(sm2.last_applied_index(), 5);
+    }
+
+    #[test]
+    fn test_apply_skips_gaps_correctly() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(1, &Command::Noop).unwrap();
+        sm.apply(
+            5,
+            &Command::SetMetadata {
+                key: "/test".into(),
+                value: b"data".to_vec(),
+            },
+        )
+        .unwrap();
+        assert_eq!(sm.last_applied_index(), 5);
+        assert_eq!(sm.get_metadata("/test").unwrap(), Some(b"data".to_vec()));
+    }
+
+    #[test]
+    fn test_restore_snapshot_corrupt_data_preserves_state() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/existing".into(),
+                value: b"original".to_vec(),
+            },
+        )
+        .unwrap();
+        assert_eq!(sm.last_applied_index(), 1);
+        let result = sm.restore_snapshot(b"this is not valid bincode");
+        assert!(result.is_err(), "corrupt snapshot should return error");
+        assert_eq!(
+            sm.get_metadata("/existing").unwrap(),
+            Some(b"original".to_vec())
+        );
+        assert_eq!(sm.last_applied_index(), 1);
+    }
+
+    #[test]
+    fn test_restore_snapshot_empty_data() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        let result = sm.restore_snapshot(b"");
+        assert!(result.is_err(), "empty snapshot should return error");
+    }
+
+    #[test]
+    fn test_restore_snapshot_overwrites_existing_data() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        sm.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/old_file".into(),
+                value: b"old_data".to_vec(),
+            },
+        )
+        .unwrap();
+        sm.apply(
+            2,
+            &Command::AcquireLock {
+                path: "/old_file".into(),
+                lock_id: "lock-old".into(),
+                max_holders: 1,
+                ttl_secs: 3600,
+                holder_info: "agent:old".into(),
+                now_secs: 1000,
+            },
+        )
+        .unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/new_file".into(),
+                value: b"new_data".to_vec(),
+            },
+        )
+        .unwrap();
+        let snapshot_data = sm2.snapshot().unwrap();
+        sm.restore_snapshot(&snapshot_data).unwrap();
+        assert!(sm.get_metadata("/old_file").unwrap().is_none());
+        assert!(sm.get_lock("/old_file").unwrap().is_none());
+        assert_eq!(
+            sm.get_metadata("/new_file").unwrap(),
+            Some(b"new_data".to_vec())
+        );
+        assert_eq!(sm.last_applied_index(), 1);
+    }
+
+    #[test]
+    fn test_restore_snapshot_persists_atomically() {
+        let store = RedbStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.apply(
+            1,
+            &Command::SetMetadata {
+                key: "/persisted".into(),
+                value: b"value".to_vec(),
+            },
+        )
+        .unwrap();
+        sm2.apply(
+            2,
+            &Command::AcquireLock {
+                path: "/persisted".into(),
+                lock_id: "lock-1".into(),
+                max_holders: 1,
+                ttl_secs: 3600,
+                holder_info: "agent:test".into(),
+                now_secs: 1000,
+            },
+        )
+        .unwrap();
+        let snapshot_data = sm2.snapshot().unwrap();
+        sm.restore_snapshot(&snapshot_data).unwrap();
+        let sm3 = FullStateMachine::new(&store).unwrap();
+        assert_eq!(
+            sm3.get_metadata("/persisted").unwrap(),
+            Some(b"value".to_vec())
+        );
+        assert!(sm3.get_lock("/persisted").unwrap().is_some());
+        assert_eq!(sm3.last_applied_index(), 2);
     }
 }

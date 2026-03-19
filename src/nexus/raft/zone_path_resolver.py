@@ -110,15 +110,15 @@ class ZonePathResolver:
             entry = current_store.get(prefix)
 
             if entry is not None and entry.is_mount:
-                # Cross zone boundary
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    # Local mount without explicit zone — stay in current zone.
-                    # This happens for in-memory mounts (e.g. /agents IPC mount)
-                    # that were registered via PathRouter.add_mount() without
-                    # a full DT_MOUNT metadata entry.
-                    target_zone_id = current_zone_id
+                    # Local mount without explicit zone (e.g. /agents IPC mount
+                    # registered via PathRouter.add_mount() only). Skip zone
+                    # crossing — keep the full global path in the current zone
+                    # so metadata put/list use the same key space.
+                    continue
 
+                # Cross zone boundary
                 mount_chain.append((current_zone_id, prefix))
 
                 if len(mount_chain) > MAX_MOUNT_DEPTH:
@@ -184,8 +184,8 @@ class ZonePathResolver:
             if entry is not None and entry.is_mount:
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    # Local mount without explicit zone — stay in current zone.
-                    target_zone_id = zone_id
+                    # Local mount — skip zone crossing, keep global path
+                    continue
 
                 mount_chain.append((zone_id, prefix))
 

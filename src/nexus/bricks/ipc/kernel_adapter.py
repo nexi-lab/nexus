@@ -87,27 +87,16 @@ class KernelVFSAdapter:
         ctx = self._ctx(zone_id)
         await self._nx.sys_write(path, data, context=ctx)
 
-    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+    async def list_dir(self, path: str, zone_id: str) -> list[str]:  # noqa: ARG002
         self._require_bound()
-        ctx = self._ctx(zone_id)
-        raw: list[Any] = await self._nx.sys_readdir(
-            path, recursive=False, details=True, context=ctx
-        )
-        # sys_readdir returns dicts with "name"/"path" keys; extract filenames
-        prefix = path.rstrip("/") + "/"
-        result: list[str] = []
-        for entry in raw:
-            p = (
-                str(entry.get("path", entry.get("name", "")))
-                if isinstance(entry, dict)
-                else str(entry)
-            )
-            if p.startswith(prefix):
-                p = p[len(prefix) :]
-            # Only direct children (no nested '/')
-            if p and "/" not in p:
-                result.append(p)
-        return result
+        # Route through PathRouter directly to the LocalConnector backend.
+        # This bypasses the metadata layer (FederatedMetadataProxy) whose
+        # Raft prefix scan may not index entries under the /agents mount.
+        import asyncio
+
+        route = self._nx.router.route(path, is_admin=True, check_write=False)
+        raw: list[str] = await asyncio.to_thread(route.backend.list_dir, route.backend_path)
+        return [name for name in raw if "/" not in name]
 
     async def count_dir(self, path: str, zone_id: str) -> int:
         entries = await self.list_dir(path, zone_id)
@@ -126,11 +115,15 @@ class KernelVFSAdapter:
     # Alias for backward compatibility
     mkdir = sys_mkdir
 
-    async def sys_access(self, path: str, zone_id: str) -> bool:
+    async def sys_access(self, path: str, zone_id: str) -> bool:  # noqa: ARG002
         self._require_bound()
-        ctx = self._ctx(zone_id)
-        result: bool = await self._nx.sys_access(path, context=ctx)
-        return result
+        import asyncio
+
+        try:
+            route = self._nx.router.route(path, is_admin=True, check_write=False)
+            return await asyncio.to_thread(route.backend.exists, route.backend_path)
+        except (FileNotFoundError, KeyError):
+            return False
 
     # Alias for backward compatibility
     exists = sys_access

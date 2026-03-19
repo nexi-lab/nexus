@@ -203,6 +203,11 @@ async def _require_process_table(request: Request) -> Any:
     return pt
 
 
+async def _get_nexus_fs(request: Request) -> Any:
+    """Get NexusFS from app state (optional — may be None)."""
+    return getattr(request.app.state, "nexus_fs", None)
+
+
 async def _get_vfs(request: Request) -> Any:
     """Get VFS from app state."""
     vfs = getattr(request.app.state, "vfs", None)
@@ -228,7 +233,7 @@ async def list_agents(
     offset: int = Query(default=0, ge=0, description="Agents to skip"),
     _auth: dict = Depends(_get_require_auth()),
     process_table: Any = Depends(_get_process_table),
-    nexus_fs: Any = Depends(lambda request: getattr(request.app.state, "nexus_fs", None)),
+    nexus_fs: Any = Depends(_get_nexus_fs),
 ) -> AgentListResponse:
     """List agents in a zone with pagination.
 

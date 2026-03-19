@@ -126,10 +126,10 @@ DEMO_DELEGATIONS = [
     {
         "worker_id": "coder",
         "worker_name": "Coder Agent",
-        "namespace_mode": "shared",
+        "namespace_mode": "copy",
         "intent": "Implement storage layer based on architecture review",
         "scope_prefix": "/workspace/demo/code",
-        "can_sub_delegate": False,
+        "can_sub_delegate": True,
     },
 ]
 

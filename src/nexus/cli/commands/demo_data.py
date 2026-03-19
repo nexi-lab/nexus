@@ -61,17 +61,7 @@ DEMO_AGENT_PERMISSIONS = [
 ]
 
 DEMO_IPC_MESSAGES = [
-    {
-        "sender": "coordinator",
-        "recipient": "researcher",
-        "type": "task",
-        "payload": {
-            "task": "Review architecture.md and summarize the key design decisions",
-            "priority": "high",
-            "context": "We need an architecture summary for the planning meeting",
-        },
-        "correlation_id": "task-001",
-    },
+    # === Messages that stay in inbox (pending — not yet consumed) ===
     {
         "sender": "coordinator",
         "recipient": "coder",
@@ -84,6 +74,17 @@ DEMO_IPC_MESSAGES = [
         "correlation_id": "task-002",
     },
     {
+        "sender": "coordinator",
+        "recipient": "coder",
+        "type": "task",
+        "payload": {
+            "task": "Add unit tests for the hash computation module",
+            "priority": "low",
+            "files": ["/workspace/demo/code/example.py"],
+        },
+        "correlation_id": "task-003",
+    },
+    {
         "sender": "researcher",
         "recipient": "coordinator",
         "type": "response",
@@ -93,6 +94,39 @@ DEMO_IPC_MESSAGES = [
             "confidence": 0.92,
         },
         "correlation_id": "task-001",
+    },
+]
+
+# Messages that have been consumed (moved to processed/) — shows delivery lifecycle
+DEMO_IPC_PROCESSED = [
+    {
+        "sender": "coordinator",
+        "recipient": "researcher",
+        "type": "task",
+        "payload": {
+            "task": "Review architecture.md and summarize the key design decisions",
+            "priority": "high",
+            "context": "We need an architecture summary for the planning meeting",
+        },
+        "correlation_id": "task-001",
+        "_status": "completed",
+    },
+]
+
+# Messages that expired (TTL exceeded, moved to dead_letter/) — shows error handling
+DEMO_IPC_DEAD_LETTER = [
+    {
+        "sender": "coordinator",
+        "recipient": "coder",
+        "type": "task",
+        "payload": {
+            "task": "Benchmark vector index performance (EXPIRED — coder was offline)",
+            "priority": "high",
+            "ttl_seconds": 3600,
+        },
+        "correlation_id": "task-000",
+        "_status": "expired",
+        "_reason": "TTL exceeded: agent did not consume within 1 hour",
     },
 ]
 

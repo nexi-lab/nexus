@@ -30,7 +30,9 @@ from nexus.cli.commands.demo_data import (
     DEMO_DELEGATIONS,
     DEMO_DIRS,
     DEMO_FILES,
+    DEMO_IPC_DEAD_LETTER,
     DEMO_IPC_MESSAGES,
+    DEMO_IPC_PROCESSED,
     DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
     HERB_CORPUS,
@@ -562,19 +564,81 @@ def _seed_agent_coordination(config: dict[str, Any], manifest: dict[str, Any]) -
     else:
         logger.debug("No coordinator API key — skipping delegations")
 
-    # 3. Seed IPC messages by writing directly to inbox paths via files API.
-    #    This bypasses the /api/v2/ipc/send endpoint (which requires NexusFS.list)
-    #    and writes JSON message files into each agent's /agents/{agent}/inbox/ dir.
+    # 3. Seed IPC messages via /api/v2/ipc/send (inbox messages)
     messages_sent = 0
     for msg in DEMO_IPC_MESSAGES:
+        send_body = {
+            "sender": msg["sender"],
+            "recipient": msg["recipient"],
+            "type": msg["type"],
+            "payload": msg["payload"],
+        }
+        if msg.get("correlation_id"):
+            send_body["correlation_id"] = msg["correlation_id"]
+        try:
+            body = json.dumps(send_body).encode()
+            req = urllib.request.Request(
+                f"{base_url}/api/v2/ipc/send",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=body,
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    messages_sent += 1
+        except Exception as e:
+            logger.debug("Could not send IPC message: %s", e)
+
+    # 4. Seed processed messages (consumed by agent — shows delivery lifecycle)
+    for msg in DEMO_IPC_PROCESSED:
         recipient = msg["recipient"]
-        corr_id = msg.get("correlation_id", f"msg-{messages_sent}")
+        corr_id = msg.get("correlation_id", f"processed-{messages_sent}")
         sender = msg["sender"]
-        filename = f"{corr_id}-from-{sender}.json"
-        inbox_path = f"/agents/{recipient}/inbox/{filename}"
+        filename = f"{corr_id}-from-{sender}-processed.json"
+        file_path = f"/agents/{recipient}/processed/{filename}"
         content = json.dumps(msg, indent=2) + "\n"
         try:
-            body = json.dumps({"path": inbox_path, "content": content}).encode()
+            body = json.dumps({"path": file_path, "content": content}).encode()
+            req = urllib.request.Request(
+                f"{base_url}/api/v2/ipc/send",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=body,
+            )
+            # ipc/send only writes to inbox — write processed via sys_write
+            # by sending a task that the "agent already handled"
+            # Actually, write directly: processed/ messages are just files
+            req2 = urllib.request.Request(
+                f"{base_url}/api/v2/files/write",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps({"path": file_path, "content": content}).encode(),
+            )
+            with urllib.request.urlopen(req2, timeout=10) as resp:
+                if resp.status == 200:
+                    messages_sent += 1
+        except Exception as e:
+            logger.debug("Could not write processed message to %s: %s", file_path, e)
+
+    # 5. Seed dead_letter messages (expired — shows error handling)
+    for msg in DEMO_IPC_DEAD_LETTER:
+        recipient = msg["recipient"]
+        corr_id = msg.get("correlation_id", f"dead-{messages_sent}")
+        sender = msg["sender"]
+        filename = f"{corr_id}-from-{sender}-expired.json"
+        file_path = f"/agents/{recipient}/dead_letter/{filename}"
+        content = json.dumps(msg, indent=2) + "\n"
+        try:
+            body = json.dumps({"path": file_path, "content": content}).encode()
             req = urllib.request.Request(
                 f"{base_url}/api/v2/files/write",
                 method="POST",
@@ -588,7 +652,7 @@ def _seed_agent_coordination(config: dict[str, Any], manifest: dict[str, Any]) -
                 if resp.status == 200:
                     messages_sent += 1
         except Exception as e:
-            logger.debug("Could not write IPC message to %s: %s", inbox_path, e)
+            logger.debug("Could not write dead_letter message to %s: %s", file_path, e)
 
     manifest["agent_coordination_seeded"] = True
     return {"provisioned": provisioned, "delegated": delegated, "messages": messages_sent}

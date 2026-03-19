@@ -132,8 +132,12 @@ export default function AgentsPanel(): React.ReactNode {
     if (!client) return;
 
     if (activeTab === "status" && selectedAgentId) {
-      // Only fetch live status for running agents — registered agents
-      // have no ProcessTable entry and these calls would 404
+      // Fetch permissions for all agents (works for registered + running)
+      client.get<{ permissions: readonly { relation: string; object_type: string; object_id: string }[] }>(
+        `/api/v2/agents/${encodeURIComponent(selectedAgentId)}/permissions`,
+      ).then((r) => useAgentsStore.setState({ agentPermissions: r.permissions }))
+        .catch(() => useAgentsStore.setState({ agentPermissions: [] }));
+      // Only fetch live status for running agents
       const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
       if (selectedAgent && selectedAgent.state !== "registered") {
         fetchAgentStatus(selectedAgentId, client);
@@ -388,6 +392,7 @@ export default function AgentsPanel(): React.ReactNode {
             {activeTab === "status" && (() => {
               const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
               if (selectedAgent?.state === "registered") {
+                const perms = useAgentsStore.getState().agentPermissions;
                 return (
                   <box height="100%" width="100%" flexDirection="column" padding={1}>
                     <text bold>{`Agent: ${selectedAgent.agent_id}`}</text>
@@ -397,8 +402,20 @@ export default function AgentsPanel(): React.ReactNode {
                     <text><span foregroundColor="cyan">{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
                     <text><span foregroundColor="cyan">{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
                     <text>{""}</text>
+                    <text bold foregroundColor="cyan">{"Permissions:"}</text>
+                    {perms.length === 0 ? (
+                      <text dimColor>{"  No permissions assigned"}</text>
+                    ) : (
+                      perms.map((p, i) => (
+                        <text key={`perm-${i}`}>
+                          <span foregroundColor="green">{`  ${p.relation}`}</span>
+                          <span dimColor>{" on "}</span>
+                          <span foregroundColor="blue">{`${p.object_type}:${p.object_id}`}</span>
+                        </text>
+                      ))
+                    )}
+                    <text>{""}</text>
                     <text dimColor>{"Agent is registered but not running."}</text>
-                    <text dimColor>{"Status, spec, and identity are available when the agent connects."}</text>
                   </box>
                 );
               }

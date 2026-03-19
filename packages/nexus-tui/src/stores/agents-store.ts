@@ -135,6 +135,9 @@ export interface AgentsState {
   readonly deadLetterMessages: readonly InboxMessage[];
   readonly inboxLoading: boolean;
 
+  // Permissions
+  readonly agentPermissions: readonly { readonly relation: string; readonly object_type: string; readonly object_id: string }[];
+
   // Trajectories
   readonly trajectories: readonly TrajectoryItem[];
   readonly trajectoriesLoading: boolean;
@@ -188,6 +191,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   deadLetterMessages: [],
   inboxCount: 0,
   inboxLoading: false,
+  agentPermissions: [],
   trajectories: [],
   trajectoriesLoading: false,
   error: null,

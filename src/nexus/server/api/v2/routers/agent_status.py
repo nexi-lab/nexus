@@ -494,3 +494,75 @@ async def warmup_agent(
         error=result.error,
         duration_ms=result.duration_ms,
     )
+
+
+# ---------------------------------------------------------------------------
+# Agent permissions
+# ---------------------------------------------------------------------------
+
+
+class PermissionTuple(BaseModel):
+    """Single ReBAC permission tuple."""
+
+    relation: str
+    object_type: str
+    object_id: str
+    zone_id: str | None = None
+
+
+class AgentPermissionsResponse(BaseModel):
+    """Response listing an agent's permissions."""
+
+    agent_id: str
+    permissions: list[PermissionTuple]
+    total: int
+
+
+@router.get(
+    "/api/v2/agents/{agent_id}/permissions",
+    response_model=AgentPermissionsResponse,
+    summary="List agent permissions",
+    description="Returns ReBAC permission tuples for the specified agent.",
+)
+async def get_agent_permissions(
+    agent_id: str,
+    _auth: dict = Depends(_get_require_auth()),
+    nexus_fs: Any = Depends(_get_nexus_fs),
+) -> AgentPermissionsResponse:
+    """List ReBAC permission tuples for an agent."""
+    tuples: list[PermissionTuple] = []
+    try:
+        # Use ReBACManager directly (available on NexusFS via __getattr__ → _SERVICE_ALIASES)
+        session_factory = getattr(nexus_fs, "SessionLocal", None)
+        if session_factory is not None:
+            from sqlalchemy import select
+
+            from nexus.storage.models.permissions import ReBACTupleModel
+
+            session = session_factory()
+            try:
+                rows = session.scalars(
+                    select(ReBACTupleModel).where(
+                        ReBACTupleModel.subject_type == "agent",
+                        ReBACTupleModel.subject_id == agent_id,
+                    )
+                ).all()
+                for row in rows:
+                    tuples.append(
+                        PermissionTuple(
+                            relation=row.relation,
+                            object_type=row.object_type,
+                            object_id=row.object_id,
+                            zone_id=getattr(row, "zone_id", None),
+                        )
+                    )
+            finally:
+                session.close()
+    except Exception:
+        logger.debug("Could not fetch permissions for agent %s", agent_id, exc_info=True)
+
+    return AgentPermissionsResponse(
+        agent_id=agent_id,
+        permissions=tuples,
+        total=len(tuples),
+    )

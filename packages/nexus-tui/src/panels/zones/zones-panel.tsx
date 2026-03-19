@@ -20,7 +20,6 @@ import { BrickDetail } from "./brick-detail.js";
 import { DriftView } from "./drift-view.js";
 import { ReindexStatus } from "./reindex-status.js";
 import { WorkspacesTab } from "./workspaces-tab.js";
-import { MemoriesTab } from "./memories-tab.js";
 import { McpMountsTab } from "./mcp-mounts-tab.js";
 import { CacheTab } from "./cache-tab.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
@@ -35,7 +34,6 @@ const ALL_TABS: readonly TabDef<ZoneTab>[] = [
   { id: "drift", label: "Drift", brick: null },
   { id: "reindex", label: "Reindex", brick: ["search", "versioning"] },
   { id: "workspaces", label: "Workspaces", brick: "workspace" },
-  { id: "memories", label: "Memories", brick: "workspace" },
   { id: "mcp", label: "MCP", brick: "mcp" },
   { id: "cache", label: "Cache", brick: "cache" },
 ];
@@ -45,7 +43,6 @@ const TAB_LABELS: Readonly<Record<ZoneTab, string>> = {
   drift: "Drift",
   reindex: "Reindex",
   workspaces: "Workspaces",
-  memories: "Memories",
   mcp: "MCP",
   cache: "Cache",
 };
@@ -90,19 +87,10 @@ export default function ZonesPanel(): React.ReactNode {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const workspacesLoading = useWorkspaceStore((s) => s.workspacesLoading);
   const selectedWorkspaceIndex = useWorkspaceStore((s) => s.selectedWorkspaceIndex);
-  const memories = useWorkspaceStore((s) => s.memories);
-  const memoriesLoading = useWorkspaceStore((s) => s.memoriesLoading);
-  const selectedMemoryIndex = useWorkspaceStore((s) => s.selectedMemoryIndex);
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces);
-  const fetchMemories = useWorkspaceStore((s) => s.fetchMemories);
   const unregisterWorkspace = useWorkspaceStore((s) => s.unregisterWorkspace);
-  const unregisterMemory = useWorkspaceStore((s) => s.unregisterMemory);
   const setSelectedWorkspaceIndex = useWorkspaceStore((s) => s.setSelectedWorkspaceIndex);
-  const setSelectedMemoryIndex = useWorkspaceStore((s) => s.setSelectedMemoryIndex);
-
-  // Workspace/memory register actions
   const registerWorkspace = useWorkspaceStore((s) => s.registerWorkspace);
-  const registerMemory = useWorkspaceStore((s) => s.registerMemory);
 
   // MCP store selectors
   const mcpMounts = useMcpStore((s) => s.mounts);
@@ -132,26 +120,23 @@ export default function ZonesPanel(): React.ReactNode {
   const [operationInProgress, setOperationInProgress] = useState(false);
 
   // Input mode state for create/register flows (multi-field forms)
-  const [inputMode, setInputMode] = useState<"none" | "workspace" | "memory" | "mcpMount">("none");
+  const [inputMode, setInputMode] = useState<"none" | "workspace" | "mcpMount">("none");
   const [inputFields, setInputFields] = useState<Record<string, string>>({});
   const [inputActiveField, setInputActiveField] = useState(0);
 
   const WS_FIELDS = ["path", "name", "description", "scope", "ttl_seconds"] as const;
-  const MEM_FIELDS = ["path", "name", "description"] as const;
   const MCP_FIELDS = ["name", "command_or_url", "description"] as const;
 
   const currentFields = inputMode === "workspace" ? WS_FIELDS
-    : inputMode === "memory" ? MEM_FIELDS
     : inputMode === "mcpMount" ? MCP_FIELDS : [] as const;
   const currentFieldName = currentFields[inputActiveField] ?? "";
 
   // Confirmation dialog state for destructive actions
   const [confirmUnregister, setConfirmUnregister] = useState(false);
   const [confirmWorkspaceUnregister, setConfirmWorkspaceUnregister] = useState(false);
-  const [confirmMemoryUnregister, setConfirmMemoryUnregister] = useState(false);
   const [confirmMcpUnmount, setConfirmMcpUnmount] = useState(false);
 
-  const anyDialogOpen = confirmUnregister || confirmWorkspaceUnregister || confirmMemoryUnregister || confirmMcpUnmount;
+  const anyDialogOpen = confirmUnregister || confirmWorkspaceUnregister || confirmMcpUnmount;
 
   // Currently selected brick (if on bricks tab)
   const selectedBrick = activeTab === "bricks" ? bricks[selectedIndex] ?? null : null;
@@ -174,15 +159,13 @@ export default function ZonesPanel(): React.ReactNode {
       fetchDrift(client);
     } else if (activeTab === "workspaces") {
       fetchWorkspaces(client);
-    } else if (activeTab === "memories") {
-      fetchMemories(client);
     } else if (activeTab === "mcp") {
       fetchMcpMounts(client);
     } else if (activeTab === "cache") {
       fetchCacheStats(client);
       fetchHotFiles(client);
     }
-  }, [activeTab, client, fetchZones, fetchBricks, fetchDrift, fetchWorkspaces, fetchMemories, fetchMcpMounts, fetchCacheStats, fetchHotFiles]);
+  }, [activeTab, client, fetchZones, fetchBricks, fetchDrift, fetchWorkspaces, fetchMcpMounts, fetchCacheStats, fetchHotFiles]);
 
   // Auto-fetch data on mount and when tab changes
   useEffect(() => {
@@ -224,20 +207,6 @@ export default function ZonesPanel(): React.ReactNode {
     setConfirmWorkspaceUnregister(false);
   }, []);
 
-  // Memory unregister confirmation handlers
-  const handleConfirmMemoryUnregister = useCallback(() => {
-    if (!client) return;
-    const mem = memories[selectedMemoryIndex];
-    if (mem) {
-      unregisterMemory(mem.path, client);
-    }
-    setConfirmMemoryUnregister(false);
-  }, [client, memories, selectedMemoryIndex, unregisterMemory]);
-
-  const handleCancelMemoryUnregister = useCallback(() => {
-    setConfirmMemoryUnregister(false);
-  }, []);
-
   // MCP unmount confirmation handlers
   const handleConfirmMcpUnmount = useCallback(() => {
     if (!client) return;
@@ -269,29 +238,25 @@ export default function ZonesPanel(): React.ReactNode {
     if (activeTab === "zones") return zones.length;
     if (activeTab === "bricks") return bricks.length;
     if (activeTab === "workspaces") return workspaces.length;
-    if (activeTab === "memories") return memories.length;
     if (activeTab === "mcp") return mcpMounts.length;
     return 0;
-  }, [activeTab, zones.length, bricks.length, workspaces.length, memories.length, mcpMounts.length]);
+  }, [activeTab, zones.length, bricks.length, workspaces.length, mcpMounts.length]);
 
   const currentNavIndex = useCallback((): number => {
     if (activeTab === "workspaces") return selectedWorkspaceIndex;
-    if (activeTab === "memories") return selectedMemoryIndex;
     if (activeTab === "mcp") return selectedMountIndex;
     return selectedIndex;
-  }, [activeTab, selectedIndex, selectedWorkspaceIndex, selectedMemoryIndex, selectedMountIndex]);
+  }, [activeTab, selectedIndex, selectedWorkspaceIndex, selectedMountIndex]);
 
   const setCurrentNavIndex = useCallback((index: number): void => {
     if (activeTab === "workspaces") {
       setSelectedWorkspaceIndex(index);
-    } else if (activeTab === "memories") {
-      setSelectedMemoryIndex(index);
     } else if (activeTab === "mcp") {
       setSelectedMountIndex(index);
     } else {
       setSelectedIndex(index);
     }
-  }, [activeTab, setSelectedIndex, setSelectedWorkspaceIndex, setSelectedMemoryIndex, setSelectedMountIndex]);
+  }, [activeTab, setSelectedIndex, setSelectedWorkspaceIndex, setSelectedMountIndex]);
 
   // In input mode, capture printable characters into the active field
   const handleUnhandledKey = useCallback(
@@ -327,14 +292,6 @@ export default function ZonesPanel(): React.ReactNode {
                   description: (f.description ?? "").trim() || undefined,
                   scope: (f.scope ?? "").trim() || undefined,
                   ttl_seconds: f.ttl_seconds?.trim() ? parseInt(f.ttl_seconds.trim(), 10) : undefined,
-                }, client);
-              } else if (inputMode === "memory") {
-                const path = (f.path ?? "").trim();
-                if (!path) { setInputMode("none"); return; }
-                registerMemory({
-                  path,
-                  name: (f.name ?? "").trim() || path.split("/").pop() || path,
-                  description: (f.description ?? "").trim() || undefined,
                 }, client);
               } else if (inputMode === "mcpMount") {
                 const val = (f.command_or_url ?? "").trim();
@@ -394,14 +351,10 @@ export default function ZonesPanel(): React.ReactNode {
               }
             },
             "shift+tab": () => toggleFocus("zones"),
-            // n: Register workspace/memory or mount MCP server
+            // n: Register workspace or mount MCP server
             n: () => {
               if (activeTab === "workspaces") {
                 setInputMode("workspace");
-                setInputFields({});
-                setInputActiveField(0);
-              } else if (activeTab === "memories") {
-                setInputMode("memory");
                 setInputFields({});
                 setInputActiveField(0);
               } else if (activeTab === "mcp") {
@@ -439,15 +392,12 @@ export default function ZonesPanel(): React.ReactNode {
               setOperationInProgress(true);
               resetBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
-            // d: Unregister workspace/memory or unmount MCP (with confirmation)
+            // d: Unregister workspace or unmount MCP (with confirmation)
             d: () => {
               if (!client) return;
               if (activeTab === "workspaces") {
                 const ws = workspaces[selectedWorkspaceIndex];
                 if (ws) setConfirmWorkspaceUnregister(true);
-              } else if (activeTab === "memories") {
-                const mem = memories[selectedMemoryIndex];
-                if (mem) setConfirmMemoryUnregister(true);
               } else if (activeTab === "mcp") {
                 const mount = mcpMounts[selectedMountIndex];
                 if (mount) setConfirmMcpUnmount(true);
@@ -491,7 +441,6 @@ export default function ZonesPanel(): React.ReactNode {
     const base = "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
     if (activeTab === "bricks") return brickHelpText;
     if (activeTab === "workspaces") return "j/k:navigate  n:register  d:unregister  Tab:tab  r:refresh  q:quit";
-    if (activeTab === "memories") return "j/k:navigate  n:register  d:unregister  Tab:tab  r:refresh  q:quit";
     if (activeTab === "mcp") return "j/k:navigate  n:mount  d:unmount  s:sync  Enter:tools  Tab:tab  r:refresh  q:quit";
     if (activeTab === "cache") return "w:warmup hot files  Tab:tab  r:refresh  q:quit";
     return base;
@@ -591,14 +540,6 @@ export default function ZonesPanel(): React.ReactNode {
           />
         )}
 
-        {activeTab === "memories" && (
-          <MemoriesTab
-            memories={memories}
-            selectedIndex={selectedMemoryIndex}
-            loading={memoriesLoading}
-          />
-        )}
-
         {activeTab === "mcp" && (
           <McpMountsTab
             mounts={mcpMounts}
@@ -620,7 +561,7 @@ export default function ZonesPanel(): React.ReactNode {
       <box height={1} width="100%">
         <text>
           {inputMode !== "none"
-            ? `${inputMode === "workspace" ? "Register Workspace" : inputMode === "memory" ? "Register Memory" : "Mount MCP Server"} — Tab:field  Enter:submit  Escape:cancel`
+            ? `${inputMode === "workspace" ? "Register Workspace" : "Mount MCP Server"} — Tab:field  Enter:submit  Escape:cancel`
             : helpText}
         </text>
       </box>
@@ -641,15 +582,6 @@ export default function ZonesPanel(): React.ReactNode {
         message={`Unregister workspace "${workspaces[selectedWorkspaceIndex]?.name ?? ""}"?`}
         onConfirm={handleConfirmWorkspaceUnregister}
         onCancel={handleCancelWorkspaceUnregister}
-      />
-
-      {/* Memory unregister confirmation dialog */}
-      <ConfirmDialog
-        visible={confirmMemoryUnregister}
-        title="Unregister Memory"
-        message={`Unregister memory "${memories[selectedMemoryIndex]?.name ?? ""}"? (Does not delete files.)`}
-        onConfirm={handleConfirmMemoryUnregister}
-        onCancel={handleCancelMemoryUnregister}
       />
 
       {/* MCP unmount confirmation dialog */}

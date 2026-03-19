@@ -139,7 +139,7 @@ export default function AgentsPanel(): React.ReactNode {
         .catch(() => useAgentsStore.setState({ agentPermissions: [] }));
       // Only fetch live status for running agents
       const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
-      if (selectedAgent && selectedAgent.state !== "registered") {
+      if (selectedAgent && selectedAgent.state !== "registered" && selectedAgent.state !== "delegated") {
         fetchAgentStatus(selectedAgentId, client);
         fetchAgentSpec(selectedAgentId, client);
         fetchAgentIdentity(selectedAgentId, client);
@@ -391,7 +391,7 @@ export default function AgentsPanel(): React.ReactNode {
           <box flexGrow={1} borderStyle="single">
             {activeTab === "status" && (() => {
               const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
-              if (selectedAgent?.state === "registered") {
+              if (selectedAgent?.state === "registered" || selectedAgent?.state === "delegated") {
                 const perms = useAgentsStore.getState().agentPermissions;
                 return (
                   <box height="100%" width="100%" flexDirection="column" padding={1}>

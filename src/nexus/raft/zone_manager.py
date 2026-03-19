@@ -744,6 +744,8 @@ class ZoneManager:
         Called by ensure_topology() before topology work. Returns True when
         TLS is ready (or not needed).
         """
+        import time
+
         if not self._two_phase_tls:
             return True
 
@@ -752,6 +754,14 @@ class ZoneManager:
 
         existing = ZoneTlsConfig.from_data_dir(self._base_path)
         if existing is not None:
+            # Grace period: leader waits before upgrading to mTLS so followers
+            # can call JoinCluster over plaintext first.
+            ca_pem_path = Path(self._base_path) / "tls" / "ca.pem"
+            if ca_pem_path.exists():
+                age = time.time() - ca_pem_path.stat().st_mtime
+                if age < 15:
+                    logger.debug("TLS certs ready but waiting for grace period (%.1fs/15s)", age)
+                    return False
             self._restart_with_tls(existing)
             self._two_phase_tls = False
             return True

@@ -2430,16 +2430,6 @@ class NexusFS(  # type: ignore[misc]
         now = datetime.now(UTC)
         meta = self.metadata.get(path)
 
-        # Capture snapshot before operation for undo capability
-        snapshot_hash = meta.etag if meta else None
-        metadata_snapshot = None
-        if meta:
-            metadata_snapshot = {
-                "size": meta.size,
-                "version": meta.version,
-                "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            }
-
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         # Hook handles existing-file (owner fast-path) vs new-file (parent check)
         from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
@@ -2611,19 +2601,10 @@ class NexusFS(  # type: ignore[misc]
                         f"write: Failed to grant direct_owner permission for {path}: {e}"
                     )
 
-        # Issue #1752: Auto-track write in active transaction (snapshot for rollback)
-        # Issue #1570: snapshot_service accessed from container, not flat attr.
-        _ss = (
-            getattr(self._brick_services, "snapshot_service", None)
-            if self._brick_services
-            else None
-        )
-        if _ss is not None:
-            _txn_id = _ss.is_tracked(path)
-            if _txn_id is not None:
-                _ss.track_write(_txn_id, path, snapshot_hash, metadata_snapshot, content_hash)
-
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        # Issue #1770: snapshot tracking moved to SnapshotWriteInterceptor.on_post_write()
+        # which fires during intercept_post_write below (hook receives old_metadata +
+        # content_hash from context).
         from nexus.contracts.vfs_hooks import WriteHookContext
 
         _write_ctx = WriteHookContext(
@@ -3396,32 +3377,13 @@ class NexusFS(  # type: ignore[misc]
         if meta is None:
             raise NexusFileNotFoundError(path)
 
-        # Capture snapshot before operation for undo capability
-        snapshot_hash = meta.etag
-        metadata_snapshot = {
-            "size": meta.size,
-            "version": meta.version,
-            "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-            "backend_name": meta.backend_name,
-            "physical_path": meta.physical_path,
-        }
-
         # PRE-INTERCEPT: pre-delete hooks (Issue #899)
+        # Issue #1770: pass metadata so SnapshotWriteInterceptor.on_pre_delete()
+        # can capture the pre-deletion state for snapshot/rollback (no direct
+        # snapshot_service access in kernel).
         from nexus.contracts.vfs_hooks import DeleteHookContext as _DHC
 
-        self._dispatch.intercept_pre_delete(_DHC(path=path, context=context))
-
-        # Issue #1752: Auto-track delete in active transaction (snapshot for rollback)
-        # Issue #1570: snapshot_service accessed from container, not flat attr.
-        _ss = (
-            getattr(self._brick_services, "snapshot_service", None)
-            if self._brick_services
-            else None
-        )
-        if _ss is not None:
-            _txn_id = _ss.is_tracked(path)
-            if _txn_id is not None:
-                _ss.track_delete(_txn_id, path, snapshot_hash, metadata_snapshot)
+        self._dispatch.intercept_pre_delete(_DHC(path=path, context=context, metadata=meta))
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         # Placed BEFORE physical content delete to preserve audit integrity.

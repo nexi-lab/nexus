@@ -564,6 +564,22 @@ async def _register_vfs_hooks(
     else:
         logger.debug("[BOOT:BRICK] task_manager disabled by profile")
 
+    # ── SnapshotWriteInterceptor (Issue #1770) ─────────────────────────
+    # Records write/delete ops into active snapshot transactions.
+    # Replaces direct snapshot_service calls in nexus_fs — kernel no longer
+    # knows about snapshot_service.
+    _snap_svc = (
+        getattr(nx._brick_services, "snapshot_service", None) if nx._brick_services else None
+    )
+    if _snap_svc is not None:
+        try:
+            from nexus.bricks.snapshot.write_hook import SnapshotWriteInterceptor
+
+            _snap_hook = SnapshotWriteInterceptor(snapshot_service=_snap_svc)
+            await _enlist("snapshot", _snap_hook)
+        except Exception as exc:
+            logger.debug("[BOOT:HOOKS] SnapshotWriteInterceptor unavailable: %s", exc)
+
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.

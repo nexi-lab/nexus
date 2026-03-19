@@ -77,9 +77,6 @@ async def _do_link(
         _brick_updates["workflow_engine"] = workflow_engine
     nx._brick_services = _dc_replace(nx._brick_services, **_brick_updates)
 
-    # Update kernel-side references set by __init__ from original BrickServices
-    nx._virtual_view_parse_fn = _parse_fn
-
     # --- Resolve enabled_bricks for profile gating ---
     _resolved_bricks = enabled_bricks
     if _resolved_bricks is None:
@@ -88,10 +85,28 @@ async def _do_link(
     def _brick_on(name: str) -> bool:
         return name in _resolved_bricks
 
-    # Issue #1740: capture _brick_on via partial so it never touches nx.__dict__.
+    # --- PermissionChecker (services layer — Issue #899, #1766) ---
+    # Factory-local: _permission_checker is only needed by _register_vfs_hooks()
+    # at initialize() time. Captured via partial — never stored on nx.
+    from nexus.bricks.rebac.checker import PermissionChecker as _PC
+
+    _permission_checker = _PC(
+        permission_enforcer=_sys.permission_enforcer,
+        metadata_store=nx.metadata,
+        default_context=nx._default_context,
+        enforce_permissions=nx._enforce_permissions,
+    )
+
+    # Issue #1740/#1765/#1766: capture factory-phase locals via partial so they
+    # never touch nx.__dict__. _do_initialize receives them as keyword args.
     import functools
 
-    nx._initialize_fn = functools.partial(_do_initialize, brick_on=_brick_on)
+    nx._initialize_fn = functools.partial(
+        _do_initialize,
+        brick_on=_brick_on,
+        parse_fn=_parse_fn,
+        permission_checker=_permission_checker,
+    )
 
     # --- Boot wired services → register into ServiceRegistry ---
     _wired = await _boot_wired_services(
@@ -129,18 +144,10 @@ async def _do_link(
     if _dc is not None:
         nx._descendant_checker = _dc
 
-    # --- PermissionChecker (services layer — Issue #899) ---
-    from nexus.bricks.rebac.checker import PermissionChecker as _PC
 
-    nx._permission_checker = _PC(
-        permission_enforcer=_sys.permission_enforcer,
-        metadata_store=nx.metadata,
-        default_context=nx._default_context,
-        enforce_permissions=nx._enforce_permissions,
-    )
-
-
-async def _do_initialize(nx: Any, *, brick_on: "Any" = None) -> None:
+async def _do_initialize(
+    nx: Any, *, brick_on: "Any" = None, parse_fn: "Any" = None, permission_checker: "Any" = None
+) -> None:
     """Phase 2 implementation: one-time side effects.  NO background threads.
 
     Prepares resources but remains static — no active threads or async loops.
@@ -163,9 +170,10 @@ async def _do_initialize(nx: Any, *, brick_on: "Any" = None) -> None:
 
     await _register_vfs_hooks(
         nx,
-        permission_checker=nx._permission_checker,
+        permission_checker=permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
         brick_on=brick_on,
+        parse_fn=parse_fn,
     )
 
     # --- BLM registration for late bricks (Issue #1704, #2991) ---

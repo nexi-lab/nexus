@@ -405,7 +405,7 @@ def _startup_task_manager(app: "FastAPI", svc: "LifespanServices") -> None:
     """Wire TaskManagerService from factory to app.state (PR #3124)."""
     if svc.nexus_fs is None:
         return
-    task_svc = getattr(svc.nexus_fs, "_task_manager_service", None)
+    task_svc = svc.nexus_fs.service("task_manager")  # Issue #1768: via coordinator
     app.state.task_manager_service = task_svc
     if task_svc is not None:
         logger.info("[TASK-MGR] TaskManagerService wired to app.state")

@@ -139,8 +139,6 @@ class NexusFS(  # type: ignore[misc]
         else:
             self.router = PathRouter(metadata_store)
 
-        self._virtual_view_parse_fn = brk_svc.parse_fn
-
         # Default context for embedded mode
         self._default_context = OperationContext(
             user_id="anonymous",
@@ -155,6 +153,10 @@ class NexusFS(  # type: ignore[misc]
         # Issue #1706: sentinel — real value wired by factory._do_link().
         # Kept as sentinel (not deleted) because 8 kernel methods access without hasattr guard.
         self._permission_enforcer: Any = None
+        # Issue #1764: sentinel for kernel LSM-style hook (like _permission_enforcer).
+        # Real value injected by factory._do_link() via _wired.descendant_checker.
+        # Consider rename → _descendant_access_checker for clarity.
+        self._descendant_checker: Any = None
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
@@ -216,7 +218,6 @@ class NexusFS(  # type: ignore[misc]
         self._bootstrapped: bool = False
         self._bootstrap_callbacks: list[Callable[[], Any]] = []
         self._runtime_closeables: list[Any] = []
-        self._permission_checker: Any = None  # set by link()
         # Factory-injected lifecycle implementations.
         # Keeps nexus.core free of nexus.factory / nexus.bricks imports.
         self._link_fn: Callable[..., Any] | None = None

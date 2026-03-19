@@ -398,6 +398,7 @@ async def _register_vfs_hooks(
     permission_checker: Any = None,
     auto_parse: bool = True,
     brick_on: "Callable[[str], bool] | None" = None,
+    parse_fn: Any = None,
 ) -> None:
     """Register hooks + observers via coordinator.enlist() (Issue #900, #1709).
 
@@ -475,7 +476,6 @@ async def _register_vfs_hooks(
 
     # AutoParseWriteHook (post-write: background parsing + cache invalidation)
     parser_reg = nx._brick_services.parser_registry
-    parse_fn = getattr(nx, "_virtual_view_parse_fn", None)
     if auto_parse and parser_reg is not None and parse_fn is not None:
         from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
 
@@ -521,7 +521,7 @@ async def _register_vfs_hooks(
         metadata=nx.metadata,
         path_router=nx.router,
         permission_checker=permission_checker,
-        parse_fn=getattr(nx, "_virtual_view_parse_fn", None),
+        parse_fn=parse_fn,
         read_tracker_fn=None,
     )
     await _enlist("virtual_view", _vview_resolver)
@@ -557,7 +557,7 @@ async def _register_vfs_hooks(
 
             await _enlist("task_write", _task_write_hook)
             await _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
-            nx._task_manager_service = _task_svc
+            await _enlist("task_manager", _task_svc)  # Issue #1768: Q1 service via coordinator
         except Exception as exc:
             logger.warning("[BOOT:BRICK] task_manager wiring failed: %s", exc)
     else:

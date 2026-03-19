@@ -25,12 +25,14 @@ DEMO_USERS = [
 DEMO_AGENTS = [
     {"type": "agent", "id": "demo_agent", "display_name": "Demo Agent"},
     {"type": "agent", "id": "coordinator", "display_name": "Coordinator Agent"},
-    {"type": "agent", "id": "researcher", "display_name": "Research Agent"},
-    {"type": "agent", "id": "coder", "display_name": "Coder Agent"},
 ]
 
 # ---------------------------------------------------------------------------
 # Agent coordination scenario seeded by demo init
+#
+# Only coordinator is a top-level registered agent. researcher and coder
+# are created via delegation (coordinator delegates to them), which gives
+# them scoped API keys and inherited permissions.
 # ---------------------------------------------------------------------------
 
 DEMO_AGENT_PERMISSIONS = [
@@ -38,24 +40,6 @@ DEMO_AGENT_PERMISSIONS = [
         "subject": ["agent", "coordinator"],
         "relation": "direct_editor",
         "object": ["file", "/workspace"],
-        "zone_id": "root",
-    },
-    {
-        "subject": ["agent", "researcher"],
-        "relation": "direct_viewer",
-        "object": ["file", "/workspace"],
-        "zone_id": "root",
-    },
-    {
-        "subject": ["agent", "researcher"],
-        "relation": "direct_editor",
-        "object": ["file", "/workspace/demo/notes"],
-        "zone_id": "root",
-    },
-    {
-        "subject": ["agent", "coder"],
-        "relation": "direct_editor",
-        "object": ["file", "/workspace/demo/code"],
         "zone_id": "root",
     },
 ]

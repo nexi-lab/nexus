@@ -516,32 +516,31 @@ def _seed_agent_coordination(config: dict[str, Any], manifest: dict[str, Any]) -
         return {"provisioned": 0, "delegated": 0, "messages": 0}
 
     identity_keys = manifest.get("identity_keys", {})
-    agent_ids = ["coordinator", "researcher", "coder"]
 
-    # 1. Provision IPC directories for each agent (admin auth)
+    # 1. Provision IPC for coordinator (top-level agent only)
     provisioned = 0
-    for agent_id in agent_ids:
-        try:
-            req = urllib.request.Request(
-                f"{base_url}/api/v2/ipc/provision/{agent_id}",
-                method="POST",
-                headers={
-                    "Authorization": f"Bearer {admin_key}",
-                    "Content-Type": "application/json",
-                },
-                data=b"{}",
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    provisioned += 1
-        except Exception as e:
-            logger.debug("Could not provision IPC for %s: %s", agent_id, e)
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/api/v2/ipc/provision/coordinator",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {admin_key}",
+                "Content-Type": "application/json",
+            },
+            data=b"{}",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                provisioned += 1
+    except Exception as e:
+        logger.debug("Could not provision IPC for coordinator: %s", e)
 
-    # 2. Create delegations (coordinator delegates to researcher & coder)
-    #    Requires coordinator's own API key (subject_type=agent) and
-    #    ProcessTable (agent runtime). Best-effort — may fail if runtime
-    #    isn't active.
+    # 2. Delegate: coordinator → researcher, coordinator → coder
+    #    Delegation creates the worker agents (API keys + grants + IPC dirs).
+    #    researcher and coder are NOT top-level registered agents — they exist
+    #    only via delegation from coordinator.
     delegated = 0
+    worker_keys: dict[str, str] = {}
     coordinator_key = identity_keys.get("coordinator", {}).get("api_key", "")
     if coordinator_key:
         for deleg in DEMO_DELEGATIONS:
@@ -558,9 +557,29 @@ def _seed_agent_coordination(config: dict[str, Any], manifest: dict[str, Any]) -
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     if resp.status == 200:
+                        result = json.loads(resp.read())
                         delegated += 1
+                        worker_id = str(deleg["worker_id"])
+                        api_key = result.get("api_key", "")
+                        if api_key:
+                            worker_keys[worker_id] = api_key
+                        # Provision IPC for the delegated worker
+                        try:
+                            prov_req = urllib.request.Request(
+                                f"{base_url}/api/v2/ipc/provision/{worker_id}",
+                                method="POST",
+                                headers={
+                                    "Authorization": f"Bearer {admin_key}",
+                                    "Content-Type": "application/json",
+                                },
+                                data=b"{}",
+                            )
+                            with urllib.request.urlopen(prov_req, timeout=10):
+                                provisioned += 1
+                        except Exception:
+                            pass
             except Exception as e:
-                logger.debug("Could not create delegation: %s", e)
+                logger.debug("Could not create delegation for %s: %s", deleg["worker_id"], e)
     else:
         logger.debug("No coordinator API key — skipping delegations")
 

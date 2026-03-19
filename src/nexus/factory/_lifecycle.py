@@ -88,8 +88,10 @@ async def _do_link(
     def _brick_on(name: str) -> bool:
         return name in _resolved_bricks
 
-    # Stash on kernel so _do_initialize() can pass it to _register_vfs_hooks()
-    nx._brick_on = _brick_on
+    # Issue #1740: capture _brick_on via partial so it never touches nx.__dict__.
+    import functools
+
+    nx._initialize_fn = functools.partial(_do_initialize, brick_on=_brick_on)
 
     # --- Boot wired services → register into ServiceRegistry ---
     _wired = await _boot_wired_services(
@@ -138,7 +140,7 @@ async def _do_link(
     )
 
 
-async def _do_initialize(nx: Any) -> None:
+async def _do_initialize(nx: Any, *, brick_on: "Any" = None) -> None:
     """Phase 2 implementation: one-time side effects.  NO background threads.
 
     Prepares resources but remains static — no active threads or async loops.
@@ -163,7 +165,7 @@ async def _do_initialize(nx: Any) -> None:
         nx,
         permission_checker=nx._permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
-        brick_on=getattr(nx, "_brick_on", None),
+        brick_on=brick_on,
     )
 
     # --- BLM registration for late bricks (Issue #1704, #2991) ---

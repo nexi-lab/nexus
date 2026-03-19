@@ -126,9 +126,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "grant_traverse_on_implicit_dirs",  # Internal - grants TRAVERSE on implicit dirs during init
         "process_tiger_cache_queue",  # Internal - background worker processes cache updates
         "warm_tiger_cache",  # Internal - pre-computes permissions for cache warming
-        # Directory Visibility Cache internal methods - server-side optimization only
-        "clear_dir_visibility_cache",  # Internal - clears the directory visibility cache
-        "get_dir_visibility_cache_metrics",  # Internal - returns cache metrics for monitoring
         # Phase 2 Service Composition - Async delegation methods (Issue #988)
         # These are internal async methods that delegate to services. The original
         # sync mixin methods (without "a" prefix) already have @rpc_expose decorators.

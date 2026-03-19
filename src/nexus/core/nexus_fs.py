@@ -4381,9 +4381,6 @@ class NexusFS(  # type: ignore[misc]
         "list_mounts": ("mount_service", "list_mounts_sync"),
         "get_mount": ("mount_service", "get_mount_sync"),
         "has_mount": ("mount_service", "has_mount_sync"),
-        # Dir visibility cache: NexusFS method names → cache method names
-        "get_dir_visibility_cache_metrics": ("_dir_visibility_cache", "get_metrics"),
-        "clear_dir_visibility_cache": ("_dir_visibility_cache", "clear"),
         # SearchService async methods: a-prefix removed when calling service
         "asemantic_search": ("search_service", "semantic_search"),
         "asemantic_search_index": ("search_service", "semantic_search_index"),

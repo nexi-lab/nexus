@@ -21,6 +21,7 @@ from nexus.contracts.exceptions import InvalidPathError
 _MULTI_SLASH_RE = re.compile(r"/+")
 
 
+@functools.lru_cache(maxsize=1024)
 def validate_path(path: str, *, allow_root: bool = False) -> str:
     """Validate and normalize a virtual path.
 

@@ -96,9 +96,10 @@ class FakeCLIConnector(CLIConnector):
     def name(self) -> str:
         return "cli:test-cli:items"
 
-    def _execute_cli(self, args, stdin=None, context=None):
+    def _execute_cli(self, args, stdin=None, context=None, env=None):
         self._last_stdin = stdin
         self._last_args = args
+        self._last_env = env
         return self._mock_result
 
 
@@ -146,6 +147,24 @@ class TestWriteContent:
         assert "body: Hello" in connector._last_stdin
         # CLI args should include the command
         assert "test-cli" in connector._last_args
+
+    def test_auth_token_not_mixed_into_stdin(self) -> None:
+        """Codex fix: token goes via env/flag, not mixed into YAML stdin."""
+        connector = FakeCLIConnector()
+        # Simulate having a token
+        connector._token_manager = type(
+            "FakeTM", (), {"get_credentials": lambda self, **kw: {"access_token": "secret-tok-123"}}
+        )()
+        content = b"agent_intent: Testing auth transport separation\ntitle: Auth Test"
+        ctx = _context()
+
+        connector.write_content(content, ctx)
+
+        # stdin should contain ONLY the YAML payload, NOT the token
+        assert "secret-tok-123" not in connector._last_stdin
+        assert "title: Auth Test" in connector._last_stdin
+        # Token should be in auth args (--access-token flag for non-gh CLIs)
+        assert "secret-tok-123" in connector._last_args
 
     def test_missing_context_raises(self) -> None:
         connector = FakeCLIConnector()

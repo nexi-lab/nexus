@@ -119,6 +119,26 @@ class CLIConnector(
         self._token_manager_db = token_manager_db
         self._token_manager: Any = None
 
+        # Initialize TokenManager from database URL if provided.
+        # Follows the same pattern as OAuthConnectorMixin._init_oauth().
+        if token_manager_db:
+            try:
+                import importlib as _il
+
+                TokenManager = _il.import_module(
+                    "nexus.bricks.auth.oauth.token_manager"
+                ).TokenManager
+                from nexus.backends.connectors.utils import resolve_database_url
+
+                resolved_db = resolve_database_url(token_manager_db)
+                if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
+                    self._token_manager = TokenManager(db_url=resolved_db)
+                else:
+                    self._token_manager = TokenManager(db_path=resolved_db)
+                logger.debug("TokenManager initialized for CLI connector %s", self.CLI_NAME)
+            except Exception:
+                logger.debug("TokenManager not available for %s", self.CLI_NAME, exc_info=True)
+
         # Error mapper — uses config's custom patterns if available
         extra_patterns = None
         if config and config.error_patterns:
@@ -280,19 +300,22 @@ class CLIConnector(
         cli_args = self._build_cli_args(operation, validated, path)
 
         # Serialize validated payload as YAML for stdin.
-        # Token (if present) is prepended as a header line, then payload follows.
         payload_yaml = yaml.dump(
             validated.model_dump(exclude_none=True) if hasattr(validated, "model_dump") else data,
             default_flow_style=False,
         )
-        stdin_parts = []
-        if token:
-            stdin_parts.append(token)
-        stdin_parts.append(payload_yaml)
-        stdin_data = "\n".join(stdin_parts)
 
-        # Execute
-        result = self._execute_cli(cli_args, stdin=stdin_data, context=context)
+        # Auth token is passed via CLI-specific transport (env var or flag),
+        # NOT mixed into stdin. The payload YAML goes on stdin alone.
+        # - gh: GH_TOKEN env var
+        # - gws: --access-token flag (added to cli_args)
+        auth_env: dict[str, str] = {}
+        if token:
+            auth_env = self._build_auth_env(token)
+            cli_args = self._add_auth_args(cli_args, token)
+
+        # Execute with payload on stdin and auth via env/flag
+        result = self._execute_cli(cli_args, stdin=payload_yaml, context=context, env=auth_env)
 
         # Classify errors
         result = self._error_mapper.classify_result(result)
@@ -361,9 +384,41 @@ class CLIConnector(
                     args.append(write_op.command)
                     break
 
-        # Serialize validated data as YAML to stdin
-        # (actual data passed via stdin in _execute_cli, not as args)
         return args
+
+    def _build_auth_env(self, token: str) -> dict[str, str]:
+        """Build environment variables for CLI auth.
+
+        Different CLIs use different auth transports:
+        - gh: GH_TOKEN environment variable
+        - gws: --access-token flag (handled in _add_auth_args)
+
+        Subclasses can override for custom auth transports.
+        """
+        cli = self.CLI_NAME.lower()
+        if cli == "gh":
+            return {"GH_TOKEN": token}
+        # gws and others use flag-based auth, handled in _add_auth_args
+        return {}
+
+    def _add_auth_args(self, args: list[str], token: str) -> list[str]:
+        """Add auth flag to CLI args if the CLI uses flag-based auth.
+
+        Decision #2: token piped via stdin was the original plan, but
+        real CLIs use either env vars (gh) or flags (gws). This method
+        handles flag-based auth. Env-based auth is in _build_auth_env.
+
+        Token is NEVER passed as a bare positional argument visible in ps.
+        """
+        cli = self.CLI_NAME.lower()
+        if cli == "gh":
+            # gh uses GH_TOKEN env var, not a flag
+            return args
+        # gws and similar: use the configured auth flag
+        auth_flag = self.CLI_AUTH_FLAG
+        if self._config and self._config.auth:
+            auth_flag = self._config.auth.flag
+        return [*args, auth_flag, token]
 
     # --- CLI execution (subclasses must implement) ---
 
@@ -372,6 +427,7 @@ class CLIConnector(
         args: list[str],
         stdin: str | None = None,
         context: "OperationContext | None" = None,
+        env: dict[str, str] | None = None,
     ) -> CLIResult:
         """Execute a CLI command. Subclasses must override.
 
@@ -380,8 +436,9 @@ class CLIConnector(
 
         Args:
             args: CLI command arguments.
-            stdin: Optional stdin input (e.g., auth token + YAML data).
+            stdin: Optional stdin input (YAML payload).
             context: Operation context.
+            env: Additional environment variables (e.g., auth tokens).
 
         Returns:
             CLIResult with status, stdout, stderr, exit code.
@@ -404,6 +461,13 @@ class CLIConnector(
                 stderr=f"CLI '{cli_binary}' not found in PATH",
             )
 
+        # Merge auth env vars with current environment
+        import os
+
+        run_env = None
+        if env:
+            run_env = {**os.environ, **env}
+
         start = time.perf_counter()
         try:
             proc = subprocess.run(
@@ -412,6 +476,7 @@ class CLIConnector(
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=run_env,
             )
             duration_ms = (time.perf_counter() - start) * 1000
 

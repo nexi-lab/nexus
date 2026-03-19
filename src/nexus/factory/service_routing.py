@@ -105,7 +105,7 @@ async def enlist_wired_services(coordinator: Any, wired: Any) -> int:
     ``wired`` (WiredServices dataclass or dict), and calls
     ``await coordinator.enlist()`` with canonical name + exports.
 
-    All wired services are Q1 (static) — no HotSwappable or PersistentService
+    All wired services are Q1 (restart-required) — no HotSwappable or PersistentService
     — so enlist() auto-detects and registers them without lifecycle side effects.
 
     Returns the number of services enlisted.

@@ -8,15 +8,15 @@ distinguish service lifecycle tiers without coupling to concrete classes:
 
 Four-quadrant classification:
 
-    +------------------+-----------------+---------------------+
-    |                  | Invocation-only | Persistent-required |
-    +------------------+-----------------+---------------------+
-    | Static           | SearchService   | EventDeliveryWorker |
-    |                  | LLMService      |                     |
-    +------------------+-----------------+---------------------+
-    | HotSwappable     | ReBACService    | (future)            |
-    |                  | MountService    |                     |
-    +------------------+-----------------+---------------------+
+    +--------------------+-----------------+---------------------+
+    |                    | On-demand       | Persistent-required |
+    +--------------------+-----------------+---------------------+
+    | Restart-required   | SearchService   | EventDeliveryWorker |
+    |                    | LLMService      |                     |
+    +--------------------+-----------------+---------------------+
+    | HotSwappable       | ReBACService    | (future)            |
+    |                    | MountService    |                     |
+    +--------------------+-----------------+---------------------+
 
 Usage::
 
@@ -75,15 +75,24 @@ class ServiceQuadrant(enum.Enum):
              /        \\
            Q2          Q3
              \\        /
-              Q1 (static) ← least constrained
+              Q1 (restart-required) ← least constrained
 
     Q2 and Q3 are independent constraint dimensions:
     - Q2 adds hot-swap capability (service must implement drain/activate/hook_spec)
     - Q3 adds persistent requirement (environment must support long-running process)
     - Q4 is their union — both constraints apply
+
+    Naming rationale:
+    - **Restart-required** (Q1): replacing this service requires a full restart,
+      because it does not implement drain/activate for safe hot-swap.
+    - **HotSwappable** (Q2): service declares dispatch hooks and supports
+      drain → swap → activate at runtime — a capability declaration to the kernel.
+    - **On-demand** (column): service has no background tasks, only handles calls.
+    - **Persistent-required** (column): service has background work that must
+      be started/stopped (event loops, polling, workers).
     """
 
-    Q1_STATIC = "Q1"
+    Q1_RESTART_REQUIRED = "Q1"
     Q2_HOT_SWAPPABLE = "Q2"
     Q3_PERSISTENT = "Q3"
     Q4_BOTH = "Q4"
@@ -99,7 +108,7 @@ class ServiceQuadrant(enum.Enum):
             return ServiceQuadrant.Q2_HOT_SWAPPABLE
         if is_persistent:
             return ServiceQuadrant.Q3_PERSISTENT
-        return ServiceQuadrant.Q1_STATIC
+        return ServiceQuadrant.Q1_RESTART_REQUIRED
 
     @property
     def is_hot_swappable(self) -> bool:
@@ -115,7 +124,7 @@ class ServiceQuadrant(enum.Enum):
     def label(self) -> str:
         """Human-readable label for error messages and CLI output."""
         labels = {
-            ServiceQuadrant.Q1_STATIC: "Q1 (static)",
+            ServiceQuadrant.Q1_RESTART_REQUIRED: "Q1 (restart-required)",
             ServiceQuadrant.Q2_HOT_SWAPPABLE: "Q2 (HotSwappable)",
             ServiceQuadrant.Q3_PERSISTENT: "Q3 (PersistentService)",
             ServiceQuadrant.Q4_BOTH: "Q4 (HotSwappable + PersistentService)",
@@ -212,7 +221,7 @@ class PersistentService(Protocol):
     PersistentServices have background tasks that run continuously
     (e.g., event delivery polling, deferred permission flushing).
     They need an ``asyncio`` event loop and cannot operate in
-    invocation-only mode (Lambda, Cloud Run single-request).
+    on-demand mode (Lambda, Cloud Run single-request).
 
     The kernel and CLI use this protocol to determine distro type::
 
@@ -223,7 +232,7 @@ class PersistentService(Protocol):
         if persistent:
             log.info("Persistent distro: %s", persistent)
         else:
-            log.info("Invocation-compatible distro")
+            log.info("On-demand compatible distro")
 
     Implementors provide:
         start()  — begin background work (spawn tasks, open connections)

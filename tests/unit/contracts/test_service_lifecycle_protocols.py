@@ -153,20 +153,20 @@ class TestPersistentServiceProtocol:
 class TestFourQuadrant:
     """Verify the four-quadrant classification matrix."""
 
-    def test_static_invocation(self) -> None:
-        """Static + invocation-only: most common case."""
+    def test_restart_required_on_demand(self) -> None:
+        """Restart-required + on-demand: most common case."""
         svc = _PlainService()
         assert not isinstance(svc, HotSwappable)
         assert not isinstance(svc, PersistentService)
 
-    def test_hot_swappable_invocation(self) -> None:
-        """HotSwappable + invocation-only: can be swapped, no background tasks."""
+    def test_hot_swappable_on_demand(self) -> None:
+        """HotSwappable + on-demand: can be swapped, no background tasks."""
         svc = _FullHotSwappable()
         assert isinstance(svc, HotSwappable)
         assert not isinstance(svc, PersistentService)
 
-    def test_static_persistent(self) -> None:
-        """Static + persistent: has background tasks but no hot-swap support."""
+    def test_restart_required_persistent(self) -> None:
+        """Restart-required + persistent: has background tasks but no hot-swap support."""
         svc = _FullPersistent()
         assert not isinstance(svc, HotSwappable)
         assert isinstance(svc, PersistentService)

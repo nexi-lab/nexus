@@ -46,7 +46,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     app.state.ipc_storage_driver = ipc_storage
     app.state.ipc_provisioner = ipc_provisioner
 
-    # Enlist IPC driver + provisioner (Q1 — static, no lifecycle)
+    # Enlist IPC driver + provisioner (Q1 — restart-required, no lifecycle)
     coord = svc.service_coordinator
     if coord is not None:
         await coord.enlist("ipc_storage_driver", ipc_storage)

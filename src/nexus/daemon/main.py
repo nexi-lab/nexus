@@ -134,7 +134,7 @@ def _print_lifecycle_summary(nx: Any) -> None:
             parts.append(f"{n_hot} hot-swappable")
         if n_persistent:
             parts.append(f"{n_persistent} persistent")
-        distro = "persistent" if n_persistent else "invocation-only"
+        distro = "persistent" if n_persistent else "on-demand"
         parts.append(f"distro={distro}")
 
         click.echo(f"  Lifecycle: {', '.join(parts)}")

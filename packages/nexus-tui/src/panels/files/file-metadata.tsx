@@ -3,9 +3,9 @@
  */
 
 import React from "react";
-import * as crypto from "node:crypto";
 import type { FileItem } from "../../stores/files-store.js";
 import { formatTimestamp } from "../../shared/utils/format-time.js";
+import { statusColor } from "../../shared/theme.js";
 
 interface FileMetadataProps {
   readonly item: FileItem | null;
@@ -18,10 +18,20 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-function display(value: string | number | null | undefined): string {
+function truncate(value: string | null | undefined, max: number = 30): string {
   if (value === null || value === undefined) return "n/a";
-  if (typeof value === "number") return String(value);
-  return value;
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function MetaRow({ label, value, color }: { label: string; value: string; color?: string }): React.ReactNode {
+  return (
+    <box height={1} width="100%">
+      <text>
+        <span foregroundColor={statusColor.dim}>{`${label.padEnd(8)} `}</span>
+        <span foregroundColor={color}>{value}</span>
+      </text>
+    </box>
+  );
 }
 
 export function FileMetadata({ item }: FileMetadataProps): React.ReactNode {
@@ -33,41 +43,19 @@ export function FileMetadata({ item }: FileMetadataProps): React.ReactNode {
     );
   }
 
-  const lines: string[] = [
-    `Name: ${item.name}`,
-    `Path: ${item.path}`,
-    `Type: ${item.isDirectory ? "Directory" : "File"}`,
-  ];
-
-  if (!item.isDirectory) {
-    lines.push(`Size: ${formatBytes(item.size)}`);
-  }
-
-  lines.push(`ETag: ${display(item.etag)}`);
-  lines.push(`Version: ${display(item.version)}`);
-  lines.push(`MIME: ${display(item.mimeType)}`);
-  lines.push(`Owner: ${display(item.owner)}`);
-  lines.push(`Permissions: ${display(item.permissions)}`);
-  lines.push(`Zone: ${display(item.zoneId)}`);
-
-  // URN (computed from path, matching NexusURN.for_file() in Python)
-  if (item.path && item.zoneId) {
-    const pathHash = crypto
-      .createHash("sha256")
-      .update(item.path)
-      .digest("hex")
-      .slice(0, 32);
-    lines.push(`URN: urn:nexus:file:${item.zoneId}:${pathHash}`);
-  }
-
-  lines.push(`Modified: ${item.modifiedAt ? formatTimestamp(item.modifiedAt) : "n/a"}`);
-
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <text>{"─── Metadata ───"}</text>
-      {lines.map((line, i) => (
-        <text key={i}>{line}</text>
-      ))}
+      <MetaRow label="Name" value={item.name} color={statusColor.info} />
+      <MetaRow label="Path" value={truncate(item.path, 40)} color={statusColor.reference} />
+      <MetaRow label="Type" value={item.isDirectory ? "Directory" : "File"} />
+      {!item.isDirectory && <MetaRow label="Size" value={formatBytes(item.size)} />}
+      <MetaRow label="ETag" value={truncate(item.etag, 20)} />
+      <MetaRow label="Version" value={truncate(item.version != null ? String(item.version) : null)} />
+      <MetaRow label="MIME" value={truncate(item.mimeType)} />
+      <MetaRow label="Owner" value={truncate(item.owner)} />
+      <MetaRow label="Perms" value={truncate(item.permissions)} />
+      <MetaRow label="Zone" value={item.zoneId ?? "n/a"} color={item.zoneId ? statusColor.reference : undefined} />
+      <MetaRow label="Modified" value={item.modifiedAt ? formatTimestamp(item.modifiedAt) : "n/a"} />
     </box>
   );
 }

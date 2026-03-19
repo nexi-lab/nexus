@@ -9,7 +9,7 @@ static admin key) instead of the legacy JWT-only ``get_authenticated_user``.
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
@@ -243,21 +243,40 @@ async def get_zone(
         return _zone_to_response(zone)
 
 
+def _get_session_factory(request: Request) -> Any:
+    """Get a DB session factory from auth provider or NexusFS."""
+    # Try auth provider first
+    try:
+        auth = get_auth_provider()
+        return auth.session_factory
+    except HTTPException:
+        pass
+    # Fallback: NexusFS.SessionLocal
+    nx = getattr(request.app.state, "nexus_fs", None)
+    sf = getattr(nx, "SessionLocal", None) if nx else None
+    if sf is not None:
+        return sf
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="No database session available for zone listing",
+    )
+
+
 @router.get("", response_model=ZoneListResponse)
 async def list_zones(
+    request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
     limit: int = 100,
     offset: int = 0,
 ) -> ZoneListResponse:
     """List zones the authenticated user belongs to.
 
     Global admins can see all zones. Regular users only see zones
-    they are members of.
+    they are members of. Works with both DatabaseLocalAuth and
+    API key authentication.
 
     Args:
         auth_result: Authenticated identity (JWT, API key, or static admin key)
-        auth: Authentication provider for DB session access
         limit: Maximum number of zones to return
         offset: Number of zones to skip
 
@@ -270,7 +289,8 @@ async def list_zones(
     user_id = auth_result["subject_id"]
     is_admin = auth_result.get("is_admin", False)
 
-    with auth.session_factory() as session:
+    session_factory = _get_session_factory(request)
+    with session_factory() as session:
         if is_admin:
             # Global admins see all active zones
             stmt = (
@@ -293,7 +313,7 @@ async def list_zones(
             )
         else:
             # Regular users only see zones they belong to
-            nx = get_nexus_instance()
+            nx = get_nexus_instance() or getattr(request.app.state, "nexus_fs", None)
             rebac_mgr = getattr(nx, "_rebac_manager", None) if nx else None
             # API-key auth may include zone_id — restrict to that zone
             auth_zone = auth_result.get("zone_id")

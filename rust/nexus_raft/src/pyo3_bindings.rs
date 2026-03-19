@@ -917,16 +917,13 @@ impl PyZoneManager {
         }
     }
 
-    /// Set authorized peer IDs for peers_bootstrap mode.
-    /// Must be called before followers attempt JoinCluster with peers_bootstrap=true.
-    pub fn set_authorized_peers(&self, peer_ids: Vec<u64>) -> PyResult<()> {
-        // The authorized peers are stored on the server via the bootstrap handle.
-        // For now we update the registry-level peer list. The server reads authorized_peer_ids
-        // from its construction — we need a different approach for runtime updates.
-        // TODO: This is a workaround. The proper fix is to make authorized_peer_ids
-        // shared via Arc<RwLock<>> like dynamic_ca.
-        tracing::info!("Authorized peers set: {:?}", peer_ids);
-        Ok(())
+    /// Get the set of node IDs that have successfully called JoinCluster.
+    /// Used by the leader to check if all peers have their certs before proposing TLS upgrade.
+    pub fn joined_peer_ids(&self) -> PyResult<Vec<u64>> {
+        match &self.tls_bootstrap_handle {
+            Some(handle) => Ok(handle.joined_peer_ids()),
+            None => Ok(vec![]),
+        }
     }
 
     /// Restart the gRPC server with TLS. Existing zones are preserved.

@@ -81,6 +81,8 @@ pub struct RaftGrpcServer {
     /// Dynamic CA material — set by leader after CA generation (2-phase bootstrap).
     /// Shared with the running service impl via Arc<RwLock<>>.
     dynamic_ca: Arc<RwLock<Option<DynamicCaMaterial>>>,
+    /// Tracks which peers have successfully called JoinCluster (peers_bootstrap mode).
+    joined_peers: Arc<RwLock<std::collections::HashSet<u64>>>,
 }
 
 /// CA material injected at runtime for 2-phase TLS bootstrap.
@@ -93,12 +95,19 @@ struct DynamicCaMaterial {
 /// Handle for injecting CA material into a running server (2-phase bootstrap).
 pub struct TlsBootstrapHandle {
     dynamic_ca: Arc<RwLock<Option<DynamicCaMaterial>>>,
+    /// Set of node IDs that have successfully called JoinCluster (peers_bootstrap mode).
+    joined_peers: Arc<RwLock<std::collections::HashSet<u64>>>,
 }
 
 impl TlsBootstrapHandle {
     /// Set CA material so the running server can handle JoinCluster requests.
     pub fn set_ca_material(&self, ca_pem: Vec<u8>, ca_key_pem: Vec<u8>) {
         *self.dynamic_ca.write().unwrap() = Some(DynamicCaMaterial { ca_pem, ca_key_pem });
+    }
+
+    /// Get the set of node IDs that have called JoinCluster successfully.
+    pub fn joined_peer_ids(&self) -> Vec<u64> {
+        self.joined_peers.read().unwrap().iter().copied().collect()
     }
 }
 
@@ -117,6 +126,7 @@ impl RaftGrpcServer {
             base_path: None,
             authorized_peer_ids: None,
             dynamic_ca: Arc::new(RwLock::new(None)),
+            joined_peers: Arc::new(RwLock::new(std::collections::HashSet::new())),
         }
     }
 
@@ -146,6 +156,7 @@ impl RaftGrpcServer {
     pub fn tls_bootstrap_handle(&self) -> TlsBootstrapHandle {
         TlsBootstrapHandle {
             dynamic_ca: self.dynamic_ca.clone(),
+            joined_peers: self.joined_peers.clone(),
         }
     }
 
@@ -176,6 +187,7 @@ impl RaftGrpcServer {
             base_path: self.base_path.clone(),
             authorized_peer_ids: self.authorized_peer_ids.clone(),
             dynamic_ca: self.dynamic_ca.clone(),
+            joined_peers: self.joined_peers.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
@@ -236,6 +248,7 @@ impl RaftGrpcServer {
             base_path: self.base_path.clone(),
             authorized_peer_ids: self.authorized_peer_ids.clone(),
             dynamic_ca: self.dynamic_ca.clone(),
+            joined_peers: self.joined_peers.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
@@ -540,6 +553,8 @@ struct ZoneApiServiceImpl {
     authorized_peer_ids: Option<Vec<u64>>,
     /// Dynamic CA material — set at runtime by leader (2-phase bootstrap).
     dynamic_ca: Arc<RwLock<Option<DynamicCaMaterial>>>,
+    /// Tracks which peers have successfully called JoinCluster.
+    joined_peers: Arc<RwLock<std::collections::HashSet<u64>>>,
 }
 
 #[tonic::async_trait]
@@ -1034,9 +1049,13 @@ impl ZoneApiService for ZoneApiServiceImpl {
             }
         }
 
+        // Track this peer as joined (for leader's all-ready check)
+        self.joined_peers.write().unwrap().insert(req.node_id);
+
         tracing::info!(
             node_id = req.node_id,
             node_address = req.node_address,
+            joined_count = self.joined_peers.read().unwrap().len(),
             "JoinCluster: node certificate signed and provisioned successfully",
         );
 

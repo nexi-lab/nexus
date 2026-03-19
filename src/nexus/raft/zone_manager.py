@@ -17,7 +17,7 @@ All zones share one gRPC port (zone_id routing in transport layer).
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
@@ -738,32 +738,25 @@ class ZoneManager:
     # 2-phase TLS bootstrap
     # -------------------------------------------------------------------------
 
+    # System keys in the Raft metastore for TLS coordination.
+    # All nodes see these via Raft consensus (deterministic, ordered).
+    _TLS_CA_KEY = "__system__/tls/ca_pem"
+    _TLS_UPGRADE_KEY = "__system__/tls/upgrade"
+
     def bootstrap_tls(self) -> bool:
-        """Phase 2 of 2-phase TLS bootstrap: leader generates CA, followers get certs.
+        """2-phase TLS bootstrap coordinated via Raft consensus.
 
         Called by ensure_topology() before topology work. Returns True when
-        TLS is ready (or not needed).
+        TLS is ready (or not needed). Each call advances the state machine:
+
+        1. Leader generates CA → proposes ca_pem to Raft metastore
+        2. All nodes see CA via Raft → followers call JoinCluster for certs
+        3. Leader tracks JoinCluster calls → when all peers served, proposes upgrade
+        4. All nodes see upgrade → restart transport with mTLS
+
+        Only the leader writes to Raft. Followers only read + call JoinCluster RPC.
         """
-        import time
-
         if not self._two_phase_tls:
-            return True
-
-        # Check if certs appeared on disk (from a previous call or restart)
-        from nexus.security.tls.config import ZoneTlsConfig
-
-        existing = ZoneTlsConfig.from_data_dir(self._base_path)
-        if existing is not None:
-            # Grace period: leader waits before upgrading to mTLS so followers
-            # can call JoinCluster over plaintext first.
-            ca_pem_path = Path(self._base_path) / "tls" / "ca.pem"
-            if ca_pem_path.exists():
-                age = time.time() - ca_pem_path.stat().st_mtime
-                if age < 15:
-                    logger.debug("TLS certs ready but waiting for grace period (%.1fs/15s)", age)
-                    return False
-            self._restart_with_tls(existing)
-            self._two_phase_tls = False
             return True
 
         if not self._root_zone_id:
@@ -773,22 +766,61 @@ class ZoneManager:
         if root_store is None:
             return False
 
-        leader_id = root_store._engine.leader_id()
+        raft_engine = root_store._engine
+        leader_id = raft_engine.leader_id()
         if not leader_id:
             return False  # No leader yet
 
-        if leader_id == self._node_id:
-            return self._leader_tls_bootstrap()
-        else:
-            return self._follower_tls_bootstrap(leader_id)
+        # --- Check if upgrade signal is in Raft → restart transport ---
+        upgrade = raft_engine.get_metadata(self._TLS_UPGRADE_KEY)
+        if upgrade is not None:
+            from nexus.security.tls.config import ZoneTlsConfig
 
-    def _leader_tls_bootstrap(self) -> bool:
-        """Leader: generate CA + own cert, set CA material on running server."""
-        from nexus.security.tls.certgen import generate_node_cert, generate_zone_ca, save_pem
+            existing = ZoneTlsConfig.from_data_dir(self._base_path)
+            if existing is not None:
+                self._restart_with_tls(existing)
+                self._two_phase_tls = False
+                logger.info("TLS bootstrap complete — transport upgraded to mTLS")
+                return True
+            logger.warning("TLS upgrade signal seen but no certs on disk")
+            return False
+
+        # --- Leader: generate CA and propose to Raft ---
+        ca_pem_in_raft = raft_engine.get_metadata(self._TLS_CA_KEY)
+        if ca_pem_in_raft is None:
+            if leader_id == self._node_id:
+                self._leader_generate_ca(raft_engine)
+            return False
+
+        # --- Followers: get cert from leader via JoinCluster ---
+        tls_dir = Path(self._base_path) / "tls"
+        if not (tls_dir / "node.pem").exists():
+            if leader_id != self._node_id:
+                self._follower_get_cert(leader_id, ca_pem_in_raft)
+            return False
+
+        # --- Leader: check if all peers have certs (tracked via JoinCluster RPCs) ---
+        # The leader proposes upgrade once all expected peers called JoinCluster.
+        # Followers just wait for the upgrade signal.
+        if leader_id == self._node_id:
+            self._leader_check_all_ready(raft_engine)
+
+        return False  # Wait for upgrade signal
+
+    def _leader_generate_ca(self, raft_engine: Any) -> None:
+        """Leader: generate CA + own cert, propose CA to Raft, set on server."""
+        from nexus.security.tls.certgen import (
+            cert_fingerprint,
+            generate_node_cert,
+            generate_zone_ca,
+            save_pem,
+        )
+        from nexus.security.tls.join_token import generate_join_token
 
         tls_dir = Path(self._base_path) / "tls"
         zone_id = ROOT_ZONE_ID
 
+        # Generate CA + own node cert
         ca_cert, ca_key = generate_zone_ca(zone_id)
         save_pem(tls_dir / "ca.pem", ca_cert)
         save_pem(tls_dir / "ca-key.pem", ca_key, is_private=True)
@@ -797,48 +829,34 @@ class ZoneManager:
         save_pem(tls_dir / "node.pem", node_cert)
         save_pem(tls_dir / "node-key.pem", node_key, is_private=True)
 
-        # Generate join token for future joiners
-        from nexus.security.tls.certgen import cert_fingerprint
-        from nexus.security.tls.join_token import generate_join_token
-
+        # Generate join token for future external joiners
         token, pw_hash = generate_join_token(ca_cert)
         (tls_dir / "join-token").write_text(token)
         (tls_dir / "join-token-hash").write_text(pw_hash)
-        fp = cert_fingerprint(ca_cert)
-        logger.info("Leader: CA generated (fingerprint: %s), join token: %s", fp, token)
 
-        # Set CA material on the running plaintext server so followers can call JoinCluster
+        fp = cert_fingerprint(ca_cert)
+        logger.info("Leader: CA generated (fingerprint: %s)", fp)
+
+        # Propose CA cert to Raft — all nodes will see it after commit
         ca_pem = (tls_dir / "ca.pem").read_bytes()
+        try:
+            raft_engine.set_metadata(self._TLS_CA_KEY, ca_pem)
+            logger.info("Leader: CA cert proposed to Raft metastore")
+        except RuntimeError as e:
+            logger.warning("Failed to propose CA to Raft: %s", e)
+            return
+
+        # Set CA material on running server so JoinCluster RPCs work
         ca_key_pem = (tls_dir / "ca-key.pem").read_bytes()
         self._py_mgr.set_ca_material(ca_pem, ca_key_pem)
 
-        # Don't restart with mTLS yet — followers need to call JoinCluster first (over plaintext).
-        # On the NEXT health check call, certs will exist on disk → restart_with_tls().
-        return False
-
-    def _follower_tls_bootstrap(self, leader_id: int) -> bool:
-        """Follower: call JoinCluster on leader to get signed certs."""
+    def _follower_get_cert(self, leader_id: int, ca_pem: bytes) -> None:
+        """Follower: call JoinCluster on leader over plaintext to get signed cert."""
         peers_str = os.environ.get("NEXUS_PEERS", "")
-        leader_addr = None
-        for p in peers_str.split(","):
-            p = p.strip()
-            if "@" in p:
-                parts = p.split("@", 1)
-                try:
-                    if int(parts[0]) == leader_id:
-                        addr = parts[1]
-                        if not addr.startswith("http"):
-                            addr = f"http://{addr}"
-                        leader_addr = addr
-                        break
-                except ValueError:
-                    continue
-
+        leader_addr = self._find_peer_address(peers_str, leader_id)
         if leader_addr is None:
-            logger.warning("Cannot find leader %d address in NEXUS_PEERS", leader_id)
-            return False
+            return
 
-        # Call JoinCluster via gRPC (plaintext — no certs yet)
         try:
             import grpc
 
@@ -857,13 +875,18 @@ class ZoneManager:
             response = stub.JoinCluster(request, timeout=10.0)
         except Exception as e:
             logger.debug("JoinCluster to leader %d failed (will retry): %s", leader_id, e)
-            return False
+            return
 
         if not response.success:
             logger.debug("JoinCluster rejected (will retry): %s", response.error)
-            return False
+            return
 
-        # Save certs
+        # Verify CA matches what's in Raft
+        if response.ca_pem != ca_pem:
+            logger.error("CA mismatch: JoinCluster response CA differs from Raft CA")
+            return
+
+        # Save certs to disk
         tls_dir = Path(self._base_path) / "tls"
         tls_dir.mkdir(parents=True, exist_ok=True)
         (tls_dir / "ca.pem").write_bytes(response.ca_pem)
@@ -873,8 +896,50 @@ class ZoneManager:
         write_secret_file(tls_dir / "node-key.pem", response.node_key_pem)
         logger.info("Follower: received signed cert from leader %d", leader_id)
 
-        # On next call, certs exist on disk → restart_with_tls()
-        return False
+    def _leader_check_all_ready(self, raft_engine: Any) -> None:
+        """Leader: check if all peers have called JoinCluster, then propose upgrade.
+
+        The server tracks JoinCluster calls via joined_peers HashSet in Rust.
+        The leader also counts itself (it has certs from _leader_generate_ca).
+        """
+        if not self._authorized_peer_ids:
+            return
+
+        joined = set(self._py_mgr.joined_peer_ids())
+        # Leader counts itself (it generated its own cert, didn't call JoinCluster)
+        joined.add(self._node_id)
+
+        expected = set(self._authorized_peer_ids)
+        missing = expected - joined
+        if missing:
+            logger.debug(
+                "TLS upgrade: waiting for peers %s (joined: %s)", sorted(missing), sorted(joined)
+            )
+            return
+
+        # All peers ready — propose upgrade via Raft consensus
+        try:
+            raft_engine.set_metadata(self._TLS_UPGRADE_KEY, b"1")
+            logger.info("Leader: all peers ready — TLS upgrade proposed to Raft")
+        except RuntimeError as e:
+            logger.warning("Failed to propose TLS upgrade: %s", e)
+
+    @staticmethod
+    def _find_peer_address(peers_str: str, node_id: int) -> str | None:
+        """Find a peer's address from NEXUS_PEERS string."""
+        for p in peers_str.split(","):
+            p = p.strip()
+            if "@" in p:
+                parts = p.split("@", 1)
+                try:
+                    if int(parts[0]) == node_id:
+                        addr = parts[1]
+                        if not addr.startswith("http"):
+                            addr = f"http://{addr}"
+                        return addr
+                except ValueError:
+                    continue
+        return None
 
     def _restart_with_tls(self, tls_config: "ZoneTlsConfig") -> None:
         """Restart the gRPC server with mTLS. Existing Raft zones are preserved."""

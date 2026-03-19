@@ -81,10 +81,12 @@ def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
         path=clean_path,
         is_directory=is_dir,
         size=entry.get("size", 0) if not is_dir else 0,
-        modified_at=None,
+        modified_at=entry.get("modified_at"),
         etag=entry.get("etag"),
         mime_type=None,
-        zone_id=None,
+        zone_id=entry.get("zone_id"),
+        version=entry.get("version"),
+        owner=entry.get("owner_id"),
     )
 
 

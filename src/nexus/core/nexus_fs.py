@@ -4640,6 +4640,10 @@ class NexusFS(  # type: ignore[misc]
                             and self.metadata.is_implicit_directory(e.path)
                         )
                         else e.entry_type,
+                        "zone_id": e.zone_id,
+                        "owner_id": e.owner_id,
+                        "modified_at": e.modified_at.isoformat() if e.modified_at else None,
+                        "version": e.version,
                     }
                     for e in result.items
                 ]
@@ -4661,6 +4665,10 @@ class NexusFS(  # type: ignore[misc]
                         and self.metadata.is_implicit_directory(e.path)
                     )
                     else e.entry_type,
+                    "zone_id": e.zone_id,
+                    "owner_id": e.owner_id,
+                    "modified_at": e.modified_at.isoformat() if e.modified_at else None,
+                    "version": e.version,
                 }
                 for e in entries
             ]

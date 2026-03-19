@@ -15,6 +15,24 @@ CONFIG_SEARCH_PATHS = ("./nexus.yaml", "./nexus.yml")
 MANIFEST_FILENAME = ".demo-manifest.json"
 
 # ---------------------------------------------------------------------------
+# Demo zones — multi-zone setup for cross-zone search demo
+# ---------------------------------------------------------------------------
+
+DEMO_ZONES = [
+    {
+        "zone_id": "root",
+        "name": "Root Zone",
+        "description": "Default zone — demo workspace, customer data, agent coordination.",
+    },
+    {
+        "zone_id": "research",
+        "name": "Research Lab",
+        "description": "Internal R&D zone — employee profiles, product specs, and engineering docs. "
+        "Isolated from customer data in the root zone.",
+    },
+]
+
+# ---------------------------------------------------------------------------
 # Demo identities
 # ---------------------------------------------------------------------------
 

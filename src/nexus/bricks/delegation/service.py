@@ -188,16 +188,17 @@ class DelegationService:
             delegation_mode.value,
         )
 
-        # 6. Register worker agent via ProcessTable
-        if self._process_table is None:
-            raise DelegationError("process_table is required for DelegationService")
-        self._process_table.register_external(
-            worker_name,
-            coordinator_owner_id,
-            zone_id or ROOT_ZONE_ID,
-            connection_id=worker_id,
-            labels={"delegated_by": coordinator_agent_id},
-        )
+        # 6. Register worker agent via ProcessTable (optional — Nexus works
+        #    without a running agent runtime; delegation is an identity/permission
+        #    operation, not a process lifecycle operation)
+        if self._process_table is not None:
+            self._process_table.register_external(
+                worker_name,
+                coordinator_owner_id,
+                zone_id or ROOT_ZONE_ID,
+                connection_id=worker_id,
+                labels={"delegated_by": coordinator_agent_id},
+            )
 
         try:
             # 7. Create ReBAC tuples for child grants
@@ -243,7 +244,8 @@ class DelegationService:
 
         except Exception:
             # Cleanup: unregister agent on failure (no key exists yet)
-            self._process_table.unregister_external(worker_id)
+            if self._process_table is not None:
+                self._process_table.unregister_external(worker_id)
             raise
 
         logger.info(
@@ -302,10 +304,9 @@ class DelegationService:
         # Step 2: Revoke API key
         self._revoke_worker_api_key(record.agent_id)
 
-        # Step 3: Unregister agent entity
-        if self._process_table is None:
-            raise DelegationError("process_table is required for DelegationService")
-        self._process_table.unregister_external(record.agent_id)
+        # Step 3: Unregister agent entity (if ProcessTable available)
+        if self._process_table is not None:
+            self._process_table.unregister_external(record.agent_id)
 
         logger.info(
             "[Delegation] Revoked delegation=%s worker=%s",
@@ -777,7 +778,7 @@ class DelegationService:
                 intent=intent,
                 parent_delegation_id=parent_delegation_id,
                 depth=depth,
-                can_sub_delegate=can_sub_delegate,
+                can_sub_delegate=int(can_sub_delegate),
             )
             session.add(model)
 

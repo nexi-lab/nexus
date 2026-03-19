@@ -769,6 +769,7 @@ class ZoneManager:
         raft_engine = root_store._engine
         leader_id = raft_engine.leader_id()
         if not leader_id:
+            logger.info("bootstrap_tls: no leader yet (node=%d)", self._node_id)
             return False  # No leader yet
 
         # --- Check if upgrade signal is in Raft → restart transport ---
@@ -787,6 +788,13 @@ class ZoneManager:
 
         # --- Leader: generate CA and propose to Raft ---
         ca_pem_in_raft = raft_engine.get_metadata(self._TLS_CA_KEY)
+        logger.info(
+            "bootstrap_tls: node=%d leader=%d ca_in_raft=%s has_cert=%s",
+            self._node_id,
+            leader_id,
+            ca_pem_in_raft is not None,
+            (Path(self._base_path) / "tls" / "node.pem").exists(),
+        )
         if ca_pem_in_raft is None:
             if leader_id == self._node_id:
                 self._leader_generate_ca(raft_engine)
@@ -860,7 +868,7 @@ class ZoneManager:
         try:
             import grpc
 
-            from nexus.raft._proto.nexus.raft import transport_pb2, transport_pb2_grpc
+            from nexus.raft import transport_pb2, transport_pb2_grpc
 
             target = leader_addr.replace("http://", "").replace("https://", "")
             channel = grpc.insecure_channel(target)
@@ -874,11 +882,11 @@ class ZoneManager:
             )
             response = stub.JoinCluster(request, timeout=10.0)
         except Exception as e:
-            logger.debug("JoinCluster to leader %d failed (will retry): %s", leader_id, e)
+            logger.info("JoinCluster to leader %d failed (will retry): %s", leader_id, e)
             return
 
         if not response.success:
-            logger.debug("JoinCluster rejected (will retry): %s", response.error)
+            logger.info("JoinCluster rejected by leader (will retry): %s", response.error)
             return
 
         # Verify CA matches what's in Raft

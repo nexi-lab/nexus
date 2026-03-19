@@ -1,4 +1,10 @@
-"""Factory orchestrator — create_nexus_services, create_nexus_fs."""
+"""factory/orchestrator.py — the init/main.c of Nexus.
+
+Complete boot sequence, readable top-to-bottom.
+``create_nexus_fs()`` is the single entry point — read it to understand
+the entire boot sequence.  ``create_nexus_services()`` is a callable
+sub-sequence for callers who need the service containers separately.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +12,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from nexus.backends.base.backend import Backend
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.types import AuditConfig
@@ -25,6 +29,11 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+
+# =====================================================================
+# Sub-sequence: create service containers (Tier 0/1/2)
+# =====================================================================
 
 
 def create_nexus_services(
@@ -241,6 +250,11 @@ def create_nexus_services(
     return kernel_services, system_services, brick_services
 
 
+# =====================================================================
+# Main boot sequence — the init/main.c of Nexus
+# =====================================================================
+
+
 async def create_nexus_fs(
     backend: "Backend",
     metadata_store: "MetastoreABC",
@@ -263,7 +277,19 @@ async def create_nexus_fs(
     agent_id: str | None = None,
     workflow_engine: "WorkflowProtocol | None" = None,
 ) -> "NexusFS":
-    """Create NexusFS with default services — the recommended entry point.
+    """Create NexusFS with full service wiring — the recommended entry point.
+
+    Read this function top-to-bottom to understand the entire boot sequence.
+    Each call is a black box — drill into the implementation only if needed.
+
+    Phases follow the OS kernel boot model:
+
+      Config  — resolve router, EventBus gating, service containers
+      Tier 0  — validate Storage Pillars (via create_nexus_services)
+      Tier 1  — system services (ReBAC, permissions, audit)
+      Tier 2  — brick services (search, workflows, IPC, governance)
+      Link    — wire topology in memory (no I/O)
+      Init    — one-time side effects (hook registration, IPC mount)
 
     Args:
         backend: Backend instance for file storage.
@@ -288,27 +314,22 @@ async def create_nexus_fs(
 
     Returns:
         Fully configured NexusFS instance with services injected.
-
-    .. versionchanged:: Issue #2034
-        ``services`` param replaced by ``kernel_services``, ``system_services``,
-        ``brick_services`` (3-tier split).
     """
+    from dataclasses import replace as _dc_replace
+
+    from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.core.config import BrickServices as _BrickServices
-    from nexus.core.config import (
-        DistributedConfig as _DistributedConfig,
-    )
+    from nexus.core.config import DistributedConfig as _DistributedConfig
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import SystemServices as _SystemServices
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
 
-    # Create and configure router
+    # ── Config resolution ─────────────────────────────────────────────
     router = PathRouter(metadata_store)
     router.add_mount("/", backend)
 
     # KERNEL-ARCHITECTURE §2: No CacheStore AND no Redis/Dragonfly → EventBus disabled.
-    # EventBus uses Redis/Dragonfly pub/sub independently of CacheStore, so only
-    # disable when neither a real CacheStore nor a Redis URL is available.
     _has_real_cache = cache_store is not None
     if _has_real_cache:
         from nexus.contracts.cache_store import NullCacheStore as _NullCacheStore
@@ -322,12 +343,10 @@ async def create_nexus_fs(
         if not _has_event_url:
             _base_dist = distributed or _DistributedConfig()
             if _base_dist.enable_events:
-                from dataclasses import replace as _dc_replace
-
                 distributed = _dc_replace(_base_dist, enable_events=False)
                 logger.debug("EventBus disabled: no CacheStore or Redis/Dragonfly URL")
 
-    # Create services if record_store is provided and no pre-built services.
+    # ── Tier 0/1/2: Create service containers ─────────────────────────
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
     # this branch is skipped — bare kernel with empty SystemServices/BrickServices.
     if kernel_services is None and record_store is not None:
@@ -356,18 +375,14 @@ async def create_nexus_fs(
     else:
         # Use provided services but ensure router is set (frozen — use replace)
         if kernel_services.router is None:
-            from dataclasses import replace as _dc_replace
-
             kernel_services = _dc_replace(kernel_services, router=router)
 
-    # Default system/brick to empty containers when not provided
     if system_services is None:
         system_services = _SystemServices()
     if brick_services is None:
         brick_services = _BrickServices()
 
-    from nexus.factory._lifecycle import _do_initialize, _do_link
-
+    # ── Construct kernel ──────────────────────────────────────────────
     nx = NexusFS(
         metadata_store=metadata_store,
         record_store=record_store,
@@ -382,248 +397,153 @@ async def create_nexus_fs(
         system_services=system_services,
         brick_services=brick_services,
     )
-    nx._link_fn = _do_link
-    nx._initialize_fn = _do_initialize
-    await nx.link(
-        enabled_bricks=enabled_bricks,
-        parsing=parsing,
-        workflow_engine=workflow_engine,
-    )
-    await nx.initialize()
-    return nx
 
+    # ── LINK — wire topology (pure memory, no I/O) ────────────────────
+    _sys = nx._system_services
+    nx._permission_enforcer = _sys.permission_enforcer  # Issue #1706: override sentinel
 
-async def _register_vfs_hooks(
-    nx: "NexusFS",
-    *,
-    permission_checker: Any = None,
-    auto_parse: bool = True,
-    brick_on: "Callable[[str], bool] | None" = None,
-    parse_fn: Any = None,
-) -> None:
-    """Register hooks + observers via coordinator.enlist() (Issue #900, #1709).
+    _parsing = parsing if parsing is not None else nx._parse_config
 
-    Kernel creates KernelDispatch with empty callback lists at init.
-    This function populates them at boot — modules register into
-    kernel-owned infrastructure, kernel never auto-constructs hooks.
+    # ParsersBrick (owns both registries — Issue #1523)
+    from nexus.bricks.parsers.brick import ParsersBrick
 
-    Issue #1708/1709: All hooks enlisted via coordinator.enlist() —
-    single entry point, no fallback.  Coordinator is always available
-    (created in _do_link for local profiles, _boot_remote_services for REMOTE).
-    """
-    from nexus.factory._helpers import _make_gate
+    parsers_brick = ParsersBrick(parsing_config=_parsing)
+    _parse_fn = parsers_brick.create_parse_fn()
 
-    _on = _make_gate(brick_on)
+    # CacheBrick (owns all cache domain services — Issue #1524)
+    from nexus.cache.brick import CacheBrick
 
-    _coordinator = nx._service_coordinator
-
-    async def _enlist(name: str, hook: Any) -> None:
-        """Enlist hook via coordinator — the single entry point."""
-        await _coordinator.enlist(name, hook)
-
-    # ── Permission pre-intercept hook (Issue #899) ────────────────
-    if permission_checker is not None:
-        from nexus.bricks.rebac.permission_hook import PermissionCheckHook
-
-        _perm_hook = PermissionCheckHook(
-            checker=permission_checker,
-            metadata_store=nx.metadata,
-            default_context=nx._default_context,
-            enforce_permissions=nx._enforce_permissions,
-            permission_enforcer=nx._system_services.permission_enforcer
-            if nx._system_services
-            else None,
-            descendant_checker=getattr(nx, "_descendant_checker", None),
-        )
-        await _enlist("permission", _perm_hook)
-
-    # ── Audit write observer as interceptor (Issue #900) ──────────
-    # Registered FIRST so it runs before other hooks (audit before side effects).
-    write_observer = (
-        getattr(nx._system_services, "write_observer", None) if nx._system_services else None
-    )
-    if write_observer is not None:
-        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
-
-        strict = getattr(write_observer, "_strict_mode", True)
-        audit = AuditWriteInterceptor(write_observer, strict_mode=strict)
-        await _enlist("audit", audit)
-
-    # DynamicViewerReadHook (post-read: column-level CSV filtering)
-    has_viewer = (
-        (getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None)
-        is not None
-        and hasattr(nx, "get_dynamic_viewer_config")
-        and hasattr(nx, "apply_dynamic_viewer_filter")
-    )
-    if has_viewer:
-        from nexus.bricks.rebac.dynamic_viewer_hook import DynamicViewerReadHook
-        from nexus.lib.context_utils import get_subject_from_context
-
-        _viewer_hook = DynamicViewerReadHook(
-            get_subject=get_subject_from_context,
-            get_viewer_config=nx.get_dynamic_viewer_config,
-            apply_filter=nx.apply_dynamic_viewer_filter,
-        )
-        await _enlist("viewer", _viewer_hook)
-
-    # ContentParserEngine (on-demand parsed reads — Issue #1383)
-    from nexus.bricks.parsers.engine import ContentParserEngine
-
-    ContentParserEngine(
-        metadata=nx.metadata,
-        provider_registry=nx._brick_services.provider_registry,
+    _cache_brick = CacheBrick(
+        cache_store=nx.cache_store,
+        record_store=nx._record_store,
     )
 
-    # AutoParseWriteHook (post-write: background parsing + cache invalidation)
-    parser_reg = nx._brick_services.parser_registry
-    if auto_parse and parser_reg is not None and parse_fn is not None:
-        from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
-
-        _auto_parse_hook = AutoParseWriteHook(
-            get_parser=parser_reg.get_parser,
-            parse_fn=parse_fn,
-            metadata=nx.metadata,
-        )
-        await _enlist("auto_parse", _auto_parse_hook)
-
-    # TigerCacheRenameHook (post-rename: bitmap updates)
-    _rebac_mgr = (
-        getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None
-    )
-    tiger_cache = getattr(_rebac_mgr, "_tiger_cache", None) if _rebac_mgr else None
-    if tiger_cache is not None:
-        from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
-
-        def _metadata_list_iter(
-            prefix: str,
-            recursive: bool = True,
-            zone_id: str = "root",  # noqa: ARG001
-        ) -> Any:
-            return nx.metadata.list(prefix=prefix, recursive=recursive)
-
-        _tiger_rename_hook = TigerCacheRenameHook(
-            tiger_cache=tiger_cache,
-            metadata_list_iter=_metadata_list_iter,
-        )
-        await _enlist("tiger_rename", _tiger_rename_hook)
-
-    # TigerCacheWriteHook (post-write: add new files to ancestor directory grants)
-    if tiger_cache is not None:
-        from nexus.bricks.rebac.cache.tiger.write_hook import TigerCacheWriteHook
-
-        _tiger_write_hook = TigerCacheWriteHook(tiger_cache=tiger_cache)
-        await _enlist("tiger_write", _tiger_write_hook)
-
-    # ── PRE-DISPATCH: Virtual view resolver (Issue #332, #889) ────────
-    from nexus.bricks.parsers.virtual_view_resolver import VirtualViewResolver
-
-    _vview_resolver = VirtualViewResolver(
-        metadata=nx.metadata,
-        path_router=nx.router,
-        permission_checker=permission_checker,
-        parse_fn=parse_fn,
-        read_tracker_fn=None,
-    )
-    await _enlist("virtual_view", _vview_resolver)
-
-    # ── ProcResolver (procfs virtual filesystem for ProcessTable — Issue #1570) ──
-    _proc_table = (
-        getattr(nx._system_services, "process_table", None) if nx._system_services else None
-    )
-    if _proc_table is not None:
+    # ContentCache (Issue #657)
+    _content_cache = None
+    _cache_cfg = nx._cache_config
+    if _cache_cfg.enable_content_cache:
+        _root_backend: Any = None
         try:
-            from nexus.system_services.proc.proc_resolver import ProcResolver
+            _root_backend = nx.router.route("/").backend
+        except Exception:
+            logger.debug("No root backend mounted — ContentCache disabled")
+        if _root_backend is not None and getattr(_root_backend, "has_root_path", False):
+            from nexus.storage.content_cache import ContentCache
 
-            _proc_resolver = ProcResolver(_proc_table)
-            await _enlist("proc", _proc_resolver)
-        except Exception as exc:
-            logger.debug("[BOOT:HOOKS] ProcResolver unavailable: %s", exc)
+            _content_cache = ContentCache(max_size_mb=_cache_cfg.content_cache_size_mb)
 
-    # ── TaskWriteHook + TaskDispatchPipeConsumer + TaskAgentResolver ───────────
-    if _on("task_manager"):
-        try:
-            from nexus.bricks.task_manager.service import TaskManagerService
-            from nexus.bricks.task_manager.task_agent_resolver import TaskAgentResolver
-            from nexus.bricks.task_manager.write_hook import TaskWriteHook
+    # Pack factory-created bricks into BrickServices (Issue #2134)
+    _brick_updates: dict[str, Any] = {
+        "cache_brick": _cache_brick,
+        "parse_fn": _parse_fn,
+        "content_cache": _content_cache,
+        "parser_registry": parsers_brick.parser_registry,
+        "provider_registry": parsers_brick.provider_registry,
+    }
+    if workflow_engine is not None:
+        _brick_updates["workflow_engine"] = workflow_engine
+    nx._brick_services = _dc_replace(nx._brick_services, **_brick_updates)
 
-            _task_svc = TaskManagerService(nexus_fs=nx)
-            _task_write_hook = TaskWriteHook()
+    # Resolve enabled_bricks for profile gating
+    _resolved_bricks = enabled_bricks
+    if _resolved_bricks is None:
+        _resolved_bricks = _DP.FULL.default_bricks()
 
-            # Wire consumer from brick_services (created in _bricks.py)
-            _task_consumer = getattr(nx._brick_services, "task_dispatch_consumer", None)
-            if _task_consumer is not None:
-                _task_write_hook.register_handler(_task_consumer)
-                _task_consumer.set_task_service(_task_svc)
+    def _brick_on(name: str) -> bool:
+        return name in _resolved_bricks
 
-            await _enlist("task_write", _task_write_hook)
-            await _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
-            await _enlist("task_manager", _task_svc)  # Issue #1768: Q1 service via coordinator
-        except Exception as exc:
-            logger.warning("[BOOT:BRICK] task_manager wiring failed: %s", exc)
-    else:
-        logger.debug("[BOOT:BRICK] task_manager disabled by profile")
+    # PermissionChecker (services layer — Issue #899, #1766)
+    from nexus.bricks.rebac.checker import PermissionChecker as _PC
 
-    # ── Snapshot write tracker (Issue #1770) ─────────────────────────
-    _snapshot_svc = getattr(nx._brick_services, "snapshot_service", None)
-    if _snapshot_svc is not None:
-        from nexus.bricks.snapshot.snapshot_hook import SnapshotWriteHook
-
-        await _enlist("snapshot_write", SnapshotWriteHook(_snapshot_svc))
-
-    # ── Deferred permission buffer (Issue #1773) ──────────────────────
-    _dpb = (
-        getattr(nx._system_services, "deferred_permission_buffer", None)
-        if nx._system_services
-        else None
+    _permission_checker = _PC(
+        permission_enforcer=_sys.permission_enforcer,
+        metadata_store=nx.metadata,
+        default_context=nx._default_context,
+        enforce_permissions=nx._enforce_permissions,
     )
+
+    # Boot wired services (Tier 2b — services needing NexusFS reference)
+    from nexus.factory._wired import _boot_wired_services
+
+    _wired = await _boot_wired_services(
+        nx,
+        nx.router,
+        nx._system_services,
+        nx._brick_services,
+        _brick_on,
+    )
+
+    # Create ServiceLifecycleCoordinator (Issue #1708)
+    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
+        ServiceLifecycleCoordinator,
+    )
+
+    _blm = getattr(nx._system_services, "brick_lifecycle_manager", None)
+    coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
+    nx._service_coordinator = coordinator
+
+    # Enlist wired services into coordinator
+    from nexus.factory.service_routing import enlist_wired_services
+
+    await enlist_wired_services(coordinator, _wired)
+
+    # Enlist system-tier PersistentService instances (Issue #1666)
+    _dpb = getattr(nx._system_services, "deferred_permission_buffer", None)
     if _dpb is not None:
-        from nexus.bricks.rebac.deferred_permission_hook import DeferredPermissionHook
+        await coordinator.enlist("deferred_permission_buffer", _dpb)
+    _dw = getattr(nx._system_services, "delivery_worker", None)
+    if _dw is not None:
+        await coordinator.enlist("delivery_worker", _dw)
 
-        await _enlist("deferred_permission", DeferredPermissionHook(_dpb))
-    else:
-        # Sync fallback — same logic, runs as post-write hook instead of inline kernel code
-        _hier = (
-            getattr(nx._system_services, "hierarchy_manager", None) if nx._system_services else None
-        )
-        _rebac = getattr(nx, "_rebac_manager", None)
-        if _hier is not None or _rebac is not None:
-            from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
+    # Inject kernel components (descendant_checker — like Linux LSM hook)
+    _dc = getattr(_wired, "descendant_checker", None)
+    if _dc is not None:
+        nx._descendant_checker = _dc
 
-            await _enlist(
-                "sync_permission",
-                SyncPermissionWriteHook(hierarchy_manager=_hier, rebac_manager=_rebac),
-            )
+    nx._linked = True
 
-    # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
-    # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
-    # Replaces _publish_file_event() direct calls — single dispatch exit point.
-    # Issue #1701: event_bus is now Tier 1 (SystemServices).  Direct injection —
-    # no bus_provider late-binding needed.  Tests use swap_service() to replace.
-    from nexus.system_services.event_bus.observer import EventBusObserver
+    # ── INITIALIZE — one-time side effects (no background threads) ────
 
-    _bus_observer = EventBusObserver(
-        event_bus=nx._system_services.event_bus if nx._system_services else None
+    # IPC adapter bind + mount
+    from nexus.factory._wired import _initialize_wired_ipc
+
+    _initialize_wired_ipc(nx, nx._brick_services)
+
+    # Register VFS hooks (INTERCEPT + OBSERVE — Issue #900)
+    from nexus.factory._hooks import register_vfs_hooks
+
+    await register_vfs_hooks(
+        nx,
+        permission_checker=_permission_checker,
+        auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
+        brick_on=_brick_on,
+        parse_fn=_parse_fn,
     )
-    await _enlist("event_bus_observer", _bus_observer)
 
-    # EventsService observer: self-registered via HotSwappable.hook_spec()
-    # at bootstrap() → activate_hot_swappable_services() (Issue #1611).
+    # Register late bricks with lifecycle manager (Issue #1704, #2991)
+    if _blm is not None:
+        from nexus.factory._helpers import _register_late_bricks
 
-    # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
-    # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).
-    from nexus.lib.revision_notifier import RevisionNotifier
-    from nexus.system_services.lifecycle.revision_tracking_observer import RevisionTrackingObserver
+        _register_late_bricks(_blm, {"cache": _cache_brick})
 
-    _rev_notifier = RevisionNotifier()
-    _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
-    await _enlist("revision_tracking", _rev_observer)
+    # Register bootstrap callbacks for deferred background work
+    _zl = getattr(nx._system_services, "zone_lifecycle", None) if nx._system_services else None
+    if _zl is not None and hasattr(_zl, "load_terminating_zones"):
 
-    # ── Test hooks (Issue #2) ────────────────────────────────────────
-    # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.
-    import os
+        async def _load_zones() -> None:
+            try:
+                _sf = getattr(_zl, "_session_factory", None)
+                if _sf is not None:
+                    with _sf() as session:
+                        _zl.load_terminating_zones(session)
+                    logger.debug(
+                        "[LIFECYCLE] ZoneLifecycleService loaded terminating zones (bootstrap)"
+                    )
+            except Exception as exc:
+                logger.warning("[LIFECYCLE] Failed to load terminating zones: %s", exc)
 
-    if os.getenv("NEXUS_TEST_HOOKS") == "true":
-        from nexus.core.test_hooks import register_test_hooks
+        nx._bootstrap_callbacks.append(_load_zones)
 
-        register_test_hooks(nx._dispatch)
+    nx._initialized = True
+
+    return nx

@@ -6,7 +6,7 @@ ARG USE_CHINA_MIRROR=false
 ARG TORCH_VARIANT=cpu
 
 # ---------- Stage 1: Build Zoekt binaries (independent, cached separately) ----------
-FROM golang:1.24 AS zoekt-builder
+FROM golang:1.25 AS zoekt-builder
 ARG USE_CHINA_MIRROR
 RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
         go env -w GOPROXY=https://goproxy.cn,direct GOSUMDB=off; \

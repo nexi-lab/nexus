@@ -233,38 +233,34 @@ class TestAcpServiceCallAgent:
     """Test call_agent subprocess + StdioPipe creation."""
 
     @pytest.mark.asyncio
-    async def test_call_agent_creates_stdio_pipes(self):
-        """Verify StdioPipe wrapping and DT_PIPE registration."""
+    async def test_call_agent_reads_config_from_vfs(self):
+        """Verify call_agent reads agent config from VFS (SSOT)."""
+        import json
+
         pt = MockProcessTable()
         pm = MockPipeManager()
         svc = AcpService(process_table=pt)
         svc.bind_pipe_manager(pm)
 
-        # Register a test agent
-        from nexus.system_services.acp.agents import AgentConfig
+        # Mock NexusFS with agent config file
+        agent_config = {
+            "agent_id": "test-agent",
+            "name": "Test",
+            "command": "echo",
+            "acp_args": ["hello"],
+            "enabled": True,
+        }
 
-        await svc.register_agent(
-            AgentConfig(
-                agent_id="test-agent",
-                name="Test",
-                command="echo",
-                acp_args=["hello"],
-                enabled=True,
-            )
-        )
+        async def _mock_sys_read(path: str) -> bytes:
+            if path.endswith("/agent.json"):
+                return json.dumps(agent_config).encode("utf-8")
+            raise FileNotFoundError(path)
 
-        # Mock subprocess to fail fast (command not found is fine for this test)
-        mock_proc = MagicMock()
-        mock_proc.stdin = MagicMock()
-        mock_proc.stdout = MagicMock()
-        mock_proc.stderr = MagicMock()
-        mock_proc.returncode = 1
-        mock_proc.kill = MagicMock()
-        mock_proc.wait = AsyncMock()
-
-        # Make stdout.readline return EOF immediately to stop reader loop
-        mock_proc.stdout.readline = AsyncMock(return_value=b"")
-        mock_proc.stderr.readline = AsyncMock(return_value=b"")
+        mock_nx = MagicMock()
+        mock_nx.sys_read = AsyncMock(side_effect=_mock_sys_read)
+        mock_nx.sys_write = AsyncMock()
+        mock_nx.sys_readdir = AsyncMock(return_value=[])
+        svc.bind_fs(mock_nx)
 
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.side_effect = FileNotFoundError("test-not-found")
@@ -282,35 +278,55 @@ class TestAcpServiceCallAgent:
         # Connections should be cleaned up
         assert len(svc._connections) == 0
 
+    @pytest.mark.asyncio
+    async def test_call_agent_unknown_agent_raises(self):
+        """call_agent raises ValueError when agent config not in VFS."""
+        pt = MockProcessTable()
+        svc = AcpService(process_table=pt)
 
-class TestAgentConfigSerialization:
-    """Test AgentConfig.to_dict() / from_dict() round-trip."""
+        mock_nx = MagicMock()
+        mock_nx.sys_read = AsyncMock(side_effect=FileNotFoundError)
+        svc.bind_fs(mock_nx)
 
-    def test_roundtrip_minimal(self):
+        with pytest.raises(ValueError, match="Unknown agent_id"):
+            await svc.call_agent(
+                agent_id="nonexistent",
+                prompt="test",
+                owner_id="user1",
+                zone_id="root",
+            )
+
+
+class TestAgentConfigFromDict:
+    """Test AgentConfig.from_dict() deserialization from VFS JSON."""
+
+    def test_from_dict_minimal(self):
         from nexus.system_services.acp.agents import AgentConfig
 
-        cfg = AgentConfig(agent_id="test", name="Test", command="test-bin")
-        restored = AgentConfig.from_dict(cfg.to_dict())
-        assert restored == cfg
+        data = {"agent_id": "test", "name": "Test", "command": "test-bin"}
+        cfg = AgentConfig.from_dict(data)
+        assert cfg.agent_id == "test"
+        assert cfg.command == "test-bin"
 
-    def test_roundtrip_full(self):
+    def test_from_dict_full(self):
         from nexus.system_services.acp.agents import AgentConfig
 
-        cfg = AgentConfig(
-            agent_id="claude",
-            name="Claude Code",
-            command="claude",
-            prompt_flag="-p",
-            default_system_prompt="You are helpful.",
-            extra_args=("--output-format", "json"),
-            env={"KEY": "val"},
-            npx_package="@zed/claude-acp@1.0",
-            acp_args=("--experimental-acp", "--dangerously-skip-permissions"),
-            enabled=True,
-        )
-        data = cfg.to_dict()
-        restored = AgentConfig.from_dict(data)
-        assert restored == cfg
+        data = {
+            "agent_id": "claude",
+            "name": "Claude Code",
+            "command": "claude",
+            "prompt_flag": "-p",
+            "default_system_prompt": "You are helpful.",
+            "extra_args": ["--output-format", "json"],
+            "env": {"KEY": "val"},
+            "npx_package": "@zed/claude-acp@1.0",
+            "acp_args": ["--experimental-acp", "--dangerously-skip-permissions"],
+            "enabled": True,
+        }
+        cfg = AgentConfig.from_dict(data)
+        assert cfg.agent_id == "claude"
+        assert cfg.npx_package == "@zed/claude-acp@1.0"
+        assert cfg.acp_args == ("--experimental-acp", "--dangerously-skip-permissions")
 
     def test_from_dict_defaults(self):
         """from_dict fills in defaults for missing optional fields."""
@@ -326,93 +342,55 @@ class TestAgentConfigSerialization:
         assert cfg.acp_args == ("--experimental-acp",)
         assert cfg.enabled is True
 
-    def test_to_dict_json_serializable(self):
-        """to_dict output must be JSON-serializable (no tuples)."""
-        import json
 
-        from nexus.system_services.acp.agents import AgentConfig
-
-        cfg = AgentConfig(
-            agent_id="test",
-            name="Test",
-            command="test",
-            extra_args=("a", "b"),
-            acp_args=("--acp",),
-        )
-        data = cfg.to_dict()
-        # Should not raise
-        serialized = json.dumps(data)
-        # Round-trip through JSON
-        restored = AgentConfig.from_dict(json.loads(serialized))
-        assert restored == cfg
-
-
-class TestAgentConfigVfsPersistence:
-    """Test register_agent VFS persistence."""
+class TestAcpServiceReadAgentConfig:
+    """Test _read_agent_config reads from VFS (SSOT)."""
 
     @pytest.mark.asyncio
-    async def test_register_persists_to_vfs(self):
-        """register_agent writes config JSON to VFS when NexusFS is bound."""
+    async def test_read_returns_config_from_vfs(self):
+        """_read_agent_config reads /{zone}/agents/{id}/agent.json."""
         import json
-
-        from nexus.system_services.acp.agents import AgentConfig
 
         pt = MockProcessTable()
         svc = AcpService(process_table=pt)
 
-        # Mock NexusFS
+        agent_json = json.dumps(
+            {
+                "agent_id": "claude",
+                "name": "Claude Code",
+                "command": "claude",
+                "acp_args": ["--experimental-acp"],
+            }
+        ).encode()
+
         mock_nx = MagicMock()
-        mock_nx.sys_write = AsyncMock()
-        mock_nx.sys_readdir = AsyncMock(return_value=[])
-        svc._nexus_fs = mock_nx
+        mock_nx.sys_read = AsyncMock(return_value=agent_json)
+        svc.bind_fs(mock_nx)
 
-        cfg = AgentConfig(agent_id="custom-agent", name="Custom", command="custom-bin")
-        await svc.register_agent(cfg)
-
-        # Verify in-memory registration
-        assert "custom-agent" in svc._agents
-        assert svc._agents["custom-agent"] is cfg
-
-        # Verify VFS write
-        mock_nx.sys_write.assert_called_once()
-        call_args = mock_nx.sys_write.call_args
-        path = call_args[0][0]
-        content_bytes = call_args[0][1]
-        assert path == "/root/agents/custom-agent/agent.json"
-        written = json.loads(content_bytes.decode("utf-8"))
-        assert written["agent_id"] == "custom-agent"
-        assert written["command"] == "custom-bin"
+        config = await svc._read_agent_config("claude", "root")
+        assert config is not None
+        assert config.agent_id == "claude"
+        assert config.command == "claude"
+        mock_nx.sys_read.assert_called_once_with("/root/agents/claude/agent.json")
 
     @pytest.mark.asyncio
-    async def test_register_without_vfs(self):
-        """register_agent still works in-memory when NexusFS is not bound."""
-        from nexus.system_services.acp.agents import AgentConfig
-
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
-
-        cfg = AgentConfig(agent_id="mem-only", name="MemOnly", command="mem")
-        await svc.register_agent(cfg)
-
-        assert "mem-only" in svc._agents
-        assert svc._agents["mem-only"] is cfg
-
-    @pytest.mark.asyncio
-    async def test_register_vfs_write_failure_graceful(self):
-        """register_agent logs warning but doesn't raise on VFS write failure."""
-        from nexus.system_services.acp.agents import AgentConfig
-
+    async def test_read_returns_none_when_not_found(self):
+        """_read_agent_config returns None for missing agent."""
         pt = MockProcessTable()
         svc = AcpService(process_table=pt)
 
         mock_nx = MagicMock()
-        mock_nx.sys_write = AsyncMock(side_effect=OSError("disk full"))
-        mock_nx.sys_readdir = AsyncMock(return_value=[])
-        svc._nexus_fs = mock_nx
+        mock_nx.sys_read = AsyncMock(side_effect=FileNotFoundError)
+        svc.bind_fs(mock_nx)
 
-        cfg = AgentConfig(agent_id="fail-write", name="Fail", command="fail")
-        # Should NOT raise
-        await svc.register_agent(cfg)
+        config = await svc._read_agent_config("nonexistent", "root")
+        assert config is None
 
-        # In-memory still succeeds
-        assert "fail-write" in svc._agents
+    @pytest.mark.asyncio
+    async def test_read_returns_none_without_vfs(self):
+        """_read_agent_config returns None when NexusFS not bound."""
+        pt = MockProcessTable()
+        svc = AcpService(process_table=pt)
+
+        config = await svc._read_agent_config("claude", "root")
+        assert config is None

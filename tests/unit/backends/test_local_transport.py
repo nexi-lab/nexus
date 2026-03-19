@@ -261,7 +261,7 @@ class TestFsyncOption:
 
 
 class TestCASKeyPattern:
-    """Verify transport works with CAS-style keys (what CASBackend sends)."""
+    """Verify transport works with CAS-style keys (what CASAddressingEngine sends)."""
 
     def test_cas_key_roundtrip(self, transport):
         key = "cas/ab/cd/abcdef1234567890"

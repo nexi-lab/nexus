@@ -1,10 +1,10 @@
 """CAS addressing engine over any BlobTransport.
 
-CASBackend implements ObjectStoreABC (via Backend) using content-addressable
+CASAddressingEngine implements ObjectStoreABC (via Backend) using content-addressable
 storage semantics: content is stored by hash, automatically deduplicated,
 and reference-counted.
 
-    CASBackend(transport: BlobTransport)
+    CASAddressingEngine(transport: BlobTransport)
         ├── CASGCSBackend   — thin: creates GCSBlobTransport, registered as "cas_gcs"
         ├── CASLocalBackend  — thin: creates LocalBlobTransport + features
         └── (future S3CAS)  — thin: creates S3BlobTransport
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CAS_BACKEND_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
+CAS_ADDRESSING_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
     {
         ConnectorCapability.CAS,
         ConnectorCapability.STREAMING,
@@ -62,7 +62,7 @@ CAS_BACKEND_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
 """Common capabilities for CAS-based backends."""
 
 
-class CASBackend(Backend):
+class CASAddressingEngine(Backend):
     """CAS addressing over any BlobTransport.  Full ObjectStoreABC implementation.
 
     Content is stored at ``cas/<h[:2]>/<h[2:4]>/<h>`` with a JSON metadata
@@ -75,7 +75,7 @@ class CASBackend(Backend):
         _backend_name: Human-readable backend identifier.
     """
 
-    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = CAS_BACKEND_CAPABILITIES
+    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = CAS_ADDRESSING_CAPABILITIES
 
     def __init__(
         self,
@@ -688,3 +688,8 @@ class CASBackend(Backend):
                 backend=self.name,
                 path=path,
             ) from e
+
+
+# Backward-compat alias (will be removed in a future cleanup)
+CASBackend = CASAddressingEngine
+CAS_BACKEND_CAPABILITIES = CAS_ADDRESSING_CAPABILITIES

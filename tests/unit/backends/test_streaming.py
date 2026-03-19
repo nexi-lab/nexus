@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.backends.base.backend import Backend
-from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.base.path_backend import PathAddressingEngine
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
@@ -312,8 +312,8 @@ class TestStreamingMemoryEfficiency:
         assert result.size == total_bytes
 
 
-class TestPathBackendStreamContent:
-    """Test stream_content in PathBackend (Issue #480)."""
+class TestPathAddressingEngineStreamContent:
+    """Test stream_content in PathAddressingEngine (Issue #480)."""
 
     def test_stream_content_default_yields_chunks(self) -> None:
         """Test default stream_content yields chunks from transport.stream_blob."""
@@ -362,7 +362,9 @@ class TestPathBackendStreamContent:
 
         transport = TestTransport()
         transport.files["test/file.txt"] = b"Hello World!"
-        connector = PathBackend(transport, backend_name="test_connector", bucket_name="test-bucket")
+        connector = PathAddressingEngine(
+            transport, backend_name="test_connector", bucket_name="test-bucket"
+        )
 
         # Create mock context with backend_path
         context = MagicMock()
@@ -412,7 +414,7 @@ class TestPathBackendStreamContent:
                 return iter([])
 
         transport = TestTransport()
-        connector = PathBackend(transport, backend_name="test", bucket_name="test")
+        connector = PathAddressingEngine(transport, backend_name="test", bucket_name="test")
 
         with pytest.raises(ValueError, match="requires backend_path"):
             list(connector.stream_content("hash", context=None))
@@ -462,7 +464,9 @@ class TestPathBackendStreamContent:
                 yield b"chunk3"
 
         transport = StreamingTransport()
-        connector = PathBackend(transport, backend_name="streaming_test", bucket_name="test")
+        connector = PathAddressingEngine(
+            transport, backend_name="streaming_test", bucket_name="test"
+        )
         context = MagicMock()
         context.backend_path = "test/file.txt"
 

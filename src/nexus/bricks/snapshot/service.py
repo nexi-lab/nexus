@@ -6,7 +6,7 @@ an in-memory registry for fast-path O(1) lookups.
 
 Architecture:
     - TransactionRegistry: in-memory fast-path (zero cost when no txns active)
-    - CASBackend.hold_reference(): prevents GC of pre-modification content
+    - CASAddressingEngine.hold_reference(): prevents GC of pre-modification content
     - DB: TransactionSnapshotModel + SnapshotEntryModel for durability
     - Conflict detection: MVCC at commit time via hash comparison
 
@@ -96,7 +96,7 @@ class TransactionalSnapshotService:
 
         Args:
             record_store: RecordStoreABC for DB persistence.
-            cas_store: CASBackend for hold_reference/release.
+            cas_store: CASAddressingEngine for hold_reference/release.
             metadata_store: MetastoreABC for reading current file state.
             metadata_factory: Callable to construct FileMetadata-like objects
                 (injected by factory.py to avoid importing nexus.contracts.metadata).

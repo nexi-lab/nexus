@@ -98,7 +98,7 @@ class BackendIOService:
         """Batch read content directly from backend (bypassing cache).
 
         Leverages _bulk_download_blobs() for efficient parallel downloads when
-        available (PathBackend subclasses). Falls back to sequential
+        available (PathAddressingEngine subclasses). Falls back to sequential
         reads for other connector types.
 
         Args:

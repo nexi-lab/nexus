@@ -1,7 +1,7 @@
 """S3 BlobTransport — raw key→blob I/O over AWS S3.
 
 Shared between PathS3Backend (path addressing) and potential future
-S3CASBackend (CAS addressing).
+S3CASAddressingEngine (CAS addressing).
 
 Authentication priority:
     1. Explicit credentials (access_key_id + secret_access_key)

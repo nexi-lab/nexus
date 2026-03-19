@@ -310,7 +310,7 @@ class ConnectorRegistry:
 
     Example:
         >>> @register_connector("azure_blob", description="Azure Blob Storage")
-        ... class AzureBlobConnector(PathBackend):
+        ... class AzureBlobConnector(PathAddressingEngine):
         ...     pass
         ...
         >>> ConnectorRegistry.get("azure_blob")
@@ -566,7 +566,7 @@ def register_connector(
         ...     description="Azure Blob Storage connector",
         ...     requires=["azure-storage-blob"]
         ... )
-        ... class AzureBlobConnector(PathBackend):
+        ... class AzureBlobConnector(PathAddressingEngine):
         ...     pass
     """
 

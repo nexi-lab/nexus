@@ -4,7 +4,7 @@ A fixed-size array of threading.Lock objects indexed by content hash.
 Provides per-hash coordination for metadata read-modify-write cycles
 without any disk I/O. Much cheaper than FileLock (~us vs ~ms).
 
-Used by CASBackend and CASLocalBackend for ref_count updates.
+Used by CASAddressingEngine and CASLocalBackend for ref_count updates.
 """
 
 from __future__ import annotations

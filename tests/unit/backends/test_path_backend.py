@@ -1,4 +1,4 @@
-"""Unit tests for PathBackend — path addressing over InMemoryBlobTransport.
+"""Unit tests for PathAddressingEngine — path addressing over InMemoryBlobTransport.
 
 Tests cover:
 - Path-based write/read/delete (requires OperationContext with backend_path)
@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.base.path_backend import PathAddressingEngine
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
 from nexus.core.hash_fast import hash_content
@@ -110,13 +110,13 @@ def transport() -> InMemoryBlobTransport:
 
 
 @pytest.fixture
-def backend(transport: InMemoryBlobTransport) -> PathBackend:
-    return PathBackend(transport, backend_name="test-path", bucket_name="test-bucket")
+def backend(transport: InMemoryBlobTransport) -> PathAddressingEngine:
+    return PathAddressingEngine(transport, backend_name="test-path", bucket_name="test-bucket")
 
 
 @pytest.fixture
-def prefixed_backend(transport: InMemoryBlobTransport) -> PathBackend:
-    return PathBackend(
+def prefixed_backend(transport: InMemoryBlobTransport) -> PathAddressingEngine:
+    return PathAddressingEngine(
         transport, backend_name="test-prefixed", bucket_name="test-bucket", prefix="data"
     )
 
@@ -124,11 +124,11 @@ def prefixed_backend(transport: InMemoryBlobTransport) -> PathBackend:
 # === Test Classes ===
 
 
-class TestPathBackendWriteContent:
+class TestPathAddressingEngineWriteContent:
     """Test write_content() — path-based storage."""
 
     def test_write_stores_at_backend_path(
-        self, backend: PathBackend, transport: InMemoryBlobTransport
+        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
     ):
         ctx = _make_context("docs/file.txt")
         result = backend.write_content(b"hello world", context=ctx)
@@ -138,23 +138,23 @@ class TestPathBackendWriteContent:
         assert "docs/file.txt" in transport.files
         assert transport.files["docs/file.txt"] == b"hello world"
 
-    def test_write_requires_backend_path(self, backend: PathBackend):
+    def test_write_requires_backend_path(self, backend: PathAddressingEngine):
         with pytest.raises(BackendError, match="requires backend_path"):
             backend.write_content(b"no context")
 
-    def test_write_requires_context(self, backend: PathBackend):
+    def test_write_requires_context(self, backend: PathAddressingEngine):
         with pytest.raises(BackendError, match="requires backend_path"):
             backend.write_content(b"no path", context=_make_context(""))
 
     def test_write_with_prefix(
-        self, prefixed_backend: PathBackend, transport: InMemoryBlobTransport
+        self, prefixed_backend: PathAddressingEngine, transport: InMemoryBlobTransport
     ):
         ctx = _make_context("file.txt")
         prefixed_backend.write_content(b"prefixed", context=ctx)
 
         assert "data/file.txt" in transport.files
 
-    def test_write_computes_hash(self, backend: PathBackend):
+    def test_write_computes_hash(self, backend: PathAddressingEngine):
         content = b"hash me"
         ctx = _make_context("file.txt")
         result = backend.write_content(content, context=ctx)
@@ -163,30 +163,32 @@ class TestPathBackendWriteContent:
         assert result.content_hash == expected
 
 
-class TestPathBackendReadContent:
+class TestPathAddressingEngineReadContent:
     """Test read_content() — path-based retrieval."""
 
-    def test_read_returns_content(self, backend: PathBackend):
+    def test_read_returns_content(self, backend: PathAddressingEngine):
         ctx = _make_context("file.txt")
         backend.write_content(b"read me", context=ctx)
 
         data = backend.read_content("any-hash", context=ctx)
         assert data == b"read me"
 
-    def test_read_requires_backend_path(self, backend: PathBackend):
+    def test_read_requires_backend_path(self, backend: PathAddressingEngine):
         with pytest.raises(BackendError, match="requires backend_path"):
             backend.read_content("hash")
 
-    def test_read_missing_raises(self, backend: PathBackend):
+    def test_read_missing_raises(self, backend: PathAddressingEngine):
         ctx = _make_context("nonexistent.txt")
         with pytest.raises(NexusFileNotFoundError):
             backend.read_content("hash", context=ctx)
 
 
-class TestPathBackendDeleteContent:
+class TestPathAddressingEngineDeleteContent:
     """Test delete_content()."""
 
-    def test_delete_removes_blob(self, backend: PathBackend, transport: InMemoryBlobTransport):
+    def test_delete_removes_blob(
+        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+    ):
         ctx = _make_context("file.txt")
         backend.write_content(b"delete me", context=ctx)
         assert "file.txt" in transport.files
@@ -194,57 +196,57 @@ class TestPathBackendDeleteContent:
         backend.delete_content("hash", context=ctx)
         assert "file.txt" not in transport.files
 
-    def test_delete_requires_backend_path(self, backend: PathBackend):
+    def test_delete_requires_backend_path(self, backend: PathAddressingEngine):
         with pytest.raises(BackendError, match="requires backend_path"):
             backend.delete_content("hash")
 
-    def test_delete_missing_raises(self, backend: PathBackend):
+    def test_delete_missing_raises(self, backend: PathAddressingEngine):
         ctx = _make_context("missing.txt")
         with pytest.raises(NexusFileNotFoundError):
             backend.delete_content("hash", context=ctx)
 
 
-class TestPathBackendContentOps:
+class TestPathAddressingEngineContentOps:
     """Test content_exists, get_content_size, get_ref_count."""
 
-    def test_content_exists(self, backend: PathBackend):
+    def test_content_exists(self, backend: PathAddressingEngine):
         ctx = _make_context("file.txt")
         backend.write_content(b"exists", context=ctx)
 
         assert backend.content_exists("hash", context=ctx) is True
         assert backend.content_exists("hash", context=_make_context("nope.txt")) is False
 
-    def test_content_exists_no_context(self, backend: PathBackend):
+    def test_content_exists_no_context(self, backend: PathAddressingEngine):
         assert backend.content_exists("hash") is False
 
-    def test_get_content_size(self, backend: PathBackend):
+    def test_get_content_size(self, backend: PathAddressingEngine):
         ctx = _make_context("file.txt")
         backend.write_content(b"size test", context=ctx)
         assert backend.get_content_size("hash", context=ctx) == 9
 
-    def test_get_ref_count_always_one(self, backend: PathBackend):
+    def test_get_ref_count_always_one(self, backend: PathAddressingEngine):
         assert backend.get_ref_count("hash") == 1
 
 
-class TestPathBackendStreaming:
+class TestPathAddressingEngineStreaming:
     """Test stream_content."""
 
-    def test_stream_yields_chunks(self, backend: PathBackend):
+    def test_stream_yields_chunks(self, backend: PathAddressingEngine):
         ctx = _make_context("file.txt")
         backend.write_content(b"A" * 100, context=ctx)
 
         chunks = list(backend.stream_content("hash", chunk_size=30, context=ctx))
         assert b"".join(chunks) == b"A" * 100
 
-    def test_stream_requires_backend_path(self, backend: PathBackend):
+    def test_stream_requires_backend_path(self, backend: PathAddressingEngine):
         with pytest.raises(ValueError, match="requires backend_path"):
             list(backend.stream_content("hash"))
 
 
-class TestPathBackendBatchRead:
+class TestPathAddressingEngineBatchRead:
     """Test batch_read_content."""
 
-    def test_batch_read_multiple(self, backend: PathBackend):
+    def test_batch_read_multiple(self, backend: PathAddressingEngine):
         ctx1 = _make_context("file1.txt")
         ctx2 = _make_context("file2.txt")
         ctx3 = _make_context("file3.txt")
@@ -261,17 +263,17 @@ class TestPathBackendBatchRead:
         assert result["h2"] == b"content2"
         assert result["h3"] == b"content3"
 
-    def test_batch_read_empty(self, backend: PathBackend):
+    def test_batch_read_empty(self, backend: PathAddressingEngine):
         assert backend.batch_read_content([]) == {}
 
-    def test_batch_read_single(self, backend: PathBackend):
+    def test_batch_read_single(self, backend: PathAddressingEngine):
         ctx = _make_context("file.txt")
         backend.write_content(b"single", context=ctx)
 
         result = backend.batch_read_content(["h"], context=ctx)
         assert result["h"] == b"single"
 
-    def test_batch_read_partial_failures(self, backend: PathBackend):
+    def test_batch_read_partial_failures(self, backend: PathAddressingEngine):
         ctx1 = _make_context("file1.txt")
         ctx2 = _make_context("missing.txt")
         backend.write_content(b"exists", context=ctx1)
@@ -282,56 +284,56 @@ class TestPathBackendBatchRead:
         assert result["h2"] is None
 
 
-class TestPathBackendDirectories:
+class TestPathAddressingEngineDirectories:
     """Test directory operations."""
 
-    def test_mkdir(self, backend: PathBackend, transport: InMemoryBlobTransport):
+    def test_mkdir(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
         backend.mkdir("data")
         assert "data/" in transport.files
 
     def test_mkdir_with_prefix(
-        self, prefixed_backend: PathBackend, transport: InMemoryBlobTransport
+        self, prefixed_backend: PathAddressingEngine, transport: InMemoryBlobTransport
     ):
         prefixed_backend.mkdir("subdir")
         assert "data/subdir/" in transport.files
 
-    def test_mkdir_root_noop(self, backend: PathBackend, transport: InMemoryBlobTransport):
+    def test_mkdir_root_noop(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
         backend.mkdir("")
         assert not any(k.endswith("/") for k in transport.files)
 
-    def test_mkdir_exist_ok(self, backend: PathBackend):
+    def test_mkdir_exist_ok(self, backend: PathAddressingEngine):
         backend.mkdir("data")
         backend.mkdir("data", exist_ok=True)
 
-    def test_mkdir_duplicate_raises(self, backend: PathBackend):
+    def test_mkdir_duplicate_raises(self, backend: PathAddressingEngine):
         backend.mkdir("data")
         with pytest.raises(BackendError, match="already exists"):
             backend.mkdir("data")
 
-    def test_is_directory(self, backend: PathBackend):
+    def test_is_directory(self, backend: PathAddressingEngine):
         assert backend.is_directory("") is True
         assert backend.is_directory("nonexistent") is False
         backend.mkdir("data")
         assert backend.is_directory("data") is True
 
-    def test_rmdir(self, backend: PathBackend, transport: InMemoryBlobTransport):
+    def test_rmdir(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
         backend.mkdir("data")
         backend.rmdir("data")
         assert "data/" not in transport.files
 
-    def test_rmdir_missing_raises(self, backend: PathBackend):
+    def test_rmdir_missing_raises(self, backend: PathAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
             backend.rmdir("nonexistent")
 
-    def test_rmdir_root_raises(self, backend: PathBackend):
+    def test_rmdir_root_raises(self, backend: PathAddressingEngine):
         with pytest.raises(BackendError, match="root"):
             backend.rmdir("")
 
 
-class TestPathBackendRename:
+class TestPathAddressingEngineRename:
     """Test rename_file (copy + delete)."""
 
-    def test_rename(self, backend: PathBackend, transport: InMemoryBlobTransport):
+    def test_rename(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
         transport.files["old.txt"] = b"content"
 
         backend.rename_file("old.txt", "new.txt")
@@ -339,12 +341,12 @@ class TestPathBackendRename:
         assert "old.txt" not in transport.files
         assert transport.files["new.txt"] == b"content"
 
-    def test_rename_source_missing_raises(self, backend: PathBackend):
+    def test_rename_source_missing_raises(self, backend: PathAddressingEngine):
         with pytest.raises(FileNotFoundError):
             backend.rename_file("missing.txt", "new.txt")
 
     def test_rename_dest_exists_raises(
-        self, backend: PathBackend, transport: InMemoryBlobTransport
+        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
     ):
         transport.files["old.txt"] = b"old"
         transport.files["new.txt"] = b"new"
@@ -353,10 +355,10 @@ class TestPathBackendRename:
             backend.rename_file("old.txt", "new.txt")
 
 
-class TestPathBackendBulkDownload:
+class TestPathAddressingEngineBulkDownload:
     """Test _bulk_download_blobs (BackendIOService compat)."""
 
-    def test_bulk_download(self, backend: PathBackend, transport: InMemoryBlobTransport):
+    def test_bulk_download(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
         transport.files["a.txt"] = b"content_a"
         transport.files["b.txt"] = b"content_b"
 
@@ -365,11 +367,11 @@ class TestPathBackendBulkDownload:
         assert result["a.txt"] == b"content_a"
         assert result["b.txt"] == b"content_b"
 
-    def test_bulk_download_empty(self, backend: PathBackend):
+    def test_bulk_download_empty(self, backend: PathAddressingEngine):
         assert backend._bulk_download_blobs([]) == {}
 
     def test_bulk_download_handles_failures(
-        self, backend: PathBackend, transport: InMemoryBlobTransport
+        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
     ):
         transport.files["exists.txt"] = b"data"
 
@@ -379,31 +381,31 @@ class TestPathBackendBulkDownload:
         assert "missing.txt" not in result
 
 
-class TestPathBackendPrefix:
+class TestPathAddressingEnginePrefix:
     """Test prefix handling in _get_blob_path."""
 
-    def test_no_prefix(self, backend: PathBackend):
+    def test_no_prefix(self, backend: PathAddressingEngine):
         assert backend._get_blob_path("file.txt") == "file.txt"
         assert backend._get_blob_path("dir/file.txt") == "dir/file.txt"
 
-    def test_with_prefix(self, prefixed_backend: PathBackend):
+    def test_with_prefix(self, prefixed_backend: PathAddressingEngine):
         assert prefixed_backend._get_blob_path("file.txt") == "data/file.txt"
         assert prefixed_backend._get_blob_path("dir/file.txt") == "data/dir/file.txt"
 
-    def test_strips_leading_slash(self, backend: PathBackend):
+    def test_strips_leading_slash(self, backend: PathAddressingEngine):
         assert backend._get_blob_path("/file.txt") == "file.txt"
 
 
-class TestPathBackendName:
+class TestPathAddressingEngineName:
     """Test name property and default name generation."""
 
     def test_custom_name(self, transport: InMemoryBlobTransport):
-        backend = PathBackend(transport, backend_name="my-path")
+        backend = PathAddressingEngine(transport, backend_name="my-path")
         assert backend.name == "my-path"
 
     def test_default_name(self, transport: InMemoryBlobTransport):
-        backend = PathBackend(transport)
+        backend = PathAddressingEngine(transport)
         assert backend.name == "path-memory"
 
-    def test_supports_rename(self, backend: PathBackend):
+    def test_supports_rename(self, backend: PathAddressingEngine):
         assert backend.supports_rename is True

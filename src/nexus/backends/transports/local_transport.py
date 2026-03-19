@@ -12,7 +12,7 @@ keys to filesystem paths under root_path.
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
-    - CASBackend — atomic write patterns
+    - CASAddressingEngine — atomic write patterns
     - transports/gcs_transport.py — reference transport implementation
 """
 
@@ -283,7 +283,7 @@ class LocalBlobTransport:
     def put_blob_from_path(self, key: str, src_path: str | Path) -> str | None:
         """Atomic move: src_path → final blob path (no memory copy).
 
-        Used by CASBackend.write_stream to avoid loading streamed content
+        Used by CASAddressingEngine.write_stream to avoid loading streamed content
         back into memory after hashing to a temp file.
         """
         path = self._resolve(key)

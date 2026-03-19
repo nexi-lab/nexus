@@ -1,12 +1,12 @@
 """Content-Defined Chunking (CDC) for large files (Issue #1074).
 
-CDCEngine provides chunking for any CASBackend subclass via Feature DI:
+CDCEngine provides chunking for any CASAddressingEngine subclass via Feature DI:
 
-    class CASBackend(Backend):
+    class CASAddressingEngine(Backend):
         def __init__(self, transport, ..., cdc_engine=None):
             self._cdc = cdc_engine  # Optional, None-safe
 
-CDC routing is handled by CASBackend base class — subclasses do NOT
+CDC routing is handled by CASAddressingEngine base class — subclasses do NOT
 need to override write_content/read_content for CDC.
 
 ChunkingStrategy protocol allows pluggable chunking algorithms:
@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.backends.base.cas_backend import CASBackend
+    from nexus.backends.base.cas_backend import CASAddressingEngine
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class ChunkingStrategy(Protocol):
     - Default: ``CDCEngine`` (Rabin fingerprint, 16MB threshold)
     - Custom: message-boundary chunking for LLM conversations, etc.
 
-    All methods receive the parent ``CASBackend`` instance for transport access.
+    All methods receive the parent ``CASAddressingEngine`` instance for transport access.
     """
 
     def should_chunk(self, content: bytes) -> bool:
@@ -177,9 +177,9 @@ class ChunkedReference:
 
 
 class CDCEngine:
-    """CDC chunking engine — composed into CASBackend subclasses.
+    """CDC chunking engine — composed into CASAddressingEngine subclasses.
 
-    Uses CASBackend's internal methods directly:
+    Uses CASAddressingEngine's internal methods directly:
     ``_transport``, ``_blob_key()``, ``_read_meta()``, ``_write_meta()``,
     ``_meta_update_locked()``, ``_stripe_lock``, ``_bloom``.
     """
@@ -188,7 +188,7 @@ class CDCEngine:
 
     def __init__(
         self,
-        backend: CASBackend,
+        backend: CASAddressingEngine,
         *,
         threshold: int = CDC_THRESHOLD_BYTES,
         min_chunk: int = CDC_MIN_CHUNK_SIZE,

@@ -1,6 +1,6 @@
 """AWS S3 connector backend with direct path mapping.
 
-Thin subclass of PathBackend that:
+Thin subclass of PathAddressingEngine that:
 - Creates an S3BlobTransport for raw S3 I/O
 - Mixes in CacheConnectorMixin for L1+L2 caching
 - Mixes in MultipartUpload for chunked uploads
@@ -18,7 +18,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
-from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.base.path_backend import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
     requires=["boto3"],
     service_name="s3",
 )
-class PathS3Backend(PathBackend, CacheConnectorMixin, MultipartUpload):
+class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
     """AWS S3 connector with direct path mapping, caching, and multipart upload."""
 
     _CAPABILITIES = BLOB_CONNECTOR_CAPABILITIES | frozenset(

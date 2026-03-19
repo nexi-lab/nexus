@@ -1,7 +1,7 @@
 """BlobTransport Protocol — raw key→blob I/O abstraction.
 
 BlobTransport captures the *transport* dimension (WHERE data lives) while
-CASBackend / PathBackend capture the *addressing* dimension (HOW data is
+CASAddressingEngine / PathAddressingEngine capture the *addressing* dimension (HOW data is
 addressed).  These two dimensions are orthogonal:
 
               Transport (WHERE)
@@ -22,7 +22,7 @@ Design decisions:
       any class with matching methods is a valid transport.
     - 9 methods matching the original BaseBlobStorageConnector abstract methods,
       but renamed to transport-neutral terminology (put/get vs upload/download).
-    - CASBackend uses a subset (6 methods). PathBackend uses all 9.
+    - CASAddressingEngine uses a subset (6 methods). PathAddressingEngine uses all 9.
 """
 
 from __future__ import annotations

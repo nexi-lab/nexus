@@ -1,4 +1,4 @@
-"""CRUD verification: CASBackend(LocalBlobTransport) end-to-end.
+"""CRUD verification: CASAddressingEngine(LocalBlobTransport) end-to-end.
 
 This is the **first time** production CRUD has been verified on the new
 CAS x BlobTransport composition with a real filesystem. Previous tests
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.cas_backend import CASAddressingEngine
 from nexus.backends.base.stripe_lock import _StripeLock
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError
@@ -38,17 +38,17 @@ def transport(tmp_path):
 
 @pytest.fixture
 def backend(transport):
-    return CASBackend(transport, backend_name="test-local")
+    return CASAddressingEngine(transport, backend_name="test-local")
 
 
 @pytest.fixture
 def backend_with_features(transport):
-    """CASBackend with all Feature DI enabled."""
+    """CASAddressingEngine with all Feature DI enabled."""
     cache = SimpleCache()
     bloom = SimpleBloom()
     stripe = _StripeLock(num_stripes=16)
     callback = MagicMock()
-    return CASBackend(
+    return CASAddressingEngine(
         transport,
         backend_name="test-local-features",
         bloom_filter=bloom,
@@ -308,7 +308,7 @@ class TestStripeLock:
         """50 threads writing same content should produce ref_count=50."""
         transport = LocalBlobTransport(root_path=tmp_path, fsync=False)
         stripe = _StripeLock(num_stripes=16)
-        backend = CASBackend(transport, backend_name="concurrent", stripe_lock=stripe)
+        backend = CASAddressingEngine(transport, backend_name="concurrent", stripe_lock=stripe)
 
         content = b"concurrent-content"
         results = []
@@ -343,7 +343,7 @@ class TestStripeLock:
         """50 threads writing different content should all succeed."""
         transport = LocalBlobTransport(root_path=tmp_path, fsync=False)
         stripe = _StripeLock(num_stripes=16)
-        backend = CASBackend(transport, backend_name="concurrent", stripe_lock=stripe)
+        backend = CASAddressingEngine(transport, backend_name="concurrent", stripe_lock=stripe)
 
         results = []
         errors = []
@@ -388,7 +388,7 @@ class TestOnWriteCallback:
 
 
 class TestNoFeatures:
-    """Verify CASBackend works correctly with no features injected (cloud mode)."""
+    """Verify CASAddressingEngine works correctly with no features injected (cloud mode)."""
 
     def test_crud_without_features(self, backend):
         r = backend.write_content(b"cloud-style")

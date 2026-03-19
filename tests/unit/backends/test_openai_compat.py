@@ -290,7 +290,7 @@ class TestOpenAICompatibleBackend:
             backend.read_content(result.content_hash)
 
     def test_content_exists(self) -> None:
-        """Verify content_exists works via CASBackend."""
+        """Verify content_exists works via CASAddressingEngine."""
         client = MagicMock()
         client.chat.completions.create.return_value = _mock_completion()
         backend, _ = self._make_backend(client)

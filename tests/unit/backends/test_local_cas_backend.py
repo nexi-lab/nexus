@@ -1,7 +1,7 @@
 """Unit tests for CASLocalBackend — full-featured local CAS backend.
 
 Tests cover:
-- Basic CRUD (inherited from CASBackend)
+- Basic CRUD (inherited from CASAddressingEngine)
 - CDC: write large file → chunked, read back → reassembled
 - Multipart: init/upload_parts/complete/abort
 - Concurrent writes with stripe lock (50 threads)

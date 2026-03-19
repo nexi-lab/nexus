@@ -1,4 +1,4 @@
-"""Unit tests for CASBackend metadata LRU cache (Issue #2940).
+"""Unit tests for CASAddressingEngine metadata LRU cache (Issue #2940).
 
 Tests cover:
 - Meta cache hit/miss counters
@@ -12,7 +12,7 @@ Tests cover:
 import cachetools
 import pytest
 
-from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.cas_backend import CASAddressingEngine
 from tests.unit.backends.test_cas_backend import InMemoryBlobTransport
 
 
@@ -27,27 +27,29 @@ def meta_cache() -> cachetools.LRUCache:
 
 
 @pytest.fixture
-def backend(transport: InMemoryBlobTransport, meta_cache: cachetools.LRUCache) -> CASBackend:
-    return CASBackend(transport, backend_name="test-cas", meta_cache=meta_cache)
+def backend(
+    transport: InMemoryBlobTransport, meta_cache: cachetools.LRUCache
+) -> CASAddressingEngine:
+    return CASAddressingEngine(transport, backend_name="test-cas", meta_cache=meta_cache)
 
 
 @pytest.fixture
-def backend_no_cache(transport: InMemoryBlobTransport) -> CASBackend:
+def backend_no_cache(transport: InMemoryBlobTransport) -> CASAddressingEngine:
     """Backend without meta_cache (simulates cloud backends)."""
-    return CASBackend(transport, backend_name="test-cas-no-cache")
+    return CASAddressingEngine(transport, backend_name="test-cas-no-cache")
 
 
 class TestCacheStats:
     """Test cache_stats property."""
 
-    def test_initial_stats_empty(self, backend: CASBackend):
+    def test_initial_stats_empty(self, backend: CASAddressingEngine):
         stats = backend.cache_stats
         assert stats["hits"] == 0
         assert stats["misses"] == 0
         assert stats["size"] == 0
         assert stats["maxsize"] == 100
 
-    def test_stats_without_cache(self, backend_no_cache: CASBackend):
+    def test_stats_without_cache(self, backend_no_cache: CASAddressingEngine):
         stats = backend_no_cache.cache_stats
         assert stats["hits"] == 0
         assert stats["misses"] == 0
@@ -58,7 +60,7 @@ class TestCacheStats:
 class TestMetaCacheReadThrough:
     """Test _read_meta with cache read-through."""
 
-    def test_first_read_is_miss(self, backend: CASBackend):
+    def test_first_read_is_miss(self, backend: CASAddressingEngine):
         content = b"test content"
         backend.write_content(content)
 
@@ -66,7 +68,7 @@ class TestMetaCacheReadThrough:
         # The initial _read_meta in _meta_update_locked is a miss
         assert backend.cache_stats["misses"] >= 1
 
-    def test_second_read_is_hit(self, backend: CASBackend):
+    def test_second_read_is_hit(self, backend: CASAddressingEngine):
         content = b"test content"
         result = backend.write_content(content)
 
@@ -80,7 +82,9 @@ class TestMetaCacheReadThrough:
         assert backend.cache_stats["hits"] == 1
         assert backend.cache_stats["misses"] == 0
 
-    def test_cache_populated_after_miss(self, backend: CASBackend, meta_cache: cachetools.LRUCache):
+    def test_cache_populated_after_miss(
+        self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
+    ):
         content = b"populate cache"
         result = backend.write_content(content)
 
@@ -88,7 +92,7 @@ class TestMetaCacheReadThrough:
         assert result.content_hash in meta_cache
         assert meta_cache[result.content_hash]["ref_count"] == 1
 
-    def test_no_cache_no_error(self, backend_no_cache: CASBackend):
+    def test_no_cache_no_error(self, backend_no_cache: CASAddressingEngine):
         """Backend without cache should work normally."""
         content = b"no cache content"
         result = backend_no_cache.write_content(content)
@@ -99,7 +103,9 @@ class TestMetaCacheReadThrough:
 class TestMetaCacheWriteThrough:
     """Test that _write_meta updates the cache."""
 
-    def test_write_meta_updates_cache(self, backend: CASBackend, meta_cache: cachetools.LRUCache):
+    def test_write_meta_updates_cache(
+        self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
+    ):
         content = b"write-through test"
         result = backend.write_content(content)
 
@@ -118,7 +124,7 @@ class TestMetaCacheEviction:
     """Test cache eviction on delete_content."""
 
     def test_delete_last_ref_evicts_cache(
-        self, backend: CASBackend, meta_cache: cachetools.LRUCache
+        self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
     ):
         content = b"delete me"
         result = backend.write_content(content)
@@ -132,7 +138,7 @@ class TestMetaCacheEviction:
         assert h not in meta_cache
 
     def test_delete_decrement_keeps_cache(
-        self, backend: CASBackend, meta_cache: cachetools.LRUCache
+        self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
     ):
         content = b"keep in cache"
         result = backend.write_content(content)
@@ -151,7 +157,7 @@ class TestMetaCacheLRUBehavior:
 
     def test_cache_maxsize_respected(self, transport: InMemoryBlobTransport):
         small_cache = cachetools.LRUCache(maxsize=3)
-        backend = CASBackend(transport, backend_name="test", meta_cache=small_cache)
+        backend = CASAddressingEngine(transport, backend_name="test", meta_cache=small_cache)
 
         hashes = []
         for i in range(5):

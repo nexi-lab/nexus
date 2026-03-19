@@ -1,16 +1,16 @@
 """Path-based addressing engine over any BlobTransport.
 
-PathBackend implements ObjectStoreABC (via Backend) using direct path mapping:
+PathAddressingEngine implements ObjectStoreABC (via Backend) using direct path mapping:
 files are stored at their actual paths, with no CAS transformation or
 deduplication.
 
-    PathBackend(transport: BlobTransport)
+    PathAddressingEngine(transport: BlobTransport)
         ├── PathGCSBackend       — thin: creates GCSBlobTransport + cache
         ├── PathS3Backend        — thin: creates S3BlobTransport + cache + multipart
         └── (future Azure)       — thin: creates AzureBlobTransport
 
 This replaces ``BaseBlobStorageConnector`` which used abstract methods (inheritance)
-for cloud-specific I/O.  PathBackend uses composition (BlobTransport protocol).
+for cloud-specific I/O.  PathAddressingEngine uses composition (BlobTransport protocol).
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PathBackend(Backend):
+class PathAddressingEngine(Backend):
     """Path-based addressing over any BlobTransport.
 
     Files are stored at their actual paths (with optional prefix).
@@ -524,3 +524,7 @@ class PathBackend(Backend):
                 backend=self.name,
                 path=old_path,
             ) from e
+
+
+# Backward-compat alias (will be removed in a future cleanup)
+PathBackend = PathAddressingEngine

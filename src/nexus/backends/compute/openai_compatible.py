@@ -1,6 +1,6 @@
 """OpenAI-compatible LLM backend — CAS addressing over any OpenAI API.
 
-Composes CASBackend (addressing) + LLMBlobTransport (in-memory I/O)
+Composes CASAddressingEngine (addressing) + LLMBlobTransport (in-memory I/O)
 to expose LLM inference as a VFS-mountable backend.
 
     nexus mount /zone/llm/openai --backend=openai_compatible \
@@ -30,7 +30,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.cas_backend import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.compute.llm_blob_transport import LLMBlobTransport
 from nexus.contracts.capabilities import ConnectorCapability
@@ -66,8 +66,8 @@ def _build_openai_client(base_url: str, api_key: str, timeout: float) -> Any:
     category="compute",
     requires=["openai"],
 )
-class OpenAICompatibleBackend(CASBackend):
-    """CAS addressing + OpenAI-compatible LLM transport.
+class OpenAICompatibleBackend(CASAddressingEngine):
+    """CAS addressing engine + OpenAI-compatible LLM transport.
 
     Sync MVP: write_content stores request + calls LLM + stores response.
     All data lives in CAS (in-memory transport, flushed to durable store later).

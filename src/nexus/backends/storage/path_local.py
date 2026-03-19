@@ -1,6 +1,6 @@
 """Path-based local filesystem backend (no CAS overhead).
 
-Thin subclass of PathBackend that:
+Thin subclass of PathAddressingEngine that:
 - Creates a LocalBlobTransport for raw local I/O
 - Registers as "path_local" via @register_connector
 - Exposes root_path / has_root_path for orchestrator
@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
-from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.base.path_backend import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
@@ -33,7 +33,7 @@ from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorC
     description="Local filesystem with direct path mapping (no CAS)",
     category="storage",
 )
-class PathLocalBackend(PathBackend):
+class PathLocalBackend(PathAddressingEngine):
     """Local filesystem backend with direct path mapping.
 
     Unlike ``CASLocalBackend`` (CAS addressing + local transport), this uses

@@ -4,7 +4,7 @@ Stores CAS blobs in process memory. LLM conversations are ephemeral
 during a session — persistence is handled by CAS flush to durable
 backends (local/GCS/S3) in Step 2 (DT_STREAM + CAS flush).
 
-Satisfies the 6-method CASBackend subset of BlobTransport:
+Satisfies the 6-method CASAddressingEngine subset of BlobTransport:
     put_blob, get_blob, delete_blob, blob_exists, get_blob_size, stream_blob.
 """
 

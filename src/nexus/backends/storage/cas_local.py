@@ -1,14 +1,14 @@
 """CAS + Local transport backend — full-featured local storage.
 
-Composes CASBackend (addressing) + LocalBlobTransport (I/O) +
+Composes CASAddressingEngine (addressing) + LocalBlobTransport (I/O) +
 MultipartUpload (resumable uploads) using Feature DI for Bloom filter,
 content cache, stripe lock, and CDCEngine (chunking).
 
-    CASLocalBackend = CASBackend(LocalBlobTransport)
+    CASLocalBackend = CASAddressingEngine(LocalBlobTransport)
                     + MultipartUpload     (resumable uploads, ABC)
                     + Feature DI          (Bloom, cache, stripe lock, CDC)
 
-CDC routing is handled by CASBackend base class via Feature DI —
+CDC routing is handled by CASAddressingEngine base class via Feature DI —
 CASLocalBackend only instantiates and passes CDCEngine.
 
 Naming convention: {addressing}_{transport} per Section 5.2 of
@@ -26,7 +26,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.cas_backend import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.base.stripe_lock import _StripeLock
 from nexus.backends.engines.cdc import CDCEngine
@@ -76,11 +76,11 @@ def _init_bloom(cas_root: Path, capacity: int, fp_rate: float) -> Any:
     description="Local filesystem with CAS deduplication (new architecture)",
     category="storage",
 )
-class CASLocalBackend(CASBackend, MultipartUpload):
+class CASLocalBackend(CASAddressingEngine, MultipartUpload):
     """CAS addressing + local filesystem transport.
 
-    CDCEngine is injected via CASBackend Feature DI (``self._cdc``).
-    CDC routing (write/read/delete) is handled by CASBackend base class.
+    CDCEngine is injected via CASAddressingEngine Feature DI (``self._cdc``).
+    CDC routing (write/read/delete) is handled by CASAddressingEngine base class.
     """
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
@@ -133,7 +133,7 @@ class CASLocalBackend(CASBackend, MultipartUpload):
 
         meta_cache: Any = cachetools.LRUCache(maxsize=10_000)
 
-        # Initialize CASBackend with Feature DI (including CDC)
+        # Initialize CASAddressingEngine with Feature DI (including CDC)
         # CDCEngine requires a reference to the backend, so we create a
         # temporary instance and wire it after super().__init__().
         super().__init__(
@@ -146,7 +146,7 @@ class CASLocalBackend(CASBackend, MultipartUpload):
             on_write_callback=on_write_callback,
         )
 
-        # CDCEngine needs self (CASBackend internals) — wire after init
+        # CDCEngine needs self (CASAddressingEngine internals) — wire after init
         self._cdc = CDCEngine(self)
 
     @property
@@ -172,7 +172,7 @@ class CASLocalBackend(CASBackend, MultipartUpload):
         return bool(self._cdc.is_chunked(content_hash))
 
     # Content operations (write_content, read_content, delete_content,
-    # get_content_size, read_content_range) — all inherited from CASBackend
+    # get_content_size, read_content_range) — all inherited from CASAddressingEngine
     # which handles CDC routing via Feature DI (self._cdc).
 
     # === Directory Operations (local FS native, not blob markers) ===

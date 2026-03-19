@@ -1,4 +1,4 @@
-"""Unit tests for CASBackend — CAS addressing over InMemoryBlobTransport.
+"""Unit tests for CASAddressingEngine — CAS addressing over InMemoryBlobTransport.
 
 Tests cover:
 - Content-addressable write/read/delete with hash-based paths
@@ -17,7 +17,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.cas_backend import CASAddressingEngine
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
@@ -97,17 +97,19 @@ def transport() -> InMemoryBlobTransport:
 
 
 @pytest.fixture
-def backend(transport: InMemoryBlobTransport) -> CASBackend:
-    return CASBackend(transport, backend_name="test-cas")
+def backend(transport: InMemoryBlobTransport) -> CASAddressingEngine:
+    return CASAddressingEngine(transport, backend_name="test-cas")
 
 
 # === Test Classes ===
 
 
-class TestCASBackendWriteContent:
+class TestCASAddressingEngineWriteContent:
     """Test write_content() — CAS dedup and ref counting."""
 
-    def test_write_stores_at_cas_path(self, backend: CASBackend, transport: InMemoryBlobTransport):
+    def test_write_stores_at_cas_path(
+        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
+    ):
         content = b"hello world"
         h = hash_content(content)
         result = backend.write_content(content)
@@ -121,7 +123,7 @@ class TestCASBackendWriteContent:
         assert transport.files[cas_key] == content
 
     def test_write_creates_metadata_sidecar(
-        self, backend: CASBackend, transport: InMemoryBlobTransport
+        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
     ):
         content = b"test metadata"
         h = hash_content(content)
@@ -136,7 +138,7 @@ class TestCASBackendWriteContent:
         assert meta["ref_count"] == 1
         assert meta["size"] == len(content)
 
-    def test_write_dedup_increments_ref_count(self, backend: CASBackend):
+    def test_write_dedup_increments_ref_count(self, backend: CASAddressingEngine):
         content = b"duplicate content"
 
         r1 = backend.write_content(content)
@@ -145,32 +147,32 @@ class TestCASBackendWriteContent:
         assert r1.content_hash == r2.content_hash
         assert backend.get_ref_count(r1.content_hash) == 2
 
-    def test_write_different_content_different_hashes(self, backend: CASBackend):
+    def test_write_different_content_different_hashes(self, backend: CASAddressingEngine):
         r1 = backend.write_content(b"content A")
         r2 = backend.write_content(b"content B")
 
         assert r1.content_hash != r2.content_hash
 
-    def test_write_returns_write_result(self, backend: CASBackend):
+    def test_write_returns_write_result(self, backend: CASAddressingEngine):
         result = backend.write_content(b"test")
         assert isinstance(result, WriteResult)
 
 
-class TestCASBackendReadContent:
+class TestCASAddressingEngineReadContent:
     """Test read_content() — hash-based retrieval and integrity verification."""
 
-    def test_read_returns_content(self, backend: CASBackend):
+    def test_read_returns_content(self, backend: CASAddressingEngine):
         content = b"read me"
         result = backend.write_content(content)
         data = backend.read_content(result.content_hash)
         assert data == content
 
-    def test_read_missing_raises(self, backend: CASBackend):
+    def test_read_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
             backend.read_content("a" * 64)
 
     def test_read_verifies_hash_integrity(
-        self, backend: CASBackend, transport: InMemoryBlobTransport
+        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
     ):
         content = b"original"
         result = backend.write_content(content)
@@ -183,11 +185,11 @@ class TestCASBackendReadContent:
             backend.read_content(result.content_hash)
 
 
-class TestCASBackendDeleteContent:
+class TestCASAddressingEngineDeleteContent:
     """Test delete_content() — ref counting and cleanup."""
 
     def test_delete_removes_blob_on_last_ref(
-        self, backend: CASBackend, transport: InMemoryBlobTransport
+        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
     ):
         content = b"delete me"
         result = backend.write_content(content)
@@ -198,7 +200,7 @@ class TestCASBackendDeleteContent:
         cas_key = f"cas/{h[:2]}/{h[2:4]}/{h}"
         assert cas_key not in transport.files
 
-    def test_delete_decrements_ref_count(self, backend: CASBackend):
+    def test_delete_decrements_ref_count(self, backend: CASAddressingEngine):
         content = b"ref counted"
         result = backend.write_content(content)
         backend.write_content(content)  # ref_count = 2
@@ -206,12 +208,12 @@ class TestCASBackendDeleteContent:
         backend.delete_content(result.content_hash)
         assert backend.get_ref_count(result.content_hash) == 1
 
-    def test_delete_missing_raises(self, backend: CASBackend):
+    def test_delete_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
             backend.delete_content("b" * 64)
 
     def test_delete_cleans_up_meta_sidecar(
-        self, backend: CASBackend, transport: InMemoryBlobTransport
+        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
     ):
         content = b"cleanup"
         result = backend.write_content(content)
@@ -223,45 +225,45 @@ class TestCASBackendDeleteContent:
         assert meta_key not in transport.files
 
 
-class TestCASBackendContentOperations:
+class TestCASAddressingEngineContentOperations:
     """Test content_exists, get_content_size, get_ref_count."""
 
-    def test_content_exists_true(self, backend: CASBackend):
+    def test_content_exists_true(self, backend: CASAddressingEngine):
         result = backend.write_content(b"exists")
         assert backend.content_exists(result.content_hash) is True
 
-    def test_content_exists_false(self, backend: CASBackend):
+    def test_content_exists_false(self, backend: CASAddressingEngine):
         assert backend.content_exists("c" * 64) is False
 
-    def test_get_content_size(self, backend: CASBackend):
+    def test_get_content_size(self, backend: CASAddressingEngine):
         content = b"size check"
         result = backend.write_content(content)
         assert backend.get_content_size(result.content_hash) == len(content)
 
-    def test_get_content_size_missing_raises(self, backend: CASBackend):
+    def test_get_content_size_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
             backend.get_content_size("d" * 64)
 
-    def test_get_ref_count_missing_raises(self, backend: CASBackend):
+    def test_get_ref_count_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
             backend.get_ref_count("e" * 64)
 
 
-class TestCASBackendStreaming:
+class TestCASAddressingEngineStreaming:
     """Test stream_content and write_stream."""
 
-    def test_stream_content_yields_chunks(self, backend: CASBackend):
+    def test_stream_content_yields_chunks(self, backend: CASAddressingEngine):
         content = b"A" * 100
         result = backend.write_content(content)
 
         chunks = list(backend.stream_content(result.content_hash, chunk_size=30))
         assert b"".join(chunks) == content
 
-    def test_stream_missing_raises(self, backend: CASBackend):
+    def test_stream_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
             list(backend.stream_content("f" * 64))
 
-    def test_write_stream(self, backend: CASBackend):
+    def test_write_stream(self, backend: CASAddressingEngine):
         chunks = [b"chunk1", b"chunk2", b"chunk3"]
         result = backend.write_stream(iter(chunks))
 
@@ -269,10 +271,10 @@ class TestCASBackendStreaming:
         assert data == b"chunk1chunk2chunk3"
 
 
-class TestCASBackendBatchRead:
+class TestCASAddressingEngineBatchRead:
     """Test batch_read_content."""
 
-    def test_batch_read_multiple(self, backend: CASBackend):
+    def test_batch_read_multiple(self, backend: CASAddressingEngine):
         h1 = backend.write_content(b"file1").content_hash
         h2 = backend.write_content(b"file2").content_hash
         h3 = backend.write_content(b"file3").content_hash
@@ -283,15 +285,15 @@ class TestCASBackendBatchRead:
         assert result[h2] == b"file2"
         assert result[h3] == b"file3"
 
-    def test_batch_read_empty(self, backend: CASBackend):
+    def test_batch_read_empty(self, backend: CASAddressingEngine):
         assert backend.batch_read_content([]) == {}
 
-    def test_batch_read_single_optimization(self, backend: CASBackend):
+    def test_batch_read_single_optimization(self, backend: CASAddressingEngine):
         h = backend.write_content(b"single").content_hash
         result = backend.batch_read_content([h])
         assert result[h] == b"single"
 
-    def test_batch_read_partial_failures(self, backend: CASBackend):
+    def test_batch_read_partial_failures(self, backend: CASAddressingEngine):
         h = backend.write_content(b"exists").content_hash
         fake = "a" * 64
 
@@ -301,54 +303,56 @@ class TestCASBackendBatchRead:
         assert result[fake] is None
 
 
-class TestCASBackendDirectories:
+class TestCASAddressingEngineDirectories:
     """Test directory operations (CAS uses dirs/ prefix)."""
 
-    def test_mkdir_creates_marker(self, backend: CASBackend, transport: InMemoryBlobTransport):
+    def test_mkdir_creates_marker(
+        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
+    ):
         backend.mkdir("data")
         assert "dirs/data/" in transport.files
 
-    def test_mkdir_root_noop(self, backend: CASBackend, transport: InMemoryBlobTransport):
+    def test_mkdir_root_noop(self, backend: CASAddressingEngine, transport: InMemoryBlobTransport):
         backend.mkdir("")
         # Root always exists, no marker created
         assert not any(k.startswith("dirs/") for k in transport.files)
 
-    def test_mkdir_exist_ok(self, backend: CASBackend):
+    def test_mkdir_exist_ok(self, backend: CASAddressingEngine):
         backend.mkdir("data")
         backend.mkdir("data", exist_ok=True)  # No error
 
-    def test_mkdir_duplicate_raises(self, backend: CASBackend):
+    def test_mkdir_duplicate_raises(self, backend: CASAddressingEngine):
         backend.mkdir("data")
         with pytest.raises(FileExistsError):
             backend.mkdir("data")
 
-    def test_is_directory(self, backend: CASBackend):
+    def test_is_directory(self, backend: CASAddressingEngine):
         assert backend.is_directory("") is True  # Root
         assert backend.is_directory("nonexistent") is False
         backend.mkdir("data")
         assert backend.is_directory("data") is True
 
-    def test_rmdir(self, backend: CASBackend, transport: InMemoryBlobTransport):
+    def test_rmdir(self, backend: CASAddressingEngine, transport: InMemoryBlobTransport):
         backend.mkdir("data")
         backend.rmdir("data")
         assert "dirs/data/" not in transport.files
 
-    def test_rmdir_missing_raises(self, backend: CASBackend):
+    def test_rmdir_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
             backend.rmdir("nonexistent")
 
-    def test_rmdir_root_raises(self, backend: CASBackend):
+    def test_rmdir_root_raises(self, backend: CASAddressingEngine):
         with pytest.raises(BackendError, match="root"):
             backend.rmdir("")
 
 
-class TestCASBackendName:
+class TestCASAddressingEngineName:
     """Test name property and default name generation."""
 
     def test_custom_name(self, transport: InMemoryBlobTransport):
-        backend = CASBackend(transport, backend_name="my-cas")
+        backend = CASAddressingEngine(transport, backend_name="my-cas")
         assert backend.name == "my-cas"
 
     def test_default_name(self, transport: InMemoryBlobTransport):
-        backend = CASBackend(transport)
+        backend = CASAddressingEngine(transport)
         assert backend.name == "cas-memory"

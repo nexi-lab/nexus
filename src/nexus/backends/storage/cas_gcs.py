@@ -1,6 +1,6 @@
 """Google Cloud Storage backend with CAS deduplication.
 
-Thin subclass of CASBackend that:
+Thin subclass of CASAddressingEngine that:
 - Creates a GCSBlobTransport for raw GCS I/O
 - Registers as "cas_gcs" connector via @register_connector
 - Declares CONNECTION_ARGS for factory instantiation
@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.cas_backend import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.contracts.exceptions import BackendError
 
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
     category="storage",
     requires=["google-cloud-storage"],
 )
-class CASGCSBackend(CASBackend):
+class CASGCSBackend(CASAddressingEngine):
     """Google Cloud Storage backend with CAS deduplication.
 
     Storage layout:

@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from nexus.backends.base.backend import Backend
-from nexus.backends.base.path_backend import PathBackend
+from nexus.backends.base.path_backend import PathAddressingEngine
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
@@ -67,7 +67,7 @@ class InMemoryBlobTransport:
             yield data[i : i + chunk_size]
 
 
-class MockBlobConnector(PathBackend, CacheConnectorMixin):
+class MockBlobConnector(PathAddressingEngine, CacheConnectorMixin):
     """Mock blob connector for testing batch operations."""
 
     def __init__(self, session_factory):
@@ -577,7 +577,7 @@ class TestGCSBatchReadContent:
 # === S3 batch_read_content tests (#1626) ===
 
 
-class MockS3ConnectorForBatch(PathBackend, CacheConnectorMixin):
+class MockS3ConnectorForBatch(PathAddressingEngine, CacheConnectorMixin):
     """Mock S3-like connector for testing batch_read_content with per-file contexts.
 
     Simulates path-based access where each file needs its own OperationContext.

@@ -77,11 +77,11 @@ def _boot_system_services(
             _is_pg = not ctx.db_url.startswith("sqlite")
 
             # --- ReBAC Manager ---
-            from nexus.bricks.rebac.consistency.metastore_version_store import (
-                MetastoreVersionStore,
-            )
             from nexus.bricks.rebac.consistency.metastore_namespace_store import (
                 MetastoreNamespaceStore,
+            )
+            from nexus.bricks.rebac.consistency.metastore_version_store import (
+                MetastoreVersionStore,
             )
             from nexus.bricks.rebac.manager import ReBACManager
 

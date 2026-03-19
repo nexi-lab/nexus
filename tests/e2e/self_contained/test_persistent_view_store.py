@@ -273,7 +273,6 @@ class TestAgentReconnection:
         from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
         from nexus.bricks.rebac.manager import EnhancedReBACManager
         from nexus.bricks.rebac.namespace_manager import MountEntry, NamespaceManager
-        from tests.helpers.dict_metastore import DictMetastore
 
         rebac = EnhancedReBACManager(
             engine=engine,

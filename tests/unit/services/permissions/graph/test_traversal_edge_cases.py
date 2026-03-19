@@ -26,8 +26,8 @@ import pytest
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 
-from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.domain import NamespaceConfig
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base

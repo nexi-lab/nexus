@@ -113,7 +113,11 @@ class ZonePathResolver:
                 # Cross zone boundary
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    raise FileNotFoundError(f"DT_MOUNT at '{prefix}' has no target_zone_id")
+                    # Local mount without explicit zone — stay in current zone.
+                    # This happens for in-memory mounts (e.g. /agents IPC mount)
+                    # that were registered via PathRouter.add_mount() without
+                    # a full DT_MOUNT metadata entry.
+                    target_zone_id = current_zone_id
 
                 mount_chain.append((current_zone_id, prefix))
 
@@ -180,7 +184,8 @@ class ZonePathResolver:
             if entry is not None and entry.is_mount:
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    raise FileNotFoundError(f"DT_MOUNT at '{prefix}' has no target_zone_id")
+                    # Local mount without explicit zone — stay in current zone.
+                    target_zone_id = zone_id
 
                 mount_chain.append((zone_id, prefix))
 

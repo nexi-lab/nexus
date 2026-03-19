@@ -191,7 +191,12 @@ def _spec_to_response(stored: Any) -> AgentSpecResponse:
 
 
 async def _get_process_table(request: Request) -> Any:
-    """Get ProcessTable from app state."""
+    """Get ProcessTable from app state (optional — may be None)."""
+    return getattr(request.app.state, "process_table", None)
+
+
+async def _require_process_table(request: Request) -> Any:
+    """Get ProcessTable, raising 503 if unavailable."""
     pt = getattr(request.app.state, "process_table", None)
     if pt is None:
         raise HTTPException(status_code=503, detail="ProcessTable not available")
@@ -223,14 +228,22 @@ async def list_agents(
     offset: int = Query(default=0, ge=0, description="Agents to skip"),
     _auth: dict = Depends(_get_require_auth()),
     process_table: Any = Depends(_get_process_table),
+    nexus_fs: Any = Depends(lambda request: getattr(request.app.state, "nexus_fs", None)),
 ) -> AgentListResponse:
-    """List agents in a zone with pagination."""
-    all_agents = process_table.list_processes(zone_id=zone_id)
-    total = len(all_agents)
-    page = all_agents[offset : offset + limit]
-    return AgentListResponse(
-        agents=[
-            AgentListItem(
+    """List agents in a zone with pagination.
+
+    Merges two sources:
+    - ProcessTable: currently running agents (in-memory)
+    - Database: registered agent identities (APIKeyModel with subject_type=agent)
+
+    Running agents show their live state; registered-but-not-running agents
+    show as "registered".
+    """
+    # 1. Running agents from ProcessTable (if available)
+    running_map: dict[str, Any] = {}
+    if process_table is not None:
+        for a in process_table.list_processes(zone_id=zone_id):
+            running_map[a.pid] = AgentListItem(
                 agent_id=a.pid,
                 owner_id=a.owner_id,
                 zone_id=a.zone_id,
@@ -238,8 +251,44 @@ async def list_agents(
                 state=str(a.state),
                 generation=a.generation,
             )
-            for a in page
-        ],
+
+    # 2. Registered agents from API key database (best-effort)
+    try:
+        session_factory = getattr(nexus_fs, "SessionLocal", None) if nexus_fs else None
+        if session_factory is not None:
+            from sqlalchemy import select
+
+            from nexus.storage.models.auth import APIKeyModel
+
+            session = session_factory()
+            try:
+                rows = session.scalars(
+                    select(APIKeyModel).where(
+                        APIKeyModel.subject_type == "agent",
+                        APIKeyModel.revoked == 0,
+                    )
+                ).all()
+                for key in rows:
+                    aid = key.subject_id
+                    if aid and aid not in running_map:
+                        running_map[aid] = AgentListItem(
+                            agent_id=aid,
+                            owner_id=key.user_id or "",
+                            zone_id=key.zone_id or zone_id,
+                            name=key.name or aid,
+                            state="registered",
+                            generation=0,
+                        )
+            finally:
+                session.close()
+    except Exception:
+        logger.debug("Could not fetch registered agents from database", exc_info=True)
+
+    all_agents = sorted(running_map.values(), key=lambda a: a.agent_id)
+    total = len(all_agents)
+    page = all_agents[offset : offset + limit]
+    return AgentListResponse(
+        agents=page,
         total=total,
         limit=limit,
         offset=offset,
@@ -259,7 +308,7 @@ async def list_agents(
 async def get_agent_status(
     agent_id: str,
     auth_result: dict = Depends(_get_require_auth()),
-    process_table: Any = Depends(_get_process_table),
+    process_table: Any = Depends(_require_process_table),
 ) -> AgentStatusResponse:
     """Get computed status for an agent."""
     _authorize_agent_access(auth_result, agent_id, "read status of")
@@ -298,7 +347,7 @@ async def set_agent_spec(
     agent_id: str,
     body: AgentSpecRequest,
     auth_result: dict = Depends(_get_require_auth()),
-    process_table: Any = Depends(_get_process_table),
+    process_table: Any = Depends(_require_process_table),
     vfs: Any = Depends(_get_vfs),
 ) -> AgentSpecResponse:
     """Set the desired state spec for an agent."""
@@ -349,7 +398,7 @@ async def set_agent_spec(
 async def get_agent_spec(
     agent_id: str,
     auth_result: dict = Depends(_get_require_auth()),
-    process_table: Any = Depends(_get_process_table),
+    process_table: Any = Depends(_require_process_table),
     vfs: Any = Depends(_get_vfs),
 ) -> AgentSpecResponse:
     """Get the stored spec for an agent."""

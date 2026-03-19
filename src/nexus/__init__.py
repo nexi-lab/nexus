@@ -334,6 +334,23 @@ async def connect(
         bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
         advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
+
+        # Auto-join cluster if NEXUS_JOIN_TOKEN + NEXUS_PEER are set and certs don't exist yet
+        join_token = os.environ.get("NEXUS_JOIN_TOKEN")
+        join_peer = os.environ.get("NEXUS_PEER")
+        tls_dir_check = Path(zones_dir) / "tls"
+        if join_token and join_peer and not (tls_dir_check / "node.pem").exists():
+            from nexus.security.tls.cluster_join import join_cluster_sync
+
+            logger.info("NEXUS_JOIN_TOKEN + NEXUS_PEER set — joining cluster before startup")
+            join_cluster_sync(
+                peer_address=join_peer,
+                token=join_token,
+                node_id=node_id,
+                tls_dir=tls_dir_check,
+            )
+            logger.info("Cluster join complete — continuing with ZoneManager init")
+
         zone_mgr = ZoneManager(
             node_id=node_id,
             base_path=zones_dir,
@@ -346,9 +363,15 @@ async def connect(
         peers = [p.strip() for p in peers_str.split(",") if p.strip()] if peers_str else []
 
         # Detect joiner vs first-node (#2694):
-        # A joiner was provisioned via `nexus join` — has ca.pem but no join-token
+        # A joiner was provisioned via `nexus join` or cluster_join — has all
+        # three cert files (ca.pem + node.pem + node-key.pem) but no join-token
         tls_dir = Path(zones_dir) / "tls"
-        is_joiner = (tls_dir / "ca.pem").exists() and not (tls_dir / "join-token").exists()
+        is_joiner = (
+            (tls_dir / "ca.pem").exists()
+            and (tls_dir / "node.pem").exists()
+            and (tls_dir / "node-key.pem").exists()
+            and not (tls_dir / "join-token").exists()
+        )
 
         if is_joiner:
             # This node was provisioned via `nexus join` — join existing cluster

@@ -377,25 +377,10 @@ load_saved_mounts_if_needed() {
     fi
 }
 
-join_cluster_if_needed() {
-    # If NEXUS_JOIN_TOKEN and NEXUS_PEER are set, provision TLS certs before serving
-    if [ -n "${NEXUS_JOIN_TOKEN:-}" ] && [ -n "${NEXUS_PEER:-}" ]; then
-        echo ""
-        echo "🔗 Joining cluster via ${NEXUS_PEER}..."
-
-        local join_cmd="nexus join --token ${NEXUS_JOIN_TOKEN}"
-        [ -n "${NEXUS_NODE_ID:-}" ] && join_cmd="${join_cmd} --node-id ${NEXUS_NODE_ID}"
-        [ -n "${NEXUS_DATA_DIR:-}" ] && join_cmd="${join_cmd} --data-dir ${NEXUS_DATA_DIR}"
-        join_cmd="${join_cmd} ${NEXUS_PEER}"
-
-        if eval "$join_cmd"; then
-            echo -e "${GREEN}✓ Cluster join complete — TLS certificates provisioned${NC}"
-        else
-            echo -e "${RED}✗ Cluster join failed${NC}"
-            exit 1
-        fi
-    fi
-}
+# join_cluster_if_needed() — REMOVED.
+# Cluster join is now integrated into nexusd startup via NEXUS_JOIN_TOKEN +
+# NEXUS_PEER env vars (see nexus.security.tls.cluster_join). The legacy
+# `nexus join` CLI command is deprecated.
 
 cleanup_stale_pid_files() {
     # After an abnormal exit (e.g. SIGSEGV from a native extension), nexusd
@@ -463,7 +448,8 @@ main() {
     setup_admin_api_key
     init_semantic_search_if_enabled
     start_zoekt_if_enabled
-    join_cluster_if_needed
+    # Note: cluster join is now handled by nexusd itself when
+    # NEXUS_JOIN_TOKEN + NEXUS_PEER env vars are set.
     start_nexus_server
 }
 

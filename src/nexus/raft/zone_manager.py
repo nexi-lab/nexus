@@ -158,11 +158,12 @@ class ZoneManager:
             from nexus.security.tls.join_token import generate_join_token
 
             tls_dir = Path(base_path) / "tls"
-            ca_cert, ca_key = generate_zone_ca("cluster")
+            zone_id = ROOT_ZONE_ID
+            ca_cert, ca_key = generate_zone_ca(zone_id)
             save_pem(tls_dir / "ca.pem", ca_cert)
             save_pem(tls_dir / "ca-key.pem", ca_key, is_private=True)
 
-            node_cert, node_key = generate_node_cert(node_id, "cluster", ca_cert, ca_key)
+            node_cert, node_key = generate_node_cert(node_id, zone_id, ca_cert, ca_key)
             save_pem(tls_dir / "node.pem", node_cert)
             save_pem(tls_dir / "node-key.pem", node_key, is_private=True)
 

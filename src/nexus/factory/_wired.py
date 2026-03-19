@@ -8,14 +8,15 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.core.config import BrickServices, KernelServices, WiredServices
+    from nexus.core.config import BrickServices, WiredServices
+    from nexus.core.router import PathRouter
 
 logger = logging.getLogger(__name__)
 
 
 async def _boot_wired_services(
     nx: Any,
-    kernel_services: "KernelServices",
+    router: "PathRouter",
     system_services: Any,
     brick_services: "BrickServices",
     brick_on: Callable[[str], bool] | None = None,
@@ -31,12 +32,12 @@ async def _boot_wired_services(
     Issue #643: Migrated from ``NexusFS._wire_services()`` to factory.py
     so the kernel never imports or creates services.
 
-    Issue #2133: Typed with KernelServices + BrickServices
-    and returns WiredServices instead of dict[str, Any].
+    Issue #1767: Takes ``router`` directly instead of KernelServices wrapper
+    (KernelServices only wrapped the router, which is already on nx.router).
 
     Args:
         nx: The NexusFS instance (already constructed).
-        kernel_services: KernelServices container (Tier 0 — router only).
+        router: PathRouter (Tier 0 — router only).
         system_services: SystemServices container (Tier 1 — rebac, permissions, etc.).
         brick_services: BrickServices container (Tier 2).
         brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
@@ -117,9 +118,7 @@ async def _boot_wired_services(
             mcp_service = MCPService(
                 filesystem=nx,
                 credential_service=oauth_service,
-                mount_lister=lambda: [
-                    (m.mount_point, "mounted") for m in kernel_services.router.list_mounts()
-                ],
+                mount_lister=lambda: [(m.mount_point, "mounted") for m in router.list_mounts()],
             )
             logger.debug("[BOOT:WIRED] MCPService created")
         except Exception as exc:
@@ -172,7 +171,7 @@ async def _boot_wired_services(
         from nexus.bricks.mount.mount_service import MountService
 
         mount_service = MountService(
-            router=kernel_services.router,
+            router=router,
             mount_manager=system_services.mount_manager,
             nexus_fs=nx,
             gateway=gateway,
@@ -201,7 +200,7 @@ async def _boot_wired_services(
         search_service = SearchService(
             metadata_store=nx.metadata,
             permission_enforcer=system_services.permission_enforcer,
-            router=kernel_services.router,
+            router=router,
             rebac_manager=system_services.rebac_manager,
             enforce_permissions=getattr(nx, "_enforce_permissions", True),
             default_context=getattr(nx, "_default_context", None),
@@ -415,7 +414,7 @@ async def _boot_wired_services(
             from nexus.bricks.versioning.operations_service import OperationsService
 
             _undo_service = OperationUndoService(
-                router=kernel_services.router,
+                router=router,
                 write_fn=nx.sys_write,
                 delete_fn=nx.sys_unlink,
                 rename_fn=nx.sys_rename,

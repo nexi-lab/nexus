@@ -102,7 +102,8 @@ class NexusFS(  # type: ignore[misc]
         self._distributed_config = distributed
         self._memory_config_obj = memory
         self._parse_config = parsing
-        self._kernel_services = ksvc
+        # Issue #1767: _kernel_services wrapper removed — only field was router,
+        # which is already stored as self.router (set a few lines below).
         self._system_services = sys_svc
         self._brick_services = brk_svc
         self._config: Any | None = None

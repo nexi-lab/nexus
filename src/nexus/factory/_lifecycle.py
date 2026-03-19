@@ -111,7 +111,7 @@ async def _do_link(
     # --- Boot wired services → register into ServiceRegistry ---
     _wired = await _boot_wired_services(
         nx,
-        nx._kernel_services,
+        nx.router,  # Issue #1767: KernelServices wrapper removed
         nx._system_services,
         nx._brick_services,
         _brick_on,

@@ -112,10 +112,13 @@ class ZonePathResolver:
             if entry is not None and entry.is_mount:
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    # DT_MOUNT without target_zone_id — treat as local mount
-                    # (no zone crossing). This can happen when a mount is
-                    # registered in-memory (PathRouter.add_mount) and the
-                    # metadata entry was created without target_zone_id.
+                    # Safety: DT_MOUNT with missing target_zone_id.
+                    # The proper fix is in _wired.py which sets target_zone_id
+                    # on mount creation. This handles stale metadata from
+                    # previous boots or incomplete mount setup.
+                    logger.warning(
+                        "DT_MOUNT at '%s' has no target_zone_id, treating as local", prefix
+                    )
                     continue
 
                 # Cross zone boundary
@@ -184,7 +187,9 @@ class ZonePathResolver:
             if entry is not None and entry.is_mount:
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    # Local mount — skip zone crossing, keep global path
+                    logger.warning(
+                        "DT_MOUNT at '%s' has no target_zone_id, treating as local", prefix
+                    )
                     continue
 
                 mount_chain.append((zone_id, prefix))

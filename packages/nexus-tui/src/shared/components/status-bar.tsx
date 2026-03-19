@@ -10,7 +10,7 @@
 import React from "react";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useEventsStore } from "../../stores/events-store.js";
-import { connectionColor, statusColor } from "../theme.js";
+import { connectionColor, palette, statusColor } from "../theme.js";
 
 const STATUS_ICONS: Record<string, string> = {
   connected: "●",
@@ -90,7 +90,7 @@ export function StatusBar(): React.ReactNode {
         {hasActiveFilter ? (
           <span foregroundColor="yellow">{" [filtered]"}</span>
         ) : ""}
-        <span foregroundColor="#555555">{" │ Ctrl+D:setup  ?:help"}</span>
+        <span foregroundColor={palette.faint}>{" │ Ctrl+D:setup  ?:help"}</span>
       </text>
     </box>
   );

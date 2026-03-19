@@ -25,9 +25,14 @@ import yaml
 
 from nexus.cli.commands.demo_data import (
     CONFIG_SEARCH_PATHS,
+    DEMO_AGENT_PERMISSIONS,
     DEMO_AGENTS,
+    DEMO_DELEGATIONS,
     DEMO_DIRS,
     DEMO_FILES,
+    DEMO_IPC_DEAD_LETTER,
+    DEMO_IPC_MESSAGES,
+    DEMO_IPC_PROCESSED,
     DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
     HERB_CORPUS,
@@ -235,7 +240,7 @@ def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any])
     if manifest.get("permissions_seeded"):
         return 0
 
-    tuples = DEMO_PERMISSION_TUPLES
+    tuples = DEMO_PERMISSION_TUPLES + DEMO_AGENT_PERMISSIONS
     preset = config.get("preset", "local")
 
     if preset in ("shared", "demo"):
@@ -486,6 +491,190 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     manifest["identities_seeded"] = True
     manifest["identity_keys"] = identity_keys
     return created
+
+
+def _seed_agent_coordination(config: dict[str, Any], manifest: dict[str, Any]) -> dict[str, int]:
+    """Seed agent coordination scenario: IPC provisioning, delegations, messages.
+
+    Uses REST API calls with the agents' own API keys so that delegation
+    and IPC endpoints accept the requests (they require subject_type=agent).
+
+    Returns counts of provisioned/delegated/messaged items.
+    """
+    if manifest.get("agent_coordination_seeded"):
+        return {"provisioned": 0, "delegated": 0, "messages": 0}
+
+    import urllib.request
+
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    base_url = f"http://localhost:{http_port}"
+
+    admin_key = _resolve_admin_key(config)
+    if not admin_key:
+        logger.debug("No admin API key — skipping agent coordination seeding")
+        return {"provisioned": 0, "delegated": 0, "messages": 0}
+
+    identity_keys = manifest.get("identity_keys", {})
+
+    # 1. Provision IPC for coordinator (top-level agent only)
+    provisioned = 0
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/api/v2/ipc/provision/coordinator",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {admin_key}",
+                "Content-Type": "application/json",
+            },
+            data=b"{}",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                provisioned += 1
+    except Exception as e:
+        logger.debug("Could not provision IPC for coordinator: %s", e)
+
+    # 2. Delegate: coordinator → researcher, coordinator → coder
+    #    Delegation creates the worker agents (API keys + grants + IPC dirs).
+    #    researcher and coder are NOT top-level registered agents — they exist
+    #    only via delegation from coordinator.
+    delegated = 0
+    worker_keys: dict[str, str] = {}
+    coordinator_key = identity_keys.get("coordinator", {}).get("api_key", "")
+    if coordinator_key:
+        for deleg in DEMO_DELEGATIONS:
+            try:
+                body = json.dumps(deleg).encode()
+                req = urllib.request.Request(
+                    f"{base_url}/api/v2/agents/delegate",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {coordinator_key}",
+                        "Content-Type": "application/json",
+                    },
+                    data=body,
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        result = json.loads(resp.read())
+                        delegated += 1
+                        worker_id = str(deleg["worker_id"])
+                        api_key = result.get("api_key", "")
+                        if api_key:
+                            worker_keys[worker_id] = api_key
+                        # Provision IPC for the delegated worker
+                        try:
+                            prov_req = urllib.request.Request(
+                                f"{base_url}/api/v2/ipc/provision/{worker_id}",
+                                method="POST",
+                                headers={
+                                    "Authorization": f"Bearer {admin_key}",
+                                    "Content-Type": "application/json",
+                                },
+                                data=b"{}",
+                            )
+                            with urllib.request.urlopen(prov_req, timeout=10):
+                                provisioned += 1
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug("Could not create delegation for %s: %s", deleg["worker_id"], e)
+    else:
+        logger.debug("No coordinator API key — skipping delegations")
+
+    # 3. Seed IPC messages via /api/v2/ipc/send (inbox messages)
+    messages_sent = 0
+    for msg in DEMO_IPC_MESSAGES:
+        send_body = {
+            "sender": msg["sender"],
+            "recipient": msg["recipient"],
+            "type": msg["type"],
+            "payload": msg["payload"],
+        }
+        if msg.get("correlation_id"):
+            send_body["correlation_id"] = msg["correlation_id"]
+        try:
+            body = json.dumps(send_body).encode()
+            req = urllib.request.Request(
+                f"{base_url}/api/v2/ipc/send",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=body,
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    messages_sent += 1
+        except Exception as e:
+            logger.debug("Could not send IPC message: %s", e)
+
+    # 4. Seed processed messages (consumed by agent — shows delivery lifecycle)
+    for msg in DEMO_IPC_PROCESSED:
+        recipient = msg["recipient"]
+        corr_id = msg.get("correlation_id", f"processed-{messages_sent}")
+        sender = msg["sender"]
+        filename = f"{corr_id}-from-{sender}-processed.json"
+        file_path = f"/agents/{recipient}/processed/{filename}"
+        content = json.dumps(msg, indent=2) + "\n"
+        try:
+            body = json.dumps({"path": file_path, "content": content}).encode()
+            req = urllib.request.Request(
+                f"{base_url}/api/v2/ipc/send",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=body,
+            )
+            # ipc/send only writes to inbox — write processed via sys_write
+            # by sending a task that the "agent already handled"
+            # Actually, write directly: processed/ messages are just files
+            req2 = urllib.request.Request(
+                f"{base_url}/api/v2/files/write",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps({"path": file_path, "content": content}).encode(),
+            )
+            with urllib.request.urlopen(req2, timeout=10) as resp:
+                if resp.status == 200:
+                    messages_sent += 1
+        except Exception as e:
+            logger.debug("Could not write processed message to %s: %s", file_path, e)
+
+    # 5. Seed dead_letter messages (expired — shows error handling)
+    for msg in DEMO_IPC_DEAD_LETTER:
+        recipient = msg["recipient"]
+        corr_id = msg.get("correlation_id", f"dead-{messages_sent}")
+        sender = msg["sender"]
+        filename = f"{corr_id}-from-{sender}-expired.json"
+        file_path = f"/agents/{recipient}/dead_letter/{filename}"
+        content = json.dumps(msg, indent=2) + "\n"
+        try:
+            body = json.dumps({"path": file_path, "content": content}).encode()
+            req = urllib.request.Request(
+                f"{base_url}/api/v2/files/write",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=body,
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    messages_sent += 1
+        except Exception as e:
+            logger.debug("Could not write dead_letter message to %s: %s", file_path, e)
+
+    manifest["agent_coordination_seeded"] = True
+    return {"provisioned": provisioned, "delegated": delegated, "messages": messages_sent}
 
 
 def _revoke_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
@@ -1093,6 +1282,13 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     # 5. Seed permissions (best-effort)
     perms_created = _seed_permissions(nx, config, manifest)
 
+    # 5b. Seed agent coordination: IPC, delegations, messages (best-effort)
+    coord_counts = {"provisioned": 0, "delegated": 0, "messages": 0}
+    try:
+        coord_counts = _seed_agent_coordination(config, manifest)
+    except Exception as e:
+        logger.debug("Agent coordination seeding failed: %s", e)
+
     # 6. Initialize semantic search and index demo files (best-effort)
     semantic_ready = False
     if not skip_semantic:
@@ -1137,6 +1333,14 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print(f"  Permissions:  {perms_created} tuples")
     else:
         console.print("  Permissions:  skipped (not available)")
+    if any(coord_counts.get(k, 0) > 0 for k in ("provisioned", "delegated", "messages")):
+        console.print(
+            f"  Agents:       {coord_counts['provisioned']} provisioned, "
+            f"{coord_counts['delegated']} delegations, "
+            f"{coord_counts['messages']} messages"
+        )
+    else:
+        console.print("  Agents:       skipped (coordination not available)")
     if skip_semantic:
         console.print("  Semantic:     skipped")
     elif semantic_ready:

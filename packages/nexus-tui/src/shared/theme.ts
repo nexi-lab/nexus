@@ -94,6 +94,39 @@ export const agentPhaseColor: Record<string, string> = {
 };
 
 // =============================================================================
+// Agent state → color mapping (for agent list)
+// =============================================================================
+
+export const agentStateColor: Record<string, string> = {
+  registered: statusColor.info,
+  delegated: statusColor.identity,
+  running: statusColor.healthy,
+  connected: statusColor.healthy,
+  disconnected: statusColor.dim,
+};
+
+// =============================================================================
+// Delegation mode → color mapping
+// =============================================================================
+
+export const delegationModeColor: Record<string, string> = {
+  shared: statusColor.info,
+  copy: statusColor.warning,
+  clean: statusColor.error,
+};
+
+// =============================================================================
+// Delegation status → color mapping
+// =============================================================================
+
+export const delegationStatusColor: Record<string, string> = {
+  active: statusColor.healthy,
+  revoked: statusColor.error,
+  expired: statusColor.dim,
+  completed: statusColor.info,
+};
+
+// =============================================================================
 // Focus / UI chrome colors
 // =============================================================================
 
@@ -108,4 +141,35 @@ export const focusColor = {
   actionKey: statusColor.info,
   /** Help bar navigation keys */
   navKey: statusColor.dim,
+} as const;
+
+// =============================================================================
+// Rich color palette — hex values for modern terminals
+//
+// Used by shared chrome components (tab bar, status bar, error bar).
+// Components should prefer semantic tokens (statusColor, focusColor) for
+// state-dependent colors and use palette for structural UI chrome.
+// =============================================================================
+
+export const palette = {
+  /** Primary accent — active tabs, selected items, key bindings */
+  accent: "#00d4ff",
+  /** Secondary accent — hover, secondary actions */
+  accentDim: "#0099bb",
+  /** Success — green confirmation */
+  success: "#4dff88",
+  /** Error — bright red */
+  error: "#ff4444",
+  /** Error secondary — softer red for hints */
+  errorDim: "#ff8888",
+  /** Warning — amber */
+  warning: "#ffaa00",
+  /** Muted text — labels, separators */
+  muted: "#888888",
+  /** Very muted — borders, inactive chrome */
+  faint: "#555555",
+  /** Bright text — active content */
+  bright: "#cccccc",
+  /** Header/title text */
+  title: "#ffffff",
 } as const;

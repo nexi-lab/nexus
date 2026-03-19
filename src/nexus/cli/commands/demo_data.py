@@ -24,6 +24,113 @@ DEMO_USERS = [
 ]
 DEMO_AGENTS = [
     {"type": "agent", "id": "demo_agent", "display_name": "Demo Agent"},
+    {"type": "agent", "id": "coordinator", "display_name": "Coordinator Agent"},
+]
+
+# ---------------------------------------------------------------------------
+# Agent coordination scenario seeded by demo init
+#
+# Only coordinator is a top-level registered agent. researcher and coder
+# are created via delegation (coordinator delegates to them), which gives
+# them scoped API keys and inherited permissions.
+# ---------------------------------------------------------------------------
+
+DEMO_AGENT_PERMISSIONS = [
+    {
+        "subject": ["agent", "coordinator"],
+        "relation": "direct_editor",
+        "object": ["file", "/workspace"],
+        "zone_id": "root",
+    },
+]
+
+DEMO_IPC_MESSAGES = [
+    # === Messages that stay in inbox (pending — not yet consumed) ===
+    {
+        "sender": "coordinator",
+        "recipient": "coder",
+        "type": "task",
+        "payload": {
+            "task": "Implement a CAS storage adapter based on the architecture doc",
+            "priority": "medium",
+            "files": ["/workspace/demo/notes/architecture.md", "/workspace/demo/code/example.py"],
+        },
+        "correlation_id": "task-002",
+    },
+    {
+        "sender": "coordinator",
+        "recipient": "coder",
+        "type": "task",
+        "payload": {
+            "task": "Add unit tests for the hash computation module",
+            "priority": "low",
+            "files": ["/workspace/demo/code/example.py"],
+        },
+        "correlation_id": "task-003",
+    },
+    {
+        "sender": "researcher",
+        "recipient": "coordinator",
+        "type": "response",
+        "payload": {
+            "summary": "3 key patterns identified: CAS for storage, Raft for metadata, ReBAC for permissions",
+            "files_reviewed": ["/workspace/demo/notes/architecture.md"],
+            "confidence": 0.92,
+        },
+        "correlation_id": "task-001",
+    },
+]
+
+# Messages that have been consumed (moved to processed/) — shows delivery lifecycle
+DEMO_IPC_PROCESSED = [
+    {
+        "sender": "coordinator",
+        "recipient": "researcher",
+        "type": "task",
+        "payload": {
+            "task": "Review architecture.md and summarize the key design decisions",
+            "priority": "high",
+            "context": "We need an architecture summary for the planning meeting",
+        },
+        "correlation_id": "task-001",
+        "_status": "completed",
+    },
+]
+
+# Messages that expired (TTL exceeded, moved to dead_letter/) — shows error handling
+DEMO_IPC_DEAD_LETTER = [
+    {
+        "sender": "coordinator",
+        "recipient": "coder",
+        "type": "task",
+        "payload": {
+            "task": "Benchmark vector index performance (EXPIRED — coder was offline)",
+            "priority": "high",
+            "ttl_seconds": 3600,
+        },
+        "correlation_id": "task-000",
+        "_status": "expired",
+        "_reason": "TTL exceeded: agent did not consume within 1 hour",
+    },
+]
+
+DEMO_DELEGATIONS = [
+    {
+        "worker_id": "researcher",
+        "worker_name": "Research Agent",
+        "namespace_mode": "shared",
+        "intent": "Research architecture patterns and summarize findings",
+        "scope_prefix": "/workspace/demo",
+        "can_sub_delegate": False,
+    },
+    {
+        "worker_id": "coder",
+        "worker_name": "Coder Agent",
+        "namespace_mode": "copy",
+        "intent": "Implement storage layer based on architecture review",
+        "scope_prefix": "/workspace/demo/code",
+        "can_sub_delegate": True,
+    },
 ]
 
 # ---------------------------------------------------------------------------

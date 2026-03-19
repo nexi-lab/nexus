@@ -2463,17 +2463,17 @@ class NexusFS(  # type: ignore[misc]
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # Remote backends (external_content capability): the typed Write RPC
-        # already performs the full write (content + metadata) on the server.
-        # Skip local metadata management to avoid overwriting the server's
-        # inline/CAS decisions with stale client-side metadata.
+        # External_content backends manage their own content storage.
+        # Remote backends (RPC-based) also persist metadata on the remote server,
+        # so we skip local metadata.put() to avoid overwriting.
+        # Local external_content backends (e.g. LocalConnector) write content
+        # to disk but do NOT manage metadata — we must persist metadata locally.
         _backend_caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
+        _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
         if "external_content" in _backend_caps:
             wr = route.backend.write_content(content, context=context)
             content_hash = wr.content_hash
             new_version = (meta.version + 1) if meta else 1
-            # Build a lightweight metadata object for event dispatch / hooks.
-            # The server already persisted the real metadata via the typed Write RPC.
             ctx = context if context is not None else self._default_context
             owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
             metadata = FileMetadata(
@@ -2489,6 +2489,9 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=zone_id or "root",
                 owner_id=owner_id,
             )
+            # Local external_content backends need metadata persisted locally
+            if not _is_remote:
+                self.metadata.put(metadata, consistency=consistency)
         else:
             # VFS I/O Lock: exclusive write lock around backend write + metadata put.
             # Like Linux i_rwsem: held for I/O duration only, released before observers.

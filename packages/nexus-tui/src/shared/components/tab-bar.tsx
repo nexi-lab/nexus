@@ -5,7 +5,7 @@
  */
 
 import React from "react";
-import { statusColor } from "../theme.js";
+import { palette } from "../theme.js";
 
 export interface Tab {
   readonly id: string;
@@ -20,8 +20,6 @@ interface TabBarProps {
 }
 
 export function TabBar({ tabs, activeTab }: TabBarProps): React.ReactNode {
-  // Render all tabs as spans inside a single <text> to avoid flex layout
-  // width issues that can cause some tab labels to disappear.
   return (
     <box height={1} width="100%">
       <text>
@@ -31,17 +29,17 @@ export function TabBar({ tabs, activeTab }: TabBarProps): React.ReactNode {
           if (isActive) {
             return (
               <span key={tab.id}>
-                <span foregroundColor="#00d4ff" bold>{"▸ "}</span>
-                <span foregroundColor="#888888">{`${tab.shortcut}:`}</span>
-                <span foregroundColor="#00d4ff" bold>{tab.label}</span>
-                <span foregroundColor="#555555">{suffix}</span>
+                <span foregroundColor={palette.accent} bold>{"▸ "}</span>
+                <span foregroundColor={palette.muted}>{`${tab.shortcut}:`}</span>
+                <span foregroundColor={palette.accent} bold>{tab.label}</span>
+                <span foregroundColor={palette.faint}>{suffix}</span>
               </span>
             );
           }
           return (
             <span key={tab.id}>
-              <span foregroundColor="#999999">{`  ${tab.shortcut}:${tab.label}`}</span>
-              <span foregroundColor="#555555">{suffix}</span>
+              <span foregroundColor={palette.muted}>{`  ${tab.shortcut}:${tab.label}`}</span>
+              <span foregroundColor={palette.faint}>{suffix}</span>
             </span>
           );
         })}

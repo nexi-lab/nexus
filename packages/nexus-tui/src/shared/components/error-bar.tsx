@@ -10,7 +10,7 @@
 import React from "react";
 import { useErrorStore } from "../../stores/error-store.js";
 import { useKeyboard } from "../hooks/use-keyboard.js";
-import { statusColor } from "../theme.js";
+import { palette } from "../theme.js";
 
 const CATEGORY_HINTS: Record<string, string> = {
   network: "Check connection. r:retry",
@@ -48,10 +48,10 @@ export function ErrorBar(): React.ReactNode {
   return (
     <box height={1} width="100%" flexDirection="row">
       <text>
-        <span foregroundColor="#ff4444" bold>{`${prefix}✗ ${latest.message}`}</span>
-        <span foregroundColor="#ff8888">{`  ${hint}`}</span>
+        <span foregroundColor={palette.error} bold>{`${prefix}✗ ${latest.message}`}</span>
+        <span foregroundColor={palette.errorDim}>{`  ${hint}`}</span>
         {latest.dismissable ? (
-          <span foregroundColor="#666666">{"  Esc:dismiss"}</span>
+          <span foregroundColor={palette.faint}>{"  Esc:dismiss"}</span>
         ) : ""}
       </text>
     </box>

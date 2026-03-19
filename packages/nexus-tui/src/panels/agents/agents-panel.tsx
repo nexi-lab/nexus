@@ -132,13 +132,20 @@ export default function AgentsPanel(): React.ReactNode {
     if (!client) return;
 
     if (activeTab === "status" && selectedAgentId) {
-      fetchAgentStatus(selectedAgentId, client);
-      fetchAgentSpec(selectedAgentId, client);
-      fetchAgentIdentity(selectedAgentId, client);
-      fetchTrustScore(selectedAgentId, client);
-      fetchAgentReputation(selectedAgentId, client);
+      // Only fetch live status for running agents — registered agents
+      // have no ProcessTable entry and these calls would 404
+      const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
+      if (selectedAgent && selectedAgent.state !== "registered") {
+        fetchAgentStatus(selectedAgentId, client);
+        fetchAgentSpec(selectedAgentId, client);
+        fetchAgentIdentity(selectedAgentId, client);
+        fetchTrustScore(selectedAgentId, client);
+        fetchAgentReputation(selectedAgentId, client);
+      }
     } else if (activeTab === "delegations") {
-      fetchDelegations(client);
+      // Delegations require agent auth — skip silently for user auth
+      // to avoid "Only agents can list delegations" error on every tab switch
+      fetchDelegations(client).catch(() => {});
     } else if (activeTab === "inbox" && selectedAgentId) {
       fetchInbox(selectedAgentId, client);
     } else if (activeTab === "trajectories" && selectedAgentId) {
@@ -380,16 +387,34 @@ export default function AgentsPanel(): React.ReactNode {
 
           {/* Detail content */}
           <box flexGrow={1} borderStyle="single">
-            {activeTab === "status" && (
-              <AgentStatusView
-                status={agentStatus}
-                spec={agentSpec}
-                identity={agentIdentity}
-                loading={statusLoading}
-                trustScore={trustScore}
-                reputation={reputation}
-              />
-            )}
+            {activeTab === "status" && (() => {
+              const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
+              if (selectedAgent?.state === "registered") {
+                return (
+                  <box height="100%" width="100%" flexDirection="column" padding={1}>
+                    <text bold>{`Agent: ${selectedAgent.agent_id}`}</text>
+                    <text>{""}</text>
+                    <text><span foregroundColor="cyan">{"State:  "}</span><span>{"registered"}</span></text>
+                    <text><span foregroundColor="cyan">{"Name:   "}</span><span>{selectedAgent.name ?? selectedAgent.agent_id}</span></text>
+                    <text><span foregroundColor="cyan">{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
+                    <text><span foregroundColor="cyan">{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
+                    <text>{""}</text>
+                    <text dimColor>{"Agent is registered but not running."}</text>
+                    <text dimColor>{"Status, spec, and identity are available when the agent connects."}</text>
+                  </box>
+                );
+              }
+              return (
+                <AgentStatusView
+                  status={agentStatus}
+                  spec={agentSpec}
+                  identity={agentIdentity}
+                  loading={statusLoading}
+                  trustScore={trustScore}
+                  reputation={reputation}
+                />
+              );
+            })()}
             {activeTab === "delegations" && (
               <DelegationList
                 delegations={delegations}
@@ -402,6 +427,8 @@ export default function AgentsPanel(): React.ReactNode {
               <InboxView
                 messages={inboxMessages}
                 count={inboxCount}
+                processedMessages={useAgentsStore.getState().processedMessages}
+                deadLetterMessages={useAgentsStore.getState().deadLetterMessages}
                 loading={inboxLoading}
               />
             )}

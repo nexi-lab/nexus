@@ -1,26 +1,26 @@
-"""OpenAI-compatible LLM backend — CAS addressing over any OpenAI API.
+"""OpenAI-compatible LLM backend — CAS addressing + LLM transport.
 
-Composes CASAddressingEngine (addressing) + LLMBlobTransport (in-memory I/O)
-to expose LLM inference as a VFS-mountable backend.
+Thin CASBackend subclass: registration + CONNECTION_ARGS + OpenAI client.
+Follows the same composition pattern as CASLocalBackend (CAS + LocalBlobTransport)
+and CASGCSBackend (CAS + GCSBlobTransport).
 
     nexus mount /zone/llm/openai --backend=openai_compatible \
         --config='{"base_url":"https://api.sudorouter.ai","api_key":"sk-..."}'
     nexus mount /zone/llm/local  --backend=openai_compatible \
         --config='{"base_url":"http://localhost:11434/v1"}'
 
-Write path (sync MVP):
-    1. Agent writes request JSON via sys_write
-    2. Backend calls OpenAI chat.completions.create (sync)
-    3. Response stored in CAS
-    4. Returns WriteResult(hash(request+response), size)
+write_content() is inherited from CASBackend — pure CAS storage,
+no LLM logic. LLM call orchestration lives in the service layer
+(LLMStreamingService), not in the storage driver.
 
-Read path: Standard CAS — read_content(hash) returns stored data.
-
-Streaming (Step 2, DT_STREAM) will add async token-by-token delivery.
+LLM-specific methods (additions, not overrides):
+    generate_streaming(request) → Iterator[(token, metadata)]
+        Pure compute — yields tokens from OpenAI streaming API.
+    persist_session(request, response, ...) → WriteResult
+        CAS persist: request + response + session envelope.
 
 References:
     - Task #1589: LLM backend driver design
-    - Plan: curious-gliding-orbit.md
 """
 
 from __future__ import annotations
@@ -28,9 +28,10 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.backends.base.cas_backend import CASAddressingEngine
+from nexus.backends.base.cas_backend import CASBackend
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.compute.llm_blob_transport import LLMBlobTransport
 from nexus.contracts.capabilities import ConnectorCapability
@@ -66,25 +67,30 @@ def _build_openai_client(base_url: str, api_key: str, timeout: float) -> Any:
     category="compute",
     requires=["openai"],
 )
-class OpenAICompatibleBackend(CASAddressingEngine):
-    """CAS addressing engine + OpenAI-compatible LLM transport.
+class OpenAICompatibleBackend(CASBackend):
+    """CAS addressing + OpenAI-compatible LLM transport.
 
-    Sync MVP: write_content stores request + calls LLM + stores response.
-    All data lives in CAS (in-memory transport, flushed to durable store later).
+    Thin subclass for connector registration and OpenAI client holder.
+    ``write_content()`` is inherited from CASBackend — pure CAS, no override.
+    LLM orchestration lives in ``LLMStreamingService``.
+
+    LLM-specific methods (additions, not overrides):
+
+    - ``generate_streaming()`` — pure compute, yields tokens
+    - ``persist_session()`` — CAS persist request + response + envelope
 
     Usage::
 
         backend = OpenAICompatibleBackend(
-            base_url="https://api.sudorouter.ai",
-            api_key="sk-...",
-            default_model="gpt-4o",
+            base_url="https://api.sudorouter.ai", api_key="sk-...",
         )
-        # Write request → triggers LLM call
-        result = backend.write_content(json.dumps({
-            "messages": [{"role": "user", "content": "Hello"}]
-        }).encode())
-        # Read response
-        data = backend.read_content(result.content_hash)
+        # Standard CAS write (inherited, no LLM call):
+        backend.write_content(b"raw data")
+
+        # LLM streaming (service orchestrates):
+        for token, meta in backend.generate_streaming(request_dict):
+            stream.push(token)
+        backend.persist_session(req_bytes, full_resp, **meta)
     """
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
@@ -139,54 +145,50 @@ class OpenAICompatibleBackend(CASAddressingEngine):
     def name(self) -> str:
         return "openai_compatible"
 
-    # === LLM-specific write ===
+    # ------------------------------------------------------------------
+    # Streaming — pure compute, no kernel IPC
+    # ------------------------------------------------------------------
 
-    def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
-    ) -> WriteResult:
-        """Write request JSON, call LLM, store both request and response in CAS.
+    def generate_streaming(
+        self, request: dict[str, Any]
+    ) -> Iterator[tuple[str, dict[str, Any] | None]]:
+        """Yield ``(token, None)`` per chunk, ``("", metadata)`` at end.
 
-        The request is parsed as JSON with at minimum a ``messages`` field.
-        The LLM response is stored as a separate CAS entry. A "session"
-        envelope containing both request hash and response hash is the
-        returned WriteResult.
+        Pure LLM compute — no kernel IPC, no StreamManager dependency.
+        The service layer (LLMStreamingService) bridges these tokens
+        to DT_STREAM for real-time fan-out.
 
         Args:
-            content: JSON-encoded request (``{"messages": [...], "model": "...", ...}``)
-            context: Operation context (optional)
+            request: Parsed request dict with ``messages`` and optional
+                ``model``, ``temperature``, etc.
 
-        Returns:
-            WriteResult with content_hash of the session envelope.
+        Yields:
+            ``(token_str, None)`` for each content token.
+            ``("", metadata_dict)`` as the final item with model/usage/latency.
+
+        Raises:
+            BackendError: On API failure or missing ``messages``.
         """
-        # Store the raw request in CAS first
-        request_result = super().write_content(content, context=context)
-
-        # Parse request
-        try:
-            request = json.loads(content)
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise BackendError(
-                f"Invalid request JSON: {e}",
-                backend="openai_compatible",
-            ) from e
-
         if "messages" not in request:
             raise BackendError(
                 "Request must contain 'messages' field",
                 backend="openai_compatible",
             )
 
-        # Call LLM
-        model = request.pop("model", self._default_model)
-        messages = request.pop("messages")
-        extra_params = request  # remaining keys passed through
+        model = request.get("model", self._default_model)
+        messages = request["messages"]
+        extra_params = {k: v for k, v in request.items() if k not in ("model", "messages")}
 
         start_time = time.perf_counter()
+        collected_model = model
+        usage: dict[str, int] = {}
+
         try:
-            completion = self._client.chat.completions.create(
+            stream = self._client.chat.completions.create(
                 model=model,
                 messages=messages,
-                stream=False,
+                stream=True,
+                stream_options={"include_usage": True},
                 **extra_params,
             )
         except Exception as e:
@@ -195,48 +197,106 @@ class OpenAICompatibleBackend(CASAddressingEngine):
                 backend="openai_compatible",
             ) from e
 
+        try:
+            for chunk in stream:
+                # Capture model from response
+                if chunk.model:
+                    collected_model = chunk.model
+
+                # Yield content tokens
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    token = (delta.content or "") if delta else ""
+                    if token:
+                        yield (token, None)
+
+                # Capture usage from final chunk (stream_options.include_usage)
+                if chunk.usage:
+                    usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens or 0,
+                        "completion_tokens": chunk.usage.completion_tokens or 0,
+                        "total_tokens": chunk.usage.total_tokens or 0,
+                    }
+        except Exception as e:
+            raise BackendError(
+                f"LLM streaming failed: {e}",
+                backend="openai_compatible",
+            ) from e
+
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-        # Extract response
-        choice = completion.choices[0] if completion.choices else None
-        response_content = choice.message.content if choice and choice.message else ""
-        finish_reason = choice.finish_reason if choice else "unknown"
+        # Final metadata message
+        yield (
+            "",
+            {
+                "model": collected_model,
+                "usage": usage,
+                "latency_ms": round(elapsed_ms, 1),
+            },
+        )
 
-        # Build response payload
+    # ------------------------------------------------------------------
+    # CAS persistence — session envelope storage
+    # ------------------------------------------------------------------
+
+    def persist_session(
+        self,
+        request_bytes: bytes,
+        response_content: str,
+        model: str,
+        finish_reason: str,
+        usage: dict[str, int],
+        latency_ms: float,
+        context: "OperationContext | None" = None,
+    ) -> WriteResult:
+        """Persist request + response + session envelope in CAS.
+
+        Called by LLMStreamingService after DT_STREAM flush, or
+        directly by callers for sync (non-streaming) LLM calls.
+        Uses inherited ``write_content()`` (pure CAS) internally.
+
+        Args:
+            request_bytes: Raw request JSON bytes.
+            response_content: Full LLM response text.
+            model: Model name from the API response.
+            finish_reason: Finish reason (e.g. "stop", "length").
+            usage: Token usage dict (prompt_tokens, completion_tokens, total_tokens).
+            latency_ms: End-to-end latency in milliseconds.
+            context: Operation context (optional).
+
+        Returns:
+            WriteResult with content_hash of the session envelope.
+        """
+        # Store raw request in CAS
+        request_result = self.write_content(request_bytes, context=context)
+
+        # Build and store response payload
         response_payload = {
-            "model": completion.model,
+            "model": model,
             "content": response_content,
             "finish_reason": finish_reason,
-            "usage": {
-                "prompt_tokens": completion.usage.prompt_tokens if completion.usage else 0,
-                "completion_tokens": completion.usage.completion_tokens if completion.usage else 0,
-                "total_tokens": completion.usage.total_tokens if completion.usage else 0,
-            },
-            "latency_ms": round(elapsed_ms, 1),
+            "usage": usage,
+            "latency_ms": round(latency_ms, 1),
         }
-        response_bytes = json.dumps(response_payload, separators=(",", ":")).encode("utf-8")
+        response_json = json.dumps(response_payload, separators=(",", ":")).encode("utf-8")
+        response_result = self.write_content(response_json, context=context)
 
-        # Store response in CAS
-        response_result = super().write_content(response_bytes, context=context)
-
-        # Build session envelope (links request + response)
+        # Build and store session envelope
         session = {
             "type": "llm_session_v1",
             "request_hash": request_result.content_hash,
             "response_hash": response_result.content_hash,
-            "model": completion.model,
-            "latency_ms": round(elapsed_ms, 1),
+            "model": model,
+            "latency_ms": round(latency_ms, 1),
         }
         session_bytes = json.dumps(session, separators=(",", ":")).encode("utf-8")
-
-        # Store session envelope in CAS
-        session_result = super().write_content(session_bytes, context=context)
+        session_result = self.write_content(session_bytes, context=context)
 
         logger.info(
-            "LLM call completed: model=%s tokens=%d latency=%.1fms session=%s",
-            completion.model,
-            completion.usage.total_tokens if completion.usage else 0,
-            elapsed_ms,
+            "LLM session persisted: model=%s tokens=%d latency=%.1fms session=%s",
+            model,
+            usage.get("total_tokens", 0),
+            latency_ms,
             session_result.content_hash[:16],
         )
 

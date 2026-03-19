@@ -18,6 +18,7 @@ import { CommandOutput } from "./command-output.js";
 import { Spinner } from "./spinner.js";
 import { statusColor } from "../theme.js";
 import { resolveConfig, FetchClient } from "@nexus/api-client";
+import { useFilesStore } from "../../stores/files-store.js";
 
 const AUTO_POLL_INTERVAL = 5_000; // 5 seconds (Decision 14A)
 
@@ -35,14 +36,19 @@ export function PreConnectionScreen(): React.ReactNode {
   const [retryCount, setRetryCount] = useState(0);
   const [urlInput, setUrlInput] = useState("");
   const [editingUrl, setEditingUrl] = useState(false);
+  const [apiKeyWarning, setApiKeyWarning] = useState<string | null>(null);
 
   // Track previous commandStatus to detect completion
   const prevCommandStatus = useRef(commandStatus);
+  // Track API key before init commands to detect changes
+  const prevApiKey = useRef<string | undefined>(undefined);
 
-  // When a local command finishes (success or error), re-read config from disk
-  // but DON'T auto-connect. The user should press R to retry or run more
-  // commands (e.g. D → Shift+U → P flow). Auto-connecting after `nexus init`
-  // would connect to a stale server with the wrong API key.
+  // When a local command finishes (success or error), re-read config from disk.
+  // Behavior depends on command type:
+  //   - "nexus up" success → auto-reconnect (server just started)
+  //   - "nexus init" success + API key changed → warn user to restart server
+  //   - "nexus demo" / "nexus up" success → clear file cache (data may have changed)
+  //   - All others → stay disconnected, user presses R when ready
   useEffect(() => {
     const prev = prevCommandStatus.current;
     prevCommandStatus.current = commandStatus;
@@ -51,19 +57,44 @@ export function PreConnectionScreen(): React.ReactNode {
       (prev === "running") &&
       (commandStatus === "success" || commandStatus === "error")
     ) {
+      const label = useCommandRunnerStore.getState().commandLabel;
+      const isUpCommand = label.startsWith("nexus up");
+      const isDataCommand = label.startsWith("nexus demo") || isUpCommand;
+      const isInitCommand = label.startsWith("nexus init");
+
       // Re-read config from disk without triggering connection test.
       // resolveConfig() picks up new api_key/ports from nexus.yaml.
-      const config = resolveConfig({ transformKeys: false });
-      const client = config.apiKey ? new FetchClient(config) : null;
-      useGlobalStore.setState({
-        config,
-        client,
-        // Stay disconnected — user presses R when ready
-        connectionStatus: client ? "error" : "disconnected",
-        connectionError: client ? "Press R to connect after setup" : null,
-      });
+      const newConfig = resolveConfig({ transformKeys: false });
+      const client = newConfig.apiKey ? new FetchClient(newConfig) : null;
+
+      // #3: Detect API key change after init commands
+      if (commandStatus === "success" && isInitCommand && prevApiKey.current !== undefined) {
+        if (newConfig.apiKey && newConfig.apiKey !== prevApiKey.current) {
+          setApiKeyWarning("API key changed. Restart server (Shift+U) to apply.");
+        }
+      }
+      prevApiKey.current = undefined;
+
+      // #6: Clear file cache after data-mutating commands
+      if (commandStatus === "success" && isDataCommand) {
+        useFilesStore.getState().clearCache();
+      }
+
+      // #1: Auto-reconnect after "nexus up" succeeds
+      if (commandStatus === "success" && isUpCommand && client) {
+        useGlobalStore.setState({ config: newConfig, client });
+        initConfig();
+      } else {
+        useGlobalStore.setState({
+          config: newConfig,
+          client,
+          // Stay disconnected — user presses R when ready
+          connectionStatus: client ? "error" : "disconnected",
+          connectionError: client ? "Press R to connect after setup" : null,
+        });
+      }
     }
-  }, [commandStatus]);
+  }, [commandStatus, initConfig]);
 
   // Manual retry: re-read config from disk + test connection.
   // This is critical for the no-config → init → retry flow: after nexus init
@@ -141,14 +172,20 @@ export function PreConnectionScreen(): React.ReactNode {
           r: handleRetry,
           a: () => setAutoPoll((prev) => !prev),
           i: () => {
+            prevApiKey.current = config.apiKey;
+            setApiKeyWarning(null);
             useCommandRunnerStore.getState().reset();
             executeLocalCommand("init", []);
           },
           s: () => {
+            prevApiKey.current = config.apiKey;
+            setApiKeyWarning(null);
             useCommandRunnerStore.getState().reset();
             executeLocalCommand("init", ["--preset", "shared"]);
           },
           d: () => {
+            prevApiKey.current = config.apiKey;
+            setApiKeyWarning(null);
             useCommandRunnerStore.getState().reset();
             executeLocalCommand("init", ["--preset", "demo", "--force"]);
           },
@@ -281,6 +318,13 @@ export function PreConnectionScreen(): React.ReactNode {
 
         {connState === "connecting" && (
           <Spinner label="  Connecting..." />
+        )}
+
+        {apiKeyWarning && (
+          <>
+            <text>{""}</text>
+            <text foregroundColor="#ffaa00">{`  ⚠ ${apiKeyWarning}`}</text>
+          </>
         )}
 
         <text>{""}</text>

@@ -61,7 +61,7 @@ services:
     command: >
       dragonfly
       --maxmemory=256mb
-      --proactor_threads=2
+      --proactor_threads=1
       --logtostderr
       --cache_mode=true
     ports:

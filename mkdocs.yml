@@ -203,3 +203,5 @@ nav:
     - CLI Architecture Proposal: proposals/cli-architecture-proposal.md
     - CLI Issues: proposals/cli-issues.md
     - Grove Async Agent Graph: proposals/grove-async-agent-graph.md
+  - Guides:
+    - User Guide: guides/user-guide.md

@@ -371,6 +371,10 @@ class NexusFS(  # type: ignore[misc]
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
 
+    # Issue #1790: _check_zone_writable() deleted — now handled by
+    # ZoneWriteGuardHook (pre-intercept on all write-like operations).
+    # Kernel no longer reads zone_lifecycle from _system_services.
+
     @property
     def zone_id(self) -> str | None:
         """Default zone_id from the instance context."""
@@ -4000,7 +4004,6 @@ class NexusFS(  # type: ignore[misc]
             ...     else:
             ...         print(f"Failed {path}: {result['error']}")
         """
-
         results = {}
         for path in paths:
             try:

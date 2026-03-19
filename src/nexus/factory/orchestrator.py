@@ -421,6 +421,16 @@ async def _register_vfs_hooks(
         """Enlist hook via coordinator — the single entry point."""
         await _coordinator.enlist(name, hook)
 
+    # ── Zone write guard hook (Issue #1790) ────────────────────────
+    # Rejects writes to zones being deprovisioned (Issue #2061).
+    # Replaces _check_zone_writable() in nexus_fs — kernel no longer
+    # reads zone_lifecycle from _system_services.
+    _zl = getattr(nx._system_services, "zone_lifecycle", None) if nx._system_services else None
+    if _zl is not None:
+        from nexus.system_services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook
+
+        await _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
+
     # ── Permission pre-intercept hook (Issue #899) ────────────────
     if permission_checker is not None:
         from nexus.bricks.rebac.permission_hook import PermissionCheckHook

@@ -335,53 +335,6 @@ async def connect(
         advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
 
-        # Auto-join cluster if NEXUS_JOIN_TOKEN is set and certs don't exist yet.
-        # NEXUS_PEER (singular) specifies the leader address for TLS provisioning.
-        # If not set, infer it from NEXUS_PEERS by picking the first peer that
-        # isn't this node — avoids a confusing NEXUS_PEER vs NEXUS_PEERS distinction.
-        join_token = os.environ.get("NEXUS_JOIN_TOKEN")
-        join_peer = os.environ.get("NEXUS_PEER")
-        if join_token and not join_peer:
-            # Infer leader from NEXUS_PEERS (exclude self)
-            peers_env = os.environ.get("NEXUS_PEERS", "")
-            for entry in peers_env.split(","):
-                entry = entry.strip()
-                if not entry:
-                    continue
-                # Format: "id@host:port" — skip our own node_id
-                if "@" in entry:
-                    peer_id_str, peer_addr = entry.split("@", 1)
-                    if peer_id_str.strip() != str(node_id):
-                        join_peer = peer_addr
-                        break
-                else:
-                    join_peer = entry
-                    break
-            if join_peer:
-                logger.info(
-                    "NEXUS_PEER not set; inferred leader address %s from NEXUS_PEERS",
-                    join_peer,
-                )
-        tls_dir_check = Path(zones_dir) / "tls"
-        if join_token and join_peer and not (tls_dir_check / "node.pem").exists():
-            from nexus.security.tls.cluster_join import join_cluster_sync
-
-            logger.info(
-                "NEXUS_JOIN_TOKEN set — joining cluster via %s before startup",
-                join_peer,
-            )
-            try:
-                join_cluster_sync(
-                    peer_address=join_peer,
-                    token=join_token,
-                    node_id=node_id,
-                    tls_dir=tls_dir_check,
-                )
-                logger.info("Cluster join complete — continuing with ZoneManager init")
-            except Exception:
-                logger.exception("TLS provisioning failed via %s — cannot join cluster", join_peer)
-                raise
-
         zone_mgr = ZoneManager(
             node_id=node_id,
             base_path=zones_dir,
@@ -393,8 +346,9 @@ async def connect(
         peers_str = os.environ.get("NEXUS_PEERS", "")
         peers = [p.strip() for p in peers_str.split(",") if p.strip()] if peers_str else []
 
-        # Detect joiner vs first-node (#2694, #3141):
-        # Priority: NEXUS_JOIN_TOKEN env > TLS file detection > bootstrap
+        # Detect joiner vs first-node:
+        # Joiner = has all cert files (provisioned by 2-phase bootstrap or join flow)
+        # but no join-token (not the CA holder / first node)
         tls_dir = Path(zones_dir) / "tls"
         is_joiner = (
             (tls_dir / "ca.pem").exists()
@@ -403,19 +357,12 @@ async def connect(
             and not (tls_dir / "join-token").exists()
         )
 
-        if join_token:
-            # NEXUS_JOIN_TOKEN set — join existing cluster via token
+        if is_joiner:
             zone_mgr.join_zone("root", peers=peers if peers else None)
-            logger.info(
-                "Joiner node: joined root zone via NEXUS_JOIN_TOKEN (token=%s...)",
-                join_token[:20],
-            )
-        elif is_joiner:
-            # Provisioned via `nexus join` or cluster_join — has certs but no join-token
-            zone_mgr.join_zone("root", peers=peers if peers else None)
-            logger.info("Joiner node: joined root zone (provisioned via `nexus join`)")
+            logger.info("Joiner node: joined root zone (certs provisioned)")
         else:
-            # First node — bootstrap
+            # First node or 2-phase mode (no certs yet — bootstrap creates Raft group,
+            # TLS is handled by zone_manager.bootstrap_tls() during ensure_topology)
             zone_mgr.bootstrap(peers=peers if peers else None)
 
         # Static Day-1 topology from env vars (idempotent)

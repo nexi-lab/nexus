@@ -1,7 +1,8 @@
 """Cluster join command — K3s-style TLS certificate provisioning (#2694).
 
-DEPRECATED: Use NEXUS_JOIN_TOKEN + NEXUS_PEER env vars with nexusd instead.
+DEPRECATED: Use NEXUS_JOIN_TOKEN + NEXUS_PEERS env vars with nexusd instead.
 The join flow is now integrated into nexusd startup (see nexus.security.tls.cluster_join).
+The leader address is automatically inferred from NEXUS_PEERS.
 
 Usage (legacy CLI — deprecated)::
 
@@ -9,7 +10,7 @@ Usage (legacy CLI — deprecated)::
 
 Usage (preferred — env vars)::
 
-    NEXUS_JOIN_TOKEN=K10abc... NEXUS_PEER=nodeA:2126 NEXUS_NODE_ID=2 nexusd
+    NEXUS_JOIN_TOKEN=K10abc... NEXUS_PEERS=1@nodeA:2126,2@nodeB:2126 NEXUS_NODE_ID=2 nexusd
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 def join(peer_address: str, token: str, node_id: int, data_dir: str | None) -> None:
     """Join an existing Nexus cluster by provisioning TLS certificates.
 
-    DEPRECATED: Use NEXUS_JOIN_TOKEN + NEXUS_PEER env vars with nexusd instead.
+    DEPRECATED: Use NEXUS_JOIN_TOKEN + NEXUS_PEERS env vars with nexusd instead.
 
     Connects to the leader, authenticates with the join token, and receives
     a server-signed node certificate. The CA key never leaves the leader.
@@ -56,7 +57,7 @@ def join(peer_address: str, token: str, node_id: int, data_dir: str | None) -> N
     """
     click.echo(
         "WARNING: `nexus join` is deprecated. Use env vars with nexusd instead:\n"
-        "  NEXUS_JOIN_TOKEN=<token> NEXUS_PEER=<addr> NEXUS_NODE_ID=<id> nexusd\n"
+        "  NEXUS_JOIN_TOKEN=<token> NEXUS_PEERS=1@nodeA:2126,2@nodeB:2126 NEXUS_NODE_ID=<id> nexusd\n"
         "Continuing with legacy join flow...\n",
         err=True,
     )

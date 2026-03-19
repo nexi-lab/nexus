@@ -67,7 +67,7 @@ tonic-build = { version = "0.12", optional = true }
 tokio-test = "0.4"
 
 [features]
-default = []
+default = ["full"]
 mimalloc = ["dep:mimalloc"]
 
 # Enable async support (Tokio runtime)

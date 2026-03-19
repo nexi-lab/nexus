@@ -49,8 +49,18 @@ from cachetools import LRUCache
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.connectors.base import (
+    ConfirmLevel,
+    ErrorDef,
+    OpTraits,
+    Reversibility,
+    SkillDocMixin,
+    TraitBasedMixin,
+    ValidatedMixin,
+)
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
-from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES
+from nexus.backends.connectors.x.schemas import CreateTweetSchema, DeleteTweetSchema
+from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
@@ -89,7 +99,9 @@ CACHE_TTL = {
     requires=["requests-oauthlib"],
     service_name="x",
 )
-class XConnectorBackend(Backend, OAuthConnectorMixin):
+class XConnectorBackend(
+    Backend, OAuthConnectorMixin, SkillDocMixin, ValidatedMixin, TraitBasedMixin
+):
     """
     X (Twitter) connector backend with OAuth 2.0 PKCE authentication.
 
@@ -114,7 +126,36 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
     - Fixed virtual directory structure
     """
 
-    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES
+    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+        {
+            ConnectorCapability.SKILL_DOC,
+        }
+    )
+
+    # Skill documentation settings
+    SKILL_NAME = "x"
+
+    SCHEMAS: dict[str, type] = {
+        "create_tweet": CreateTweetSchema,
+        "delete_tweet": DeleteTweetSchema,
+    }
+
+    OPERATION_TRAITS = {
+        "create_tweet": OpTraits(reversibility=Reversibility.PARTIAL, confirm=ConfirmLevel.USER),
+        "delete_tweet": OpTraits(reversibility=Reversibility.NONE, confirm=ConfirmLevel.USER),
+    }
+
+    ERROR_REGISTRY = {
+        "MISSING_AGENT_INTENT": ErrorDef(
+            message="Operations require agent_intent",
+            skill_section="required-format",
+        ),
+        "TWEET_TOO_LONG": ErrorDef(
+            message="Tweet exceeds 280 characters",
+            skill_section="operations",
+            fix_example="text: <max 280 chars>",
+        ),
+    }
 
     user_scoped = True
 

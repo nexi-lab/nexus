@@ -45,7 +45,21 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.registry import register_connector
+from nexus.backends.connectors.base import (
+    ConfirmLevel,
+    ErrorDef,
+    OpTraits,
+    Reversibility,
+    SkillDocMixin,
+    TraitBasedMixin,
+    ValidatedMixin,
+)
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
+from nexus.backends.connectors.slack.schemas import (
+    DeleteMessageSchema,
+    SendMessageSchema,
+    UpdateMessageSchema,
+)
 from nexus.backends.connectors.slack.utils import (
     list_channels,
     list_messages_from_channel,
@@ -69,7 +83,14 @@ logger = logging.getLogger(__name__)
     requires=["slack-sdk"],
     service_name="slack",
 )
-class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
+class SlackConnectorBackend(
+    Backend,
+    CacheConnectorMixin,
+    OAuthConnectorMixin,
+    SkillDocMixin,
+    ValidatedMixin,
+    TraitBasedMixin,
+):
     """
     Slack connector backend with OAuth 2.0 authentication.
 
@@ -102,8 +123,41 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         {
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SKILL_DOC,
         }
     )
+
+    # Skill documentation settings
+    SKILL_NAME = "slack"
+
+    SCHEMAS: dict[str, type] = {
+        "send_message": SendMessageSchema,
+        "delete_message": DeleteMessageSchema,
+        "update_message": UpdateMessageSchema,
+    }
+
+    OPERATION_TRAITS = {
+        "send_message": OpTraits(reversibility=Reversibility.NONE, confirm=ConfirmLevel.USER),
+        "delete_message": OpTraits(reversibility=Reversibility.NONE, confirm=ConfirmLevel.USER),
+        "update_message": OpTraits(reversibility=Reversibility.FULL, confirm=ConfirmLevel.EXPLICIT),
+    }
+
+    ERROR_REGISTRY = {
+        "MISSING_AGENT_INTENT": ErrorDef(
+            message="Operations require agent_intent",
+            skill_section="required-format",
+        ),
+        "CHANNEL_NOT_FOUND": ErrorDef(
+            message="Channel not found or bot not a member",
+            skill_section="operations",
+            fix_example="channel: C01234ABCDE  # Use channel ID, not name",
+        ),
+        "MESSAGE_NOT_FOUND": ErrorDef(
+            message="Message not found (invalid timestamp)",
+            skill_section="operations",
+            fix_example="ts: 1234567890.123456",
+        ),
+    }
 
     # Top-level folder types
     FOLDER_TYPES = ["channels", "private-channels", "dms"]

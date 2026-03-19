@@ -111,6 +111,64 @@ def _register_optional_backends() -> None:
         except Exception:
             _logger.debug("Entry point scanning unavailable")
 
+        # --- CLI connector configs from config directory (Issue #3148, Phase 5) ---
+        # Scan ~/.nexus/connectors/ or NEXUS_CONNECTORS_DIR for YAML configs
+        import os
+        from pathlib import Path
+
+        config_dir_env = os.getenv("NEXUS_CONNECTORS_DIR")
+        config_dirs = []
+        if config_dir_env:
+            config_dirs.append(Path(config_dir_env))
+        config_dirs.append(Path.home() / ".nexus" / "connectors")
+
+        for config_dir in config_dirs:
+            if not config_dir.is_dir():
+                continue
+            try:
+                from nexus.backends.connectors.cli.loader import load_all_configs
+
+                configs = load_all_configs(config_dir)
+                for name, config in configs.items():
+                    try:
+                        from nexus.backends.connectors.cli.loader import (
+                            create_connector_from_yaml,
+                        )
+
+                        connector = create_connector_from_yaml(config)
+                        # Register as a connector type so it can be used with add_mount
+                        from nexus.backends.base.registry import ConnectorRegistry
+
+                        if hasattr(ConnectorRegistry, "register_type"):
+                            ConnectorRegistry.register_type(
+                                name=f"cli:{name}",
+                                backend_class=type(connector),
+                                description=f"CLI connector: {config.cli} {config.service}",
+                                category="cli",
+                            )
+                        else:
+                            _logger.debug(
+                                "ConnectorRegistry.register_type not available, "
+                                "CLI connector %s loaded but not registered",
+                                name,
+                            )
+                        _logger.info(
+                            "Registered CLI connector from config: %s (%s %s)",
+                            name,
+                            config.cli,
+                            config.service,
+                        )
+                    except Exception:
+                        _logger.warning(
+                            "Failed to register CLI connector %s from %s",
+                            name,
+                            config_dir,
+                            exc_info=True,
+                        )
+            except (ImportError, ModuleNotFoundError):
+                _logger.debug("CLI connector loader not available")
+                break  # If loader isn't available, skip all dirs
+
 
 __all__ = [
     # Base classes

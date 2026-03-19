@@ -1,0 +1,31 @@
+version: 1
+type: cli
+cli: gws
+service: sheets
+auth:
+  provider: google
+  scopes:
+    - https://www.googleapis.com/auth/spreadsheets
+read:
+  list_command: spreadsheets.list
+  get_command: spreadsheets.values.get
+  format: json
+write:
+  - path: "_append.yaml"
+    operation: append_rows
+    schema_ref: nexus.backends.connectors.gws.schemas.AppendRowsSchema
+    command: spreadsheets.values.append
+    traits:
+      reversibility: partial
+      confirm: intent
+  - path: "_update.yaml"
+    operation: update_cells
+    schema_ref: nexus.backends.connectors.gws.schemas.UpdateCellsSchema
+    command: spreadsheets.values.update
+    traits:
+      reversibility: partial
+      confirm: explicit
+sync:
+  delta_command: "spreadsheets.list --modified-after {since}"
+  state_field: lastModifiedTime
+  page_size: 50

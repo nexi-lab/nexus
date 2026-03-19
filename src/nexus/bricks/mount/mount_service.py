@@ -929,6 +929,148 @@ class MountService:
         """
         return await asyncio.to_thread(self.list_connectors_sync, category)
 
+    @rpc_expose(description="Update mount backend configuration")
+    async def update_mount(
+        self,
+        mount_point: str,
+        backend_config: dict[str, Any],
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Update a mount's backend configuration without removing it.
+
+        Reconfigures the backend (new endpoint, rotated key, updated token)
+        while preserving the DT_MOUNT entry, permissions, and metadata index.
+        This avoids the remove+add cycle that loses permissions and search index.
+
+        Phase 5 (Issue #3148).
+
+        Args:
+            mount_point: Virtual path of mount to update
+            backend_config: New backend configuration (merged with existing)
+            context: Operation context for permission checks
+
+        Returns:
+            Dict with update details: {updated, mount_point, changed_keys}
+
+        Raises:
+            PermissionError: If user lacks write permission on mount
+            ValueError: If mount does not exist
+        """
+        if not self._check_permission(mount_point, "write", context):
+            raise PermissionError(f"Cannot update mount {mount_point}: no write permission")
+
+        route = self.router.route(mount_point)
+        if route is None:
+            raise ValueError(f"Mount not found: {mount_point}")
+
+        backend = route.backend
+        result: dict[str, Any] = {
+            "updated": False,
+            "mount_point": mount_point,
+            "changed_keys": [],
+        }
+
+        # Apply config updates to backend
+        for key, value in backend_config.items():
+            if hasattr(backend, key):
+                old_val = getattr(backend, key, None)
+                if old_val != value:
+                    setattr(backend, key, value)
+                    result["changed_keys"].append(key)
+            elif hasattr(backend, f"_{key}"):
+                old_val = getattr(backend, f"_{key}", None)
+                if old_val != value:
+                    setattr(backend, f"_{key}", value)
+                    result["changed_keys"].append(key)
+
+        result["updated"] = len(result["changed_keys"]) > 0
+
+        if result["updated"]:
+            logger.info(
+                "Updated mount %s config: %s",
+                mount_point,
+                ", ".join(result["changed_keys"]),
+            )
+
+        return result
+
+    @rpc_expose(description="Refresh OAuth credentials for a mount")
+    async def reauth_mount(
+        self,
+        mount_point: str,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Refresh or rotate OAuth credentials for a mounted connector.
+
+        Triggers a token refresh via TokenManager without unmounting.
+        Useful for credential rotation, expired tokens, or provider changes.
+
+        Phase 5 (Issue #3148).
+
+        Args:
+            mount_point: Virtual path of mount to reauth
+            provider: OAuth provider name (auto-detected from backend if not given)
+            user_email: User email for token lookup (auto-detected from context)
+            context: Operation context
+
+        Returns:
+            Dict with reauth details: {refreshed, provider, user_email}
+
+        Raises:
+            PermissionError: If user lacks write permission on mount
+            ValueError: If mount not found or not OAuth-capable
+        """
+        if not self._check_permission(mount_point, "write", context):
+            raise PermissionError(f"Cannot reauth mount {mount_point}: no write permission")
+
+        route = self.router.route(mount_point)
+        if route is None:
+            raise ValueError(f"Mount not found: {mount_point}")
+
+        backend = route.backend
+
+        # Auto-detect provider from backend
+        if provider is None:
+            provider = getattr(backend, "provider", None) or getattr(backend, "_provider", None)
+        if provider is None:
+            raise ValueError(f"Cannot determine OAuth provider for {mount_point}")
+
+        # Auto-detect user_email from context
+        if user_email is None and context is not None:
+            user_email = getattr(context, "user_id", None)
+        if user_email is None:
+            raise ValueError("user_email required for reauth")
+
+        # Get token manager from backend or service
+        token_manager = getattr(backend, "_token_manager", None)
+        if token_manager is None and self._token_manager_fn is not None:
+            token_manager = self._token_manager_fn()
+
+        if token_manager is None:
+            raise ValueError(f"No token manager available for {mount_point}")
+
+        # Refresh token
+        zone_id = getattr(context, "zone_id", None) if context else None
+        try:
+            await asyncio.to_thread(
+                token_manager.refresh_token,
+                user_email=user_email,
+                provider=provider,
+                zone_id=zone_id,
+            )
+            logger.info("Refreshed OAuth token for %s (%s/%s)", mount_point, provider, user_email)
+            return {"refreshed": True, "provider": provider, "user_email": user_email}
+        except Exception as e:
+            logger.warning("Token refresh failed for %s: %s", mount_point, e)
+            return {
+                "refreshed": False,
+                "provider": provider,
+                "user_email": user_email,
+                "error": str(e),
+            }
+
     @rpc_expose(description="List all backend mounts")
     async def list_mounts(self, context: "OperationContext | None" = None) -> list[dict[str, Any]]:
         """List all active backend mounts that the user has permission to access.

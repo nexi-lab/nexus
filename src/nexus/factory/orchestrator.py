@@ -595,6 +595,16 @@ async def _register_vfs_hooks(
                 SyncPermissionWriteHook(hierarchy_manager=_hier, rebac_manager=_rebac),
             )
 
+    # ── Zone writability gate (Issue #1371, #2061) ─────────────────────
+    # Replaces NexusFS._check_zone_writable() — kernel should not know
+    # about zone lifecycle.  PRE hooks on all mutating ops block writes
+    # to zones being deprovisioned.
+    _zl = getattr(nx._system_services, "zone_lifecycle", None) if nx._system_services else None
+    if _zl is not None:
+        from nexus.system_services.lifecycle.zone_writability_hook import ZoneWritabilityHook
+
+        await _enlist("zone_writability", ZoneWritabilityHook(_zl))
+
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.

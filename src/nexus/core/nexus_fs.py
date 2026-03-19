@@ -371,25 +371,6 @@ class NexusFS(  # type: ignore[misc]
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
 
-    def _check_zone_writable(self, context: OperationContext | dict | None = None) -> None:
-        """Raise ZoneTerminatingError if the zone is being deprovisioned.
-
-        Issue #2061: Write-gating during zone finalization (Decision #4A).
-        Issue #1570: zone_lifecycle accessed from container, not flat attr.
-        """
-        _zl = (
-            getattr(self._system_services, "zone_lifecycle", None)
-            if self._system_services
-            else None
-        )
-        if _zl is None:
-            return
-        zone_id, _, _ = self._get_routing_params(context)
-        if zone_id and _zl.is_zone_terminating(zone_id):
-            from nexus.contracts.exceptions import ZoneTerminatingError
-
-            raise ZoneTerminatingError(zone_id)
-
     @property
     def zone_id(self) -> str | None:
         """Default zone_id from the instance context."""
@@ -533,7 +514,6 @@ class NexusFS(  # type: ignore[misc]
         ctx = context if context is not None else self._default_context
 
         # Block writes during zone deprovisioning (Issue #2061)
-        self._check_zone_writable(ctx)
 
         # PRE-INTERCEPT: pre-mkdir hooks (Issue #899)
         from nexus.contracts.vfs_hooks import MkdirHookContext
@@ -676,7 +656,6 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # Block writes during zone deprovisioning (Issue #2061)
-        self._check_zone_writable(context)
 
         # P0 Fixes: Create OperationContext
         if context is not None:
@@ -978,8 +957,6 @@ class NexusFS(  # type: ignore[misc]
             Dict with path, created flag, and type-specific fields.
         """
         path = self._validate_path(path)
-        ctx = context or self._default_context
-        self._check_zone_writable(ctx)
 
         meta = self.metadata.get(path)
 
@@ -2156,7 +2133,6 @@ class NexusFS(  # type: ignore[misc]
             >>> result = nx.write_stream("/workspace/large.bin", file_chunks("/tmp/large.bin"))
         """
         path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route to backend with write access check
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -2282,7 +2258,6 @@ class NexusFS(  # type: ignore[misc]
             return {"path": path, "bytes_written": n, "created": False}
 
         path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _result = self._dispatch.resolve_write(path, buf)
@@ -2388,7 +2363,6 @@ class NexusFS(  # type: ignore[misc]
             buf = buf[:count]
 
         path = self._validate_path(path)
-        self._check_zone_writable(context)
 
         # PRE-DISPATCH: virtual path resolvers
         _handled, _result = self._dispatch.resolve_write(path, buf)
@@ -3014,8 +2988,6 @@ class NexusFS(  # type: ignore[misc]
         if not files:
             return []
 
-        self._check_zone_writable(context)  # Issue #2061: write-gating
-
         # Validate all paths first
         validated_files: list[tuple[str, bytes]] = []
         for path, content in files:
@@ -3272,7 +3244,6 @@ class NexusFS(  # type: ignore[misc]
             PermissionError: If path is read-only or user doesn't have write permission
         """
         path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _result = self._dispatch.resolve_delete(path, context=context)
@@ -3404,7 +3375,6 @@ class NexusFS(  # type: ignore[misc]
         new_path = self._validate_path(new_path)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route both paths
         zone_id, agent_id, is_admin = self._get_routing_params(context)
@@ -4030,7 +4000,7 @@ class NexusFS(  # type: ignore[misc]
             ...     else:
             ...         print(f"Failed {path}: {result['error']}")
         """
-        self._check_zone_writable(context)  # Issue #2061: write-gating
+
         results = {}
         for path in paths:
             try:

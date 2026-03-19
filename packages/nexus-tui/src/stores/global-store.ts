@@ -125,23 +125,24 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
         client.get<UserInfo>("/auth/me").catch(() => null),
       ]);
 
-      // Auto-discovery: if health check fails, scan common ports to find the server
-      if (!health) {
+      // Auto-discovery: if health check fails, scan common ports to find the server.
+      // Only probe when running interactively (not in tests) — probing creates real
+      // HTTP connections that cause test timeouts.
+      if (!health && typeof process !== "undefined" && process.stdout?.isTTY) {
         const configuredUrl = get().config.baseUrl ?? "";
         const hostname = configuredUrl.replace(/:\d+$/, "").replace(/^https?:\/\//, "");
         const protocol = configuredUrl.startsWith("https") ? "https" : "http";
         const PROBE_PORTS = [2026, 2027, 2042, 2043, 8080, 2122];
 
         for (const port of PROBE_PORTS) {
-          if (configuredUrl.includes(`:${port}`)) continue; // skip already-tried port
+          if (configuredUrl.includes(`:${port}`)) continue;
           try {
             const probeUrl = `${protocol}://${hostname || "localhost"}:${port}`;
-            const probeClient = new FetchClient({ ...get().config, baseUrl: probeUrl });
+            const probeClient = new FetchClient({ ...get().config, baseUrl: probeUrl, timeout: 3000, maxRetries: 0 });
             const probeHealth = await probeClient.get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
               "/api/v2/bricks/health",
             ).catch(() => null);
             if (probeHealth) {
-              // Found the server on a different port — reconnect with this URL
               const newConfig = resolveConfig({ transformKeys: false, baseUrl: probeUrl });
               const newClient = new FetchClient(newConfig);
               [health, features, userInfo] = await Promise.all([

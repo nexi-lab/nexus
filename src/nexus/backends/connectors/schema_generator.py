@@ -77,6 +77,9 @@ class SkillDocGenerator:
             "",
         ]
 
+        # Read patterns (Issue #3148) — how to list, cat, grep connector content
+        lines.extend(self._generate_read_patterns_section(mount_path))
+
         if self._schemas:
             lines.extend(self._generate_operations_section())
 
@@ -160,6 +163,65 @@ class SkillDocGenerator:
         except Exception as e:
             logger.warning("Failed to write skill docs to %s: %s", skill_dir, e)
             return result
+
+    def _generate_read_patterns_section(self, mount_path: str) -> list[str]:
+        """Generate Read Patterns section showing how to list, cat, grep content.
+
+        Provides agents with L0-L1 discovery: how to explore connector content
+        before attempting write operations. Issue #3148.
+        """
+        mp = mount_path.rstrip("/")
+        lines = [
+            "## Read Patterns",
+            "",
+            "### List content",
+            "```bash",
+            f"nexus ls {mp}/",
+            "```",
+            "",
+            "### Read a file",
+            "```bash",
+            f"nexus cat {mp}/<path>",
+            "```",
+            "",
+            "### Search content",
+            "```bash",
+            f'nexus grep "keyword" {mp}/',
+            "```",
+            "",
+        ]
+
+        # Add write patterns if schemas exist
+        if self._schemas:
+            lines.extend(
+                [
+                    "### Write patterns",
+                    "",
+                ]
+            )
+            for op_name in self._schemas:
+                traits = self._operation_traits.get(op_name, OpTraits())
+                lines.append(
+                    f"- **{op_name.replace('_', ' ').title()}**: "
+                    f"write to appropriate `_new.yaml` path "
+                    f"(reversibility: {traits.reversibility.value}, "
+                    f"confirm: {traits.confirm.value})"
+                )
+            lines.append("")
+
+        # Add schema discovery
+        lines.extend(
+            [
+                "### Schema discovery",
+                "```bash",
+                f"nexus mounts skills {mp}",
+                f"nexus mounts schema {mp} <operation>",
+                "```",
+                "",
+            ]
+        )
+
+        return lines
 
     def _generate_annotated_schema(self, op_name: str, schema: type[BaseModel]) -> str:
         """Generate an annotated YAML schema file for a single operation.

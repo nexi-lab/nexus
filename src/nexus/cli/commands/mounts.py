@@ -951,6 +951,165 @@ async def _async_sync_jobs(
         handle_error(e)
 
 
+@mounts_group.command(name="skills")
+@click.argument("mount_point", type=str)
+@add_backend_options
+@add_output_options
+def list_skills(
+    mount_point: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    """List available skills for a mounted connector.
+
+    Shows operations, write paths, and traits for a connector.
+    Reads from the .skill/ directory at the mount point.
+
+    MOUNT_POINT: Path of the mount (e.g., /mnt/gmail)
+
+    Examples:
+        nexus mounts skills /mnt/gmail
+        nexus mounts skills /mnt/calendar --format json
+    """
+    import asyncio
+
+    asyncio.run(_async_list_skills(mount_point, remote_url, remote_api_key, output_opts))
+
+
+async def _async_list_skills(
+    mount_point: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    timing = CommandTiming()
+    try:
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
+        mp = mount_point.rstrip("/")
+        skill_md_path = f"{mp}/.skill/SKILL.md"
+        schemas_dir = f"{mp}/.skill/schemas"
+
+        with timing.phase("server"):
+            # Read SKILL.md
+            try:
+                raw = await nx.sys_read(skill_md_path)
+                content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            except Exception:
+                console.print(f"[yellow]No skill documentation found at {skill_md_path}[/yellow]")
+                console.print("[dim]This mount may not be a connector with skill docs.[/dim]")
+                return
+
+            # List schema files
+            schema_files: list[str] = []
+            try:
+                entries = await nx.sys_readdir(schemas_dir)
+                schema_files = [e.rstrip("/") for e in entries if str(e).endswith(".yaml")]
+            except Exception:
+                pass  # No schemas directory is OK
+
+        def _render(data: dict[str, Any]) -> None:
+            console.print(f"[bold cyan]Skills for {mp}[/bold cyan]")
+            console.print()
+            console.print(data["content"])
+            if data["schemas"]:
+                console.print()
+                console.print("[bold]Available Schemas:[/bold]")
+                for s in data["schemas"]:
+                    op_name = s.replace(".yaml", "")
+                    console.print(
+                        f"  [green]{op_name}[/green]  \u2192  nexus mounts schema {mp} {op_name}"
+                    )
+
+        result_data = {"mount_point": mp, "content": content, "schemas": schema_files}
+
+        render_output(
+            data=result_data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=lambda d: _render(d),
+        )
+
+    except Exception as e:
+        handle_error(e)
+
+
+@mounts_group.command(name="schema")
+@click.argument("mount_point", type=str)
+@click.argument("operation", type=str)
+@add_backend_options
+@add_output_options
+def show_schema(
+    mount_point: str,
+    operation: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    """Show annotated schema for a connector operation.
+
+    Displays the full schema with field types, constraints, and
+    descriptions for a specific write operation.
+
+    MOUNT_POINT: Path of the mount (e.g., /mnt/gmail)
+
+    OPERATION: Operation name (e.g., send_email, create_event)
+
+    Examples:
+        nexus mounts schema /mnt/gmail send_email
+        nexus mounts schema /mnt/calendar create_event --format json
+    """
+    import asyncio
+
+    asyncio.run(_async_show_schema(mount_point, operation, remote_url, remote_api_key, output_opts))
+
+
+async def _async_show_schema(
+    mount_point: str,
+    operation: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    timing = CommandTiming()
+    try:
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
+        mp = mount_point.rstrip("/")
+        schema_path = f"{mp}/.skill/schemas/{operation}.yaml"
+
+        with timing.phase("server"):
+            try:
+                raw = await nx.sys_read(schema_path)
+                content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            except Exception:
+                console.print(f"[red]Schema not found:[/red] {schema_path}")
+                console.print()
+                console.print("[dim]Available operations:[/dim]")
+                try:
+                    entries = await nx.sys_readdir(f"{mp}/.skill/schemas")
+                    for e in entries:
+                        if str(e).endswith(".yaml"):
+                            console.print(f"  [green]{str(e).replace('.yaml', '')}[/green]")
+                except Exception:
+                    console.print("  [yellow]No schemas found for this mount[/yellow]")
+                return
+
+        def _render(data: dict[str, Any]) -> None:
+            console.print(f"[bold cyan]Schema: {operation}[/bold cyan]  ({mp})")
+            console.print()
+            console.print(data["content"])
+
+        render_output(
+            data={"mount_point": mp, "operation": operation, "content": content},
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=lambda d: _render(d),
+        )
+
+    except Exception as e:
+        handle_error(e)
+
+
 def register_commands(cli: click.Group) -> None:
     """Register mount commands with the CLI.
 

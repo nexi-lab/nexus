@@ -215,6 +215,10 @@ async def _boot_wired_services(
             exc_info=True,
         )
 
+    # Wire SearchService -> MountService for post-mount indexing (Issue #3148)
+    if mount_service is not None and search_service is not None:
+        mount_service._search_service = search_service
+
     # --- ShareLinkService: Share link operations ---
     share_link_service: Any = None
     if _on("discovery"):

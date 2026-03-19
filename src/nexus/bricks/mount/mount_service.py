@@ -83,6 +83,7 @@ class MountService:
         persist_service: Any = None,
         rmdir_fn: Any = None,
         token_manager_fn: Any = None,
+        search_service: Any = None,
     ):
         """Initialize mount service.
 
@@ -98,6 +99,7 @@ class MountService:
             persist_service: MountPersistService (alias, used by delete_connector)
             rmdir_fn: Callback to delete directories (NexusFS.rmdir)
             token_manager_fn: Callback to get token manager for OAuth revocation
+            search_service: Optional SearchService for post-mount indexing (Issue #3148)
         """
         self.router = router
         self.mount_manager = mount_manager
@@ -110,6 +112,7 @@ class MountService:
         self._persist_service = persist_service
         self._rmdir_fn = rmdir_fn
         self._token_manager_fn = token_manager_fn
+        self._search_service = search_service
 
         logger.info("[MountService] Initialized")
 

@@ -26,6 +26,22 @@ from tests.helpers.in_memory_record_store import InMemoryRecordStore
 @pytest.fixture()
 def record_store():
     store = InMemoryRecordStore()
+    # Create rebac_namespaces table (removed from ORM models in #183 migration)
+    from sqlalchemy import text
+
+    with store.engine.connect() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS rebac_namespaces ("
+                "  namespace_id TEXT PRIMARY KEY,"
+                "  object_type TEXT UNIQUE NOT NULL,"
+                "  config TEXT NOT NULL,"
+                "  created_at TEXT NOT NULL,"
+                "  updated_at TEXT NOT NULL"
+                ")"
+            )
+        )
+        conn.commit()
     yield store
     store.close()
 

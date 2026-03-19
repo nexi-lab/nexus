@@ -36,7 +36,7 @@ class _StubFS:
             raise InvalidPathError(path)
         return path
 
-    def _get_routing_params(self, context):
+    def _get_context_identity(self, context):
         return "default", None, False
 
     def _parse_context(self, context):

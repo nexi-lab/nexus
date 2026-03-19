@@ -89,7 +89,6 @@ services:
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
       # gRPC
       NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
-      NEXUS_GRPC_INSECURE: "${NEXUS_GRPC_INSECURE:-false}"
       # Zoekt (external container, not built-in sidecar)
       ZOEKT_ENABLED: "false"
       ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}

@@ -40,6 +40,8 @@
 //! ```
 
 #[cfg(all(feature = "grpc", has_protos))]
+pub(crate) mod certgen;
+#[cfg(all(feature = "grpc", has_protos))]
 mod client;
 #[cfg(all(feature = "grpc", has_protos))]
 mod server;

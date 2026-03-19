@@ -69,8 +69,9 @@ impl Default for ServerConfig {
 pub struct RaftGrpcServer {
     config: ServerConfig,
     registry: Arc<ZoneRaftRegistry>,
-    /// Path to CA private key — read by JoinCluster handler to send to joiners.
-    ca_key_path: Option<PathBuf>,
+    /// CA private key bytes — read once at startup, held in memory for JoinCluster cert signing.
+    /// The CA key never leaves this process (security: server-side cert signing).
+    ca_key_pem: Option<Vec<u8>>,
     /// SHA-256 hash of the join token password — for JoinCluster verification.
     join_token_hash: Option<String>,
     /// Base path for data directory — used for peers_joined marker file.
@@ -87,20 +88,23 @@ impl RaftGrpcServer {
         Self {
             config,
             registry,
-            ca_key_path: None,
+            ca_key_pem: None,
             join_token_hash: None,
             base_path: None,
         }
     }
 
     /// Set cluster join parameters for JoinCluster RPC support.
+    ///
+    /// Reads the CA private key from disk once and holds it in memory.
+    /// The CA key never leaves this process — server signs certs for joiners.
     pub fn with_join_config(
         mut self,
-        ca_key_path: PathBuf,
+        ca_key_pem: Vec<u8>,
         join_token_hash: String,
         base_path: PathBuf,
     ) -> Self {
-        self.ca_key_path = Some(ca_key_path);
+        self.ca_key_pem = Some(ca_key_pem);
         self.join_token_hash = Some(join_token_hash);
         self.base_path = Some(base_path);
         self
@@ -128,7 +132,7 @@ impl RaftGrpcServer {
         let client_service = ZoneApiServiceImpl {
             registry: self.registry.clone(),
             tls: self.config.tls.clone(),
-            ca_key_path: self.ca_key_path.clone(),
+            ca_key_pem: self.ca_key_pem.clone(),
             join_token_hash: self.join_token_hash.clone(),
             base_path: self.base_path.clone(),
         };
@@ -186,7 +190,7 @@ impl RaftGrpcServer {
         let client_service = ZoneApiServiceImpl {
             registry: self.registry.clone(),
             tls: self.config.tls.clone(),
-            ca_key_path: self.ca_key_path.clone(),
+            ca_key_pem: self.ca_key_pem.clone(),
             join_token_hash: self.join_token_hash.clone(),
             base_path: self.base_path.clone(),
         };
@@ -483,8 +487,8 @@ struct ZoneApiServiceImpl {
     registry: Arc<ZoneRaftRegistry>,
     /// TLS config for outbound connections.
     tls: Option<super::TlsConfig>,
-    /// Path to CA private key file — read by JoinCluster handler to send to joiners.
-    ca_key_path: Option<PathBuf>,
+    /// CA private key bytes — held in memory for server-side cert signing.
+    ca_key_pem: Option<Vec<u8>>,
     /// SHA-256 hash of the join token password — for JoinCluster verification.
     join_token_hash: Option<String>,
     /// Base path for data directory — used to write peers_joined marker.
@@ -871,8 +875,9 @@ impl ZoneApiService for ZoneApiServiceImpl {
 
     /// Handle a JoinCluster request — K3s-style TLS certificate provisioning.
     ///
-    /// Verifies the join token password, then returns the cluster CA cert + key
-    /// so the joiner can generate its own node cert locally.
+    /// Verifies the join token password, signs a node certificate server-side,
+    /// and returns the CA cert + signed node cert + node key.
+    /// The CA private key never leaves this process (security fix).
     /// After success, writes a `peers_joined` marker to signal mTLS upgrade.
     async fn join_cluster(
         &self,
@@ -883,6 +888,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
         tracing::info!(
             node_id = req.node_id,
             node_address = req.node_address,
+            zone_id = req.zone_id,
             "JoinCluster request received",
         );
 
@@ -897,7 +903,8 @@ impl ZoneApiService for ZoneApiServiceImpl {
                             .to_string(),
                     ),
                     ca_pem: Vec::new(),
-                    ca_key_pem: Vec::new(),
+                    node_cert_pem: Vec::new(),
+                    node_key_pem: Vec::new(),
                 }));
             }
         };
@@ -919,19 +926,21 @@ impl ZoneApiService for ZoneApiServiceImpl {
                 success: false,
                 error: Some("Invalid join token password".to_string()),
                 ca_pem: Vec::new(),
-                ca_key_pem: Vec::new(),
+                node_cert_pem: Vec::new(),
+                node_key_pem: Vec::new(),
             }));
         }
 
-        // Read CA cert and key from disk
-        let ca_key_path = match &self.ca_key_path {
-            Some(p) => p,
+        // Get CA cert and key (both in memory — no disk reads)
+        let ca_key_pem = match &self.ca_key_pem {
+            Some(k) => k,
             None => {
                 return Ok(Response::new(JoinClusterResponse {
                     success: false,
-                    error: Some("CA key path not configured".to_string()),
+                    error: Some("CA key not configured".to_string()),
                     ca_pem: Vec::new(),
-                    ca_key_pem: Vec::new(),
+                    node_cert_pem: Vec::new(),
+                    node_key_pem: Vec::new(),
                 }));
             }
         };
@@ -943,23 +952,32 @@ impl ZoneApiService for ZoneApiServiceImpl {
                     success: false,
                     error: Some("TLS not configured on this node".to_string()),
                     ca_pem: Vec::new(),
-                    ca_key_pem: Vec::new(),
+                    node_cert_pem: Vec::new(),
+                    node_key_pem: Vec::new(),
                 }));
             }
         };
 
-        let ca_key_pem = match std::fs::read(ca_key_path) {
-            Ok(data) => data,
-            Err(e) => {
-                tracing::error!("Failed to read CA key: {}", e);
-                return Ok(Response::new(JoinClusterResponse {
-                    success: false,
-                    error: Some(format!("Failed to read CA key: {}", e)),
-                    ca_pem: Vec::new(),
-                    ca_key_pem: Vec::new(),
-                }));
-            }
+        // Server-side cert signing — CA key never leaves this process
+        let zone_id = if req.zone_id.is_empty() {
+            "root"
+        } else {
+            &req.zone_id
         };
+        let (node_cert_pem, node_key_pem) =
+            match super::certgen::generate_node_cert(req.node_id, zone_id, &ca_pem, ca_key_pem) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    tracing::error!("Failed to generate node cert: {}", e);
+                    return Ok(Response::new(JoinClusterResponse {
+                        success: false,
+                        error: Some(format!("Failed to generate node cert: {}", e)),
+                        ca_pem: Vec::new(),
+                        node_cert_pem: Vec::new(),
+                        node_key_pem: Vec::new(),
+                    }));
+                }
+            };
 
         // Write peers_joined marker to signal mTLS upgrade on next restart
         if let Some(ref base) = self.base_path {
@@ -973,14 +991,15 @@ impl ZoneApiService for ZoneApiServiceImpl {
         tracing::info!(
             node_id = req.node_id,
             node_address = req.node_address,
-            "JoinCluster: certificates provisioned successfully",
+            "JoinCluster: node certificate signed and provisioned successfully",
         );
 
         Ok(Response::new(JoinClusterResponse {
             success: true,
             error: None,
             ca_pem,
-            ca_key_pem,
+            node_cert_pem,
+            node_key_pem,
         }))
     }
 }

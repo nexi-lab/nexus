@@ -671,7 +671,7 @@ impl PyZoneManager {
     ///     tls_cert_path: Path to PEM certificate file (mTLS). All three TLS paths must be set, or none.
     ///     tls_key_path: Path to PEM private key file (mTLS).
     ///     tls_ca_path: Path to PEM CA certificate file (mTLS).
-    ///     ca_key_path: Path to CA private key file (for JoinCluster RPC to send to joiners).
+    ///     ca_key_path: Path to CA private key file (read once at startup for server-side cert signing).
     ///     join_token_hash: SHA-256 hash of join token password (for JoinCluster verification).
     #[new]
     #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
@@ -742,10 +742,14 @@ impl PyZoneManager {
         };
         let use_tls = tls_config.is_some();
         let mut server = RaftGrpcServer::new(registry.clone(), config);
-        // Configure JoinCluster RPC support if join token is available
-        if let (Some(ca_key), Some(token_hash)) = (ca_key_path, join_token_hash) {
+        // Configure JoinCluster RPC support if join token is available.
+        // Read CA key from disk once — held in memory for server-side cert signing.
+        if let (Some(ca_key_path), Some(token_hash)) = (ca_key_path, join_token_hash) {
+            let ca_key_pem = std::fs::read(ca_key_path).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to read CA key for JoinCluster: {}", e))
+            })?;
             server = server.with_join_config(
-                std::path::PathBuf::from(ca_key),
+                ca_key_pem,
                 token_hash.to_string(),
                 std::path::PathBuf::from(base_path),
             );

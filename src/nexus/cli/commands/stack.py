@@ -144,11 +144,7 @@ def _derive_project_env(
         env["NEXUS_TLS_CERT"] = "/app/data/tls/server.crt"
         env["NEXUS_TLS_KEY"] = "/app/data/tls/server.key"
         env["NEXUS_TLS_CA"] = "/app/data/tls/ca.crt"
-        # TLS enabled — let the server use mTLS for gRPC
-        env["NEXUS_GRPC_INSECURE"] = "false"
-    else:
-        # No TLS — skip TOFU mTLS so CLI can connect without certs
-        env["NEXUS_GRPC_INSECURE"] = "true"
+    # No TLS → gRPC server auto-detects: no certs found → insecure loopback
 
     return env
 

@@ -112,10 +112,10 @@ class ZonePathResolver:
             if entry is not None and entry.is_mount:
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    # Local mount without explicit zone (e.g. /agents IPC mount
-                    # registered via PathRouter.add_mount() only). Skip zone
-                    # crossing — keep the full global path in the current zone
-                    # so metadata put/list use the same key space.
+                    # DT_MOUNT without target_zone_id — treat as local mount
+                    # (no zone crossing). This can happen when a mount is
+                    # registered in-memory (PathRouter.add_mount) and the
+                    # metadata entry was created without target_zone_id.
                     continue
 
                 # Cross zone boundary

@@ -20,6 +20,11 @@ MANIFEST_FILENAME = ".demo-manifest.json"
 
 DEMO_ZONES = [
     {
+        "zone_id": "root",
+        "name": "Root Zone",
+        "description": "Default zone — demo workspace, customer data, agent coordination.",
+    },
+    {
         "zone_id": "research",
         "name": "Research Lab",
         "description": "Internal R&D zone — employee profiles, product specs, and engineering docs. "

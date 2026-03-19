@@ -276,8 +276,8 @@ class ZoneApiServiceServicer:
     def JoinCluster(self, request, context):
         """JoinCluster provisions a new node with cluster TLS certificates.
         Called by `nexus join` before `nexus serve`. The caller authenticates
-        with the join token password; the server returns the cluster CA + key
-        so the joiner can generate its own node cert locally.
+        with the join token password; the server signs a node cert and returns
+        it along with the CA cert. CA key never leaves node-1 (security fix).
         K3s-style bootstrap: token = shared secret, TLS encrypts the channel.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)

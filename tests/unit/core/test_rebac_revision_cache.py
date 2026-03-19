@@ -19,8 +19,12 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+    MetastoreNamespaceStore,
+)
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
+from tests.helpers.dict_metastore import DictMetastore
 
 
 def _check_postgres_available():
@@ -82,6 +86,7 @@ def manager(engine, test_zone):
     manager = ReBACManager(
         engine=engine,
         is_postgresql=True,
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield manager
 

@@ -53,6 +53,7 @@ __all__ = [
     "SyncConfig",
     "WriteOperationConfig",
     # Loader
+    "create_connector_class_from_yaml",
     "create_connector_from_yaml",
     "load_connector_config",
 ]
@@ -68,7 +69,11 @@ def __getattr__(name: str) -> object:
         from nexus.backends.connectors.cli.sync_provider import CLISyncProvider
 
         return CLISyncProvider
-    if name in ("load_connector_config", "create_connector_from_yaml"):
+    if name in (
+        "load_connector_config",
+        "create_connector_from_yaml",
+        "create_connector_class_from_yaml",
+    ):
         from nexus.backends.connectors.cli import loader
 
         return getattr(loader, name)

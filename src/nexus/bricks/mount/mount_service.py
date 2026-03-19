@@ -126,8 +126,9 @@ class MountService:
         Hooks are best-effort: failures are logged as warnings but do not
         fail the mount operation (Decision #12).
 
-        Currently runs:
+        Runs:
         - Skill doc generation for SkillDocMixin backends
+        - Search indexing via search_service (Issue #3148 Gap 1)
         """
         try:
             # Get backend from router to check capabilities
@@ -143,6 +144,27 @@ class MountService:
                 ConnectorCapability.SKILL_DOC
             ):
                 await asyncio.to_thread(self._generate_skill_docs, mount_point, backend)
+
+            # Search indexing — index the mount point so content is discoverable.
+            # Uses search_service DI (Issue #3148 Phase 1).
+            if self._search_service is not None:
+                try:
+                    index_fn = getattr(self._search_service, "index_directory", None)
+                    if index_fn is not None:
+                        await asyncio.to_thread(index_fn, mount_point)
+                        logger.info("Indexed mount point %s for search", mount_point)
+                    else:
+                        # Fall back to semantic_search_index if available
+                        semantic_fn = getattr(self._search_service, "semantic_search_index", None)
+                        if semantic_fn is not None:
+                            asyncio.create_task(semantic_fn(mount_point, recursive=True))
+                            logger.info("Queued semantic search indexing for %s", mount_point)
+                except Exception:
+                    logger.warning(
+                        "Post-mount search indexing failed for %s",
+                        mount_point,
+                        exc_info=True,
+                    )
 
         except Exception:
             logger.warning(

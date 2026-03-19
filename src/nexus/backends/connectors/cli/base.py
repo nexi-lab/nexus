@@ -110,6 +110,11 @@ class CLIConnector(
     ) -> None:
         super().__init__(**kwargs)
 
+        # Fall back to class-level _DEFAULT_CONFIG for subclasses created
+        # by create_connector_class_from_yaml() (Phase 5 config dir loading).
+        if config is None:
+            config = getattr(self.__class__, "_DEFAULT_CONFIG", None)
+
         self._config = config
         self._token_manager_db = token_manager_db
         self._token_manager: Any = None
@@ -274,8 +279,20 @@ class CLIConnector(
         # Build CLI command
         cli_args = self._build_cli_args(operation, validated, path)
 
+        # Serialize validated payload as YAML for stdin.
+        # Token (if present) is prepended as a header line, then payload follows.
+        payload_yaml = yaml.dump(
+            validated.model_dump(exclude_none=True) if hasattr(validated, "model_dump") else data,
+            default_flow_style=False,
+        )
+        stdin_parts = []
+        if token:
+            stdin_parts.append(token)
+        stdin_parts.append(payload_yaml)
+        stdin_data = "\n".join(stdin_parts)
+
         # Execute
-        result = self._execute_cli(cli_args, stdin=token, context=context)
+        result = self._execute_cli(cli_args, stdin=stdin_data, context=context)
 
         # Classify errors
         result = self._error_mapper.classify_result(result)

@@ -138,6 +138,70 @@ def create_connector_from_yaml(
     return connector
 
 
+def create_connector_class_from_yaml(
+    name: str,
+    config: CLIConnectorConfig,
+) -> type:
+    """Create a dedicated CLIConnector subclass with baked-in config.
+
+    Unlike ``create_connector_from_yaml`` which returns an instance with
+    instance-level attribute overrides, this creates a proper subclass
+    with class-level SCHEMAS, OPERATION_TRAITS, etc. so that
+    ``ConnectorRegistry.register()`` can later instantiate it via
+    ``BackendFactory.create()`` without losing the configuration.
+
+    Args:
+        name: Connector name (used for class name).
+        config: Validated connector configuration.
+
+    Returns:
+        A new CLIConnector subclass with config baked into class attributes.
+    """
+    from nexus.backends.connectors.base import ConfirmLevel, OpTraits, Reversibility
+    from nexus.backends.connectors.cli.base import CLIConnector
+
+    # Build SCHEMAS from config schema references
+    schemas: dict[str, Any] = {}
+    for write_op in config.write:
+        try:
+            schema_class = _import_schema(write_op.schema_ref)
+            schemas[write_op.operation] = schema_class
+        except Exception:
+            logger.warning(
+                "Failed to import schema %s for operation %s",
+                write_op.schema_ref,
+                write_op.operation,
+                exc_info=True,
+            )
+
+    # Build OPERATION_TRAITS from config
+    traits: dict[str, OpTraits] = {}
+    for write_op in config.write:
+        traits[write_op.operation] = OpTraits(
+            reversibility=Reversibility(write_op.traits.get("reversibility", "full")),
+            confirm=ConfirmLevel(write_op.traits.get("confirm", "intent")),
+        )
+
+    # Dynamically create a subclass with the config baked in.
+    # _DEFAULT_CONFIG is picked up by CLIConnector.__init__ as fallback
+    # when no explicit config= kwarg is provided.
+    cls_name = f"CLIConnector_{name.replace('-', '_').title()}"
+    connector_cls: type = type(
+        cls_name,
+        (CLIConnector,),
+        {
+            "SKILL_NAME": config.service,
+            "CLI_NAME": config.cli,
+            "CLI_SERVICE": config.service,
+            "SCHEMAS": schemas,
+            "OPERATION_TRAITS": traits,
+            "_DEFAULT_CONFIG": config,
+        },
+    )
+
+    return connector_cls
+
+
 def _import_schema(dotted_path: str) -> type:
     """Import a Pydantic schema class from a dotted path.
 

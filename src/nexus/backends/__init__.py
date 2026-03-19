@@ -126,32 +126,26 @@ def _register_optional_backends() -> None:
             if not config_dir.is_dir():
                 continue
             try:
-                from nexus.backends.connectors.cli.loader import load_all_configs
+                from nexus.backends.connectors.cli.loader import (
+                    create_connector_class_from_yaml,
+                    load_all_configs,
+                )
 
                 configs = load_all_configs(config_dir)
                 for name, config in configs.items():
                     try:
-                        from nexus.backends.connectors.cli.loader import (
-                            create_connector_from_yaml,
-                        )
-
-                        connector = create_connector_from_yaml(config)
-                        # Register as a connector type so it can be used with add_mount
                         from nexus.backends.base.registry import ConnectorRegistry
 
-                        if hasattr(ConnectorRegistry, "register_type"):
-                            ConnectorRegistry.register_type(
-                                name=f"cli:{name}",
-                                backend_class=type(connector),
-                                description=f"CLI connector: {config.cli} {config.service}",
-                                category="cli",
-                            )
-                        else:
-                            _logger.debug(
-                                "ConnectorRegistry.register_type not available, "
-                                "CLI connector %s loaded but not registered",
-                                name,
-                            )
+                        # Create a dedicated subclass with baked-in config
+                        # so ConnectorRegistry gets a proper class, not a
+                        # generic CLIConnector that lost its config.
+                        connector_cls = create_connector_class_from_yaml(name, config)
+                        ConnectorRegistry.register(
+                            name=f"cli:{name}",
+                            connector_class=connector_cls,
+                            description=f"CLI connector: {config.cli} {config.service}",
+                            category="cli",
+                        )
                         _logger.info(
                             "Registered CLI connector from config: %s (%s %s)",
                             name,

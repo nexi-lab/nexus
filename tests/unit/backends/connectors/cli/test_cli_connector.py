@@ -97,6 +97,8 @@ class FakeCLIConnector(CLIConnector):
         return "cli:test-cli:items"
 
     def _execute_cli(self, args, stdin=None, context=None):
+        self._last_stdin = stdin
+        self._last_args = args
         return self._mock_result
 
 
@@ -129,6 +131,21 @@ class TestWriteContent:
         assert isinstance(result, WriteResult)
         assert result.content_hash  # SHA256 of CLI stdout
         assert result.size == len(content)
+
+    def test_validated_payload_forwarded_to_cli(self) -> None:
+        """Codex fix: verify the validated YAML payload is piped to CLI via stdin."""
+        connector = FakeCLIConnector()
+        content = b"agent_intent: Testing create item for unit test\ntitle: Test Item\nbody: Hello"
+        ctx = _context()
+
+        connector.write_content(content, ctx)
+
+        # The stdin passed to _execute_cli must contain the validated payload
+        assert connector._last_stdin is not None
+        assert "title: Test Item" in connector._last_stdin
+        assert "body: Hello" in connector._last_stdin
+        # CLI args should include the command
+        assert "test-cli" in connector._last_args
 
     def test_missing_context_raises(self) -> None:
         connector = FakeCLIConnector()

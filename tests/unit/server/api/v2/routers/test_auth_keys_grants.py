@@ -10,12 +10,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from nexus.bricks.rebac.consistency.metastore_namespace_store import (
+    MetastoreNamespaceStore,
+)
 from nexus.bricks.rebac.manager import EnhancedReBACManager
 from nexus.server.api.v2.routers.auth_keys import (
     ROLE_TO_RELATION,
     GrantRequest,
     router,
 )
+from tests.helpers.dict_metastore import DictMetastore
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 
 # ---------------------------------------------------------------------------
@@ -36,6 +40,7 @@ def rebac_manager(record_store):
         engine=record_store.engine,
         cache_ttl_seconds=0,
         max_depth=10,
+        namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield manager
     manager.close()

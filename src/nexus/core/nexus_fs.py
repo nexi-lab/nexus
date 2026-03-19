@@ -353,10 +353,10 @@ class NexusFS(  # type: ignore[misc]
 
         return get_created_by(context, self._default_context)
 
-    def _get_routing_params(
+    def _get_context_identity(
         self, context: OperationContext | dict | None = None
     ) -> tuple[str | None, str | None, bool]:
-        """Extract (zone_id, agent_id, is_admin) from context for router.route()."""
+        """Extract (zone_id, agent_id, is_admin) from context."""
         if context is None:
             return (
                 self._default_context.zone_id,
@@ -1038,7 +1038,7 @@ class NexusFS(  # type: ignore[misc]
             # For root path, try routing "/" to find the root mount's backend
             if not path or path == "/":
                 try:
-                    zone_id, _agent_id, is_admin = self._get_routing_params(context)
+                    zone_id, _agent_id, is_admin = self._get_context_identity(context)
                     root_route = self.router.route("/", is_admin=is_admin, check_write=False)
                     entries = root_route.backend.list_dir(root_route.backend_path)
                     for entry in entries:
@@ -1051,7 +1051,7 @@ class NexusFS(  # type: ignore[misc]
                     pass
             else:
                 # Non-root path - use router with context
-                zone_id, _agent_id, is_admin = self._get_routing_params(context)
+                zone_id, _agent_id, is_admin = self._get_context_identity(context)
                 route = self.router.route(
                     path.rstrip("/"),
                     is_admin=is_admin,
@@ -1300,7 +1300,7 @@ class NexusFS(  # type: ignore[misc]
                 perm_check_elapsed * 1000,
             )
 
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(path, is_admin=is_admin, check_write=False)
 
         # DT_PIPE / DT_STREAM bypass (sync — range reads not applicable)
@@ -1435,7 +1435,7 @@ class NexusFS(  # type: ignore[misc]
             )
 
         # Normal file path - proceed with regular read
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -1629,7 +1629,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Read allowed files
         read_start = time.time()
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
 
         # Group paths by backend for potential bulk optimization
         # Use get_batch for metadata lookup (single query instead of N queries)
@@ -1960,7 +1960,7 @@ class NexusFS(  # type: ignore[misc]
         if not has_post_hooks:
             self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, agent_id, is_admin = self._get_context_identity(context)
             route = self.router.route(path, is_admin=is_admin, check_write=False)
 
             meta = self.metadata.get(path)
@@ -2033,7 +2033,7 @@ class NexusFS(  # type: ignore[misc]
         self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
         # Route to backend with access control
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -2078,7 +2078,7 @@ class NexusFS(  # type: ignore[misc]
 
         self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -2135,7 +2135,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # Route to backend with write access check
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -2396,7 +2396,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
 
         route = self.router.route(
             path,
@@ -2995,7 +2995,7 @@ class NexusFS(  # type: ignore[misc]
             validated_files.append((validated_path, content))
 
         # Route all paths and check write access
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         routes = []
         for path, _ in validated_files:
             route = self.router.route(
@@ -3259,7 +3259,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -3377,7 +3377,7 @@ class NexusFS(  # type: ignore[misc]
         context = self._parse_context(context)
 
         # Route both paths
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         old_route = self.router.route(
             old_path,
             is_admin=is_admin,
@@ -3624,7 +3624,7 @@ class NexusFS(  # type: ignore[misc]
         size = meta.size
         if size is None and meta.etag:
             # Try to get size from backend
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, agent_id, is_admin = self._get_context_identity(context)
             route = self.router.route(
                 path,
                 is_admin=is_admin,
@@ -4051,7 +4051,7 @@ class NexusFS(  # type: ignore[misc]
         import errno
 
         path = self._validate_path(path)
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
 
         route = self.router.route(
             path,

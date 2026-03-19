@@ -597,7 +597,7 @@ class NexusFSGateway:
         Returns:
             Tuple of (zone_id, agent_id, is_admin)
         """
-        return self._fs._get_routing_params(context)
+        return self._fs._get_context_identity(context)
 
     def has_descendant_access(
         self,

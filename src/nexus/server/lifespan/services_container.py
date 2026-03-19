@@ -68,6 +68,7 @@ class LifespanServices:
     # --- DT_PIPE consumers (Issue #810) -----------------------------------
     zoekt_pipe_consumer: Any = None
     task_dispatch_consumer: Any = None  # Task Manager DT_PIPE consumer
+    stream_manager: Any = None  # DT_STREAM manager (for SSE fan-out)
 
     # --- Brick services container ----------------------------------------
     brick_services: Any = None  # The whole BrickServices dataclass
@@ -134,6 +135,7 @@ class LifespanServices:
             task_dispatch_consumer=(
                 getattr(_brk, "task_dispatch_consumer", None) if _brk else None
             ),
+            stream_manager=(getattr(nx, "_stream_manager", None) if nx else None),
             # Issue #2195: Scheduler
             scheduler_service=(getattr(_sys, "scheduler_service", None) if _sys else None),
             # Brick services

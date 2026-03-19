@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 _TASK_DISPATCH_PIPE_PATH = "/nexus/pipes/task-dispatch"
 _TASK_DISPATCH_PIPE_CAPACITY = 65_536  # 64KB
+_TASK_SSE_STREAM_PATH = "/nexus/streams/task-events"
 
 # Type alias for injectable LLM provider (used by copilot review path)
 LLMCallable = Callable[[str], Awaitable[str]]
@@ -84,11 +85,13 @@ class TaskDispatchPipeConsumer:
         self._task_svc: TaskManagerService | None = None
         self._acp_service = acp_service
         self._process_table = process_table
+        self._agent_resolver: Any | None = None  # TaskAgentResolver for virtual path
         self._llm_fn: LLMCallable = llm_fn or _no_llm  # used by copilot review
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
         self._server_base_url: str = "http://127.0.0.1:2026"
         self._api_key: str = ""
+        self._stream_manager: Any = None
 
     # ------------------------------------------------------------------
     # Deferred injection
@@ -108,10 +111,32 @@ class TaskDispatchPipeConsumer:
     def set_process_table(self, process_table: Any) -> None:
         self._process_table = process_table
 
+    def set_agent_resolver(self, resolver: Any) -> None:
+        """Inject TaskAgentResolver for virtual agent status path updates."""
+        self._agent_resolver = resolver
+
     def set_server_info(self, base_url: str, api_key: str) -> None:
         """Inject server base URL and API key for enriched worker prompts."""
         self._server_base_url = base_url
         self._api_key = api_key
+
+    def set_stream_manager(self, stream_manager: Any) -> None:
+        """Inject DT_STREAM manager for SSE fan-out notifications."""
+        self._stream_manager = stream_manager
+
+    # ------------------------------------------------------------------
+    # SSE notifications
+    # ------------------------------------------------------------------
+
+    def _notify_sse(self, event: str, task_id: str) -> None:
+        """Best-effort SSE notification via DT_STREAM."""
+        if self._stream_manager is None:
+            return
+        try:
+            data = json.dumps({"event": event, "task_id": task_id}).encode()
+            self._stream_manager.stream_write_nowait(_TASK_SSE_STREAM_PATH, data)
+        except Exception:
+            logger.debug("[TASK-SSE] stream write failed (non-fatal)")
 
     # ------------------------------------------------------------------
     # TaskSignalHandler (producer side)
@@ -217,8 +242,9 @@ class TaskDispatchPipeConsumer:
             # Record audit via VFS
             await self._task_svc.create_audit_entry(task_id, "task_created", detail="task created")
 
-            # Check if task is blocked
-            blocked_by = payload.get("blocked_by") or []
+            # Re-read from store for current state (pipe payload is a stale snapshot)
+            task = await self._task_svc.get_task(task_id)
+            blocked_by = task.get("blocked_by") or []
             if blocked_by:
                 logger.info(
                     "[TASK-DISPATCH] task_created task_id=%s mission_id=%s blocked_by=%s",
@@ -233,7 +259,7 @@ class TaskDispatchPipeConsumer:
                 task_id,
                 mission_id,
             )
-            await self._start_worker(task_id)
+            asyncio.create_task(self._start_worker(task_id))
 
         elif signal_type == "task_updated":
             task_id = payload.get("task_id", "?")
@@ -241,7 +267,7 @@ class TaskDispatchPipeConsumer:
 
             if status == "in_review":
                 logger.info("[TASK-DISPATCH] task_id=%s in_review → copilot review", task_id)
-                await self._copilot_review(task_id)
+                asyncio.create_task(self._copilot_review(task_id))
             elif status in ("completed", "failed", "cancelled"):
                 logger.info(
                     "[TASK-DISPATCH] task_id=%s %s → checking unblocked tasks",
@@ -302,6 +328,7 @@ Status flow: created → running → in_review → completed
             agent_id = task.get("worker_type") or "claude"
 
             await svc.update_task(task_id, status="running")
+            self._notify_sse("task_running", task_id)
             await svc.create_audit_entry(
                 task_id, "status_changed", actor="system", detail="task started"
             )
@@ -309,6 +336,7 @@ Status flow: created → running → in_review → completed
             if self._acp_service is None:
                 logger.error("[TASK-DISPATCH] AcpService not wired for task %s", task_id)
                 await svc.update_task(task_id, status="failed")
+                self._notify_sse("task_failed", task_id)
                 await svc.create_audit_entry(
                     task_id, "status_changed", actor="system", detail="AcpService unavailable"
                 )
@@ -329,10 +357,21 @@ Status flow: created → running → in_review → completed
             agent_label = f"{result.agent_id}:{result.pid}"
             await svc.update_task(task_id, worker_pid=result.pid, agent_name=result.agent_id)
 
+            # Persist agent response as a comment (design step 9)
+            if result.response:
+                await svc.create_comment(task_id, agent_label, result.response)
+
+            # Notify resolver so /.tasks/tasks/{id}/agent/status virtual path works
+            if self._agent_resolver is not None and hasattr(
+                self._agent_resolver, "notify_worker_assigned"
+            ):
+                self._agent_resolver.notify_worker_assigned(task_id, result.pid)
+
             # Ensure status advances — agent may not have called the PATCH curl
             current = await svc.get_task(task_id)
             if current.get("status") not in ("in_review", "completed", "failed"):
                 await svc.update_task(task_id, status="in_review")
+                self._notify_sse("task_in_review", task_id)
                 await svc.create_audit_entry(
                     task_id, "status_changed", actor="system", detail="worker done → in_review"
                 )
@@ -349,6 +388,7 @@ Status flow: created → running → in_review → completed
             try:
                 await svc.create_comment(task_id, "system", f"Worker failed: {e}")
                 await svc.update_task(task_id, status="failed")
+                self._notify_sse("task_failed", task_id)
                 await svc.create_audit_entry(
                     task_id, "status_changed", actor="system", detail=f"task failed: {e}"
                 )
@@ -374,6 +414,7 @@ Status flow: created → running → in_review → completed
                     task_id, "copilot", "(copilot review skipped — AcpService unavailable)"
                 )
                 await svc.update_task(task_id, status="completed")
+                self._notify_sse("task_completed", task_id)
                 await svc.create_audit_entry(
                     task_id, "status_changed", actor="copilot", detail="auto-completed (no ACP)"
                 )
@@ -425,6 +466,7 @@ Give brief feedback (2-3 sentences). Then decide: approve or reject.
             current = await svc.get_task(task_id)
             if current.get("status") not in ("completed", "failed"):
                 await svc.update_task(task_id, status="completed")
+                self._notify_sse("task_completed", task_id)
                 await svc.create_audit_entry(
                     task_id, "status_changed", actor="copilot", detail="review done → completed"
                 )
@@ -440,6 +482,7 @@ Give brief feedback (2-3 sentences). Then decide: approve or reject.
             try:
                 await svc.create_comment(task_id, "copilot", f"Review failed: {e}")
                 await svc.update_task(task_id, status="failed")
+                self._notify_sse("task_failed", task_id)
                 await svc.create_audit_entry(
                     task_id, "status_changed", actor="copilot", detail=f"review failed: {e}"
                 )

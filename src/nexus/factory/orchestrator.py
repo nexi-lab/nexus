@@ -550,9 +550,11 @@ async def _register_vfs_hooks(
                 _task_consumer.set_task_service(_task_svc)
 
             await _enlist("task_write", _task_write_hook)
-            await _enlist("task_agent_resolver", TaskAgentResolver(_proc_table))
+            _task_agent_resolver = TaskAgentResolver(_proc_table)
+            await _enlist("task_agent_resolver", _task_agent_resolver)
             nx._task_write_hook = _task_write_hook
             nx._task_manager_service = _task_svc
+            nx._task_agent_resolver = _task_agent_resolver  # expose for lifespan
         except Exception as exc:
             logger.warning("[BOOT:BRICK] task_manager wiring failed: %s", exc)
     else:

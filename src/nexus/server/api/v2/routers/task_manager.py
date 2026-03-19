@@ -253,13 +253,17 @@ async def task_events(request: Request) -> StreamingResponse:
             if await request.is_disconnected():
                 break
             try:
-                data, next_offset = sm.stream_read_at(_TASK_SSE_STREAM_PATH, offset)
+                data, next_offset = await asyncio.wait_for(
+                    sm.stream_read(_TASK_SSE_STREAM_PATH, offset, blocking=True),
+                    timeout=25.0,
+                )
                 offset = next_offset
                 yield f"data: {data.decode()}\n\n"
-            except Exception:
-                # StreamEmptyError or StreamNotFoundError — wait and send keepalive
-                await asyncio.sleep(25)
+            except TimeoutError:
                 yield ": keepalive\n\n"
+            except Exception:
+                yield ": stream error\n\n"
+                await asyncio.sleep(1)  # back off on unexpected errors
 
     return StreamingResponse(
         _stream(),

@@ -633,34 +633,6 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
 
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
-    # Fallback: create consumer if not provided by factory (e.g. no record_store)
-    if tdc is None:
-        nx = svc.nexus_fs
-        if nx is not None:
-            try:
-                from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
-
-                _task_svc = getattr(nx, "_task_manager_service", None)
-                # AcpService lives on AcpRPCService (created in _boot_wired_services)
-                _acp_svc = None
-                _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
-                if _acp_rpc_ref is not None:
-                    _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
-                    _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
-                _proc_tbl = app.state.process_table
-                if _task_svc is not None:
-                    tdc = TaskDispatchPipeConsumer(
-                        acp_service=_acp_svc,
-                        process_table=_proc_tbl,
-                    )
-                    tdc.set_task_service(_task_svc)
-                    # Wire into existing TaskWriteHook
-                    _twh = getattr(nx, "_task_write_hook", None)
-                    if _twh is not None:
-                        _twh.register_handler(tdc)
-                    logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
-            except Exception as e:
-                logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
     if tdc is not None and hasattr(tdc, "set_pipe_manager"):
         try:
             tdc.set_pipe_manager(pipe_manager)
@@ -669,11 +641,44 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
                 _port = os.environ.get("NEXUS_PORT", "2026")
                 _host = os.environ.get("NEXUS_HOST", "127.0.0.1")
                 tdc.set_server_info(f"http://{_host}:{_port}", "")
+
+            # Deferred AcpService injection — safety net for late initialization
+            _nx = svc.nexus_fs
+            if _nx is not None and hasattr(tdc, "set_acp_service"):
+                _acp = getattr(getattr(_nx, "_system_services", None), "acp_service", None)
+                if _acp is not None and getattr(tdc, "_acp_service", None) is None:
+                    tdc.set_acp_service(_acp)
+                    logger.info(
+                        "[PIPE] AcpService injected into TaskDispatchPipeConsumer (deferred)"
+                    )
+
+            # Wire TaskAgentResolver so virtual agent status path gets updated
+            if _nx is not None and hasattr(tdc, "set_agent_resolver"):
+                _resolver = getattr(_nx, "_task_agent_resolver", None)
+                if _resolver is not None:
+                    tdc.set_agent_resolver(_resolver)
+                    logger.info("[PIPE] TaskAgentResolver wired to TaskDispatchPipeConsumer")
+
             await tdc.start()
             app.state.task_dispatch_consumer = tdc
             logger.info("[PIPE] TaskDispatchPipeConsumer started")
         except Exception as e:
             logger.warning("[PIPE] TaskDispatchPipeConsumer start failed: %s", e, exc_info=True)
+
+    # Wire SSE stream for task events
+    _sm = svc.stream_manager
+    if _sm is not None:
+        import contextlib
+
+        from nexus.core.stream import StreamError
+
+        _SSE_PATH = "/nexus/streams/task-events"
+        with contextlib.suppress(StreamError, ValueError, Exception):
+            _sm.create(_SSE_PATH, capacity=65_536, owner_id="kernel")
+        app.state.task_stream_manager = _sm
+        if tdc is not None and hasattr(tdc, "set_stream_manager"):
+            tdc.set_stream_manager(_sm)
+        logger.info("[PIPE] task SSE stream wired at %s", _SSE_PATH)
 
 
 async def _shutdown_pipe_consumers(app: "FastAPI") -> None:

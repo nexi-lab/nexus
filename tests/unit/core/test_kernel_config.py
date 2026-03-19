@@ -329,6 +329,8 @@ class TestSystemServices:
             "acp_service",
             # Distributed event bus — promoted from Tier 2 (Issue #1701)
             "event_bus",
+            # Distributed lock manager — promoted from Tier 2 (Issue #1702)
+            "lock_manager",
         }
         assert field_names == expected_fields, (
             f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
@@ -355,7 +357,6 @@ class TestBrickServices:
 
     def test_defaults_all_none(self) -> None:
         bs = BrickServices()
-        assert bs.lock_manager is None
         assert bs.workflow_engine is None
         assert bs.rebac_circuit_breaker is None
         assert bs.wallet_provisioner is None
@@ -370,13 +371,12 @@ class TestBrickServices:
     def test_frozen(self) -> None:
         bs = BrickServices()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            bs.lock_manager = "x"
+            bs.workflow_engine = "x"
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
-        bs = BrickServices(lock_manager=sentinel)
-        assert bs.lock_manager is sentinel
-        assert bs.workflow_engine is None
+        bs = BrickServices(rebac_circuit_breaker=sentinel)
+        assert bs.rebac_circuit_breaker is sentinel
 
     def test_replace(self) -> None:
         bs = BrickServices()
@@ -391,7 +391,6 @@ class TestBrickServices:
         """
         field_names = {f.name for f in dataclasses.fields(BrickServices)}
         expected_fields = {
-            "lock_manager",
             "workflow_engine",
             "rebac_circuit_breaker",
             "wallet_provisioner",

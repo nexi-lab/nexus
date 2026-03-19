@@ -205,10 +205,11 @@ def create_nexus_services(
         acp_service=system_dict.get("acp_service"),
         # Distributed event bus — Tier 1 infrastructure (Issue #1701)
         event_bus=brick_dict["event_bus"],
+        # Distributed lock manager — Tier 1 infrastructure (Issue #1702)
+        lock_manager=brick_dict["lock_manager"],
     )
 
     brick_services = _BrickServices(
-        lock_manager=brick_dict["lock_manager"],
         workflow_engine=brick_dict["workflow_engine"],
         rebac_circuit_breaker=brick_dict["rebac_circuit_breaker"],
         wallet_provisioner=brick_dict["wallet_provisioner"],

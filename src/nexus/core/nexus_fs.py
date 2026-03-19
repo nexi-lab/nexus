@@ -1206,7 +1206,9 @@ class NexusFS(  # type: ignore[misc]
         import asyncio
 
         # Issue #1570: lock_manager accessed from container, not flat attr.
-        _lm = getattr(self._brick_services, "lock_manager", None) if self._brick_services else None
+        _lm = (
+            getattr(self._system_services, "lock_manager", None) if self._system_services else None
+        )
         if _lm is None:
             raise RuntimeError(
                 "write(lock=True) called but distributed lock manager not configured. "
@@ -1258,7 +1260,9 @@ class NexusFS(  # type: ignore[misc]
             return
 
         # Issue #1570: lock_manager accessed from container, not flat attr.
-        _lm = getattr(self._brick_services, "lock_manager", None) if self._brick_services else None
+        _lm = (
+            getattr(self._system_services, "lock_manager", None) if self._system_services else None
+        )
         if _lm is None:
             return
 
@@ -2706,7 +2710,9 @@ class NexusFS(  # type: ignore[misc]
             ... )
         """
         # Issue #1570: lock_manager accessed from container, not flat attr.
-        _lm = getattr(self._brick_services, "lock_manager", None) if self._brick_services else None
+        _lm = (
+            getattr(self._system_services, "lock_manager", None) if self._system_services else None
+        )
         if _lm is None:
             raise RuntimeError(
                 "atomic_update() requires distributed lock manager. "

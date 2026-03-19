@@ -151,7 +151,7 @@ export interface AgentsState {
   readonly fetchAgentStatus: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchAgentSpec: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchAgentIdentity: (agentId: string, client: FetchClient) => Promise<void>;
-  readonly fetchDelegations: (client: FetchClient) => Promise<void>;
+  readonly fetchDelegations: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchInbox: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchTrajectories: (agentId: string, client: FetchClient) => Promise<void>;
   readonly revokeDelegation: (delegationId: string, client: FetchClient) => Promise<void>;
@@ -236,14 +236,15 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     },
   }),
 
-  fetchDelegations: createApiAction<AgentsState, [FetchClient]>(set, {
+  fetchDelegations: createApiAction<AgentsState, [string, FetchClient]>(set, {
     loadingKey: "delegationsLoading",
     source: SOURCE,
-    action: async (client) => {
+    action: async (agentId, client) => {
+      const agentParam = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : "";
       const response = await client.get<{
         readonly delegations: readonly DelegationItem[];
         readonly total: number;
-      }>("/api/v2/agents/delegate?limit=50&offset=0");
+      }>(`/api/v2/agents/delegate?limit=50&offset=0${agentParam}`);
       return { delegations: response.delegations, selectedDelegationIndex: 0 };
     },
   }),

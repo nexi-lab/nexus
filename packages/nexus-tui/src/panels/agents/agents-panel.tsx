@@ -142,10 +142,8 @@ export default function AgentsPanel(): React.ReactNode {
         fetchTrustScore(selectedAgentId, client);
         fetchAgentReputation(selectedAgentId, client);
       }
-    } else if (activeTab === "delegations") {
-      // Delegations require agent auth — skip silently for user auth
-      // to avoid "Only agents can list delegations" error on every tab switch
-      fetchDelegations(client).catch(() => {});
+    } else if (activeTab === "delegations" && selectedAgentId) {
+      fetchDelegations(selectedAgentId, client);
     } else if (activeTab === "inbox" && selectedAgentId) {
       fetchInbox(selectedAgentId, client);
     } else if (activeTab === "trajectories" && selectedAgentId) {

@@ -235,7 +235,7 @@ describe("AgentsStore", () => {
         },
       });
 
-      await useAgentsStore.getState().fetchDelegations(client);
+      await useAgentsStore.getState().fetchDelegations("coordinator", client);
       const state = useAgentsStore.getState();
 
       expect(state.delegations).toHaveLength(2);
@@ -251,7 +251,7 @@ describe("AgentsStore", () => {
         get: mock(async () => { throw new Error("Delegation service down"); }),
       } as unknown as FetchClient;
 
-      await useAgentsStore.getState().fetchDelegations(client);
+      await useAgentsStore.getState().fetchDelegations("coordinator", client);
       const state = useAgentsStore.getState();
       expect(state.delegationsLoading).toBe(false);
       expect(state.error).toBe("Delegation service down");

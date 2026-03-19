@@ -334,16 +334,27 @@ async def list_delegations(
     status: str | None = Query(
         default=None, description="Filter by status (active/revoked/expired/completed)"
     ),
+    agent_id: str | None = Query(
+        default=None, description="Agent ID to list delegations for (admin only)"
+    ),
 ) -> DelegationListResponse:
-    """List delegations created by the calling agent with pagination."""
+    """List delegations with pagination.
+
+    Agents see their own delegations. Admin users can list any agent's
+    delegations via the ``agent_id`` query parameter.
+    """
     subject_type = auth_result.get("subject_type", "")
-    if subject_type != "agent":
+    is_admin = auth_result.get("is_admin", False)
+
+    if subject_type == "agent":
+        coordinator_agent_id = auth_result.get("subject_id", "")
+    elif is_admin and agent_id:
+        coordinator_agent_id = agent_id
+    else:
         raise HTTPException(
             status_code=403,
-            detail="Only agents can list delegations.",
+            detail="Only agents can list delegations. Admins can pass ?agent_id=<id>.",
         )
-
-    coordinator_agent_id = auth_result.get("subject_id", "")
 
     # Parse optional status filter
     from nexus.bricks.delegation.models import DelegationStatus

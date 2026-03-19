@@ -189,7 +189,7 @@ def main() -> None:
         check(
             "Gmail sync",
             "error" not in sync_resp or sync_resp.get("files_scanned", 0) >= 0,
-            f"scanned={sync_resp.get('files_scanned', 0)}, synced={sync_resp.get('files_synced', 0)}, error={sync_resp.get('error', 'none')[:80]}",
+            f"scanned={sync_resp.get('files_scanned', 0)}, synced={sync_resp.get('files_synced', 0)}, error={str(sync_resp.get('error') or 'none')[:80]}",
         )
     )
 
@@ -248,7 +248,7 @@ def main() -> None:
         check(
             "Invalid write rejected",
             write_resp.get("success") is False,
-            write_resp.get("error", "")[:100],
+            str(write_resp.get("error") or "")[:100],
         )
     )
 

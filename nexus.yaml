@@ -1,0 +1,4 @@
+preset: local
+data_dir: /private/tmp/nexus-e2e-test
+auth: none
+tls: false

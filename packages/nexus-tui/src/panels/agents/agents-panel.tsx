@@ -49,7 +49,7 @@ export default function AgentsPanel(): React.ReactNode {
   // Zone ID for fetchAgents
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
   const serverZoneId = useGlobalStore((s) => s.zoneId);
-  const effectiveZoneId = configZoneId ?? serverZoneId ?? undefined;
+  const effectiveZoneId = configZoneId ?? serverZoneId ?? "root";
 
   const knownAgents = useAgentsStore((s) => s.knownAgents);
   const agents = useAgentsStore((s) => s.agents);

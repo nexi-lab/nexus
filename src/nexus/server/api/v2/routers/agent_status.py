@@ -209,8 +209,8 @@ async def _get_nexus_fs(request: Request) -> Any:
 
 
 async def _get_vfs(request: Request) -> Any:
-    """Get VFS from app state."""
-    vfs = getattr(request.app.state, "vfs", None)
+    """Get VFS (NexusFS) from app state."""
+    vfs = getattr(request.app.state, "nexus_fs", None)
     if vfs is None:
         raise HTTPException(status_code=503, detail="VFS not available")
     return vfs

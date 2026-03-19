@@ -1,0 +1,47 @@
+version: 1
+type: cli
+cli: gws
+service: gmail
+auth:
+  provider: google
+  scopes:
+    - https://www.googleapis.com/auth/gmail.send
+    - https://www.googleapis.com/auth/gmail.readonly
+    - https://www.googleapis.com/auth/gmail.modify
+read:
+  list_command: gmail.messages.list
+  get_command: gmail.messages.get
+  format: yaml
+write:
+  - path: "SENT/_new.yaml"
+    operation: send_email
+    schema_ref: nexus.backends.connectors.gmail.schemas.SendEmailSchema
+    command: "gmail.messages.send"
+    traits:
+      reversibility: none
+      confirm: user
+  - path: "SENT/_reply.yaml"
+    operation: reply_email
+    schema_ref: nexus.backends.connectors.gmail.schemas.ReplyEmailSchema
+    command: "gmail.messages.send"
+    traits:
+      reversibility: none
+      confirm: user
+  - path: "SENT/_forward.yaml"
+    operation: forward_email
+    schema_ref: nexus.backends.connectors.gmail.schemas.ForwardEmailSchema
+    command: "gmail.messages.send"
+    traits:
+      reversibility: none
+      confirm: user
+  - path: "DRAFTS/_new.yaml"
+    operation: create_draft
+    schema_ref: nexus.backends.connectors.gmail.schemas.DraftEmailSchema
+    command: "gmail.drafts.create"
+    traits:
+      reversibility: full
+      confirm: intent
+sync:
+  delta_command: "gmail.messages.list --after {since}"
+  state_field: historyId
+  page_size: 100

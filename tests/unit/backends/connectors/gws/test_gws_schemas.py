@@ -17,10 +17,13 @@ from nexus.backends.connectors.cli.loader import load_connector_config
 from nexus.backends.connectors.gws.schemas import (
     AppendRowsSchema,
     CreateSpaceSchema,
+    DeleteFileSchema,
     InsertTextSchema,
     ReplaceTextSchema,
     SendMessageSchema,
     UpdateCellsSchema,
+    UpdateFileSchema,
+    UploadFileSchema,
 )
 
 # Path to the YAML config directory
@@ -417,3 +420,252 @@ class TestYAMLConfigLoading:
         assert (
             config.write[1].schema_ref == "nexus.backends.connectors.gws.schemas.CreateSpaceSchema"
         )
+
+    # --- Gmail YAML config ---
+
+    def test_load_gmail_config(self) -> None:
+        config = load_connector_config(CONFIGS_DIR / "gmail.yaml")
+        assert config.cli == "gws"
+        assert config.service == "gmail"
+        assert config.auth.provider == "google"
+        assert len(config.auth.scopes) == 3
+        assert "https://www.googleapis.com/auth/gmail.send" in config.auth.scopes
+        assert config.read is not None
+        assert config.read.format == "yaml"
+        assert len(config.write) == 4
+        assert config.write[0].operation == "send_email"
+        assert config.write[0].traits["reversibility"] == "none"
+        assert config.write[0].traits["confirm"] == "user"
+        assert config.write[3].operation == "create_draft"
+        assert config.write[3].traits["reversibility"] == "full"
+        assert config.write[3].traits["confirm"] == "intent"
+        assert config.sync is not None
+        assert config.sync.state_field == "historyId"
+        assert config.sync.page_size == 100
+
+    def test_gmail_write_schema_refs(self) -> None:
+        config = load_connector_config(CONFIGS_DIR / "gmail.yaml")
+        assert (
+            config.write[0].schema_ref == "nexus.backends.connectors.gmail.schemas.SendEmailSchema"
+        )
+        assert (
+            config.write[1].schema_ref == "nexus.backends.connectors.gmail.schemas.ReplyEmailSchema"
+        )
+        assert (
+            config.write[2].schema_ref
+            == "nexus.backends.connectors.gmail.schemas.ForwardEmailSchema"
+        )
+        assert (
+            config.write[3].schema_ref == "nexus.backends.connectors.gmail.schemas.DraftEmailSchema"
+        )
+
+    # --- Calendar YAML config ---
+
+    def test_load_calendar_config(self) -> None:
+        config = load_connector_config(CONFIGS_DIR / "calendar.yaml")
+        assert config.cli == "gws"
+        assert config.service == "calendar"
+        assert config.auth.provider == "google"
+        assert "https://www.googleapis.com/auth/calendar" in config.auth.scopes
+        assert config.read is not None
+        assert config.read.format == "json"
+        assert len(config.write) == 3
+        assert config.write[0].operation == "create_event"
+        assert config.write[0].traits["reversibility"] == "full"
+        assert config.write[0].traits["confirm"] == "intent"
+        assert config.write[1].operation == "update_event"
+        assert config.write[2].operation == "delete_event"
+        assert config.write[2].traits["reversibility"] == "partial"
+        assert config.write[2].traits["confirm"] == "user"
+        assert config.sync is not None
+        assert config.sync.state_field == "syncToken"
+        assert config.sync.page_size == 100
+
+    def test_calendar_write_schema_refs(self) -> None:
+        config = load_connector_config(CONFIGS_DIR / "calendar.yaml")
+        assert (
+            config.write[0].schema_ref
+            == "nexus.backends.connectors.calendar.schemas.CreateEventSchema"
+        )
+        assert (
+            config.write[1].schema_ref
+            == "nexus.backends.connectors.calendar.schemas.UpdateEventSchema"
+        )
+        assert (
+            config.write[2].schema_ref
+            == "nexus.backends.connectors.calendar.schemas.DeleteEventSchema"
+        )
+
+    # --- Drive YAML config ---
+
+    def test_load_drive_config(self) -> None:
+        config = load_connector_config(CONFIGS_DIR / "drive.yaml")
+        assert config.cli == "gws"
+        assert config.service == "drive"
+        assert config.auth.provider == "google"
+        assert "https://www.googleapis.com/auth/drive" in config.auth.scopes
+        assert config.read is not None
+        assert config.read.format == "json"
+        assert len(config.write) == 3
+        assert config.write[0].operation == "upload_file"
+        assert config.write[0].traits["reversibility"] == "full"
+        assert config.write[0].traits["confirm"] == "intent"
+        assert config.write[1].operation == "update_file"
+        assert config.write[1].traits["reversibility"] == "partial"
+        assert config.write[1].traits["confirm"] == "explicit"
+        assert config.write[2].operation == "delete_file"
+        assert config.write[2].traits["reversibility"] == "partial"
+        assert config.write[2].traits["confirm"] == "user"
+        assert config.sync is not None
+        assert config.sync.state_field == "newStartPageToken"
+        assert config.sync.page_size == 100
+
+    def test_drive_write_schema_refs(self) -> None:
+        config = load_connector_config(CONFIGS_DIR / "drive.yaml")
+        assert (
+            config.write[0].schema_ref == "nexus.backends.connectors.gws.schemas.UploadFileSchema"
+        )
+        assert (
+            config.write[1].schema_ref == "nexus.backends.connectors.gws.schemas.UpdateFileSchema"
+        )
+        assert (
+            config.write[2].schema_ref == "nexus.backends.connectors.gws.schemas.DeleteFileSchema"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Google Drive — UploadFileSchema
+# ---------------------------------------------------------------------------
+
+
+class TestUploadFileSchema:
+    def test_valid_upload(self) -> None:
+        schema = UploadFileSchema(
+            agent_intent="Uploading quarterly revenue report for team review",
+            name="Q1-report.pdf",
+        )
+        assert schema.name == "Q1-report.pdf"
+        assert schema.parent_id is None
+        assert schema.mime_type is None
+        assert schema.content_path is None
+        assert schema.description == ""
+        assert schema.confirm is False
+
+    def test_full_upload(self) -> None:
+        schema = UploadFileSchema(
+            agent_intent="Uploading design mockup to shared project folder",
+            name="mockup-v2.png",
+            parent_id="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
+            mime_type="image/png",
+            content_path="/tmp/mockup-v2.png",
+            description="Updated mockup with feedback incorporated",
+            confirm=True,
+        )
+        assert schema.parent_id is not None
+        assert schema.mime_type == "image/png"
+        assert schema.confirm is True
+
+    def test_missing_name(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            UploadFileSchema.model_validate({"agent_intent": "Uploading a file for the project"})
+        assert "name" in str(exc_info.value)
+
+    def test_empty_name_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            UploadFileSchema(
+                agent_intent="Uploading a file for the project",
+                name="",
+            )
+
+    def test_name_too_long_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            UploadFileSchema(
+                agent_intent="Uploading a file for the project",
+                name="x" * 1025,
+            )
+
+    def test_short_intent_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            UploadFileSchema(
+                agent_intent="short",
+                name="file.txt",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Google Drive — UpdateFileSchema
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateFileSchema:
+    def test_valid_update(self) -> None:
+        schema = UpdateFileSchema(
+            agent_intent="Renaming file to match new naming convention",
+            file_id="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
+            name="new-name.txt",
+        )
+        assert schema.file_id.startswith("1Bxi")
+        assert schema.name == "new-name.txt"
+        assert schema.description is None
+        assert schema.parent_id is None
+        assert schema.starred is None
+        assert schema.confirm is False
+
+    def test_missing_file_id(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            UpdateFileSchema.model_validate(
+                {"agent_intent": "Updating file metadata for organization"}
+            )
+        assert "file_id" in str(exc_info.value)
+
+    def test_star_file(self) -> None:
+        schema = UpdateFileSchema(
+            agent_intent="Starring important project document for quick access",
+            file_id="abc123",
+            starred=True,
+        )
+        assert schema.starred is True
+
+    def test_short_intent_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            UpdateFileSchema(
+                agent_intent="short",
+                file_id="abc123",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Google Drive — DeleteFileSchema
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteFileSchema:
+    def test_valid_delete(self) -> None:
+        schema = DeleteFileSchema(
+            agent_intent="Deleting outdated draft that is no longer needed",
+            file_id="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
+        )
+        assert schema.file_id.startswith("1Bxi")
+        assert schema.user_confirmed is False
+
+    def test_confirmed_delete(self) -> None:
+        schema = DeleteFileSchema(
+            agent_intent="Deleting duplicate file after confirming with user",
+            file_id="abc123",
+            user_confirmed=True,
+        )
+        assert schema.user_confirmed is True
+
+    def test_missing_file_id(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            DeleteFileSchema.model_validate(
+                {"agent_intent": "Deleting a file that is no longer needed"}
+            )
+        assert "file_id" in str(exc_info.value)
+
+    def test_short_intent_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            DeleteFileSchema(
+                agent_intent="short",
+                file_id="abc123",
+            )

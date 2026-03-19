@@ -1,0 +1,38 @@
+version: 1
+type: cli
+cli: gws
+service: calendar
+auth:
+  provider: google
+  scopes:
+    - https://www.googleapis.com/auth/calendar
+read:
+  list_command: calendar.events.list
+  get_command: calendar.events.get
+  format: json
+write:
+  - path: "_new.yaml"
+    operation: create_event
+    schema_ref: nexus.backends.connectors.calendar.schemas.CreateEventSchema
+    command: "calendar.events.insert"
+    traits:
+      reversibility: full
+      confirm: intent
+  - path: "_update.yaml"
+    operation: update_event
+    schema_ref: nexus.backends.connectors.calendar.schemas.UpdateEventSchema
+    command: "calendar.events.update"
+    traits:
+      reversibility: full
+      confirm: explicit
+  - path: "_delete.yaml"
+    operation: delete_event
+    schema_ref: nexus.backends.connectors.calendar.schemas.DeleteEventSchema
+    command: "calendar.events.delete"
+    traits:
+      reversibility: partial
+      confirm: user
+sync:
+  delta_command: "calendar.events.list --sync-token {since}"
+  state_field: syncToken
+  page_size: 100

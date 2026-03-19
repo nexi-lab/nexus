@@ -88,3 +88,48 @@ class CreateSpaceSchema(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=128, description="Space display name")
     space_type: str = Field(default="SPACE", description="SPACE or GROUP_CHAT")
     confirm: bool = Field(default=False, description="Explicit confirmation")
+
+
+# ---------------------------------------------------------------------------
+# Google Drive
+# ---------------------------------------------------------------------------
+
+
+class UploadFileSchema(BaseModel):
+    """Schema for uploading a file to Google Drive."""
+
+    agent_intent: str = Field(..., min_length=10, description="Why this file is being uploaded")
+    name: str = Field(..., min_length=1, max_length=1024, description="File name")
+    parent_id: str | None = Field(
+        default=None, description="Parent folder ID (root if not specified)"
+    )
+    mime_type: str | None = Field(
+        default=None, description="MIME type (auto-detected if not specified)"
+    )
+    content_path: str | None = Field(
+        default=None, description="Local path to file content to upload"
+    )
+    description: str = Field(default="", description="File description")
+    confirm: bool = Field(default=False, description="Explicit confirmation")
+
+
+class UpdateFileSchema(BaseModel):
+    """Schema for updating a file's metadata in Google Drive."""
+
+    agent_intent: str = Field(..., min_length=10, description="Why this file is being updated")
+    file_id: str = Field(..., description="Drive file ID to update")
+    name: str | None = Field(default=None, description="New file name")
+    description: str | None = Field(default=None, description="New file description")
+    parent_id: str | None = Field(default=None, description="Move to this parent folder")
+    starred: bool | None = Field(default=None, description="Star/unstar the file")
+    confirm: bool = Field(default=False, description="Explicit confirmation")
+
+
+class DeleteFileSchema(BaseModel):
+    """Schema for deleting a file from Google Drive."""
+
+    agent_intent: str = Field(..., min_length=10, description="Why this file is being deleted")
+    file_id: str = Field(..., description="Drive file ID to delete")
+    user_confirmed: bool = Field(
+        default=False, description="User confirmed deletion (moves to trash)"
+    )

@@ -23,8 +23,8 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
-from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import (
     EnhancedReBACManager,
 )

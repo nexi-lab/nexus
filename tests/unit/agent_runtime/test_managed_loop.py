@@ -1,13 +1,13 @@
-"""Tests for AgentObserver + ManagedAgentLoop.
+"""Tests for AgentObserver + ManagedAgentLoop (everything-is-a-file).
 
 Tests cover:
 - AgentObserver: shared notification accumulation (text, usage, tool_calls)
-- ManagedAgentLoop: reasoning loop with mock LLM backend
-- AcpConnection refactor: observer delegation still works
+- ManagedAgentLoop: VFS-native reasoning loop with mock kernel syscalls
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -59,14 +59,11 @@ class TestAgentObserver:
         assert len(result.tool_calls) == 2
 
     def test_text_not_accumulated_before_reset(self) -> None:
-        """Text chunks are ignored when prompt is not active."""
         obs = AgentObserver()
-        # No reset_turn() → _prompt_active is False
         obs.observe_update("agent_message_chunk", {"content": {"type": "text", "text": "ignored"}})
         assert obs.collected_text == ""
 
     def test_user_message_chunk_clears_text(self) -> None:
-        """user_message_chunk during active prompt clears accumulated text."""
         obs = AgentObserver()
         obs.reset_turn()
 
@@ -91,149 +88,247 @@ class TestAgentObserver:
 
 
 # =============================================================================
-# ManagedAgentLoop tests
+# ManagedAgentLoop tests — everything-is-a-file
 # =============================================================================
 
 
-def _make_managed_loop(
-    streaming_responses: list[list[tuple[str, dict[str, Any] | None]]],
-) -> Any:
-    """Create ManagedAgentLoop with mocked backend."""
+def _make_vfs_loop(
+    stream_tokens: list[bytes] | None = None,
+    system_prompt: str = "",
+    tools_json: str = "[]",
+) -> tuple[Any, dict[str, AsyncMock]]:
+    """Create ManagedAgentLoop with mocked VFS syscalls."""
     from nexus.system_services.agent_runtime.managed_loop import ManagedAgentLoop
 
-    backend = MagicMock()
+    # Mock sys_read: return different content based on path
+    read_store: dict[str, bytes] = {}
+    write_store: dict[str, bytes] = {}
 
-    call_count = 0
+    async def mock_sys_read(path: str) -> bytes:
+        if path.endswith("/SYSTEM.md"):
+            return system_prompt.encode()
+        if path.endswith("/tools.json"):
+            return tools_json.encode()
+        if path in read_store:
+            return read_store[path]
+        raise FileNotFoundError(path)
 
-    def _generate_streaming(request: dict) -> list[tuple[str, dict | None]]:
-        nonlocal call_count
-        idx = min(call_count, len(streaming_responses) - 1)
-        call_count += 1
-        return streaming_responses[idx]
+    async def mock_sys_write(path: str, data: bytes) -> None:
+        write_store[path] = data
 
-    backend.generate_streaming.side_effect = _generate_streaming
+    # Mock stream_read: deliver tokens then "done" message
+    tokens = stream_tokens or [
+        b"Hello",
+        b" there!",
+        json.dumps(
+            {"type": "done", "model": "gpt-4o", "usage": {"total_tokens": 10}, "latency_ms": 50}
+        ).encode(),
+    ]
+    token_iter = iter(tokens)
+    offset_counter = [0]
+
+    async def mock_stream_read(path: str, offset: int) -> tuple[bytes, int]:
+        try:
+            data = next(token_iter)
+            new_offset = offset_counter[0] + len(data)
+            offset_counter[0] = new_offset
+            return data, new_offset
+        except StopIteration:
+            from nexus.core.stream import StreamClosedError
+
+            raise StreamClosedError("stream closed") from None
+
+    # Mock LLMStreamingService
+    llm_service = MagicMock()
+    llm_service.start_stream = AsyncMock(
+        return_value={"stream_path": "/zone/llm/.streams/test", "status": "streaming"}
+    )
+
+    sys_read_mock = AsyncMock(side_effect=mock_sys_read)
+    sys_write_mock = AsyncMock(side_effect=mock_sys_write)
+    stream_read_mock = AsyncMock(side_effect=mock_stream_read)
 
     loop = ManagedAgentLoop(
-        backend=backend,
-        system_prompt="You are helpful.",
+        sys_read=sys_read_mock,
+        sys_write=sys_write_mock,
+        stream_read=stream_read_mock,
+        llm_service=llm_service,
+        agent_path="/zone/agents/test-agent",
+        llm_path="/zone/llm/openai",
+        conv_path="/zone/agents/test-agent/conversation",
+        proc_path="/zone/proc/pid-123",
         model="gpt-4o",
     )
-    return loop, backend
+
+    mocks: dict[str, Any] = {
+        "sys_read": sys_read_mock,
+        "sys_write": sys_write_mock,
+        "stream_read": stream_read_mock,
+        "llm_service": llm_service,
+        "write_store": write_store,
+        "read_store": read_store,
+    }
+    return loop, mocks
 
 
 class TestManagedAgentLoop:
-    """Test kernel-managed reasoning loop."""
+    """Test VFS-native reasoning loop."""
 
     @pytest.mark.asyncio()
-    async def test_simple_text_response(self) -> None:
-        """LLM returns text → loop returns immediately."""
-        loop, _ = _make_managed_loop(
-            [
-                [
-                    ("Hello", None),
-                    (" there!", None),
-                    ("", {"model": "gpt-4o", "usage": {"total_tokens": 10}, "latency_ms": 50}),
-                ],
-            ]
-        )
+    async def test_initialize_reads_system_prompt_from_vfs(self) -> None:
+        """System prompt loaded via sys_read from VFS."""
+        loop, mocks = _make_vfs_loop(system_prompt="You are helpful.")
+        await loop.initialize()
+
+        assert len(loop.messages) == 1
+        assert loop.messages[0]["role"] == "system"
+        assert loop.messages[0]["content"] == "You are helpful."
+
+    @pytest.mark.asyncio()
+    async def test_initialize_no_system_prompt(self) -> None:
+        """No system prompt → empty messages."""
+        loop, _ = _make_vfs_loop(system_prompt="")
+        await loop.initialize()
+        assert len(loop.messages) == 0
+
+    @pytest.mark.asyncio()
+    async def test_run_calls_llm_via_streaming_service(self) -> None:
+        """LLM call goes through LLMStreamingService (not backend directly)."""
+        loop, mocks = _make_vfs_loop()
+        await loop.initialize()
+
+        await loop.run("Hi")
+
+        # LLMStreamingService.start_stream was called
+        mocks["llm_service"].start_stream.assert_called_once()
+        call_args = mocks["llm_service"].start_stream.call_args
+        request_bytes = call_args[0][0]
+        request = json.loads(request_bytes)
+        assert "messages" in request
+
+    @pytest.mark.asyncio()
+    async def test_run_reads_tokens_from_dt_stream(self) -> None:
+        """Tokens read via stream_read (kernel DT_STREAM IPC)."""
+        loop, mocks = _make_vfs_loop()
+        await loop.initialize()
 
         result = await loop.run("Hi")
 
         assert result.text == "Hello there!"
+        # stream_read was called multiple times
+        assert mocks["stream_read"].call_count >= 2
+
+    @pytest.mark.asyncio()
+    async def test_conversation_persisted_via_sys_write(self) -> None:
+        """Conversation persisted to VFS after each mutation."""
+        loop, mocks = _make_vfs_loop()
+        await loop.initialize()
+
+        await loop.run("Hello")
+
+        # sys_write called for conversation persistence
+        write_store = mocks["write_store"]
+        conv_key = "/zone/agents/test-agent/conversation"
+        assert conv_key in write_store
+
+        # Conversation contains system (if any) + user + assistant
+        conv = json.loads(write_store[conv_key])
+        roles = [m["role"] for m in conv]
+        assert "user" in roles
+        assert "assistant" in roles
+
+    @pytest.mark.asyncio()
+    async def test_result_persisted_to_proc_fs(self) -> None:
+        """Turn result persisted to /{zone}/proc/{pid}/result via sys_write."""
+        loop, mocks = _make_vfs_loop()
+        await loop.initialize()
+
+        await loop.run("Hello")
+
+        write_store = mocks["write_store"]
+        result_key = "/zone/proc/pid-123/result"
+        assert result_key in write_store
+
+        result_data = json.loads(write_store[result_key])
+        assert "text" in result_data
+        assert result_data["session_id"] == loop.session_id
+
+    @pytest.mark.asyncio()
+    async def test_observer_shared(self) -> None:
+        """Observer accumulates during VFS-native loop execution."""
+        loop, _ = _make_vfs_loop()
+        await loop.initialize()
+
+        result = await loop.run("Test")
+        assert result.text == "Hello there!"
         assert result.stop_reason == "stop"
-        assert result.model == "gpt-4o"
 
     @pytest.mark.asyncio()
-    async def test_conversation_history(self) -> None:
-        """Messages accumulate in conversation."""
-        loop, _ = _make_managed_loop(
-            [
-                [("First response", None), ("", {"model": "gpt-4o", "usage": {}, "latency_ms": 0})],
-            ]
-        )
+    async def test_tool_execution_via_sys_read(self) -> None:
+        """Tool call executes via sys_read (VFS syscall)."""
+        loop, mocks = _make_vfs_loop()
+        await loop.initialize()
 
-        await loop.run("Hello")
+        # Simulate a tool call
+        tool_call = {
+            "id": "tc1",
+            "function": {"name": "read_file", "arguments": '{"path": "/zone/data/file.txt"}'},
+        }
 
-        # system + user + assistant = 3 messages
-        assert len(loop.messages) == 3
-        assert loop.messages[0]["role"] == "system"
-        assert loop.messages[1]["role"] == "user"
-        assert loop.messages[1]["content"] == "Hello"
-        assert loop.messages[2]["role"] == "assistant"
-        assert loop.messages[2]["content"] == "First response"
+        # Pre-populate read store
+        mocks["read_store"]["/zone/data/file.txt"] = b"file content"
+
+        result = await loop._execute_tool(tool_call)
+        assert result == "file content"
 
     @pytest.mark.asyncio()
-    async def test_reset_clears_conversation(self) -> None:
-        loop, _ = _make_managed_loop(
-            [[("OK", None), ("", {"model": "m", "usage": {}, "latency_ms": 0})]],
-        )
+    async def test_tool_execution_via_sys_write(self) -> None:
+        """Tool call executes via sys_write (VFS syscall)."""
+        loop, mocks = _make_vfs_loop()
+        await loop.initialize()
 
-        await loop.run("Hello")
+        tool_call = {
+            "id": "tc2",
+            "function": {
+                "name": "write_file",
+                "arguments": '{"path": "/zone/output.txt", "content": "hello"}',
+            },
+        }
+
+        result = await loop._execute_tool(tool_call)
+        assert json.loads(result)["status"] == "ok"
+        assert mocks["write_store"]["/zone/output.txt"] == b"hello"
+
+    @pytest.mark.asyncio()
+    async def test_load_conversation_from_vfs(self) -> None:
+        """Resume conversation from VFS."""
+        loop, mocks = _make_vfs_loop()
+
+        saved_conv = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Previous message"},
+            {"role": "assistant", "content": "Previous response"},
+        ]
+        mocks["read_store"]["/zone/agents/test-agent/conversation"] = json.dumps(
+            saved_conv
+        ).encode()
+
+        await loop.load_conversation()
         assert len(loop.messages) == 3
+        assert loop.messages[1]["content"] == "Previous message"
 
-        loop.reset()
-        # Only system prompt remains
+    @pytest.mark.asyncio()
+    async def test_reset_reinitializes_from_vfs(self) -> None:
+        """Reset reloads config from VFS."""
+        loop, _ = _make_vfs_loop(system_prompt="System prompt")
+        await loop.initialize()
+        assert len(loop.messages) == 1
+
+        # Add some messages
+        loop._messages.append({"role": "user", "content": "test"})
+        assert len(loop.messages) == 2
+
+        # Reset → re-reads SYSTEM.md from VFS
+        await loop.reset()
         assert len(loop.messages) == 1
         assert loop.messages[0]["role"] == "system"
-
-    @pytest.mark.asyncio()
-    async def test_max_turns_limit(self) -> None:
-        """Loop stops after max_turns even with tool calls."""
-        # This would require tool_call support in the response.
-        # For MVP (no tool_call parsing from streaming), just verify
-        # text response works within 1 turn.
-        loop, _ = _make_managed_loop(
-            [[("Done", None), ("", {"model": "m", "usage": {}, "latency_ms": 0})]],
-        )
-        loop._max_turns = 1
-
-        result = await loop.run("Test")
-        assert result.text == "Done"
-
-    @pytest.mark.asyncio()
-    async def test_observer_shared_with_loop(self) -> None:
-        """Observer accumulates during loop execution."""
-        loop, _ = _make_managed_loop(
-            [
-                [
-                    ("Token1", None),
-                    ("Token2", None),
-                    (
-                        "",
-                        {
-                            "model": "gpt-4o",
-                            "usage": {"prompt_tokens": 5, "completion_tokens": 2},
-                            "latency_ms": 30,
-                        },
-                    ),
-                ],
-            ]
-        )
-
-        result = await loop.run("Test")
-        assert result.text == "Token1Token2"
-        assert result.usage.get("prompt_tokens") == 5
-
-    @pytest.mark.asyncio()
-    async def test_tool_execution_read_file(self) -> None:
-        """Tool call executes via fs_read."""
-        from nexus.system_services.agent_runtime.managed_loop import ManagedAgentLoop
-
-        backend = MagicMock()
-        # First call: LLM returns empty text (would have tool_calls in full impl)
-        # Second call: LLM returns text response
-        backend.generate_streaming.return_value = iter(
-            [("The file says hello", None), ("", {"model": "m", "usage": {}, "latency_ms": 0})]
-        )
-
-        fs_read = AsyncMock(return_value="file content here")
-
-        loop = ManagedAgentLoop(
-            backend=backend,
-            fs_read=fs_read,
-            system_prompt="Helper",
-        )
-
-        result = await loop.run("Read a file")
-        # Without tool_call parsing, the loop returns text directly
-        assert result.text == "The file says hello"

@@ -114,6 +114,70 @@ class MountService:
         logger.info("[MountService] Initialized")
 
     # =========================================================================
+    # Post-mount hooks (Issue #3148)
+    # =========================================================================
+
+    async def _run_post_mount_hooks(self, mount_point: str) -> None:
+        """Run async post-mount hooks after a mount is added.
+
+        Hooks are best-effort: failures are logged as warnings but do not
+        fail the mount operation (Decision #12).
+
+        Currently runs:
+        - Skill doc generation for SkillDocMixin backends
+        """
+        try:
+            # Get backend from router to check capabilities
+            route = self.router.route(mount_point)
+            backend = route.backend if route else None
+            if backend is None:
+                return
+
+            # Skill doc generation (via mount_hooks if available)
+            from nexus.contracts.capabilities import ConnectorCapability
+
+            if hasattr(backend, "has_capability") and backend.has_capability(
+                ConnectorCapability.SKILL_DOC
+            ):
+                await asyncio.to_thread(self._generate_skill_docs, mount_point, backend)
+
+        except Exception:
+            logger.warning(
+                "Post-mount hooks failed for %s (mount still active)", mount_point, exc_info=True
+            )
+
+    def _generate_skill_docs(self, mount_point: str, backend: Any) -> None:
+        """Generate .skill/ directory for a connector backend (sync).
+
+        Called from post-mount hooks and sync completion.
+        """
+        from nexus.backends.connectors.base import SkillDocMixin
+
+        if not isinstance(backend, SkillDocMixin):
+            return
+        if not backend.SKILL_NAME:
+            return
+
+        backend.set_mount_path(mount_point)
+
+        # Determine filesystem to write to
+        fs = None
+        if self._gw is not None and hasattr(self._gw, "nexus_fs"):
+            fs = self._gw.nexus_fs
+        elif self.nexus_fs is not None:
+            fs = self.nexus_fs
+
+        if fs is not None:
+            try:
+                result = backend.write_skill_docs(mount_point, fs)
+                if result.get("skill_md"):
+                    logger.info(
+                        "Generated skill docs for %s at %s", mount_point, result["skill_md"]
+                    )
+            except Exception:
+                logger.warning("Failed to generate skill docs for %s", mount_point, exc_info=True)
+
+    # =========================================================================
     # Sync Core Logic (inlined from MountCoreService)
     # =========================================================================
 
@@ -299,8 +363,12 @@ class MountService:
     ) -> str:
         """Add a dynamic backend mount (synchronous).
 
-        This is the core sync implementation used by both the async RPC
-        wrapper and NexusFS facade methods.
+        .. deprecated::
+            Use ``await add_mount(...)`` instead. This sync entry point
+            skips async post-mount hooks (skill doc regeneration, search
+            indexing). Retained for internal use by MountPersistService
+            and NexusFS facade during startup. Will be made private in
+            a future release.
 
         Args:
             mount_point: Virtual path where backend is mounted
@@ -737,7 +805,7 @@ class MountService:
             PermissionError: If user lacks write permission on parent path
             RuntimeError: If backend type is not supported
         """
-        return await asyncio.to_thread(
+        mount_id = await asyncio.to_thread(
             self.add_mount_sync,
             mount_point=mount_point,
             backend_type=backend_type,
@@ -746,6 +814,14 @@ class MountService:
             io_profile=io_profile,
             context=context,
         )
+
+        # --- Post-mount hooks (Issue #3148, Decision #1A) ---
+        # These run only through the async path. Sync callers (startup,
+        # persist service) skip hooks — a separate generate_all_skill_docs
+        # pass handles startup.
+        await self._run_post_mount_hooks(mount_point)
+
+        return mount_id
 
     @rpc_expose(description="Remove backend mount")
     async def remove_mount(
@@ -1171,7 +1247,23 @@ class MountService:
             result = self._sync_service.sync_mount(ctx)
             return cast(dict[str, Any], result.to_dict())
 
-        return await asyncio.to_thread(_sync_mount_sync)
+        sync_result = await asyncio.to_thread(_sync_mount_sync)
+
+        # Post-sync: regenerate .skill/ directory (Issue #3148, Decision #7B).
+        # Schema files are re-generated on every sync so they stay fresh.
+        if mount_point and not dry_run:
+            try:
+                route = self.router.route(mount_point)
+                if route:
+                    await asyncio.to_thread(self._generate_skill_docs, mount_point, route.backend)
+            except Exception:
+                logger.warning(
+                    "Post-sync skill doc regeneration failed for %s",
+                    mount_point,
+                    exc_info=True,
+                )
+
+        return sync_result
 
     @rpc_expose(description="Start async sync job for a mount")
     async def sync_mount_async(

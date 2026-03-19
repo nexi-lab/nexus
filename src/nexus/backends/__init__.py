@@ -72,7 +72,11 @@ def __getattr__(name: str) -> object:
 
 
 def _register_optional_backends() -> None:
-    """Import all optional backend modules to trigger @register_connector."""
+    """Import all optional backend modules to trigger @register_connector.
+
+    Also scans Python entry points in the ``nexus.connectors`` group
+    for externally installed connector plugins.
+    """
     global _optional_backends_registered
 
     if _optional_backends_registered:
@@ -82,6 +86,7 @@ def _register_optional_backends() -> None:
             return
         _optional_backends_registered = True
 
+        # --- Built-in optional backends ---
         seen_modules: set[str] = set()
         for module_path, _ in _OPTIONAL_BACKENDS.values():
             if module_path in seen_modules:
@@ -91,6 +96,20 @@ def _register_optional_backends() -> None:
                 importlib.import_module(module_path)
             except ImportError as e:
                 _logger.debug("Optional backend module %s not available: %s", module_path, e)
+
+        # --- External connector plugins via entry points (Issue #3148, Decision #4) ---
+        try:
+            from importlib.metadata import entry_points
+
+            for ep in entry_points(group="nexus.connectors"):
+                try:
+                    ep.load()
+                except (ImportError, ModuleNotFoundError):
+                    _logger.debug("Connector plugin %s not installed, skipping", ep.name)
+                except Exception:
+                    _logger.warning("Connector plugin %s failed to load", ep.name, exc_info=True)
+        except Exception:
+            _logger.debug("Entry point scanning unavailable")
 
 
 __all__ = [

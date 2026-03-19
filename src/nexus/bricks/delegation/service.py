@@ -317,16 +317,16 @@ class DelegationService:
 
     def list_delegations(
         self,
-        parent_agent_id: str,
+        parent_agent_id: str | None = None,
         *,
         limit: int = 50,
         offset: int = 0,
         status_filter: DelegationStatus | None = None,
     ) -> tuple[list[DelegationRecord], int]:
-        """List delegations created by a coordinator agent with pagination.
+        """List delegations with pagination.
 
         Args:
-            parent_agent_id: The coordinator agent ID.
+            parent_agent_id: Filter by coordinator agent ID. None = all.
             limit: Maximum records to return (default 50).
             offset: Number of records to skip (default 0).
             status_filter: Optional filter by status (default: all statuses).
@@ -339,9 +339,9 @@ class DelegationService:
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
-            stmt = select(DelegationRecordModel).where(
-                DelegationRecordModel.parent_agent_id == parent_agent_id
-            )
+            stmt = select(DelegationRecordModel)
+            if parent_agent_id is not None:
+                stmt = stmt.where(DelegationRecordModel.parent_agent_id == parent_agent_id)
             if status_filter is not None:
                 stmt = stmt.where(DelegationRecordModel.status == status_filter.value)
 

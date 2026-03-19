@@ -348,12 +348,12 @@ async def list_delegations(
 
     if subject_type == "agent":
         coordinator_agent_id = auth_result.get("subject_id", "")
-    elif is_admin and agent_id:
-        coordinator_agent_id = agent_id
+    elif is_admin:
+        coordinator_agent_id = agent_id  # None = list all delegations
     else:
         raise HTTPException(
             status_code=403,
-            detail="Only agents can list delegations. Admins can pass ?agent_id=<id>.",
+            detail="Only agents or admins can list delegations.",
         )
 
     # Parse optional status filter

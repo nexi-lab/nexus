@@ -19,8 +19,21 @@ from nexus.backends.connectors.base import (
     OpTraits,
     Reversibility,
 )
+from nexus.backends.connectors.calendar.schemas import (
+    CreateEventSchema,
+    DeleteEventSchema,
+    UpdateEventSchema,
+)
 from nexus.backends.connectors.cli.base import CLIConnector
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
+
+# Gmail/Calendar schemas live in their own packages (existing API connectors)
+from nexus.backends.connectors.gmail.schemas import (
+    DraftEmailSchema,
+    ForwardEmailSchema,
+    ReplyEmailSchema,
+    SendEmailSchema,
+)
 from nexus.backends.connectors.gws.schemas import (
     AppendRowsSchema,
     CreateSpaceSchema,
@@ -181,5 +194,85 @@ class DriveConnector(CLIConnector):
 
     def __init__(self, **kwargs: Any) -> None:
         config = SheetsConnector._load_config("drive.yaml")
+        kwargs.setdefault("config", config)
+        super().__init__(**kwargs)
+
+
+class GmailConnector(CLIConnector):
+    """Gmail CLI connector via ``gws gmail``.
+
+    CLI-backed alternative to the existing GmailConnectorBackend API connector.
+    Uses gws CLI for all operations. Phase 3 (Issue #3148).
+    """
+
+    SKILL_NAME = "gmail"
+    CLI_NAME = "gws"
+    CLI_SERVICE = "gmail"
+
+    SCHEMAS: dict[str, type] = {
+        "send_email": SendEmailSchema,
+        "reply_email": ReplyEmailSchema,
+        "forward_email": ForwardEmailSchema,
+        "create_draft": DraftEmailSchema,
+    }
+    OPERATION_TRAITS: dict[str, OpTraits] = {
+        "send_email": OpTraits(reversibility=Reversibility.NONE, confirm=ConfirmLevel.USER),
+        "reply_email": OpTraits(reversibility=Reversibility.NONE, confirm=ConfirmLevel.USER),
+        "forward_email": OpTraits(reversibility=Reversibility.NONE, confirm=ConfirmLevel.USER),
+        "create_draft": OpTraits(reversibility=Reversibility.FULL, confirm=ConfirmLevel.INTENT),
+    }
+    ERROR_REGISTRY: dict[str, ErrorDef] = {
+        "MISSING_AGENT_INTENT": ErrorDef(
+            message="Operations require agent_intent",
+            skill_section="required-format",
+        ),
+        "MISSING_RECIPIENTS": ErrorDef(
+            message="Email requires at least one recipient",
+            skill_section="operations",
+            fix_example="to:\n  - user@example.com",
+        ),
+    }
+
+    def __init__(self, **kwargs: Any) -> None:
+        config = SheetsConnector._load_config("gmail.yaml")
+        kwargs.setdefault("config", config)
+        super().__init__(**kwargs)
+
+
+class CalendarConnector(CLIConnector):
+    """Calendar CLI connector via ``gws calendar``.
+
+    CLI-backed alternative to the existing GoogleCalendarConnectorBackend.
+    Uses gws CLI for all operations. Phase 3 (Issue #3148).
+    """
+
+    SKILL_NAME = "gcalendar"
+    CLI_NAME = "gws"
+    CLI_SERVICE = "calendar"
+
+    SCHEMAS: dict[str, type] = {
+        "create_event": CreateEventSchema,
+        "update_event": UpdateEventSchema,
+        "delete_event": DeleteEventSchema,
+    }
+    OPERATION_TRAITS: dict[str, OpTraits] = {
+        "create_event": OpTraits(reversibility=Reversibility.FULL, confirm=ConfirmLevel.INTENT),
+        "update_event": OpTraits(reversibility=Reversibility.FULL, confirm=ConfirmLevel.EXPLICIT),
+        "delete_event": OpTraits(reversibility=Reversibility.PARTIAL, confirm=ConfirmLevel.USER),
+    }
+    ERROR_REGISTRY: dict[str, ErrorDef] = {
+        "MISSING_AGENT_INTENT": ErrorDef(
+            message="Operations require agent_intent",
+            skill_section="required-format",
+        ),
+        "EVENT_NOT_FOUND": ErrorDef(
+            message="Calendar event not found",
+            skill_section="operations",
+            fix_example="event_id: <valid event ID>",
+        ),
+    }
+
+    def __init__(self, **kwargs: Any) -> None:
+        config = SheetsConnector._load_config("calendar.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)

@@ -19,6 +19,8 @@ from nexus.backends.connectors.gws.schemas import (
 
 __all__ = [
     # Connectors
+    "GmailConnector",
+    "CalendarConnector",
     "SheetsConnector",
     "DocsConnector",
     "ChatConnector",
@@ -41,7 +43,14 @@ __all__ = [
 
 def __getattr__(name: str) -> object:
     """Lazy-load connector classes to avoid circular imports."""
-    if name in ("SheetsConnector", "DocsConnector", "ChatConnector", "DriveConnector"):
+    if name in (
+        "GmailConnector",
+        "CalendarConnector",
+        "SheetsConnector",
+        "DocsConnector",
+        "ChatConnector",
+        "DriveConnector",
+    ):
         from nexus.backends.connectors.gws import connector
 
         return getattr(connector, name)

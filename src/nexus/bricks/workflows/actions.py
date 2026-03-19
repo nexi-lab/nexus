@@ -414,6 +414,57 @@ class BashAction(SandboxedAction):
 
 
 # Built-in action registry
+class SyncMountAction(BaseAction):
+    """Sync a mount's content from its backend (Issue #3148).
+
+    Config:
+        mount_point: Virtual path of mount to sync (or {mount_point} variable)
+        recursive: Whether to sync recursively (default: true)
+        generate_embeddings: Whether to generate embeddings (default: false)
+
+    Requires ``services.mount_sync`` (MountSyncProtocol) to be injected
+    in WorkflowServices.
+    """
+
+    async def execute(self, context: WorkflowContext) -> ActionResult:
+        try:
+            if not context.services or not context.services.mount_sync:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error="mount_sync service not injected",
+                )
+
+            mount_point = self.safe_interpolate(self.config.get("mount_point", ""), context)
+            if not mount_point:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error="mount_point is required",
+                )
+
+            recursive = self.config.get("recursive", True)
+            generate_embeddings = self.config.get("generate_embeddings", False)
+
+            result = await context.services.mount_sync.sync_mount(
+                mount_point=mount_point,
+                recursive=recursive,
+                generate_embeddings=generate_embeddings,
+            )
+
+            return ActionResult(
+                action_name=self.name,
+                success=True,
+                output=result,
+            )
+        except Exception as e:
+            return ActionResult(
+                action_name=self.name,
+                success=False,
+                error=str(e),
+            )
+
+
 BUILTIN_ACTIONS = {
     "parse": ParseAction,
     "tag": TagAction,
@@ -422,4 +473,5 @@ BUILTIN_ACTIONS = {
     "webhook": WebhookAction,
     "python": PythonAction,
     "bash": BashAction,
+    "sync_mount": SyncMountAction,
 }

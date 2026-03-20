@@ -88,7 +88,7 @@ class TestAgentRecord:
     def test_is_frozen(self, record):
         """AgentRecord is immutable (frozen dataclass)."""
         with pytest.raises(FrozenInstanceError):
-            object.__setattr__(record, "state", AgentState.READY)
+            record.state = AgentState.READY
 
     def test_field_access(self, record):
         """All fields are accessible."""

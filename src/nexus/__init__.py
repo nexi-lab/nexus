@@ -215,22 +215,13 @@ async def connect(
         # Single shared RPCTransport (gRPC channel) for all remote proxies.
         from nexus.remote.rpc_transport import RPCTransport
 
-        # TLS: honour NEXUS_TLS_CERT / KEY / CA env vars (same convention
-        # as the gRPC server) so that `nexus connect` works against a
-        # server started with --tls.
+        # TLS: auto-detect from NEXUS_DATA_DIR/tls/ (provisioned by 2-phase bootstrap)
         _tls_config = None
-        _tls_cert = os.getenv("NEXUS_TLS_CERT")
-        _tls_key = os.getenv("NEXUS_TLS_KEY")
-        _tls_ca = os.getenv("NEXUS_TLS_CA")
-        if _tls_cert and _tls_key and _tls_ca:
+        _data_dir = os.getenv("NEXUS_DATA_DIR")
+        if _data_dir:
             from nexus.security.tls.config import ZoneTlsConfig
 
-            _tls_config = ZoneTlsConfig(
-                ca_cert_path=Path(_tls_ca),
-                node_cert_path=Path(_tls_cert),
-                node_key_path=Path(_tls_key),
-                known_zones_path=Path(_tls_ca).parent / "known_zones",
-            )
+            _tls_config = ZoneTlsConfig.from_data_dir(_data_dir)
 
         transport = RPCTransport(
             server_address=grpc_address,

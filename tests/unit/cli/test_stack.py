@@ -279,7 +279,8 @@ class TestDeriveProjectEnv:
         assert env["POSTGRES_PORT"] == "5432"
         assert env["NEXUS_HOST_DATA_DIR"] == str(tmp_path / "data")
         assert env["NEXUS_AUTH_TYPE"] == "database"
-        assert "NEXUS_TLS_ENABLED" not in env
+        # TLS is auto-detected from disk, no env vars
+        assert "NEXUS_TLS_CERT" not in env
 
     def test_image_ref_in_env(self, tmp_path: Path) -> None:
         """image_ref from config is passed as NEXUS_IMAGE_REF."""
@@ -318,14 +319,12 @@ class TestDeriveProjectEnv:
         assert env["NEXUS_PORT"] == "3026"
         assert env["NEXUS_GRPC_PORT"] == "3028"
 
-    def test_tls_env(self, tmp_path: Path) -> None:
-        """When tls is enabled, TLS env vars are set."""
+    def test_tls_config_ignored(self, tmp_path: Path) -> None:
+        """TLS config key no longer produces env vars (auto-detected from disk)."""
         config = {"data_dir": str(tmp_path / "data"), "tls": True, "ports": {}}
         env = _derive_project_env(config)
-        assert env["NEXUS_TLS_ENABLED"] == "true"
-        assert env["NEXUS_TLS_CERT"] == "/app/data/tls/server.crt"
-        assert env["NEXUS_TLS_KEY"] == "/app/data/tls/server.key"
-        assert env["NEXUS_TLS_CA"] == "/app/data/tls/ca.crt"
+        assert "NEXUS_TLS_ENABLED" not in env
+        assert "NEXUS_TLS_CERT" not in env
 
     def test_deterministic_project_name(self, tmp_path: Path) -> None:
         """Same data_dir always produces same project name."""

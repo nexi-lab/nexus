@@ -332,6 +332,7 @@ class TestOpenAICompatibleBackend:
         result = backend.write_content(b"cas test data")
         assert backend.content_exists(result.content_hash)
 
+
 # =============================================================================
 # LLMStreamingService tests
 # =============================================================================

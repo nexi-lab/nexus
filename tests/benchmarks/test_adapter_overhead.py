@@ -28,7 +28,7 @@ class _BenchBackend(Backend):
     def write_content(self, content, context=None) -> WriteResult:
         h = hashlib.sha256(content).hexdigest()
         self._store[h] = content
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, content_hash, context=None) -> bytes:
         data = self._store.get(content_hash)
@@ -70,7 +70,7 @@ class TestWriteResultOverhead:
         iterations = 10_000
         start = time.perf_counter()
         for _ in range(iterations):
-            WriteResult(content_hash="a" * 64, size=100)
+            WriteResult(content_id="a" * 64, size=100)
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
         assert elapsed_us < 10, f"WriteResult() took {elapsed_us:.2f}us per call"
 
@@ -102,7 +102,7 @@ class TestBackendOverhead:
     def test_read_overhead(self, bench_backend: _BenchBackend) -> None:
         """read_content() overhead: direct bytes return."""
         result = bench_backend.write_content(b"benchmark read payload")
-        content_hash = result.content_hash
+        content_hash = result.content_id
 
         # Warmup
         for _ in range(100):
@@ -120,7 +120,7 @@ class TestBackendOverhead:
     def test_get_content_size_overhead(self, bench_backend: _BenchBackend) -> None:
         """get_content_size() overhead: direct int return (lightest op)."""
         result = bench_backend.write_content(b"benchmark size payload")
-        content_hash = result.content_hash
+        content_hash = result.content_id
 
         for _ in range(100):
             bench_backend.get_content_size(content_hash)

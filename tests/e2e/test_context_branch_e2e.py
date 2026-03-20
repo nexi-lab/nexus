@@ -51,7 +51,7 @@ class InMemoryCAS:
 
         h = hashlib.sha256(data).hexdigest()
         self.blobs[h] = data
-        return WriteResult(content_hash=h, size=len(data))
+        return WriteResult(content_id=h, size=len(data))
 
 
 class InMemoryMetadata:

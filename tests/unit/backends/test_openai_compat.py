@@ -180,14 +180,14 @@ class TestOpenAICompatibleBackend:
 
         data = b"hello world"
         result = backend.write_content(data)
-        assert result.content_hash
+        assert result.content_id
         assert result.size == len(data)
 
         # No LLM API call was made
         client.chat.completions.create.assert_not_called()
 
         # Can read back the data
-        stored = backend.read_content(result.content_hash)
+        stored = backend.read_content(result.content_id)
         assert stored == data
 
     def test_generate_streaming_yields_tokens(self) -> None:
@@ -284,7 +284,7 @@ class TestOpenAICompatibleBackend:
         )
 
         # Read session envelope
-        session = json.loads(backend.read_content(result.content_hash))
+        session = json.loads(backend.read_content(result.content_id))
         assert session["type"] == "llm_session_v1"
         assert session["model"] == "gpt-4o"
         assert "request_hash" in session
@@ -317,20 +317,20 @@ class TestOpenAICompatibleBackend:
     def test_content_exists(self) -> None:
         backend, _ = _make_backend()
         result = backend.write_content(b"test data")
-        assert backend.content_exists(result.content_hash)
+        assert backend.content_exists(result.content_id)
 
     def test_delete_content(self) -> None:
         backend, _ = _make_backend()
         result = backend.write_content(b"test data")
-        backend.delete_content(result.content_hash)
+        backend.delete_content(result.content_id)
         with pytest.raises(NexusFileNotFoundError):
-            backend.read_content(result.content_hash)
+            backend.read_content(result.content_id)
 
     def test_content_exists_via_cas(self) -> None:
         """Verify content_exists works via CASAddressingEngine."""
         backend, _ = _make_backend()
         result = backend.write_content(b"cas test data")
-        assert backend.content_exists(result.content_hash)
+        assert backend.content_exists(result.content_id)
 
 
 # =============================================================================
@@ -391,7 +391,7 @@ class TestLLMStreamingService:
         backend.generate_streaming.side_effect = _generate_streaming
 
         persist_result = MagicMock()
-        persist_result.content_hash = "abc123deadbeef"
+        persist_result.content_id = "abc123deadbeef"
         backend.persist_session.return_value = persist_result
 
         return backend

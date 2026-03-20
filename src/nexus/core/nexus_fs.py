@@ -2088,7 +2088,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Write content via streaming
         write_result = route.backend.write_stream(chunks, context=context)
-        content_hash = write_result.content_hash
+        content_hash = write_result.content_id
 
         # WriteResult carries the byte count to avoid a redundant
         # get_content_size() round-trip after streaming writes.
@@ -2386,7 +2386,7 @@ class NexusFS(  # type: ignore[misc]
         _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
         if "external_content" in _backend_caps:
             wr = route.backend.write_content(content, context=context)
-            content_hash = wr.content_hash
+            content_hash = wr.content_id
             new_version = (meta.version + 1) if meta else 1
             ctx = self._require_context(context)
             owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
@@ -2410,7 +2410,7 @@ class NexusFS(  # type: ignore[misc]
             # VFS I/O Lock: exclusive write lock around backend write + metadata put.
             # Like Linux i_rwsem: held for I/O duration only, released before observers.
             with self._vfs_locked(path, "write"):
-                content_hash = route.backend.write_content(content, context=context).content_hash
+                content_hash = route.backend.write_content(content, context=context).content_id
 
                 # NOTE: sys_write does NOT release old content on overwrite.
                 # HDFS/GFS pattern: content cleanup is async via background GC.
@@ -2981,7 +2981,7 @@ class NexusFS(  # type: ignore[misc]
                     backend_path=route.backend_path,
                     virtual_path=path,
                 )
-            content_hash = route.backend.write_content(content, context=_write_ctx).content_hash
+            content_hash = route.backend.write_content(content, context=_write_ctx).content_id
 
             # Get existing metadata for this file
             meta = existing_metadata.get(path)

@@ -61,7 +61,7 @@ def base_manifest(
     entries: dict[str, ManifestEntry] = {}
     for rel_path, content in base_content.items():
         result = local_backend.write_content(content)
-        content_hash = result.content_hash
+        content_hash = result.content_id
         entries[rel_path] = ManifestEntry(
             content_hash=content_hash,
             size=len(content),
@@ -75,7 +75,7 @@ def stored_manifest_hash(local_backend: CASLocalBackend, base_manifest: Workspac
     """Store base manifest in CAS and return its hash."""
     manifest_json = base_manifest.to_json()
     result = local_backend.write_content(manifest_json)
-    return result.content_hash
+    return result.content_id
 
 
 @pytest.fixture
@@ -174,7 +174,7 @@ class TestNexusFSOverlayRead:
     async def test_read_upper_layer_overrides_base(self, nexus_fs, metadata_store, local_backend):
         """File written to upper layer overrides base layer on read."""
         new_content = b"def main():\n    print('updated!')\n"
-        new_hash = local_backend.write_content(new_content).content_hash
+        new_hash = local_backend.write_content(new_content).content_id
 
         # Write to upper layer (metadata store)
         metadata_store.put(

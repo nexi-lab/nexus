@@ -87,14 +87,14 @@ class LoggingBackendWrapper(DelegatingBackend):
 
     # === Content Operations (with logging) ===
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         content, elapsed_ms = self._timed(
             "read_content",
-            lambda: self._inner.read_content(content_hash, context=context),
+            lambda: self._inner.read_content(content_id, context=context),
         )
         logger.debug(
             "read_content hash=%s success=True latency_ms=%.2f",
-            content_hash[:12],
+            content_id[:12],
             elapsed_ms,
         )
         return content
@@ -109,30 +109,30 @@ class LoggingBackendWrapper(DelegatingBackend):
         logger.debug(
             "write_content size=%d success=True hash=%s latency_ms=%.2f",
             len(content),
-            result.content_hash[:12],
+            result.content_id[:12],
             elapsed_ms,
         )
         return result
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         _, elapsed_ms = self._timed(
             "delete_content",
-            lambda: self._inner.delete_content(content_hash, context=context),
+            lambda: self._inner.delete_content(content_id, context=context),
         )
         logger.debug(
             "delete_content hash=%s success=True latency_ms=%.2f",
-            content_hash[:12],
+            content_id[:12],
             elapsed_ms,
         )
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         exists, elapsed_ms = self._timed(
             "content_exists",
-            lambda: self._inner.content_exists(content_hash, context=context),
+            lambda: self._inner.content_exists(content_id, context=context),
         )
         logger.debug(
             "content_exists hash=%s exists=%s latency_ms=%.2f",
-            content_hash[:12],
+            content_id[:12],
             exists,
             elapsed_ms,
         )

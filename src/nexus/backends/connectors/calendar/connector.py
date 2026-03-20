@@ -463,7 +463,7 @@ send_notifications: true
     # Backend Interface - Read Operations
     # =========================================================================
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """Read event content from cache or Google Calendar API.
 
         Args:
@@ -477,7 +477,7 @@ send_notifications: true
             NexusFileNotFoundError: If event doesn't exist
             BackendError: If read operation fails
         """
-        _ = content_hash  # Unused for connector backends
+        _ = content_id  # Unused for connector backends
         if not context or not context.backend_path:
             raise BackendError(
                 "Calendar connector requires backend_path in OperationContext.",
@@ -583,7 +583,7 @@ send_notifications: true
                 backend="gcalendar",
             )
 
-        return WriteResult(content_hash=result, size=len(content))
+        return WriteResult(content_id=result, size=len(content))
 
     def _create_event(
         self, calendar_id: str, data: dict[str, Any], context: "OperationContext | None"
@@ -706,7 +706,7 @@ send_notifications: true
                 self.clear_checkpoint(checkpoint.checkpoint_id)
             raise BackendError(f"Failed to update event: {e}", backend="gcalendar") from e
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """Delete a calendar event.
 
         Args:
@@ -717,7 +717,7 @@ send_notifications: true
             ValidationError: If validation fails
             BackendError: If delete fails
         """
-        _ = content_hash  # Unused for connector backends
+        _ = content_id  # Unused for connector backends
         if not context or not context.backend_path:
             raise BackendError(
                 "Calendar connector requires backend_path in OperationContext.",
@@ -832,9 +832,9 @@ send_notifications: true
     # Backend Interface - Directory Operations
     # =========================================================================
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         """Check if event exists."""
-        _ = content_hash  # Unused for connector backends
+        _ = content_id  # Unused for connector backends
         if not context or not context.backend_path:
             return False
 
@@ -844,7 +844,7 @@ send_notifications: true
         except Exception:
             return False
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get event content size."""
         if not context:
             return 0
@@ -856,12 +856,12 @@ send_notifications: true
                 return cached_size
 
         # Read content to get size
-        content = self.read_content(content_hash, context)
+        content = self.read_content(content_id, context)
         return len(content)
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get reference count (always 1 for connector backends)."""
-        _, _ = content_hash, context  # Unused
+        _, _ = content_id, context  # Unused
         return 1
 
     def get_version(self, path: str, context: "OperationContext | None" = None) -> str | None:

@@ -92,7 +92,7 @@ class TestAgentRecord:
         may not raise FrozenInstanceError on Python 3.13+.
         """
         with pytest.raises(FrozenInstanceError):
-            object.__setattr__(record, "state", AgentState.READY)
+            record.state = AgentState.READY
 
     def test_field_access(self, record):
         """All fields are accessible."""

@@ -5,9 +5,9 @@ import logging
 import threading
 
 from nexus.backends.base.backend import Backend, HandlerStatusResponse
-from nexus.backends.base.cas_backend import CASAddressingEngine, CASBackend
+from nexus.backends.base.cas_addressing_engine import CASAddressingEngine, CASBackend
 from nexus.backends.base.factory import BackendFactory
-from nexus.backends.base.path_backend import PathAddressingEngine, PathBackend
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine, PathBackend
 from nexus.backends.base.registry import (
     ArgType,
     ConnectionArg,

@@ -168,7 +168,7 @@ class WorkspaceManager:
             manifest_bytes = manifest.to_json()
 
             # Store manifest in CAS
-            manifest_hash = self.backend.write_content(manifest_bytes, context=None).content_hash
+            manifest_hash = self.backend.write_content(manifest_bytes, context=None).content_id
 
             # Get next snapshot number for this workspace
             stmt = (
@@ -564,7 +564,7 @@ class WorkspaceManager:
         manifest_bytes = merged_manifest.to_json()
 
         # Store flattened manifest in CAS
-        manifest_hash = self.backend.write_content(manifest_bytes, context=None).content_hash
+        manifest_hash = self.backend.write_content(manifest_bytes, context=None).content_id
 
         return {
             "manifest_hash": manifest_hash,

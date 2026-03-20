@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.backends.base.cas_backend import CASAddressingEngine
+    from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)

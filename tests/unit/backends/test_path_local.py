@@ -22,8 +22,8 @@ class TestPathLocalBasic:
         ctx = _ctx("/hello.txt")
         result = backend.write_content(b"hello world", context=ctx)
         assert result.size == 11
-        assert result.content_hash  # non-empty hash
-        data = backend.read_content(result.content_hash, context=ctx)
+        assert result.content_id  # non-empty hash
+        data = backend.read_content(result.content_id, context=ctx)
         assert data == b"hello world"
 
     def test_file_at_actual_path(self, tmp_path: Path) -> None:

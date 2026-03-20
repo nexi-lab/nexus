@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from nexus.backends.base.backend import Backend
-from nexus.backends.base.path_backend import PathAddressingEngine
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
@@ -438,7 +438,7 @@ class MockGCSBackend(Backend):
 
         h = hash_content(content)
         self._content[h] = content
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, content_hash, context=None) -> bytes:
         self.read_count += 1
@@ -511,9 +511,9 @@ class TestGCSBatchReadContent:
     def test_basic_batch_read(self):
         """Test reading multiple CAS objects in parallel."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"file1").content_hash
-        h2 = backend.write_content(b"file2").content_hash
-        h3 = backend.write_content(b"file3").content_hash
+        h1 = backend.write_content(b"file1").content_id
+        h2 = backend.write_content(b"file2").content_id
+        h3 = backend.write_content(b"file3").content_id
 
         result = backend.batch_read_content([h1, h2, h3])
 
@@ -524,7 +524,7 @@ class TestGCSBatchReadContent:
     def test_partial_failures_return_none(self):
         """Test missing hashes return None, not exceptions."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"exists").content_hash
+        h1 = backend.write_content(b"exists").content_id
         fake_hash = "a" * 64
 
         result = backend.batch_read_content([h1, fake_hash])
@@ -540,7 +540,7 @@ class TestGCSBatchReadContent:
     def test_single_item_skips_thread_pool(self):
         """Test single-item optimization (no ThreadPoolExecutor overhead)."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"single").content_hash
+        h1 = backend.write_content(b"single").content_id
 
         result = backend.batch_read_content([h1])
 
@@ -552,7 +552,7 @@ class TestGCSBatchReadContent:
         backend = MockGCSBackend()
         hashes = []
         for i in range(20):
-            h = backend.write_content(f"content{i}".encode()).content_hash
+            h = backend.write_content(f"content{i}".encode()).content_id
             hashes.append(h)
 
         backend.read_count = 0
@@ -565,7 +565,7 @@ class TestGCSBatchReadContent:
     def test_deduplication(self):
         """Test requesting same hash multiple times."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"dedup").content_hash
+        h1 = backend.write_content(b"dedup").content_id
 
         result = backend.batch_read_content([h1, h1, h1])
 
@@ -819,7 +819,7 @@ class TestBatchReadContentContextsParam:
     def test_backward_compat_no_contexts(self):
         """Test that batch_read_content still works without contexts param."""
         backend = MockGCSBackend()
-        h1 = backend.write_content(b"compat").content_hash
+        h1 = backend.write_content(b"compat").content_id
 
         # Call without contexts (backward compatible)
         result = backend.batch_read_content([h1])

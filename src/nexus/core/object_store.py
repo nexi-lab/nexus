@@ -7,13 +7,12 @@ Design:
     - ABC (not Protocol) -- concrete defaults for streaming, batch, capability flags
     - 6 abstract methods: write_content, read_content, delete_content,
       get_content_size, mkdir, rmdir
-    - WriteResult returned from write operations (content_hash + size)
+    - WriteResult returned from write operations (content_id + size)
     - Callers get raw types, errors are exceptions
 """
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
@@ -23,26 +22,16 @@ from nexus.contracts.types import WriteResult
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
-_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-
 # Re-export WriteResult for backward compatibility — canonical home is contracts.types
+# Re-export _validate_hash for backward compatibility — canonical home is backends.base.cas_backend
 __all__ = ["ObjectStoreABC", "WriteResult", "_validate_hash"]
 
 
 def _validate_hash(content_hash: str) -> None:
-    """Validate that a content hash is a well-formed SHA-256 hex string.
+    """Validate SHA-256 hex string — re-export from CAS backend for backward compat."""
+    from nexus.backends.base.cas_addressing_engine import _validate_hash as _cas_validate
 
-    Args:
-        content_hash: Value to validate
-
-    Raises:
-        ValueError: If content_hash is not a 64-character lowercase hex string
-    """
-    if not _HASH_PATTERN.match(content_hash):
-        raise ValueError(
-            f"Invalid SHA-256 content hash: {content_hash!r} "
-            f"(expected 64-character lowercase hex string)"
-        )
+    _cas_validate(content_hash)
 
 
 class ObjectStoreABC(ABC):
@@ -64,21 +53,21 @@ class ObjectStoreABC(ABC):
         """Backend identifier name (e.g. ``"local"``, ``"gcs"``, ``"s3"``)."""
         ...
 
-    # === CAS Content Operations (4 abstract) ===
+    # === Content Operations (4 abstract) ===
 
     @abstractmethod
     def write_content(self, content: bytes, context: OperationContext | None = None) -> WriteResult:
         """Write content to storage and return a ``WriteResult``.
 
-        If content already exists (same hash), deduplication is handled
-        internally.
+        If content already exists (same identifier), deduplication is
+        handled internally.
 
         Args:
             content: File content as bytes.
             context: Operation context (optional, for user-scoped backends).
 
         Returns:
-            ``WriteResult`` with ``content_hash`` and ``size``.
+            ``WriteResult`` with ``content_id`` and ``size``.
 
         Raises:
             BackendError: If write operation fails.
@@ -86,11 +75,12 @@ class ObjectStoreABC(ABC):
         ...
 
     @abstractmethod
-    def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
-        """Read content by its hash.
+    def read_content(self, content_id: str, context: OperationContext | None = None) -> bytes:
+        """Read content by its opaque identifier.
 
         Args:
-            content_hash: SHA-256 hash as hex string.
+            content_id: Opaque content identifier (e.g. SHA-256 hash for CAS,
+                version ID for path-based backends).
             context: Operation context (optional).
 
         Returns:
@@ -103,14 +93,14 @@ class ObjectStoreABC(ABC):
         ...
 
     @abstractmethod
-    def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
-        """Delete content by hash.
+    def delete_content(self, content_id: str, context: OperationContext | None = None) -> None:
+        """Delete content by identifier.
 
         Decrements reference count. Only deletes actual data when the
         reference count reaches zero.
 
         Args:
-            content_hash: SHA-256 hash as hex string.
+            content_id: Opaque content identifier.
             context: Operation context (optional).
 
         Raises:
@@ -120,11 +110,11 @@ class ObjectStoreABC(ABC):
         ...
 
     @abstractmethod
-    def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
+    def get_content_size(self, content_id: str, context: OperationContext | None = None) -> int:
         """Get content size in bytes.
 
         Args:
-            content_hash: SHA-256 hash as hex string.
+            content_id: Opaque content identifier.
             context: Operation context (optional).
 
         Returns:
@@ -153,37 +143,37 @@ class ObjectStoreABC(ABC):
             context: Operation context (optional).
 
         Returns:
-            ``WriteResult`` with ``content_hash`` and ``size``.
+            ``WriteResult`` with ``content_id`` and ``size``.
         """
         content = b"".join(chunks)
         return self.write_content(content, context=context)
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 8192,
         context: OperationContext | None = None,
     ) -> Iterator[bytes]:
-        """Stream content by hash in chunks (generator).
+        """Stream content in chunks (generator).
 
         Default implementation reads the full content and yields slices.
         Backends with seekable storage should override for efficiency.
 
         Args:
-            content_hash: SHA-256 hash as hex string.
+            content_id: Opaque content identifier.
             chunk_size: Size of each chunk in bytes (default: 8 KiB).
             context: Operation context (optional).
 
         Yields:
             Chunks of file content.
         """
-        content = self.read_content(content_hash, context=context)
+        content = self.read_content(content_id, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
     def stream_range(
         self,
-        content_hash: str,
+        content_id: str,
         start: int,
         end: int,
         chunk_size: int = 8192,
@@ -195,7 +185,7 @@ class ObjectStoreABC(ABC):
         with seekable storage should override for efficiency.
 
         Args:
-            content_hash: Content identifier (hash).
+            content_id: Opaque content identifier.
             start: First byte position (inclusive, 0-based).
             end: Last byte position (inclusive, 0-based).
             chunk_size: Size of each yielded chunk in bytes.
@@ -204,7 +194,7 @@ class ObjectStoreABC(ABC):
         Yields:
             Chunks covering the requested range.
         """
-        content = self.read_content(content_hash, context=context)
+        content = self.read_content(content_id, context=context)
         sliced = content[start : end + 1]
         for i in range(0, len(sliced), chunk_size):
             yield sliced[i : i + chunk_size]
@@ -258,35 +248,35 @@ class ObjectStoreABC(ABC):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: OperationContext | None = None,
         *,
         contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
-        """Read multiple content items by their hashes.
+        """Read multiple content items by their identifiers.
 
-        Default implementation calls ``read_content()`` for each hash.
+        Default implementation calls ``read_content()`` for each id.
         Backends should override for better performance (e.g. batch RPCs).
 
         Unlike ``read_content()``, missing content is indicated by
         ``None`` values in the result dict rather than raising.
 
         Args:
-            content_hashes: List of SHA-256 hashes.
+            content_ids: List of opaque content identifiers.
             context: Shared operation context (fallback).
-            contexts: Per-hash operation contexts mapping
-                ``content_hash -> OperationContext``.
+            contexts: Per-id operation contexts mapping
+                ``content_id -> OperationContext``.
 
         Returns:
-            Dict mapping ``content_hash -> bytes | None``.
+            Dict mapping ``content_id -> bytes | None``.
         """
         result: dict[str, bytes | None] = {}
-        for content_hash in content_hashes:
-            ctx = contexts.get(content_hash, context) if contexts else context
+        for content_id in content_ids:
+            ctx = contexts.get(content_id, context) if contexts else context
             try:
-                result[content_hash] = self.read_content(content_hash, context=ctx)
+                result[content_id] = self.read_content(content_id, context=ctx)
             except Exception:
-                result[content_hash] = None
+                result[content_id] = None
         return result
 
     # === Capability Flags (concrete defaults, all False) ===

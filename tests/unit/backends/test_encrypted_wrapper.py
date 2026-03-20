@@ -90,7 +90,7 @@ class TestEncryptedRoundtrip:
         plaintext = b"hello world"
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
-        content_hash = write_resp.content_hash
+        content_hash = write_resp.content_id
 
         read_resp = wrapper.read_content(content_hash)
         assert read_resp == plaintext
@@ -106,7 +106,7 @@ class TestEncryptedRoundtrip:
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == plaintext
 
     def test_large_content_roundtrip(self) -> None:
@@ -120,7 +120,7 @@ class TestEncryptedRoundtrip:
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == plaintext
 
 
@@ -141,8 +141,8 @@ class TestEncryptedCASDedup:
         wrapper = EncryptedStorage(inner=mock, config=config)
 
         plaintext = b"deterministic content"
-        hash1 = wrapper.write_content(plaintext).content_hash
-        hash2 = wrapper.write_content(plaintext).content_hash
+        hash1 = wrapper.write_content(plaintext).content_id
+        hash2 = wrapper.write_content(plaintext).content_id
         assert hash1 == hash2, "GCM-SIV should produce identical ciphertext for identical plaintext"
 
     def test_different_plaintext_different_hash(self) -> None:
@@ -152,8 +152,8 @@ class TestEncryptedCASDedup:
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
-        hash1 = wrapper.write_content(b"content A").content_hash
-        hash2 = wrapper.write_content(b"content B").content_hash
+        hash1 = wrapper.write_content(b"content A").content_id
+        hash2 = wrapper.write_content(b"content B").content_id
         assert hash1 != hash2
 
 
@@ -174,7 +174,7 @@ class TestEncryptedErrors:
 
         # Write valid content
         write_resp = wrapper.write_content(b"valid data")
-        content_hash = write_resp.content_hash
+        content_hash = write_resp.content_id
 
         # Corrupt the stored ciphertext
         stored = storage[content_hash]
@@ -200,7 +200,7 @@ class TestEncryptedErrors:
 
         # Write with key1
         write_resp = wrapper1.write_content(b"secret data")
-        content_hash = write_resp.content_hash
+        content_hash = write_resp.content_id
 
         # Read with key2 should raise ValueError
         with pytest.raises(ValueError):
@@ -285,7 +285,7 @@ class TestEncryptedEmptyContent:
         write_resp = wrapper.write_content(b"")
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == b""
 
 
@@ -359,9 +359,9 @@ class TestEncryptedBatch:
         wrapper = EncryptedStorage(inner=mock, config=config)
 
         # Write 3 items
-        h1 = wrapper.write_content(b"alpha").content_hash
-        h2 = wrapper.write_content(b"beta").content_hash
-        h3 = wrapper.write_content(b"gamma").content_hash
+        h1 = wrapper.write_content(b"alpha").content_id
+        h2 = wrapper.write_content(b"beta").content_id
+        h3 = wrapper.write_content(b"gamma").content_id
 
         # Batch read
         results = wrapper.batch_read_content([h1, h2, h3])
@@ -376,7 +376,7 @@ class TestEncryptedBatch:
         config = EncryptedStorageConfig(key=_generate_key(), metrics_enabled=False)
         wrapper = EncryptedStorage(inner=mock, config=config)
 
-        h1 = wrapper.write_content(b"exists").content_hash
+        h1 = wrapper.write_content(b"exists").content_id
         results = wrapper.batch_read_content([h1, "nonexistent"])
         assert results[h1] == b"exists"
         assert results["nonexistent"] is None

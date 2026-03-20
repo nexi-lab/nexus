@@ -405,9 +405,11 @@ class WriteResult:
     """Result of a content write operation.
 
     Attributes:
-        content_hash: SHA-256 hex digest of the written content.
+        content_id: Opaque content identifier returned by the backend.
+            For CAS backends this is a SHA-256 hex digest; for path-based
+            backends it may be a version ID or other addressing token.
         size: Content size in bytes (0 = unknown / not tracked).
     """
 
-    content_hash: str
+    content_id: str
     size: int = 0

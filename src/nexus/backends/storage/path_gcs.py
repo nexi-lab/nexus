@@ -24,7 +24,7 @@ import time
 from typing import TYPE_CHECKING
 
 from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
-from nexus.backends.base.path_backend import PathAddressingEngine
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
@@ -274,7 +274,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
 
     # === Content Operations with Caching ===
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         if not context or not context.backend_path:
             raise BackendError(
                 message="GCS connector requires backend_path in OperationContext.",
@@ -295,8 +295,8 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
 
         # Read from GCS
         version_id = None
-        if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
-            version_id = content_hash
+        if self.versioning_enabled and content_id and self._is_version_id(content_id):
+            version_id = content_id
 
         content, generation = self._transport.get_blob(blob_path, version_id)
 
@@ -346,7 +346,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
                 logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
         content_hash = new_version if new_version else self._compute_hash(content)
-        return WriteResult(content_hash=content_hash, size=len(content))
+        return WriteResult(content_id=content_hash, size=len(content))
 
     def write_content_with_version_check(
         self,

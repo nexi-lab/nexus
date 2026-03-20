@@ -661,7 +661,7 @@ class GmailConnectorBackend(
             backend="gmail",
         )
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read email content from cache or Gmail API.
 
@@ -838,7 +838,7 @@ class GmailConnectorBackend(
 
         return results
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """
         Delete is not supported for Gmail connector (read-only).
 
@@ -854,7 +854,7 @@ class GmailConnectorBackend(
             backend="gmail",
         )
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if email exists.
 
@@ -904,7 +904,7 @@ class GmailConnectorBackend(
             logger.debug("Gmail content existence check failed: %s", e)
             return False
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get email content size (cache-first, efficient).
 
         Performance optimization: Checks cache first to avoid API calls during
@@ -933,12 +933,12 @@ class GmailConnectorBackend(
 
         # Fallback: Read content to get size (hits Gmail API)
         # This only happens when file is not cached
-        content = self.read_content(content_hash, context)
+        content = self.read_content(content_id, context)
         if content:
             return len(content)
         return 0
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get reference count (always 1 for connector backends).
 
         Args:

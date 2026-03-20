@@ -25,7 +25,7 @@ def _create_local_backend(tmp_path: Path) -> CASLocalBackend:
 
 def _write_content(backend: CASLocalBackend, data: bytes) -> str:
     result = backend.write_content(data)
-    return result.content_hash
+    return result.content_id
 
 
 # =============================================================================

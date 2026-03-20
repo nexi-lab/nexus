@@ -159,9 +159,9 @@ class PathAddressingEngine(Backend):
         # If versioning, put_blob returns version_id; otherwise compute hash
         content_hash = result if result is not None else self._compute_hash(content)
 
-        return WriteResult(content_hash=content_hash, size=len(content))
+        return WriteResult(content_id=content_hash, size=len(content))
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         if not context or not context.backend_path:
             raise BackendError(
                 f"{self.name} connector requires backend_path in OperationContext. "
@@ -172,15 +172,15 @@ class PathAddressingEngine(Backend):
         blob_path = self._get_blob_path(context.backend_path)
 
         version_id = None
-        if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
-            version_id = content_hash
+        if self.versioning_enabled and content_id and self._is_version_id(content_id):
+            version_id = content_id
 
         content, _version_id = self._transport.get_blob(blob_path, version_id)
         return content
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 8192,
         context: "OperationContext | None" = None,
     ) -> Iterator[bytes]:
@@ -191,8 +191,8 @@ class PathAddressingEngine(Backend):
 
         try:
             version_id = None
-            if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
-                version_id = content_hash
+            if self.versioning_enabled and content_id and self._is_version_id(content_id):
+                version_id = content_id
 
             yield from self._transport.stream_blob(blob_path, chunk_size, version_id)
 
@@ -205,7 +205,7 @@ class PathAddressingEngine(Backend):
                 path=blob_path,
             ) from e
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         if not context or not context.backend_path:
             raise BackendError(
                 f"{self.name} connector requires backend_path in OperationContext",
@@ -215,7 +215,7 @@ class PathAddressingEngine(Backend):
         blob_path = self._get_blob_path(context.backend_path)
         self._transport.delete_blob(blob_path)
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         if not context or not context.backend_path:
             return False
         try:
@@ -224,7 +224,7 @@ class PathAddressingEngine(Backend):
         except Exception:
             return False
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         if not context or not context.backend_path:
             raise BackendError(
                 f"{self.name} connector requires backend_path in OperationContext",
@@ -244,7 +244,7 @@ class PathAddressingEngine(Backend):
         blob_path = self._get_blob_path(context.backend_path)
         return self._transport.get_blob_size(blob_path)
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Always 1 — path-based backends don't do deduplication."""
         return 1
 
@@ -296,11 +296,12 @@ class PathAddressingEngine(Backend):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: "OperationContext | None" = None,
         *,
         contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
+        content_hashes = content_ids  # PAS: opaque id, kept as local alias
         if not content_hashes:
             return {}
 

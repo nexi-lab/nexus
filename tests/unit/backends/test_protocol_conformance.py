@@ -56,7 +56,7 @@ class _MockBackend(Backend):
         else:
             self._content[h] = content
             self._ref_counts[h] = 1
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, content_hash: str, context: Any = None) -> bytes:
         if content_hash not in self._content:

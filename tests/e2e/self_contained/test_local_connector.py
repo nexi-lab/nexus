@@ -197,8 +197,8 @@ class TestWriteOperations:
         result = connector.write_content(b"hash me", context=context)
 
         assert result is not None
-        assert result.content_hash is not None
-        assert len(result.content_hash) > 0
+        assert result.content_id is not None
+        assert len(result.content_id) > 0
 
     def test_write_readonly_rejected(self, local_folder: Path, context: OperationContext):
         """Should raise BackendError for writes in readonly mode."""

@@ -410,14 +410,14 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 raise BackendError(f"Failed to post message: {error}", backend="slack")
 
             # Return message timestamp as content hash
-            return WriteResult(content_hash=result["ts"], size=len(content))
+            return WriteResult(content_id=result["ts"], size=len(content))
 
         except json.JSONDecodeError as e:
             raise BackendError(f"Invalid JSON content: {e}", backend="slack") from e
         except Exception as e:
             raise BackendError(f"Failed to write message: {e}", backend="slack") from e
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read channel content as YAML file from cache or Slack API.
 
@@ -543,7 +543,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
 
         return content
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """
         Delete is not supported for Slack connector (read-only for now).
 
@@ -559,7 +559,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             backend="slack",
         )
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if message exists.
 
@@ -575,13 +575,13 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
 
         try:
             # Try to read the message
-            self.read_content(content_hash, context)
+            self.read_content(content_id, context)
             return True
         except Exception as e:
             logger.debug("Slack content existence check failed: %s", e)
             return False
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get message content size (cache-first, efficient).
 
         Args:
@@ -605,10 +605,10 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 return cached_size
 
         # Fallback: Read content to get size
-        content = self.read_content(content_hash, context)
+        content = self.read_content(content_id, context)
         return len(content)
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get reference count (always 1 for connector backends).
 
         Args:

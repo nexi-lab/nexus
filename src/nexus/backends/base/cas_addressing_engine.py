@@ -36,6 +36,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -45,6 +46,28 @@ from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult
+
+# CAS-specific: SHA-256 hex pattern for content hash validation.
+_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _validate_hash(content_hash: str) -> None:
+    """Validate that a content hash is a well-formed SHA-256 hex string.
+
+    CAS-specific — only used by CAS addressing engine and its subclasses.
+
+    Args:
+        content_hash: Value to validate.
+
+    Raises:
+        ValueError: If content_hash is not a 64-character lowercase hex string.
+    """
+    if not _HASH_PATTERN.match(content_hash):
+        raise ValueError(
+            f"Invalid SHA-256 content hash: {content_hash!r} "
+            f"(expected 64-character lowercase hex string)"
+        )
+
 
 if TYPE_CHECKING:
     from nexus.backends.engines.cdc import ChunkingStrategy
@@ -226,7 +249,7 @@ class CASAddressingEngine(Backend):
             if self._cache is not None:
                 self._cache.put(content_hash, content)
 
-            return WriteResult(content_hash=content_hash, size=len(content))
+            return WriteResult(content_id=content_hash, size=len(content))
 
         content_hash = hash_content(content)
         key = self._blob_key(content_hash)
@@ -257,7 +280,7 @@ class CASAddressingEngine(Backend):
             if is_new and self._on_write_callback is not None:
                 self._on_write_callback(key)
 
-            return WriteResult(content_hash=content_hash, size=len(content))
+            return WriteResult(content_id=content_hash, size=len(content))
 
         except (BackendError, NexusFileNotFoundError):
             raise
@@ -268,7 +291,8 @@ class CASAddressingEngine(Backend):
                 path=content_hash,
             ) from e
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
+        content_hash = content_id  # CAS: content_id is a SHA-256 hash
         # Feature DI: cache hit → skip transport
         if self._cache is not None:
             cached: bytes | None = self._cache.get(content_hash)
@@ -315,7 +339,8 @@ class CASAddressingEngine(Backend):
                 path=content_hash,
             ) from e
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
+        content_hash = content_id  # CAS: content_id is a SHA-256 hash
         # Feature DI: CDC chunked content
         if self._cdc is not None and self._cdc.is_chunked(content_hash):
             self._cdc.delete_chunked(content_hash, context)
@@ -362,7 +387,8 @@ class CASAddressingEngine(Backend):
                 path=content_hash,
             ) from e
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
+        content_hash = content_id  # CAS: content_id is a SHA-256 hash
         try:
             # Bloom filter fast-miss: definitely not present → skip transport I/O
             if self._bloom is not None and not self._bloom.might_exist(content_hash):
@@ -372,7 +398,8 @@ class CASAddressingEngine(Backend):
         except Exception:
             return False
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
+        content_hash = content_id  # CAS: content_id is a SHA-256 hash
         # Feature DI: CDC chunked content
         if self._cdc is not None and self._cdc.is_chunked(content_hash):
             size: int = self._cdc.get_size(content_hash)
@@ -393,7 +420,7 @@ class CASAddressingEngine(Backend):
 
     def read_content_range(
         self,
-        content_hash: str,
+        content_id: str,
         start: int,
         end: int,
         context: "OperationContext | None" = None,
@@ -405,6 +432,7 @@ class CASAddressingEngine(Backend):
         - Chunked content: delegate to CDCEngine.read_chunked_range().
         - Single blob: read full content, verify hash, then slice.
         """
+        content_hash = content_id  # CAS: content_id is a SHA-256 hash
         # Feature DI: content cache hit → slice
         if self._cache is not None:
             cached: bytes | None = self._cache.get(content_hash)
@@ -417,22 +445,23 @@ class CASAddressingEngine(Backend):
             return range_data
 
         # Single blob: read, verify integrity, then slice
-        content = self.read_content(content_hash, context=context)
+        content = self.read_content(content_id, context=context)
         return content[start:end]
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
-        if not self.content_exists(content_hash, context=context):
-            raise NexusFileNotFoundError(content_hash)
+    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
+        if not self.content_exists(content_id, context=context):
+            raise NexusFileNotFoundError(content_id)
 
-        meta = self._read_meta(content_hash)
+        meta = self._read_meta(content_id)
         return int(meta.get("ref_count", 0))
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 8192,
         context: "OperationContext | None" = None,
     ) -> Iterator[bytes]:
+        content_hash = content_id  # CAS: content_id is a SHA-256 hash
         key = self._blob_key(content_hash)
         try:
             yield from self._transport.stream_blob(key, chunk_size)
@@ -515,7 +544,7 @@ class CASAddressingEngine(Backend):
 
             # Skip cache for streamed content (avoid loading into memory)
 
-            return WriteResult(content_hash=content_hash, size=total_size)
+            return WriteResult(content_id=content_hash, size=total_size)
 
         except (BackendError, NexusFileNotFoundError):
             raise
@@ -528,11 +557,12 @@ class CASAddressingEngine(Backend):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: "OperationContext | None" = None,
         *,
         contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
+        content_hashes = content_ids  # CAS alias
         if not content_hashes:
             return {}
 

@@ -78,7 +78,7 @@ class TestRemoteBackendRPC:
 
         mock_transport.write_file.assert_called_once_with("/path/to/file.txt", b"hello")
         assert isinstance(result, WriteResult)
-        assert result.content_hash == "abc123"
+        assert result.content_id == "abc123"
         assert result.size == 5
 
     def test_read_content_uses_typed_rpc(self, backend: RemoteBackend, mock_transport) -> None:

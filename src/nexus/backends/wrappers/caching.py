@@ -153,14 +153,14 @@ class CachingBackendWrapper(DelegatingBackend):
 
     # === Cached Content Operations ===
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """Read content with L1 → inner backend fallback.
 
         L2 is write-populate-only; reads never check L2.
         """
         # L1 check
         try:
-            cached = self._l1_cache.get(content_hash)
+            cached = self._l1_cache.get(content_id)
             if cached is not None:
                 self._metrics.increment("l1_hits")
                 return cached
@@ -169,15 +169,15 @@ class CachingBackendWrapper(DelegatingBackend):
             self._record_cache_error("l1_read", e)
 
         # Inner backend read (raises on failure — no response wrapping)
-        content = self._inner.read_content(content_hash, context=context)
+        content = self._inner.read_content(content_id, context=context)
 
         # Populate L1
         try:
-            self._l1_cache.put(content_hash, content)
+            self._l1_cache.put(content_id, content)
         except Exception as e:
             self._record_cache_error("l1_populate", e)
         # Schedule L2 population (fire-and-forget)
-        self._schedule_l2_populate(content_hash, content)
+        self._schedule_l2_populate(content_id, content)
 
         return content
 
@@ -187,7 +187,7 @@ class CachingBackendWrapper(DelegatingBackend):
         """Write content to inner backend, then handle cache based on strategy."""
         result = self._inner.write_content(content, context=context)
 
-        content_hash = result.content_hash
+        content_hash = result.content_id
 
         if self._config.strategy == CacheStrategy.WRITE_THROUGH:
             # Populate L1 immediately
@@ -203,14 +203,14 @@ class CachingBackendWrapper(DelegatingBackend):
 
         return result
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """Delete from inner backend and invalidate caches."""
-        self._inner.delete_content(content_hash, context=context)
-        self._invalidate(content_hash)
+        self._inner.delete_content(content_id, context=context)
+        self._invalidate(content_id)
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         """Always delegate to inner backend — source of truth for existence."""
-        return self._inner.content_exists(content_hash, context=context)
+        return self._inner.content_exists(content_id, context=context)
 
     def batch_read_content(
         self,

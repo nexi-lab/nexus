@@ -49,7 +49,7 @@ class FakeCAS:
     def write_content(self, data, context=None):
         h = hashlib.sha256(data).hexdigest()
         self.store[h] = data
-        return WriteResult(content_hash=h, size=len(data))
+        return WriteResult(content_id=h, size=len(data))
 
 
 class FakeWorkspaceManager:

@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
-from nexus.backends.base.path_backend import PathAddressingEngine
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability

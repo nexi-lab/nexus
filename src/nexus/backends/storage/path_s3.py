@@ -18,7 +18,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
-from nexus.backends.base.path_backend import PathAddressingEngine
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
@@ -250,7 +250,7 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
 
     # === Content Operations with Caching ===
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         if not context or not context.backend_path:
             raise BackendError(
                 message="S3 connector requires backend_path in OperationContext.",
@@ -268,8 +268,8 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
                 logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
 
         version_id = None
-        if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
-            version_id = content_hash
+        if self.versioning_enabled and content_id and self._is_version_id(content_id):
+            version_id = content_id
 
         blob_path = self._get_blob_path(context.backend_path)
         content, resp_version = self._transport.get_blob(blob_path, version_id)
@@ -318,6 +318,6 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
                 logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
         return WriteResult(
-            content_hash=new_version if new_version else self._compute_hash(content),
+            content_id=new_version if new_version else self._compute_hash(content),
             size=len(content),
         )

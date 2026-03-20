@@ -54,7 +54,7 @@ def mock_gateway(record_store):
     mock_backend.capabilities = frozenset()  # No special capabilities — eligible for write-back
     from nexus.core.object_store import WriteResult
 
-    mock_backend.write_content.return_value = WriteResult(content_hash="new_content_hash", size=11)
+    mock_backend.write_content.return_value = WriteResult(content_id="new_content_hash", size=11)
 
     gw.get_mount_for_path.return_value = {
         "mount_point": "/mnt/gcs",

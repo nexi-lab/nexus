@@ -57,7 +57,7 @@ class BenchMockBackend:
         h = hashlib.sha256(content).hexdigest()
         self._store[h] = content
         self._refs[h] = self._refs.get(h, 0) + 1
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, content_hash: str, context: Any = None) -> bytes:  # noqa: ARG002
         if content_hash not in self._store:

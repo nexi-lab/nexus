@@ -63,7 +63,7 @@ class SysModulesMutator:
         from nexus.core.object_store import WriteResult
 
         h = hashlib.sha256(content).hexdigest()
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, h, context=None):
         return b""
@@ -185,10 +185,10 @@ class TestCrossBrickIsolation:
         b2 = IsolatedBackend(_cfg())
         try:
             wr1 = b1.write_content(b"only-in-b1")
-            assert wr1.content_hash  # WriteResult with content_hash
+            assert wr1.content_id  # WriteResult with content_hash
 
             # b2's worker has a fresh MockBackend — it should not have b1's data
-            exists = b2.content_exists(wr1.content_hash)
+            exists = b2.content_exists(wr1.content_id)
             assert exists is False
         finally:
             b1.disconnect()

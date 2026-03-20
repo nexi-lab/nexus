@@ -101,15 +101,15 @@ class RemoteBackend(ObjectStoreABC):
         path = self._to_server_path(context)
         result = self._transport.write_file(path, content)  # Typed RPC — raw bytes
         return WriteResult(
-            content_hash=result.get("etag", ""),
+            content_id=result.get("etag", ""),
             size=result.get("size", len(content)),
         )
 
-    def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
+    def read_content(self, content_id: str, context: OperationContext | None = None) -> bytes:
         path = self._to_server_path(context)
         return self._transport.read_file(path)  # Typed RPC — raw bytes, no JSON decode
 
-    def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
+    def delete_content(self, content_id: str, context: OperationContext | None = None) -> None:
         """No-op: server-side deletion is handled by RemoteMetastore.delete().
 
         The kernel always calls ``metastore.delete(path)`` after
@@ -119,7 +119,7 @@ class RemoteBackend(ObjectStoreABC):
         redundant and risks a double-delete race.
         """
 
-    def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
+    def get_content_size(self, content_id: str, context: OperationContext | None = None) -> int:
         path = self._to_server_path(context)
         result = self._call_rpc("sys_stat", {"path": path})
         size: int = int(result.get("size", 0)) if isinstance(result, dict) else 0
@@ -148,7 +148,7 @@ class RemoteBackend(ObjectStoreABC):
 
     # === Query Operations ===
 
-    def content_exists(self, content_hash: str, context: OperationContext | None = None) -> bool:
+    def content_exists(self, content_id: str, context: OperationContext | None = None) -> bool:
         path = self._to_server_path(context)
         result = self._call_rpc("sys_access", {"path": path})
         if isinstance(result, dict):

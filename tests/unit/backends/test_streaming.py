@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.backends.base.backend import Backend
-from nexus.backends.base.path_backend import PathAddressingEngine
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content
@@ -40,7 +40,7 @@ class TestBackendWriteStreamDefault:
 
             def write_content(self, content: bytes, context=None) -> ObjectStoreWriteResult:
                 self.written_content = content
-                return ObjectStoreWriteResult(content_hash=hash_content(content), size=len(content))
+                return ObjectStoreWriteResult(content_id=hash_content(content), size=len(content))
 
             def read_content(self, content_hash: str, context=None) -> bytes:
                 return b""
@@ -76,7 +76,7 @@ class TestBackendWriteStreamDefault:
             yield b"!"
 
         result = backend.write_stream(chunks())
-        result_hash = result.content_hash
+        result_hash = result.content_id
 
         assert backend.written_content == b"Hello World!"
         assert result_hash == hash_content(b"Hello World!")
@@ -94,7 +94,7 @@ class TestCASLocalBackendStreaming:
         """Test that stream_content yields file content in chunks."""
         # Write some content first
         content = b"A" * 1000 + b"B" * 1000 + b"C" * 1000
-        content_hash = local_backend.write_content(content).content_hash
+        content_hash = local_backend.write_content(content).content_id
 
         # Stream with small chunks
         chunks = list(local_backend.stream_content(content_hash, chunk_size=500))
@@ -106,7 +106,7 @@ class TestCASLocalBackendStreaming:
     def test_stream_content_default_chunk_size(self, local_backend: CASLocalBackend) -> None:
         """Test stream_content with default chunk size."""
         content = b"test content"
-        content_hash = local_backend.write_content(content).content_hash
+        content_hash = local_backend.write_content(content).content_id
 
         chunks = list(local_backend.stream_content(content_hash))
 
@@ -127,7 +127,7 @@ class TestCASLocalBackendStreaming:
             yield b"World!"
 
         result = local_backend.write_stream(chunks())
-        content_hash = result.content_hash
+        content_hash = result.content_id
 
         # Verify content was written correctly
         content = local_backend.read_content(content_hash)
@@ -138,13 +138,13 @@ class TestCASLocalBackendStreaming:
         content = b"Test content for hash comparison"
 
         # Write using write_content
-        hash1 = local_backend.write_content(content).content_hash
+        hash1 = local_backend.write_content(content).content_id
 
         # Write using write_stream
         def chunks():
             yield content
 
-        hash2 = local_backend.write_stream(chunks()).content_hash
+        hash2 = local_backend.write_stream(chunks()).content_id
 
         assert hash1 == hash2
 
@@ -153,14 +153,14 @@ class TestCASLocalBackendStreaming:
         content = b"Duplicate content"
 
         # First write
-        hash1 = local_backend.write_content(content).content_hash
+        hash1 = local_backend.write_content(content).content_id
         ref1 = local_backend.get_ref_count(hash1)
 
         # Second write via stream
         def chunks():
             yield content
 
-        hash2 = local_backend.write_stream(chunks()).content_hash
+        hash2 = local_backend.write_stream(chunks()).content_id
         ref2 = local_backend.get_ref_count(hash2)
 
         assert hash1 == hash2
@@ -177,7 +177,7 @@ class TestCASLocalBackendStreaming:
                 yield content_per_chunk
 
         result = local_backend.write_stream(chunks())
-        content_hash = result.content_hash
+        content_hash = result.content_id
 
         # Verify content
         content = local_backend.read_content(content_hash)
@@ -192,7 +192,7 @@ class TestCASLocalBackendStreaming:
             yield  # Make it a generator
 
         result = local_backend.write_stream(chunks())
-        content_hash = result.content_hash
+        content_hash = result.content_id
 
         # Should write empty content
         content = local_backend.read_content(content_hash)
@@ -295,7 +295,7 @@ class TestStreamingMemoryEfficiency:
         baseline = tracemalloc.get_traced_memory()[0]
 
         result = backend.write_stream(big_chunks())
-        assert result.content_hash is not None
+        assert result.content_id is not None
 
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()

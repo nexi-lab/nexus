@@ -25,10 +25,15 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
     """Resolve TLS config from ZoneManager or auto-detection.
 
     Priority:
+    0. NEXUS_GRPC_TLS=false → disable TLS (for standalone Docker / dev)
     1. ZoneManager.tls_config (provisioned by 2-phase TLS bootstrap)
     2. Auto-detect from {NEXUS_DATA_DIR}/tls/
     3. None → insecure (no certs available)
     """
+    # 0. Explicit disable via env var (standalone / dev mode)
+    if os.environ.get("NEXUS_GRPC_TLS", "").lower() in ("false", "0", "no"):
+        return None
+
     from nexus.security.tls.config import ZoneTlsConfig
 
     # 1. ZoneManager (if running federation / Raft)
@@ -38,7 +43,7 @@ def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
         if tls_cfg is not None:
             return tls_cfg
 
-    # 3. Auto-detect from NEXUS_DATA_DIR
+    # 2. Auto-detect from NEXUS_DATA_DIR
     data_dir = os.environ.get("NEXUS_DATA_DIR")
     if data_dir:
         return ZoneTlsConfig.from_data_dir(data_dir)

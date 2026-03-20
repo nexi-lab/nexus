@@ -36,7 +36,12 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from cachetools import TTLCache
+# Issue #3192: Using cachebox (Rust-backed) TTLCache for lock-free cache internals.
+# The RLock is retained for Python-side secondary index consistency.
+try:
+    from cachebox import TTLCache
+except ImportError:
+    from cachetools import TTLCache  # fallback
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -126,6 +131,10 @@ class ReBACPermissionCache:
         # Local cache for revisions to reduce DB queries (zone -> (revision, timestamp))
         self._revision_cache: dict[str, tuple[int, float]] = {}
         self._revision_cache_ttl = 1.0  # Refresh revision from DB every 1 second
+
+        # SharedRingBuffer for cross-process revision broadcasting (Issue #3192)
+        # When set, revision updates are read from mmap instead of DB queries.
+        self._revision_ring_buffer: Any = None  # SharedRingBuffer | None
 
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
@@ -258,6 +267,7 @@ class ReBACPermissionCache:
         object_type: str,
         object_id: str,
         zone_id: str,
+        path_prefixes: list[str] | None = None,
     ) -> None:
         """Add a cache key to secondary indexes for O(1) invalidation (Issue #1077).
 
@@ -270,6 +280,8 @@ class ReBACPermissionCache:
             object_type: Type of object
             object_id: Object identifier (path)
             zone_id: Zone ID
+            path_prefixes: Optional pre-computed path prefixes (Issue #3192).
+                If provided, skips O(depth) prefix computation inside the lock.
         """
         if self._invalidation_mode != "targeted":
             return
@@ -289,17 +301,44 @@ class ReBACPermissionCache:
         # Path prefix index - index all path prefixes for directory-based invalidation
         # e.g., /workspace/project/file.py -> index at /workspace, /workspace/project
         # Only index actual paths (starting with /) to avoid infinite loops with non-path IDs
+        # Issue #3192: Use pre-computed prefixes when available to reduce lock hold time
         if object_type in ("file", "memory", "resource") and object_id.startswith("/"):
-            path = object_id
-            while path and path != "/":
-                parent = path.rsplit("/", 1)[0] or "/"
+            prefixes = (
+                path_prefixes
+                if path_prefixes is not None
+                else self._compute_path_prefixes(object_id)
+            )
+            for parent in prefixes:
                 prefix_key = (zone_id, object_type, parent)
                 if prefix_key not in self._path_prefix_index:
                     self._path_prefix_index[prefix_key] = set()
                 self._path_prefix_index[prefix_key].add(key)
-                if parent == "/":
-                    break
-                path = parent
+
+    @staticmethod
+    def _compute_path_prefixes(object_id: str) -> list[str]:
+        """Compute path prefix list for directory-based invalidation (Issue #3192).
+
+        Walks up the path hierarchy and returns all parent paths.
+        e.g., /workspace/project/file.py -> ["/workspace/project", "/workspace", "/"]
+
+        This is a pure computation with no side effects, so it can be called
+        outside the lock to reduce lock hold time.
+
+        Args:
+            object_id: Object identifier (must be an absolute path starting with "/")
+
+        Returns:
+            List of parent path prefixes from most specific to root.
+        """
+        prefixes: list[str] = []
+        path = object_id
+        while path and path != "/":
+            parent = path.rsplit("/", 1)[0] or "/"
+            prefixes.append(parent)
+            if parent == "/":
+                break
+            path = parent
+        return prefixes
 
     def _remove_from_indexes(self, key: str) -> None:
         """Remove a cache key from all secondary indexes (Issue #1077).
@@ -432,6 +471,17 @@ class ReBACPermissionCache:
             fetcher: Function that takes zone_id and returns current revision number
         """
         self._revision_fetcher = fetcher
+
+    def set_revision_ring_buffer(self, ring_buffer: Any) -> None:
+        """Set SharedRingBuffer for cross-process revision broadcasting (Issue #3192).
+
+        When set, revision updates are read from mmap instead of DB queries,
+        eliminating a DB round-trip per revision check.
+
+        Args:
+            ring_buffer: SharedRingBuffer instance opened as consumer
+        """
+        self._revision_ring_buffer = ring_buffer
 
     def _get_revision_bucket(self, zone_id: str | None) -> int:
         """Get quantized revision bucket for cache key.
@@ -717,6 +767,15 @@ class ReBACPermissionCache:
         key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
         zone_part = zone_id if zone_id else ROOT_ZONE_ID
 
+        # Pre-compute path prefixes outside lock (Issue #3192: reduce lock hold time)
+        path_prefixes: list[str] = []
+        if (
+            self._invalidation_mode == "targeted"
+            and object_type in ("file", "memory", "resource")
+            and object_id.startswith("/")
+        ):
+            path_prefixes = self._compute_path_prefixes(object_id)
+
         with self._lock:
             # Issue #1077: Get tiered TTL based on relation type
             # Only use tiered TTL when relation is explicitly provided
@@ -751,7 +810,15 @@ class ReBACPermissionCache:
                     self._denial_sets += 1
 
             # Issue #1077: Add to secondary indexes for O(1) invalidation
-            self._add_to_indexes(key, subject_type, subject_id, object_type, object_id, zone_part)
+            self._add_to_indexes(
+                key,
+                subject_type,
+                subject_id,
+                object_type,
+                object_id,
+                zone_part,
+                path_prefixes or None,
+            )
 
             if self._enable_metrics:
                 self._sets += 1

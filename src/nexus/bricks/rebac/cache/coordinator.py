@@ -23,11 +23,17 @@ Also handles:
 Related: Issue #1459 (decomposition), Issue #2179 (rebac-brick), Issue #1244, Issue #1077
 """
 
+import concurrent.futures
 import logging
 import time as time_module
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.rebac.cache.invalidation_stream import (
+    InvalidationEventType,
+    InvalidationStream,
+)
+from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
 from nexus.bricks.rebac.domain import RELATION_TO_PERMISSIONS
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -81,6 +87,10 @@ class CacheCoordinator:
         get_namespace_cb: "Callable[[str], Any] | None" = None,
         compute_permission_cb: "Callable[..., bool] | None" = None,
         cache_check_result_cb: "Callable[..., None] | None" = None,
+        # DT_STREAM for intra-zone invalidation (Issue #3192)
+        invalidation_stream: "InvalidationStream | None" = None,
+        # Pub/Sub for cross-zone invalidation hints (Issue #3192)
+        pubsub: "PubSubInvalidation | None" = None,
         # Stats / cleanup
         cache_ttl_seconds: int = 300,
         get_tuple_version: "Callable[[], int] | None" = None,
@@ -117,6 +127,10 @@ class CacheCoordinator:
         self._create_cursor = create_cursor
         self._fix_sql = fix_sql
 
+        # DT_STREAM + Pub/Sub (Issue #3192)
+        self._stream = invalidation_stream
+        self._pubsub = pubsub
+
         # Eager recompute
         self._get_namespace_cb = get_namespace_cb
         self._compute_permission_cb = compute_permission_cb
@@ -136,6 +150,13 @@ class CacheCoordinator:
         # Used by NamespaceManager to invalidate dcache + mount table on grant/revoke (Issue #1244)
         self._namespace_invalidators: list[tuple[str, Callable[[str, str, str], None]]] = []
 
+        # Async eager recompute (Issue #3192)
+        self._recompute_executor: concurrent.futures.ThreadPoolExecutor | None = None
+        self._async_recompute_enabled = True
+        self._recompute_submitted = 0
+        self._recompute_completed = 0
+        self._recompute_failed = 0
+
         # Metrics
         self._invalidation_count = 0
         self._zone_graph_invalidations = 0
@@ -144,6 +165,7 @@ class CacheCoordinator:
         self._visibility_invalidations = 0
         self._namespace_invalidations = 0
         self._iterator_invalidations = 0
+        self._callback_failure_count = 0
 
     # ------------------------------------------------------------------
     # Cache setters (for lazy initialization)
@@ -164,6 +186,20 @@ class CacheCoordinator:
     def set_zone_graph_cache(self, cache: dict[str, Any]) -> None:
         """Set the zone graph cache (shared dict reference)."""
         self._zone_graph_cache = cache
+
+    def set_invalidation_stream(self, stream: "InvalidationStream") -> None:
+        """Set the DT_STREAM for ordered intra-zone invalidation.
+
+        When set, existing callback registrations are migrated to stream consumers.
+        New callbacks registered after this will also be auto-registered as consumers.
+        """
+        self._stream = stream
+        # Migrate existing callbacks to stream consumers
+        self._register_callbacks_as_stream_consumers()
+
+    def set_pubsub(self, pubsub: "PubSubInvalidation") -> None:
+        """Set the Pub/Sub for cross-zone invalidation hints."""
+        self._pubsub = pubsub
 
     # ------------------------------------------------------------------
     # Callback registration
@@ -290,6 +326,32 @@ class CacheCoordinator:
         # 6. Iterator cache (zone-level)
         self._invalidate_iterator(zone_id)
 
+        # 7. DT_STREAM: Publish invalidation event for intra-zone consumers (Issue #3192)
+        if self._stream:
+            self._stream.append(
+                InvalidationEventType.L1_CACHE,
+                zone_id,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                relation=relation,
+                object_type=object_type,
+                object_id=object_id,
+            )
+
+        # 8. Pub/Sub: Publish cross-zone hint (Issue #3192)
+        if self._pubsub:
+            self._pubsub.publish_invalidation(
+                zone_id=zone_id,
+                layer="all",
+                payload={
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "relation": relation,
+                    "object_type": object_type,
+                    "object_id": object_id,
+                },
+            )
+
     def invalidate_zone_graph(self, zone_id: str | None = None) -> None:
         """Invalidate zone graph cache.
 
@@ -410,7 +472,10 @@ class CacheCoordinator:
             # Invalidation is now handled entirely by L1 in-memory cache above.
 
             if should_eager_recompute:
-                self._eager_recompute(subject, relation, obj, zone_id, conn)
+                if self._async_recompute_enabled:
+                    self._submit_eager_recompute(subject, relation, obj, zone_id)
+                else:
+                    self._eager_recompute(subject, relation, obj, zone_id, conn)
 
             # 2. TRANSITIVE (Groups): If subject is a group/set, invalidate cache
             #    for potential members accessing the object
@@ -488,6 +553,51 @@ class CacheCoordinator:
             if should_close and self._close_connection is not None:
                 self._close_connection(conn)
 
+    def _submit_eager_recompute(
+        self,
+        subject: "Entity",
+        relation: str,
+        obj: "Entity",
+        zone_id: str | None,
+    ) -> None:
+        """Submit eager recomputation as async task.
+
+        Instead of blocking the invalidation path, schedule recomputation
+        in a background thread. Cache will be filled when complete.
+
+        If the cache is read before recomputation finishes, the normal
+        compute path handles it (protected by stampede prevention).
+        """
+        if self._recompute_executor is None:
+            self._recompute_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="eager-recompute"
+            )
+
+        def _do_recompute() -> None:
+            try:
+                # Need a fresh connection for the background thread
+                conn = None
+                if self._get_connection is not None:
+                    conn = self._get_connection()
+                if conn is None:
+                    return
+                try:
+                    self._eager_recompute(subject, relation, obj, zone_id, conn)
+                    self._recompute_completed += 1
+                finally:
+                    if self._close_connection is not None:
+                        self._close_connection(conn)
+            except Exception as e:
+                self._recompute_failed += 1
+                logger.warning("Async eager recompute failed: %s", e)
+
+        try:
+            self._recompute_executor.submit(_do_recompute)
+            self._recompute_submitted += 1
+        except RuntimeError:
+            # Executor shut down
+            pass
+
     def _eager_recompute(
         self,
         subject: "Entity",
@@ -539,10 +649,11 @@ class CacheCoordinator:
                         obj,
                         result,
                     )
-            except Exception as e:  # fail-safe: fall back to invalidation
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("Eager recomputation failed, falling back to invalidation: %s", e)
-                break
+            except Exception as e:
+                logger.warning(
+                    "Eager recomputation failed for permission %s, continuing: %s", permission, e
+                )
+                continue
 
     def invalidate_for_namespace_change(self, object_type: str) -> None:
         """Invalidate all cache entries for objects of a given type in both L1 and L2.
@@ -723,6 +834,73 @@ class CacheCoordinator:
         elif zone_id in self._zone_graph_cache:
             del self._zone_graph_cache[zone_id]
 
+    def _register_callbacks_as_stream_consumers(self) -> None:
+        """Migrate existing callback registrations to DT_STREAM consumers.
+
+        Each callback becomes a stream consumer that filters by event type
+        and dispatches to the original callback function.
+        """
+        if not self._stream:
+            return
+
+        for callback_id, callback in self._boundary_invalidators:
+
+            def _make_boundary_handler(cb: Any) -> Any:
+                def handler(event: Any) -> None:
+                    if event.event_type == InvalidationEventType.BOUNDARY:
+                        for perm in event.payload.get(
+                            "permissions", [event.payload.get("relation", "")]
+                        ):
+                            cb(
+                                event.zone_id,
+                                event.payload["subject_type"],
+                                event.payload["subject_id"],
+                                perm,
+                                event.payload["object_id"],
+                            )
+
+                return handler
+
+            self._stream.register_consumer(
+                f"boundary:{callback_id}",
+                _make_boundary_handler(callback),
+                [InvalidationEventType.BOUNDARY],
+            )
+
+        for callback_id, callback in self._visibility_invalidators:
+
+            def _make_visibility_handler(cb: Any) -> Any:
+                def handler(event: Any) -> None:
+                    if event.event_type == InvalidationEventType.VISIBILITY:
+                        cb(event.zone_id, event.payload["object_id"])
+
+                return handler
+
+            self._stream.register_consumer(
+                f"visibility:{callback_id}",
+                _make_visibility_handler(callback),
+                [InvalidationEventType.VISIBILITY],
+            )
+
+        for callback_id, callback in self._namespace_invalidators:
+
+            def _make_namespace_handler(cb: Any) -> Any:
+                def handler(event: Any) -> None:
+                    if event.event_type == InvalidationEventType.NAMESPACE:
+                        cb(
+                            event.payload["subject_type"],
+                            event.payload["subject_id"],
+                            event.zone_id,
+                        )
+
+                return handler
+
+            self._stream.register_consumer(
+                f"namespace:{callback_id}",
+                _make_namespace_handler(callback),
+                [InvalidationEventType.NAMESPACE],
+            )
+
     def _invalidate_l1(
         self,
         subject_type: str,
@@ -761,18 +939,34 @@ class CacheCoordinator:
 
         self._boundary_invalidations += 1
 
-        for callback_id, callback in self._boundary_invalidators:
-            for permission in permissions:
-                try:
-                    callback(zone_id, subject_type, subject_id, permission, object_id)
-                except Exception:  # fail-safe: callback errors must not break invalidation loop
-                    logger.debug(
-                        "[CacheCoordinator] Boundary invalidator %s failed for %s",
-                        callback_id,
-                        permission,
-                    )
+        # When DT_STREAM is active, publish to stream (consumers handle dispatch).
+        # Otherwise fall back to legacy callback loop. (Issue #3192)
+        if self._stream:
+            self._stream.append(
+                InvalidationEventType.BOUNDARY,
+                zone_id,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                relation=relation,
+                object_type=object_type,
+                object_id=object_id,
+                permissions=permissions,
+            )
+        else:
+            for callback_id, callback in self._boundary_invalidators:
+                for permission in permissions:
+                    try:
+                        callback(zone_id, subject_type, subject_id, permission, object_id)
+                    except Exception:
+                        self._callback_failure_count += 1
+                        logger.warning(
+                            "[CacheCoordinator] Boundary invalidator %s failed for %s",
+                            callback_id,
+                            permission,
+                            exc_info=True,
+                        )
 
-        # Also invalidate the internal boundary cache
+        # Always invalidate the internal boundary cache directly
         if self._boundary_cache:
             for permission in permissions:
                 self._boundary_cache.invalidate_permission_change(
@@ -786,7 +980,7 @@ class CacheCoordinator:
         object_id: str,
     ) -> None:
         """Notify directory visibility cache invalidators."""
-        if not self._visibility_invalidators:
+        if not self._visibility_invalidators and not self._stream:
             return
 
         # Only invalidate for file objects
@@ -795,15 +989,25 @@ class CacheCoordinator:
 
         self._visibility_invalidations += 1
 
-        for callback_id, callback in self._visibility_invalidators:
-            try:
-                callback(zone_id, object_id)
-            except Exception:  # fail-safe: callback errors must not break invalidation loop
-                logger.debug(
-                    "[CacheCoordinator] Visibility invalidator %s failed for %s",
-                    callback_id,
-                    object_id,
-                )
+        if self._stream:
+            self._stream.append(
+                InvalidationEventType.VISIBILITY,
+                zone_id,
+                object_type=object_type,
+                object_id=object_id,
+            )
+        else:
+            for callback_id, callback in self._visibility_invalidators:
+                try:
+                    callback(zone_id, object_id)
+                except Exception:
+                    self._callback_failure_count += 1
+                    logger.warning(
+                        "[CacheCoordinator] Visibility invalidator %s failed for %s",
+                        callback_id,
+                        object_id,
+                        exc_info=True,
+                    )
 
     def notify_namespace_invalidators(
         self,
@@ -822,21 +1026,31 @@ class CacheCoordinator:
             subject_type: Type of the subject whose cache should be invalidated
             subject_id: ID of the subject whose cache should be invalidated
         """
-        if not self._namespace_invalidators:
+        if not self._namespace_invalidators and not self._stream:
             return
 
         self._namespace_invalidations += 1
 
-        for callback_id, callback in self._namespace_invalidators:
-            try:
-                callback(subject_type, subject_id, zone_id)
-            except Exception:  # fail-safe: callback errors must not break invalidation loop
-                logger.debug(
-                    "[CacheCoordinator] Namespace invalidator %s failed for %s:%s",
-                    callback_id,
-                    subject_type,
-                    subject_id,
-                )
+        if self._stream:
+            self._stream.append(
+                InvalidationEventType.NAMESPACE,
+                zone_id,
+                subject_type=subject_type,
+                subject_id=subject_id,
+            )
+        else:
+            for callback_id, callback in self._namespace_invalidators:
+                try:
+                    callback(subject_type, subject_id, zone_id)
+                except Exception:
+                    self._callback_failure_count += 1
+                    logger.warning(
+                        "[CacheCoordinator] Namespace invalidator %s failed for %s:%s",
+                        callback_id,
+                        subject_type,
+                        subject_id,
+                        exc_info=True,
+                    )
 
     def _invalidate_iterator(self, zone_id: str) -> None:
         """Invalidate iterator cache for a zone."""
@@ -863,6 +1077,12 @@ class CacheCoordinator:
             "registered_boundary_invalidators": len(self._boundary_invalidators),
             "registered_visibility_invalidators": len(self._visibility_invalidators),
             "registered_namespace_invalidators": len(self._namespace_invalidators),
+            "callback_failure_count": self._callback_failure_count,
+            "async_recompute_submitted": self._recompute_submitted,
+            "async_recompute_completed": self._recompute_completed,
+            "async_recompute_failed": self._recompute_failed,
+            "stream_enabled": self._stream is not None,
+            "pubsub_enabled": self._pubsub is not None,
         }
 
     def reset_stats(self) -> None:
@@ -874,3 +1094,7 @@ class CacheCoordinator:
         self._visibility_invalidations = 0
         self._namespace_invalidations = 0
         self._iterator_invalidations = 0
+        self._callback_failure_count = 0
+        self._recompute_submitted = 0
+        self._recompute_completed = 0
+        self._recompute_failed = 0

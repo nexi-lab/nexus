@@ -30,6 +30,7 @@ EXCEPTIONS = [
     "src/nexus/bricks/search/search_service.py",  # 2,215 lines - moved from services/search/ + semantic mixin inlined
     "src/nexus/remote/client.py",  # 5,000 lines - Phase 4 splitting
     "src/nexus/remote/async_client.py",  # 2,500 lines - Phase 4 splitting
+    "src/nexus/bricks/rebac/cache/tiger/bitmap_cache.py",  # 2,103 lines - Issue #3192 BloomFilter + batch_get additions
     "src/nexus/storage/models/__init__.py",  # 3,400 lines - Phase 4 splitting (partially done)
     "src/nexus/server/fastapi_server.py",  # 2,133 lines - Phase 4 splitting
     "src/nexus/services/memory/memory_api.py",  # 3,012 lines - moved from core/, split tracked

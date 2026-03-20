@@ -60,7 +60,7 @@ class MetastoreMountStore:
 
         key = f"{_MNT_PREFIX}{mount_point}"
         existing = self._metastore.get(key)
-        if existing is not None and existing.backend_name == _MNT_BACKEND:
+        if existing is not None and existing.backend_name.startswith(_MNT_BACKEND):
             raise ValueError(f"Mount already exists at {mount_point}")
 
         now = datetime.now(UTC).isoformat()
@@ -100,7 +100,7 @@ class MetastoreMountStore:
         """Update an existing mount configuration. Returns False if not found."""
         key = f"{_MNT_PREFIX}{mount_point}"
         existing = self._metastore.get(key)
-        if existing is None or existing.backend_name != _MNT_BACKEND:
+        if existing is None or not existing.backend_name.startswith(_MNT_BACKEND):
             return False
 
         try:
@@ -130,7 +130,7 @@ class MetastoreMountStore:
     def get(self, mount_point: str) -> dict[str, Any] | None:
         """Get a mount configuration by mount_point."""
         fm = self._metastore.get(f"{_MNT_PREFIX}{mount_point}")
-        if fm is None or fm.backend_name != _MNT_BACKEND:
+        if fm is None or not fm.backend_name.startswith(_MNT_BACKEND):
             return None
         try:
             data: dict[str, Any] = json.loads(fm.physical_path)
@@ -147,7 +147,7 @@ class MetastoreMountStore:
         entries = self._metastore.list(_MNT_PREFIX)
         results: list[dict[str, Any]] = []
         for fm in entries:
-            if fm.backend_name != _MNT_BACKEND:
+            if not fm.backend_name.startswith(_MNT_BACKEND):
                 continue
             try:
                 data: dict[str, Any] = json.loads(fm.physical_path)
@@ -165,7 +165,7 @@ class MetastoreMountStore:
         """Remove a mount configuration. Returns False if not found."""
         key = f"{_MNT_PREFIX}{mount_point}"
         existing = self._metastore.get(key)
-        if existing is None or existing.backend_name != _MNT_BACKEND:
+        if existing is None or not existing.backend_name.startswith(_MNT_BACKEND):
             return False
         self._metastore.delete(key)
         return True

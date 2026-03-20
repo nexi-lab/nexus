@@ -19,6 +19,7 @@ from nexus.contracts.rebac_types import CROSS_ZONE_ALLOWED_RELATIONS
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.leopard_facade import LeopardFacade
+    from nexus.bricks.rebac.cache.shared_ring_buffer import SharedRingBuffer
     from nexus.bricks.rebac.domain import Entity
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,15 @@ class ZoneGraphLoader:
         self._cache_ttl = cache_ttl
         self._cache_lock = threading.RLock()
 
+        # SharedRingBuffer for cross-process zone tuple broadcasting (Issue #3192)
+        # When set, zone tuple updates are published to the ring buffer so other
+        # processes can read from mmap instead of querying the database.
+        self._ring_buffer: "SharedRingBuffer | None" = None
+
+    def set_ring_buffer(self, ring_buffer: "SharedRingBuffer") -> None:
+        """Set the SharedRingBuffer for cross-process tuple broadcasting."""
+        self._ring_buffer = ring_buffer
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -88,6 +98,18 @@ class ZoneGraphLoader:
                 logger.debug("[GRAPH-CACHE] Cache MISS for zone %s, fetching from DB", zone_id)
             tuples = self._fetch_from_db(zone_id)
             self._put(zone_id, tuples)
+
+            # Publish to ring buffer for cross-process sharing (Issue #3192)
+            if self._ring_buffer:
+                try:
+                    import json
+
+                    self._ring_buffer.write(
+                        json.dumps({"zone_id": zone_id, "count": len(tuples)}).encode()
+                    )
+                except Exception:
+                    logger.debug("[GRAPH-CACHE] Ring buffer write failed for zone %s", zone_id)
+
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("[GRAPH-CACHE] Cached %d tuples for zone %s", len(tuples), zone_id)
 

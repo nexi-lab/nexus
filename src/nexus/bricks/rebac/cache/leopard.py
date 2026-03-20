@@ -23,6 +23,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+try:
+    from cachebox import TTLCache as RustTTLCache
+except ImportError:
+    RustTTLCache = None  # noqa: N816 — optional Rust dependency
+
+try:
+    from fastbloom_rs import BloomFilter
+except ImportError:
+    BloomFilter = None  # noqa: N816 — optional Rust dependency
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
@@ -69,18 +79,40 @@ class LeopardCache:
         self._ttl_seconds = ttl_seconds
         self._lock = threading.RLock()
 
+        # Issue #3192 decision 16C: Use Rust-backed TTLCache for high-contention
+        # member lookups when available. Falls back to manual dict + TTL checking.
+        self._use_rust_cache = RustTTLCache is not None
+
         # member (type, id, zone) -> set of (group_type, group_id)
-        self._member_to_groups: dict[tuple[str, str, str], set[tuple[str, str]]] = {}
+        # cachebox.TTLCache is API-compatible with dict for get/set/pop/clear.
+        self._member_to_groups: dict[tuple[str, str, str], set[tuple[str, str]]]
+        if self._use_rust_cache:
+            self._member_to_groups = RustTTLCache(maxsize=max_size, ttl=ttl_seconds)
+        else:
+            self._member_to_groups = {}
 
         # group (type, id, zone) -> set of (member_type, member_id)
-        # Used for invalidation when group membership changes
+        # Used for invalidation when group membership changes.
+        # Kept as a plain dict — low contention, invalidation-only path.
         self._group_to_members: dict[tuple[str, str, str], set[tuple[str, str]]] = {}
 
-        # LRU tracking
-        self._access_times: dict[tuple[str, str, str], float] = {}
+        # LRU / TTL tracking — only needed when NOT using cachebox
+        # (cachebox handles TTL + maxsize eviction internally).
+        if not self._use_rust_cache:
+            self._access_times: dict[tuple[str, str, str], float] = {}
+            self._insert_times: dict[tuple[str, str, str], float] = {}
 
-        # TTL tracking — insertion time for staleness eviction
-        self._insert_times: dict[tuple[str, str, str], float] = {}
+        # BloomFilter pre-gate for fast negative membership checks (Issue #3192)
+        self._bloom: BloomFilter | None = None
+        self._bloom_capacity = max_size
+        self._bloom_fpp = 0.01
+        self._bloom_rejects = 0
+        self._bloom_passes = 0
+        if BloomFilter is not None:
+            self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fpp)
+
+        # Recursion guard for eviction (see Issue #3192, decision 8C)
+        self._evicting: bool = False
 
     def get_transitive_groups(
         self, member_type: str, member_id: str, zone_id: str
@@ -97,6 +129,22 @@ class LeopardCache:
         """
         key = (member_type, member_id, zone_id)
         with self._lock:
+            # BloomFilter pre-gate: fast rejection for unknown members
+            if self._bloom is not None:
+                key_str = f"{member_type}:{member_id}:{zone_id}"
+                if key_str not in self._bloom:
+                    self._bloom_rejects += 1
+                    return None
+                self._bloom_passes += 1
+
+            if self._use_rust_cache:
+                # cachebox TTLCache handles TTL expiry and LRU eviction internally
+                result = self._member_to_groups.get(key)
+                if result is not None:
+                    return result.copy()
+                return None
+
+            # Fallback: manual dict with TTL checking
             if key in self._member_to_groups:
                 # TTL eviction: discard entries older than ttl_seconds
                 insert_time = self._insert_times.get(key, 0.0)
@@ -126,16 +174,28 @@ class LeopardCache:
         """
         key = (member_type, member_id, zone_id)
         with self._lock:
-            # Evict if at capacity
-            if len(self._member_to_groups) >= self._max_size and key not in self._member_to_groups:
-                self._evict_lru()
-
             # Update member -> groups mapping
-            old_groups = self._member_to_groups.get(key, set())
-            self._member_to_groups[key] = groups.copy()
-            now = time.time()
-            self._access_times[key] = now
-            self._insert_times[key] = now
+            old_groups = self._member_to_groups.get(key, set()) or set()
+
+            if self._use_rust_cache:
+                # cachebox handles maxsize eviction + TTL internally
+                self._member_to_groups[key] = groups.copy()
+            else:
+                # Fallback: manual eviction
+                if (
+                    len(self._member_to_groups) >= self._max_size
+                    and key not in self._member_to_groups
+                ):
+                    self._evict_lru()
+                self._member_to_groups[key] = groups.copy()
+                now = time.time()
+                self._access_times[key] = now
+                self._insert_times[key] = now
+
+            # Update bloom filter
+            if self._bloom is not None:
+                key_str = f"{member_type}:{member_id}:{zone_id}"
+                self._bloom.add(key_str)
 
             # Update reverse mapping (group -> members)
             for group_type, group_id in old_groups - groups:
@@ -161,8 +221,9 @@ class LeopardCache:
         with self._lock:
             if key in self._member_to_groups:
                 groups = self._member_to_groups.pop(key)
-                self._access_times.pop(key, None)
-                self._insert_times.pop(key, None)
+                if not self._use_rust_cache:
+                    self._access_times.pop(key, None)
+                    self._insert_times.pop(key, None)
 
                 # Clean up reverse mapping
                 for group_type, group_id in groups:
@@ -186,8 +247,9 @@ class LeopardCache:
             for member_type, member_id in members:
                 member_key = (member_type, member_id, zone_id)
                 self._member_to_groups.pop(member_key, None)
-                self._access_times.pop(member_key, None)
-                self._insert_times.pop(member_key, None)
+                if not self._use_rust_cache:
+                    self._access_times.pop(member_key, None)
+                    self._insert_times.pop(member_key, None)
 
     def invalidate_zone(self, zone_id: str) -> None:
         """Invalidate all cache entries for a zone.
@@ -199,8 +261,9 @@ class LeopardCache:
             keys_to_remove = [k for k in self._member_to_groups if k[2] == zone_id]
             for key in keys_to_remove:
                 self._member_to_groups.pop(key, None)
-                self._access_times.pop(key, None)
-                self._insert_times.pop(key, None)
+                if not self._use_rust_cache:
+                    self._access_times.pop(key, None)
+                    self._insert_times.pop(key, None)
 
             group_keys_to_remove = [k for k in self._group_to_members if k[2] == zone_id]
             for key in group_keys_to_remove:
@@ -211,20 +274,40 @@ class LeopardCache:
         with self._lock:
             self._member_to_groups.clear()
             self._group_to_members.clear()
-            self._access_times.clear()
-            self._insert_times.clear()
+            if not self._use_rust_cache:
+                self._access_times.clear()
+                self._insert_times.clear()
+            if self._bloom is not None and BloomFilter is not None:
+                self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fpp)
 
     def _evict_lru(self) -> None:
-        """Evict least recently used entries (must hold lock)."""
-        if not self._access_times:
+        """Evict least recently used entries (must hold lock).
+
+        No-op when using cachebox (eviction is handled internally).
+        """
+        if self._use_rust_cache:
+            return
+        if self._evicting or not self._access_times:
             return
 
-        # Find 10% oldest entries to evict
-        num_to_evict = max(1, len(self._access_times) // 10)
-        sorted_keys = sorted(self._access_times.items(), key=lambda x: x[1])
+        self._evicting = True
+        try:
+            num_to_evict = max(1, len(self._access_times) // 10)
+            sorted_keys = sorted(self._access_times.items(), key=lambda x: x[1])
 
-        for key, _ in sorted_keys[:num_to_evict]:
-            self.invalidate_member(key[0], key[1], key[2])
+            for key, _ in sorted_keys[:num_to_evict]:
+                # Inline the invalidation instead of calling invalidate_member()
+                # to avoid re-acquiring the lock and potential recursion
+                if key in self._member_to_groups:
+                    groups = self._member_to_groups.pop(key)
+                    self._access_times.pop(key, None)
+                    self._insert_times.pop(key, None)
+                    for group_type, group_id in groups:
+                        group_key = (group_type, group_id, key[2])
+                        if group_key in self._group_to_members:
+                            self._group_to_members[group_key].discard((key[0], key[1]))
+        finally:
+            self._evicting = False
 
     @property
     def size(self) -> int:

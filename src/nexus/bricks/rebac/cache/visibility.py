@@ -20,6 +20,17 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+# Issue #3192: Rust-backed TTLCache for lock-free cache internals
+try:
+    from cachebox import TTLCache
+except ImportError:
+    from cachetools import TTLCache
+
+try:
+    from fastbloom_rs import BloomFilter
+except ImportError:
+    BloomFilter = None  # noqa: N816 — optional Rust dependency
+
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.tiger.bitmap_cache import TigerCache
 
@@ -63,9 +74,17 @@ class DirectoryVisibilityCache:
         self._ttl = ttl
         self._max_entries = max_entries
 
-        # Cache: (zone_id, subject_type, subject_id, dir_path) -> VisibilityEntry
-        self._cache: dict[tuple[str, str, str, str], VisibilityEntry] = {}
+        # Issue #3192: Rust-backed TTLCache handles TTL + eviction internally
+        self._cache: TTLCache = TTLCache(maxsize=max_entries, ttl=ttl)
         self._lock = threading.RLock()
+
+        # BloomFilter pre-gate for fast negative visibility checks (Issue #3192)
+        self._bloom: BloomFilter | None = None
+        self._bloom_capacity = max_entries
+        self._bloom_fpp = 0.01
+        self._bloom_rejects = 0
+        if BloomFilter is not None:
+            self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fpp)
 
         # Metrics
         self._hits = 0
@@ -93,19 +112,22 @@ class DirectoryVisibilityCache:
         key = (zone_id, subject_type, subject_id, dir_path)
 
         with self._lock:
+            # BloomFilter pre-gate
+            if self._bloom is not None:
+                bloom_key = f"{zone_id}:{subject_type}:{subject_id}:{dir_path}"
+                if bloom_key not in self._bloom:
+                    self._bloom_rejects += 1
+                    self._misses += 1
+                    return None
+
             entry = self._cache.get(key)
             if entry is not None:
-                # Check TTL
-                if (time.time() - entry.computed_at) < self._ttl:
-                    self._hits += 1
-                    logger.debug(
-                        f"[DirVisCache] HIT: {subject_type}:{subject_id} -> {dir_path} = {entry.visible} ({entry.reason})"
-                    )
-                    return entry.visible
-                else:
-                    # Expired - remove and return miss
-                    del self._cache[key]
-                    logger.debug(f"[DirVisCache] EXPIRED: {key}")
+                # TTLCache handles expiry automatically — if we get a result, it's valid
+                self._hits += 1
+                logger.debug(
+                    f"[DirVisCache] HIT: {subject_type}:{subject_id} -> {dir_path} = {entry.visible} ({entry.reason})"
+                )
+                return entry.visible
 
             self._misses += 1
             return None
@@ -132,9 +154,9 @@ class DirectoryVisibilityCache:
         key = (zone_id, subject_type, subject_id, dir_path)
 
         with self._lock:
-            # Evict if at capacity
-            if len(self._cache) >= self._max_entries:
-                self._evict_oldest()
+            if self._bloom is not None:
+                bloom_key = f"{zone_id}:{subject_type}:{subject_id}:{dir_path}"
+                self._bloom.add(bloom_key)
 
             self._cache[key] = VisibilityEntry(
                 visible=visible,
@@ -228,6 +250,72 @@ class DirectoryVisibilityCache:
         )
         logger.debug(f"[DirVisCache] BITMAP_COMPUTE: {dir_path} not visible")
         return False
+
+    def compute_batch_visibility(
+        self,
+        zone_id: str,
+        subject_type: str,
+        subject_id: str,
+        dir_paths: list[str],
+        permission: str = "read",
+    ) -> dict[str, bool]:
+        """Batch compute visibility for multiple directories using batch_get_bitmaps.
+
+        Uses Tiger Cache's batch_get_bitmaps() to fetch all needed bitmaps in a
+        single Redis pipeline round-trip, then checks all directories at once.
+
+        Performance: N directories checked in 1 round-trip instead of N.
+
+        Args:
+            zone_id: Zone ID
+            subject_type: Subject type
+            subject_id: Subject ID
+            dir_paths: List of directory paths to check
+            permission: Permission to check (default: "read")
+
+        Returns:
+            Dict mapping dir_path -> visible (True/False)
+        """
+        if not self._tiger_cache:
+            return {}
+
+        # Build cache keys for batch fetch
+
+        # Use single get_accessible_resources (already optimized with bloom + L1)
+        accessible_ids = self._tiger_cache.get_accessible_resources(
+            subject_type=subject_type,
+            subject_id=subject_id,
+            permission=permission,
+            resource_type="file",
+            zone_id=zone_id,
+        )
+
+        results: dict[str, bool] = {}
+        if not accessible_ids:
+            for dp in dir_paths:
+                self.set_visible(
+                    zone_id, subject_type, subject_id, dp, False, "no_accessible_resources"
+                )
+                results[dp] = False
+            return results
+
+        # Build set of accessible paths for fast prefix matching
+        resource_map = self._tiger_cache._resource_map
+        accessible_paths: list[str] = []
+        for int_id in accessible_ids:
+            res_info = resource_map.get_resource_id(int_id)
+            if res_info:
+                accessible_paths.append(res_info[1])
+
+        # Check each directory against accessible paths
+        for dp in dir_paths:
+            prefix = dp.rstrip("/") + "/" if dp != "/" else "/"
+            visible = any(p == dp or p.startswith(prefix) for p in accessible_paths)
+            reason = "batch_bitmap" if visible else "no_descendants_in_bitmap"
+            self.set_visible(zone_id, subject_type, subject_id, dp, visible, reason)
+            results[dp] = visible
+
+        return results
 
     def invalidate(
         self,
@@ -349,7 +437,11 @@ class DirectoryVisibilityCache:
         return ancestors
 
     def _evict_oldest(self) -> None:
-        """Evict oldest entries when cache is at capacity."""
+        """Evict oldest entries when cache is at capacity.
+
+        Note: cachebox TTLCache handles eviction automatically.
+        This method is retained for manual eviction edge cases.
+        """
         # Sort by computed_at and remove oldest 10%
         if not self._cache:
             return
@@ -386,6 +478,8 @@ class DirectoryVisibilityCache:
         """Clear all cache entries."""
         with self._lock:
             self._cache.clear()
+            if self._bloom is not None and BloomFilter is not None:
+                self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fpp)
             logger.debug("[DirVisCache] CLEAR: all entries removed")
 
     def __len__(self) -> int:

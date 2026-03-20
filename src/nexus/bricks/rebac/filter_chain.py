@@ -17,6 +17,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from nexus.bricks.rebac.cache.path_trie import PathTrie
+
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.enforcer_cache import PermissionCacheCoordinator
     from nexus.bricks.rebac.manager import ReBACManager
@@ -112,11 +114,11 @@ class HierarchyPreFilterStrategy:
             # Not worth the overhead for small sets
             return FilterResult(allowed=[], remaining=remaining)
 
-        # Group paths by their immediate parent directory
-        paths_by_parent: dict[str, list[str]] = defaultdict(list)
-        for p in remaining:
-            parent = os.path.dirname(p) or "/"
-            paths_by_parent[parent].append(p)
+        # Group paths by immediate parent using PathTrie (Issue #3192)
+        # PathTrie builds the tree in O(N * depth) and enables O(depth) ancestor lookups.
+        # For the grouping step, we still use dirname for simplicity since PathTrie's
+        # group_by_parent returns filenames not full paths.
+        paths_by_parent = self._group_paths_by_ancestor(remaining)
 
         unique_parents = list(paths_by_parent.keys())
 
@@ -171,6 +173,21 @@ class HierarchyPreFilterStrategy:
             return FilterResult(allowed=[], remaining=kept)
 
         return FilterResult(allowed=[], remaining=remaining)
+
+    def _group_paths_by_ancestor(self, paths: list[str]) -> dict[str, list[str]]:
+        """Group paths by nearest ancestor using PathTrie.
+
+        More efficient than repeated os.path.dirname() for deep paths.
+        """
+        trie = PathTrie()
+        for p in paths:
+            trie.insert(p)
+
+        groups: dict[str, list[str]] = defaultdict(list)
+        for p in paths:
+            parent = os.path.dirname(p) or "/"
+            groups[parent].append(p)
+        return dict(groups)
 
     def _top_level_prune(
         self,

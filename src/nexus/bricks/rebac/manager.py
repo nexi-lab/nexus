@@ -1893,6 +1893,7 @@ class ReBACManager:
             namespace = self.get_namespace(obj_type)
             if namespace:
                 configs[obj_type] = namespace.config
+
         return configs
 
     def _compute_permission_zone_aware_with_limits(

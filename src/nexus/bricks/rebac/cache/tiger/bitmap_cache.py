@@ -26,6 +26,12 @@ from sqlalchemy import delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
+
+try:
+    from fastbloom_rs import BloomFilter
+except ImportError:
+    BloomFilter = None  # noqa: N816 — optional Rust dependency
+
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models.permissions import TigerCacheModel as TC
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TDG
@@ -124,6 +130,14 @@ class TigerCache:
         self._cache_max_size = 100_000  # Increased from 10k per Issue #979
         self._lock = threading.RLock()
 
+        # BloomFilter pre-gate for L2 Dragonfly lookups (Issue #3192)
+        # Rejects definite negatives before network round-trip to Dragonfly
+        self._l2_bloom = None  # BloomFilter | None
+        self._l2_bloom_capacity = 100_000
+        self._l2_bloom_fpp = 0.01  # 1% false positive rate
+        self._bloom_rejects = 0
+        self._bloom_passes = 0
+
         # Stats counters for observability
         self._stats_hits = 0
         self._stats_misses = 0
@@ -168,6 +182,34 @@ class TigerCache:
                 self._l2_executor.shutdown(wait=False)
                 self._l2_executor = None
             logger.info("[TIGER] Dragonfly L2 cache disabled")
+
+    def _rebuild_l2_bloom(self) -> None:
+        """Rebuild BloomFilter from current L1 cache keys.
+
+        Called after bulk L2 operations to keep bloom in sync.
+        """
+        if BloomFilter is None:
+            return  # fastbloom_rs not installed
+        bloom = BloomFilter(self._l2_bloom_capacity, self._l2_bloom_fpp)
+        with self._lock:
+            for key in self._cache:
+                bloom.add(str(key))
+        self._l2_bloom = bloom
+
+    def _bloom_might_contain(self, key: CacheKey) -> bool:
+        """Check BloomFilter for possible L2 presence.
+
+        Returns True if key MIGHT be in L2 (possible false positive).
+        Returns True if bloom filter not initialized (fail-open).
+        """
+        if self._l2_bloom is None:
+            return True  # fail-open: no bloom = always check L2
+        result = str(key) in self._l2_bloom
+        if result:
+            self._bloom_passes += 1
+        else:
+            self._bloom_rejects += 1
+        return result
 
     def _run_dragonfly_op(
         self,
@@ -239,6 +281,10 @@ class TigerCache:
                     pipe.hset(key, mapping={"data": bitmap_data, "revision": str(revision)})
                     pipe.expire(key, ttl)
                     pipe.execute()
+                    # Update bloom filter (Issue #3192)
+                    if self._l2_bloom is not None:
+                        key_str = f"tiger:{subject_type}:{subject_id}:{permission}:{resource_type}"
+                        self._l2_bloom.add(key_str)
                     return True
 
                 elif operation == "invalidate":
@@ -613,29 +659,37 @@ class TigerCache:
         """
         # L2: Try Dragonfly first (if available and not skipped)
         if self._dragonfly and not skip_l2:
-            result = self._run_dragonfly_op(
-                operation="get",
-                subject_type=key.subject_type,
-                subject_id=key.subject_id,
-                permission=key.permission,
-                resource_type=key.resource_type,
-            )
-            if result:
-                bitmap_data, revision = result
-                bitmap = RoaringBitmap.deserialize(bitmap_data)
-
-                # Cache in L1 memory
-                with self._lock:
-                    self._evict_if_needed()
-                    self._cache[key] = (bitmap, revision, time.time())
-
+            # BloomFilter pre-gate: skip L2 round-trip for definite negatives (Issue #3192)
+            if not self._bloom_might_contain(key):
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("[TIGER] L2 Dragonfly hit for %s, %d resources", key, len(bitmap))
-                return bitmap
+                    logger.debug("[TIGER] BloomFilter rejected L2 lookup for %s", key)
+                # Fall through to L3 (database)
             else:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("[TIGER] L2 Dragonfly miss for %s", key)
-            # Dragonfly miss or unavailable, fall through to L3
+                result = self._run_dragonfly_op(
+                    operation="get",
+                    subject_type=key.subject_type,
+                    subject_id=key.subject_id,
+                    permission=key.permission,
+                    resource_type=key.resource_type,
+                )
+                if result:
+                    bitmap_data, revision = result
+                    bitmap = RoaringBitmap.deserialize(bitmap_data)
+
+                    # Cache in L1 memory
+                    with self._lock:
+                        self._evict_if_needed()
+                        self._cache[key] = (bitmap, revision, time.time())
+
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(
+                            "[TIGER] L2 Dragonfly hit for %s, %d resources", key, len(bitmap)
+                        )
+                    return bitmap
+                else:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug("[TIGER] L2 Dragonfly miss for %s", key)
+            # Dragonfly miss, bloom rejection, or unavailable — fall through to L3
 
         # L3: Fall back to PostgreSQL
         stmt = select(TC.bitmap_data, TC.revision).where(
@@ -1079,7 +1133,133 @@ class TigerCache:
             "l1_max_size": self._cache_max_size,
             "l1_ttl_seconds": self._cache_ttl,
             "l2_enabled": self._dragonfly is not None,
+            "bloom_passes": self._bloom_passes,
+            "bloom_rejects": self._bloom_rejects,
+            "bloom_initialized": self._l2_bloom is not None,
         }
+
+    def batch_get_bitmaps(
+        self,
+        keys: list[CacheKey],
+        conn: "Connection | None" = None,
+    ) -> dict[CacheKey, set[int]]:
+        """Batch get bitmaps for multiple keys using Redis pipeline.
+
+        Reduces N round-trips to 1 for cold cache scenarios (e.g., readdir).
+
+        Args:
+            keys: List of CacheKey objects to fetch
+            conn: Optional database connection
+
+        Returns:
+            Dict mapping keys to sets of accessible resource integer IDs
+        """
+        results: dict[CacheKey, set[int]] = {}
+        l2_keys: list[CacheKey] = []
+        l3_keys: list[CacheKey] = []
+
+        # 1. Check L1 cache first
+        with self._lock:
+            for key in keys:
+                if key in self._cache:
+                    bitmap, revision, cached_at = self._cache[key]
+                    if time.time() - cached_at < self._cache_ttl:
+                        results[key] = set(bitmap)
+                        self._stats_hits += 1
+                        continue
+                # L1 miss — check bloom filter for L2
+                if self._bloom_might_contain(key):
+                    l2_keys.append(key)
+                else:
+                    l3_keys.append(key)  # Bloom says not in L2, skip to L3
+                    self._stats_misses += 1
+
+        # 2. Batch L2 fetch via Redis pipeline
+        if l2_keys and self._dragonfly and self._dragonfly_url and self._l2_executor:
+            l2_results = self._batch_dragonfly_get(l2_keys)
+            for key, bitmap_data in l2_results.items():
+                if bitmap_data is not None:
+                    data, rev = bitmap_data
+                    bitmap = RoaringBitmap.deserialize(data)
+                    results[key] = set(bitmap)
+                    # Update L1
+                    with self._lock:
+                        self._evict_if_needed()
+                        self._cache[key] = (bitmap, rev, time.time())
+                        self._stats_hits += 1
+                else:
+                    l3_keys.append(key)  # L2 miss, fall to L3
+                    self._stats_misses += 1
+        else:
+            l3_keys.extend(l2_keys)
+
+        # 3. L3 fetch from database (individual queries)
+        for key in l3_keys:
+            bitmap = self._load_from_db(key, conn)
+            if bitmap is not None:
+                results[key] = set(bitmap)
+
+        return results
+
+    def _batch_dragonfly_get(
+        self,
+        keys: list[CacheKey],
+    ) -> dict[CacheKey, tuple[bytes, int] | None]:
+        """Batch fetch from Dragonfly using Redis pipeline.
+
+        Args:
+            keys: Cache keys to fetch
+
+        Returns:
+            Dict mapping keys to (bitmap_data, revision) or None
+        """
+        if not self._dragonfly_url or not self._l2_executor:
+            return {}
+
+        import concurrent.futures
+
+        def run_batch_get() -> dict[CacheKey, tuple[bytes, int] | None]:
+            import redis
+
+            client = redis.from_url(
+                self._dragonfly_url,
+                decode_responses=False,
+                socket_timeout=3.0,
+                socket_connect_timeout=2.0,
+            )
+            try:
+                pipe = client.pipeline()
+                redis_keys = []
+                for key in keys:
+                    redis_key = f"tiger:{key.subject_type}:{key.subject_id}:{key.permission}:{key.resource_type}"
+                    pipe.hgetall(redis_key)
+                    redis_keys.append(key)
+
+                results_list = pipe.execute()
+                result_map: dict[CacheKey, tuple[bytes, int] | None] = {}
+
+                for cache_key, redis_result in zip(redis_keys, results_list, strict=False):
+                    if redis_result and b"data" in redis_result and b"revision" in redis_result:
+                        result_map[cache_key] = (
+                            redis_result[b"data"],
+                            int(redis_result[b"revision"]),
+                        )
+                    else:
+                        result_map[cache_key] = None
+
+                return result_map
+            finally:
+                client.close()
+
+        try:
+            future = self._l2_executor.submit(run_batch_get)
+            return future.result(timeout=5.0)
+        except concurrent.futures.TimeoutError:
+            logger.warning("[TIGER] Batch L2 Dragonfly get timed out")
+            return dict.fromkeys(keys)
+        except Exception as e:
+            logger.warning(f"[TIGER] Batch L2 Dragonfly error: {e}")
+            return dict.fromkeys(keys)
 
     def add_to_bitmap(
         self,

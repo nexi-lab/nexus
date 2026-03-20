@@ -798,23 +798,37 @@ class BulkPermissionChecker:
         tiger_writes = 0
         tiger_updates: dict[tuple[str, str, str, str, str], set[int]] = {}
 
-        for check in cache_misses:
-            subject, permission, obj = check
-            result = get_result(check)
+        # Issue #3192: Batch fetch int IDs first to avoid N individual DB round-trips
+        positive_checks = [
+            (subject, permission, obj)
+            for subject, permission, obj in cache_misses
+            if get_result((subject, permission, obj))
+        ]
+        if not positive_checks:
+            return
 
-            if result:
+        resource_keys = [(obj[0], obj[1]) for _, _, obj in positive_checks]
+        int_id_map = self._tiger_cache._resource_map.get_int_ids_batch(resource_keys)
+
+        # For resources not yet in the map, create them individually (rare path)
+        for key in resource_keys:
+            if key not in int_id_map:
                 try:
-                    resource_int_id = self._tiger_cache._resource_map.get_or_create_int_id(
-                        obj[0], obj[1]
-                    )
-                    if resource_int_id > 0:
-                        group_key = (subject[0], subject[1], permission, obj[0], zone_id)
-                        if group_key not in tiger_updates:
-                            tiger_updates[group_key] = set()
-                        tiger_updates[group_key].add(resource_int_id)
-                        tiger_writes += 1
+                    int_id = self._tiger_cache._resource_map.get_or_create_int_id(key[0], key[1])
+                    if int_id > 0:
+                        int_id_map[key] = int_id
                 except (KeyError, ValueError) as e:
-                    logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
+                    logger.debug(f"[TIGER] Failed to get int_id for {key}: {e}")
+
+        for subject, permission, obj in positive_checks:
+            resource_key = (obj[0], obj[1])
+            resource_int_id = int_id_map.get(resource_key, 0)
+            if resource_int_id > 0:
+                group_key = (subject[0], subject[1], permission, obj[0], zone_id)
+                if group_key not in tiger_updates:
+                    tiger_updates[group_key] = set()
+                tiger_updates[group_key].add(resource_int_id)
+                tiger_writes += 1
 
         # Bulk add to Tiger Cache bitmaps (memory)
         for group_key, int_ids in tiger_updates.items():

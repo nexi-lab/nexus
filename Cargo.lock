@@ -1294,10 +1294,12 @@ dependencies = [
 name = "nexus_raft"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "bincode",
  "bytes",
  "dashmap",
  "mimalloc",
+ "pem",
  "prost",
  "protobuf",
  "pyo3",

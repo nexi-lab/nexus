@@ -326,6 +326,36 @@ async def connect(
         advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
 
+        # K3s-style pre-provision: if NEXUS_JOIN_TOKEN is set and certs
+        # don't exist yet, provision TLS from the leader BEFORE creating
+        # ZoneManager (so Raft transport starts with mTLS from the start).
+        join_token = os.environ.get("NEXUS_JOIN_TOKEN")
+        if join_token:
+            tls_dir_pre = Path(zones_dir) / "tls"
+            if not (tls_dir_pre / "node.pem").exists():
+                # Find a peer address to join from NEXUS_PEERS
+                join_peer = None
+                for entry in (os.environ.get("NEXUS_PEERS", "")).split(","):
+                    entry = entry.strip()
+                    if "@" in entry:
+                        peer_id_str, peer_addr = entry.split("@", 1)
+                        if peer_id_str.strip() != str(node_id):
+                            join_peer = peer_addr.strip()
+                            break
+                if join_peer:
+                    from _nexus_raft import join_cluster as _join_cluster
+
+                    logger.info(
+                        "NEXUS_JOIN_TOKEN set -- provisioning TLS from %s",
+                        join_peer,
+                    )
+                    _join_cluster(join_peer, join_token, node_id, str(tls_dir_pre))
+                    logger.info("TLS provisioning complete")
+                else:
+                    raise RuntimeError(
+                        "NEXUS_JOIN_TOKEN set but no peer found in NEXUS_PEERS to join"
+                    )
+
         zone_mgr = ZoneManager(
             node_id=node_id,
             base_path=zones_dir,
@@ -338,7 +368,7 @@ async def connect(
         peers = [p.strip() for p in peers_str.split(",") if p.strip()] if peers_str else []
 
         # Detect joiner vs first-node:
-        # Joiner = has all cert files (provisioned by 2-phase bootstrap or join flow)
+        # Joiner = has all cert files (pre-provisioned by join_cluster above)
         # but no join-token (not the CA holder / first node)
         tls_dir = Path(zones_dir) / "tls"
         is_joiner = (
@@ -352,8 +382,8 @@ async def connect(
             zone_mgr.join_zone("root", peers=peers if peers else None)
             logger.info("Joiner node: joined root zone (certs provisioned)")
         else:
-            # First node or 2-phase mode (no certs yet — bootstrap creates Raft group,
-            # TLS is handled by zone_manager.bootstrap_tls() during ensure_topology)
+            # First node — auto_generate_tls creates CA + certs,
+            # ZoneManager starts with mTLS from the beginning.
             zone_mgr.bootstrap(peers=peers if peers else None)
 
         # Static Day-1 topology from env vars (idempotent)

@@ -97,20 +97,6 @@ impl ZoneRaftRegistry {
         *self.tls.write().unwrap() = tls;
     }
 
-    /// Upgrade all peer endpoints from http:// to https:// scheme.
-    /// Called after TLS upgrade so outbound connections use TLS.
-    pub fn upgrade_peer_schemes(&self) {
-        for entry in self.zones.iter() {
-            let mut peers = entry.peers.write().unwrap();
-            for addr in peers.values_mut() {
-                if addr.endpoint.starts_with("http://") {
-                    addr.endpoint = addr.endpoint.replacen("http://", "https://", 1);
-                }
-            }
-        }
-        tracing::info!("Upgraded all peer endpoints to https://");
-    }
-
     /// Create a new zone with its own Raft group.
     ///
     /// # Arguments

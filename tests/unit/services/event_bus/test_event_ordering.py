@@ -7,7 +7,9 @@ Verifies that:
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock
+
+import pytest
 
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.system_services.event_log.delivery import EventDeliveryWorker
@@ -139,7 +141,8 @@ class TestDeliveryWorkerOrdering:
         zone_b = [(z, s) for z, s in dispatch_log if z == "zone-b"]
         assert zone_b == [("zone-b", 3), ("zone-b", 4)]
 
-    def test_sequence_number_in_broadcast_data(self):
+    @pytest.mark.asyncio
+    async def test_sequence_number_in_broadcast_data(self):
         """Webhook broadcast includes sequence_number in event data."""
         record = _make_record("op-1", "zone-1", sequence_number=42)
 
@@ -155,11 +158,8 @@ class TestDeliveryWorkerOrdering:
             sub_manager_getter=lambda: mock_sub_manager,
         )
 
-        with patch(
-            "nexus.system_services.event_log.delivery._run_async",
-            side_effect=lambda coro, loop=None: asyncio.run(coro),  # noqa: ARG005
-        ):
-            worker._dispatch_event_internal(worker._build_file_event(record), record)
+        # Issue #3193: _dispatch_event_internal is now async (no _run_async bridge)
+        await worker._dispatch_event_internal(worker._build_file_event(record), record)
 
         assert len(broadcast_calls) == 1
         assert broadcast_calls[0]["sequence_number"] == 42

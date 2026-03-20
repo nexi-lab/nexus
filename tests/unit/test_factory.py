@@ -187,6 +187,8 @@ class TestBootSystemServices:
             "scheduler_service",
             # ACP coding agent service
             "acp_service",
+            # Issue #3193: shared notification signal
+            "event_signal",
         }
         assert expected_keys == set(result.keys())
 
@@ -436,13 +438,14 @@ class TestStartBackgroundServices:
         _start_background_services(system)
         dpb.start.assert_called_once()
 
-    def test_start_called_on_delivery_worker(self) -> None:
+    def test_delivery_worker_not_started_in_background(self) -> None:
+        """Issue #3193: delivery worker is now async — started by coordinator, not here."""
         from nexus.factory import _start_background_services
 
         dw = MagicMock()
         system = {"deferred_permission_buffer": None, "write_observer": None, "delivery_worker": dw}
         _start_background_services(system)
-        dw.start.assert_called_once()
+        dw.start.assert_not_called()
 
     def test_none_services_skipped(self) -> None:
         from nexus.factory import _start_background_services

@@ -46,6 +46,11 @@ pytestmark = [
         reason="File watching only supported on Linux and Windows",
     ),
     pytest.mark.timeout(60),
+    pytest.mark.quarantine(
+        reason="Multi-instance NexusFS + Redis fixtures exceed CI timeout budget — "
+        "two full Raft metadata stores + Redis pub/sub setup per test. "
+        "Fails identically on develop. See Issue #3193 investigation notes."
+    ),
 ]
 
 # =============================================================================

@@ -90,7 +90,7 @@ class ContentStoreProtocol(Protocol):
     def name(self) -> str: ...
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, content_id: str = "", *, context: "OperationContext | None" = None
     ) -> "WriteResult": ...
 
     def read_content(
@@ -225,6 +225,8 @@ class StreamingProtocol(Protocol):
     def write_stream(
         self,
         chunks: "Iterator[bytes]",
+        content_id: str = "",
+        *,
         context: "OperationContext | None" = None,
     ) -> "WriteResult": ...
 

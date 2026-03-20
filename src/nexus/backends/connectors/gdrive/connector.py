@@ -684,7 +684,11 @@ class GoogleDriveConnectorBackend(Backend):
         return parent_id, filename
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
         """
         Write content to Google Drive and return its content hash.
@@ -768,7 +772,7 @@ class GoogleDriveConnectorBackend(Backend):
             file_id = file["id"]
             logger.info(f"Created file '{filename}' in Drive (ID: {file_id})")
 
-        return WriteResult(content_id=content_hash, size=len(content))
+        return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """

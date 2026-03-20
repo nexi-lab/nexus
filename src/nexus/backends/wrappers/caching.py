@@ -182,10 +182,14 @@ class CachingBackendWrapper(DelegatingBackend):
         return content
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write content to inner backend, then handle cache based on strategy."""
-        result = self._inner.write_content(content, context=context)
+        result = self._inner.write_content(content, content_id, context=context)
 
         content_hash = result.content_id
 

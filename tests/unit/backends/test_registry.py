@@ -41,7 +41,7 @@ class DummyBackend(Backend):
     def name(self) -> str:
         return "dummy"
 
-    def write_content(self, content, context=None):
+    def write_content(self, content, content_id: str = "", *, context=None):
         return "hash"
 
     def read_content(self, content_hash, context=None):

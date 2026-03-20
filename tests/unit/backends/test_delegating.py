@@ -106,7 +106,7 @@ class TestDefaultHooks:
         wrapper = DelegatingBackend(leaf)
 
         result = wrapper.write_content(b"hello")
-        leaf.write_content.assert_called_once_with(b"hello", context=None)
+        leaf.write_content.assert_called_once_with(b"hello", "", context=None)
         assert result is expected
 
     def test_passthrough_read_delegates_to_inner(self) -> None:

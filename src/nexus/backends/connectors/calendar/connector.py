@@ -532,7 +532,11 @@ send_notifications: true
     # =========================================================================
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write event content - handles create and update.
 
@@ -583,7 +587,7 @@ send_notifications: true
                 backend="gcalendar",
             )
 
-        return WriteResult(content_id=result, size=len(content))
+        return WriteResult(content_id=result, version=result, size=len(content))
 
     def _create_event(
         self, calendar_id: str, data: dict[str, Any], context: "OperationContext | None"

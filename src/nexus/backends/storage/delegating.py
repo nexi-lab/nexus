@@ -147,14 +147,18 @@ class DelegatingBackend(Backend):
     # === Content Operations (with hook support) ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> "WriteResult":
         """Transform content via ``_transform_on_write``, then write to inner.
 
         If ``_transform_on_write`` raises, the exception propagates.
         """
         transformed = self._transform_on_write(content)
-        return self._inner.write_content(transformed, context=context)
+        return self._inner.write_content(transformed, content_id, context=context)
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """Read from inner, then transform via ``_transform_on_read``."""

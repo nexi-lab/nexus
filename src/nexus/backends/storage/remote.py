@@ -97,11 +97,19 @@ class RemoteBackend(ObjectStoreABC):
 
     # === CAS Content Operations ===
 
-    def write_content(self, content: bytes, context: OperationContext | None = None) -> WriteResult:
+    def write_content(
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: OperationContext | None = None,
+    ) -> WriteResult:
         path = self._to_server_path(context)
         result = self._transport.write_file(path, content)  # Typed RPC — raw bytes
+        etag = result.get("etag", "")
         return WriteResult(
-            content_id=result.get("etag", ""),
+            content_id=etag,
+            version=etag,
             size=result.get("size", len(content)),
         )
 

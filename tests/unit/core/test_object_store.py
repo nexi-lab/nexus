@@ -37,7 +37,7 @@ class MockBackend(Backend):
     def name(self) -> str:
         return "mock"
 
-    def write_content(self, content, context=None) -> WriteResult:
+    def write_content(self, content, content_id: str = "", *, context=None) -> WriteResult:
         self._last_context = context
         h = hashlib.sha256(content).hexdigest()
         if h in self._content:

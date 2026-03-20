@@ -25,7 +25,7 @@ class _BenchBackend(Backend):
     def name(self) -> str:
         return "bench"
 
-    def write_content(self, content, context=None) -> WriteResult:
+    def write_content(self, content, content_id: str = "", *, context=None) -> WriteResult:
         h = hashlib.sha256(content).hexdigest()
         self._store[h] = content
         return WriteResult(content_id=h, size=len(content))

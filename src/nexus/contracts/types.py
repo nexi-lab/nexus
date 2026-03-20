@@ -405,11 +405,17 @@ class WriteResult:
     """Result of a content write operation.
 
     Attributes:
-        content_id: Opaque content identifier returned by the backend.
-            For CAS backends this is a SHA-256 hex digest; for path-based
-            backends it may be a version ID or other addressing token.
+        content_id: Opaque content identifier — the primary key for
+            addressing this content in future read/delete/exists calls.
+            CAS backends: SHA-256 hex digest.
+            PAS backends: blob path (e.g., "prefix/data/file.txt").
+        version: OCC (optimistic concurrency control) token.  Kernel uses
+            this to detect concurrent modifications (not content_id).
+            CAS backends: same as content_id (hash IS the version).
+            PAS backends: cloud version_id or content hash.
         size: Content size in bytes (0 = unknown / not tracked).
     """
 
     content_id: str
+    version: str = ""
     size: int = 0

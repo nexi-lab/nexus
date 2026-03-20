@@ -38,7 +38,9 @@ class TestBackendWriteStreamDefault:
             def user_scoped(self) -> bool:
                 return False
 
-            def write_content(self, content: bytes, context=None) -> ObjectStoreWriteResult:
+            def write_content(
+                self, content: bytes, content_id: str = "", *, context=None
+            ) -> ObjectStoreWriteResult:
                 self.written_content = content
                 return ObjectStoreWriteResult(content_id=hash_content(content), size=len(content))
 

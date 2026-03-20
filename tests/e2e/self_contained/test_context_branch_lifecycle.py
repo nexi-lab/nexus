@@ -46,7 +46,7 @@ class FakeCAS:
     def read_content(self, content_hash, context=None):
         return self.store[content_hash]
 
-    def write_content(self, data, context=None):
+    def write_content(self, data, content_id: str = "", *, context=None):
         h = hashlib.sha256(data).hexdigest()
         self.store[h] = data
         return WriteResult(content_id=h, size=len(data))

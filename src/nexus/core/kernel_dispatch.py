@@ -367,13 +367,16 @@ class KernelDispatch:
         self,
         items: list[tuple],
         *,
+        context: Any = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
     ) -> None:
         """INTERCEPT phase for batch write."""
         if self._registry.count("write_batch") == 0:
             return
-        ctx = WriteBatchHookContext(items=items, zone_id=zone_id, agent_id=agent_id)
+        ctx = WriteBatchHookContext(
+            items=items, context=context, zone_id=zone_id, agent_id=agent_id
+        )
         await self._post_dispatch("write_batch", "on_post_write_batch", ctx)
 
     async def intercept_post_delete(self, ctx: DeleteHookContext) -> None:

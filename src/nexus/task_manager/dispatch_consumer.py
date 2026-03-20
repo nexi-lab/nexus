@@ -77,13 +77,13 @@ class TaskDispatchPipeConsumer:
         self,
         *,
         acp_service: Any | None = None,
-        process_table: Any | None = None,
+        agent_registry: Any | None = None,
         llm_fn: LLMCallable | None = None,
     ) -> None:
         self._pipe_manager: PipeManager | None = None
         self._task_svc: TaskManagerService | None = None
         self._acp_service = acp_service
-        self._process_table = process_table
+        self._agent_registry = agent_registry
         self._llm_fn: LLMCallable = llm_fn or _no_llm  # used by copilot review
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
@@ -105,8 +105,8 @@ class TaskDispatchPipeConsumer:
     def set_acp_service(self, acp_service: Any) -> None:
         self._acp_service = acp_service
 
-    def set_process_table(self, process_table: Any) -> None:
-        self._process_table = process_table
+    def set_agent_registry(self, agent_registry: Any) -> None:
+        self._agent_registry = agent_registry
 
     def set_server_info(self, base_url: str, api_key: str) -> None:
         """Inject server base URL and API key for enriched worker prompts."""

@@ -46,7 +46,7 @@ class AgentRecord:
     """Immutable snapshot of an agent's identity and lifecycle state.
 
     Pure domain object (frozen dataclass). Agent state SSOT is
-    ProcessTable (kernel, in-memory) + ProcResolver (VFS visibility).
+    AgentRegistry (kernel, in-memory) + ProcResolver (VFS visibility).
     The kernel always returns new AgentRecord instances, never mutates
     existing ones.
 

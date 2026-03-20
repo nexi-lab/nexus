@@ -12,7 +12,7 @@ Defines:
     AgentDescriptor  — frozen PCB (Process Control Block)
     ExternalProcessInfo — connection metadata for external agents
 
-Backward-compat aliases (ProcessState, ProcessSignal, etc.) at bottom of file.
+
 
 See: core/process_table.py for the AgentRegistry implementation.
 """
@@ -230,29 +230,3 @@ class AgentDescriptor:
     def from_json(cls, s: str) -> AgentDescriptor:
         """Deserialize from JSON string."""
         return cls.from_dict(json.loads(s))
-
-
-# ---------------------------------------------------------------------------
-# Backward-compat aliases (Issue #1800)
-# ---------------------------------------------------------------------------
-
-ProcessState = AgentState
-"""Deprecated alias — use ``AgentState``."""
-
-VALID_PROCESS_TRANSITIONS = VALID_AGENT_TRANSITIONS
-"""Deprecated alias — use ``VALID_AGENT_TRANSITIONS``."""
-
-ProcessSignal = AgentSignal
-"""Deprecated alias — use ``AgentSignal``."""
-
-ProcessKind = AgentKind
-"""Deprecated alias — use ``AgentKind``."""
-
-ProcessError = AgentError
-"""Deprecated alias — use ``AgentError``."""
-
-ProcessNotFoundError = AgentNotFoundError
-"""Deprecated alias — use ``AgentNotFoundError``."""
-
-ProcessDescriptor = AgentDescriptor
-"""Deprecated alias — use ``AgentDescriptor``."""

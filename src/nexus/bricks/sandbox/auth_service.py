@@ -1,6 +1,6 @@
 """Sandbox authentication service (Issue #1307).
 
-Orchestrates sandbox creation through the ProcessTable, enforcing the
+Orchestrates sandbox creation through the AgentRegistry, enforcing the
 Agent OS design principle: *the sandbox is a platform service that USES
 kernel primitives, not a kernel component*.
 
@@ -10,7 +10,7 @@ Pipeline: validate agent → check ownership → transition to CONNECTED →
 Design decisions:
     - #1A: Thin orchestration layer above SandboxManager
     - #8A: ``agent_id`` is required (non-optional) at this layer
-    - #13A: Sync ProcessTable calls wrapped in ``asyncio.to_thread``
+    - #13A: Sync AgentRegistry calls wrapped in ``asyncio.to_thread``
     - #15A: Budget enforcement gated by feature flag
     - #4A / #16C: Events emitted synchronously from this service
 """
@@ -38,13 +38,13 @@ class SandboxAuthResult:
 
 
 class SandboxAuthService:
-    """Orchestrates sandbox creation through ProcessTable.
+    """Orchestrates sandbox creation through AgentRegistry.
 
-    This is a platform service that uses kernel primitives (ProcessTable,
+    This is a platform service that uses kernel primitives (AgentRegistry,
     NamespaceManager). The sandbox doesn't bypass the kernel for auth.
 
     Args:
-        process_table: Process lifecycle table (required).
+        agent_registry: Process lifecycle table (required).
         sandbox_manager: Infrastructure-layer sandbox lifecycle manager (required).
         namespace_manager: Per-subject namespace visibility (optional).
         nexus_pay: Budget enforcement SDK (optional).
@@ -55,14 +55,14 @@ class SandboxAuthService:
 
     def __init__(
         self,
-        process_table: Any,  # ProcessTable injected via DI
+        agent_registry: Any,  # AgentRegistry injected via DI
         sandbox_manager: "SandboxManager",
         namespace_manager: Any = None,
         nexus_pay: Any = None,
         event_log: "AgentEventLogProtocol | None" = None,
         budget_enforcement: bool = False,
     ) -> None:
-        self._process_table = process_table
+        self._agent_registry = agent_registry
         self._sandbox_manager = sandbox_manager
         self._namespace_manager = namespace_manager
         self._nexus_pay = nexus_pay
@@ -112,7 +112,7 @@ class SandboxAuthService:
         template_id: str | None = None,
         sandbox_cost: float = 1.0,
     ) -> SandboxAuthResult:
-        """Create a sandbox through the ProcessTable authentication pipeline.
+        """Create a sandbox through the AgentRegistry authentication pipeline.
 
         Pipeline:
             1. Validate agent exists in process table
@@ -142,7 +142,7 @@ class SandboxAuthService:
             InvalidTransitionError: If agent cannot transition to CONNECTED.
         """
         # Step 1: Validate agent exists
-        agent_record = await asyncio.to_thread(self._process_table.get, agent_id)
+        agent_record = await asyncio.to_thread(self._agent_registry.get, agent_id)
         if agent_record is None:
             raise ValueError(f"Agent '{agent_id}' not found in process table")
 
@@ -154,10 +154,10 @@ class SandboxAuthService:
             )
 
         # Step 3: Signal agent SIGCONT (transition to CONNECTED)
-        from nexus.contracts.process_types import ProcessSignal
+        from nexus.contracts.process_types import AgentSignal
 
         connected_record = await asyncio.to_thread(
-            self._process_table.signal, agent_id, ProcessSignal.SIGCONT
+            self._agent_registry.signal, agent_id, AgentSignal.SIGCONT
         )
 
         # Step 4: Construct namespace (best-effort — failure doesn't block sandbox)
@@ -238,9 +238,9 @@ class SandboxAuthService:
 
         # Signal agent SIGSTOP (transition to IDLE — best-effort)
         try:
-            from nexus.contracts.process_types import ProcessSignal
+            from nexus.contracts.process_types import AgentSignal
 
-            await asyncio.to_thread(self._process_table.signal, agent_id, ProcessSignal.SIGSTOP)
+            await asyncio.to_thread(self._agent_registry.signal, agent_id, AgentSignal.SIGSTOP)
         except Exception:
             logger.warning(
                 "[SANDBOX-AUTH] Failed to transition agent %s to IDLE after stop",

@@ -1,4 +1,4 @@
-"""Service startup/shutdown: ProcessTable, KeyService, Sandbox, Scheduler, TaskQueue.
+"""Service startup/shutdown: AgentRegistry, KeyService, Sandbox, Scheduler, TaskQueue.
 
 Extracted from fastapi_server.py (#1602).
 """
@@ -21,7 +21,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     """Initialize application services and return background tasks.
 
     Covers:
-    - ProcessTable (Issue #1240)
+    - AgentRegistry (Issue #1240)
     - KeyService (Issue #1355)
     - SandboxAuthService (Issue #1307)
     - SchedulerService (Issue #1212)
@@ -39,7 +39,7 @@ async def startup_services(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_transactional_snapshot(app, svc)
     _startup_access_manifest(app, svc)
 
-    # Agent background tasks depend on process_table
+    # Agent background tasks depend on agent_registry
     agent_tasks = _startup_agent_tasks(app, svc)
     bg_tasks.extend(agent_tasks)
 
@@ -130,18 +130,18 @@ async def shutdown_services(app: "FastAPI", svc: "LifespanServices") -> None:
 
 
 def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Wire ProcessTable for agent lifecycle tracking."""
-    process_table = svc.process_table
-    if process_table is None:
-        app.state.process_table = None
+    """Wire AgentRegistry for agent lifecycle tracking."""
+    agent_registry = svc.agent_registry
+    if agent_registry is None:
+        app.state.agent_registry = None
         return
 
-    app.state.process_table = process_table
+    app.state.agent_registry = agent_registry
 
     # Wire into sync PermissionEnforcer
     perm_enforcer = svc.permission_enforcer
     if perm_enforcer is not None:
-        perm_enforcer.process_table = process_table
+        perm_enforcer.agent_registry = agent_registry
 
     # Issue #2172: Create AgentWarmupService with step registry
     try:
@@ -149,7 +149,7 @@ def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
         from nexus.system_services.agents.warmup_steps import register_standard_steps
 
         app.state.agent_warmup_service = AgentWarmupService(
-            process_table=process_table,
+            agent_registry=agent_registry,
             namespace_manager=svc.namespace_manager,
             enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
             cache_store=getattr(app.state, "cache_brick", None),
@@ -161,7 +161,7 @@ def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.warning("[WARMUP] Failed to initialize AgentWarmupService: %s", e, exc_info=True)
         app.state.agent_warmup_service = None
 
-    logger.info("[PROCESS-TABLE] ProcessTable wired for agent lifecycle")
+    logger.info("[PROCESS-TABLE] AgentRegistry wired for agent lifecycle")
 
 
 def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
@@ -286,8 +286,8 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
         deleg = app.state.delegation_service
         if getattr(deleg, "_namespace_manager", None) is None:
             deleg._namespace_manager = svc.namespace_manager
-        if getattr(deleg, "_process_table", None) is None:
-            deleg._process_table = app.state.process_table
+        if getattr(deleg, "_agent_registry", None) is None:
+            deleg._agent_registry = app.state.agent_registry
         logger.info("[DELEGATION] DelegationService wired from brick_dict")
 
 
@@ -321,11 +321,11 @@ def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
 
 def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
-    if svc.nexus_fs and not app.state.process_table:
+    if svc.nexus_fs and not app.state.agent_registry:
         logger.info(
-            "[SANDBOX-AUTH] ProcessTable not available, SandboxAuthService will not be initialized"
+            "[SANDBOX-AUTH] AgentRegistry not available, SandboxAuthService will not be initialized"
         )
-    if not (svc.nexus_fs and app.state.process_table):
+    if not (svc.nexus_fs and app.state.agent_registry):
         return
 
     try:
@@ -388,7 +388,7 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
                 )
 
         app.state.sandbox_auth_service = SandboxAuthService(
-            process_table=app.state.process_table,
+            agent_registry=app.state.agent_registry,
             sandbox_manager=sandbox_mgr,
             namespace_manager=namespace_manager,
             event_log=app.state.agent_event_log,
@@ -444,8 +444,8 @@ def _startup_access_manifest(app: "FastAPI", svc: "LifespanServices") -> None:
 
 def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start agent eviction background task."""
-    # ProcessTable handles heartbeats directly (no buffer), so no flush task needed.
-    # Stale detection handled by ProcessTable's external_info.last_heartbeat field.
+    # AgentRegistry handles heartbeats directly (no buffer), so no flush task needed.
+    # Stale detection handled by AgentRegistry's external_info.last_heartbeat field.
     # Checkpoint cleanup handled by VFS when process is reaped.
     app.state._heartbeat_task = None
     app.state._stale_detection_task = None
@@ -471,7 +471,7 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             logger.info("[EVICTION] Background eviction task started")
         except Exception:
             logger.warning("[EVICTION] Failed to start eviction tasks", exc_info=True)
-    elif _eviction_tuning is not None and app.state.process_table is not None:
+    elif _eviction_tuning is not None and app.state.agent_registry is not None:
         # Fallback: construct EvictionManager here if factory didn't create one
         try:
             from nexus.server.background_tasks import agent_eviction_task
@@ -482,7 +482,7 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
             eviction_policy = LRUEvictionPolicy()
             app.state.eviction_manager = EvictionManager(
-                process_table=app.state.process_table,
+                agent_registry=app.state.agent_registry,
                 monitor=resource_monitor,
                 policy=eviction_policy,
                 tuning=_eviction_tuning,
@@ -593,21 +593,25 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
 
 
 async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Bind NexusFS and start DT_PIPE consumers (Issue #809, #810, #1772).
+    """Inject PipeManager and start DT_PIPE consumers (Issue #809, #810).
 
-    Consumers use sys_read/sys_write via NexusFS instead of PipeManager directly.
-    The deferred-injection pattern remains: created in factory, NexusFS bound here,
-    start() creates pipe via sys_setattr and spawns background consumer.
+    Two consumers are started here:
+    1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
+    2. ZoektPipeConsumer — async Zoekt index notifications via kernel IPC
+
+    Both follow the deferred-injection pattern: created in factory without
+    PipeManager, then PipeManager is injected here and start() spawns the
+    background consumer task.
     """
-    nx = svc.nexus_fs
-    if nx is None:
+    pipe_manager = svc.pipe_manager
+    if pipe_manager is None:
         return
 
     # Issue #809: PipedRecordStoreWriteObserver
     wo = svc.write_observer
-    if wo is not None and hasattr(wo, "bind_fs"):
+    if wo is not None and hasattr(wo, "set_pipe_manager"):
         try:
-            wo.bind_fs(nx)
+            wo.set_pipe_manager(pipe_manager)
             await wo.start()
             app.state.write_observer = wo
             logger.info("[PIPE] PipedRecordStoreWriteObserver started")
@@ -618,9 +622,9 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
 
     # Issue #810: ZoektPipeConsumer
     zpc = svc.zoekt_pipe_consumer
-    if zpc is not None and hasattr(zpc, "bind_fs"):
+    if zpc is not None and hasattr(zpc, "set_pipe_manager"):
         try:
-            zpc.bind_fs(nx)
+            zpc.set_pipe_manager(pipe_manager)
             await zpc.start()
             app.state.zoekt_pipe_consumer = zpc
             logger.info("[PIPE] ZoektPipeConsumer started")
@@ -630,34 +634,36 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
     # Fallback: create consumer if not provided by factory (e.g. no record_store)
-    if tdc is None and nx is not None:
-        try:
-            from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
+    if tdc is None:
+        nx = svc.nexus_fs
+        if nx is not None:
+            try:
+                from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
 
-            _task_svc = getattr(nx, "_task_manager_service", None)
-            # AcpService lives on AcpRPCService (created in _boot_wired_services)
-            _acp_svc = None
-            _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
-            if _acp_rpc_ref is not None:
-                _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
-                _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
-            _proc_tbl = app.state.process_table
-            if _task_svc is not None:
-                tdc = TaskDispatchPipeConsumer(
-                    acp_service=_acp_svc,
-                    process_table=_proc_tbl,
-                )
-                tdc.set_task_service(_task_svc)
-                # Wire into existing TaskWriteHook
-                _twh = getattr(nx, "_task_write_hook", None)
-                if _twh is not None:
-                    _twh.register_handler(tdc)
-                logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
-        except Exception as e:
-            logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
-    if tdc is not None and hasattr(tdc, "bind_fs"):
+                _task_svc = getattr(nx, "_task_manager_service", None)
+                # AcpService lives on AcpRPCService (created in _boot_wired_services)
+                _acp_svc = None
+                _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
+                if _acp_rpc_ref is not None:
+                    _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
+                    _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
+                _proc_tbl = app.state.agent_registry
+                if _task_svc is not None:
+                    tdc = TaskDispatchPipeConsumer(
+                        acp_service=_acp_svc,
+                        agent_registry=_proc_tbl,
+                    )
+                    tdc.set_task_service(_task_svc)
+                    # Wire into existing TaskWriteHook
+                    _twh = getattr(nx, "_task_write_hook", None)
+                    if _twh is not None:
+                        _twh.register_handler(tdc)
+                    logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
+            except Exception as e:
+                logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
+    if tdc is not None and hasattr(tdc, "set_pipe_manager"):
         try:
-            tdc.bind_fs(nx)
+            tdc.set_pipe_manager(pipe_manager)
             # Inject server base URL so enriched worker prompts can reference the API
             if hasattr(tdc, "set_server_info"):
                 _port = os.environ.get("NEXUS_PORT", "2026")

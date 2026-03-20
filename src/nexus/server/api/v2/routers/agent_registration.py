@@ -110,7 +110,7 @@ def _get_registration_service(request: Request) -> Any:
     service = AgentRegistrationService(
         record_store=record_store,
         entity_registry=getattr(request.app.state, "entity_registry", None),
-        process_table=getattr(request.app.state, "process_table", None),
+        agent_registry=getattr(request.app.state, "agent_registry", None),
         rebac_manager=getattr(request.app.state, "rebac_manager", None),
         ipc_provisioner=getattr(request.app.state, "ipc_provisioner", None),
         key_service=getattr(request.app.state, "key_service", None),
@@ -134,7 +134,7 @@ async def register_agent(
 
     Creates a permanent agent identity with:
     - Registered identity in entity_registry (persistent, DB)
-    - Registered in ProcessTable (runtime liveness, in-memory)
+    - Registered in AgentRegistry (runtime liveness, in-memory)
     - Permanent API key (no TTL, ``subject_type: "agent"``)
     - ReBAC permission tuples for the specified grants
     - IPC directories (inbox/outbox/processed/dead_letter) if ``ipc=True``

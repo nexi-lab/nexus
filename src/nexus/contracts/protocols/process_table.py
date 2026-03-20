@@ -3,7 +3,7 @@
 Kernel contract for agent management. No LLM, no tools, no agent logic.
 Those belong in the service-layer AgentService (Phase 4).
 
-    contracts/protocols/process_table.py = kernel syscall interface
+    contracts/protocols/agent_registry.py = kernel syscall interface
 """
 
 from __future__ import annotations
@@ -92,5 +92,5 @@ class AgentRegistryProtocol(Protocol):
 
 
 # Backward-compat alias (Issue #1800)
-ProcessTableProtocol = AgentRegistryProtocol
+AgentRegistryProtocol = AgentRegistryProtocol
 """Deprecated alias — use ``AgentRegistryProtocol``."""

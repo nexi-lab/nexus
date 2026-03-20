@@ -17,7 +17,7 @@ from nexus.bricks.delegation.models import DelegationMode
 from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.core.process_table import AgentRegistry
+from nexus.core.agent_registry import AgentRegistry
 from nexus.server.api.v2.routers.delegation import (
     DelegateRequest,
     DelegateResponse,
@@ -43,7 +43,7 @@ def entity_registry(record_store):
 
 
 @pytest.fixture()
-def process_table():
+def agent_registry():
     return AgentRegistry()
 
 
@@ -55,16 +55,16 @@ def rebac_manager(record_store):
 
 
 @pytest.fixture()
-def delegation_service(record_store, rebac_manager, entity_registry, process_table):
+def delegation_service(record_store, rebac_manager, entity_registry, agent_registry):
     return DelegationService(
         record_store=record_store,
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
-        process_table=process_table,
+        agent_registry=agent_registry,
     )
 
 
-def _setup_coordinator(entity_registry, rebac_manager, process_table):
+def _setup_coordinator(entity_registry, rebac_manager, agent_registry):
     """Register user + coordinator agent with file grants."""
     entity_registry.register_entity("user", "alice")
     entity_registry.register_entity(
@@ -73,8 +73,8 @@ def _setup_coordinator(entity_registry, rebac_manager, process_table):
         parent_type="user",
         parent_id="alice",
     )
-    # Register coordinator in process_table (replaces AgentRegistry)
-    process_table.register_external(
+    # Register coordinator in agent_registry (replaces AgentRegistry)
+    agent_registry.register_external(
         "Coordinator",
         "alice",
         "root",
@@ -194,11 +194,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        process_table,
+        agent_registry,
         agent_auth,
     ):
         """Default auto_warmup=True should call warmup service."""
-        _setup_coordinator(entity_registry, rebac_manager, process_table)
+        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
 
         mock_warmup = AsyncMock()
         mock_result = MagicMock()
@@ -228,11 +228,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        process_table,
+        agent_registry,
         agent_auth,
     ):
         """Explicit auto_warmup=False should skip warmup."""
-        _setup_coordinator(entity_registry, rebac_manager, process_table)
+        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
 
         mock_warmup = AsyncMock()
 
@@ -260,11 +260,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        process_table,
+        agent_registry,
         agent_auth,
     ):
         """Warmup failure should NOT undo the delegation."""
-        _setup_coordinator(entity_registry, rebac_manager, process_table)
+        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
 
         mock_warmup = AsyncMock()
         mock_warmup.warmup.side_effect = RuntimeError("Warmup exploded")
@@ -295,11 +295,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        process_table,
+        agent_registry,
         agent_auth,
     ):
         """If warmup service is None, auto_warmup=True should silently skip."""
-        _setup_coordinator(entity_registry, rebac_manager, process_table)
+        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
 
         app = _create_test_app(delegation_service, agent_auth, warmup_service=None)
         client = TestClient(app)
@@ -324,11 +324,11 @@ class TestAutoWarmup:
         delegation_service,
         entity_registry,
         rebac_manager,
-        process_table,
+        agent_registry,
         agent_auth,
     ):
         """Existing callers that don't send auto_warmup get the default (True)."""
-        _setup_coordinator(entity_registry, rebac_manager, process_table)
+        _setup_coordinator(entity_registry, rebac_manager, agent_registry)
 
         mock_warmup = AsyncMock()
         mock_result = MagicMock()

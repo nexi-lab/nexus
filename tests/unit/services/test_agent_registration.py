@@ -37,7 +37,7 @@ def mock_entity_registry():
 
 
 @pytest.fixture()
-def mock_process_table():
+def mock_agent_registry():
     pt = MagicMock()
     return pt
 
@@ -60,14 +60,14 @@ def mock_ipc_provisioner():
 def service(
     mock_record_store,
     mock_entity_registry,
-    mock_process_table,
+    mock_agent_registry,
     mock_rebac_manager,
     mock_ipc_provisioner,
 ):
     return AgentRegistrationService(
         record_store=mock_record_store,
         entity_registry=mock_entity_registry,
-        process_table=mock_process_table,
+        agent_registry=mock_agent_registry,
         rebac_manager=mock_rebac_manager,
         ipc_provisioner=mock_ipc_provisioner,
     )
@@ -125,8 +125,8 @@ class TestHappyPath:
         )
 
     @pytest.mark.asyncio()
-    async def test_register_calls_process_table(self, service, mock_process_table):
-        """Registration must call process_table.register_external()."""
+    async def test_register_calls_agent_registry(self, service, mock_agent_registry):
+        """Registration must call agent_registry.register_external()."""
         with patch("nexus.storage.api_key_ops.create_agent_api_key") as mock_key:
             mock_key.return_value = ("key-1", "sk-key")
 
@@ -137,8 +137,8 @@ class TestHappyPath:
                 zone_id="root",
             )
 
-        mock_process_table.register_external.assert_called_once()
-        call_args = mock_process_table.register_external.call_args
+        mock_agent_registry.register_external.assert_called_once()
+        call_args = mock_agent_registry.register_external.call_args
         # name, owner_id, zone_id are positional; connection_id is keyword
         assert call_args[1].get("connection_id") == "proc-agent"
 
@@ -246,7 +246,7 @@ class TestCompensation:
 
     @pytest.mark.asyncio()
     async def test_grant_failure_cleans_up_all(
-        self, service, mock_entity_registry, mock_process_table, mock_rebac_manager
+        self, service, mock_entity_registry, mock_agent_registry, mock_rebac_manager
     ):
         """If ReBAC grant creation fails, entity + process + grants must be cleaned up."""
         mock_rebac_manager.rebac_write_batch.side_effect = RuntimeError("ReBAC write failed")
@@ -261,12 +261,12 @@ class TestCompensation:
                 grants=grants,
             )
 
-        mock_process_table.unregister_external.assert_called_once_with("fail-agent")
+        mock_agent_registry.unregister_external.assert_called_once_with("fail-agent")
         mock_entity_registry.delete_entity.assert_called_once_with("agent", "fail-agent")
 
     @pytest.mark.asyncio()
     async def test_key_creation_failure_cleans_up(
-        self, service, mock_entity_registry, mock_process_table
+        self, service, mock_entity_registry, mock_agent_registry
     ):
         """If API key creation fails, entity + process are cleaned up."""
         with patch("nexus.storage.api_key_ops.create_agent_api_key") as mock_key:
@@ -279,7 +279,7 @@ class TestCompensation:
                     owner_id="alice",
                 )
 
-        mock_process_table.unregister_external.assert_called_once_with("key-fail-agent")
+        mock_agent_registry.unregister_external.assert_called_once_with("key-fail-agent")
         mock_entity_registry.delete_entity.assert_called_once_with("agent", "key-fail-agent")
 
     @pytest.mark.asyncio()

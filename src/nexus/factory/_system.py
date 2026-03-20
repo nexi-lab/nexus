@@ -461,19 +461,19 @@ def _boot_system_services(
     # (PipeManager + StreamManager are kernel-internal primitives,
     # constructed in NexusFS.__init__ — not booted here.)
 
-    # --- ProcessTable (Issue #1509: kernel process lifecycle) ---
-    process_table: Any = None
+    # --- AgentRegistry (Issue #1509: kernel process lifecycle) ---
+    agent_registry: Any = None
     try:
-        from nexus.core.process_table import ProcessTable
+        from nexus.core.agent_registry import AgentRegistry
 
-        process_table = ProcessTable()
-        logger.debug("[BOOT:SYSTEM] ProcessTable created (in-memory)")
+        agent_registry = AgentRegistry()
+        logger.debug("[BOOT:SYSTEM] AgentRegistry created (in-memory)")
     except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] ProcessTable unavailable: %s", exc)
+        logger.warning("[BOOT:SYSTEM] AgentRegistry unavailable: %s", exc)
 
     # --- Eviction Manager (Issues #2170, #2171) ---
     eviction_manager: Any = None
-    if process_table is not None:
+    if agent_registry is not None:
         try:
             from nexus.system_services.agents.eviction_manager import EvictionManager
             from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
@@ -483,7 +483,7 @@ def _boot_system_services(
             resource_monitor = ResourceMonitor(tuning=eviction_tuning)
             eviction_policy = QoSEvictionPolicy()
             eviction_manager = EvictionManager(
-                process_table=process_table,
+                agent_registry=agent_registry,
                 monitor=resource_monitor,
                 policy=eviction_policy,
                 tuning=eviction_tuning,
@@ -496,12 +496,12 @@ def _boot_system_services(
     acp_service: Any = None
     if not _on("acp"):
         logger.debug("[BOOT:SYSTEM] AcpService disabled by profile")
-    elif process_table is not None:
+    elif agent_registry is not None:
         try:
             from nexus.system_services.acp.service import AcpService
 
             acp_service = AcpService(
-                process_table=process_table,
+                agent_registry=agent_registry,
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
             )
             logger.debug("[BOOT:SYSTEM] AcpService created")
@@ -519,7 +519,7 @@ def _boot_system_services(
         "entity_registry": entity_registry,
         "permission_enforcer": permission_enforcer,
         "write_observer": write_observer,
-        "process_table": process_table,
+        "agent_registry": agent_registry,
         # Former-kernel degradable
         "dir_visibility_cache": dir_visibility_cache,
         "hierarchy_manager": hierarchy_manager,

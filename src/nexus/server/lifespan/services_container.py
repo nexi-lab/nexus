@@ -52,7 +52,7 @@ class LifespanServices:
     service_coordinator: Any = None  # ServiceLifecycleCoordinator
 
     # --- Process table (kernel process lifecycle) -------------------------
-    process_table: Any = None
+    agent_registry: Any = None
 
     # --- System services (from nexus_fs._system_services) ----------------
     brick_lifecycle_manager: Any = None
@@ -111,10 +111,10 @@ class LifespanServices:
             zone_id=getattr(app.state, "zone_id", None),
             # Process table — read from system_services (where it's created),
             # falling back to app.state for backwards compatibility
-            process_table=(
-                getattr(_sys, "process_table", None)
+            agent_registry=(
+                getattr(_sys, "agent_registry", None)
                 if _sys
-                else getattr(app.state, "process_table", None)
+                else getattr(app.state, "agent_registry", None)
             ),
             # Coordinator
             service_coordinator=_coord,

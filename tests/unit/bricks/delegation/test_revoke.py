@@ -53,18 +53,18 @@ def _make_service(
         - _update_delegation_status: no-op
         - _delete_worker_tuples: either no-op or raises `rebac_raises`
         - _revoke_worker_api_key: no-op
-        - _process_table.unregister: no-op
+        - _agent_registry.unregister: no-op
     """
     from nexus.bricks.delegation.service import DelegationService
 
     mock_record_store = MagicMock()
     rebac_manager = MagicMock()
-    process_table = MagicMock()
+    agent_registry = MagicMock()
 
     service = DelegationService(
         record_store=mock_record_store,
         rebac_manager=rebac_manager,
-        process_table=process_table,
+        agent_registry=agent_registry,
     )
 
     # Patch internal methods
@@ -99,7 +99,7 @@ class TestRevokeHappyPath:
         service._update_delegation_status.assert_called_once_with("del-1", DelegationStatus.REVOKED)
         service._delete_worker_tuples.assert_called_once_with("worker-1", "root")
         service._revoke_worker_api_key.assert_called_once_with("worker-1")
-        service._process_table.unregister_external.assert_called_once_with("worker-1")
+        service._agent_registry.unregister_external.assert_called_once_with("worker-1")
 
 
 class TestRevokeAlreadyRevoked:

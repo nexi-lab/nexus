@@ -4,7 +4,7 @@ Tests cover:
 - agent_eviction_task calls eviction_manager.run_cycle()
 
 Note: heartbeat_flush_task and stale_agent_detection_task were removed
-(Issue #1692). ProcessTable writes heartbeats directly to metastore.
+(Issue #1692). AgentRegistry writes heartbeats directly to metastore.
 """
 
 import asyncio

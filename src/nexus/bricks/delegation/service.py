@@ -74,13 +74,13 @@ class DelegationService:
         rebac_manager: Any,
         namespace_manager: Any = None,
         entity_registry: "EntityRegistryProtocol | None" = None,
-        process_table: Any = None,
+        agent_registry: Any = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._rebac_manager = rebac_manager
         self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
-        self._process_table: Any = process_table
+        self._agent_registry: Any = agent_registry
         logger.info("[DelegationService] Initialized")
 
     @contextmanager
@@ -188,11 +188,11 @@ class DelegationService:
             delegation_mode.value,
         )
 
-        # 6. Register worker agent via ProcessTable (optional — Nexus works
+        # 6. Register worker agent via AgentRegistry (optional — Nexus works
         #    without a running agent runtime; delegation is an identity/permission
         #    operation, not a process lifecycle operation)
-        if self._process_table is not None:
-            self._process_table.register_external(
+        if self._agent_registry is not None:
+            self._agent_registry.register_external(
                 worker_name,
                 coordinator_owner_id,
                 zone_id or ROOT_ZONE_ID,
@@ -244,8 +244,8 @@ class DelegationService:
 
         except Exception:
             # Cleanup: unregister agent on failure (no key exists yet)
-            if self._process_table is not None:
-                self._process_table.unregister_external(worker_id)
+            if self._agent_registry is not None:
+                self._agent_registry.unregister_external(worker_id)
             raise
 
         logger.info(
@@ -304,9 +304,9 @@ class DelegationService:
         # Step 2: Revoke API key
         self._revoke_worker_api_key(record.agent_id)
 
-        # Step 3: Unregister agent entity (if ProcessTable available)
-        if self._process_table is not None:
-            self._process_table.unregister_external(record.agent_id)
+        # Step 3: Unregister agent entity (if AgentRegistry available)
+        if self._agent_registry is not None:
+            self._agent_registry.unregister_external(record.agent_id)
 
         logger.info(
             "[Delegation] Revoked delegation=%s worker=%s",

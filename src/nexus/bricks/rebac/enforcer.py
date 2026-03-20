@@ -15,7 +15,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext, Permission
 
 
-def check_stale_session(process_table: Any, context: OperationContext) -> None:
+def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
     """Check for stale agent sessions and raise if the session is outdated.
 
     Compares the agent_generation from the JWT token (stored in context) against
@@ -25,14 +25,18 @@ def check_stale_session(process_table: Any, context: OperationContext) -> None:
     Issue #1240 / #1445: Shared helper used by both sync and async enforcers.
 
     Args:
-        process_table: ProcessTable instance (or None to skip check).
+        agent_registry: AgentRegistry instance (or None to skip check).
         context: Operation context with agent_generation from JWT claims.
 
     Raises:
         StaleSessionError: If the session generation is stale or the agent
             record no longer exists (deleted agent with valid JWT).
     """
-    if process_table is None or context.agent_generation is None or context.subject_type != "agent":
+    if (
+        agent_registry is None
+        or context.agent_generation is None
+        or context.subject_type != "agent"
+    ):
         return
 
     agent_id = context.agent_id or context.subject_id
@@ -40,7 +44,7 @@ def check_stale_session(process_table: Any, context: OperationContext) -> None:
         logger.warning("[STALE-SESSION] No agent_id in context, skipping check")
         return
 
-    current_record = process_table.get(agent_id)
+    current_record = agent_registry.get(agent_id)
 
     from nexus.contracts.exceptions import StaleSessionError
 
@@ -120,7 +124,7 @@ class PermissionEnforcer:
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         namespace_manager: "NamespaceManager | None" = None,
         # Issue #1240: Process table for stale-session detection (Agent OS Phase 1)
-        process_table: Any = None,
+        agent_registry: Any = None,
     ):
         """Initialize permission enforcer.
 
@@ -139,7 +143,7 @@ class PermissionEnforcer:
             hotspot_detector: HotspotDetector for access pattern tracking (Issue #921)
             enable_hotspot_tracking: Enable hotspot tracking (default: True)
             namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
-            process_table: ProcessTable for stale-session detection (Issue #1240)
+            agent_registry: AgentRegistry for stale-session detection (Issue #1240)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: ReBACManager | None = rebac_manager
@@ -150,7 +154,7 @@ class PermissionEnforcer:
         self.namespace_manager: NamespaceManager | None = namespace_manager
 
         # Issue #1240: Process table for stale-session detection (Agent OS Phase 1)
-        self.process_table = process_table
+        self.agent_registry = agent_registry
 
         # P0-4: Enhanced features
         self.allow_admin_bypass = allow_admin_bypass
@@ -471,7 +475,7 @@ class PermissionEnforcer:
                 )
 
         # Issue #1240 / #1445: Stale-session detection (Agent OS Phase 1)
-        check_stale_session(self.process_table, context)
+        check_stale_session(self.agent_registry, context)
 
         # Normal ReBAC check
         return self._check_rebac(path, permission, context)

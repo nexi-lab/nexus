@@ -705,7 +705,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | P11 | **ShareLinkProtocol** | `services/protocols/share_link.py` | Service | Async | 6 (Small) | Standalone | capability URLs | Create/revoke/access capability URLs |
 | P12 | **OAuthProtocol** | `services/protocols/oauth.py` | Service | Async | 7 (Medium) | Standalone | PAM / keyring | OAuth flow + credential management |
 | P13 | **LLMProtocol** | `services/protocols/llm.py` | Service | Mixed | 4 (Small) | Standalone | (AI-native) | AI-powered document reading |
-| P14 | **ProcessTable** | `core/process_table.py` | Kernel | Sync | 6 (Small) | Standalone | process table | Agent process lifecycle |
+| P14 | **AgentRegistry** | `core/process_table.py` | Kernel | Sync | 6 (Small) | Standalone | process table | Agent process lifecycle |
 | P15 | **SchedulerProtocol** | `services/protocols/scheduler.py` | Service | Async | 4 (Small) | Standalone | CFS scheduler | Work queue: submit/next/cancel |
 | P16 | **SkillsProtocol** | `services/protocols/skills.py` | Service | Sync | 9 (Medium) | Standalone | `apt` / `npm` | Skill distribution + subscription + package |
 | P17 | **HookEngineProtocol** | `services/protocols/hook_engine.py` | Service | Async | 3 (Micro) | Standalone | `netfilter` hooks | Pre/post operation hook registration + firing |
@@ -741,7 +741,7 @@ In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path re
 | P5 (VFSRouter) ↔ P10 (Mount) | Kernel path resolution (1 method: `route()`) vs service-tier mount lifecycle (add/remove/sync/save/load + mount CRUD absorbed from former P5) |
 | P6 (Search) ↔ P13 (LLM) | Pattern matching vs AI inference — different compute models |
 | P8 (Permission) ↔ P18 (NamespaceManager) | Graph traversal authorization vs binary visibility check |
-| P14 (ProcessTable) ↔ P15 (Scheduler) | Process lifecycle vs work queue — different state models |
+| P14 (AgentRegistry) ↔ P15 (Scheduler) | Process lifecycle vs work queue — different state models |
 | P16 (Skills) ↔ P13 (LLM) | Package distribution vs AI reading — different concerns |
 | P11 (ShareLink) ↔ P12 (OAuth) | Capability URLs vs OAuth flows — different auth patterns |
 
@@ -821,7 +821,7 @@ Map each surviving scenario (S1-S28) to its canonical Ops ABC (existing or propo
 | **S7** Permission (ReBAC) | **P8** PermissionProtocol | EXISTS | Service | EXACT | 6 core Zanzibar APIs |
 | **S8** File Watching | **WatchProtocol** (split from P9) | EXISTS | Service | EXACT | `services/protocols/watch.py` — inotify-style long-poll |
 | **S9** Advisory Locking | **LockProtocol** (split from P9) | EXISTS | Service | EXACT | `services/protocols/lock.py` — flock-style advisory locks |
-| **S10** Agent Lifecycle | **P14** ProcessTable | EXISTS | Kernel | EXACT | 6 methods: spawn/get/kill/heartbeat/list_processes/unregister_external |
+| **S10** Agent Lifecycle | **P14** AgentRegistry | EXISTS | Kernel | EXACT | 6 methods: spawn/get/kill/heartbeat/list_processes/unregister_external |
 | **S11** Agent Scheduling | **P15** SchedulerProtocol | EXISTS | Service | EXACT | 4 methods: submit/next/cancel/pending_count |
 | **S12** Skill Management | **P16** SkillsProtocol | EXISTS | Service | EXACT | 9 methods: share/discover/subscribe/load/export |
 | **S13** LLM Reading | **P13** LLMProtocol | EXISTS | Service | EXACT | 4 methods: read/detailed/stream/create_reader |

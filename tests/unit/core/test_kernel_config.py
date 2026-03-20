@@ -324,7 +324,7 @@ class TestSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "zone_lifecycle",
-            "process_table",
+            "agent_registry",
             "scheduler_service",
             "acp_service",
             # Distributed event bus — promoted from Tier 2 (Issue #1701)

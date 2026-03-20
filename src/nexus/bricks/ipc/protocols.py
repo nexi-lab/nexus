@@ -104,7 +104,7 @@ class AgentInfoResult(Protocol):
 class AgentLookupProtocol(Protocol):
     """Minimal agent registry interface for zone resolution.
 
-    Satisfied by ProcessTable or compatible lookup at wiring time.
+    Satisfied by AgentRegistry or compatible lookup at wiring time.
     """
 
     async def get(self, agent_id: str) -> AgentInfoResult | None:

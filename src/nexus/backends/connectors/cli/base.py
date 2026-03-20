@@ -97,7 +97,9 @@ class CLIConnector(
     # See _build_auth_env() for the mapping.
 
     _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = (
-        CLI_CONNECTOR_CAPABILITIES | OAUTH_CONNECTOR_CAPABILITIES
+        CLI_CONNECTOR_CAPABILITIES
+        | OAUTH_CONNECTOR_CAPABILITIES
+        | frozenset({ConnectorCapability.EXTERNAL_CONTENT})
     )
 
     # --- Instance state ---

@@ -256,11 +256,56 @@ class TestConfigDoesNotImportServer:
         )
 
     def test_auth_config_canonical_import(self):
-        """OAuthConfig canonical path is nexus.bricks.auth.oauth.config (#2281)."""
-        from nexus.bricks.auth.oauth.config import OAuthConfig, OAuthProviderConfig
+        """OAuthConfig canonical path is nexus.contracts.oauth_types (#3230)."""
+        from nexus.contracts.oauth_types import OAuthConfig, OAuthProviderConfig
 
         assert OAuthConfig is not None
         assert OAuthProviderConfig is not None
+
+    def test_auth_config_backward_compat_import(self):
+        """OAuthConfig backward-compat shim from bricks.auth.oauth.config (#3230)."""
+        from nexus.bricks.auth.oauth.config import OAuthConfig as ShimOAuth
+        from nexus.bricks.auth.oauth.config import OAuthProviderConfig as ShimProvider
+        from nexus.contracts.oauth_types import OAuthConfig, OAuthProviderConfig
+
+        assert ShimOAuth is OAuthConfig
+        assert ShimProvider is OAuthProviderConfig
+
+    def test_config_no_bricks_auth_imports(self):
+        """nexus/config.py must not import from nexus.bricks.auth at top level (#3230).
+
+        This prevents config from pulling in the auth brick, which may
+        not be installed in the slim nexus-fs package.
+        """
+        config_path = NEXUS_ROOT / "config.py"
+        violations: list[str] = []
+
+        for module, lineno, _kind in _collect_top_level_imports(config_path):
+            if module.startswith("nexus.bricks.auth"):
+                violations.append(f"config.py:{lineno} imports {module}")
+
+        assert violations == [], (
+            "config.py→bricks.auth import violations found (#3230):\n"
+            + "\n".join(f"  - {v}" for v in violations)
+        )
+
+    def test_sdk_no_bricks_rebac_top_level_imports(self):
+        """nexus/sdk/__init__.py must not top-level import from nexus.bricks.rebac (#3230).
+
+        ReBAC implementation types should be lazy-loaded via __getattr__ so
+        that `import nexus.sdk` works without bricks.rebac installed.
+        """
+        sdk_init = NEXUS_ROOT / "sdk" / "__init__.py"
+        violations: list[str] = []
+
+        for module, lineno, _kind in _collect_top_level_imports(sdk_init):
+            if module.startswith("nexus.bricks.rebac"):
+                violations.append(f"sdk/__init__.py:{lineno} imports {module}")
+
+        assert violations == [], (
+            "sdk/__init__.py→bricks.rebac top-level import violations found (#3230):\n"
+            + "\n".join(f"  - {v}" for v in violations)
+        )
 
 
 class TestZoneHelpersInLib:

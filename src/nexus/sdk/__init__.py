@@ -99,19 +99,12 @@ __all__ = [
 
 # Re-export from core modules with cleaner names
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.storage.cas_gcs import CASGCSBackend
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.backends.storage.path_local import PathLocalBackend
-from nexus.bricks.rebac.domain import WILDCARD_SUBJECT, Entity, ReBACTuple
-from nexus.bricks.rebac.enforcer import PermissionEnforcer
-from nexus.bricks.rebac.manager import (
-    CheckResult,
-    GraphLimitExceeded,
-    ReBACManager,
-)
 from nexus.config import NexusConfig as Config
 from nexus.config import load_config
 from nexus.contracts.exceptions import (
@@ -128,8 +121,61 @@ from nexus.contracts.exceptions import (
     NexusPermissionError as PermissionError,
 )
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as Filesystem
+
+# ReBAC types canonical in contracts — always available (#3230)
+from nexus.contracts.rebac_types import WILDCARD_SUBJECT, CheckResult, Entity, GraphLimitExceeded
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
+
+# =============================================================================
+# LAZY IMPORTS for optional bricks (#3230)
+# =============================================================================
+# These ReBAC implementation types require the rebac brick to be installed.
+# They are loaded on-demand via __getattr__ to allow `import nexus.sdk` to
+# succeed without bricks.rebac installed.
+
+_LAZY_REBAC_IMPORTS: dict[str, tuple[str, str]] = {
+    "ReBACTuple": ("nexus.bricks.rebac.domain", "ReBACTuple"),
+    "PermissionEnforcer": ("nexus.bricks.rebac.enforcer", "PermissionEnforcer"),
+    "ReBACManager": ("nexus.bricks.rebac.manager", "ReBACManager"),
+}
+
+_lazy_imports_cache: dict[str, Any] = {}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy import for optional brick dependencies.
+
+    ReBAC implementation types (ReBACTuple, PermissionEnforcer, ReBACManager)
+    are loaded on first access. If the rebac brick is not installed, a clear
+    ImportError is raised.
+    """
+    if name in _lazy_imports_cache:
+        return _lazy_imports_cache[name]
+
+    if name in _LAZY_REBAC_IMPORTS:
+        module_path, attr_name = _LAZY_REBAC_IMPORTS[name]
+        import importlib
+
+        try:
+            module = importlib.import_module(module_path)
+        except ModuleNotFoundError as exc:
+            raise ImportError(
+                f"nexus.sdk.{name} requires the ReBAC brick. "
+                f"Install it with: pip install nexus[rebac]"
+            ) from exc
+        value = getattr(module, attr_name)
+        _lazy_imports_cache[name] = value
+        return value
+
+    raise AttributeError(f"module 'nexus.sdk' has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include lazy imports in dir() for discoverability."""
+    module_attrs = list(globals().keys())
+    module_attrs.extend(_LAZY_REBAC_IMPORTS.keys())
+    return module_attrs
 
 
 async def connect(

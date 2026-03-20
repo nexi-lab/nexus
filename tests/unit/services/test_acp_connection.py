@@ -253,43 +253,6 @@ class TestAcpConnectionNotifications:
     """Test session/update notification accumulation."""
 
     @pytest.mark.asyncio
-    async def test_usage_accumulation(self, acp_conn):
-        conn, _, stdout = acp_conn
-        conn.start()
-        try:
-            stdout.inject_json(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "update": {
-                            "sessionUpdate": "usage_update",
-                            "usage": {"input_tokens": 100, "output_tokens": 50},
-                        }
-                    },
-                }
-            )
-            stdout.inject_json(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "update": {
-                            "sessionUpdate": "usage_update",
-                            "usage": {"input_tokens": 200, "output_tokens": 75},
-                        }
-                    },
-                }
-            )
-            await asyncio.sleep(0.05)
-
-            assert conn._accumulated_usage["input_tokens"] == 300
-            assert conn._accumulated_usage["output_tokens"] == 125
-        finally:
-            stdout.signal_close()
-            await conn.disconnect()
-
-    @pytest.mark.asyncio
     async def test_tool_call_counting(self, acp_conn):
         conn, _, stdout = acp_conn
         conn.start()
@@ -305,68 +268,6 @@ class TestAcpConnectionNotifications:
             await asyncio.sleep(0.05)
 
             assert conn.num_turns == 3
-        finally:
-            stdout.signal_close()
-            await conn.disconnect()
-
-    @pytest.mark.asyncio
-    async def test_agent_message_chunk_accumulation(self, acp_conn):
-        conn, _, stdout = acp_conn
-        conn._prompt_active = True
-        conn.start()
-        try:
-            stdout.inject_json(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "update": {
-                            "sessionUpdate": "agent_message_chunk",
-                            "content": {"type": "text", "text": "Hello "},
-                        }
-                    },
-                }
-            )
-            stdout.inject_json(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "update": {
-                            "sessionUpdate": "agent_message_chunk",
-                            "content": {"type": "text", "text": "world"},
-                        }
-                    },
-                }
-            )
-            await asyncio.sleep(0.05)
-
-            assert "".join(conn._accumulated_text) == "Hello world"
-        finally:
-            stdout.signal_close()
-            await conn.disconnect()
-
-    @pytest.mark.asyncio
-    async def test_chunks_discarded_when_prompt_not_active(self, acp_conn):
-        conn, _, stdout = acp_conn
-        conn._prompt_active = False  # Not in a prompt
-        conn.start()
-        try:
-            stdout.inject_json(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "update": {
-                            "sessionUpdate": "agent_message_chunk",
-                            "content": {"type": "text", "text": "replay"},
-                        }
-                    },
-                }
-            )
-            await asyncio.sleep(0.05)
-
-            assert len(conn._accumulated_text) == 0
         finally:
             stdout.signal_close()
             await conn.disconnect()

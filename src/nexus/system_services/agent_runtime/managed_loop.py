@@ -1,0 +1,362 @@
+"""ManagedAgentLoop — kernel-managed LLM reasoning loop (everything-is-a-file).
+
+1st-party agent where ALL I/O routes through kernel VFS syscalls:
+
+    LLM call:       sys_write(llm_path, request) → DT_STREAM tokens
+    Token read:     sys_read(stream_path, offset) → real-time token delivery
+    Conversation:   sys_write(conv_path, messages) → CAS persistence
+    System prompt:  sys_read(agent_path/SYSTEM.md) → VFS-backed config
+    Tools config:   sys_read(agent_path/tools.json) → VFS-backed tool defs
+    Tool execution: sys_read / sys_write → VFS syscalls
+    Session result: sys_write(proc/{pid}/result) → VFS persistence
+
+No backend called directly. No in-memory-only state. Every I/O
+operation is observable via kernel dispatch (PRE → INTERCEPT → OBSERVE).
+
+Reuses AgentObserver for notification accumulation (shared with
+3rd-party AcpConnection).
+
+DI dependencies (kernel syscall callables):
+    - sys_read:  NexusFS.sys_read wrapper
+    - sys_write: NexusFS.sys_write wrapper
+    - llm_streaming_service: LLMStreamingService for DT_STREAM delivery
+    - agent_path: VFS path for agent config (SYSTEM.md, tools.json)
+    - llm_path: VFS mount path for LLM backend
+    - conv_path: VFS path for conversation persistence (CAS)
+    - proc_path: VFS path for process state (/{zone}/proc/{pid})
+
+References:
+    - Task #1510: AgentService (Tier 1)
+    - Task #1589: LLM backend driver design
+    - system_services/acp/connection.py — AcpConnection pattern
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+
+from nexus.system_services.agent_runtime.observer import AgentObserver, AgentTurnResult
+
+if TYPE_CHECKING:
+    from nexus.system_services.llm_streaming_service import LLMStreamingService
+
+logger = logging.getLogger(__name__)
+
+# Kernel syscall callables (injected from NexusFS).
+SysReadFn = Callable[[str], Awaitable[bytes]]
+SysWriteFn = Callable[[str, bytes], Awaitable[Any]]
+# StreamReadFn: (path, offset, blocking) → (data, next_offset)
+StreamReadFn = Callable[[str, int], Awaitable[tuple[bytes, int]]]
+
+# Maximum reasoning turns before forced stop (prevent infinite loops).
+_MAX_TURNS = 50
+
+
+class ManagedAgentLoop:
+    """Kernel-managed LLM reasoning loop — everything-is-a-file.
+
+    Every I/O operation goes through kernel VFS syscalls:
+
+    - LLM calls via ``LLMStreamingService`` (DT_STREAM delivery)
+    - Token reads via ``sys_read`` on DT_STREAM (kernel IPC)
+    - Conversation via ``sys_write`` to CAS-addressed VFS path
+    - Config (system prompt, tools) via ``sys_read`` from VFS
+    - Tool execution via ``sys_read`` / ``sys_write`` (VFS)
+    - Results via ``sys_write`` to proc filesystem
+
+    Shares ``AgentObserver`` with AcpConnection for identical
+    notification handling — external consumers see the same format.
+    """
+
+    def __init__(
+        self,
+        *,
+        sys_read: SysReadFn,
+        sys_write: SysWriteFn,
+        stream_read: StreamReadFn,
+        llm_service: "LLMStreamingService",
+        agent_path: str,
+        llm_path: str,
+        conv_path: str,
+        proc_path: str,
+        model: str | None = None,
+        max_turns: int = _MAX_TURNS,
+    ) -> None:
+        self._sys_read = sys_read
+        self._sys_write = sys_write
+        self._stream_read = stream_read
+        self._llm_service = llm_service
+        self._agent_path = agent_path  # /{zone}/agents/{id}
+        self._llm_path = llm_path  # /{zone}/llm/openai
+        self._conv_path = conv_path  # /{zone}/agents/{id}/conversation
+        self._proc_path = proc_path  # /{zone}/proc/{pid}
+        self._model = model
+        self._max_turns = max_turns
+        self._session_id = str(uuid.uuid4())
+
+        # Shared observer (same logic as AcpConnection)
+        self._observer = AgentObserver()
+
+        # Conversation state — persisted to VFS after each mutation.
+        self._messages: list[dict[str, Any]] = []
+
+    @property
+    def observer(self) -> AgentObserver:
+        return self._observer
+
+    @property
+    def messages(self) -> list[dict[str, Any]]:
+        return list(self._messages)
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    # ------------------------------------------------------------------
+    # Lifecycle — load config from VFS
+    # ------------------------------------------------------------------
+
+    async def initialize(self) -> None:
+        """Load agent config from VFS (system prompt, tools).
+
+        Reads:
+            {agent_path}/SYSTEM.md → system prompt
+            {agent_path}/tools.json → tool definitions
+        """
+        # System prompt from VFS
+        try:
+            prompt_bytes = await self._sys_read(f"{self._agent_path}/SYSTEM.md")
+            system_prompt = prompt_bytes.decode("utf-8").strip()
+            if system_prompt:
+                self._messages.append({"role": "system", "content": system_prompt})
+        except Exception:
+            logger.debug("No system prompt at %s/SYSTEM.md", self._agent_path)
+
+        # Tool definitions from VFS
+        self._tools: list[dict[str, Any]] = []
+        try:
+            tools_bytes = await self._sys_read(f"{self._agent_path}/tools.json")
+            self._tools = json.loads(tools_bytes)
+        except Exception:
+            logger.debug("No tools config at %s/tools.json", self._agent_path)
+
+    # ------------------------------------------------------------------
+    # Main reasoning loop
+    # ------------------------------------------------------------------
+
+    async def run(self, prompt: str) -> AgentTurnResult:
+        """Run the reasoning loop for a single user prompt.
+
+        All I/O through VFS:
+            1. Append user message → persist conversation (sys_write)
+            2. Start LLM stream (LLMStreamingService → DT_STREAM)
+            3. Read tokens from DT_STREAM (sys_read / stream_read)
+            4. Parse response: tool_calls? → execute via VFS → loop
+                               text? → persist result → return
+        """
+        self._messages.append({"role": "user", "content": prompt})
+        await self._persist_conversation()
+        self._observer.reset_turn()
+
+        turns = 0
+        while turns < self._max_turns:
+            turns += 1
+
+            # Call LLM via kernel (DT_STREAM)
+            response_text, tool_calls, meta = await self._call_llm_via_kernel()
+
+            # Emit observations (same format as AcpConnection)
+            if response_text:
+                self._observer.observe_update(
+                    "agent_message_chunk",
+                    {"content": {"type": "text", "text": response_text}},
+                )
+            if meta:
+                self._observer.observe_update("usage_update", {"usage": meta.get("usage", {})})
+                self._observer.model_name = meta.get("model")
+
+            # Append assistant message → persist conversation (sys_write)
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": response_text,
+            }
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+            self._messages.append(assistant_msg)
+            await self._persist_conversation()
+
+            # No tool calls → done
+            if not tool_calls:
+                result = self._observer.finish_turn(stop_reason="stop")
+                await self._persist_result(result)
+                return result
+
+            # Execute tool calls via VFS → append results → persist
+            for tc in tool_calls:
+                self._observer.observe_update("tool_call", tc)
+                tool_result = await self._execute_tool(tc)
+                self._messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": tool_result,
+                    }
+                )
+            await self._persist_conversation()
+
+        # Max turns reached
+        logger.warning("ManagedAgentLoop: max turns (%d) reached", self._max_turns)
+        result = self._observer.finish_turn(stop_reason="max_turns")
+        await self._persist_result(result)
+        return result
+
+    # ------------------------------------------------------------------
+    # LLM call via kernel (DT_STREAM)
+    # ------------------------------------------------------------------
+
+    async def _call_llm_via_kernel(
+        self,
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
+        """Call LLM through kernel VFS path.
+
+        1. Build request from conversation state
+        2. LLMStreamingService.start_stream() → creates DT_STREAM
+        3. Read tokens from DT_STREAM via stream_read (kernel IPC)
+        4. Parse final "done" message for session hash + metadata
+        """
+        request: dict[str, Any] = {"messages": self._messages}
+        if self._model:
+            request["model"] = self._model
+        if self._tools:
+            request["tools"] = self._tools
+
+        request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
+        stream_path = f"{self._llm_path}/.streams/{self._session_id}-{uuid.uuid4().hex[:8]}"
+
+        # Start LLM streaming via kernel service
+        await self._llm_service.start_stream(request_bytes, stream_path)
+
+        # Read tokens from DT_STREAM (kernel IPC, non-destructive)
+        tokens: list[str] = []
+        meta: dict[str, Any] | None = None
+        offset = 0
+
+        while True:
+            try:
+                data, offset = await self._stream_read(stream_path, offset)
+            except Exception:
+                # StreamClosedError or similar — stream ended
+                break
+
+            # Check for control messages (JSON with "type" field)
+            text = data.decode("utf-8", errors="replace")
+            if text.startswith("{"):
+                try:
+                    msg = json.loads(text)
+                    if msg.get("type") == "done":
+                        meta = msg
+                        break
+                    if msg.get("type") == "error":
+                        logger.error("LLM stream error: %s", msg.get("message"))
+                        break
+                except json.JSONDecodeError:
+                    tokens.append(text)
+            else:
+                tokens.append(text)
+
+        response_text = "".join(tokens)
+
+        # TODO: parse tool_calls from streaming response
+        tool_calls: list[dict[str, Any]] = []
+
+        return response_text, tool_calls, meta
+
+    # ------------------------------------------------------------------
+    # Tool execution via VFS syscalls
+    # ------------------------------------------------------------------
+
+    async def _execute_tool(self, tool_call: dict[str, Any]) -> str:
+        """Execute a tool call via VFS syscalls.
+
+        ALL tool I/O goes through sys_read / sys_write — observable
+        via kernel dispatch (PRE → INTERCEPT → OBSERVE).
+        """
+        func = tool_call.get("function", {})
+        name = func.get("name", "")
+        try:
+            args = json.loads(func.get("arguments", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            return json.dumps({"error": f"Invalid arguments for tool {name}"})
+
+        try:
+            if name == "read_file":
+                path = args.get("path", "")
+                data = await self._sys_read(path)
+                return data.decode("utf-8", errors="replace")
+
+            elif name == "write_file":
+                path = args.get("path", "")
+                content = args.get("content", "")
+                await self._sys_write(path, content.encode("utf-8"))
+                return json.dumps({"status": "ok", "path": path})
+
+            else:
+                return json.dumps({"error": f"Unknown tool: {name}"})
+
+        except Exception as exc:
+            logger.error("Tool execution failed: %s(%s): %s", name, args, exc)
+            return json.dumps({"error": str(exc)})
+
+    # ------------------------------------------------------------------
+    # Conversation persistence via VFS (CAS-addressed)
+    # ------------------------------------------------------------------
+
+    async def _persist_conversation(self) -> None:
+        """Persist current conversation to VFS (CAS-addressed).
+
+        Each mutation creates a new CAS hash. With MessageBoundaryStrategy
+        CDC, shared message prefixes are deduplicated across sessions.
+        """
+        conv_bytes = json.dumps(self._messages, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
+        await self._sys_write(self._conv_path, conv_bytes)
+
+    async def _persist_result(self, result: AgentTurnResult) -> None:
+        """Persist turn result to proc filesystem via VFS."""
+        result_data = {
+            "text": result.text,
+            "stop_reason": result.stop_reason,
+            "model": result.model,
+            "usage": result.usage,
+            "num_turns": result.num_turns,
+            "session_id": self._session_id,
+        }
+        result_bytes = json.dumps(result_data, separators=(",", ":")).encode("utf-8")
+        try:
+            await self._sys_write(f"{self._proc_path}/result", result_bytes)
+        except Exception:
+            logger.debug("Could not persist result to %s/result", self._proc_path)
+
+    async def load_conversation(self) -> None:
+        """Resume conversation from VFS (CAS-addressed)."""
+        try:
+            conv_bytes = await self._sys_read(self._conv_path)
+            self._messages = json.loads(conv_bytes)
+        except Exception:
+            logger.debug("No conversation to resume at %s", self._conv_path)
+
+    # ------------------------------------------------------------------
+    # Session management
+    # ------------------------------------------------------------------
+
+    async def reset(self) -> None:
+        """Reset conversation — re-initialize from VFS config."""
+        self._messages.clear()
+        self._observer = AgentObserver()
+        self._session_id = str(uuid.uuid4())
+        await self.initialize()

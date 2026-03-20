@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from nexus.system_services.agent_runtime.loop import AgentLoop, AgentRpcError
+from nexus.system_services.agent_runtime.observer import AgentObserver
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +76,10 @@ class AcpConnection(AgentLoop):
             cwd=cwd,
         )
         self._session_id: str | None = None
-        self._accumulated_usage: dict[str, Any] = {}
-        self._accumulated_text: list[str] = []
-        self._num_turns: int = 0
-        self._model_name: str | None = None
         self._load_session: bool = False
-        self._prompt_active: bool = False
+
+        # Shared observer (same logic for 3rd-party and 1st-party agents)
+        self._observer = AgentObserver()
 
         # VFS-backed file I/O callables (``everything is a file``).
         self._fs_read = fs_read
@@ -164,11 +163,9 @@ class AcpConnection(AgentLoop):
         # to flush remaining replay output.
         await asyncio.sleep(0.2)
 
-        # Clear text/usage accumulated from history replay notifications
+        # Reset observer — clear text/usage accumulated from history replay
         # so send_prompt starts with a clean slate.
-        self._accumulated_text.clear()
-        self._accumulated_usage.clear()
-        self._num_turns = 0
+        self._observer = AgentObserver()
 
         return self._session_id or ""
 
@@ -179,12 +176,8 @@ class AcpConnection(AgentLoop):
         notifications that arrive *during* the prompt (the prompt response
         itself only contains ``stopReason`` and ``usage``).
         """
-        # Reset per-prompt accumulators and enable chunk accumulation.
-        # The _prompt_active gate ensures only chunks from this prompt
-        # are collected — late replay notifications from session/load
-        # are silently discarded.
-        self._accumulated_text.clear()
-        self._prompt_active = True
+        # Reset observer for this prompt turn.
+        self._observer.reset_turn()
 
         try:
             result = await self._request(
@@ -196,29 +189,27 @@ class AcpConnection(AgentLoop):
                 timeout=timeout,
             )
         finally:
-            self._prompt_active = False
+            pass  # finish_turn called below
 
-        # Text comes from agent_message_chunk notifications
-        text = "".join(self._accumulated_text)
+        # Finalize turn — collects accumulated text, usage, tool calls.
+        turn = self._observer.finish_turn(stop_reason=result.get("stopReason"))
 
-        # Model: prompt result > accumulated usage > session/new
-        model = (
-            result.get("model") or self._accumulated_usage.pop("model", None) or self._model_name
-        )
+        # Model: prompt result > observer > session/new
+        model = result.get("model") or turn.model or self._observer.model_name
 
         return AcpPromptResult(
-            text=text,
-            stop_reason=result.get("stopReason"),
+            text=turn.text,
+            stop_reason=turn.stop_reason,
             usage=result.get("usage", {}),
             session_id=self._session_id,
             model=model,
-            accumulated_usage=dict(self._accumulated_usage),
+            accumulated_usage=turn.usage,
         )
 
     @property
     def num_turns(self) -> int:
         """Number of tool_call turns observed via session/update."""
-        return self._num_turns
+        return self._observer.num_turns
 
     # ------------------------------------------------------------------
     # AgentLoop abstract — ACP dispatch
@@ -248,45 +239,14 @@ class AcpConnection(AgentLoop):
             self._respond_error(msg_id, f"Method not found: {method}", code=-32601)
 
     def _handle_notification(self, msg: dict[str, Any]) -> None:
-        """Handle incoming notifications (no response needed)."""
+        """Handle incoming notifications — delegates to shared AgentObserver."""
         method = msg.get("method")
         params = msg.get("params", {})
 
         if method == "session/update":
             update = params.get("update", {})
-            update_type = update.get("sessionUpdate")
-
-            if update_type == "usage_update":
-                # Accumulate usage data
-                usage = update.get("usage", {})
-                for key, val in usage.items():
-                    if isinstance(val, (int, float)):
-                        self._accumulated_usage[key] = self._accumulated_usage.get(key, 0) + val
-                    else:
-                        self._accumulated_usage[key] = val
-
-            elif update_type == "tool_call":
-                self._num_turns += 1
-
-            elif update_type == "user_message_chunk":
-                # A user_message_chunk during an active prompt means history
-                # replay is still in progress (the agent is echoing prior
-                # conversation turns).  Clear accumulators so only text
-                # from the actual model response survives.
-                if self._prompt_active:
-                    self._accumulated_text.clear()
-
-            elif update_type == "agent_message_chunk":
-                # Only accumulate chunks during an active prompt — discard
-                # replay notifications from session/load.
-                if self._prompt_active:
-                    content = update.get("content", {})
-                    if content.get("type") == "text":
-                        self._accumulated_text.append(content.get("text", ""))
-
-            else:
-                logger.debug("ACP: session/update type=%s (ignored)", update_type)
-
+            update_type = update.get("sessionUpdate", "")
+            self._observer.observe_update(update_type, update)
         else:
             logger.debug("ACP: unhandled notification: %s", method)
 
@@ -345,9 +305,9 @@ class AcpConnection(AgentLoop):
             for m in models.get("availableModels", []):
                 if m.get("modelId") == current_id:
                     desc = m.get("description", "")
-                    self._model_name = (
+                    self._observer.model_name = (
                         desc.split(" · ")[0] if " · " in desc else m.get("name", current_id)
                     )
                     break
             else:
-                self._model_name = current_id
+                self._observer.model_name = current_id

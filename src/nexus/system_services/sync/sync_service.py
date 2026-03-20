@@ -588,13 +588,14 @@ class SyncService:
                         except Exception as e:
                             result.errors.append(f"Failed to add {virtual_path}: {e}")
 
-                    # Fetch content via provider (populates cache for sys_read)
+                    # Fetch content via provider and write to VFS
                     if ctx.sync_content and not ctx.dry_run:
                         try:
                             fetch = loop.run_until_complete(
                                 provider.fetch_item(item.item_id, context=ctx.context)
                             )
                             if fetch.content and len(fetch.content) > 0:
+                                self._gw.sys_write(virtual_path, fetch.content)
                                 result.files_synced += 1
                         except Exception:
                             logger.debug(
@@ -603,10 +604,22 @@ class SyncService:
                                 exc_info=True,
                             )
 
-                # Process deletions
-                for deleted_id in page.deleted_ids:
-                    del_path = f"{ctx.mount_point}/{deleted_id}"
-                    if not ctx.dry_run:
+                # Process deletions — deleted_ids are item IDs, not paths.
+                # Build an id→path lookup from items we've seen so we can
+                # delete the correct VFS path even when id != relative_path.
+                if page.deleted_ids and not ctx.dry_run:
+                    # Build reverse map: item_id → virtual_path from known files
+                    id_to_path: dict[str, str] = {}
+                    for known_path in files_found:
+                        # Extract the filename as a possible ID match
+                        fname = known_path.rsplit("/", 1)[-1].replace(".yaml", "")
+                        id_to_path[fname] = known_path
+                    # Also try direct metadata scan for previously synced files
+                    for deleted_id in page.deleted_ids:
+                        del_path = id_to_path.get(deleted_id)
+                        if not del_path:
+                            # Fallback: try as relative path
+                            del_path = f"{ctx.mount_point}/{deleted_id}"
                         try:
                             self._gw.metadata_delete(del_path)
                             result.files_deleted += 1

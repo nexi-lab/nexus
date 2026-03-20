@@ -373,6 +373,9 @@ class ReBACManager:
             pubsub=self._create_pubsub(),
         )
 
+        # Issue #3192: Wire SharedRingBuffer for cross-process revision broadcasting
+        self._wire_shared_ring_buffer()
+
     def _create_invalidation_stream(self) -> "InvalidationStream":
         """Create the DT_STREAM for ordered intra-zone invalidation."""
         from nexus.bricks.rebac.cache.invalidation_stream import InvalidationStream
@@ -384,6 +387,30 @@ class ReBACManager:
         from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
 
         return PubSubInvalidation()
+
+    def _wire_shared_ring_buffer(self) -> None:
+        """Create and inject SharedRingBuffer for cross-process IPC (Issue #3192).
+
+        Wires the ring buffer into zone_graph_loader (write on cache miss)
+        and result_cache (read for revision broadcasting).
+        """
+        try:
+            from nexus.bricks.rebac.cache.shared_ring_buffer import SharedRingBuffer
+
+            ring = SharedRingBuffer(
+                name="rebac-revisions",
+                entry_size=256,
+                capacity=1024,
+            ).open_producer()
+
+            if self._zone_loader is not None:
+                self._zone_loader.set_ring_buffer(ring)
+            if self._l1_cache is not None:
+                self._l1_cache.set_revision_ring_buffer(ring)
+
+            logger.info("[RING-BUFFER] SharedRingBuffer wired into zone_graph_loader + result_cache")
+        except Exception as e:
+            logger.debug("[RING-BUFFER] SharedRingBuffer not available: %s", e)
 
     def rebac_check(
         self,

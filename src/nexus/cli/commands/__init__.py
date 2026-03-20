@@ -44,7 +44,6 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "context": ("context",),
     "network": ("network",),
     "tls": ("tls",),
-    "cluster": ("join",),
     "status": ("status",),  # status [--watch] [--json]
     "doctor": ("doctor",),  # doctor [--json] [--fix]
     # Issue #2809: Profile management

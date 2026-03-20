@@ -6,9 +6,9 @@ use super::proto::nexus::raft::{
     raft_command::Command as ProtoCommandVariant, raft_query::Query as ProtoQueryVariant,
     zone_api_service_client::ZoneApiServiceClient,
     zone_transport_service_client::ZoneTransportServiceClient, AcquireLock, DeleteMetadata,
-    EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata,
-    ProposeRequest, PutMetadata, QueryRequest, RaftCommand, RaftQuery, ReleaseLock,
-    ReplicateEntriesRequest, StepMessageRequest,
+    EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata,
+    JoinClusterRequest, ListMetadata, ProposeRequest, PutMetadata, QueryRequest, RaftCommand,
+    RaftQuery, ReleaseLock, ReplicateEntriesRequest, StepMessageRequest,
 };
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;
@@ -689,4 +689,67 @@ mod tests {
             inner: ZoneTransportServiceClient::new(channel),
         }
     }
+}
+
+// =============================================================================
+// JoinCluster client — shared by fullnodes (via PyO3) and witness binary
+// =============================================================================
+
+/// Result of a successful JoinCluster call.
+pub struct JoinClusterResult {
+    pub ca_pem: Vec<u8>,
+    pub node_cert_pem: Vec<u8>,
+    pub node_key_pem: Vec<u8>,
+}
+
+/// Call JoinCluster on a leader to get a signed node certificate.
+///
+/// Used during 2-phase TLS bootstrap by both fullnodes (via PyO3) and
+/// the witness binary. Connects over plaintext (no TLS — certs don't exist yet).
+pub async fn call_join_cluster(
+    leader_addr: &str,
+    node_id: u64,
+    node_address: &str,
+    zone_id: &str,
+    peers_bootstrap: bool,
+    password: &str,
+    timeout_secs: u64,
+) -> Result<JoinClusterResult> {
+    let ep = Endpoint::from_shared(leader_addr.to_string())
+        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
+        .connect_timeout(Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(timeout_secs));
+
+    let channel = ep
+        .connect()
+        .await
+        .map_err(|e| TransportError::Connection(format!("JoinCluster connect failed: {}", e)))?;
+
+    let mut client = ZoneApiServiceClient::new(channel);
+    let request = JoinClusterRequest {
+        password: password.to_string(),
+        node_id,
+        node_address: node_address.to_string(),
+        zone_id: zone_id.to_string(),
+        peers_bootstrap,
+    };
+
+    let response = client
+        .join_cluster(request)
+        .await
+        .map_err(|e| TransportError::Rpc(format!("JoinCluster RPC failed: {}", e)))?
+        .into_inner();
+
+    if !response.success {
+        return Err(TransportError::Rpc(format!(
+            "JoinCluster rejected: {}",
+            response.error.unwrap_or_default()
+        )));
+    }
+
+    Ok(JoinClusterResult {
+        ca_pem: response.ca_pem,
+        node_cert_pem: response.node_cert_pem,
+        node_key_pem: response.node_key_pem,
+    })
 }

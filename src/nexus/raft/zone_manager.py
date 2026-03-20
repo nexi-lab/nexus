@@ -859,49 +859,39 @@ class ZoneManager:
         self._py_mgr.set_ca_material(ca_pem, ca_key_pem)
 
     def _follower_get_cert(self, leader_id: int, ca_pem: bytes) -> None:
-        """Follower: call JoinCluster on leader over plaintext to get signed cert."""
+        """Follower: call JoinCluster on leader over plaintext to get signed cert.
+
+        Uses the shared Rust implementation (transport::call_join_cluster) via PyO3.
+        """
         peers_str = os.environ.get("NEXUS_PEERS", "")
         leader_addr = self._find_peer_address(peers_str, leader_id)
         if leader_addr is None:
             return
 
         try:
-            import grpc
-
-            from nexus.raft import transport_pb2, transport_pb2_grpc
-
-            target = leader_addr.replace("http://", "").replace("https://", "")
-            channel = grpc.insecure_channel(target)
-            stub = transport_pb2_grpc.ZoneApiServiceStub(channel)
-            request = transport_pb2.JoinClusterRequest(
-                password="",
+            resp_ca, resp_cert, resp_key = self._py_mgr.call_join_cluster(
+                leader_addr=leader_addr,
                 node_id=self._node_id,
                 node_address=self._advertise_addr,
                 zone_id=ROOT_ZONE_ID,
-                peers_bootstrap=True,
             )
-            response = stub.JoinCluster(request, timeout=10.0)
         except Exception as e:
             logger.info("JoinCluster to leader %d failed (will retry): %s", leader_id, e)
             return
 
-        if not response.success:
-            logger.info("JoinCluster rejected by leader (will retry): %s", response.error)
-            return
-
         # Verify CA matches what's in Raft
-        if response.ca_pem != ca_pem:
+        if resp_ca != ca_pem:
             logger.error("CA mismatch: JoinCluster response CA differs from Raft CA")
             return
 
         # Save certs to disk
         tls_dir = Path(self._base_path) / "tls"
         tls_dir.mkdir(parents=True, exist_ok=True)
-        (tls_dir / "ca.pem").write_bytes(response.ca_pem)
-        (tls_dir / "node.pem").write_bytes(response.node_cert_pem)
+        (tls_dir / "ca.pem").write_bytes(resp_ca)
+        (tls_dir / "node.pem").write_bytes(resp_cert)
         from nexus.security.secret_file import write_secret_file
 
-        write_secret_file(tls_dir / "node-key.pem", response.node_key_pem)
+        write_secret_file(tls_dir / "node-key.pem", resp_key)
         logger.info("Follower: received signed cert from leader %d", leader_id)
 
     def _leader_check_all_ready(self, raft_engine: Any) -> None:

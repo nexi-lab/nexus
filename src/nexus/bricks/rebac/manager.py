@@ -2638,7 +2638,22 @@ class ReBACManager:
 
     def _increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
         """Increment and return the new revision. Delegates to TupleRepository (Issue #1459)."""
-        return self._repo.increment_zone_revision(zone_id, conn)
+        new_rev = self._repo.increment_zone_revision(zone_id, conn)
+
+        # Issue #3192: Broadcast revision via SharedRingBuffer
+        if self._l1_cache is not None:
+            ring = getattr(self._l1_cache, "_revision_ring_buffer", None)
+            if ring is not None:
+                try:
+                    import json
+
+                    ring.write(
+                        json.dumps({"zone_id": zone_id or "root", "revision": new_rev}).encode()
+                    )
+                except Exception:
+                    pass  # best-effort broadcast
+
+        return new_rev
 
     @contextmanager
     def _connection(self, *, readonly: bool = False) -> Any:

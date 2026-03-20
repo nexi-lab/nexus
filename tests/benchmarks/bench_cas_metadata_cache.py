@@ -27,7 +27,7 @@ class TestMetaCacheBenchmark:
         """Benchmark: repeated _read_meta calls should mostly hit cache."""
         content = b"benchmark content"
         result = backend.write_content(content)
-        h = result.content_hash
+        h = result.content_id
 
         # Warm up cache
         backend._read_meta(h)
@@ -45,7 +45,7 @@ class TestMetaCacheBenchmark:
         hashes = []
         for i in range(100):
             result = backend.write_content(f"content-{i}".encode())
-            hashes.append(result.content_hash)
+            hashes.append(result.content_id)
 
         # Read each hash multiple times — should get cache hits
         for _ in range(10):

@@ -94,12 +94,12 @@ class TestWriteReadRoundtrip:
     def test_write_returns_write_result(self, backend):
         result = backend.write_content(b"hello")
         assert isinstance(result, WriteResult)
-        assert result.content_hash == hash_content(b"hello")
+        assert result.content_id == hash_content(b"hello")
         assert result.size == 5
 
     def test_read_returns_exact_content(self, backend):
         result = backend.write_content(b"hello world")
-        data = backend.read_content(result.content_hash)
+        data = backend.read_content(result.content_id)
         assert data == b"hello world"
 
     def test_read_nonexistent_raises(self, backend):
@@ -108,13 +108,13 @@ class TestWriteReadRoundtrip:
 
     def test_write_empty_content(self, backend):
         result = backend.write_content(b"")
-        data = backend.read_content(result.content_hash)
+        data = backend.read_content(result.content_id)
         assert data == b""
 
     def test_write_large_content(self, backend):
         large = b"x" * (1024 * 1024)  # 1MB
         result = backend.write_content(large)
-        data = backend.read_content(result.content_hash)
+        data = backend.read_content(result.content_id)
         assert data == large
 
 
@@ -122,32 +122,32 @@ class TestDeduplication:
     def test_same_content_same_hash(self, backend):
         r1 = backend.write_content(b"dedup")
         r2 = backend.write_content(b"dedup")
-        assert r1.content_hash == r2.content_hash
+        assert r1.content_id == r2.content_id
 
     def test_ref_count_increments(self, backend):
         r1 = backend.write_content(b"dedup")
         backend.write_content(b"dedup")
-        ref = backend.get_ref_count(r1.content_hash)
+        ref = backend.get_ref_count(r1.content_id)
         assert ref == 2
 
     def test_ref_count_starts_at_one(self, backend):
         r = backend.write_content(b"single")
-        assert backend.get_ref_count(r.content_hash) == 1
+        assert backend.get_ref_count(r.content_id) == 1
 
 
 class TestDeleteContent:
     def test_delete_single_ref(self, backend):
         r = backend.write_content(b"del me")
-        backend.delete_content(r.content_hash)
-        assert not backend.content_exists(r.content_hash)
+        backend.delete_content(r.content_id)
+        assert not backend.content_exists(r.content_id)
 
     def test_delete_decrements_ref_count(self, backend):
         r = backend.write_content(b"shared")
         backend.write_content(b"shared")
-        backend.delete_content(r.content_hash)
+        backend.delete_content(r.content_id)
         # Should still exist with ref_count=1
-        assert backend.content_exists(r.content_hash)
-        assert backend.get_ref_count(r.content_hash) == 1
+        assert backend.content_exists(r.content_id)
+        assert backend.get_ref_count(r.content_id) == 1
 
     def test_delete_nonexistent_raises(self, backend):
         with pytest.raises(NexusFileNotFoundError):
@@ -157,21 +157,21 @@ class TestDeleteContent:
 class TestContentExists:
     def test_exists_after_write(self, backend):
         r = backend.write_content(b"exists")
-        assert backend.content_exists(r.content_hash) is True
+        assert backend.content_exists(r.content_id) is True
 
     def test_not_exists(self, backend):
         assert backend.content_exists("deadbeef" * 8) is False
 
     def test_not_exists_after_delete(self, backend):
         r = backend.write_content(b"temp")
-        backend.delete_content(r.content_hash)
-        assert backend.content_exists(r.content_hash) is False
+        backend.delete_content(r.content_id)
+        assert backend.content_exists(r.content_id) is False
 
 
 class TestGetContentSize:
     def test_size_correct(self, backend):
         r = backend.write_content(b"12345")
-        assert backend.get_content_size(r.content_hash) == 5
+        assert backend.get_content_size(r.content_id) == 5
 
     def test_size_nonexistent_raises(self, backend):
         with pytest.raises(NexusFileNotFoundError):
@@ -190,7 +190,7 @@ class TestGetRefCount:
 class TestStreamContent:
     def test_stream_roundtrip(self, backend):
         r = backend.write_content(b"stream me")
-        chunks = list(backend.stream_content(r.content_hash, chunk_size=3))
+        chunks = list(backend.stream_content(r.content_id, chunk_size=3))
         assert b"".join(chunks) == b"stream me"
 
     def test_stream_nonexistent_raises(self, backend):
@@ -202,8 +202,8 @@ class TestWriteStream:
     def test_write_stream_roundtrip(self, backend):
         chunks = iter([b"hel", b"lo ", b"wor", b"ld"])
         r = backend.write_stream(chunks)
-        assert r.content_hash == hash_content(b"hello world")
-        data = backend.read_content(r.content_hash)
+        assert r.content_id == hash_content(b"hello world")
+        data = backend.read_content(r.content_id)
         assert data == b"hello world"
 
 
@@ -211,14 +211,14 @@ class TestBatchRead:
     def test_batch_read_all_found(self, backend):
         r1 = backend.write_content(b"one")
         r2 = backend.write_content(b"two")
-        result = backend.batch_read_content([r1.content_hash, r2.content_hash])
-        assert result[r1.content_hash] == b"one"
-        assert result[r2.content_hash] == b"two"
+        result = backend.batch_read_content([r1.content_id, r2.content_id])
+        assert result[r1.content_id] == b"one"
+        assert result[r2.content_id] == b"two"
 
     def test_batch_read_missing_returns_none(self, backend):
         r = backend.write_content(b"exists")
-        result = backend.batch_read_content([r.content_hash, "deadbeef" * 8])
-        assert result[r.content_hash] == b"exists"
+        result = backend.batch_read_content([r.content_id, "deadbeef" * 8])
+        assert result[r.content_id] == b"exists"
         assert result["deadbeef" * 8] is None
 
     def test_batch_read_empty(self, backend):
@@ -273,12 +273,12 @@ class TestBloomFilter:
     def test_bloom_hit_after_write(self, backend_with_features):
         b = backend_with_features
         r = b.write_content(b"bloom test")
-        assert b.content_exists(r.content_hash) is True
+        assert b.content_exists(r.content_id) is True
 
     def test_bloom_populated_on_write(self, backend_with_features):
         b = backend_with_features
         r = b.write_content(b"data")
-        assert b._bloom.might_exist(r.content_hash) is True
+        assert b._bloom.might_exist(r.content_id) is True
 
 
 # === Feature DI: Content Cache ===
@@ -289,15 +289,15 @@ class TestContentCache:
         b = backend_with_features
         r = b.write_content(b"cached data")
         # First read populates cache (write also populates)
-        data1 = b.read_content(r.content_hash)
+        data1 = b.read_content(r.content_id)
         assert data1 == b"cached data"
         # Cache should have it
-        assert b._cache.get(r.content_hash) == b"cached data"
+        assert b._cache.get(r.content_id) == b"cached data"
 
     def test_cache_populated_on_write(self, backend_with_features):
         b = backend_with_features
         r = b.write_content(b"write cache")
-        assert b._cache.get(r.content_hash) == b"write cache"
+        assert b._cache.get(r.content_id) == b"write cache"
 
 
 # === Feature DI: Stripe Lock ===
@@ -331,11 +331,11 @@ class TestStripeLock:
         assert len(results) == 50
 
         # All results should have the same hash
-        hashes = {r.content_hash for r in results}
+        hashes = {r.content_id for r in results}
         assert len(hashes) == 1
 
         # ref_count should be exactly 50
-        content_hash = results[0].content_hash
+        content_hash = results[0].content_id
         ref_count = backend.get_ref_count(content_hash)
         assert ref_count == 50
 
@@ -363,7 +363,7 @@ class TestStripeLock:
 
         assert not errors
         assert len(results) == 50
-        hashes = {r.content_hash for r in results}
+        hashes = {r.content_id for r in results}
         assert len(hashes) == 50  # All different content
 
 
@@ -392,7 +392,7 @@ class TestNoFeatures:
 
     def test_crud_without_features(self, backend):
         r = backend.write_content(b"cloud-style")
-        data = backend.read_content(r.content_hash)
+        data = backend.read_content(r.content_id)
         assert data == b"cloud-style"
-        backend.delete_content(r.content_hash)
-        assert not backend.content_exists(r.content_hash)
+        backend.delete_content(r.content_id)
+        assert not backend.content_exists(r.content_id)

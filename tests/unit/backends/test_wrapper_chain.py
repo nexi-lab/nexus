@@ -78,11 +78,11 @@ class TestCompressEncryptChain:
         assert isinstance(write_resp, WriteResult)
 
         # Verify stored content is neither plaintext nor just compressed
-        stored = storage[write_resp.content_hash]
+        stored = storage[write_resp.content_id]
         assert stored != plaintext, "Stored content should be encrypted"
 
         # Read back through chain
-        read_back = compressed.read_content(write_resp.content_hash)
+        read_back = compressed.read_content(write_resp.content_id)
         assert read_back == plaintext
 
     def test_chain_dedup(self) -> None:
@@ -105,8 +105,8 @@ class TestCompressEncryptChain:
         )
 
         content = b"deduplicate me " * 100
-        h1 = compressed.write_content(content).content_hash
-        h2 = compressed.write_content(content).content_hash
+        h1 = compressed.write_content(content).content_id
+        h2 = compressed.write_content(content).content_id
         assert h1 == h2
 
     def test_chain_batch_read(self) -> None:
@@ -129,7 +129,7 @@ class TestCompressEncryptChain:
         )
 
         items = [b"item_a " * 50, b"item_b " * 50, b"item_c " * 50]
-        hashes = [compressed.write_content(item).content_hash for item in items]
+        hashes = [compressed.write_content(item).content_id for item in items]
 
         results = compressed.batch_read_content(hashes)
         for h, expected in zip(hashes, items):
@@ -182,7 +182,7 @@ class TestEncryptCompressChain:
         write_resp = encrypted.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_back = encrypted.read_content(write_resp.content_hash)
+        read_back = encrypted.read_content(write_resp.content_id)
         assert read_back == plaintext
 
 
@@ -219,7 +219,7 @@ class TestWrapperChainPerformance:
         content = b"performance test data " * 100
 
         # Warm up
-        h = compressed.write_content(content).content_hash
+        h = compressed.write_content(content).content_id
         compressed.read_content(h)
 
         # Time writes
@@ -278,11 +278,11 @@ class TestCacheWrapperChain:
         assert isinstance(write_resp, WriteResult)
 
         # First read populates L1
-        read_back = cached.read_content(write_resp.content_hash)
+        read_back = cached.read_content(write_resp.content_id)
         assert read_back == plaintext
 
         # Second read should hit L1 cache
-        read_back2 = cached.read_content(write_resp.content_hash)
+        read_back2 = cached.read_content(write_resp.content_id)
         assert read_back2 == plaintext
 
     def test_cache_only_chain(self) -> None:
@@ -298,7 +298,7 @@ class TestCacheWrapperChain:
 
         # Write and first read
         write_resp = cached.write_content(b"hello")
-        content_hash = write_resp.content_hash
+        content_hash = write_resp.content_id
         cached.read_content(content_hash)
 
         # Reset mock call count
@@ -388,7 +388,7 @@ class TestPerformanceRegression:
         content = b"full chain perf data " * 100
 
         # Warm up
-        h = cached.write_content(content).content_hash
+        h = cached.write_content(content).content_id
         cached.read_content(h)
 
         # Time reads (includes L1 cache hit path)

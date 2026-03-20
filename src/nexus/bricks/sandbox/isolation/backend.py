@@ -105,20 +105,20 @@ class IsolatedBackend(Backend):
     def write_content(self, content: bytes, context: "Any | None" = None) -> WriteResult:
         return cast(WriteResult, self._call("write_content", content, context=context))
 
-    def read_content(self, content_hash: str, context: "Any | None" = None) -> bytes:
-        return cast(bytes, self._call("read_content", content_hash, context=context))
+    def read_content(self, content_id: str, context: "Any | None" = None) -> bytes:
+        return cast(bytes, self._call("read_content", content_id, context=context))
 
-    def delete_content(self, content_hash: str, context: "Any | None" = None) -> None:
-        self._call("delete_content", content_hash, context=context)
+    def delete_content(self, content_id: str, context: "Any | None" = None) -> None:
+        self._call("delete_content", content_id, context=context)
 
-    def content_exists(self, content_hash: str, context: "Any | None" = None) -> bool:
-        return cast(bool, self._call("content_exists", content_hash, context=context))
+    def content_exists(self, content_id: str, context: "Any | None" = None) -> bool:
+        return cast(bool, self._call("content_exists", content_id, context=context))
 
-    def get_content_size(self, content_hash: str, context: "Any | None" = None) -> int:
-        return cast(int, self._call("get_content_size", content_hash, context=context))
+    def get_content_size(self, content_id: str, context: "Any | None" = None) -> int:
+        return cast(int, self._call("get_content_size", content_id, context=context))
 
-    def get_ref_count(self, content_hash: str, context: "Any | None" = None) -> int:
-        return cast(int, self._call("get_ref_count", content_hash, context=context))
+    def get_ref_count(self, content_id: str, context: "Any | None" = None) -> int:
+        return cast(int, self._call("get_ref_count", content_id, context=context))
 
     # ── Directory operations ────────────────────────────────────────────
 

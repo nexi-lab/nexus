@@ -84,7 +84,7 @@ class TestContentOperationLogs:
     def test_write_content_logs(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
-        mock_inner.write_content.return_value = WriteResult(content_hash="hash123456ab", size=11)
+        mock_inner.write_content.return_value = WriteResult(content_id="hash123456ab", size=11)
         with caplog.at_level(logging.DEBUG, logger="nexus.backends.wrappers.logging"):
             result = logged.write_content(b"hello world")
         assert isinstance(result, WriteResult)
@@ -238,7 +238,7 @@ class TestDelegationCorrectness:
     def test_write_returns_inner_response(
         self, logged: LoggingBackendWrapper, mock_inner: MagicMock
     ) -> None:
-        expected = WriteResult(content_hash="hash-result")
+        expected = WriteResult(content_id="hash-result")
         mock_inner.write_content.return_value = expected
         result = logged.write_content(b"data")
         assert result is expected

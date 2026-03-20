@@ -29,8 +29,8 @@ class TestBackendAsObjectStore:
 
         content = b"integration test data"
         result = backend.write_content(content)
-        assert len(result.content_hash) == 64
-        assert backend.read_content(result.content_hash) == content
+        assert len(result.content_id) == 64
+        assert backend.read_content(result.content_id) == content
 
     def test_all_ops(self, tmp_path) -> None:
         """Exercises core ObjectStoreABC methods through CASLocalBackend."""
@@ -41,26 +41,26 @@ class TestBackendAsObjectStore:
         r2 = backend.write_content(b"second")
 
         # read_content
-        assert backend.read_content(r1.content_hash) == b"first"
-        assert backend.read_content(r2.content_hash) == b"second"
+        assert backend.read_content(r1.content_id) == b"first"
+        assert backend.read_content(r2.content_id) == b"second"
 
         # content_exists
-        assert backend.content_exists(r1.content_hash) is True
+        assert backend.content_exists(r1.content_id) is True
         assert backend.content_exists("f" * 64) is False
 
         # get_content_size
-        assert backend.get_content_size(r1.content_hash) == 5
-        assert backend.get_content_size(r2.content_hash) == 6
+        assert backend.get_content_size(r1.content_id) == 5
+        assert backend.get_content_size(r2.content_id) == 6
 
         # batch_read_content
-        result = backend.batch_read_content([r1.content_hash, r2.content_hash, "f" * 64])
-        assert result[r1.content_hash] == b"first"
-        assert result[r2.content_hash] == b"second"
+        result = backend.batch_read_content([r1.content_id, r2.content_id, "f" * 64])
+        assert result[r1.content_id] == b"first"
+        assert result[r2.content_id] == b"second"
         assert result["f" * 64] is None
 
         # delete_content
-        backend.delete_content(r1.content_hash)
-        assert backend.content_exists(r1.content_hash) is False
+        backend.delete_content(r1.content_id)
+        assert backend.content_exists(r1.content_id) is False
 
     def test_error_propagation(self, tmp_path) -> None:
         """Errors from CASLocalBackend raise proper exceptions."""
@@ -76,10 +76,10 @@ class TestBackendAsObjectStore:
         content = b"deduplicate me"
         r1 = backend.write_content(content)
         r2 = backend.write_content(content)
-        assert r1.content_hash == r2.content_hash
+        assert r1.content_id == r2.content_id
 
         # Delete once — should decrement ref count
-        backend.delete_content(r1.content_hash)
+        backend.delete_content(r1.content_id)
         # Content still accessible (ref count > 0)
-        assert backend.content_exists(r2.content_hash)
-        assert backend.read_content(r2.content_hash) == content
+        assert backend.content_exists(r2.content_id)
+        assert backend.read_content(r2.content_id) == content

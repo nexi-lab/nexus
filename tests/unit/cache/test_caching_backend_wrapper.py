@@ -132,7 +132,7 @@ class TestCacheInvalidation:
         """After write_content, cached content for that hash is evicted."""
         inner = _make_mock_backend()
         inner.read_content.return_value = b"original"
-        inner.write_content.return_value = WriteResult(content_hash="hash_x")
+        inner.write_content.return_value = WriteResult(content_id="hash_x")
 
         config = CacheWrapperConfig(strategy=CacheStrategy.WRITE_AROUND)
         wrapper = CachingBackendWrapper(inner=inner, config=config)
@@ -153,7 +153,7 @@ class TestCacheInvalidation:
     def test_write_through_populates_l1(self) -> None:
         """WRITE_THROUGH strategy populates L1 on write."""
         inner = _make_mock_backend()
-        inner.write_content.return_value = WriteResult(content_hash="hash_y")
+        inner.write_content.return_value = WriteResult(content_id="hash_y")
 
         config = CacheWrapperConfig(strategy=CacheStrategy.WRITE_THROUGH)
         wrapper = CachingBackendWrapper(inner=inner, config=config)

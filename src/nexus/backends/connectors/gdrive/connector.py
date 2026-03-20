@@ -768,9 +768,9 @@ class GoogleDriveConnectorBackend(Backend):
             file_id = file["id"]
             logger.info(f"Created file '{filename}' in Drive (ID: {file_id})")
 
-        return WriteResult(content_hash=content_hash, size=len(content))
+        return WriteResult(content_id=content_hash, size=len(content))
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read content from Google Drive by path (not hash).
 
@@ -878,7 +878,7 @@ class GoogleDriveConnectorBackend(Backend):
 
         return defaults.get(mime_type, "application/pdf")
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """
         Delete content from Google Drive by path.
 
@@ -939,7 +939,7 @@ class GoogleDriveConnectorBackend(Backend):
 
         logger.info(f"Deleted file '{filename}' from Drive (ID: {file_id})")
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         """
         Check if content exists in Google Drive by path.
 
@@ -986,7 +986,7 @@ class GoogleDriveConnectorBackend(Backend):
 
         return len(files) > 0
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get content size from Google Drive.
 
         Args:
@@ -1001,7 +1001,7 @@ class GoogleDriveConnectorBackend(Backend):
         """
         try:
             service = self._get_drive_service(context)
-            file_metadata = service.files().get(fileId=content_hash, fields="size").execute()
+            file_metadata = service.files().get(fileId=content_id, fields="size").execute()
 
             size = file_metadata.get("size")
             if size is None:
@@ -1012,10 +1012,10 @@ class GoogleDriveConnectorBackend(Backend):
 
         except Exception as e:
             if "File not found" in str(e):
-                raise NexusFileNotFoundError(content_hash) from e
+                raise NexusFileNotFoundError(content_id) from e
             raise
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get reference count (always 1 for connector backends).
 
         Connector backends don't do deduplication, so each file

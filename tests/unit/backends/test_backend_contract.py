@@ -37,7 +37,7 @@ class _MockBackend(Backend):
         else:
             self._content[content_hash] = content
             self._ref_counts[content_hash] = 1
-        return WriteResult(content_hash=content_hash, size=len(content))
+        return WriteResult(content_id=content_hash, size=len(content))
 
     def read_content(self, content_hash: str, context: Any = None) -> bytes:
         if content_hash not in self._content:
@@ -123,14 +123,14 @@ class TestBackendContract:
     def test_write_then_read_roundtrip(self, backend: Backend) -> None:
         content = b"hello world"
         write_result = backend.write_content(content)
-        content_hash = write_result.content_hash
+        content_hash = write_result.content_id
         assert content_hash is not None
         data = backend.read_content(content_hash)
         assert data == content
 
     def test_content_exists_after_write(self, backend: Backend) -> None:
         content = b"test exists"
-        content_hash = backend.write_content(content).content_hash
+        content_hash = backend.write_content(content).content_id
         assert content_hash is not None
         assert backend.content_exists(content_hash) is True
 
@@ -139,7 +139,7 @@ class TestBackendContract:
 
     def test_delete_removes_content(self, backend: Backend) -> None:
         content = b"delete me"
-        content_hash = backend.write_content(content).content_hash
+        content_hash = backend.write_content(content).content_id
         assert content_hash is not None
         backend.delete_content(content_hash)
         assert backend.content_exists(content_hash) is False
@@ -149,13 +149,13 @@ class TestBackendContract:
         content = b"idempotent data"
         result1 = backend.write_content(content)
         result2 = backend.write_content(content)
-        assert result1.content_hash is not None
-        assert result2.content_hash is not None
-        assert result1.content_hash == result2.content_hash
+        assert result1.content_id is not None
+        assert result2.content_id is not None
+        assert result1.content_id == result2.content_id
 
     def test_get_content_size_correct(self, backend: Backend) -> None:
         content = b"measure me"
-        content_hash = backend.write_content(content).content_hash
+        content_hash = backend.write_content(content).content_id
         assert content_hash is not None
         size = backend.get_content_size(content_hash)
         assert size == len(content)
@@ -163,7 +163,7 @@ class TestBackendContract:
     def test_get_ref_count_after_writes(self, backend: Backend) -> None:
         content = b"ref counting"
         backend.write_content(content)
-        content_hash = backend.write_content(content).content_hash  # Second write
+        content_hash = backend.write_content(content).content_id  # Second write
         assert content_hash is not None
         ref_count = backend.get_ref_count(content_hash)
         assert ref_count is not None
@@ -180,7 +180,7 @@ class TestBackendContract:
 
     def test_batch_read_partial_missing(self, backend: Backend) -> None:
         content = b"batch test"
-        real_hash = backend.write_content(content).content_hash
+        real_hash = backend.write_content(content).content_id
         assert real_hash is not None
         fake_hash = "c" * 64
         results = backend.batch_read_content([real_hash, fake_hash])
@@ -249,7 +249,7 @@ class TestBackendContract:
         backend.write_content(b"ctx test", context=None)
 
     def test_read_with_context(self, backend: Backend) -> None:
-        content_hash = backend.write_content(b"ctx read", context=None).content_hash
+        content_hash = backend.write_content(b"ctx read", context=None).content_id
         assert content_hash is not None
         backend.read_content(content_hash, context=None)
 

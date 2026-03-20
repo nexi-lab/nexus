@@ -193,7 +193,7 @@ class LLMStreamingService:
             done_msg = json.dumps(
                 {
                     "type": "done",
-                    "session_hash": result.content_hash,
+                    "session_hash": result.content_id,
                     "model": meta.get("model", ""),
                     "latency_ms": meta.get("latency_ms", 0),
                 },
@@ -206,7 +206,7 @@ class LLMStreamingService:
                 "LLM stream completed: %s model=%s session=%s",
                 stream_path,
                 meta.get("model", ""),
-                result.content_hash[:16],
+                result.content_id[:16],
             )
 
         except asyncio.CancelledError:

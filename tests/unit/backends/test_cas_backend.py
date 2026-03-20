@@ -114,7 +114,7 @@ class TestCASAddressingEngineWriteContent:
         h = hash_content(content)
         result = backend.write_content(content)
 
-        assert result.content_hash == h
+        assert result.content_id == h
         assert result.size == len(content)
 
         # Blob stored at cas/xx/yy/hash
@@ -144,14 +144,14 @@ class TestCASAddressingEngineWriteContent:
         r1 = backend.write_content(content)
         r2 = backend.write_content(content)
 
-        assert r1.content_hash == r2.content_hash
-        assert backend.get_ref_count(r1.content_hash) == 2
+        assert r1.content_id == r2.content_id
+        assert backend.get_ref_count(r1.content_id) == 2
 
     def test_write_different_content_different_hashes(self, backend: CASAddressingEngine):
         r1 = backend.write_content(b"content A")
         r2 = backend.write_content(b"content B")
 
-        assert r1.content_hash != r2.content_hash
+        assert r1.content_id != r2.content_id
 
     def test_write_returns_write_result(self, backend: CASAddressingEngine):
         result = backend.write_content(b"test")
@@ -164,7 +164,7 @@ class TestCASAddressingEngineReadContent:
     def test_read_returns_content(self, backend: CASAddressingEngine):
         content = b"read me"
         result = backend.write_content(content)
-        data = backend.read_content(result.content_hash)
+        data = backend.read_content(result.content_id)
         assert data == content
 
     def test_read_missing_raises(self, backend: CASAddressingEngine):
@@ -178,11 +178,11 @@ class TestCASAddressingEngineReadContent:
         result = backend.write_content(content)
 
         # Corrupt the stored blob
-        cas_key = f"cas/{result.content_hash[:2]}/{result.content_hash[2:4]}/{result.content_hash}"
+        cas_key = f"cas/{result.content_id[:2]}/{result.content_id[2:4]}/{result.content_id}"
         transport.files[cas_key] = b"corrupted"
 
         with pytest.raises(BackendError, match="hash mismatch"):
-            backend.read_content(result.content_hash)
+            backend.read_content(result.content_id)
 
 
 class TestCASAddressingEngineDeleteContent:
@@ -193,7 +193,7 @@ class TestCASAddressingEngineDeleteContent:
     ):
         content = b"delete me"
         result = backend.write_content(content)
-        h = result.content_hash
+        h = result.content_id
 
         backend.delete_content(h)
 
@@ -205,8 +205,8 @@ class TestCASAddressingEngineDeleteContent:
         result = backend.write_content(content)
         backend.write_content(content)  # ref_count = 2
 
-        backend.delete_content(result.content_hash)
-        assert backend.get_ref_count(result.content_hash) == 1
+        backend.delete_content(result.content_id)
+        assert backend.get_ref_count(result.content_id) == 1
 
     def test_delete_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
@@ -217,7 +217,7 @@ class TestCASAddressingEngineDeleteContent:
     ):
         content = b"cleanup"
         result = backend.write_content(content)
-        h = result.content_hash
+        h = result.content_id
 
         backend.delete_content(h)
 
@@ -230,7 +230,7 @@ class TestCASAddressingEngineContentOperations:
 
     def test_content_exists_true(self, backend: CASAddressingEngine):
         result = backend.write_content(b"exists")
-        assert backend.content_exists(result.content_hash) is True
+        assert backend.content_exists(result.content_id) is True
 
     def test_content_exists_false(self, backend: CASAddressingEngine):
         assert backend.content_exists("c" * 64) is False
@@ -238,7 +238,7 @@ class TestCASAddressingEngineContentOperations:
     def test_get_content_size(self, backend: CASAddressingEngine):
         content = b"size check"
         result = backend.write_content(content)
-        assert backend.get_content_size(result.content_hash) == len(content)
+        assert backend.get_content_size(result.content_id) == len(content)
 
     def test_get_content_size_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
@@ -256,7 +256,7 @@ class TestCASAddressingEngineStreaming:
         content = b"A" * 100
         result = backend.write_content(content)
 
-        chunks = list(backend.stream_content(result.content_hash, chunk_size=30))
+        chunks = list(backend.stream_content(result.content_id, chunk_size=30))
         assert b"".join(chunks) == content
 
     def test_stream_missing_raises(self, backend: CASAddressingEngine):
@@ -267,7 +267,7 @@ class TestCASAddressingEngineStreaming:
         chunks = [b"chunk1", b"chunk2", b"chunk3"]
         result = backend.write_stream(iter(chunks))
 
-        data = backend.read_content(result.content_hash)
+        data = backend.read_content(result.content_id)
         assert data == b"chunk1chunk2chunk3"
 
 
@@ -275,9 +275,9 @@ class TestCASAddressingEngineBatchRead:
     """Test batch_read_content."""
 
     def test_batch_read_multiple(self, backend: CASAddressingEngine):
-        h1 = backend.write_content(b"file1").content_hash
-        h2 = backend.write_content(b"file2").content_hash
-        h3 = backend.write_content(b"file3").content_hash
+        h1 = backend.write_content(b"file1").content_id
+        h2 = backend.write_content(b"file2").content_id
+        h3 = backend.write_content(b"file3").content_id
 
         result = backend.batch_read_content([h1, h2, h3])
 
@@ -289,12 +289,12 @@ class TestCASAddressingEngineBatchRead:
         assert backend.batch_read_content([]) == {}
 
     def test_batch_read_single_optimization(self, backend: CASAddressingEngine):
-        h = backend.write_content(b"single").content_hash
+        h = backend.write_content(b"single").content_id
         result = backend.batch_read_content([h])
         assert result[h] == b"single"
 
     def test_batch_read_partial_failures(self, backend: CASAddressingEngine):
-        h = backend.write_content(b"exists").content_hash
+        h = backend.write_content(b"exists").content_id
         fake = "a" * 64
 
         result = backend.batch_read_content([h, fake])

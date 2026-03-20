@@ -284,8 +284,8 @@ class OpenAICompatibleBackend(CASBackend):
         # Build and store session envelope
         session = {
             "type": "llm_session_v1",
-            "request_hash": request_result.content_hash,
-            "response_hash": response_result.content_hash,
+            "request_hash": request_result.content_id,
+            "response_hash": response_result.content_id,
             "model": model,
             "latency_ms": round(latency_ms, 1),
         }
@@ -297,7 +297,7 @@ class OpenAICompatibleBackend(CASBackend):
             model,
             usage.get("total_tokens", 0),
             latency_ms,
-            session_result.content_hash[:16],
+            session_result.content_id[:16],
         )
 
         return session_result

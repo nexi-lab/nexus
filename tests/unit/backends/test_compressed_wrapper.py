@@ -87,7 +87,7 @@ class TestCompressedRoundtrip:
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == plaintext
 
     def test_binary_roundtrip(self) -> None:
@@ -101,7 +101,7 @@ class TestCompressedRoundtrip:
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == plaintext
 
     def test_large_content_roundtrip(self) -> None:
@@ -115,7 +115,7 @@ class TestCompressedRoundtrip:
         write_resp = wrapper.write_content(plaintext)
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == plaintext
 
 
@@ -135,8 +135,8 @@ class TestCompressedCASDedup:
         wrapper = CompressedStorage(inner=mock, config=config)
 
         content = b"deterministic content " * 100
-        hash1 = wrapper.write_content(content).content_hash
-        hash2 = wrapper.write_content(content).content_hash
+        hash1 = wrapper.write_content(content).content_id
+        hash2 = wrapper.write_content(content).content_id
         assert hash1 == hash2, "zstd should produce identical output for identical input"
 
 
@@ -160,7 +160,7 @@ class TestCompressedThreshold:
         assert isinstance(write_resp, WriteResult)
 
         # Read should return original content
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == small_content
 
     def test_above_threshold_compressed(self) -> None:
@@ -176,11 +176,11 @@ class TestCompressedThreshold:
         assert isinstance(write_resp, WriteResult)
 
         # The stored content should be smaller than original
-        stored = storage[write_resp.content_hash]
+        stored = storage[write_resp.content_id]
         assert len(stored) < len(large_content)
 
         # Read should return original
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == large_content
 
 
@@ -207,7 +207,7 @@ class TestCompressedNegativeRatio:
         assert isinstance(write_resp, WriteResult)
 
         # Read should return original regardless of whether compression was skipped
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == random_data
 
 
@@ -229,7 +229,7 @@ class TestCompressedEmptyContent:
         write_resp = wrapper.write_content(b"")
         assert isinstance(write_resp, WriteResult)
 
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == b""
 
 
@@ -318,9 +318,9 @@ class TestCompressedBatch:
         content_b = b"beta " * 100
         content_c = b"gamma " * 100
 
-        h1 = wrapper.write_content(content_a).content_hash
-        h2 = wrapper.write_content(content_b).content_hash
-        h3 = wrapper.write_content(content_c).content_hash
+        h1 = wrapper.write_content(content_a).content_id
+        h2 = wrapper.write_content(content_b).content_id
+        h3 = wrapper.write_content(content_c).content_id
 
         # Batch read
         results = wrapper.batch_read_content([h1, h2, h3])
@@ -335,7 +335,7 @@ class TestCompressedBatch:
         config = CompressedStorageConfig(min_size=0, metrics_enabled=False)
         wrapper = CompressedStorage(inner=mock, config=config)
 
-        h1 = wrapper.write_content(b"exists " * 100).content_hash
+        h1 = wrapper.write_content(b"exists " * 100).content_id
         results = wrapper.batch_read_content([h1, "nonexistent"])
         assert results[h1] == b"exists " * 100
         assert results["nonexistent"] is None
@@ -370,9 +370,9 @@ class TestCompressedFailureFallback:
 
         # Write should succeed with uncompressed content
         assert isinstance(write_resp, WriteResult)
-        stored = storage[write_resp.content_hash]
+        stored = storage[write_resp.content_id]
         assert stored == content  # Stored raw, no NEXZ header
 
         # Read should return original
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == content

@@ -45,7 +45,7 @@ class MockBackend(Backend):
         else:
             self._content[h] = content
             self._ref_counts[h] = 1
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, content_hash, context=None) -> bytes:
         self._last_context = context
@@ -130,13 +130,13 @@ class TestObjectStoreConformance:
     def test_write_returns_write_result(self, store: ObjectStoreABC) -> None:
         result = store.write_content(b"hello world")
         assert isinstance(result, WriteResult)
-        assert isinstance(result.content_hash, str)
+        assert isinstance(result.content_id, str)
         assert result.size == len(b"hello world")
 
     def test_read_roundtrip(self, store: ObjectStoreABC) -> None:
         content = b"roundtrip test data"
         result = store.write_content(content)
-        retrieved = store.read_content(result.content_hash)
+        retrieved = store.read_content(result.content_id)
         assert retrieved == content
 
     def test_read_nonexistent_raises(self, store: ObjectStoreABC) -> None:
@@ -146,7 +146,7 @@ class TestObjectStoreConformance:
 
     def test_delete(self, store: ObjectStoreABC) -> None:
         result = store.write_content(b"delete me")
-        content_hash = result.content_hash
+        content_hash = result.content_id
         # Verify content exists via read
         store.read_content(content_hash)
         # Delete it
@@ -158,19 +158,19 @@ class TestObjectStoreConformance:
     def test_get_content_size(self, store: ObjectStoreABC) -> None:
         content = b"size check"
         result = store.write_content(content)
-        assert store.get_content_size(result.content_hash) == len(content)
+        assert store.get_content_size(result.content_id) == len(content)
 
     def test_batch_read_content(self, store: ObjectStoreABC) -> None:
-        h1 = store.write_content(b"item1").content_hash
-        h2 = store.write_content(b"item2").content_hash
-        h3 = store.write_content(b"item3").content_hash
+        h1 = store.write_content(b"item1").content_id
+        h2 = store.write_content(b"item2").content_id
+        h3 = store.write_content(b"item3").content_id
         result = store.batch_read_content([h1, h2, h3])
         assert result[h1] == b"item1"
         assert result[h2] == b"item2"
         assert result[h3] == b"item3"
 
     def test_batch_read_content_partial(self, store: ObjectStoreABC) -> None:
-        h1 = store.write_content(b"exists").content_hash
+        h1 = store.write_content(b"exists").content_id
         fake_hash = "c" * 64
         result = store.batch_read_content([h1, fake_hash])
         assert result[h1] == b"exists"
@@ -178,8 +178,8 @@ class TestObjectStoreConformance:
 
     def test_deduplication(self, store: ObjectStoreABC) -> None:
         content = b"same content twice"
-        h1 = store.write_content(content).content_hash
-        h2 = store.write_content(content).content_hash
+        h1 = store.write_content(content).content_id
+        h2 = store.write_content(content).content_id
         assert h1 == h2
 
 
@@ -193,26 +193,26 @@ class TestEdgeCases:
         """Empty content (0 bytes) should hash consistently and roundtrip."""
         content = b""
         result = store.write_content(content)
-        assert isinstance(result.content_hash, str)
-        retrieved = store.read_content(result.content_hash)
+        assert isinstance(result.content_id, str)
+        retrieved = store.read_content(result.content_id)
         assert retrieved == b""
-        assert store.get_content_size(result.content_hash) == 0
+        assert store.get_content_size(result.content_id) == 0
 
     def test_binary_content_all_bytes(self, store: ObjectStoreABC) -> None:
         """Binary content with all 256 byte values should preserve exactly."""
         content = bytes(range(256))
         result = store.write_content(content)
-        retrieved = store.read_content(result.content_hash)
+        retrieved = store.read_content(result.content_id)
         assert retrieved == content
-        assert store.get_content_size(result.content_hash) == 256
+        assert store.get_content_size(result.content_id) == 256
 
     def test_large_content(self, store: ObjectStoreABC) -> None:
         """Large content (1MB) should handle without memory issues."""
         content = b"X" * (1024 * 1024)
         result = store.write_content(content)
-        retrieved = store.read_content(result.content_hash)
+        retrieved = store.read_content(result.content_id)
         assert len(retrieved) == len(content)
-        assert store.get_content_size(result.content_hash) == 1024 * 1024
+        assert store.get_content_size(result.content_id) == 1024 * 1024
 
     def test_batch_read_content_empty_list(self, store: ObjectStoreABC) -> None:
         """batch_read_content([]) returns empty dict."""
@@ -222,7 +222,7 @@ class TestEdgeCases:
     def test_batch_read_content_single_item(self, store: ObjectStoreABC) -> None:
         """batch_read_content([hash]) works like read_content()."""
         content = b"single"
-        content_hash = store.write_content(content).content_hash
+        content_hash = store.write_content(content).content_id
         result = store.batch_read_content([content_hash])
         assert len(result) == 1
         assert result[content_hash] == content
@@ -236,7 +236,7 @@ class TestEdgeCases:
     def test_size_consistency_roundtrip(self, store: ObjectStoreABC) -> None:
         """get_content_size() matches len(read_content()) immediately after write_content()."""
         content = b"consistency check content"
-        content_hash = store.write_content(content).content_hash
+        content_hash = store.write_content(content).content_id
         assert store.get_content_size(content_hash) == len(content)
         retrieved = store.read_content(content_hash)
         assert len(retrieved) == store.get_content_size(content_hash)
@@ -284,8 +284,8 @@ class TestErrorHandling:
 
     def test_write_returns_consistent_hash(self, mock_store: MockBackend) -> None:
         content = b"deterministic"
-        h1 = mock_store.write_content(content).content_hash
-        h2 = mock_store.write_content(content).content_hash
+        h1 = mock_store.write_content(content).content_id
+        h2 = mock_store.write_content(content).content_id
         assert h1 == h2
 
 
@@ -338,7 +338,7 @@ class TestContextPropagation:
     def test_context_propagated_to_read(self, mock_backend: MockBackend) -> None:
         ctx = MagicMock()
         result = mock_backend.write_content(b"ctx read test")
-        mock_backend.read_content(result.content_hash, context=ctx)
+        mock_backend.read_content(result.content_id, context=ctx)
         assert mock_backend._last_context is ctx
 
     def test_context_propagated_to_content_exists(self, mock_backend: MockBackend) -> None:
@@ -349,7 +349,7 @@ class TestContextPropagation:
     def test_context_propagated_to_delete(self, mock_backend: MockBackend) -> None:
         ctx = MagicMock()
         result = mock_backend.write_content(b"ctx delete test")
-        mock_backend.delete_content(result.content_hash, context=ctx)
+        mock_backend.delete_content(result.content_id, context=ctx)
         assert mock_backend._last_context is ctx
 
     def test_context_propagated_to_batch_read(self, mock_backend: MockBackend) -> None:
@@ -365,7 +365,7 @@ class TestBackendOverhead:
     def test_direct_call_overhead_under_50us(self, mock_store: MockBackend) -> None:
         """Measure direct backend call overhead -- should be minimal."""
         result = mock_store.write_content(b"benchmark data")
-        content_hash = result.content_hash
+        content_hash = result.content_id
 
         # Warmup
         for _ in range(100):

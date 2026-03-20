@@ -304,7 +304,7 @@ class Backend(ObjectStoreABC):
         """
         Write content to storage and return a WriteResult.
 
-        If content already exists (same hash), increments reference count
+        If content already exists (same identifier), increments reference count
         instead of writing duplicate data.
 
         Args:
@@ -312,7 +312,7 @@ class Backend(ObjectStoreABC):
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
-            WriteResult with content_hash and size.
+            WriteResult with content_id and size.
 
         Raises:
             BackendError: If write operation fails.
@@ -320,12 +320,13 @@ class Backend(ObjectStoreABC):
         pass
 
     @abstractmethod
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """
-        Read content by its hash.
+        Read content by its opaque identifier.
 
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_id: Opaque content identifier (e.g. SHA-256 hash for CAS,
+                version ID for path-based backends)
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
@@ -339,53 +340,53 @@ class Backend(ObjectStoreABC):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: "OperationContext | None" = None,
         *,
         contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """
-        Read multiple content items by their hashes (batch operation).
+        Read multiple content items by their identifiers (batch operation).
 
         This is an optimization to reduce round-trips for backends that support
-        batch operations. Default implementation calls read_content() for each hash.
+        batch operations. Default implementation calls read_content() for each id.
         Backends should override this for better performance.
 
         Args:
-            content_hashes: List of SHA-256 hashes as hex strings
-            context: Shared operation context (used when per-hash context is not available)
-            contexts: Per-hash operation contexts mapping content_hash -> OperationContext.
+            content_ids: List of opaque content identifiers
+            context: Shared operation context (used when per-id context is not available)
+            contexts: Per-id operation contexts mapping content_id -> OperationContext.
                      Used by path-based backends (S3, etc.) that need per-file backend_path.
-                     Falls back to ``context`` for hashes not in this dict.
+                     Falls back to ``context`` for ids not in this dict.
 
         Returns:
-            Dictionary mapping content_hash -> content bytes
-            Returns None for hashes that don't exist (instead of raising)
+            Dictionary mapping content_id -> content bytes
+            Returns None for ids that don't exist (instead of raising)
 
         Note:
             Unlike read_content(), this does NOT raise on missing content.
             Missing content is indicated by None values in the result dict.
         """
         result: dict[str, bytes | None] = {}
-        for content_hash in content_hashes:
-            ctx = contexts.get(content_hash, context) if contexts else context
+        for content_id in content_ids:
+            ctx = contexts.get(content_id, context) if contexts else context
             try:
-                result[content_hash] = self.read_content(content_hash, context=ctx)
+                result[content_id] = self.read_content(content_id, context=ctx)
             except Exception:
-                result[content_hash] = None
+                result[content_id] = None
         return result
 
     def stream_content(
-        self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
+        self, content_id: str, chunk_size: int = 8192, context: "OperationContext | None" = None
     ) -> "Iterator[bytes]":
         """
-        Stream content by its hash in chunks (generator).
+        Stream content by its identifier in chunks (generator).
 
         This is a memory-efficient alternative to read_content() for large files.
         Instead of loading entire file into memory, yields chunks as an iterator.
 
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_id: Opaque content identifier
             chunk_size: Size of each chunk in bytes (default: 8KB)
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
@@ -398,18 +399,18 @@ class Backend(ObjectStoreABC):
 
         Example:
             >>> # Stream large file without loading into memory
-            >>> for chunk in backend.stream_content(content_hash):
+            >>> for chunk in backend.stream_content(content_id):
             ...     process_chunk(chunk)  # Process incrementally
         """
         # Default implementation: read entire file and yield in chunks
         # Backends can override for true streaming from storage
-        content = self.read_content(content_hash, context=context)
+        content = self.read_content(content_id, context=context)
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
     def stream_range(
         self,
-        content_hash: str,
+        content_id: str,
         start: int,
         end: int,
         chunk_size: int = 8192,
@@ -421,7 +422,7 @@ class Backend(ObjectStoreABC):
         seekable storage should override for efficiency.
 
         Args:
-            content_hash: Content identifier (hash)
+            content_id: Opaque content identifier
             start: First byte position (inclusive, 0-based)
             end: Last byte position (inclusive, 0-based)
             chunk_size: Size of each yielded chunk in bytes
@@ -430,7 +431,7 @@ class Backend(ObjectStoreABC):
         Yields:
             bytes: Chunks covering the requested range
         """
-        content = self.read_content(content_hash, context=context)
+        content = self.read_content(content_id, context=context)
         sliced = content[start : end + 1]
         for i in range(0, len(sliced), chunk_size):
             yield sliced[i : i + chunk_size]
@@ -452,7 +453,7 @@ class Backend(ObjectStoreABC):
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
-            WriteResult with content_hash and size.
+            WriteResult with content_id and size.
 
         Note:
             Default implementation collects all chunks and calls write_content().
@@ -464,15 +465,15 @@ class Backend(ObjectStoreABC):
         return self.write_content(content, context=context)
 
     @abstractmethod
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """
-        Delete content by hash.
+        Delete content by identifier.
 
         Decrements reference count. Only deletes actual data when the
         reference count reaches zero.
 
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_id: Opaque content identifier
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Raises:
@@ -481,7 +482,7 @@ class Backend(ObjectStoreABC):
         """
         pass
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         """Check if content exists.
 
         This is a service-level method, NOT part of the kernel contract.
@@ -490,7 +491,7 @@ class Backend(ObjectStoreABC):
         Subclasses should override if they support existence checks.
 
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_id: Opaque content identifier
             context: Operation context (optional)
 
         Returns:
@@ -499,12 +500,12 @@ class Backend(ObjectStoreABC):
         raise NotImplementedError(f"Backend '{self.name}' does not implement content_exists")
 
     @abstractmethod
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """
         Get content size in bytes.
 
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_id: Opaque content identifier
             context: Operation context (optional)
 
         Returns:
@@ -515,7 +516,7 @@ class Backend(ObjectStoreABC):
         """
         pass
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
         """Get reference count for content.
 
         This is a service-level method, NOT part of the kernel contract.
@@ -523,7 +524,7 @@ class Backend(ObjectStoreABC):
         Subclasses should override if they support reference counting.
 
         Args:
-            content_hash: SHA-256 hash as hex string
+            content_id: Opaque content identifier
             context: Operation context (optional)
 
         Returns:
@@ -729,20 +730,20 @@ class AsyncBackend(Protocol):
     ) -> WriteResult: ...
 
     async def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_id: str, context: "OperationContext | None" = None
     ) -> bytes: ...
 
     async def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_id: str, context: "OperationContext | None" = None
     ) -> None: ...
 
     async def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_id: str, context: "OperationContext | None" = None
     ) -> bool: ...
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> AsyncIterator[bytes]: ...

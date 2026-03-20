@@ -313,7 +313,7 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         result = self.write_content(content)
 
         shutil.rmtree(upload_dir, ignore_errors=True)
-        return result.content_hash
+        return result.content_id
 
     def abort_multipart(
         self,

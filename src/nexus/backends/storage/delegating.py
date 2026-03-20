@@ -156,9 +156,9 @@ class DelegatingBackend(Backend):
         transformed = self._transform_on_write(content)
         return self._inner.write_content(transformed, context=context)
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """Read from inner, then transform via ``_transform_on_read``."""
-        data = self._inner.read_content(content_hash, context=context)
+        data = self._inner.read_content(content_id, context=context)
         return self._transform_on_read(data)
 
     def batch_read_content(
@@ -174,35 +174,35 @@ class DelegatingBackend(Backend):
         )
 
         transformed: dict[str, bytes | None] = {}
-        for content_hash, data in raw_results.items():
+        for content_id, data in raw_results.items():
             if data is None:
-                transformed[content_hash] = None
+                transformed[content_id] = None
                 continue
 
             try:
-                transformed[content_hash] = self._transform_on_read(data)
+                transformed[content_id] = self._transform_on_read(data)
             except Exception as e:
                 logger.warning(
                     "%s batch read transform failed for hash=%s: %s",
                     self.__class__.__name__,
-                    content_hash[:12],
+                    content_id[:12],
                     e,
                 )
-                transformed[content_hash] = None
+                transformed[content_id] = None
 
         return transformed
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
-        return self._inner.delete_content(content_hash, context=context)
+    def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
+        return self._inner.delete_content(content_id, context=context)
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
-        return self._inner.content_exists(content_hash, context=context)
+    def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
+        return self._inner.content_exists(content_id, context=context)
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
-        return self._inner.get_content_size(content_hash, context=context)
+    def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
+        return self._inner.get_content_size(content_id, context=context)
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
-        return self._inner.get_ref_count(content_hash, context=context)
+    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
+        return self._inner.get_ref_count(content_id, context=context)
 
     # === Directory Operations (delegate to inner) ===
 

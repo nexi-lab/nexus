@@ -160,7 +160,7 @@ class TestPathAddressingEngineWriteContent:
         result = backend.write_content(content, context=ctx)
 
         expected = hash_content(content)
-        assert result.content_hash == expected
+        assert result.content_id == expected
 
 
 class TestPathAddressingEngineReadContent:

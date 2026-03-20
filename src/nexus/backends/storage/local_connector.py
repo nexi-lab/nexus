@@ -289,7 +289,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     def read_content(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> bytes:
         """Read file content with L1 caching.
@@ -409,7 +409,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
             # Return content hash and size for consistency
             content_hash = hash_content(content)
-            return WriteResult(content_hash=content_hash, size=len(content))
+            return WriteResult(content_id=content_hash, size=len(content))
         except PermissionError as e:
             raise BackendError(f"Permission denied: {write_path} - {e}") from e
         except OSError as e:
@@ -570,7 +570,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     def delete_content(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> None:
         """Delete content by hash - not supported for local_connector.
@@ -587,7 +587,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     def content_exists(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> bool:
         """Check if content exists by hash - not supported for local_connector."""
@@ -595,7 +595,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     def get_content_size(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> int:
         """Get content size by hash - not supported for local_connector.
@@ -607,7 +607,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     def get_ref_count(
         self,
-        content_hash: str,
+        content_id: str,
         context: "OperationContext | None" = None,
     ) -> int:
         """Get reference count by hash - not supported for local_connector."""

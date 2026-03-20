@@ -79,10 +79,11 @@ class SearchableConnector(Protocol):
 
 @runtime_checkable
 class ContentStoreProtocol(Protocol):
-    """Minimal CAS interface — most consumers need only this.
+    """Minimal content store interface — most consumers need only this.
 
-    Covers content-addressable storage operations: write, read, delete,
-    existence check, size, and reference counting.
+    Covers content operations: write, read, delete, existence check,
+    size, and reference counting.  Uses opaque ``content_id`` (hash for
+    CAS backends, path for PAS backends).
     """
 
     @property
@@ -93,23 +94,23 @@ class ContentStoreProtocol(Protocol):
     ) -> "WriteResult": ...
 
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_id: str, context: "OperationContext | None" = None
     ) -> bytes: ...
 
     def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_id: str, context: "OperationContext | None" = None
     ) -> None: ...
 
     def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_id: str, context: "OperationContext | None" = None
     ) -> bool: ...
 
     def get_content_size(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_id: str, context: "OperationContext | None" = None
     ) -> int: ...
 
     def get_ref_count(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_id: str, context: "OperationContext | None" = None
     ) -> int: ...
 
 @runtime_checkable
@@ -207,14 +208,14 @@ class StreamingProtocol(Protocol):
 
     def stream_content(
         self,
-        content_hash: str,
+        content_id: str,
         chunk_size: int = 8192,
         context: "OperationContext | None" = None,
     ) -> "Iterator[bytes]": ...
 
     def stream_range(
         self,
-        content_hash: str,
+        content_id: str,
         start: int,
         end: int,
         chunk_size: int = 8192,
@@ -237,7 +238,7 @@ class BatchContentProtocol(Protocol):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: "OperationContext | None" = None,
     ) -> dict[str, bytes | None]: ...
 

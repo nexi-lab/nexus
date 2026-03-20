@@ -70,7 +70,7 @@ class MockBackend:
 
         h = hashlib.sha256(content).hexdigest()
         (self._content_dir / h).write_bytes(content)
-        return WriteResult(content_hash=h, size=len(content))
+        return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, h, context=None):
         from nexus.contracts.exceptions import NexusFileNotFoundError

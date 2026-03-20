@@ -33,7 +33,7 @@ class MetastoreWriteProtocol(MetastoreReadProtocol, Protocol):
 class ContentBackendProtocol(Protocol):
     """Narrow backend surface for reading content blobs."""
 
-    def read_content(self, content_hash: str) -> Any:
+    def read_content(self, content_id: str) -> Any:
         """Read a content blob by its CAS hash."""
         ...
 

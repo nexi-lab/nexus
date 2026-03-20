@@ -40,44 +40,44 @@ class TestBasicCRUD:
     def test_write_read_roundtrip(self, backend):
         r = backend.write_content(b"hello world")
         assert isinstance(r, WriteResult)
-        data = backend.read_content(r.content_hash)
+        data = backend.read_content(r.content_id)
         assert data == b"hello world"
 
     def test_deduplication(self, backend):
         r1 = backend.write_content(b"dedup")
         r2 = backend.write_content(b"dedup")
-        assert r1.content_hash == r2.content_hash
-        assert backend.get_ref_count(r1.content_hash) == 2
+        assert r1.content_id == r2.content_id
+        assert backend.get_ref_count(r1.content_id) == 2
 
     def test_delete_content(self, backend):
         r = backend.write_content(b"delete me")
-        backend.delete_content(r.content_hash)
-        assert not backend.content_exists(r.content_hash)
+        backend.delete_content(r.content_id)
+        assert not backend.content_exists(r.content_id)
 
     def test_content_exists(self, backend):
         r = backend.write_content(b"exists")
-        assert backend.content_exists(r.content_hash)
+        assert backend.content_exists(r.content_id)
         assert not backend.content_exists("deadbeef" * 8)
 
     def test_get_content_size(self, backend):
         r = backend.write_content(b"12345")
-        assert backend.get_content_size(r.content_hash) == 5
+        assert backend.get_content_size(r.content_id) == 5
 
     def test_stream_content(self, backend):
         r = backend.write_content(b"stream me")
-        chunks = list(backend.stream_content(r.content_hash, chunk_size=3))
+        chunks = list(backend.stream_content(r.content_id, chunk_size=3))
         assert b"".join(chunks) == b"stream me"
 
     def test_write_stream(self, backend):
         r = backend.write_stream(iter([b"hel", b"lo"]))
-        assert backend.read_content(r.content_hash) == b"hello"
+        assert backend.read_content(r.content_id) == b"hello"
 
     def test_batch_read(self, backend):
         r1 = backend.write_content(b"one")
         r2 = backend.write_content(b"two")
-        result = backend.batch_read_content([r1.content_hash, r2.content_hash])
-        assert result[r1.content_hash] == b"one"
-        assert result[r2.content_hash] == b"two"
+        result = backend.batch_read_content([r1.content_id, r2.content_id])
+        assert result[r1.content_id] == b"one"
+        assert result[r2.content_id] == b"two"
 
 
 # === Directory Operations ===
@@ -115,33 +115,33 @@ class TestCDCChunkedStorage:
 
         content = b"A" * 500 + b"B" * 500 + b"C" * 200  # 1200 bytes
         r = backend.write_content(content)
-        data = backend.read_content(r.content_hash)
+        data = backend.read_content(r.content_id)
         assert data == content
 
     def test_chunked_content_is_detected(self, backend):
         backend._cdc.threshold = 1024
         content = b"x" * 1200
         r = backend.write_content(content)
-        assert backend._cdc.is_chunked(r.content_hash)
+        assert backend._cdc.is_chunked(r.content_id)
 
     def test_chunked_delete(self, backend):
         backend._cdc.threshold = 1024
         content = b"z" * 1200
         r = backend.write_content(content)
-        backend.delete_content(r.content_hash)
-        assert not backend.content_exists(r.content_hash)
+        backend.delete_content(r.content_id)
+        assert not backend.content_exists(r.content_id)
 
     def test_small_file_not_chunked(self, backend):
         """Files below threshold should use single-blob storage."""
         small = b"small file"
         r = backend.write_content(small)
-        assert not backend._cdc.is_chunked(r.content_hash)
+        assert not backend._cdc.is_chunked(r.content_id)
 
     def test_chunked_content_size(self, backend):
         backend._cdc.threshold = 1024
         content = b"s" * 1200
         r = backend.write_content(content)
-        assert backend.get_content_size(r.content_hash) == 1200
+        assert backend.get_content_size(r.content_id) == 1200
 
 
 # === Multipart Upload ===
@@ -200,9 +200,9 @@ class TestConcurrentWrites:
 
         assert not errors
         assert len(results) == 50
-        hashes = {r.content_hash for r in results}
+        hashes = {r.content_id for r in results}
         assert len(hashes) == 1
-        assert backend.get_ref_count(results[0].content_hash) == 50
+        assert backend.get_ref_count(results[0].content_id) == 50
 
     def test_50_threads_different_content(self, backend):
         results = []
@@ -222,7 +222,7 @@ class TestConcurrentWrites:
 
         assert not errors
         assert len(results) == 50
-        assert len({r.content_hash for r in results}) == 50
+        assert len({r.content_id for r in results}) == 50
 
 
 # === Bloom Filter ===
@@ -236,7 +236,7 @@ class TestBloomFilter:
 
         # Create new backend from same root — Bloom should be populated from disk
         b2 = CASLocalBackend(root_path=tmp_path)
-        assert b2.content_exists(r.content_hash)
+        assert b2.content_exists(r.content_id)
 
     def test_bloom_fast_miss(self, backend):
         assert not backend.content_exists("deadbeef" * 8)
@@ -295,7 +295,7 @@ class TestIncrementalChunkWrite:
         # Record ref_counts after first write
         from nexus.backends.engines.cdc import ChunkedReference
 
-        manifest_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r1.content_hash))[0]
+        manifest_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r1.content_id))[0]
         manifest = ChunkedReference.from_json(manifest_data)
 
         first_counts = {}
@@ -304,7 +304,7 @@ class TestIncrementalChunkWrite:
 
         # Second write
         r2 = cdc_backend.write_content(content)
-        assert r1.content_hash == r2.content_hash
+        assert r1.content_id == r2.content_id
 
         for ci in manifest.chunks:
             meta = cdc_backend._read_meta(ci.chunk_hash)
@@ -331,9 +331,7 @@ class TestIncrementalChunkWrite:
 
         from nexus.backends.engines.cdc import ChunkedReference
 
-        manifest_b_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r_b.content_hash))[
-            0
-        ]
+        manifest_b_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r_b.content_id))[0]
         manifest_b = ChunkedReference.from_json(manifest_b_data)
 
         from nexus.core.hash_fast import hash_content
@@ -356,13 +354,13 @@ class TestIncrementalChunkWrite:
         cdc_backend.write_content(content)  # ref_count = 2
 
         # Delete once — ref_count drops to 1, still readable
-        cdc_backend.delete_content(r.content_hash)
-        assert cdc_backend.content_exists(r.content_hash)
-        assert cdc_backend.read_content(r.content_hash) == content
+        cdc_backend.delete_content(r.content_id)
+        assert cdc_backend.content_exists(r.content_id)
+        assert cdc_backend.read_content(r.content_id) == content
 
         # Delete again — ref_count = 0, gone
-        cdc_backend.delete_content(r.content_hash)
-        assert not cdc_backend.content_exists(r.content_hash)
+        cdc_backend.delete_content(r.content_id)
+        assert not cdc_backend.content_exists(r.content_id)
 
     def test_no_bloom_skips_optimization(self, tmp_path):
         """Backend without bloom filter should always write (backward compat)."""
@@ -390,7 +388,7 @@ class TestIncrementalChunkWrite:
         r2 = b.write_content(content)
 
         # Without bloom, all chunk blobs + manifest should be written
-        meta = b._read_meta(r2.content_hash)
+        meta = b._read_meta(r2.content_id)
         chunk_count = meta.get("chunk_count", 0)
         assert len(blob_writes) == chunk_count + 1, (
             f"Without bloom, expected {chunk_count + 1} blob writes "

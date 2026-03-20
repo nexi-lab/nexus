@@ -77,7 +77,7 @@ class TestMetaCacheReadThrough:
         backend._meta_cache_misses = 0
 
         # Read meta again — should be a cache hit
-        meta = backend._read_meta(result.content_hash)
+        meta = backend._read_meta(result.content_id)
         assert meta["ref_count"] == 1
         assert backend.cache_stats["hits"] == 1
         assert backend.cache_stats["misses"] == 0
@@ -89,14 +89,14 @@ class TestMetaCacheReadThrough:
         result = backend.write_content(content)
 
         # After write, cache should contain the hash
-        assert result.content_hash in meta_cache
-        assert meta_cache[result.content_hash]["ref_count"] == 1
+        assert result.content_id in meta_cache
+        assert meta_cache[result.content_id]["ref_count"] == 1
 
     def test_no_cache_no_error(self, backend_no_cache: CASAddressingEngine):
         """Backend without cache should work normally."""
         content = b"no cache content"
         result = backend_no_cache.write_content(content)
-        data = backend_no_cache.read_content(result.content_hash)
+        data = backend_no_cache.read_content(result.content_id)
         assert data == content
 
 
@@ -110,13 +110,13 @@ class TestMetaCacheWriteThrough:
         result = backend.write_content(content)
 
         # Verify cache has the metadata
-        cached_meta = meta_cache.get(result.content_hash)
+        cached_meta = meta_cache.get(result.content_id)
         assert cached_meta is not None
         assert cached_meta["ref_count"] == 1
 
         # Write again (ref_count bump)
         backend.write_content(content)
-        cached_meta = meta_cache.get(result.content_hash)
+        cached_meta = meta_cache.get(result.content_id)
         assert cached_meta["ref_count"] == 2
 
 
@@ -128,7 +128,7 @@ class TestMetaCacheEviction:
     ):
         content = b"delete me"
         result = backend.write_content(content)
-        h = result.content_hash
+        h = result.content_id
 
         assert h in meta_cache
 
@@ -143,7 +143,7 @@ class TestMetaCacheEviction:
         content = b"keep in cache"
         result = backend.write_content(content)
         backend.write_content(content)  # ref_count = 2
-        h = result.content_hash
+        h = result.content_id
 
         backend.delete_content(h)
 
@@ -162,7 +162,7 @@ class TestMetaCacheLRUBehavior:
         hashes = []
         for i in range(5):
             result = backend.write_content(f"content-{i}".encode())
-            hashes.append(result.content_hash)
+            hashes.append(result.content_id)
 
         # Only 3 entries should remain (LRU evicts oldest)
         assert len(small_cache) == 3

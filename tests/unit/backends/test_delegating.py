@@ -101,7 +101,7 @@ class TestDefaultHooks:
 
     def test_passthrough_write_delegates_to_inner(self) -> None:
         leaf = make_leaf()
-        expected = WriteResult(content_hash="hash123")
+        expected = WriteResult(content_id="hash123")
         leaf.write_content.return_value = expected
         wrapper = DelegatingBackend(leaf)
 
@@ -162,7 +162,7 @@ class TestTransformOnRead:
         assert isinstance(write_resp, WriteResult)
 
         # Read through wrapper (strips "TX:" prefix)
-        read_resp = wrapper.read_content(write_resp.content_hash)
+        read_resp = wrapper.read_content(write_resp.content_id)
         assert read_resp == b"hello"
 
     def test_error_response_propagated_from_inner(self) -> None:
@@ -194,8 +194,8 @@ class TestBatchReadWithTransform:
         mock, storage = make_storage_mock()
         wrapper = FakeTransformBackend(mock)
 
-        h1 = wrapper.write_content(b"alpha").content_hash
-        h2 = wrapper.write_content(b"beta").content_hash
+        h1 = wrapper.write_content(b"alpha").content_id
+        h2 = wrapper.write_content(b"beta").content_id
 
         results = wrapper.batch_read_content([h1, h2])
         assert results[h1] == b"alpha"
@@ -205,7 +205,7 @@ class TestBatchReadWithTransform:
         mock, storage = make_storage_mock()
         wrapper = FakeTransformBackend(mock)
 
-        h1 = wrapper.write_content(b"exists").content_hash
+        h1 = wrapper.write_content(b"exists").content_id
         results = wrapper.batch_read_content([h1, "missing"])
         assert results[h1] == b"exists"
         assert results["missing"] is None

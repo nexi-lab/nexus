@@ -107,7 +107,7 @@ class TestContentDelegation:
         assert result is expected
 
     def test_write_content(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:
-        expected = WriteResult(content_hash="hash123", size=4)
+        expected = WriteResult(content_id="hash123", size=4)
         mock_inner.write_content.return_value = expected
         result = delegating.write_content(b"data")
         mock_inner.write_content.assert_called_once_with(b"data", context=None)

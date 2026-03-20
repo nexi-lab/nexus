@@ -593,7 +593,7 @@ class ChunkedUploadService:
         return {
             "etag": chunk_hash,
             "part_number": part_number,
-            "content_hash": result.content_hash,
+            "content_hash": result.content_id,
         }
 
     async def _assemble_and_write(
@@ -633,7 +633,7 @@ class ChunkedUploadService:
             content = bytes(assembled)
             _write = self._backend.write_content
             result = await asyncio.to_thread(_write, content)
-            content_hash = result.content_hash
+            content_hash = result.content_id
 
             # Link content to target_path via metadata store so the file is
             # reachable (multipart backends do this inside complete_multipart).

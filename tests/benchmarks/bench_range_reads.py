@@ -27,7 +27,7 @@ class TestRangeReadBenchmark:
     def test_range_read_small_file_equivalent(self, backend: CASLocalBackend) -> None:
         """Verify range read returns correct data for small files."""
         content = os.urandom(64 * 1024)  # 64KB
-        h = backend.write_content(content).content_hash
+        h = backend.write_content(content).content_id
 
         # Full read + slice
         full = backend.read_content(h)
@@ -41,7 +41,7 @@ class TestRangeReadBenchmark:
     def test_range_read_chunked_file_equivalent(self, backend: CASLocalBackend) -> None:
         """Verify range read returns correct data for chunked files."""
         content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
-        h = backend.write_content(content).content_hash
+        h = backend.write_content(content).content_id
 
         # Full read + slice
         start = CDC_THRESHOLD_BYTES // 2
@@ -56,7 +56,7 @@ class TestRangeReadBenchmark:
     def test_range_read_first_chunk_only(self, backend: CASLocalBackend) -> None:
         """Benchmark: reading first 4KB of a large chunked file."""
         content = os.urandom(CDC_THRESHOLD_BYTES + 2 * 1024 * 1024)
-        h = backend.write_content(content).content_hash
+        h = backend.write_content(content).content_id
 
         result = backend.read_content_range(h, 0, 4096)
         assert result == content[:4096]
@@ -64,7 +64,7 @@ class TestRangeReadBenchmark:
     def test_range_read_last_chunk_only(self, backend: CASLocalBackend) -> None:
         """Benchmark: reading last 4KB of a large chunked file."""
         content = os.urandom(CDC_THRESHOLD_BYTES + 2 * 1024 * 1024)
-        h = backend.write_content(content).content_hash
+        h = backend.write_content(content).content_id
 
         end = len(content)
         start = end - 4096

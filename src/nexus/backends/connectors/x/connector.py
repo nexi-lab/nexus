@@ -730,7 +730,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             draft_file = Path(self.cache_dir) / "drafts" / f"{draft_id}.json"
             draft_file.parent.mkdir(exist_ok=True)
             draft_file.write_bytes(content)
-            return WriteResult(content_hash=draft_id, size=len(content))
+            return WriteResult(content_id=draft_id, size=len(content))
 
         # Post tweet
         async def _post_tweet() -> str:
@@ -759,7 +759,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         from nexus.lib.sync_bridge import run_sync
 
         tweet_id = run_sync(_post_tweet())
-        return WriteResult(content_hash=tweet_id, size=len(content))
+        return WriteResult(content_id=tweet_id, size=len(content))
 
     def delete_content(
         self,

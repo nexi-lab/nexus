@@ -39,14 +39,14 @@ class TestFullRoundTrip:
     def test_write_read_delete_cycle(self, backend: IsolatedBackend) -> None:
         data = b"integration-roundtrip"
         wr = backend.write_content(data)
-        assert wr.content_hash  # WriteResult with content_hash
+        assert wr.content_id  # WriteResult with content_hash
 
-        rd = backend.read_content(wr.content_hash)
+        rd = backend.read_content(wr.content_id)
         assert rd == data
 
-        backend.delete_content(wr.content_hash)
+        backend.delete_content(wr.content_id)
 
-        ex = backend.content_exists(wr.content_hash)
+        ex = backend.content_exists(wr.content_id)
         assert ex is False
 
     def test_directory_operations(self, backend: IsolatedBackend) -> None:
@@ -63,9 +63,9 @@ class TestLargeContent:
         """1MB content passes through the isolation boundary correctly."""
         data = b"X" * (1024 * 1024)
         wr = backend.write_content(data)
-        assert wr.content_hash
+        assert wr.content_id
 
-        rd = backend.read_content(wr.content_hash)
+        rd = backend.read_content(wr.content_id)
         assert len(rd) == len(data)
         assert rd == data
 
@@ -76,7 +76,7 @@ class TestConcurrentRequests:
         # Write one piece of content
         data = b"concurrent-test"
         wr = backend.write_content(data)
-        content_hash = wr.content_hash
+        content_hash = wr.content_id
 
         def read_one(_: int) -> bool:
             rd = backend.read_content(content_hash)
@@ -106,7 +106,7 @@ class TestPoolRestartRecovery:
                         pass
                 # Pool should have restarted — next valid call should work
                 wr = backend.write_content(b"after-restart")
-                assert wr.content_hash  # WriteResult with content_hash
+                assert wr.content_id  # WriteResult with content_hash
             finally:
                 backend.disconnect()
 

@@ -35,7 +35,7 @@ def test_write_and_read_content(temp_backend):
     """Test writing and reading content."""
     content = b"Hello, World!"
     result = temp_backend.write_content(content)
-    content_hash = result.content_hash
+    content_hash = result.content_id
 
     # Verify hash is correct (using BLAKE3)
     expected_hash = hash_content(content)
@@ -50,8 +50,8 @@ def test_write_duplicate_content(temp_backend):
     """Test writing duplicate content returns same hash."""
     content = b"Duplicate test content"
 
-    hash1 = temp_backend.write_content(content).content_hash
-    hash2 = temp_backend.write_content(content).content_hash
+    hash1 = temp_backend.write_content(content).content_id
+    hash2 = temp_backend.write_content(content).content_id
 
     assert hash1 == hash2
 
@@ -71,7 +71,7 @@ def test_read_nonexistent_content(temp_backend):
 def test_delete_content(temp_backend):
     """Test deleting content."""
     content = b"Content to delete"
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     # Verify content exists
     retrieved = temp_backend.read_content(content_hash)
@@ -99,7 +99,7 @@ def test_delete_nonexistent_content(temp_backend):
 def test_exists_content(temp_backend):
     """Test checking if content exists."""
     content = b"Existence test"
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     assert temp_backend.content_exists(content_hash) is True
 
@@ -123,13 +123,13 @@ def test_content_hash_roundtrip(temp_backend):
     expected_hash = hash_content(content)
 
     result = temp_backend.write_content(content)
-    assert result.content_hash == expected_hash
+    assert result.content_id == expected_hash
 
 
 def test_write_empty_content(temp_backend):
     """Test writing empty content."""
     content = b""
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     # Verify hash is correct for empty content (using BLAKE3)
     expected_hash = hash_content(b"")
@@ -144,7 +144,7 @@ def test_write_large_content(temp_backend):
     """Test writing large content."""
     # 10 MB of data
     content = b"X" * (10 * 1024 * 1024)
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     # Verify it can be read back
     retrieved = temp_backend.read_content(content_hash)
@@ -155,7 +155,7 @@ def test_write_large_content(temp_backend):
 def test_get_content_size(temp_backend):
     """Test getting content size."""
     content = b"Test content for size"
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     size = temp_backend.get_content_size(content_hash)
     assert size == len(content)
@@ -166,9 +166,9 @@ def test_content_deduplication(temp_backend):
     content = b"Deduplicate me!"
 
     # Write same content multiple times
-    hash1 = temp_backend.write_content(content).content_hash
-    hash2 = temp_backend.write_content(content).content_hash
-    hash3 = temp_backend.write_content(content).content_hash
+    hash1 = temp_backend.write_content(content).content_id
+    hash2 = temp_backend.write_content(content).content_id
+    hash3 = temp_backend.write_content(content).content_id
 
     # All hashes should be identical
     assert hash1 == hash2 == hash3
@@ -224,7 +224,7 @@ def test_binary_content(temp_backend):
     """Test handling of binary content."""
     # Binary data with all byte values
     content = bytes(range(256))
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     retrieved = temp_backend.read_content(content_hash)
     assert retrieved == content
@@ -252,7 +252,7 @@ def test_multiple_backends_same_root(tmp_path):
 
     # Write with first backend
     content = b"Shared content"
-    hash1 = backend1.write_content(content).content_hash
+    hash1 = backend1.write_content(content).content_id
 
     # Read with second backend
     retrieved = backend2.read_content(hash1)
@@ -280,9 +280,9 @@ def test_batch_read_content_basic(temp_backend):
     content2 = b"Content 2"
     content3 = b"Content 3"
 
-    hash1 = temp_backend.write_content(content1).content_hash
-    hash2 = temp_backend.write_content(content2).content_hash
-    hash3 = temp_backend.write_content(content3).content_hash
+    hash1 = temp_backend.write_content(content1).content_id
+    hash2 = temp_backend.write_content(content2).content_id
+    hash3 = temp_backend.write_content(content3).content_id
 
     # Batch read all content
     result = temp_backend.batch_read_content([hash1, hash2, hash3])
@@ -297,7 +297,7 @@ def test_batch_read_content_missing_hashes(temp_backend):
     """Test batch read with some missing content hashes."""
     # Write one content item
     content1 = b"Content 1"
-    hash1 = temp_backend.write_content(content1).content_hash
+    hash1 = temp_backend.write_content(content1).content_id
 
     # Create fake hashes that don't exist
     fake_hash1 = "0" * 64
@@ -321,7 +321,7 @@ def test_batch_read_content_empty_list(temp_backend):
 def test_batch_read_content_deduplication(temp_backend):
     """Test that batch read handles duplicate hashes correctly."""
     content = b"Duplicate content"
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     # Request same hash multiple times
     result = temp_backend.batch_read_content([content_hash, content_hash, content_hash])
@@ -341,8 +341,8 @@ def test_batch_read_content_with_cache(tmp_path):
     # Write content
     content1 = b"Cached content 1"
     content2 = b"Cached content 2"
-    hash1 = backend.write_content(content1).content_hash
-    hash2 = backend.write_content(content2).content_hash
+    hash1 = backend.write_content(content1).content_id
+    hash2 = backend.write_content(content2).content_id
 
     # First batch read (populates cache)
     result1 = backend.batch_read_content([hash1, hash2])
@@ -373,7 +373,7 @@ def test_batch_read_content_parallel(tmp_path):
 
     # Write multiple files
     contents = [f"Content for file {i}".encode() for i in range(10)]
-    hashes = [backend.write_content(content).content_hash for content in contents]
+    hashes = [backend.write_content(content).content_id for content in contents]
 
     # Batch read all files (will use parallel reads since cache is disabled)
     result = backend.batch_read_content(hashes)
@@ -396,7 +396,7 @@ def test_batch_read_content_parallel_performance(tmp_path):
 
     # Write 20 files
     contents = [f"Content for performance test file {i}".encode() for i in range(20)]
-    hashes = [backend.write_content(content).content_hash for content in contents]
+    hashes = [backend.write_content(content).content_id for content in contents]
 
     # Time batch read (should be parallel)
     start = time.time()
@@ -419,7 +419,7 @@ def test_batch_read_content_single_file_no_threadpool(tmp_path):
     backend.content_cache = None
 
     content = b"Single file content"
-    content_hash = backend.write_content(content).content_hash
+    content_hash = backend.write_content(content).content_id
 
     # Batch read with single file
     result = backend.batch_read_content([content_hash])
@@ -451,7 +451,7 @@ def test_batch_read_respects_worker_limit(tmp_path):
 
     # Write 10 files
     contents = [f"Content {i}".encode() for i in range(10)]
-    hashes = [backend.write_content(c).content_hash for c in contents]
+    hashes = [backend.write_content(c).content_id for c in contents]
 
     # Batch read should work correctly even with limited workers
     result = backend.batch_read_content(hashes)
@@ -464,7 +464,7 @@ def test_batch_read_respects_worker_limit(tmp_path):
 def test_stream_content_small_file(temp_backend):
     """Test streaming a small file."""
     content = b"Small file content for streaming test"
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     # Stream content
     chunks = list(temp_backend.stream_content(content_hash, chunk_size=10))
@@ -481,7 +481,7 @@ def test_stream_content_large_file(temp_backend):
     """Test streaming a large file in chunks."""
     # Create 1MB test file
     content = b"X" * (1024 * 1024)
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     # Stream in 64KB chunks
     chunk_size = 64 * 1024
@@ -499,7 +499,7 @@ def test_stream_content_exact_chunk_boundary(temp_backend):
     """Test streaming when file size is exact multiple of chunk size."""
     chunk_size = 100
     content = b"A" * (chunk_size * 5)  # Exactly 5 chunks
-    content_hash = temp_backend.write_content(content).content_hash
+    content_hash = temp_backend.write_content(content).content_id
 
     chunks = list(temp_backend.stream_content(content_hash, chunk_size=chunk_size))
 
@@ -520,7 +520,7 @@ def test_stream_content_memory_efficient(temp_backend):
     """Test that streaming doesn't load entire file into memory."""
     # Create 10MB file
     large_content = b"X" * (10 * 1024 * 1024)
-    content_hash = temp_backend.write_content(large_content).content_hash
+    content_hash = temp_backend.write_content(large_content).content_id
 
     # Stream it - should not cause memory spike
     total_bytes = 0
@@ -549,7 +549,7 @@ class TestConcurrentSync:
         content = b"concurrent same content sync"
 
         def writer(_i: int) -> str:
-            return temp_backend.write_content(content).content_hash
+            return temp_backend.write_content(content).content_id
 
         with ThreadPoolExecutor(max_workers=NUM_THREADS) as pool:
             futures = [pool.submit(writer, i) for i in range(NUM_THREADS)]
@@ -572,7 +572,7 @@ class TestConcurrentSync:
 
         def writer(i: int) -> str:
             content = f"unique sync content {i}".encode()
-            return temp_backend.write_content(content).content_hash
+            return temp_backend.write_content(content).content_id
 
         with ThreadPoolExecutor(max_workers=NUM_THREADS) as pool:
             futures = [pool.submit(writer, i) for i in range(NUM_THREADS)]
@@ -591,11 +591,11 @@ class TestConcurrentSync:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         content = b"read-write concurrent sync"
-        h = temp_backend.write_content(content).content_hash
+        h = temp_backend.write_content(content).content_id
 
         def worker(i: int) -> bytes | str:
             if i % 2 == 0:
-                return temp_backend.write_content(content).content_hash
+                return temp_backend.write_content(content).content_id
             else:
                 return temp_backend.read_content(h)
 
@@ -632,7 +632,7 @@ class TestChunkedCASIntegration:
         content = b"A" * 500 + b"B" * 500 + b"C" * 200
         assert len(content) >= chunked_backend._cdc.threshold
 
-        manifest_hash = chunked_backend.write_content(content).content_hash
+        manifest_hash = chunked_backend.write_content(content).content_id
 
         # Verify it's recognized as chunked
         assert chunked_backend._cdc.is_chunked(manifest_hash)
@@ -646,7 +646,7 @@ class TestChunkedCASIntegration:
         from nexus.backends.engines.cdc import ChunkedReference
 
         content = b"X" * 2048  # 2KB, above threshold
-        manifest_hash = chunked_backend.write_content(content).content_hash
+        manifest_hash = chunked_backend.write_content(content).content_id
 
         # Read raw manifest via transport
         key = chunked_backend._blob_key(manifest_hash)
@@ -663,7 +663,7 @@ class TestChunkedCASIntegration:
         from nexus.backends.engines.cdc import ChunkedReference
 
         content = b"D" * 2048
-        manifest_hash = chunked_backend.write_content(content).content_hash
+        manifest_hash = chunked_backend.write_content(content).content_id
 
         # Read manifest to get chunk hashes
         key = chunked_backend._blob_key(manifest_hash)
@@ -684,8 +684,8 @@ class TestChunkedCASIntegration:
     def test_chunked_deduplication(self, chunked_backend):
         """Writing same chunked content twice increments ref_count."""
         content = b"E" * 2048
-        h1 = chunked_backend.write_content(content).content_hash
-        h2 = chunked_backend.write_content(content).content_hash
+        h1 = chunked_backend.write_content(content).content_id
+        h2 = chunked_backend.write_content(content).content_id
 
         assert h1 == h2
         meta = chunked_backend._read_meta(h1)
@@ -697,7 +697,7 @@ class TestChunkedCASIntegration:
 
         def writer(i: int) -> str:
             content = f"chunked content {i} ".encode() * 200  # ~3.6KB each
-            return chunked_backend.write_content(content).content_hash
+            return chunked_backend.write_content(content).content_id
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             futures = [pool.submit(writer, i) for i in range(8)]

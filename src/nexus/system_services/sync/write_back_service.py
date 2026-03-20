@@ -367,7 +367,7 @@ class WriteBackService:
         # write_content now returns WriteResult directly, raises on error
 
         # Step 3: Update change log with new backend state
-        new_hash = result.content_hash
+        new_hash = result.content_id
         self._change_log_store.upsert_change_log(
             path=entry.path,
             backend_name=entry.backend_name,

@@ -125,7 +125,7 @@ class TestConnectorSearchIndexing:
             search_service=search_svc,
         )
 
-        await mount_svc._index_mount_content("/mnt/gmail", files_count=3)
+        await mount_svc._index_mount_content("/mnt/gmail", _files_count=3)
 
         # Assert: search daemon received 3 documents in correct format
         daemon._backend.upsert.assert_awaited_once()
@@ -178,7 +178,7 @@ class TestConnectorSearchIndexing:
             search_service=search_svc,
         )
 
-        await mount_svc._index_mount_content("/mnt/gmail", files_count=4)
+        await mount_svc._index_mount_content("/mnt/gmail", _files_count=4)
 
         call_args = daemon._backend.upsert.call_args
         documents = call_args[0][0]
@@ -269,7 +269,7 @@ class TestConnectorSearchIndexing:
             search_service=search_svc,
         )
 
-        await mount_svc._index_mount_content("/mnt/gmail", files_count=3)
+        await mount_svc._index_mount_content("/mnt/gmail", _files_count=3)
 
         call_args = daemon._backend.upsert.call_args
         documents = call_args[0][0]
@@ -295,7 +295,7 @@ class TestConnectorSearchIndexing:
             search_service=search_svc,
         )
 
-        await mount_svc._index_mount_content("/mnt/gmail", files_count=50)
+        await mount_svc._index_mount_content("/mnt/gmail", _files_count=50)
 
         search_svc.semantic_search_index.assert_awaited_once_with("/mnt/gmail", recursive=True)
 
@@ -320,7 +320,7 @@ class TestConnectorSearchIndexing:
             search_service=search_svc,
         )
 
-        await mount_svc._index_mount_content("/mnt/gmail", files_count=0)
+        await mount_svc._index_mount_content("/mnt/gmail", _files_count=0)
 
         # Should not crash; upsert should not be called
         daemon._backend.upsert.assert_not_awaited()

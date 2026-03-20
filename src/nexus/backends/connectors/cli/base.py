@@ -165,6 +165,23 @@ class CLIConnector(
             if "CLI_SERVICE" not in type(self).__dict__:
                 self.CLI_SERVICE = config.service
 
+    # --- Sync provider (wires CLISyncProvider into mount sync) ---
+
+    def get_sync_provider(self) -> Any:
+        """Return a CLISyncProvider for this connector.
+
+        Called by SyncService to use the page/state-token sync protocol
+        instead of raw list_dir/get_file_info when available.
+        """
+        if self._config is None:
+            return None
+        try:
+            from nexus.backends.connectors.cli.sync_provider import CLISyncProvider
+
+            return CLISyncProvider(self)
+        except Exception:
+            return None
+
     # --- Backend identity ---
 
     @property
@@ -517,7 +534,11 @@ class CLIConnector(
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> bytes:
-        """Read content via CLI get command."""
+        """Read content via CLI get command.
+
+        Auth is via environment variables (never stdin/flags) — consistent
+        with the write path security model.
+        """
         if not context or not context.backend_path:
             return b""
 
@@ -530,8 +551,10 @@ class CLIConnector(
         args.append(self._config.read.get_command)
         args.append(context.backend_path)
 
+        # Auth via env vars only (never stdin — tokens visible in /proc on some OS)
         token = self._get_user_token(context)
-        result = self._execute_cli(args, stdin=token, context=context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
 
         if result.ok:
             return result.stdout.encode("utf-8")
@@ -542,7 +565,10 @@ class CLIConnector(
         path: str = "/",
         context: "OperationContext | None" = None,
     ) -> list[str]:
-        """List directory contents via CLI list command."""
+        """List directory contents via CLI list command.
+
+        Auth is via environment variables (never stdin/flags).
+        """
         if not self._config or not self._config.read:
             return []
 
@@ -553,8 +579,10 @@ class CLIConnector(
         if path and path != "/":
             args.append(path)
 
+        # Auth via env vars only (consistent with write path)
         token = self._get_user_token(context)
-        result = self._execute_cli(args, stdin=token, context=context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
 
         if not result.ok:
             return []

@@ -295,6 +295,10 @@ class SyncService:
     ) -> set[str]:
         """Scan backend and sync metadata using BFS traversal.
 
+        If the backend exposes a ConnectorSyncProvider (via get_sync_provider()),
+        delegates to the provider's page/state-token protocol for paginated
+        and delta-aware sync. Otherwise falls back to direct BFS via list_dir().
+
         Args:
             ctx: SyncContext
             backend: Backend instance
@@ -305,6 +309,21 @@ class SyncService:
         """
 
         assert ctx.mount_point is not None
+
+        # Try the ConnectorSyncProvider path for CLI-backed connectors
+        # that expose paginated/delta-aware sync (Issue #3148).
+        provider = None
+        if hasattr(backend, "get_sync_provider"):
+            provider = backend.get_sync_provider()
+        if provider is not None:
+            try:
+                return self._sync_via_provider(ctx, backend, provider, result)
+            except Exception:
+                logger.debug(
+                    "ConnectorSyncProvider failed for %s, falling back to BFS",
+                    ctx.mount_point,
+                    exc_info=True,
+                )
 
         files_found: set[str] = set()
         paths_needing_tuples: list[str] = []
@@ -477,6 +496,83 @@ class SyncService:
                 f"{total_tuples_created} tuples created total"
             )
 
+        return files_found
+
+    def _sync_via_provider(
+        self,
+        ctx: SyncContext,
+        backend: Any,
+        provider: Any,
+        result: SyncResult,
+    ) -> set[str]:
+        """Sync metadata using a ConnectorSyncProvider (page/state-token protocol).
+
+        Iterates through paginated results from the provider, creating metadata
+        entries for each remote item. Supports delta sync via state tokens.
+
+        This is the preferred sync path for CLI-backed connectors (Issue #3148).
+        Falls back to BFS list_dir if this fails.
+        """
+        import asyncio
+
+        from nexus.contracts.metadata import FileMetadata
+
+        assert ctx.mount_point is not None
+        files_found: set[str] = set()
+        created_by = self._get_created_by(ctx)
+        zone_id = self._resolve_zone_id(ctx)
+
+        # Run the async provider in a sync context
+        loop = asyncio.new_event_loop()
+        try:
+            page_token: str | None = None
+            while True:
+                page = loop.run_until_complete(
+                    provider.list_remote_items("", page_token=page_token, page_size=100)
+                )
+
+                for item in page.items:
+                    virtual_path = f"{ctx.mount_point}/{item.path}"
+                    files_found.add(virtual_path)
+                    result.files_scanned += 1
+
+                    if ctx.dry_run:
+                        continue
+
+                    # Create metadata entry if not exists
+                    existing = self._gw.metadata_get(virtual_path)
+                    if not existing and zone_id:
+                        now = datetime.now(UTC)
+                        meta = FileMetadata(
+                            path=virtual_path,
+                            backend_name=backend.name,
+                            physical_path=item.path,
+                            size=item.size or 0,
+                            etag=item.content_hash,
+                            created_at=now,
+                            modified_at=now,
+                            version=1,
+                            created_by=created_by,
+                            zone_id=zone_id,
+                        )
+                        try:
+                            self._gw.metadata_put(meta)
+                            result.files_created += 1
+                        except Exception as e:
+                            result.errors.append(f"Failed to add {virtual_path}: {e}")
+
+                if not page.next_page_token:
+                    break
+                page_token = page.next_page_token
+
+        finally:
+            loop.close()
+
+        logger.info(
+            "[SYNC_PROVIDER] Synced %d files via provider for %s",
+            result.files_scanned,
+            ctx.mount_point,
+        )
         return files_found
 
     def _sync_file(

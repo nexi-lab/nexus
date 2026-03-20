@@ -61,8 +61,15 @@ class CLISyncProvider:
 
         args = self._build_list_args(path, since=since, page_token=page_token, page_size=page_size)
 
+        # Auth via env vars (consistent with base CLIConnector security model)
+        auth_env = (
+            self._connector._build_auth_env(self._connector._get_user_token(None) or "")
+            if hasattr(self._connector, "_build_auth_env")
+            else None
+        )
+
         result: CLIResult = await asyncio.to_thread(
-            self._connector._execute_cli, args, stdin=None, context=None
+            self._connector._execute_cli, args, env=auth_env
         )
 
         if not result.ok:
@@ -80,8 +87,14 @@ class CLISyncProvider:
 
         args = self._build_get_args(item_id)
 
+        auth_env = (
+            self._connector._build_auth_env(self._connector._get_user_token(None) or "")
+            if hasattr(self._connector, "_build_auth_env")
+            else None
+        )
+
         result: CLIResult = await asyncio.to_thread(
-            self._connector._execute_cli, args, stdin=None, context=None
+            self._connector._execute_cli, args, env=auth_env
         )
 
         if not result.ok:

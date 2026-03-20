@@ -139,6 +139,23 @@ RUN set -eux; \
         gosu \
     && rm -rf /var/lib/apt/lists/*
 
+# ---------- CLI connectors: gws + gh (Issue #3148) ----------
+# gws: Google Workspace CLI for Gmail/Calendar/Drive/Sheets/Docs/Chat connectors
+# gh: GitHub CLI for GitHub connector
+ARG TARGETARCH
+RUN set -eux; \
+    ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
+    curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/gws-${ARCH}-unknown-linux-gnu.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/local/bin "gws-${ARCH}-unknown-linux-gnu/gws" \
+    && chmod +x /usr/local/bin/gws; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y --no-install-recommends gh && \
+    rm -rf /var/lib/apt/lists/* && \
+    gws --version && gh --version
+
 # ---------- Copy Python packages + Rust extensions ----------
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus

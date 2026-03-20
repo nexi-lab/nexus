@@ -240,7 +240,7 @@ class GmailConnector(CLIConnector):
     SKILL_NAME = "gmail"
     CLI_NAME = "gws"
     CLI_SERVICE = "gmail"
-    use_metadata_listing = True
+    use_metadata_listing = False  # Sync reads from gws CLI, not metadata
 
     SCHEMAS: dict[str, type] = {
         "send_email": SendEmailSchema,
@@ -614,7 +614,7 @@ class CalendarConnector(CLIConnector):
     SKILL_NAME = "gcalendar"
     CLI_NAME = "gws"
     CLI_SERVICE = "calendar"
-    use_metadata_listing = True
+    use_metadata_listing = False  # Sync reads from gws CLI, not metadata
 
     DIRECTORY_STRUCTURE = """\
 /mnt/calendar/

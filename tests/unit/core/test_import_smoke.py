@@ -24,6 +24,10 @@ _CORE_MODULES = [
     "nexus.contracts.describable",
     "nexus.contracts.wirable_fs",
     "nexus.contracts.agent_utils",
+    # Config and SDK decoupled from optional bricks (#3230):
+    "nexus.config",
+    "nexus.sdk",
+    "nexus.contracts.oauth_types",
 ]
 
 _FACTORY_MODULES = [

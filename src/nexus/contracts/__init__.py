@@ -82,6 +82,7 @@ from nexus.contracts.metadata import (
     DT_REG,
     FileMetadata,
 )
+from nexus.contracts.oauth_types import OAuthConfig, OAuthProviderConfig
 from nexus.contracts.rebac_types import (
     CROSS_ZONE_ALLOWED_RELATIONS,
     WILDCARD_SUBJECT,
@@ -178,6 +179,9 @@ __all__ = [
     "Describable",
     "WirableFS",
     "WriteObserverProtocol",
+    # OAuth types (Issue #3230)
+    "OAuthConfig",
+    "OAuthProviderConfig",
     # ReBAC types (Issue #2190)
     "CheckResult",
     "CROSS_ZONE_ALLOWED_RELATIONS",

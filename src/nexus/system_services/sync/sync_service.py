@@ -595,7 +595,9 @@ class SyncService:
                                 provider.fetch_item(item.item_id, context=ctx.context)
                             )
                             if fetch.content and len(fetch.content) > 0:
-                                self._gw.sys_write(virtual_path, fetch.content)
+                                loop.run_until_complete(
+                                    self._gw.sys_write(virtual_path, fetch.content)
+                                )
                                 result.files_synced += 1
                         except Exception:
                             logger.debug(
@@ -604,28 +606,32 @@ class SyncService:
                                 exc_info=True,
                             )
 
-                # Process deletions — deleted_ids are item IDs, not paths.
-                # Build an id→path lookup from items we've seen so we can
-                # delete the correct VFS path even when id != relative_path.
+                # Process deletions — deleted_ids are item IDs (e.g. Gmail
+                # msgId), not VFS paths.  Filenames may embed the ID as a
+                # suffix (e.g. "{threadId}-{msgId}.yaml") so we match on
+                # both the full stem and trailing component after the last
+                # hyphen.
                 if page.deleted_ids and not ctx.dry_run:
-                    # Build reverse map: item_id → virtual_path from known files
                     id_to_path: dict[str, str] = {}
                     for known_path in files_found:
-                        # Extract the filename as a possible ID match
-                        fname = known_path.rsplit("/", 1)[-1].replace(".yaml", "")
-                        id_to_path[fname] = known_path
-                    # Also try direct metadata scan for previously synced files
+                        stem = known_path.rsplit("/", 1)[-1].replace(".yaml", "")
+                        # Full stem: "threadId-msgId" → path
+                        id_to_path[stem] = known_path
+                        # Suffix after last hyphen: "msgId" → path
+                        if "-" in stem:
+                            suffix = stem.rsplit("-", 1)[-1]
+                            id_to_path[suffix] = known_path
+
                     for deleted_id in page.deleted_ids:
                         del_path = id_to_path.get(deleted_id)
                         if not del_path:
-                            # Fallback: try as relative path
                             del_path = f"{ctx.mount_point}/{deleted_id}"
                         try:
                             self._gw.metadata_delete(del_path)
                             result.files_deleted += 1
                             logger.debug("[SYNC_PROVIDER] Deleted %s", del_path)
                         except Exception:
-                            pass  # Already deleted or doesn't exist
+                            pass
 
                 # Track state token for persistence
                 if page.state_token:

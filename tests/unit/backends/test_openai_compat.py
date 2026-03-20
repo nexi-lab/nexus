@@ -326,14 +326,10 @@ class TestOpenAICompatibleBackend:
         with pytest.raises(NexusFileNotFoundError):
             backend.read_content(result.content_hash)
 
-    def test_content_exists(self) -> None:
+    def test_content_exists_via_cas(self) -> None:
         """Verify content_exists works via CASAddressingEngine."""
-        client = MagicMock()
-        client.chat.completions.create.return_value = _mock_completion()
-        backend, _ = self._make_backend(client)
-
-        request = {"messages": [{"role": "user", "content": "Hi"}]}
-        result = backend.write_content(json.dumps(request).encode())
+        backend, _ = _make_backend()
+        result = backend.write_content(b"cas test data")
         assert backend.content_exists(result.content_hash)
 
 

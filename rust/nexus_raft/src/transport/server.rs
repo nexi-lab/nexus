@@ -1090,7 +1090,7 @@ pub struct WitnessZoneRegistry {
     zones: DashMap<String, WitnessZoneEntry>,
     base_path: PathBuf,
     node_id: u64,
-    tls: Option<super::TlsConfig>,
+    tls: Arc<RwLock<Option<super::TlsConfig>>>,
 }
 
 impl WitnessZoneRegistry {
@@ -1100,7 +1100,7 @@ impl WitnessZoneRegistry {
             zones: DashMap::new(),
             base_path,
             node_id,
-            tls,
+            tls: Arc::new(RwLock::new(tls)),
         }
     }
 

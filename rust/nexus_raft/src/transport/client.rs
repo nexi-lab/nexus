@@ -32,8 +32,9 @@ pub struct ClientConfig {
     pub keep_alive_interval: Duration,
     /// Keep-alive timeout.
     pub keep_alive_timeout: Duration,
-    /// Optional TLS configuration for mTLS. None = plain HTTP/2.
-    pub tls: Option<super::TlsConfig>,
+    /// Shared TLS configuration — reads from registry's Arc<RwLock<>> so
+    /// transport loops pick up TLS upgrades without restart.
+    pub tls: Arc<std::sync::RwLock<Option<super::TlsConfig>>>,
 }
 
 impl Default for ClientConfig {
@@ -43,7 +44,7 @@ impl Default for ClientConfig {
             request_timeout: Duration::from_secs(10),
             keep_alive_interval: Duration::from_secs(10),
             keep_alive_timeout: Duration::from_secs(20),
-            tls: None,
+            tls: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 }
@@ -159,10 +160,11 @@ pub struct RaftClient {
 impl RaftClient {
     /// Connect to a Raft node.
     pub async fn connect(endpoint: &str, config: ClientConfig) -> Result<Self> {
+        let tls_snapshot = config.tls.read().unwrap().clone();
         tracing::info!(
             "Connecting to Raft node at {} (tls={})",
             endpoint,
-            config.tls.is_some()
+            tls_snapshot.is_some()
         );
 
         let mut ep = Endpoint::from_shared(endpoint.to_string())
@@ -172,7 +174,7 @@ impl RaftClient {
             .http2_keep_alive_interval(config.keep_alive_interval)
             .keep_alive_timeout(config.keep_alive_timeout);
 
-        if let Some(ref tls) = config.tls {
+        if let Some(ref tls) = tls_snapshot {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
             let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
             let tls_config = tonic::transport::ClientTlsConfig::new()
@@ -275,10 +277,11 @@ pub struct RaftApiClient {
 impl RaftApiClient {
     /// Connect to a Raft cluster node.
     pub async fn connect(endpoint: &str, config: ClientConfig) -> Result<Self> {
+        let tls_snapshot = config.tls.read().unwrap().clone();
         tracing::info!(
             "Connecting to Raft API at {} (tls={})",
             endpoint,
-            config.tls.is_some()
+            tls_snapshot.is_some()
         );
 
         let mut ep = Endpoint::from_shared(endpoint.to_string())
@@ -288,7 +291,7 @@ impl RaftApiClient {
             .http2_keep_alive_interval(config.keep_alive_interval)
             .keep_alive_timeout(config.keep_alive_timeout);
 
-        if let Some(ref tls) = config.tls {
+        if let Some(ref tls) = tls_snapshot {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
             let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
             let tls_config = tonic::transport::ClientTlsConfig::new()

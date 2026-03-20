@@ -27,6 +27,7 @@ pub fn generate_node_cert(
     zone_id: &str,
     ca_cert_pem: &[u8],
     ca_key_pem: &[u8],
+    extra_hostnames: &[String],
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     // Parse CA key pair
     let ca_key_str =
@@ -59,8 +60,9 @@ pub fn generate_node_cert(
     );
     params.distinguished_name = dn;
 
-    // SANs: localhost, 127.0.0.1, ::1 (matches Python certgen.py)
-    params.subject_alt_names = vec![
+    // SANs: localhost, 127.0.0.1, ::1, plus any extra hostnames from node_address
+    // (CockroachDB pattern: cert SANs include all hostnames the node is reachable at)
+    let mut sans = vec![
         SanType::DnsName(
             "localhost"
                 .try_into()
@@ -69,6 +71,20 @@ pub fn generate_node_cert(
         SanType::IpAddress(Ipv4Addr::LOCALHOST.into()),
         SanType::IpAddress(Ipv6Addr::LOCALHOST.into()),
     ];
+    for hostname in extra_hostnames {
+        // Try parsing as IP first, fall back to DNS name
+        if let Ok(ip) = hostname.parse::<std::net::IpAddr>() {
+            sans.push(SanType::IpAddress(ip));
+        } else {
+            sans.push(SanType::DnsName(
+                hostname
+                    .as_str()
+                    .try_into()
+                    .map_err(|e| format!("SAN error for '{hostname}': {e}"))?,
+            ));
+        }
+    }
+    params.subject_alt_names = sans;
 
     // Extended key usage: serverAuth + clientAuth (mTLS)
     params.extended_key_usages = vec![
@@ -125,8 +141,14 @@ mod tests {
     #[test]
     fn test_generate_node_cert() {
         let (ca_cert_pem, ca_key_pem) = generate_test_ca();
-        let (cert_pem, key_pem) =
-            generate_node_cert(2, "root", ca_cert_pem.as_bytes(), ca_key_pem.as_bytes()).unwrap();
+        let (cert_pem, key_pem) = generate_node_cert(
+            2,
+            "root",
+            ca_cert_pem.as_bytes(),
+            ca_key_pem.as_bytes(),
+            &[],
+        )
+        .unwrap();
 
         assert!(!cert_pem.is_empty());
         assert!(!key_pem.is_empty());
@@ -137,7 +159,7 @@ mod tests {
     #[test]
     fn test_invalid_ca_key() {
         let (ca_cert_pem, _) = generate_test_ca();
-        let result = generate_node_cert(1, "root", ca_cert_pem.as_bytes(), b"not-a-key");
+        let result = generate_node_cert(1, "root", ca_cert_pem.as_bytes(), b"not-a-key", &[]);
         assert!(result.is_err());
     }
 }

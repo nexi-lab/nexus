@@ -833,7 +833,11 @@ class ZoneManager:
         save_pem(tls_dir / "ca.pem", ca_cert)
         save_pem(tls_dir / "ca-key.pem", ca_key, is_private=True)
 
-        node_cert, node_key = generate_node_cert(self._node_id, zone_id, ca_cert, ca_key)
+        # Include this node's advertise hostname in cert SAN (CockroachDB pattern)
+        leader_hostnames = self._extract_hostnames(self._advertise_addr)
+        node_cert, node_key = generate_node_cert(
+            self._node_id, zone_id, ca_cert, ca_key, hostnames=leader_hostnames
+        )
         save_pem(tls_dir / "node.pem", node_cert)
         save_pem(tls_dir / "node-key.pem", node_key, is_private=True)
 
@@ -938,6 +942,15 @@ class ZoneManager:
                 except ValueError:
                     continue
         return None
+
+    @staticmethod
+    def _extract_hostnames(address: str) -> list[str]:
+        """Extract hostname from an address for cert SAN inclusion."""
+        addr = address.removeprefix("http://").removeprefix("https://")
+        host = addr.rsplit(":", 1)[0] if ":" in addr else addr
+        if not host or host in ("0.0.0.0", "localhost", "127.0.0.1"):
+            return []
+        return [host]
 
     def _restart_with_tls(self, tls_config: "ZoneTlsConfig") -> None:
         """Restart the gRPC server with mTLS. Existing Raft zones are preserved."""

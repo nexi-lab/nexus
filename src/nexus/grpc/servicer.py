@@ -176,8 +176,23 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             # 4. Operation context
             op_context = get_operation_context(auth_result)
 
-            # 5. Zone scoping
-            scope_params_for_zone(params, op_context.zone_id)
+            # 5. SearchDelegation guard (Issue #3147, Phase 2)
+            search_delegation = auth_result.get("search_delegation")
+            if search_delegation is not None:
+                target_zone = op_context.zone_id or ""
+                try:
+                    search_delegation.validate(method, target_zone)
+                except PermissionError as perm_err:
+                    return vfs_pb2.CallResponse(
+                        payload=_error_payload(
+                            RPCErrorCode.PERMISSION_ERROR,
+                            str(perm_err),
+                        ),
+                        is_error=True,
+                    )
+            else:
+                # Normal auth — zone scoping as today
+                scope_params_for_zone(params, op_context.zone_id)
 
             # 6. Dispatch
             result = await dispatch_method(

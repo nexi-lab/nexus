@@ -12,10 +12,11 @@ use super::proto::nexus::raft::{
     zone_api_service_server::{ZoneApiService, ZoneApiServiceServer},
     zone_transport_service_server::{ZoneTransportService, ZoneTransportServiceServer},
     ClusterConfig as ProtoClusterConfig, GetClusterInfoRequest, GetClusterInfoResponse,
-    GetMetadataResult, JoinClusterRequest, JoinClusterResponse, JoinZoneRequest, JoinZoneResponse,
-    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest,
-    ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
-    ReplicateEntriesRequest, ReplicateEntriesResponse, StepMessageRequest, StepMessageResponse,
+    GetMetadataResult, GetSearchCapabilitiesRequest, JoinClusterRequest, JoinClusterResponse,
+    JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
+    NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
+    RaftCommand, RaftQueryResponse, RaftResponse, ReplicateEntriesRequest,
+    ReplicateEntriesResponse, SearchCapabilities, StepMessageRequest, StepMessageResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
@@ -948,6 +949,36 @@ impl ZoneApiService for ZoneApiServiceImpl {
             ca_pem,
             node_cert_pem,
             node_key_pem,
+        }))
+    }
+
+    /// Return search capabilities for a zone (Issue #3147, Phase 2).
+    ///
+    /// Reads real capabilities set by Python via `ZoneManager.set_search_capabilities()`.
+    /// Falls back to keyword-only defaults if Python hasn't registered capabilities yet.
+    async fn get_search_capabilities(
+        &self,
+        request: Request<GetSearchCapabilitiesRequest>,
+    ) -> std::result::Result<Response<SearchCapabilities>, Status> {
+        let req = request.into_inner();
+        let zone_id = req.zone_id;
+
+        if self.registry.get_node(&zone_id).is_none() {
+            return Err(Status::not_found(format!("Zone '{}' not found", zone_id)));
+        }
+
+        let caps = self
+            .registry
+            .get_search_capabilities(&zone_id)
+            .unwrap_or_default();
+
+        Ok(Response::new(SearchCapabilities {
+            zone_id,
+            device_tier: caps.device_tier,
+            search_modes: caps.search_modes,
+            embedding_model: caps.embedding_model,
+            embedding_dimensions: caps.embedding_dimensions,
+            has_graph: caps.has_graph,
         }))
     }
 }

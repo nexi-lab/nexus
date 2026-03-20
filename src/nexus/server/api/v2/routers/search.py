@@ -174,6 +174,7 @@ async def search_query(
     graph_mode: str = Query(
         "none", description="Graph enhancement mode: none, low, high, dual, auto"
     ),
+    federated: bool = Query(False, description="Cross-zone federated search (Issue #3147)"),
     auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(_get_search_daemon),
     async_session_factory: Any = Depends(_get_async_read_session_factory),
@@ -207,6 +208,21 @@ async def search_query(
             detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', 'dual', or 'auto'",
         )
 
+    # --- Federated search path (Issue #3147) ---
+    if federated:
+        return await _handle_federated_search(
+            q=q,
+            search_type=type,
+            limit=limit,
+            path_filter=path,
+            alpha=alpha,
+            fusion_method=fusion,
+            auth_result=auth_result,
+            search_daemon=search_daemon,
+            request=request,
+        )
+
+    # --- Standard single-zone search path ---
     # ReBAC file-level permission enforcer (Decision #17)
     permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
 
@@ -347,6 +363,80 @@ async def search_query(
     except Exception as e:
         logger.error("Search error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Search query failed") from e
+
+
+async def _handle_federated_search(
+    *,
+    q: str,
+    search_type: str,
+    limit: int,
+    path_filter: str | None,
+    alpha: float,
+    fusion_method: str,
+    auth_result: dict[str, Any],
+    search_daemon: Any,
+    request: Request,
+) -> dict[str, Any]:
+    """Handle federated cross-zone search (Issue #3147).
+
+    Delegates to FederatedSearchDispatcher which fans out search
+    across all accessible zones and fuses results via raw score merge.
+    """
+    from nexus.bricks.search.federated_search import FederatedSearchDispatcher
+
+    # Resolve ReBAC service
+    rebac = getattr(request.app.state, "rebac_service", None)
+    if rebac is None:
+        raw_mgr = getattr(request.app.state, "rebac_manager", None)
+        if raw_mgr is not None:
+            from nexus.bricks.rebac.rebac_service import ReBACService
+
+            rebac = ReBACService(raw_mgr)
+            request.app.state.rebac_service = rebac
+    if rebac is None:
+        raise HTTPException(status_code=503, detail="Federated search requires ReBAC service")
+
+    user_id = auth_result.get("user_id", "")
+    subject_type = auth_result.get("subject_type", "user")
+    subject_id = auth_result.get("subject_id") or user_id
+    subject = (subject_type, subject_id)
+
+    registry = getattr(request.app.state, "zone_search_registry", None)
+    per_file_rebac = getattr(request.app.state, "federated_per_file_rebac", True)
+    dispatcher = FederatedSearchDispatcher(
+        daemon=search_daemon,
+        rebac=rebac,
+        registry=registry,
+        enable_per_file_rebac=per_file_rebac,
+    )
+    fed_response = await dispatcher.search(
+        query=q,
+        subject=subject,
+        search_type=search_type,
+        limit=limit,
+        path_filter=path_filter,
+        alpha=alpha,
+        fusion_method=fusion_method,
+    )
+
+    response_dict: dict[str, Any] = {
+        "query": q,
+        "search_type": search_type,
+        "graph_mode": "none",
+        "federated": True,
+        "results": fed_response.results,
+        "total": len(fed_response.results),
+        "latency_ms": round(fed_response.latency_ms, 2),
+        "zones_searched": fed_response.zones_searched,
+        "zones_failed": [
+            {"zone_id": zf.zone_id, "error": zf.error} for zf in fed_response.zones_failed
+        ],
+    }
+    if fed_response.zones_skipped:
+        response_dict["zones_skipped"] = fed_response.zones_skipped
+    if fed_response.cached:
+        response_dict["cached"] = True
+    return response_dict
 
 
 @router.post("/index")

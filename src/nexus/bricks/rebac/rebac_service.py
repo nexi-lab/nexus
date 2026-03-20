@@ -824,6 +824,38 @@ class ReBACService(ReBACShareMixin):
 
         return await self._run_in_thread(_list_tuples_sync)
 
+    async def list_accessible_zones(
+        self,
+        subject: tuple[str, str],
+    ) -> list[str]:
+        """List zone IDs that a subject has membership access to.
+
+        Queries ReBAC tuples where the subject has a zone-level relation
+        (member, owner, admin, viewer) and the object type is "zone".
+
+        This is the canonical way to discover which zones a user/agent
+        can access for federated operations (Issue #3147).
+
+        Args:
+            subject: Subject tuple e.g., ("user", "alice") or ("agent", "bot_1")
+
+        Returns:
+            List of zone IDs the subject can access (deduplicated, stable order).
+        """
+        tuples = await self.rebac_list_tuples(
+            subject=subject,
+            relation_in=["member", "owner", "admin", "viewer"],
+        )
+        seen: set[str] = set()
+        zones: list[str] = []
+        for t in tuples:
+            obj_type = t.get("object_type", "")
+            obj_id = t.get("object_id", "")
+            if obj_type == "zone" and obj_id and obj_id not in seen:
+                seen.add(obj_id)
+                zones.append(obj_id)
+        return zones
+
     @rpc_expose(description="List objects a subject has a specific relation to")
     async def rebac_list_objects(
         self,

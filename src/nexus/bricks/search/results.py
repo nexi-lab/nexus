@@ -36,6 +36,17 @@ class BaseSearchResult:
     matched_field: str | None = None  # Which field matched (filename, path, content, etc.)
     attribute_boost: float | None = None  # Boost multiplier applied
     original_score: float | None = None  # Score before attribute boosting
+    # Issue #3147: Federated search — zone provenance
+    zone_id: str | None = None  # Source zone for cross-zone federated results
+
+    @property
+    def zone_qualified_path(self) -> str | None:
+        """Path qualified with zone_id for cross-zone dedup.
+
+        Returns '{zone_id}:{path}' when zone_id is set, None otherwise.
+        Computed from zone_id + path so it can never drift out of sync.
+        """
+        return f"{self.zone_id}:{self.path}" if self.zone_id else None
 
 
 def detect_matched_field(

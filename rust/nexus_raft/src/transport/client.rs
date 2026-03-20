@@ -179,7 +179,12 @@ impl RaftClient {
             let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
             let tls_config = tonic::transport::ClientTlsConfig::new()
                 .identity(identity)
-                .ca_certificate(ca);
+                .ca_certificate(ca)
+                // Verify against "localhost" — our certs have SAN=localhost.
+                // Without this, rustls rejects connections to Docker hostnames
+                // (nexus-1, nexus-2) that aren't in the cert's SAN list.
+                // Authentication is via mTLS (CA-signed client cert), not hostname.
+                .domain_name("localhost");
             ep = ep
                 .tls_config(tls_config)
                 .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
@@ -296,7 +301,12 @@ impl RaftApiClient {
             let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
             let tls_config = tonic::transport::ClientTlsConfig::new()
                 .identity(identity)
-                .ca_certificate(ca);
+                .ca_certificate(ca)
+                // Verify against "localhost" — our certs have SAN=localhost.
+                // Without this, rustls rejects connections to Docker hostnames
+                // (nexus-1, nexus-2) that aren't in the cert's SAN list.
+                // Authentication is via mTLS (CA-signed client cert), not hostname.
+                .domain_name("localhost");
             ep = ep
                 .tls_config(tls_config)
                 .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;

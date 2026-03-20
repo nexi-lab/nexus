@@ -46,6 +46,7 @@ class SkillDocGenerator:
         skill_dir: str = ".skill",
         nested_examples: dict[str, list[str]] | None = None,
         field_examples: dict[str, str] | None = None,
+        write_paths: dict[str, str] | None = None,
     ) -> None:
         self._skill_name = skill_name
         self._schemas = schemas
@@ -55,6 +56,8 @@ class SkillDocGenerator:
         self._skill_dir = skill_dir
         self._nested_examples = nested_examples or {}
         self._field_examples = field_examples or {}
+        # operation_name -> write path (e.g., "send_email" -> "SENT/_new.yaml")
+        self._write_paths = write_paths or {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -77,11 +80,8 @@ class SkillDocGenerator:
             "",
         ]
 
-        # Read patterns (Issue #3148) — how to list, cat, grep connector content
+        # Read patterns + write operations (Issue #3148)
         lines.extend(self._generate_read_patterns_section(mount_path))
-
-        if self._schemas:
-            lines.extend(self._generate_operations_section())
 
         if self._operation_traits:
             lines.extend(self._generate_required_format_section())
@@ -191,22 +191,55 @@ class SkillDocGenerator:
             "",
         ]
 
-        # Add write patterns if schemas exist
+        # Add write operations with exact paths and inline schemas
         if self._schemas:
-            lines.extend(
-                [
-                    "### Write patterns",
-                    "",
-                ]
-            )
-            for op_name in self._schemas:
+            lines.extend(["## Write Operations", ""])
+
+            for op_name, schema in self._schemas.items():
                 traits = self._operation_traits.get(op_name, OpTraits())
-                lines.append(
-                    f"- **{op_name.replace('_', ' ').title()}**: "
-                    f"write to appropriate `_new.yaml` path "
-                    f"(reversibility: {traits.reversibility.value}, "
-                    f"confirm: {traits.confirm.value})"
-                )
+                display = op_name.replace("_", " ").title()
+                write_path = self._write_paths.get(op_name, "_new.yaml")
+
+                lines.append(f"### {display}")
+                lines.append("")
+                lines.append(f"Write to `{mp}/{write_path}`:")
+                lines.append(f"- Reversibility: **{traits.reversibility.value}**")
+                lines.append(f"- Confirm: **{traits.confirm.value}**")
+
+                if traits.confirm == ConfirmLevel.USER:
+                    lines.append("- **⚠ IRREVERSIBLE** — requires `user_confirmed: true`")
+
+                lines.append("")
+                lines.append("```yaml")
+
+                if traits.confirm >= ConfirmLevel.INTENT:
+                    lines.append("# agent_intent: <why you are doing this — min 10 chars>")
+                if traits.confirm >= ConfirmLevel.EXPLICIT:
+                    lines.append("# confirm: true")
+                if traits.confirm == ConfirmLevel.USER:
+                    lines.append("# user_confirmed: true  # ask user first")
+
+                # Inline schema fields
+                for field_name, field_info in schema.model_fields.items():
+                    if field_name in ("agent_intent", "confirm", "user_confirmed"):
+                        continue
+                    required = field_info.is_required()
+                    req_tag = "REQUIRED" if required else "optional"
+                    desc = field_info.description or ""
+                    example = self._get_field_example(
+                        field_name, field_info, field_info.annotation, required
+                    )
+                    lines.append(
+                        f"{field_name}: {example}  # {req_tag}{' — ' + desc if desc else ''}"
+                    )
+
+                lines.append("```")
+                lines.append("")
+
+                for warning in traits.warnings:
+                    lines.append(f"> **Warning:** {warning}")
+                    lines.append("")
+
             lines.append("")
 
         # Add schema discovery

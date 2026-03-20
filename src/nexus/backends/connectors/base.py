@@ -241,6 +241,13 @@ class SkillDocMixin:
         if self._cached_doc_generator is None:
             from nexus.backends.connectors.schema_generator import SkillDocGenerator
 
+            # Extract write paths from CLIConnectorConfig if available
+            write_paths: dict[str, str] = {}
+            _config = getattr(self, "_config", None)
+            if _config and hasattr(_config, "write"):
+                for wp in _config.write:
+                    write_paths[wp.operation] = wp.path
+
             self._cached_doc_generator = SkillDocGenerator(
                 skill_name=self.SKILL_NAME,
                 schemas=self.SCHEMAS,
@@ -250,6 +257,7 @@ class SkillDocMixin:
                 skill_dir=self.SKILL_DIR,
                 nested_examples=self.NESTED_EXAMPLES or None,
                 field_examples=self.FIELD_EXAMPLES or None,
+                write_paths=write_paths or None,
             )
         return self._cached_doc_generator
 

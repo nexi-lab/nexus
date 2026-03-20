@@ -32,7 +32,7 @@ from nexus.system_services.agents.agent_warmup import AgentWarmupService
 
 @pytest.fixture
 def process_table():
-    return ProcessTable(zone_id="test")
+    return ProcessTable()
 
 
 @pytest.fixture

@@ -28,7 +28,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.process_types import (
     VALID_PROCESS_TRANSITIONS,
     ExternalProcessInfo,
@@ -51,8 +50,7 @@ class ProcessTable:
     VFS visibility via ProcResolver (procfs), not metastore persistence.
     """
 
-    def __init__(self, zone_id: str = ROOT_ZONE_ID) -> None:
-        self._zone_id = zone_id
+    def __init__(self) -> None:
         self._processes: dict[str, ProcessDescriptor] = {}
         self._wait_events: dict[str, list[asyncio.Event]] = {}
 

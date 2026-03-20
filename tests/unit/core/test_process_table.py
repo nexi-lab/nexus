@@ -33,7 +33,7 @@ OWNER = "user-1"
 
 
 def _make_table() -> ProcessTable:
-    return ProcessTable(zone_id=ZONE)
+    return ProcessTable()
 
 
 # ---------------------------------------------------------------------------

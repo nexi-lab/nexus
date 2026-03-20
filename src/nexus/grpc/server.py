@@ -22,31 +22,16 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_tls_config(app: "FastAPI") -> "ZoneTlsConfig | None":
-    """Resolve TLS config from env vars, ZoneManager, or auto-detection.
+    """Resolve TLS config from ZoneManager or auto-detection.
 
     Priority:
-    1. Explicit env vars: NEXUS_TLS_CERT / NEXUS_TLS_KEY / NEXUS_TLS_CA
-    2. ZoneManager.tls_config (auto-generated or passed via --tls-* flags)
-    3. Auto-detect from {NEXUS_DATA_DIR}/tls/
-    4. None → insecure (no certs available)
+    1. ZoneManager.tls_config (provisioned by 2-phase TLS bootstrap)
+    2. Auto-detect from {NEXUS_DATA_DIR}/tls/
+    3. None → insecure (no certs available)
     """
     from nexus.security.tls.config import ZoneTlsConfig
 
-    # 1. Explicit env vars
-    cert = os.environ.get("NEXUS_TLS_CERT")
-    key = os.environ.get("NEXUS_TLS_KEY")
-    ca = os.environ.get("NEXUS_TLS_CA")
-    if cert and key and ca:
-        from pathlib import Path
-
-        return ZoneTlsConfig(
-            ca_cert_path=Path(ca),
-            node_cert_path=Path(cert),
-            node_key_path=Path(key),
-            known_zones_path=Path(ca).parent / "known_zones",
-        )
-
-    # 2. ZoneManager (if running federation / Raft)
+    # 1. ZoneManager (if running federation / Raft)
     zone_mgr = getattr(app.state, "zone_manager", None)
     if zone_mgr is not None:
         tls_cfg: ZoneTlsConfig | None = getattr(zone_mgr, "tls_config", None)

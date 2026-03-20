@@ -139,12 +139,8 @@ def _derive_project_env(
     if image_ref:
         env["NEXUS_IMAGE_REF"] = image_ref
 
-    if config.get("tls"):
-        env["NEXUS_TLS_ENABLED"] = "true"
-        env["NEXUS_TLS_CERT"] = "/app/data/tls/server.crt"
-        env["NEXUS_TLS_KEY"] = "/app/data/tls/server.key"
-        env["NEXUS_TLS_CA"] = "/app/data/tls/ca.crt"
-    # No TLS → gRPC server auto-detects: no certs found → insecure loopback
+    # TLS is provisioned automatically by 2-phase TLS bootstrap.
+    # No env vars needed — certs are auto-detected from disk.
 
     return env
 

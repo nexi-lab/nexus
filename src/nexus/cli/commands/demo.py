@@ -117,15 +117,7 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
 
         # When TLS is enabled, set env vars so nexus.connect() builds
         # an RPCTransport with mTLS credentials (dev certs double as
-        # both server and client certs).
-        if config.get("tls"):
-            tls_cert = config.get("tls_cert", "")
-            tls_key = config.get("tls_key", "")
-            tls_ca = config.get("tls_ca", "")
-            if tls_cert and tls_key and tls_ca:
-                os.environ["NEXUS_TLS_CERT"] = tls_cert
-                os.environ["NEXUS_TLS_KEY"] = tls_key
-                os.environ["NEXUS_TLS_CA"] = tls_ca
+        # TLS is auto-detected from NEXUS_DATA_DIR/tls/ (provisioned by 2-phase bootstrap)
 
         try:
             nx = await nexus.connect(
@@ -871,14 +863,7 @@ def _revoke_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
         return 0
 
     # Set TLS env vars so admin RPC uses mTLS when TLS is enabled
-    if config.get("tls"):
-        tls_cert = config.get("tls_cert", "")
-        tls_key = config.get("tls_key", "")
-        tls_ca = config.get("tls_ca", "")
-        if tls_cert and tls_key and tls_ca:
-            os.environ["NEXUS_TLS_CERT"] = tls_cert
-            os.environ["NEXUS_TLS_KEY"] = tls_key
-            os.environ["NEXUS_TLS_CA"] = tls_ca
+    # TLS is auto-detected from NEXUS_DATA_DIR/tls/
 
     try:
         from nexus.cli.commands.admin import get_admin_rpc

@@ -588,15 +588,19 @@ class SyncService:
                         except Exception as e:
                             result.errors.append(f"Failed to add {virtual_path}: {e}")
 
-                    # Fetch content via provider and write to VFS
+                    # Fetch content via provider and write to VFS.
+                    # Honor fetch.relative_path if it differs from list-derived path.
                     if ctx.sync_content and not ctx.dry_run:
                         try:
                             fetch = loop.run_until_complete(
                                 provider.fetch_item(item.item_id, context=ctx.context)
                             )
                             if fetch.content and len(fetch.content) > 0:
+                                write_path = virtual_path
+                                if fetch.relative_path and fetch.relative_path != rel_path:
+                                    write_path = f"{ctx.mount_point}/{fetch.relative_path}"
                                 loop.run_until_complete(
-                                    self._gw.sys_write(virtual_path, fetch.content)
+                                    self._gw.sys_write(write_path, fetch.content)
                                 )
                                 result.files_synced += 1
                         except Exception:
@@ -606,21 +610,32 @@ class SyncService:
                                 exc_info=True,
                             )
 
-                # Process deletions — deleted_ids are item IDs (e.g. Gmail
-                # msgId), not VFS paths.  Filenames may embed the ID as a
-                # suffix (e.g. "{threadId}-{msgId}.yaml") so we match on
-                # both the full stem and trailing component after the last
-                # hyphen.
+                # Process deletions — deleted_ids are item IDs (e.g. bare
+                # Gmail msgId), not VFS paths.  We must scan the metadata
+                # store for the mount prefix to find stored paths that
+                # contain the deleted ID, since the deleted item is typically
+                # NOT in the current page.items.
                 if page.deleted_ids and not ctx.dry_run:
+                    # Build id→path from metadata store (covers previously synced files)
                     id_to_path: dict[str, str] = {}
+                    try:
+                        stored = self._gw.metadata_list(ctx.mount_point + "/", recursive=True) or []
+                        for entry in stored:
+                            p = getattr(entry, "path", str(entry))
+                            stem = p.rsplit("/", 1)[-1].replace(".yaml", "")
+                            id_to_path[stem] = p
+                            # Gmail: "threadId-msgId" → also index by msgId suffix
+                            if "-" in stem:
+                                id_to_path[stem.rsplit("-", 1)[-1]] = p
+                    except Exception:
+                        pass  # metadata_list unavailable (Raft store)
+
+                    # Also index from files_found in this run
                     for known_path in files_found:
                         stem = known_path.rsplit("/", 1)[-1].replace(".yaml", "")
-                        # Full stem: "threadId-msgId" → path
                         id_to_path[stem] = known_path
-                        # Suffix after last hyphen: "msgId" → path
                         if "-" in stem:
-                            suffix = stem.rsplit("-", 1)[-1]
-                            id_to_path[suffix] = known_path
+                            id_to_path[stem.rsplit("-", 1)[-1]] = known_path
 
                     for deleted_id in page.deleted_ids:
                         del_path = id_to_path.get(deleted_id)

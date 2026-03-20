@@ -218,6 +218,9 @@ class NexusFS(  # type: ignore[misc]
         self._initialized: bool = False
         self._bootstrapped: bool = False
         self._bootstrap_callbacks: list[Callable[[], Any]] = []
+        self._close_callbacks: list[
+            Callable[[], None]
+        ] = []  # Issue #1793: factory-registered service close
         self._runtime_closeables: list[Any] = []
         # Factory-injected lifecycle implementations.
         # Keeps nexus.core free of nexus.factory / nexus.bricks imports.
@@ -4716,11 +4719,12 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Dict with ``flushed`` count.
         """
-        wo = (
-            getattr(self._system_services, "write_observer", None)
-            if self._system_services
-            else None
-        )
+        # Issue #1789: delegate to write_observer via service registry or
+        # _system_services as last resort.  _close_callbacks handles close().
+        wo = None
+        _sys = self._system_services
+        if _sys is not None:
+            wo = getattr(_sys, "write_observer", None)
         if wo is None or not hasattr(wo, "flush"):
             return {"flushed": 0}
         flushed: int = NexusFS._run_async(wo.flush())
@@ -4869,29 +4873,14 @@ class NexusFS(  # type: ignore[misc]
         if _pt is not None:
             _pt.close_all()
 
-        # Flush write observer pre-buffer (CLI mode: events buffered in memory
-        # because PipeManager was never injected). Must happen before
-        # record_store.close() since flush needs the DB connection.
-        write_observer = (
-            getattr(self._system_services, "write_observer", None)
-            if self._system_services
-            else None
-        )
-        if write_observer is not None and hasattr(write_observer, "flush_sync"):
+        # Issue #1793/#1789: Service close via factory-registered callbacks.
+        # Replaces direct _system_services reads for write_observer, rebac_manager,
+        # audit_store. Runs BEFORE pillar close so DB connections are still open.
+        for _close_cb in self._close_callbacks:
             try:
-                count = write_observer.flush_sync()
-                if count:
-                    import logging
-
-                    logging.getLogger(__name__).debug(
-                        "NexusFS.close: flushed %d write observer events", count
-                    )
+                _close_cb()
             except Exception as exc:
-                import logging
-
-                logging.getLogger(__name__).debug(
-                    "NexusFS.close: flush_sync failed (best-effort): %s", exc
-                )
+                logger.debug("close: callback failed (best-effort): %s", exc)
 
         # Close metadata store
         self.metadata.close()
@@ -4899,19 +4888,6 @@ class NexusFS(  # type: ignore[misc]
         # Close record store (Services layer SQL connections)
         if self._record_store is not None:
             self._record_store.close()
-
-        # Close ReBACManager to release database connection
-        _rebac = (
-            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
-        )
-        if _rebac is not None:
-            _rebac.close()
-
-        # Close AuditStore to release database connection
-        # Issue #1570: accessed from container, not flat attr.
-        _as = getattr(self._system_services, "audit_store", None) if self._system_services else None
-        if _as is not None:
-            _as.close()
 
         # Close TokenManager to release database connection
         if hasattr(self, "_token_manager") and self._token_manager is not None:

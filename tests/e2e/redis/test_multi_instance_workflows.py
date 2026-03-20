@@ -45,6 +45,7 @@ pytestmark = [
         sys.platform not in ("linux", "win32"),
         reason="File watching only supported on Linux and Windows",
     ),
+    pytest.mark.timeout(60),  # Prevent individual tests from consuming full job budget
 ]
 
 # =============================================================================

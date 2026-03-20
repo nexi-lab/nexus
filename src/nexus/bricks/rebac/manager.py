@@ -389,26 +389,39 @@ class ReBACManager:
         return PubSubInvalidation()
 
     def _wire_shared_ring_buffer(self) -> None:
-        """Create and inject SharedRingBuffer for cross-process IPC (Issue #3192).
+        """Create and inject SharedRingBuffers for cross-process IPC (Issue #3192).
 
-        Wires the ring buffer into zone_graph_loader (write on cache miss)
-        and result_cache (read for revision broadcasting).
+        Uses separate buffers for each message type to avoid multiplexing
+        incompatible schemas. Each buffer is SPSC: one producer per process,
+        one consumer per process. Multi-process safety is achieved by using
+        unique buffer names per process (PID suffix).
         """
         try:
+            import os
+
             from nexus.bricks.rebac.cache.shared_ring_buffer import SharedRingBuffer
 
-            ring = SharedRingBuffer(
-                name="rebac-revisions",
-                entry_size=256,
-                capacity=1024,
-            ).open_producer()
+            pid = os.getpid()
 
+            # Separate buffer for zone graph tuple notifications
             if self._zone_loader is not None:
-                self._zone_loader.set_ring_buffer(ring)
-            if self._l1_cache is not None:
-                self._l1_cache.set_revision_ring_buffer(ring)
+                zone_ring = SharedRingBuffer(
+                    name=f"rebac-zone-tuples-{pid}",
+                    entry_size=256,
+                    capacity=1024,
+                ).open_producer()
+                self._zone_loader.set_ring_buffer(zone_ring)
 
-            logger.info("[RING-BUFFER] SharedRingBuffer wired into zone_graph_loader + result_cache")
+            # Separate buffer for revision sequence broadcasting
+            if self._l1_cache is not None:
+                rev_ring = SharedRingBuffer(
+                    name=f"rebac-revisions-{pid}",
+                    entry_size=128,
+                    capacity=1024,
+                ).open_producer()
+                self._l1_cache.set_revision_ring_buffer(rev_ring)
+
+            logger.info("[RING-BUFFER] SharedRingBuffers wired (pid=%d)", pid)
         except Exception as e:
             logger.debug("[RING-BUFFER] SharedRingBuffer not available: %s", e)
 

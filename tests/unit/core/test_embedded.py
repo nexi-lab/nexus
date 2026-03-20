@@ -17,7 +17,7 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Mount points auto-created by factory boot (root + IPC /agents).
 # These are system entries, not user files.
-_SYSTEM_PATHS = frozenset({"/", "/agents"})
+_SYSTEM_PATHS = frozenset({"/", "/agents", "/nexus/pipes/audit-events"})
 
 
 @pytest.fixture

@@ -171,7 +171,6 @@ class TestBootSystemServices:
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "delivery_worker",
@@ -181,12 +180,8 @@ class TestBootSystemServices:
             "brick_lifecycle_manager",
             "brick_reconciler",
             "zone_lifecycle",
-            # (PipeManager is kernel-internal §4.2, not in SystemServices)
-            # Process lifecycle (Issue #1509)
-            "agent_registry",
+            # (PipeManager + StreamManager + AgentRegistry are kernel-internal §4.2)
             "scheduler_service",
-            # ACP coding agent service
-            "acp_service",
         }
         assert expected_keys == set(result.keys())
 

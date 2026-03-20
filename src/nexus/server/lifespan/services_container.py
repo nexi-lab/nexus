@@ -109,11 +109,11 @@ class LifespanServices:
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
-            # Process table — read from system_services (where it's created),
+            # Process table — kernel-owned primitive (Issue #1792),
             # falling back to app.state for backwards compatibility
             agent_registry=(
-                getattr(_sys, "agent_registry", None)
-                if _sys
+                getattr(nx, "_agent_registry", None)
+                if nx
                 else getattr(app.state, "agent_registry", None)
             ),
             # Coordinator

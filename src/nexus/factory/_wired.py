@@ -296,21 +296,19 @@ async def _boot_wired_services(
     acp_rpc_service: Any = None
     _acp_service = getattr(system_services, "acp_service", None)
     if _acp_service is None:
-        # System tier didn't create AcpService — construct inline.
-        try:
-            from nexus.core.agent_registry import AgentRegistry
-            from nexus.system_services.acp.service import AcpService
+        # AcpService not yet created — construct inline using kernel-owned AgentRegistry.
+        _acp_pt = getattr(nx, "_agent_registry", None)
+        if _acp_pt is not None:
+            try:
+                from nexus.system_services.acp.service import AcpService
 
-            _acp_pt = getattr(system_services, "agent_registry", None)
-            if _acp_pt is None:
-                _acp_pt = AgentRegistry()
-            _acp_service = AcpService(
-                agent_registry=_acp_pt,
-                zone_id=ROOT_ZONE_ID,
-            )
-            logger.debug("[BOOT:WIRED] AcpService created (inline)")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
+                _acp_service = AcpService(
+                    agent_registry=_acp_pt,
+                    zone_id=ROOT_ZONE_ID,
+                )
+                logger.debug("[BOOT:WIRED] AcpService created (inline)")
+            except Exception as exc:
+                logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
     if _acp_service is not None:
         # Late-bind NexusFS for VFS-routed file I/O (``everything is a file``).
         if hasattr(_acp_service, "bind_fs"):

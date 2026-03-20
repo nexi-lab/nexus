@@ -211,8 +211,17 @@ class NexusFS(  # type: ignore[misc]
             metadata_store,
             self_address=_ipc_self_addr,
         )
+
+        # Agent process table — kernel-internal, NOT injected via DI.
+        # Like PipeManager/StreamManager: always present, created by kernel at init.
+        # Analogous to Linux process table (PID hash + task list).
+        from nexus.core.agent_registry import AgentRegistry
+
+        self._agent_registry = AgentRegistry()
+
         logger.info(
-            "IPC primitives initialized: PipeManager + StreamManager (self_address=%s)",
+            "Kernel primitives initialized: PipeManager + StreamManager + AgentRegistry"
+            " (self_address=%s)",
             _ipc_self_addr or "none/single-node",
         )
 

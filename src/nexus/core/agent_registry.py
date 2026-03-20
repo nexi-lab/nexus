@@ -1,15 +1,24 @@
-"""AgentRegistry — kernel agent lifecycle manager (Issue #1509, #1800).
+"""AgentRegistry — kernel agent lifecycle primitive (Issue #1509, #1792, #1800).
 
-Pure in-memory agent registry, analogous to Linux task_struct array.
-No metastore persistence — agent state is ephemeral (tied to OS
-process lifespan).  On nexusd restart, all agents are gone.
+Kernel-owned, pure in-memory agent process table, analogous to the Linux
+process table (PID hash + task list).  Each entry is an AgentDescriptor
+(≈ task_struct).  No metastore persistence — agent state is ephemeral
+(tied to OS process lifespan).  On nexusd restart, all agents are gone.
+
+Kernel ownership: created in ``NexusFS.__init__`` (like PipeManager,
+StreamManager, VFSLockManager).  Factory and services receive a reference
+but never create it.
 
 VFS visibility is provided by ProcResolver (procfs model): reading
 ``/{zone}/proc/{pid}/status`` generates content from memory at
 read time, like Linux ``/proc/{pid}/status``.
 
-    core/agent_registry.py  = kernel/fork.c + kernel/exit.c + kernel/signal.c
-    system_services/proc/proc_resolver.py  = fs/proc/ (procfs virtual filesystem)
+Linux analogy::
+
+    AgentRegistry    ≈  process table (PID hash + task list)
+    AgentDescriptor  ≈  task_struct (per-process control block)
+    spawn/kill/signal  ≈  fork()/exit()/kill()
+    ProcResolver     ≈  fs/proc/ (procfs virtual filesystem)
 
 Concurrency model:
   - spawn/kill/signal/get/list are synchronous (fast PID allocation
@@ -44,9 +53,9 @@ logger = logging.getLogger(__name__)
 
 
 class AgentRegistry:
-    """Manages agent lifecycle — PID allocation, state machine, signals, wait().
+    """Kernel-owned agent process table — PID allocation, state machine, signals, wait().
 
-    Pure in-memory — analogous to Linux's task_struct table.
+    Pure in-memory — analogous to Linux's process table (PID hash + task list).
     VFS visibility via ProcResolver (procfs), not metastore persistence.
     """
 

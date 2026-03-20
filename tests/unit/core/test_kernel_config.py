@@ -324,7 +324,7 @@ class TestSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "zone_lifecycle",
-            "agent_registry",
+            # (AgentRegistry is kernel-internal §4.4 — not in SystemServices)
             "scheduler_service",
             "acp_service",
             # Distributed event bus — promoted from Tier 2 (Issue #1701)

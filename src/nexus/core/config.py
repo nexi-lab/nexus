@@ -251,11 +251,8 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
-    # (PipeManager + StreamManager are kernel-internal primitives,
+    # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
     # constructed in NexusFS.__init__ — not injected via SystemServices.)
-
-    # Process lifecycle — kernel process table (Issue #1509)
-    agent_registry: Any = None
 
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None

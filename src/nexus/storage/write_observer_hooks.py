@@ -1,13 +1,16 @@
-"""Audit interceptor: serialize VFS mutations → DT_PIPE via sys_write.
+"""Audit interceptor: VFS mutation hooks → WriteObserver or DT_PIPE.
 
-Async VFS interceptor hook that serializes each mutation event to JSON
-and writes it into a DT_PIPE via ``nx.sys_write(pipe_path, data)``.
-The pipe is consumed by ``PipedRecordStoreWriteObserver`` which flushes
-events to RecordStore in batches.
+Two modes:
 
-By using ``sys_write`` instead of ``PipeManager`` directly, the
-interceptor is decoupled from kernel internals and benefits from the
-IPC fast-path (~1μs).
+1. **Observer mode** (sync): wraps a ``WriteObserverProtocol`` (e.g.
+   ``RecordStoreWriteObserver``) and calls ``on_write()`` / ``on_delete()``
+   etc. directly.  Used for SQLite and any non-buffered backend.
+
+2. **Pipe mode** (async): serializes each mutation event to JSON and
+   writes it into a DT_PIPE via ``nx.sys_write(pipe_path, data)``.
+   The pipe is consumed by ``PipedRecordStoreWriteObserver`` which
+   flushes events to RecordStore in batches.  Used for PostgreSQL
+   with write-buffer enabled.
 
 Issue #900, #1772.
 """
@@ -28,25 +31,28 @@ if TYPE_CHECKING:
         WriteBatchHookContext,
         WriteHookContext,
     )
+    from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
 
 class AuditWriteInterceptor:
-    """Async VFS interceptor: serialize mutation events → sys_write to pipe.
+    """VFS interceptor: dispatch mutation events to observer or pipe.
 
     Registered as an async POST hook via ``register_intercept_*()``.
-    The Rust HookRegistry auto-classifies it as async because
-    ``on_post_write`` is ``async def``.
+
+    Construction:
+        - Observer mode: ``AuditWriteInterceptor(observer=obs)``
+        - Pipe mode: ``AuditWriteInterceptor(nx, pipe_path)``
 
     Error policy: ``strict_mode=True`` aborts with AuditLogError on
-    pipe write failure; ``strict_mode=False`` logs and continues.
+    failure; ``strict_mode=False`` logs and continues.
     """
 
     name = "audit_write_observer"
 
-    __slots__ = ("_nx", "_pipe_path", "_strict_mode")
+    __slots__ = ("_nx", "_observer", "_pipe_path", "_strict_mode")
 
     # ── HotSwappable protocol (Issue #1613) ────────────────────────────
 
@@ -68,14 +74,34 @@ class AuditWriteInterceptor:
     async def activate(self) -> None:
         pass
 
-    def __init__(self, nx: "NexusFS", pipe_path: str, *, strict_mode: bool = True) -> None:
+    def __init__(
+        self,
+        nx: "NexusFS | None" = None,
+        pipe_path: str | None = None,
+        *,
+        observer: "WriteObserverProtocol | None" = None,
+        strict_mode: bool = True,
+    ) -> None:
         self._nx = nx
         self._pipe_path = pipe_path
+        self._observer = observer
         self._strict_mode = strict_mode
 
     # ── VFSWriteHook ──────────────────────────────────────────────────
 
     async def on_post_write(self, ctx: "WriteHookContext") -> None:
+        if self._observer is not None:
+            self._call_observer(
+                "write",
+                ctx.path,
+                metadata=ctx.metadata,
+                is_new=ctx.is_new_file,
+                path=ctx.path,
+                old_metadata=ctx.old_metadata,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            )
+            return
         event = {
             "op": "write",
             "path": ctx.path,
@@ -91,6 +117,15 @@ class AuditWriteInterceptor:
     # ── VFSWriteBatchHook ─────────────────────────────────────────────
 
     async def on_post_write_batch(self, ctx: "WriteBatchHookContext") -> None:
+        if self._observer is not None:
+            self._call_observer(
+                "write_batch",
+                "<batch>",
+                items=ctx.items,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            )
+            return
         for metadata, is_new in ctx.items:
             event = {
                 "op": "write",
@@ -106,6 +141,16 @@ class AuditWriteInterceptor:
     # ── VFSDeleteHook ─────────────────────────────────────────────────
 
     async def on_post_delete(self, ctx: "DeleteHookContext") -> None:
+        if self._observer is not None:
+            self._call_observer(
+                "delete",
+                ctx.path,
+                path=ctx.path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                metadata=ctx.metadata,
+            )
+            return
         event = {
             "op": "delete",
             "path": ctx.path,
@@ -119,6 +164,17 @@ class AuditWriteInterceptor:
     # ── VFSRenameHook ─────────────────────────────────────────────────
 
     async def on_post_rename(self, ctx: "RenameHookContext") -> None:
+        if self._observer is not None:
+            self._call_observer(
+                "rename",
+                ctx.old_path,
+                old_path=ctx.old_path,
+                new_path=ctx.new_path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                metadata=ctx.metadata,
+            )
+            return
         event = {
             "op": "rename",
             "path": ctx.old_path,
@@ -133,6 +189,15 @@ class AuditWriteInterceptor:
     # ── VFSMkdirHook ─────────────────────────────────────────────────
 
     async def on_post_mkdir(self, ctx: "MkdirHookContext") -> None:
+        if self._observer is not None:
+            self._call_observer(
+                "mkdir",
+                ctx.path,
+                path=ctx.path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            )
+            return
         event = {
             "op": "mkdir",
             "path": ctx.path,
@@ -144,6 +209,16 @@ class AuditWriteInterceptor:
     # ── VFSRmdirHook ─────────────────────────────────────────────────
 
     async def on_post_rmdir(self, ctx: "RmdirHookContext") -> None:
+        if self._observer is not None:
+            self._call_observer(
+                "rmdir",
+                ctx.path,
+                path=ctx.path,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                recursive=ctx.recursive,
+            )
+            return
         event = {
             "op": "rmdir",
             "path": ctx.path,
@@ -153,34 +228,54 @@ class AuditWriteInterceptor:
         }
         await self._emit(event, "rmdir", ctx.path)
 
-    # ── Internal ──────────────────────────────────────────────────────
+    # ── Internal — observer mode (sync) ──────────────────────────────
+
+    def _call_observer(self, operation: str, op_path: str, **kwargs: Any) -> None:
+        """Dispatch to WriteObserverProtocol with audit error policy."""
+        try:
+            method = getattr(self._observer, f"on_{operation}")
+            method(**kwargs)
+        except Exception as e:
+            self._handle_error(operation, op_path, e)
+
+    # ── Internal — pipe mode (async) ─────────────────────────────────
 
     async def _emit(self, event: dict[str, Any], operation: str, op_path: str) -> None:
         """Serialize event to JSON and write to pipe via sys_write."""
+        assert self._nx is not None and self._pipe_path is not None  # pipe mode invariant
         try:
             data = json.dumps(event).encode()
-            await self._nx.sys_write(self._pipe_path, data)
-        except Exception as e:
-            from nexus.contracts.exceptions import AuditLogError
+            # Use admin context for internal audit pipe writes to bypass permission checks.
+            from nexus.contracts.types import OperationContext as _OC
 
-            if self._strict_mode:
-                logger.error(
-                    "AUDIT LOG FAILURE: %s on '%s' ABORTED. Error: %s. "
-                    "Set audit_strict_mode=False to allow writes without audit logs.",
-                    operation,
-                    op_path,
-                    e,
-                )
-                raise AuditLogError(
-                    f"Operation aborted: audit logging failed for {operation}: {e}",
-                    path=op_path,
-                    original_error=e,
-                ) from e
-            else:
-                logger.critical(
-                    "AUDIT LOG FAILURE: %s on '%s' SUCCEEDED but audit log FAILED. "
-                    "Error: %s. This creates an audit trail gap!",
-                    operation,
-                    op_path,
-                    e,
-                )
+            _admin_ctx = _OC(user_id="system", groups=[], is_admin=True)
+            await self._nx.sys_write(self._pipe_path, data, context=_admin_ctx)
+        except Exception as e:
+            self._handle_error(operation, op_path, e)
+
+    # ── Shared error handling ────────────────────────────────────────
+
+    def _handle_error(self, operation: str, op_path: str, e: Exception) -> None:
+        from nexus.contracts.exceptions import AuditLogError
+
+        if self._strict_mode:
+            logger.error(
+                "AUDIT LOG FAILURE: %s on '%s' ABORTED. Error: %s. "
+                "Set audit_strict_mode=False to allow writes without audit logs.",
+                operation,
+                op_path,
+                e,
+            )
+            raise AuditLogError(
+                f"Operation aborted: audit logging failed for {operation}: {e}",
+                path=op_path,
+                original_error=e,
+            ) from e
+        else:
+            logger.critical(
+                "AUDIT LOG FAILURE: %s on '%s' SUCCEEDED but audit log FAILED. "
+                "Error: %s. This creates an audit trail gap!",
+                operation,
+                op_path,
+                e,
+            )

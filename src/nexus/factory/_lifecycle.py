@@ -19,6 +19,7 @@ async def _do_link(
     enabled_bricks: "frozenset[str] | None" = None,
     parsing: Any = None,
     workflow_engine: Any = None,
+    zone_id: str | None = None,
 ) -> None:
     """Phase 1 implementation: wire service topology.  Pure memory — NO I/O.
 
@@ -196,8 +197,8 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_audit)
 
-    # Issue #1792: agent_registry close via callback (not kernel → _system_services)
-    _pt = getattr(_sys, "agent_registry", None)
+    # Issue #1792: agent_registry close via callback (kernel-owned primitive)
+    _pt = getattr(nx, "_agent_registry", None)
     if _pt is not None and hasattr(_pt, "close_all"):
 
         def _close_agent_registry() -> None:
@@ -230,6 +231,55 @@ async def _do_link(
             )
 
         nx._overlay_config_fn = _resolve_overlay
+
+    # --- Issue #1792: Deferred EvictionManager + AcpService creation ---
+    # These depend on nx._agent_registry (kernel-owned), so they cannot be
+    # created in _boot_system_services (runs before kernel construction).
+    _agent_reg = getattr(nx, "_agent_registry", None)
+    if _agent_reg is not None and getattr(_sys, "eviction_manager", None) is None:
+        try:
+            import os
+
+            from nexus.contracts.deployment_profile import DeploymentProfile as _DP2
+            from nexus.lib.performance_tuning import resolve_profile_tuning as _rpt
+            from nexus.system_services.agents.eviction_manager import EvictionManager
+            from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
+            from nexus.system_services.agents.resource_monitor import ResourceMonitor
+
+            _prof_str = os.environ.get("NEXUS_PROFILE", "full")
+            try:
+                _prof = _DP2(_prof_str) if _prof_str != "auto" else _DP2.FULL
+            except ValueError:
+                _prof = _DP2.FULL
+            _eviction_tuning = _rpt(_prof).eviction
+            _resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
+            _eviction_policy = QoSEvictionPolicy()
+            _eviction_mgr = EvictionManager(
+                agent_registry=_agent_reg,
+                monitor=_resource_monitor,
+                policy=_eviction_policy,
+                tuning=_eviction_tuning,
+            )
+            _sys = _dc_replace(_sys, eviction_manager=_eviction_mgr)
+            nx._system_services = _sys
+            logger.debug("[BOOT:LINK] EvictionManager created (deferred, QoS-aware)")
+        except Exception as exc:
+            logger.warning("[BOOT:LINK] EvictionManager unavailable: %s", exc)
+
+    if _agent_reg is not None and _brick_on("acp") and getattr(_sys, "acp_service", None) is None:
+        try:
+            from nexus.contracts.constants import ROOT_ZONE_ID
+            from nexus.system_services.acp.service import AcpService
+
+            _acp_svc = AcpService(
+                agent_registry=_agent_reg,
+                zone_id=zone_id or ROOT_ZONE_ID,
+            )
+            _sys = _dc_replace(_sys, acp_service=_acp_svc)
+            nx._system_services = _sys
+            logger.debug("[BOOT:LINK] AcpService created (deferred)")
+        except Exception as exc:
+            logger.warning("[BOOT:LINK] AcpService unavailable: %s", exc)
 
 
 async def _do_initialize(

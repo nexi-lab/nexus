@@ -86,13 +86,9 @@ class TestAgentRecord:
         )
 
     def test_is_frozen(self, record):
-        """AgentRecord is immutable (frozen dataclass).
-
-        Note: tests str field (agent_id) because Enum field assignment
-        may not raise FrozenInstanceError on Python 3.13+.
-        """
+        """AgentRecord is immutable (frozen dataclass)."""
         with pytest.raises(FrozenInstanceError):
-            object.__setattr__(record, "state", AgentState.READY)
+            record.agent_id = "hacked"
 
     def test_field_access(self, record):
         """All fields are accessible."""

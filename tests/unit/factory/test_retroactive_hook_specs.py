@@ -35,8 +35,13 @@ class TestHotSwappableConformance:
     def test_audit_interceptor(self) -> None:
         from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
+        # Observer mode: wraps a WriteObserverProtocol directly
         hook = AuditWriteInterceptor(observer=MagicMock())
         assert isinstance(hook, HotSwappable)
+
+        # Pipe mode: writes to DT_PIPE via nx.sys_write
+        hook2 = AuditWriteInterceptor(MagicMock(), "/nexus/pipes/audit-events")
+        assert isinstance(hook2, HotSwappable)
 
     def test_dynamic_viewer_hook(self) -> None:
         from nexus.bricks.rebac.dynamic_viewer_hook import DynamicViewerReadHook

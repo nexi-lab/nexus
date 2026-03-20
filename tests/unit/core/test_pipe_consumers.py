@@ -3,57 +3,126 @@
 Verifies that ZoektPipeConsumer and PipedRecordStoreWriteObserver correctly
 flow events through the DT_PIPE kernel IPC path:
 
-    sync producer (notify_write / on_write)
-      → pipe_write_nowait() (~5us)
-      → RingBuffer (kfifo)
-      → async consumer (_consume loop)
-      → trigger_reindex_async() / RecordStore flush
+    sync producer (notify_write / sys_write)
+      -> pipe_write_nowait() (~5us)
+      -> RingBuffer (kfifo)
+      -> async consumer (_consume loop)
+      -> trigger_reindex_async() / RecordStore flush
 
 These tests prove DT_PIPE works end-to-end as a production IPC mechanism,
 not just as isolated unit primitives.
 
 See: factory/zoekt_pipe_consumer.py, storage/piped_record_store_write_observer.py
+
+Issue #1772: Tests migrated from PipeManager API to NexusFS sys_read/sys_write.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import tempfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.pipe_manager import PipeManager
+from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
+from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.test_context import TEST_CONTEXT
+
+# Pipe path constants (must match production code)
+_ZOEKT_PIPE_PATH = "/nexus/pipes/zoekt-writes"
+_AUDIT_PIPE_PATH = "/nexus/pipes/audit-events"
+
 
 # ======================================================================
-# Shared MockMetastore (reused from test_pipe.py)
+# Shared helpers
 # ======================================================================
 
 
-class MockMetastore:
-    """Minimal MetastoreABC mock for pipe consumer tests."""
+def _make_nx():
+    """Create a minimal NexusFS with DictMetastore for pipe tests."""
+    from nexus import CASLocalBackend, NexusFS
 
-    def __init__(self) -> None:
-        self._store: dict[str, FileMetadata] = {}
+    tmpdir = tempfile.mkdtemp()
+    metastore = DictMetastore()
+    backend = CASLocalBackend(str(Path(tmpdir) / "data"))
+    nx = NexusFS(
+        metadata_store=metastore,
+        permissions=PermissionConfig(enforce=False),
+        parsing=ParseConfig(auto_parse=False),
+        system_services=SystemServices(),
+    )
+    nx._default_context = TEST_CONTEXT
+    nx.router.add_mount("/", backend)
+    return nx
 
-    def get(self, path: str) -> FileMetadata | None:
-        return self._store.get(path)
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
-        if metadata.path:
-            self._store[metadata.path] = metadata
+def _audit_event_write(path: str, *, is_new: bool = True) -> bytes:
+    """Create an audit write event JSON (simulates AuditWriteInterceptor)."""
+    metadata = FileMetadata(
+        path=path,
+        backend_name="local",
+        physical_path=f"/data{path}",
+        size=100,
+    )
+    return json.dumps(
+        {
+            "op": "write",
+            "path": path,
+            "is_new": is_new,
+            "zone_id": None,
+            "agent_id": None,
+            "snapshot_hash": None,
+            "metadata_snapshot": None,
+            "metadata": metadata.to_dict(),
+        }
+    ).encode()
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict | None:
-        return {"path": path} if self._store.pop(path, None) else None
 
-    def exists(self, path: str) -> bool:
-        return path in self._store
+def _audit_event_delete(path: str) -> bytes:
+    """Create an audit delete event JSON."""
+    return json.dumps(
+        {
+            "op": "delete",
+            "path": path,
+            "zone_id": None,
+            "agent_id": None,
+            "snapshot_hash": None,
+            "metadata_snapshot": None,
+        }
+    ).encode()
 
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs) -> list:  # noqa: ARG002
-        return [m for p, m in self._store.items() if p.startswith(prefix)]
 
-    def close(self) -> None:
-        pass
+def _audit_event_mkdir(path: str) -> bytes:
+    """Create an audit mkdir event JSON."""
+    return json.dumps(
+        {
+            "op": "mkdir",
+            "path": path,
+            "zone_id": None,
+            "agent_id": None,
+        }
+    ).encode()
+
+
+def _audit_event_rmdir(path: str) -> bytes:
+    """Create an audit rmdir event JSON."""
+    return json.dumps(
+        {
+            "op": "rmdir",
+            "path": path,
+            "zone_id": None,
+            "agent_id": None,
+            "recursive": False,
+        }
+    ).encode()
+
+
+def _noop_process_events(session: object, events: list[dict[str, object]]) -> None:
+    """No-op replacement for _process_events_in_session (avoids sqlalchemy dep)."""
 
 
 # ======================================================================
@@ -62,15 +131,14 @@ class MockMetastore:
 
 
 class TestZoektPipeConsumerE2E:
-    """Prove DT_PIPE end-to-end: sync notify_write → pipe → consumer → reindex."""
+    """Prove DT_PIPE end-to-end: sync notify_write -> pipe -> consumer -> reindex."""
 
     @pytest.mark.asyncio
     async def test_notify_write_triggers_reindex(self) -> None:
-        """Full E2E: sync notify_write → pipe_write_nowait → consumer → reindex."""
+        """Full E2E: sync notify_write -> pipe_write_nowait -> consumer -> reindex."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
+        nx = _make_nx()
 
         # Mock ZoektIndexManager
         zoekt = MagicMock()
@@ -78,7 +146,7 @@ class TestZoektPipeConsumerE2E:
         zoekt.trigger_reindex_async = AsyncMock()
 
         consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.05)
-        consumer.set_pipe_manager(pm)
+        consumer.bind_fs(nx)
         await consumer.start()
 
         try:
@@ -86,51 +154,51 @@ class TestZoektPipeConsumerE2E:
             consumer.notify_write("/workspace/file1.txt")
             consumer.notify_write("/workspace/file2.txt")
 
-            # Wait for debounce window + consumer processing
-            await asyncio.sleep(0.15)
+            # Wait for flush loop + debounce window + consumer processing
+            await asyncio.sleep(0.25)
 
             # Verify reindex was triggered
             assert zoekt.trigger_reindex_async.call_count >= 1
         finally:
             await consumer.stop()
+            nx.close()
 
     @pytest.mark.asyncio
     async def test_sync_complete_triggers_reindex(self) -> None:
         """notify_sync_complete flows through pipe to trigger reindex."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
+        nx = _make_nx()
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.05
         zoekt.trigger_reindex_async = AsyncMock()
 
         consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.05)
-        consumer.set_pipe_manager(pm)
+        consumer.bind_fs(nx)
         await consumer.start()
 
         try:
             consumer.notify_sync_complete(files_synced=5)
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.25)
             assert zoekt.trigger_reindex_async.call_count >= 1
         finally:
             await consumer.stop()
+            nx.close()
 
     @pytest.mark.asyncio
     async def test_debounce_coalesces_writes(self) -> None:
-        """Multiple rapid writes within debounce window → single reindex."""
+        """Multiple rapid writes within debounce window -> single reindex."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
+        nx = _make_nx()
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.1
         zoekt.trigger_reindex_async = AsyncMock()
 
         consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.1)
-        consumer.set_pipe_manager(pm)
+        consumer.bind_fs(nx)
         await consumer.start()
 
         try:
@@ -138,24 +206,25 @@ class TestZoektPipeConsumerE2E:
             for i in range(20):
                 consumer.notify_write(f"/workspace/file{i}.txt")
 
-            # Wait for debounce + processing
-            await asyncio.sleep(0.25)
+            # Wait for flush loop + debounce + processing
+            await asyncio.sleep(0.35)
 
             # Should coalesce into 1 reindex call (not 20)
             assert zoekt.trigger_reindex_async.call_count == 1
         finally:
             await consumer.stop()
+            nx.close()
 
     @pytest.mark.asyncio
-    async def test_fallback_without_pipe_manager(self) -> None:
-        """Without PipeManager, notify_write falls back to direct call."""
+    async def test_fallback_without_bind_fs(self) -> None:
+        """Without bind_fs, notify_write falls back to direct call."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.05
 
         consumer = ZoektPipeConsumer(zoekt)
-        # No set_pipe_manager() → no start() → fallback path
+        # No bind_fs() -> no start() -> fallback path
 
         consumer.notify_write("/workspace/file.txt")
 
@@ -167,15 +236,14 @@ class TestZoektPipeConsumerE2E:
         """stop() drains remaining pipe events before exiting."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
+        nx = _make_nx()
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.5  # Long debounce
         zoekt.trigger_reindex_async = AsyncMock()
 
         consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.5)
-        consumer.set_pipe_manager(pm)
+        consumer.bind_fs(nx)
         await consumer.start()
 
         # Write events, then immediately stop (before debounce fires)
@@ -185,24 +253,25 @@ class TestZoektPipeConsumerE2E:
         # Consumer should have been cancelled cleanly (no exceptions)
         # The consumer task should be None after stop
         assert consumer._consumer_task is None
+        nx.close()
 
     @pytest.mark.asyncio
     async def test_pipe_full_falls_back(self) -> None:
         """When pipe is full, notify_write falls back to direct call."""
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
+        nx = _make_nx()
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 10  # Very long debounce — consumer won't drain
 
         consumer = ZoektPipeConsumer(zoekt, debounce_seconds=10)
-        consumer.set_pipe_manager(pm)
+        consumer.bind_fs(nx)
         await consumer.start()
 
         try:
-            # Fill the pipe (64KB capacity) with large messages
+            # Fill the write buffer (maxlen=10_000) — events buffer in deque
+            # then pipe (64KB capacity) with large messages
             filled = False
             for _ in range(200):
                 try:
@@ -219,6 +288,7 @@ class TestZoektPipeConsumerE2E:
                 assert zoekt.notify_write.call_count >= 1
         finally:
             await consumer.stop()
+            nx.close()
 
 
 # ======================================================================
@@ -226,139 +296,121 @@ class TestZoektPipeConsumerE2E:
 # ======================================================================
 
 
-def _noop_process_events(session: object, events: list[dict[str, object]]) -> None:
-    """No-op replacement for _process_events_in_session (avoids sqlalchemy dep)."""
-
-
 class TestPipedWriteObserverE2E:
-    """Prove DT_PIPE end-to-end: sync on_write → pipe → consumer → flush.
+    """Prove DT_PIPE end-to-end: sys_write -> pipe -> consumer -> _flush_batch.
 
-    We patch ``_process_events_in_session`` (the DB flush layer) so these tests
+    We patch ``_flush_batch_sync`` (the DB flush layer) so these tests
     verify the DT_PIPE IPC path without requiring sqlalchemy/RecordStore.
+
+    The producer side is now AuditWriteInterceptor (writes via nx.sys_write),
+    simulated here by direct nx.sys_write() calls with JSON events.
+
+    Note: The consumer's _consume() loop uses blocking sys_read() for batch
+    draining. After writing events, we yield to the event loop so the consumer
+    task can start processing, then stop() closes the pipe which breaks the
+    drain loop and triggers _flush_batch.
     """
 
     @pytest.mark.asyncio
     async def test_on_write_flows_through_pipe(self) -> None:
-        """Full E2E: on_write → pipe_write_nowait → consumer → _flush_batch."""
+        """Full E2E: sys_write -> pipe -> consumer -> _flush_batch (on stop)."""
         from nexus.storage.piped_record_store_write_observer import (
             PipedRecordStoreWriteObserver,
         )
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
-
+        nx = _make_nx()
         observer = PipedRecordStoreWriteObserver(MagicMock())
-        observer.set_pipe_manager(pm)
+        observer.bind_fs(nx)
 
         with patch.object(
             PipedRecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
+            "_flush_batch_sync",
+            lambda self, events: None,
         ):
             await observer.start()
             try:
-                metadata = FileMetadata(
-                    path="/workspace/test.txt",
-                    backend_name="local",
-                    physical_path="/data/test.txt",
-                    size=100,
-                )
-                observer.on_write(metadata, is_new=True, path="/workspace/test.txt")
-                await asyncio.sleep(0.15)
-
-                assert observer._total_enqueued == 1
-                assert observer._total_flushed >= 1
+                # Simulate AuditWriteInterceptor writing to the pipe
+                await nx.sys_write(_AUDIT_PIPE_PATH, _audit_event_write("/workspace/test.txt"))
+                # Yield so consumer task starts and reads the event from the pipe
+                await asyncio.sleep(0)
             finally:
+                # stop() closes pipe, which unblocks the consumer's drain loop
+                # and triggers _flush_batch with accumulated events
                 await observer.stop()
+
+            assert observer._total_flushed >= 1
+        nx.close()
 
     @pytest.mark.asyncio
     async def test_batch_write_flows_through_pipe(self) -> None:
-        """on_write_batch enqueues multiple events that flush in one batch."""
+        """Multiple sys_write events flush in batch on stop."""
         from nexus.storage.piped_record_store_write_observer import (
             PipedRecordStoreWriteObserver,
         )
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
-
+        nx = _make_nx()
         observer = PipedRecordStoreWriteObserver(MagicMock())
-        observer.set_pipe_manager(pm)
+        observer.bind_fs(nx)
 
         with patch.object(
             PipedRecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
+            "_flush_batch_sync",
+            lambda self, events: None,
         ):
             await observer.start()
             try:
-                items = [
-                    (
-                        FileMetadata(
-                            path=f"/workspace/file{i}.txt",
-                            backend_name="local",
-                            physical_path=f"/data/file{i}.txt",
-                            size=i * 10,
-                        ),
-                        True,
+                for i in range(5):
+                    await nx.sys_write(
+                        _AUDIT_PIPE_PATH,
+                        _audit_event_write(f"/workspace/file{i}.txt"),
                     )
-                    for i in range(5)
-                ]
-                observer.on_write_batch(items)
-                await asyncio.sleep(0.15)
-
-                assert observer._total_enqueued == 5
-                assert observer._total_flushed >= 5
+                # Yield so consumer task starts and reads events from the pipe
+                await asyncio.sleep(0)
             finally:
                 await observer.stop()
+
+            assert observer._total_flushed >= 5
+        nx.close()
 
     @pytest.mark.asyncio
     async def test_delete_event_flows_through_pipe(self) -> None:
-        """on_delete flows through pipe to consumer."""
+        """Delete event flows through pipe to consumer on stop."""
         from nexus.storage.piped_record_store_write_observer import (
             PipedRecordStoreWriteObserver,
         )
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
-
+        nx = _make_nx()
         observer = PipedRecordStoreWriteObserver(MagicMock())
-        observer.set_pipe_manager(pm)
+        observer.bind_fs(nx)
 
         with patch.object(
             PipedRecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
+            "_flush_batch_sync",
+            lambda self, events: None,
         ):
             await observer.start()
             try:
-                observer.on_delete("/workspace/deleted.txt")
-                await asyncio.sleep(0.15)
-
-                assert observer._total_enqueued == 1
-                assert observer._total_flushed >= 1
+                await nx.sys_write(_AUDIT_PIPE_PATH, _audit_event_delete("/workspace/deleted.txt"))
+                # Yield so consumer task starts and reads the event from the pipe
+                await asyncio.sleep(0)
             finally:
                 await observer.stop()
 
+            assert observer._total_flushed >= 1
+        nx.close()
+
     @pytest.mark.asyncio
-    async def test_pre_buffer_drains_on_start(self) -> None:
-        """Events buffered before pipe injection are drained on start()."""
+    async def test_pre_buffer_drains_on_stop(self) -> None:
+        """Events buffered in _pre_buffer are drained by flush_sync on stop."""
         from nexus.storage.piped_record_store_write_observer import (
             PipedRecordStoreWriteObserver,
         )
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
-
         observer = PipedRecordStoreWriteObserver(MagicMock())
 
-        # Buffer events BEFORE pipe injection (CLI mode / pre-startup)
-        metadata = FileMetadata(
-            path="/workspace/early.txt",
-            backend_name="local",
-            physical_path="/data/early.txt",
-            size=50,
-        )
-        observer.on_write(metadata, is_new=True, path="/workspace/early.txt")
+        # Buffer events BEFORE bind_fs (CLI mode / pre-startup)
+        observer._pre_buffer.append(_audit_event_write("/workspace/early.txt"))
+        observer._total_enqueued = 1
         assert len(observer._pre_buffer) == 1
 
         with patch.object(
@@ -366,17 +418,12 @@ class TestPipedWriteObserverE2E:
             "_process_events_in_session",
             staticmethod(_noop_process_events),
         ):
-            # Now inject pipe and start — should drain pre-buffer into pipe
-            observer.set_pipe_manager(pm)
-            await observer.start()
-            try:
-                assert len(observer._pre_buffer) == 0
-                await asyncio.sleep(0.15)
+            # flush_sync drains pre-buffer directly to DB
+            flushed = observer.flush_sync()
 
-                # Pre-buffered event should have been flushed via pipe → consumer
-                assert observer._total_flushed >= 1
-            finally:
-                await observer.stop()
+        assert flushed == 1
+        assert len(observer._pre_buffer) == 0
+        assert observer._total_flushed == 1
 
     def test_flush_sync_for_cli_mode(self) -> None:
         """flush_sync() works without asyncio for CLI shutdown path."""
@@ -393,17 +440,11 @@ class TestPipedWriteObserverE2E:
 
         observer = PipedRecordStoreWriteObserver(mock_record_store)
 
-        # No pipe manager — events go to pre_buffer
-        metadata = FileMetadata(
-            path="/workspace/cli.txt",
-            backend_name="local",
-            physical_path="/data/cli.txt",
-            size=25,
-        )
-        observer.on_write(metadata, is_new=True, path="/workspace/cli.txt")
-        observer.on_delete("/workspace/old.txt")
+        # No bind_fs — events go to pre_buffer manually
+        observer._pre_buffer.append(_audit_event_write("/workspace/cli.txt"))
+        observer._pre_buffer.append(_audit_event_delete("/workspace/old.txt"))
+        observer._total_enqueued = 2
 
-        assert observer._total_enqueued == 2
         assert len(observer._pre_buffer) == 2
 
         with patch.object(
@@ -424,38 +465,31 @@ class TestPipedWriteObserverE2E:
             PipedRecordStoreWriteObserver,
         )
 
-        ms = MockMetastore()
-        pm = PipeManager(ms)
-
+        nx = _make_nx()
         observer = PipedRecordStoreWriteObserver(MagicMock())
-        observer.set_pipe_manager(pm)
+        observer.bind_fs(nx)
 
         with patch.object(
             PipedRecordStoreWriteObserver,
-            "_process_events_in_session",
-            staticmethod(_noop_process_events),
+            "_flush_batch_sync",
+            lambda self, events: None,
         ):
             await observer.start()
             try:
-                metadata = FileMetadata(
-                    path="/workspace/metrics.txt",
-                    backend_name="local",
-                    physical_path="/data/metrics.txt",
-                    size=10,
-                )
-                observer.on_write(metadata, is_new=True, path="/workspace/metrics.txt")
-                observer.on_mkdir("/workspace/newdir")
-                observer.on_rmdir("/workspace/olddir")
-
-                await asyncio.sleep(0.15)
-
-                metrics = observer.metrics
-                assert metrics["total_enqueued"] == 3
-                assert metrics["total_flushed"] >= 3
-                assert metrics["total_failed"] == 0
-                assert metrics["total_dropped"] == 0
+                await nx.sys_write(_AUDIT_PIPE_PATH, _audit_event_write("/workspace/metrics.txt"))
+                await nx.sys_write(_AUDIT_PIPE_PATH, _audit_event_mkdir("/workspace/newdir"))
+                await nx.sys_write(_AUDIT_PIPE_PATH, _audit_event_rmdir("/workspace/olddir"))
+                # Yield so consumer task starts and reads events from the pipe
+                await asyncio.sleep(0)
             finally:
+                # stop() closes pipe, consumer drains and flushes
                 await observer.stop()
+
+            metrics = observer.metrics
+            assert metrics["total_flushed"] >= 3
+            assert metrics["total_failed"] == 0
+            assert metrics["total_dropped"] == 0
+        nx.close()
 
 
 # ======================================================================

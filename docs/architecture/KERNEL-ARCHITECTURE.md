@@ -45,7 +45,8 @@ Every kernel interface belongs to exactly one of four categories:
         │  │  PRIMITIVES — internal (§4)                 │ │
         │  │  PathValidator, ZoneAccessGuard, VFSRouter, │ │
         │  │  VFSLockManager, KernelDispatch,            │ │
-        │  │  PipeManager, FileEvent                     │ │
+        │  │  PipeManager, StreamManager,                │ │
+        │  │  AgentRegistry, FileEvent                   │ │
         │  └─────────────────────────────────────────────┘ │
         └──────────────┬───────────────────────────────────┘
                        │  ↓ HAL — DRIVER CONTRACT (§3)
@@ -376,6 +377,7 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase callback mechanism implementing §2.4. Per-op callback lists; empty = zero overhead. Hook contracts (§2.4) and registration API (§2.5) are User Contract; this is the plumbing |
 | **PipeManager + RingBuffer** | `system_services` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `system_services` + `core.stream` | append-only log | VFS named streams — inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
+| **AgentRegistry** | `core.agent_registry` | process table (`task_struct` hash) | Kernel-owned agent process table — PID allocation, state machine, signals, wait(). Pure in-memory (ephemeral). VFS visibility via ProcResolver (procfs). Details in §4.4 |
 | **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
 | **ZoneWriteGuardHook** | `system_services.lifecycle` | `fs/namespace.c` mount readonly | Zone write permission check via KernelDispatch PRE hook (Issue #1790). Rejects writes to terminating zones |
 | **ServiceLifecycleCoordinator** | `system_services.lifecycle` | `init/main.c` + `module.c` | Kernel-owned bridge: ServiceRegistry + BrickLifecycleManager. Manages enlist/swap/shutdown for all 4 service quadrants |
@@ -430,6 +432,20 @@ See `federation-memo.md` §7j for design rationale.
 | Structure | Frozen dataclass: path, etag, size, version, zone_id, agent_id, user_id, vector_clock |
 | Consumer paths | KernelDispatch OBSERVE (local), EventBus (distributed) |
 | Emission point | Always AFTER lock release |
+
+### 4.4 AgentRegistry — Kernel Agent Process Table
+
+| Property | Value |
+|----------|-------|
+| Storage | Pure in-memory `dict[str, AgentDescriptor]` — no persistence |
+| PID allocation | UUID4 hex prefix (12 chars) |
+| State machine | REGISTERED → READY → BUSY → SUSPENDED → TERMINATED (validated transitions) |
+| Signals | SIGSTOP, SIGCONT, SIGTERM, SIGKILL, SIGUSR1 |
+| Concurrency | spawn/kill/signal/get/list are synchronous; wait() is async (`asyncio.Event`) |
+| Lifecycle | Created in `NexusFS.__init__` (kernel-owned, like PipeManager). Ephemeral — cleared on restart |
+| VFS visibility | ProcResolver (procfs model): `/{zone}/proc/{pid}/status` generates content from memory at read time |
+
+**Linux analogy:** `AgentRegistry` ≈ process table (PID hash + task list), `AgentDescriptor` ≈ `task_struct`, `ProcResolver` ≈ `fs/proc/`.
 
 
 ---

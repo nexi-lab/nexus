@@ -115,10 +115,10 @@ def is_new_session(current: AgentState, target: AgentState) -> bool:
 class AgentRecord:
     """Immutable snapshot of an agent's identity and lifecycle state.
 
-    Follows the frozen dataclass + SQLAlchemy model pattern (Decision #7A):
-    this domain object is separate from the mutable persistence layer
-    (AgentRecordModel in models.py). The registry always returns new
-    AgentRecord instances, never mutates existing ones.
+    Pure domain object (frozen dataclass). Agent state SSOT is
+    ProcessTable (kernel, in-memory) + ProcResolver (VFS visibility).
+    The kernel always returns new AgentRecord instances, never mutates
+    existing ones.
 
     Attributes:
         agent_id: Unique agent identifier (e.g., "alice,ImpersonatedUser")

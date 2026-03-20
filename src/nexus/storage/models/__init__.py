@@ -38,7 +38,6 @@ from nexus.storage.models.access_manifest import AccessManifestModel as AccessMa
 
 # Domain: Agents
 from nexus.storage.models.agents import AgentEventModel as AgentEventModel
-from nexus.storage.models.agents import AgentRecordModel as AgentRecordModel
 from nexus.storage.models.agents import DelegationRecordModel as DelegationRecordModel
 
 # Domain: Knowledge Platform (Issue #2929)

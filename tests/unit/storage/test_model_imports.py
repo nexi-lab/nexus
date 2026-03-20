@@ -62,7 +62,6 @@ EXPECTED_MODELS = [
     # Path Registration (Issue #189 — merged WorkspaceConfig + MemoryConfig)
     "PathRegistrationModel",
     # Agents
-    "AgentRecordModel",
     "AgentEventModel",
     # Delegation (Issue #1271)
     "DelegationRecordModel",

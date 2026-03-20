@@ -160,6 +160,8 @@ class NexusFS(  # type: ignore[misc]
         self._descendant_checker: Any = None
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
+        # Issue #1791: factory-injected overlay config resolver (captures workspace_registry)
+        self._overlay_config_fn: Callable[..., Any] | None = None
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
 
         # Lazy-init sentinels
@@ -1093,40 +1095,15 @@ class NexusFS(  # type: ignore[misc]
     def _get_overlay_config(self, path: str) -> Any:
         """Get overlay config for a path, if overlay is active.
 
-        Issue #1264: Looks up the workspace containing this path and returns
-        its OverlayConfig if overlay is enabled.
-
-        Args:
-            path: File path to check
+        Issue #1791: Delegates to factory-injected callable. Kernel does NOT
+        read workspace_registry from _system_services — the factory captures
+        the registry reference in a closure at link() time.
 
         Returns:
             OverlayConfig if overlay active for this path, None otherwise
         """
-        registry = (
-            getattr(self._system_services, "workspace_registry", None)
-            if self._system_services
-            else None
-        )
-        if registry is None:
-            return None
-
-        ws_config = registry.find_workspace_for_path(path)
-        if ws_config is None:
-            return None
-
-        # Check if workspace has overlay metadata
-        overlay_data = ws_config.metadata.get("overlay_config")
-        if overlay_data is None:
-            return None
-
-        from nexus.contracts.overlay_config import OverlayConfig
-
-        return OverlayConfig(
-            enabled=overlay_data.get("enabled", False),
-            base_manifest_hash=overlay_data.get("base_manifest_hash"),
-            workspace_path=ws_config.path,
-            agent_id=overlay_data.get("agent_id"),
-        )
+        fn = self._overlay_config_fn
+        return fn(path) if fn is not None else None
 
     # =========================================================================
     # VFS I/O Lock — kernel-internal path-level read/write protection
@@ -4865,15 +4842,7 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_stream_manager"):
             self._stream_manager.close_all()
 
-        # Close ProcessTable — kill all processes, clear state
-        # Issue #1570: accessed from container, not flat attr.
-        _pt = (
-            getattr(self._system_services, "process_table", None) if self._system_services else None
-        )
-        if _pt is not None:
-            _pt.close_all()
-
-        # Issue #1793/#1789: Service close via factory-registered callbacks.
+        # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
         # Replaces direct _system_services reads for write_observer, rebac_manager,
         # audit_store. Runs BEFORE pillar close so DB connections are still open.
         for _close_cb in self._close_callbacks:

@@ -181,6 +181,41 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_audit)
 
+    # Issue #1792: process_table close via callback (not kernel → _system_services)
+    _pt = getattr(_sys, "process_table", None)
+    if _pt is not None and hasattr(_pt, "close_all"):
+
+        def _close_process_table() -> None:
+            try:
+                _pt.close_all()
+            except Exception as exc:
+                logger.debug("close: process_table.close_all() failed: %s", exc)
+
+        nx._close_callbacks.append(_close_process_table)
+
+    # Issue #1791: overlay config resolver — kernel calls self._overlay_config_fn(path)
+    # instead of reading workspace_registry from _system_services.
+    _ws_reg = getattr(_sys, "workspace_registry", None)
+    if _ws_reg is not None:
+
+        def _resolve_overlay(path: str) -> "Any":
+            ws_config = _ws_reg.find_workspace_for_path(path)
+            if ws_config is None:
+                return None
+            overlay_data = ws_config.metadata.get("overlay_config")
+            if overlay_data is None:
+                return None
+            from nexus.contracts.overlay_config import OverlayConfig
+
+            return OverlayConfig(
+                enabled=overlay_data.get("enabled", False),
+                base_manifest_hash=overlay_data.get("base_manifest_hash"),
+                workspace_path=ws_config.path,
+                agent_id=overlay_data.get("agent_id"),
+            )
+
+        nx._overlay_config_fn = _resolve_overlay
+
 
 async def _do_initialize(
     nx: Any, *, brick_on: "Any" = None, parse_fn: "Any" = None, permission_checker: "Any" = None

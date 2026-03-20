@@ -117,6 +117,30 @@ pub fn generate_node_cert(
     Ok((cert_pem, key_pem))
 }
 
+/// Compute a SHA-256 fingerprint of a PEM-encoded CA certificate.
+///
+/// Returns the fingerprint in `SHA256:<base64-no-padding>` format,
+/// matching the Python `cert_fingerprint()` output used in join tokens.
+pub fn ca_fingerprint_from_pem(ca_pem: &[u8]) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+
+    // Extract DER bytes from PEM
+    let pem_str =
+        std::str::from_utf8(ca_pem).map_err(|e| format!("CA PEM is not valid UTF-8: {e}"))?;
+    let pem = pem::parse(pem_str).map_err(|e| format!("Failed to parse PEM: {e}"))?;
+    let der = pem.contents();
+
+    // SHA-256 hash of DER-encoded certificate
+    let hash = Sha256::digest(der);
+
+    // Base64-encode without padding (matching Python's rstrip("="))
+    use base64::engine::general_purpose::STANDARD_NO_PAD;
+    use base64::Engine;
+    let b64 = STANDARD_NO_PAD.encode(hash);
+
+    Ok(format!("SHA256:{}", b64))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -56,6 +56,8 @@ dashmap = { version = "6", optional = true }
 time = { version = "0.3", features = ["parsing"], optional = true }
 sha2 = { version = "0.10", optional = true }  # SHA-256 for JoinCluster token verification
 rcgen = { version = "0.13", features = ["pem", "x509-parser"], optional = true }  # Server-side node cert generation for JoinCluster
+pem = { version = "3", optional = true }  # PEM parsing for CA fingerprint verification
+base64 = { version = "0.22", optional = true }  # Base64 encoding for CA fingerprint
 
 # Python bindings (PyO3 FFI)
 pyo3 = { version = "0.27.2", features = ["extension-module"], optional = true }
@@ -87,7 +89,7 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
 # Requires `consensus` feature. Not used in production.
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2", "rcgen"]
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time", "sha2", "rcgen", "pem", "base64"]
 
 # Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]

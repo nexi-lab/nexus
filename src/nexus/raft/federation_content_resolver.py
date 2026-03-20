@@ -281,6 +281,8 @@ class FederationContentResolver:
             )
             try:
                 self._delete_on_peer(origin, path)
+                # Clean up local replica blob if we have a local ObjectStore (#1310)
+                self._cleanup_local_replica(meta.etag)
                 return {}
             except Exception:
                 logger.warning("Federation delete to %s failed, trying next origin", origin)
@@ -288,6 +290,31 @@ class FederationContentResolver:
 
         logger.warning("Federation delete: all origins unreachable for %s", path)
         return {}
+
+    # === Local replica cleanup (#1310) ===
+
+    def _cleanup_local_replica(self, content_hash: str | None) -> None:
+        """Best-effort cleanup of local replica blob after remote delete.
+
+        If local_object_store is injected and has the content, delete it.
+        Failure is logged but never propagates — the remote delete already
+        succeeded, and orphan blobs are harmless (just waste disk).
+        """
+        if not content_hash or self._local_object_store is None:
+            return
+        store = self._local_object_store
+        try:
+            if hasattr(store, "content_exists") and store.content_exists(content_hash):
+                store.delete_content(content_hash)
+                logger.debug(
+                    "Cleaned up local replica blob %s",
+                    content_hash[:16],
+                )
+        except Exception:
+            logger.debug(
+                "Failed to clean up local replica %s (harmless)",
+                content_hash[:16],
+            )
 
     # === gRPC Remote Operations ===
 

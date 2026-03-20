@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Benchmark: sys_write(DT_PIPE) overhead vs direct pipe_write_nowait (#1772).
+"""Benchmark: sys_write/sys_read(DT_PIPE) overhead vs direct pipe_write_nowait (#1772).
 
-Measures the cost of routing a DT_PIPE write through the kernel syscall path
+Measures the cost of routing DT_PIPE read/write through the kernel syscall path
 (metastore lookup, path validation, dispatch resolution) vs calling
 PipeManager.pipe_write_nowait() directly.
 
-Three benchmarks:
-  [1] pm.pipe_write_nowait()       — direct (current production path)
-  [2] nx.sys_write(pipe_path, ..)  — full syscall (proposed migration path)
-  [3] Component breakdown          — isolate each overhead source
+Benchmarks:
+  [1]  pm.pipe_write_nowait()       — direct (current production path)
+  [2a] nx.sys_write(pipe_path, ..)  — full syscall write path
+  [2b] nx.sys_read(pipe_path)       — full syscall read path
+  [3]  Component breakdown          — isolate each overhead source
 
 Run:
   uv run python tests/benchmarks/bench_pipe_syscall_overhead.py
@@ -216,6 +217,23 @@ def _bench_dict_in(pm, path: str) -> list[float]:
     return times
 
 
+async def _bench_sys_read(nx, pm, data: bytes) -> list[float]:
+    """[2b] nx.sys_read(pipe_path) — full syscall path (pre-fill + read)."""
+    # warmup
+    for _ in range(WARMUP):
+        pm.pipe_write_nowait(_BENCH_PIPE_PATH, data)
+        await nx.sys_read(_BENCH_PIPE_PATH)
+
+    times: list[float] = []
+    for _ in range(ITERATIONS):
+        pm.pipe_write_nowait(_BENCH_PIPE_PATH, data)
+        t0 = time.perf_counter()
+        await nx.sys_read(_BENCH_PIPE_PATH)
+        t1 = time.perf_counter()
+        times.append((t1 - t0) * 1_000_000)
+    return times
+
+
 def _bench_ideal_fast_path(pm, path: str, data: bytes) -> list[float]:
     """[4] Ideal fast-path: dict check + pipe_write_nowait (no validation/metastore)."""
     buffers = pm._buffers
@@ -253,6 +271,7 @@ async def _run() -> dict:
         # Run benchmarks
         direct = _bench_direct(pm, payload)
         sys_write = await _bench_sys_write(nx, payload)
+        sys_read = await _bench_sys_read(nx, pm, payload)
         meta_get = _bench_metastore_get(metastore, _BENCH_PIPE_PATH)
         validate = _bench_validate_path(nx, _BENCH_PIPE_PATH)
         resolve = _bench_resolve_write(nx, _BENCH_PIPE_PATH, payload)
@@ -260,12 +279,14 @@ async def _run() -> dict:
         dict_in = _bench_dict_in(pm, _BENCH_PIPE_PATH)
         fast_path = _bench_ideal_fast_path(pm, _BENCH_PIPE_PATH, payload)
         sys_write_opt = await _bench_sys_write(nx, payload)
+        sys_read_opt = await _bench_sys_read(nx, pm, payload)
 
         pm.close_all()
 
     return {
         "direct_pipe_write": _stats(direct),
         "sys_write": _stats(sys_write),
+        "sys_read": _stats(sys_read),
         "metastore_get": _stats(meta_get),
         "validate_path": _stats(validate),
         "resolve_write": _stats(resolve),
@@ -273,6 +294,7 @@ async def _run() -> dict:
         "dict_in": _stats(dict_in),
         "fast_path": _stats(fast_path),
         "sys_write_optimized": _stats(sys_write_opt),
+        "sys_read_optimized": _stats(sys_read_opt),
     }
 
 
@@ -289,10 +311,11 @@ def main() -> None:
     print("=" * 70)
 
     _print_stats("pm.pipe_write_nowait() — direct", 1, results["direct_pipe_write"])
-    _print_stats("nx.sys_write(pipe_path) — full syscall", 2, results["sys_write"])
+    _print_stats("nx.sys_write(pipe_path) — full syscall", "2a", results["sys_write"])
+    _print_stats("nx.sys_read(pipe_path) — full syscall", "2b", results["sys_read"])
 
     overhead = results["sys_write"]["mean_us"] - results["direct_pipe_write"]["mean_us"]
-    print(f"\n  >>> Overhead: {_fmt(overhead)} per call")
+    print(f"\n  >>> sys_write overhead: {_fmt(overhead)} per call")
 
     print("\n--- Component breakdown ---")
     _print_stats("metastore.get(path)", "3a", results["metastore_get"])
@@ -316,13 +339,18 @@ def main() -> None:
     print(f"\n  >>> Ideal fast-path overhead vs direct: {_fmt(delta)}")
 
     print("\n--- After optimization ---")
-    _print_stats("nx.sys_write(pipe_path) — with fast-path", 5, results["sys_write_optimized"])
+    _print_stats("nx.sys_write(pipe_path) — with fast-path", "5a", results["sys_write_optimized"])
+    _print_stats("nx.sys_read(pipe_path) — with fast-path", "5b", results["sys_read_optimized"])
 
     opt_delta = results["sys_write_optimized"]["mean_us"] - results["direct_pipe_write"]["mean_us"]
     print(f"\n  >>> Optimized sys_write overhead vs direct: {_fmt(opt_delta)}")
     print(
-        f"  >>> Speedup: {results['sys_write']['mean_us'] / max(results['sys_write_optimized']['mean_us'], 0.001):.0f}x"
+        f"  >>> sys_write speedup: {results['sys_write']['mean_us'] / max(results['sys_write_optimized']['mean_us'], 0.001):.0f}x"
     )
+    opt_read_delta = (
+        results["sys_read_optimized"]["mean_us"] - results["direct_pipe_write"]["mean_us"]
+    )
+    print(f"  >>> Optimized sys_read overhead vs direct: {_fmt(opt_read_delta)}")
     print("=" * 70)
 
 

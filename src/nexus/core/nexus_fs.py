@@ -1295,6 +1295,15 @@ class NexusFS(  # type: ignore[misc]
         without duplicating virtual-path dispatch, overlay resolution,
         hook invocation, and dynamic connector bypass.
         """
+        # DT_PIPE fast-path: skip validate/resolve/intercept/route
+        if self._pipe_manager is not None and path in self._pipe_manager._buffers:
+            content = self._pipe_manager._get_buffer(path).read_nowait()
+            return (content, None, None, None, None)
+        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
+        if path in self._stream_manager._buffers:
+            content, _ = self._stream_manager.stream_read_at(path, 0)
+            return (content, None, None, None, None)
+
         path = self._validate_path(path)
         context = self._parse_context(context)
 
@@ -1423,6 +1432,25 @@ class NexusFS(  # type: ignore[misc]
             AccessDeniedError: If access is denied based on zone isolation
             PermissionError: If user doesn't have read permission
         """
+        # DT_PIPE fast-path: skip validate/resolve/intercept/route (~400ns vs ~20+μs)
+        # Hot path: try sync read_nowait (no Lock, no await) — matches sys_write perf.
+        # Cold path (empty pipe): fall through to async _pipe_read for blocking wait.
+        if self._pipe_manager is not None and path in self._pipe_manager._buffers:
+            from nexus.core.pipe import PipeClosedError, PipeEmptyError
+
+            try:
+                data = self._pipe_manager._get_buffer(path).read_nowait()
+            except PipeEmptyError:
+                return await self._pipe_read(path, count=count, offset=offset)
+            except PipeClosedError:
+                raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
+            if offset or count is not None:
+                data = data[offset : offset + count] if count is not None else data[offset:]
+            return data
+        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
+        if path in self._stream_manager._buffers:
+            return await self._stream_read(path, count=count, offset=offset)
+
         path = self._validate_path(path)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
@@ -2266,6 +2294,22 @@ class NexusFS(  # type: ignore[misc]
             AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
         """
+        # DT_PIPE fast-path: skip ALL preprocessing + validate/metastore/dispatch.
+        # Pipe is a byte FIFO — callers always pass bytes, count/offset are file concepts.
+        # Fully inlined: single dict lookup → Rust write_nowait. No wrapper calls.
+        _pm = self._pipe_manager
+        if _pm is not None:
+            _buf = _pm._buffers.get(path)
+            if _buf is not None:
+                n = _buf.write_nowait(buf if isinstance(buf, bytes) else buf.encode("utf-8"))
+                return {"path": path, "bytes_written": n, "created": False}
+        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
+        if path in self._stream_manager._buffers:
+            if isinstance(buf, str):
+                buf = buf.encode("utf-8")
+            offset = self._stream_write(path, buf)
+            return {"path": path, "bytes_written": len(buf), "created": False, "offset": offset}
+
         # Auto-convert str to bytes for convenience
         if isinstance(buf, str):
             buf = buf.encode("utf-8")
@@ -2273,13 +2317,6 @@ class NexusFS(  # type: ignore[misc]
         # Apply count slicing if specified
         if count is not None:
             buf = buf[:count]
-
-        # DT_PIPE fast-path: skip validate/metastore/dispatch (~400ns vs ~21μs)
-        # PipeManager._buffers is the authoritative pipe registry; paths are
-        # validated at pipe creation time, so re-validation is unnecessary.
-        if self._pipe_manager is not None and path in self._pipe_manager._buffers:
-            n = self._pipe_write(path, buf)
-            return {"path": path, "bytes_written": n, "created": False}
 
         path = self._validate_path(path)
         self._check_zone_writable(context)  # Issue #2061: write-gating
@@ -3268,6 +3305,13 @@ class NexusFS(  # type: ignore[misc]
             AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
         """
+        # DT_PIPE fast-path: skip validate/zone_check/resolve/metastore.get
+        if self._pipe_manager is not None and path in self._pipe_manager._buffers:
+            return self._pipe_destroy(path)
+        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
+        if path in self._stream_manager._buffers:
+            return self._stream_destroy(path)
+
         path = self._validate_path(path)
         self._check_zone_writable(context)  # Issue #2061: write-gating
 

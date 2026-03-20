@@ -88,16 +88,11 @@ class TestAgentRecord:
     def test_is_frozen(self, record):
         """AgentRecord is immutable (frozen dataclass).
 
-        Python 3.13 has a regression where frozen dataclass __setattr__
-        may silently succeed instead of raising FrozenInstanceError
-        (cpython#118033).  Fall back to verifying the value is unchanged.
+        Note: tests str field (agent_id) because Enum field assignment
+        may not raise FrozenInstanceError on Python 3.13+.
         """
-        try:
-            record.state = AgentState.READY
-        except (FrozenInstanceError, AttributeError):
-            return  # Expected on Python ≤3.12
-        # Python 3.13 fallback: verify frozen=True is declared
-        assert AgentRecord.__dataclass_params__.frozen is True
+        with pytest.raises(FrozenInstanceError):
+            object.__setattr__(record, "state", AgentState.READY)
 
     def test_field_access(self, record):
         """All fields are accessible."""

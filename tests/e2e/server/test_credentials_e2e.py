@@ -23,6 +23,7 @@ import pytest
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.storage.models import Base
 from tests.helpers.dict_metastore import DictMetastore
+from tests.helpers.test_context import TEST_CONTEXT
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -109,6 +110,7 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
     )
+    nx._default_context = TEST_CONTEXT
 
     db_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))
     auth_provider = DiscriminatingAuthProvider(

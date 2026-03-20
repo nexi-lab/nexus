@@ -275,6 +275,85 @@ class GmailConnector(CLIConnector):
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
 
+    def _build_cli_args(self, operation: str, validated: Any, path: str) -> list[str]:
+        """Build gws gmail CLI args from validated schema data.
+
+        gws helper commands (+send, +reply, +forward) use flags, not stdin YAML.
+        """
+        args = ["gws", "gmail"]
+
+        data = validated.model_dump(exclude_none=True) if hasattr(validated, "model_dump") else {}
+
+        if operation == "send_email":
+            args.append("+send")
+            to = data.get("to", [])
+            if isinstance(to, list):
+                args.extend(["--to", ",".join(to)])
+            else:
+                args.extend(["--to", str(to)])
+            args.extend(["--subject", data.get("subject", "")])
+            args.extend(["--body", data.get("body", "")])
+            cc = data.get("cc")
+            if cc:
+                args.extend(["--cc", ",".join(cc) if isinstance(cc, list) else str(cc)])
+        elif operation == "reply_email":
+            args.append("+reply")
+            args.extend(["--to", data.get("message_id", "")])
+            args.extend(["--body", data.get("body", "")])
+        elif operation == "forward_email":
+            args.append("+forward")
+            args.extend(["--to", ",".join(data.get("to", []))])
+            args.extend(["--body", data.get("body", "")])
+        elif operation == "create_draft":
+            args.extend(["users", "drafts", "create"])
+        else:
+            return super()._build_cli_args(operation, validated, path)
+
+        args.extend(["--format", "yaml"])
+        return args
+
+    def write_content(self, content: bytes, context: Any = None) -> Any:
+        """Override to use flag-based CLI args instead of stdin YAML for gws helpers."""
+        import yaml as _yaml
+
+        from nexus.contracts.exceptions import BackendError
+        from nexus.core.object_store import WriteResult
+
+        if not context or not context.backend_path:
+            raise BackendError(f"{self.name} requires backend_path", backend=self.name)
+
+        path = context.backend_path.strip("/")
+        operation = self._resolve_operation(path)
+        if not operation:
+            raise BackendError(f"No operation for path: {path}", backend=self.name)
+
+        data = _yaml.safe_load(content)
+        if not isinstance(data, dict):
+            raise BackendError(
+                f"Expected YAML mapping, got {type(data).__name__}", backend=self.name
+            )
+
+        # Validate traits + schema
+        self.validate_traits(operation, data)
+        validated = self.validate_schema(operation, data)
+
+        # Build CLI args with flags (not stdin)
+        cli_args = self._build_cli_args(operation, validated, path)
+
+        # Execute — no stdin needed, args have everything
+        result = self._execute_cli(cli_args, stdin=None, context=context)
+        result = self._error_mapper.classify_result(result)
+
+        if not result.ok:
+            raise BackendError(result.summary(), backend=self.name)
+
+        import hashlib
+
+        return WriteResult(
+            content_hash=hashlib.sha256(result.stdout.encode()).hexdigest(),
+            size=len(content),
+        )
+
     def get_history_id(self) -> str | None:
         """Get current Gmail historyId for delta sync."""
         import json as _json

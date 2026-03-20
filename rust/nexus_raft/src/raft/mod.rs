@@ -62,7 +62,7 @@ pub use node::{NodeRole, RaftConfig, RaftMsg, ZoneConsensus, ZoneConsensusDriver
 #[cfg(feature = "consensus")]
 pub use storage::RaftStorage;
 #[cfg(all(feature = "grpc", has_protos))]
-pub use zone_registry::ZoneRaftRegistry;
+pub use zone_registry::{SearchCapabilitiesInfo, ZoneRaftRegistry};
 
 /// A proposal to be replicated through Raft.
 #[derive(Debug)]

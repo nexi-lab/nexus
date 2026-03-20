@@ -187,8 +187,59 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             stats.get("backend", "txtai"),
             stats["startup_time_ms"],
         )
+
+        # Issue #3147: Initialize ZoneSearchRegistry for federated search.
+        # Phase 1: All zones use the single global daemon.
+        # Phase 2: Per-zone daemons can be registered if ZoneManager is available.
+        _init_zone_registry(app, svc)
+
     except Exception as e:
         logger.warning("Failed to start Search Daemon: %s", e)
         app.state.search_daemon_enabled = False
 
     return []
+
+
+def _init_zone_registry(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Initialize ZoneSearchRegistry with per-zone daemons (Issue #3147).
+
+    Phase 1: Creates registry with the global daemon as default.
+             All zones share this daemon — zone isolation via SQL WHERE.
+    Phase 2: If ZoneManager is available, registers each known zone
+             with capability detection from the daemon's stats.
+    """
+    from nexus.bricks.search.zone_registry import ZoneSearchCapabilities, ZoneSearchRegistry
+
+    daemon = app.state.search_daemon
+    registry = ZoneSearchRegistry(default_daemon=daemon)
+
+    # Phase 2: Register per-zone capabilities if ZoneManager is available.
+    # Each zone still uses the shared daemon (same DB), but gets its own
+    # capabilities record so the dispatcher can make routing decisions.
+    zone_manager = getattr(svc, "zone_manager", None)
+    if zone_manager is not None:
+        try:
+            zone_ids = zone_manager.list_zones()
+            for zone_id in zone_ids:
+                caps = ZoneSearchCapabilities.from_daemon_stats(zone_id, daemon)
+                registry.register(zone_id, daemon, capabilities=caps)
+                # Phase 2: Push real capabilities to the Rust gRPC server so
+                # remote nodes get accurate data from GetSearchCapabilities RPC.
+                _py_mgr = getattr(zone_manager, "_py_mgr", None)
+                if _py_mgr is not None and hasattr(_py_mgr, "set_search_capabilities"):
+                    _py_mgr.set_search_capabilities(
+                        zone_id,
+                        caps.device_tier,
+                        list(caps.search_modes),
+                        caps.has_graph,
+                        caps.embedding_model or "",
+                        caps.embedding_dimensions,
+                    )
+            logger.info(
+                "[ZONE-REGISTRY] Registered %d zones from ZoneManager",
+                len(zone_ids),
+            )
+        except Exception as e:
+            logger.warning("[ZONE-REGISTRY] Failed to register zones: %s", e)
+
+    app.state.zone_search_registry = registry

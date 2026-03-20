@@ -128,6 +128,7 @@ class RPCTransport:
         method: str,
         params: dict[str, Any] | None = None,
         read_timeout: float | None = None,
+        auth_token: str | None = None,
     ) -> Any:
         """Make a gRPC call to the server with automatic retry.
 
@@ -135,6 +136,9 @@ class RPCTransport:
             method: RPC method name (e.g. ``sys_read``).
             params: Parameter dict (JSON-serialised via rpc_codec).
             read_timeout: Per-call timeout override in seconds.
+            auth_token: Override the default auth token for this call.
+                Used by federated search to pass SearchDelegation credentials
+                for cross-zone queries (Issue #3147).
 
         Returns:
             Decoded result from the server.
@@ -145,10 +149,11 @@ class RPCTransport:
             NexusError subclasses: Application-level errors from server.
         """
         payload = encode_rpc_message(params or {})
+        effective_token = auth_token if auth_token is not None else self._auth_token
         request = vfs_pb2.CallRequest(
             method=method,
             payload=payload,
-            auth_token=self._auth_token,
+            auth_token=effective_token,
         )
         timeout = read_timeout if read_timeout is not None else self._timeout
 

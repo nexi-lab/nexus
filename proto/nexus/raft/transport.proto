@@ -65,6 +65,25 @@ service ZoneApiService {
   // it along with the CA cert. CA key never leaves node-1 (security fix).
   // K3s-style bootstrap: token = shared secret, TLS encrypts the channel.
   rpc JoinCluster(JoinClusterRequest) returns (JoinClusterResponse);
+
+  // GetSearchCapabilities returns the search modes available on a zone (Issue #3147).
+  // Used by FederatedSearchDispatcher to route queries to zones that can handle them.
+  rpc GetSearchCapabilities(GetSearchCapabilitiesRequest) returns (SearchCapabilities);
+}
+
+// === Search Capability Advertisement (Issue #3147) ===
+
+message GetSearchCapabilitiesRequest {
+  string zone_id = 1;
+}
+
+message SearchCapabilities {
+  string zone_id = 1;
+  string device_tier = 2;            // "phone", "laptop", "server"
+  repeated string search_modes = 3;  // "keyword", "semantic", "hybrid"
+  string embedding_model = 4;
+  int32 embedding_dimensions = 5;
+  bool has_graph = 6;
 }
 
 // === Client Messages ===

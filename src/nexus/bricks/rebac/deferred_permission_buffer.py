@@ -262,7 +262,7 @@ class DeferredPermissionBuffer:
                 # Group by zone_id
                 by_zone: dict[str, list[str]] = {}
                 for _path, zone_id in hierarchy_batch:
-                    by_zone.setdefault(zone_id, []).append(path)
+                    by_zone.setdefault(zone_id, []).append(_path)
 
                 for zone_id, paths in by_zone.items():
                     self._hierarchy_manager.ensure_parent_tuples_batch(

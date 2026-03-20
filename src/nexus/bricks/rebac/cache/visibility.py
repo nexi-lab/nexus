@@ -259,12 +259,12 @@ class DirectoryVisibilityCache:
         dir_paths: list[str],
         permission: str = "read",
     ) -> dict[str, bool]:
-        """Batch compute visibility for multiple directories using batch_get_bitmaps.
+        """Batch compute visibility for multiple directories in one bitmap scan.
 
-        Uses Tiger Cache's batch_get_bitmaps() to fetch all needed bitmaps in a
-        single Redis pipeline round-trip, then checks all directories at once.
+        Fetches accessible resource IDs once via Tiger Cache, then checks all
+        directories against the same bitmap in a single scan.
 
-        Performance: N directories checked in 1 round-trip instead of N.
+        Performance: N directories checked in 1 bitmap fetch instead of N.
 
         Args:
             zone_id: Zone ID

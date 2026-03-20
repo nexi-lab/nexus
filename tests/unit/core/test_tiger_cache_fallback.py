@@ -139,6 +139,8 @@ class TestL2DragonflyFallback:
         with patch.object(tiger_cache, "_run_dragonfly_op", return_value=(bitmap_bytes, 5)):
             # Enable dragonfly so _load_from_db tries L2
             tiger_cache._dragonfly = MagicMock()
+            # Add key to bloom filter so it passes the pre-gate
+            tiger_cache._bloom_add(_make_key())
             result = tiger_cache._load_from_db(_make_key(), conn=None)
 
             assert result is not None

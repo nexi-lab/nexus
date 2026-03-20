@@ -114,10 +114,7 @@ class HierarchyPreFilterStrategy:
             # Not worth the overhead for small sets
             return FilterResult(allowed=[], remaining=remaining)
 
-        # Group paths by immediate parent using PathTrie (Issue #3192)
-        # PathTrie builds the tree in O(N * depth) and enables O(depth) ancestor lookups.
-        # For the grouping step, we still use dirname for simplicity since PathTrie's
-        # group_by_parent returns filenames not full paths.
+        # Group paths by immediate parent via PathTrie (Issue #3192)
         paths_by_parent = self._group_paths_by_ancestor(remaining)
 
         unique_parents = list(paths_by_parent.keys())
@@ -175,9 +172,10 @@ class HierarchyPreFilterStrategy:
         return FilterResult(allowed=[], remaining=remaining)
 
     def _group_paths_by_ancestor(self, paths: list[str]) -> dict[str, list[str]]:
-        """Group paths by nearest ancestor using PathTrie.
+        """Group paths by immediate parent directory.
 
-        More efficient than repeated os.path.dirname() for deep paths.
+        Uses PathTrie.get_ancestors() for O(depth) parent lookup instead
+        of os.path.dirname() string operations.
         """
         trie = PathTrie()
         for p in paths:
@@ -185,7 +183,9 @@ class HierarchyPreFilterStrategy:
 
         groups: dict[str, list[str]] = defaultdict(list)
         for p in paths:
-            parent = os.path.dirname(p) or "/"
+            ancestors = trie.get_ancestors(p)
+            # get_ancestors returns [immediate_parent, ..., "/"]
+            parent = ancestors[0] if ancestors else "/"
             groups[parent].append(p)
         return dict(groups)
 

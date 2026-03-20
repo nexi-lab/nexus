@@ -132,11 +132,14 @@ class TigerCache:
 
         # BloomFilter pre-gate for L2 Dragonfly lookups (Issue #3192)
         # Rejects definite negatives before network round-trip to Dragonfly
-        self._l2_bloom = None  # BloomFilter | None
         self._l2_bloom_capacity = 100_000
         self._l2_bloom_fpp = 0.01  # 1% false positive rate
         self._bloom_rejects = 0
         self._bloom_passes = 0
+        if BloomFilter is not None:
+            self._l2_bloom = BloomFilter(self._l2_bloom_capacity, self._l2_bloom_fpp)
+        else:
+            self._l2_bloom = None
 
         # Stats counters for observability
         self._stats_hits = 0
@@ -183,17 +186,24 @@ class TigerCache:
                 self._l2_executor = None
             logger.info("[TIGER] Dragonfly L2 cache disabled")
 
-    def _rebuild_l2_bloom(self) -> None:
-        """Rebuild BloomFilter from current L1 cache keys.
+    @staticmethod
+    def _bloom_key(key: CacheKey) -> str:
+        """Canonical bloom filter key — same format as Dragonfly redis key."""
+        return f"tiger:{key.subject_type}:{key.subject_id}:{key.permission}:{key.resource_type}"
 
-        Called after bulk L2 operations to keep bloom in sync.
-        """
+    def _bloom_add(self, key: CacheKey) -> None:
+        """Add a key to the bloom filter (call on every L1/L2 cache set)."""
+        if self._l2_bloom is not None:
+            self._l2_bloom.add(self._bloom_key(key))
+
+    def _rebuild_l2_bloom(self) -> None:
+        """Rebuild BloomFilter from current L1 cache keys."""
         if BloomFilter is None:
-            return  # fastbloom_rs not installed
+            return
         bloom = BloomFilter(self._l2_bloom_capacity, self._l2_bloom_fpp)
         with self._lock:
             for key in self._cache:
-                bloom.add(str(key))
+                bloom.add(self._bloom_key(key))
         self._l2_bloom = bloom
 
     def _bloom_might_contain(self, key: CacheKey) -> bool:
@@ -204,7 +214,7 @@ class TigerCache:
         """
         if self._l2_bloom is None:
             return True  # fail-open: no bloom = always check L2
-        result = str(key) in self._l2_bloom
+        result = self._bloom_key(key) in self._l2_bloom
         if result:
             self._bloom_passes += 1
         else:
@@ -281,10 +291,8 @@ class TigerCache:
                     pipe.hset(key, mapping={"data": bitmap_data, "revision": str(revision)})
                     pipe.expire(key, ttl)
                     pipe.execute()
-                    # Update bloom filter (Issue #3192)
-                    if self._l2_bloom is not None:
-                        key_str = f"tiger:{subject_type}:{subject_id}:{permission}:{resource_type}"
-                        self._l2_bloom.add(key_str)
+                    # Update bloom filter using canonical key (Issue #3192)
+                    self._bloom_add(CacheKey(subject_type, subject_id, permission, resource_type))
                     return True
 
                 elif operation == "invalidate":

@@ -140,6 +140,7 @@ def isolated_db(tmp_path, monkeypatch):
         def test_something(isolated_db):
             metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
             nx = NexusFS(metadata_store=metadata_store)
+            nx._default_context = TEST_CONTEXT
             # Test code here
             nx.close()
 

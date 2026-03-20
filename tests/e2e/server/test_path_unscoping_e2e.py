@@ -24,6 +24,7 @@ from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.helpers.test_context import TEST_CONTEXT
 
 
 @pytest.fixture
@@ -41,6 +42,7 @@ def nexus_fs_local(tmp_path: Path):
         record_store=record_store,
         permissions=PermissionConfig(enforce=False),
     )
+    nx._default_context = TEST_CONTEXT
     yield nx
     nx.close()
 

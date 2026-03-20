@@ -218,7 +218,7 @@ class NexusFilesystemABC(ABC):
     # ── System Info + Lifecycle ────────────────────────────────────
 
     @abstractmethod
-    def get_top_level_mounts(self) -> builtins.list[str]:
+    def get_top_level_mounts(self, context: Any = None) -> builtins.list[str]:
         """Get list of top-level mount names."""
         ...
 

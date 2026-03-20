@@ -257,6 +257,10 @@ async def connect(
             kernel_services=_KernelServices(router=_router),
             brick_services=_BrickServices(),
         )
+        # Issue #1801: inject default context for REMOTE profile
+        from nexus.contracts.types import OperationContext as _RemoteOC
+
+        nfs._default_context = _RemoteOC(user_id="remote", groups=[], is_admin=False)
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards

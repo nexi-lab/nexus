@@ -1,13 +1,17 @@
-"""Tests for OpenAI-compatible LLM backend (sync MVP).
+"""Tests for OpenAI-compatible LLM backend.
 
 Tests cover:
 - LLMBlobTransport: in-memory blob operations
-- OpenAICompatibleBackend: CAS write → LLM call → session envelope
-- Error handling: invalid JSON, missing messages, API failure
+- OpenAICompatibleBackend: thin CASBackend subclass (no write_content override)
+  - write_content(): inherited from CASBackend (pure CAS, no LLM call)
+  - generate_streaming(): pure LLM compute, yields tokens
+  - persist_session(): CAS persist request + response + session envelope
+- LLMStreamingService: DT_STREAM orchestration + CAS flush
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -115,177 +119,210 @@ class TestLLMBlobTransport:
 # =============================================================================
 
 
-def _mock_completion(
-    content: str = "Hello! I'm an AI assistant.",
+def _make_backend(mock_client: MagicMock | None = None) -> tuple[Any, MagicMock]:
+    """Create backend with mocked OpenAI client."""
+    from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
+
+    with patch("nexus.backends.compute.openai_compatible._build_openai_client") as mock_build:
+        client = mock_client or MagicMock()
+        mock_build.return_value = client
+        backend = OpenAICompatibleBackend(
+            base_url="https://api.test.com/v1",
+            api_key="sk-test",
+            default_model="gpt-4o",
+        )
+    return backend, client
+
+
+def _mock_streaming_chunks(
+    tokens: list[str],
     model: str = "gpt-4o",
     prompt_tokens: int = 10,
     completion_tokens: int = 20,
-    finish_reason: str = "stop",
-) -> MagicMock:
-    """Build a mock OpenAI ChatCompletion response."""
+) -> list[MagicMock]:
+    """Build mock OpenAI streaming chunks."""
+    chunks = []
+    for token in tokens:
+        chunk = MagicMock()
+        chunk.model = model
+        chunk.usage = None
+        delta = MagicMock()
+        delta.content = token
+        choice = MagicMock()
+        choice.delta = delta
+        chunk.choices = [choice]
+        chunks.append(chunk)
+
+    # Final chunk with usage (stream_options.include_usage)
+    final = MagicMock()
+    final.model = model
+    final.choices = []
     usage = MagicMock()
     usage.prompt_tokens = prompt_tokens
     usage.completion_tokens = completion_tokens
     usage.total_tokens = prompt_tokens + completion_tokens
+    final.usage = usage
+    chunks.append(final)
 
-    message = MagicMock()
-    message.content = content
-
-    choice = MagicMock()
-    choice.message = message
-    choice.finish_reason = finish_reason
-
-    completion = MagicMock()
-    completion.choices = [choice]
-    completion.model = model
-    completion.usage = usage
-    return completion
+    return chunks
 
 
 class TestOpenAICompatibleBackend:
     """Test OpenAI-compatible backend with mocked API."""
 
-    def _make_backend(self, mock_client: MagicMock | None = None) -> Any:
-        """Create backend with mocked OpenAI client."""
-        from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
-
-        with patch("nexus.backends.compute.openai_compatible._build_openai_client") as mock_build:
-            client = mock_client or MagicMock()
-            mock_build.return_value = client
-            backend = OpenAICompatibleBackend(
-                base_url="https://api.test.com/v1",
-                api_key="sk-test",
-                default_model="gpt-4o",
-            )
-        return backend, client
-
     def test_name(self) -> None:
-        backend, _ = self._make_backend()
+        backend, _ = _make_backend()
         assert backend.name == "openai_compatible"
 
-    def test_write_and_read_session(self) -> None:
-        """Write request → LLM call → read session envelope."""
-        client = MagicMock()
-        client.chat.completions.create.return_value = _mock_completion()
-        backend, _ = self._make_backend(client)
+    def test_write_content_is_pure_cas(self) -> None:
+        """write_content() is inherited from CASBackend — no LLM call."""
+        backend, client = _make_backend()
 
-        request = {"messages": [{"role": "user", "content": "Hello"}]}
-        request_bytes = json.dumps(request).encode()
-
-        result = backend.write_content(request_bytes)
+        data = b"hello world"
+        result = backend.write_content(data)
         assert result.content_hash
-        assert result.size > 0
+        assert result.size == len(data)
 
-        # Read session envelope
-        session_bytes = backend.read_content(result.content_hash)
-        session = json.loads(session_bytes)
-        assert session["type"] == "llm_session_v1"
-        assert "request_hash" in session
-        assert "response_hash" in session
-        assert session["model"] == "gpt-4o"
+        # No LLM API call was made
+        client.chat.completions.create.assert_not_called()
 
-    def test_read_request_and_response(self) -> None:
-        """Verify request and response are readable from CAS."""
+        # Can read back the data
+        stored = backend.read_content(result.content_hash)
+        assert stored == data
+
+    def test_generate_streaming_yields_tokens(self) -> None:
+        """generate_streaming yields (token, None) then ("", metadata)."""
         client = MagicMock()
-        client.chat.completions.create.return_value = _mock_completion(content="The answer is 42.")
-        backend, _ = self._make_backend(client)
+        mock_chunks = _mock_streaming_chunks(["Hello", " world", "!"])
+        client.chat.completions.create.return_value = iter(mock_chunks)
+        backend, _ = _make_backend(client)
 
-        request = {"messages": [{"role": "user", "content": "What is the answer?"}]}
-        result = backend.write_content(json.dumps(request).encode())
+        request = {"messages": [{"role": "user", "content": "Hi"}]}
+        results = list(backend.generate_streaming(request))
 
-        session = json.loads(backend.read_content(result.content_hash))
+        # Tokens
+        tokens = [(t, m) for t, m in results if t]
+        assert len(tokens) == 3
+        assert tokens[0] == ("Hello", None)
+        assert tokens[1] == (" world", None)
+        assert tokens[2] == ("!", None)
 
-        # Read request
-        req_data = json.loads(backend.read_content(session["request_hash"]))
-        assert req_data["messages"][0]["content"] == "What is the answer?"
+        # Final metadata
+        final = results[-1]
+        assert final[0] == ""
+        assert final[1] is not None
+        meta = final[1]
+        assert meta["model"] == "gpt-4o"
+        assert meta["usage"]["total_tokens"] == 30
+        assert "latency_ms" in meta
 
-        # Read response
-        resp_data = json.loads(backend.read_content(session["response_hash"]))
-        assert resp_data["content"] == "The answer is 42."
-        assert resp_data["usage"]["total_tokens"] == 30
-
-    def test_custom_model(self) -> None:
-        """Model from request overrides default."""
+    def test_generate_streaming_custom_model(self) -> None:
+        """Model from request is used."""
         client = MagicMock()
-        client.chat.completions.create.return_value = _mock_completion(model="claude-3-opus")
-        backend, _ = self._make_backend(client)
+        mock_chunks = _mock_streaming_chunks(["OK"], model="claude-3-opus")
+        client.chat.completions.create.return_value = iter(mock_chunks)
+        backend, _ = _make_backend(client)
 
         request = {
             "messages": [{"role": "user", "content": "Hi"}],
             "model": "claude-3-opus",
         }
-        result = backend.write_content(json.dumps(request).encode())
+        results = list(backend.generate_streaming(request))
 
-        # Verify the API was called with the custom model
-        call_kwargs = client.chat.completions.create.call_args
-        assert call_kwargs.kwargs["model"] == "claude-3-opus"
+        call_kwargs = client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["model"] == "claude-3-opus"
+        assert call_kwargs["stream"] is True
 
-        session = json.loads(backend.read_content(result.content_hash))
-        assert session["model"] == "claude-3-opus"
+        meta = results[-1][1]
+        assert meta["model"] == "claude-3-opus"
 
-    def test_extra_params_passed_through(self) -> None:
-        """Extra parameters (temperature, etc.) are passed to the API."""
+    def test_generate_streaming_extra_params(self) -> None:
+        """Extra params (temperature, etc.) are passed through."""
         client = MagicMock()
-        client.chat.completions.create.return_value = _mock_completion()
-        backend, _ = self._make_backend(client)
+        mock_chunks = _mock_streaming_chunks(["OK"])
+        client.chat.completions.create.return_value = iter(mock_chunks)
+        backend, _ = _make_backend(client)
 
         request = {
             "messages": [{"role": "user", "content": "Hi"}],
             "temperature": 0.7,
             "max_tokens": 100,
         }
-        backend.write_content(json.dumps(request).encode())
+        list(backend.generate_streaming(request))
 
         call_kwargs = client.chat.completions.create.call_args.kwargs
         assert call_kwargs["temperature"] == 0.7
         assert call_kwargs["max_tokens"] == 100
 
-    def test_invalid_json_raises(self) -> None:
-        backend, _ = self._make_backend()
-        with pytest.raises(BackendError, match="Invalid request JSON"):
-            backend.write_content(b"not json {{{")
-
-    def test_missing_messages_raises(self) -> None:
-        backend, _ = self._make_backend()
+    def test_generate_streaming_missing_messages_raises(self) -> None:
+        backend, _ = _make_backend()
         with pytest.raises(BackendError, match="must contain 'messages'"):
-            backend.write_content(json.dumps({"model": "gpt-4o"}).encode())
+            list(backend.generate_streaming({"model": "gpt-4o"}))
 
-    def test_api_failure_raises(self) -> None:
+    def test_generate_streaming_api_failure_raises(self) -> None:
         client = MagicMock()
         client.chat.completions.create.side_effect = Exception("Connection timeout")
-        backend, _ = self._make_backend(client)
+        backend, _ = _make_backend(client)
 
         request = {"messages": [{"role": "user", "content": "Hi"}]}
         with pytest.raises(BackendError, match="LLM API call failed"):
-            backend.write_content(json.dumps(request).encode())
+            list(backend.generate_streaming(request))
+
+    def test_persist_session(self) -> None:
+        """persist_session stores request + response + envelope in CAS."""
+        backend, _ = _make_backend()
+
+        request_bytes = json.dumps({"messages": [{"role": "user", "content": "Hello"}]}).encode()
+
+        result = backend.persist_session(
+            request_bytes=request_bytes,
+            response_content="Hi there!",
+            model="gpt-4o",
+            finish_reason="stop",
+            usage={"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            latency_ms=42.5,
+        )
+
+        # Read session envelope
+        session = json.loads(backend.read_content(result.content_hash))
+        assert session["type"] == "llm_session_v1"
+        assert session["model"] == "gpt-4o"
+        assert "request_hash" in session
+        assert "response_hash" in session
+
+        # Read request
+        req_data = json.loads(backend.read_content(session["request_hash"]))
+        assert req_data["messages"][0]["content"] == "Hello"
+
+        # Read response
+        resp_data = json.loads(backend.read_content(session["response_hash"]))
+        assert resp_data["content"] == "Hi there!"
+        assert resp_data["usage"]["total_tokens"] == 8
+        assert resp_data["finish_reason"] == "stop"
 
     def test_capabilities(self) -> None:
         from nexus.contracts.capabilities import ConnectorCapability
 
-        backend, _ = self._make_backend()
+        backend, _ = _make_backend()
         assert backend.has_capability(ConnectorCapability.CAS)
         assert backend.has_capability(ConnectorCapability.STREAMING)
         assert not backend.has_capability(ConnectorCapability.ROOT_PATH)
 
     def test_mkdir_rmdir_noop(self) -> None:
         """Directory ops are no-ops for compute backends."""
-        backend, _ = self._make_backend()
+        backend, _ = _make_backend()
         backend.mkdir("/some/path")  # Should not raise
         backend.rmdir("/some/path")  # Should not raise
 
+    def test_content_exists(self) -> None:
+        backend, _ = _make_backend()
+        result = backend.write_content(b"test data")
+        assert backend.content_exists(result.content_hash)
+
     def test_delete_content(self) -> None:
-        """Verify content can be deleted."""
-        client = MagicMock()
-        client.chat.completions.create.return_value = _mock_completion()
-        backend, _ = self._make_backend(client)
-
-        request = {"messages": [{"role": "user", "content": "Hi"}]}
-        result = backend.write_content(json.dumps(request).encode())
-
-        # Should not raise
+        backend, _ = _make_backend()
+        result = backend.write_content(b"test data")
         backend.delete_content(result.content_hash)
-
-        # Now reading should fail
         with pytest.raises(NexusFileNotFoundError):
             backend.read_content(result.content_hash)
 
@@ -299,15 +336,206 @@ class TestOpenAICompatibleBackend:
         result = backend.write_content(json.dumps(request).encode())
         assert backend.content_exists(result.content_hash)
 
-    def test_get_content_size(self) -> None:
-        """Verify get_content_size returns correct size."""
-        client = MagicMock()
-        client.chat.completions.create.return_value = _mock_completion()
-        backend, _ = self._make_backend(client)
 
-        request = {"messages": [{"role": "user", "content": "Hi"}]}
-        result = backend.write_content(json.dumps(request).encode())
+# =============================================================================
+# LLMStreamingService tests
+# =============================================================================
 
-        size = backend.get_content_size(result.content_hash)
-        # Session envelope is a small JSON
-        assert size > 0
+
+class TestLLMStreamingService:
+    """Test DT_STREAM orchestration with mock backend + stream manager."""
+
+    @pytest.fixture()
+    def mock_stream_manager(self) -> MagicMock:
+        """Create a mock StreamManager that stores writes in a list."""
+        sm = MagicMock()
+        # Track writes for verification
+        sm._written: list[bytes] = []
+        sm._closed = False
+
+        def _write_nowait(path: str, data: bytes) -> int:
+            sm._written.append(data)
+            return len(data)
+
+        def _collect_all(path: str) -> bytes:
+            return b"".join(sm._written)
+
+        def _signal_close(path: str) -> None:
+            sm._closed = True
+
+        sm.stream_write_nowait.side_effect = _write_nowait
+        sm.collect_all.side_effect = _collect_all
+        sm.signal_close.side_effect = _signal_close
+        return sm
+
+    @pytest.fixture()
+    def mock_backend(self) -> MagicMock:
+        """Create a mock OpenAICompatibleBackend."""
+        backend = MagicMock()
+
+        def _generate_streaming(request: dict) -> list[tuple[str, dict | None]]:
+            return [
+                ("Hello", None),
+                (" world", None),
+                ("!", None),
+                (
+                    "",
+                    {
+                        "model": "gpt-4o",
+                        "usage": {
+                            "prompt_tokens": 10,
+                            "completion_tokens": 3,
+                            "total_tokens": 13,
+                        },
+                        "latency_ms": 50.0,
+                    },
+                ),
+            ]
+
+        backend.generate_streaming.side_effect = _generate_streaming
+
+        persist_result = MagicMock()
+        persist_result.content_hash = "abc123deadbeef"
+        backend.persist_session.return_value = persist_result
+
+        return backend
+
+    @pytest.mark.asyncio()
+    async def test_start_stream(
+        self, mock_stream_manager: MagicMock, mock_backend: MagicMock
+    ) -> None:
+        """start_stream creates DT_STREAM and returns immediately."""
+        from nexus.system_services.llm_streaming_service import (
+            LLMStreamingService,
+        )
+
+        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=mock_backend)
+
+        request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
+        result = await service.start_stream(request, "/zone/llm/.streams/s1")
+
+        assert result["status"] == "streaming"
+        assert result["stream_path"] == "/zone/llm/.streams/s1"
+        mock_stream_manager.create.assert_called_once()
+
+        # Wait for background task to complete
+        await asyncio.sleep(0.1)
+
+    @pytest.mark.asyncio()
+    async def test_stream_delivers_tokens(
+        self, mock_stream_manager: MagicMock, mock_backend: MagicMock
+    ) -> None:
+        """Tokens are pushed to DT_STREAM, then CAS persist + signal_close."""
+        from nexus.system_services.llm_streaming_service import (
+            LLMStreamingService,
+        )
+
+        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=mock_backend)
+
+        request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
+        await service.start_stream(request, "/zone/llm/.streams/s2")
+
+        # Wait for background task
+        await asyncio.sleep(0.5)
+
+        # Verify tokens were written to stream
+        written = mock_stream_manager._written
+        # Tokens: "Hello", " world", "!" + done message
+        assert len(written) >= 3
+        assert written[0] == b"Hello"
+        assert written[1] == b" world"
+        assert written[2] == b"!"
+
+        # Verify done message
+        done_msg = json.loads(written[-1])
+        assert done_msg["type"] == "done"
+        assert done_msg["session_hash"] == "abc123deadbeef"
+
+        # Verify CAS persist was called
+        mock_backend.persist_session.assert_called_once()
+        call_kwargs = mock_backend.persist_session.call_args
+        assert call_kwargs.kwargs["response_content"] == "Hello world!"
+        assert call_kwargs.kwargs["model"] == "gpt-4o"
+
+        # Verify stream was closed
+        assert mock_stream_manager._closed
+
+    @pytest.mark.asyncio()
+    async def test_stream_error_handling(self, mock_stream_manager: MagicMock) -> None:
+        """On LLM failure, error is written to stream and stream is closed."""
+        from nexus.system_services.llm_streaming_service import (
+            LLMStreamingService,
+        )
+
+        backend = MagicMock()
+        backend.generate_streaming.side_effect = BackendError(
+            "API down", backend="openai_compatible"
+        )
+
+        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=backend)
+
+        request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
+        await service.start_stream(request, "/zone/llm/.streams/err")
+
+        # Wait for background task
+        await asyncio.sleep(0.5)
+
+        # Verify error message was written
+        written = mock_stream_manager._written
+        assert len(written) >= 1
+        error_msg = json.loads(written[-1])
+        assert error_msg["type"] == "error"
+
+        # Stream was closed
+        assert mock_stream_manager._closed
+
+    @pytest.mark.asyncio()
+    async def test_cancel_stream(self, mock_stream_manager: MagicMock) -> None:
+        """cancel_stream cancels the background task and destroys the stream."""
+        from nexus.system_services.llm_streaming_service import (
+            LLMStreamingService,
+        )
+
+        # Slow backend that blocks
+        backend = MagicMock()
+
+        def _slow_generate(request: dict) -> list[tuple[str, dict | None]]:
+            import time
+
+            time.sleep(10)
+            return [("x", None), ("", {"model": "m", "usage": {}, "latency_ms": 0})]
+
+        backend.generate_streaming.side_effect = _slow_generate
+
+        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=backend)
+
+        request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
+        await service.start_stream(request, "/zone/llm/.streams/cancel")
+
+        assert "/zone/llm/.streams/cancel" in service.active_streams
+        cancelled = await service.cancel_stream("/zone/llm/.streams/cancel")
+        assert cancelled
+        assert "/zone/llm/.streams/cancel" not in service.active_streams
+
+    @pytest.mark.asyncio()
+    async def test_active_streams(
+        self, mock_stream_manager: MagicMock, mock_backend: MagicMock
+    ) -> None:
+        """active_streams tracks running streams."""
+        from nexus.system_services.llm_streaming_service import (
+            LLMStreamingService,
+        )
+
+        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=mock_backend)
+
+        assert service.active_streams == []
+
+        request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
+        await service.start_stream(request, "/zone/llm/.streams/track")
+
+        # Task is active briefly
+        assert "/zone/llm/.streams/track" in service.active_streams
+
+        # Wait for completion
+        await asyncio.sleep(0.5)
+        assert "/zone/llm/.streams/track" not in service.active_streams

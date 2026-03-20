@@ -338,6 +338,42 @@ class StreamManager:
         )
 
     # ------------------------------------------------------------------
+    # Data extraction (for CAS flush by storage layer)
+    # ------------------------------------------------------------------
+
+    def collect_all(self, path: str) -> bytes:
+        """Collect all messages from a stream into a single bytes object.
+
+        Non-destructive bulk read from offset 0 to tail. Fan-out contract
+        is preserved — other readers at their own offsets are unaffected.
+
+        This is a kernel-level read primitive. CAS persistence is the
+        responsibility of the storage layer (e.g. OpenAICompatibleBackend
+        calls ``collect_all()`` then ``backend.write_content()``).
+
+        Args:
+            path: VFS path of the stream.
+
+        Returns:
+            Concatenated bytes of all messages in the stream.
+            Empty bytes if the stream has no data.
+
+        Raises:
+            StreamNotFoundError: No buffer at this path.
+        """
+        buf = self._get_buffer(path)
+        chunks: list[bytes] = []
+        offset = 0
+        while True:
+            try:
+                data, next_offset = buf.read_at(offset)
+                chunks.append(data)
+                offset = next_offset
+            except (StreamEmptyError, StreamClosedError):
+                break
+        return b"".join(chunks)
+
+    # ------------------------------------------------------------------
     # Observability
     # ------------------------------------------------------------------
 

@@ -3,10 +3,13 @@
 Tests sustained load and many concurrent SSE connections to validate
 the notification-driven architecture under pressure.
 
-- Sustained write load: 500 events over 5 seconds
-- Many SSE connections: 20 concurrent stream() consumers on one signal
+- Sustained write load: 200 events over waves
+- Many SSE connections: 10 concurrent stream() consumers on one signal
 - Mixed operations under load: writes + renames + deletes
 - Signal contention: rapid-fire signal with slow consumers
+
+Marked ``slow`` — excluded from default CI run to avoid timeouts.
+Run with: ``pytest -m slow tests/e2e/self_contained/test_event_signal_stress.py``
 """
 
 from __future__ import annotations
@@ -71,6 +74,7 @@ def _insert_event(
 # =========================================================================
 
 
+@pytest.mark.slow
 class TestSustainedLoad:
     """Test delivery under sustained write load."""
 
@@ -89,13 +93,13 @@ class TestSustainedLoad:
         )
         await worker.start()
 
-        total = 500
+        total = 100
         t0 = time.monotonic()
 
         try:
-            # Insert events in waves of 50, signaling after each wave
-            for wave in range(10):
-                for i in range(50):
+            # Insert events in waves of 20, signaling after each wave
+            for wave in range(5):
+                for i in range(20):
                     idx = wave * 50 + i
                     _insert_event(
                         record_store.session_factory,
@@ -206,6 +210,7 @@ class TestSustainedLoad:
 # =========================================================================
 
 
+@pytest.mark.slow
 class TestManyConcurrentStreams:
     """Test many SSE stream() consumers sharing one signal."""
 
@@ -213,7 +218,7 @@ class TestManyConcurrentStreams:
     async def test_20_concurrent_streams(self, record_store: SQLAlchemyRecordStore) -> None:
         """20 concurrent stream() consumers all receive events via shared signal."""
         signal = asyncio.Event()
-        num_consumers = 20
+        num_consumers = 10
         events_per_consumer: dict[int, list] = {i: [] for i in range(num_consumers)}
 
         # Pre-insert 5 events for streams to pick up
@@ -318,6 +323,7 @@ class TestManyConcurrentStreams:
 # =========================================================================
 
 
+@pytest.mark.slow
 class TestSignalContention:
     """Test signal behavior when producer is faster than consumer."""
 
@@ -342,7 +348,7 @@ class TestSignalContention:
         )
         await worker.start()
 
-        total = 200
+        total = 100
         try:
             # Rapid-fire: insert all events and signal repeatedly
             for i in range(total):

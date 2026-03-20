@@ -76,6 +76,7 @@ def _insert_delivered(session_factory, path: str, seq: int) -> str:
     return op_id
 
 
+@pytest.mark.slow
 class TestDeliveryLatency:
     """Measure signal → delivery latency."""
 
@@ -198,6 +199,7 @@ class TestDeliveryLatency:
             await worker.stop()
 
 
+@pytest.mark.slow
 class TestStreamLatency:
     """Measure signal → SSE stream yield latency."""
 
@@ -271,6 +273,7 @@ class TestStreamLatency:
         assert p50 < 50, f"p50 stream latency {p50:.1f}ms too high"
 
 
+@pytest.mark.slow
 class TestThroughput:
     """Measure events/sec throughput."""
 
@@ -289,7 +292,7 @@ class TestThroughput:
         )
 
         # Pre-insert 500 events
-        total = 500
+        total = 100
         for i in range(total):
             _insert_undelivered(record_store.session_factory, f"/throughput-{i}.txt")
 

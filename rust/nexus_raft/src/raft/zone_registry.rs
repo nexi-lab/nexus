@@ -212,7 +212,7 @@ impl ZoneRaftRegistry {
         driver.set_peer_map(shared_peers.clone());
 
         let client_config = ClientConfig {
-            tls: self.tls.read().unwrap().clone(),
+            tls: self.tls.clone(),
             ..Default::default()
         };
         let transport_loop = TransportLoop::new(

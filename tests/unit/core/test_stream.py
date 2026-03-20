@@ -250,7 +250,7 @@ class TestStreamManager:
 
         from nexus.core.stream_manager import StreamManager
 
-        return StreamManager(mock, zone_id="root", self_address=None)
+        return StreamManager(mock, self_address=None)
 
     def test_create_and_read(self, manager):
         buf = manager.create("/streams/test", capacity=1024)
@@ -474,7 +474,7 @@ class TestStreamManagerBlockingRead:
 
         from nexus.core.stream_manager import StreamManager
 
-        return StreamManager(mock, zone_id="root")
+        return StreamManager(mock)
 
     async def test_stream_read_blocking(self, manager):
         """stream_read() blocks until data arrives."""

@@ -300,6 +300,79 @@ class TestTryDeleteRemoteContent:
         assert mock_delete.call_count == 2
 
 
+class TestDeleteLocalReplicaCleanup:
+    """Tests for local replica blob cleanup on delete (#1310)."""
+
+    @patch.object(FederationContentResolver, "_delete_on_peer")
+    def test_local_replica_cleaned_up_after_remote_delete(self, mock_delete):
+        """After successful remote delete, local replica blob is cleaned up."""
+        meta = _make_meta(f"local@{REMOTE_ADDR}", etag="blob_hash")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        mock_store = MagicMock()
+        mock_store.content_exists.return_value = True
+
+        resolver = _make_resolver(
+            metastore=metastore,
+            local_object_store=mock_store,
+        )
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result == {}
+        mock_store.delete_content.assert_called_once_with("blob_hash")
+
+    @patch.object(FederationContentResolver, "_delete_on_peer")
+    def test_no_local_replica_no_cleanup(self, mock_delete):
+        """If local CAS doesn't have the blob, skip cleanup."""
+        meta = _make_meta(f"local@{REMOTE_ADDR}", etag="blob_hash")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        mock_store = MagicMock()
+        mock_store.content_exists.return_value = False
+
+        resolver = _make_resolver(
+            metastore=metastore,
+            local_object_store=mock_store,
+        )
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result == {}
+        mock_store.delete_content.assert_not_called()
+
+    @patch.object(FederationContentResolver, "_delete_on_peer")
+    def test_cleanup_failure_does_not_break_delete(self, mock_delete):
+        """Local cleanup failure is swallowed — remote delete already succeeded."""
+        meta = _make_meta(f"local@{REMOTE_ADDR}", etag="blob_hash")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        mock_store = MagicMock()
+        mock_store.content_exists.return_value = True
+        mock_store.delete_content.side_effect = Exception("disk error")
+
+        resolver = _make_resolver(
+            metastore=metastore,
+            local_object_store=mock_store,
+        )
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result == {}  # Still succeeds
+
+    @patch.object(FederationContentResolver, "_delete_on_peer")
+    def test_no_object_store_skips_cleanup(self, mock_delete):
+        """Without local_object_store injected, cleanup is skipped."""
+        meta = _make_meta(f"local@{REMOTE_ADDR}", etag="blob_hash")
+        metastore = MagicMock()
+        metastore.get.return_value = meta
+
+        resolver = _make_resolver(metastore=metastore)  # No local_object_store
+        result = resolver.try_delete("/test/file.txt")
+
+        assert result == {}
+
+
 class TestKernelDispatchIntegration:
     """Verify FederationContentResolver works with KernelDispatch."""
 

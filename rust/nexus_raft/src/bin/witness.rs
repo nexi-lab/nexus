@@ -12,26 +12,23 @@
 //! - Does NOT serve reads
 //! - Cannot become leader
 //!
-//! # Multi-Zone
+//! # TLS Bootstrap
 //!
-//! The witness creates one Raft group per zone (root + all federation zones),
-//! mirroring full nodes' static bootstrap. Each zone runs an independent
-//! `TransportLoop` with correct `zone_id` routing.
+//! Same 2-phase flow as fullnodes:
+//! 1. Existing certs on disk → use them (normal restart)
+//! 2. No certs + NEXUS_PEERS → start plaintext, call JoinCluster on leader,
+//!    save certs, restart server with mTLS
+//!
+//! Uses the shared Rust `call_join_cluster()` — same code path as fullnodes.
 //!
 //! # Usage
 //!
 //! ```bash
-//! NEXUS_NODE_ID=3 NEXUS_BIND_ADDR=0.0.0.0:2028 \
-//!   NEXUS_PEERS=1@http://10.0.0.1:2026,2@http://10.0.0.2:2026 \
+//! NEXUS_NODE_ID=3 NEXUS_BIND_ADDR=0.0.0.0:2126 \
+//!   NEXUS_PEERS=1@nexus-1:2126,2@nexus-2:2126,3@witness:2126 \
 //!   NEXUS_FEDERATION_ZONES=corp,corp-eng,corp-sales,family \
 //!   nexus-witness
 //! ```
-//!
-//! # Resource Requirements
-//!
-//! - Memory: ~64MB per zone (just Raft log, no data)
-//! - CPU: <0.1 core (only processes votes/heartbeats)
-//! - Disk: ~1GB per zone (Raft log only, auto-compacted)
 
 use std::env;
 use std::net::SocketAddr;
@@ -41,7 +38,6 @@ use std::sync::Arc;
 #[tokio::main]
 #[allow(unreachable_code)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -50,26 +46,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    // Parse configuration from environment
     let node_id: u64 = env::var("NEXUS_NODE_ID")
         .unwrap_or_else(|_| "1".to_string())
         .parse()
         .expect("NEXUS_NODE_ID must be a valid u64");
 
     let bind_addr: SocketAddr = env::var("NEXUS_BIND_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:2028".to_string())
+        .unwrap_or_else(|_| "0.0.0.0:2126".to_string())
         .parse()
         .expect("NEXUS_BIND_ADDR must be a valid socket address");
 
     let data_dir =
         env::var("NEXUS_DATA_DIR").unwrap_or_else(|_| "./nexus_witness_data".to_string());
-
     let data_path = PathBuf::from(&data_dir);
-
-    // Ensure data directory exists
     std::fs::create_dir_all(&data_path)?;
 
-    // Parse federation zones (same env var as full nodes)
     let federation_zones: Vec<String> = env::var("NEXUS_FEDERATION_ZONES")
         .unwrap_or_default()
         .split(',')
@@ -85,52 +76,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         federation_zones,
     );
 
-    // Import and start the witness server (requires grpc feature AND proto files)
     #[cfg(all(feature = "grpc", has_protos))]
     {
         use _nexus_raft::transport::{
-            NodeAddress, RaftWitnessServer, ServerConfig, TlsConfig, WitnessZoneRegistry,
+            NodeAddress, RaftWitnessServer, ServerConfig, WitnessZoneRegistry,
         };
 
-        // Parse TLS configuration from environment
-        let tls_config = match (
-            env::var("NEXUS_TLS_CERT").ok(),
-            env::var("NEXUS_TLS_KEY").ok(),
-            env::var("NEXUS_TLS_CA").ok(),
-        ) {
-            (Some(cert_path), Some(key_path), Some(ca_path)) => {
-                let cert_pem = std::fs::read(&cert_path)
-                    .unwrap_or_else(|e| panic!("Failed to read TLS cert '{}': {}", cert_path, e));
-                let key_pem = std::fs::read(&key_path)
-                    .unwrap_or_else(|e| panic!("Failed to read TLS key '{}': {}", key_path, e));
-                let ca_pem = std::fs::read(&ca_path)
-                    .unwrap_or_else(|e| panic!("Failed to read TLS CA '{}': {}", ca_path, e));
-                tracing::info!(
-                    "TLS enabled (cert={}, key={}, ca={})",
-                    cert_path,
-                    key_path,
-                    ca_path
-                );
-                Some(TlsConfig {
-                    cert_pem,
-                    key_pem,
-                    ca_pem,
-                })
-            }
-            (None, None, None) => {
-                tracing::info!("TLS disabled (no NEXUS_TLS_CERT/KEY/CA set)");
-                None
-            }
-            _ => {
-                panic!(
-                    "TLS requires all three env vars: NEXUS_TLS_CERT, NEXUS_TLS_KEY, NEXUS_TLS_CA"
-                );
-            }
-        };
+        let tls_dir = data_path.join("tls");
 
+        // TLS: check disk for existing certs (same logic as fullnodes)
+        let tls_config = load_tls_from_disk(&tls_dir);
         let use_tls = tls_config.is_some();
+        let needs_bootstrap = tls_config.is_none();
 
-        // Parse peers from NEXUS_PEERS env var
+        if use_tls {
+            tracing::info!("TLS: using existing certs from {}", tls_dir.display());
+        } else {
+            tracing::info!("TLS: no certs — starting plaintext (2-phase bootstrap)");
+        }
+
+        // Parse peers (plaintext initially if no certs)
         let peers: Vec<NodeAddress> = env::var("NEXUS_PEERS")
             .unwrap_or_default()
             .split(',')
@@ -141,9 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .collect();
 
-        if peers.is_empty() {
-            tracing::warn!("No peers configured (NEXUS_PEERS is empty).");
-        } else {
+        if !peers.is_empty() {
             tracing::info!(
                 "Peers: {}",
                 peers
@@ -154,46 +117,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
 
-        // Create multi-zone witness registry
+        // Create registry + zones
         let registry = Arc::new(WitnessZoneRegistry::new(
             data_path.clone(),
             node_id,
             tls_config.clone(),
         ));
-
         let runtime_handle = tokio::runtime::Handle::current();
 
-        // Static bootstrap: create root zone + all federation zones
-        // Same pattern as full nodes: bootstrap("root") then bootstrap_static(zones)
         registry
             .create_zone("root", peers.clone(), &runtime_handle)
             .map_err(|e| format!("Failed to create root zone: {}", e))?;
-
         for zone_id in &federation_zones {
             registry
                 .create_zone(zone_id, peers.clone(), &runtime_handle)
                 .map_err(|e| format!("Failed to create zone '{}': {}", zone_id, e))?;
         }
 
-        let total_zones = 1 + federation_zones.len();
         tracing::info!(
-            "Witness bootstrap complete: {} zones (root + {} federation)",
-            total_zones,
-            federation_zones.len(),
+            "Witness bootstrap complete: {} zones",
+            1 + federation_zones.len(),
         );
 
-        // Create gRPC server
+        // Start server (plaintext or mTLS depending on cert availability)
         let server_config = ServerConfig {
             bind_address: bind_addr,
             tls: tls_config,
             ..Default::default()
         };
-
         let server = RaftWitnessServer::new(registry.clone(), server_config);
+
+        // If no certs, spawn a background task to call JoinCluster when leader is available
+        if needs_bootstrap && !peers.is_empty() {
+            let tls_dir_bg = tls_dir.clone();
+            let peers_bg = peers.clone();
+            let bind_addr_str = format!("http://{}", bind_addr);
+            tokio::spawn(async move {
+                tls_bootstrap_loop(node_id, &bind_addr_str, &peers_bg, &tls_dir_bg).await;
+            });
+        }
 
         tracing::info!("Witness server starting on {}", bind_addr);
 
-        // Handle shutdown signal
         let shutdown_registry = registry.clone();
         let shutdown = async move {
             tokio::signal::ctrl_c()
@@ -220,4 +185,103 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(all(feature = "grpc", has_protos))]
     Ok(())
+}
+
+/// Load TLS certs from disk if all three files exist.
+#[cfg(all(feature = "grpc", has_protos))]
+fn load_tls_from_disk(tls_dir: &std::path::Path) -> Option<_nexus_raft::transport::TlsConfig> {
+    use _nexus_raft::transport::TlsConfig;
+
+    let ca = tls_dir.join("ca.pem");
+    let cert = tls_dir.join("node.pem");
+    let key = tls_dir.join("node-key.pem");
+
+    if ca.exists() && cert.exists() && key.exists() {
+        Some(TlsConfig {
+            ca_pem: std::fs::read(&ca).expect("read CA cert"),
+            cert_pem: std::fs::read(&cert).expect("read node cert"),
+            key_pem: std::fs::read(&key).expect("read node key"),
+        })
+    } else {
+        None
+    }
+}
+
+/// Background loop: try JoinCluster on each peer until one succeeds (leader).
+/// After success, save certs to disk and exit. The witness must be restarted
+/// to pick up the new certs (Docker will restart it, or the orchestrator will).
+#[cfg(all(feature = "grpc", has_protos))]
+async fn tls_bootstrap_loop(
+    node_id: u64,
+    node_address: &str,
+    peers: &[_nexus_raft::transport::NodeAddress],
+    tls_dir: &std::path::Path,
+) {
+    use _nexus_raft::transport::call_join_cluster;
+
+    // Wait a bit for leader election
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    loop {
+        // Check if certs appeared (another process might have written them)
+        if tls_dir.join("node.pem").exists() {
+            tracing::info!("TLS certs found on disk — bootstrap complete");
+            return;
+        }
+
+        // Try each peer as potential leader
+        for peer in peers {
+            if peer.id == node_id {
+                continue; // Skip self
+            }
+
+            tracing::debug!("Trying JoinCluster on peer {} ({})", peer.id, peer.endpoint);
+
+            match call_join_cluster(
+                &peer.endpoint,
+                node_id,
+                node_address,
+                "root",
+                true, // peers_bootstrap
+                "",   // no password
+                10,   // timeout
+            )
+            .await
+            {
+                Ok(result) => {
+                    // Save certs to disk
+                    std::fs::create_dir_all(tls_dir).expect("create tls dir");
+                    std::fs::write(tls_dir.join("ca.pem"), &result.ca_pem).expect("write CA");
+                    std::fs::write(tls_dir.join("node.pem"), &result.node_cert_pem)
+                        .expect("write cert");
+
+                    // Write key with restricted permissions
+                    let key_path = tls_dir.join("node-key.pem");
+                    std::fs::write(&key_path, &result.node_key_pem).expect("write key");
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+                            .ok();
+                    }
+
+                    tracing::info!(
+                        "TLS bootstrap: received signed cert from peer {} — restart to enable mTLS",
+                        peer.id
+                    );
+                    // Certs saved. The witness needs a restart to use them.
+                    // The Raft-coordinated upgrade signal will eventually trigger
+                    // this via the fullnode leader's __system__/tls/upgrade proposal.
+                    // For now, the witness continues in plaintext until restart.
+                    return;
+                }
+                Err(e) => {
+                    tracing::debug!("JoinCluster on peer {} failed: {}", peer.id, e);
+                }
+            }
+        }
+
+        // Retry after delay
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
 }

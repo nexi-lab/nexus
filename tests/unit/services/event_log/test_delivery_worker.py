@@ -79,11 +79,9 @@ class TestExporterRegistryIntegration:
     async def test_dispatch_calls_exporter_registry(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        from nexus.system_services.event_log.exporter_registry import ExporterRegistry
-
         _insert_undelivered(record_store.session_factory)
 
-        mock_registry = MagicMock(spec=ExporterRegistry)
+        mock_registry = MagicMock()
         mock_registry.exporter_names = ["mock-exporter"]
         mock_registry.dispatch_batch = AsyncMock(return_value={})
 
@@ -105,12 +103,10 @@ class TestExporterRegistryIntegration:
     async def test_exporter_failure_routes_to_dlq(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        from nexus.system_services.event_log.exporter_registry import ExporterRegistry
-
         _insert_undelivered(record_store.session_factory)
 
         # Mock registry returns failures for the exporter
-        mock_registry = MagicMock(spec=ExporterRegistry)
+        mock_registry = MagicMock()
         mock_registry.exporter_names = ["kafka"]
 
         async def mock_dispatch(events):

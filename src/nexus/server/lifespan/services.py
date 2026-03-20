@@ -620,17 +620,11 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
                 "[PIPE] PipedRecordStoreWriteObserver start failed: %s", e, exc_info=True
             )
 
-    # Issue #3193: EventDeliveryWorker (now async, started in lifespan)
-    dw = svc.delivery_worker
-    if dw is not None and hasattr(dw, "start"):
-        try:
-            await dw.start()
-            app.state.delivery_worker = dw
-            logger.info("[PIPE] EventDeliveryWorker started")
-        except Exception as e:
-            logger.warning("[PIPE] EventDeliveryWorker start failed: %s", e, exc_info=True)
-
-    # Issue #3193: expose event_signal on app.state for replay service
+    # Issue #3193: EventDeliveryWorker is started by ServiceLifecycleCoordinator
+    # (PersistentService auto-start). We only expose it + event_signal on
+    # app.state so the API layer (EventReplayService) can access the signal.
+    if svc.delivery_worker is not None:
+        app.state.delivery_worker = svc.delivery_worker
     if svc.event_signal is not None:
         app.state.event_signal = svc.event_signal
 
@@ -691,17 +685,12 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
 
 
 async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
-    """Stop DT_PIPE consumers (Issue #809, #810, #3193)."""
-    # Issue #3193: EventDeliveryWorker — stop first so it doesn't process
-    # events after the write observer is shut down.
-    dw = getattr(app.state, "delivery_worker", None)
-    if dw is not None and hasattr(dw, "stop"):
-        try:
-            await dw.stop()
-            logger.info("[PIPE] EventDeliveryWorker stopped")
-        except Exception as e:
-            logger.warning("[PIPE] Error stopping EventDeliveryWorker: %s", e, exc_info=True)
+    """Stop DT_PIPE consumers (Issue #809, #810).
 
+    Note: EventDeliveryWorker (Issue #3193) is stopped by
+    ServiceLifecycleCoordinator.stop_persistent_services() — no
+    explicit stop here to avoid double-stop.
+    """
     # Issue #809: PipedRecordStoreWriteObserver
     wo = getattr(app.state, "write_observer", None)
     if wo is not None and hasattr(wo, "stop"):

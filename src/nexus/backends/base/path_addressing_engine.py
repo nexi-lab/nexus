@@ -296,11 +296,12 @@ class PathAddressingEngine(Backend):
 
     def batch_read_content(
         self,
-        content_hashes: list[str],
+        content_ids: list[str],
         context: "OperationContext | None" = None,
         *,
         contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
+        content_hashes = content_ids  # PAS: opaque id, kept as local alias
         if not content_hashes:
             return {}
 

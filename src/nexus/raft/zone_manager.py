@@ -833,8 +833,11 @@ class ZoneManager:
         save_pem(tls_dir / "ca.pem", ca_cert)
         save_pem(tls_dir / "ca-key.pem", ca_key, is_private=True)
 
-        # Include this node's advertise hostname in cert SAN (CockroachDB pattern)
-        leader_hostnames = self._extract_hostnames(self._advertise_addr)
+        # Include this node's hostname in cert SAN (CockroachDB pattern).
+        # Use NEXUS_PEERS to get the actual hostname (e.g. nexus-1) instead of bind addr (0.0.0.0).
+        peers_str = os.environ.get("NEXUS_PEERS", "")
+        my_peer_addr = self._find_peer_address(peers_str, self._node_id) or self._advertise_addr
+        leader_hostnames = self._extract_hostnames(my_peer_addr)
         node_cert, node_key = generate_node_cert(
             self._node_id, zone_id, ca_cert, ca_key, hostnames=leader_hostnames
         )
@@ -872,11 +875,14 @@ class ZoneManager:
         if leader_addr is None:
             return
 
+        # Use this node's address from NEXUS_PEERS (contains the actual hostname
+        # like nexus-2:2126) so the cert SAN includes the correct hostname.
+        my_addr = self._find_peer_address(peers_str, self._node_id) or self._advertise_addr
         try:
             resp_ca, resp_cert, resp_key = self._py_mgr.call_join_cluster(
                 leader_addr=leader_addr,
                 node_id=self._node_id,
-                node_address=self._advertise_addr,
+                node_address=my_addr,
                 zone_id=ROOT_ZONE_ID,
             )
         except Exception as e:

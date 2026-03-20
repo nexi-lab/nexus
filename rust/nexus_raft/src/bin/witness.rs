@@ -151,9 +151,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if needs_bootstrap && !peers.is_empty() {
             let tls_dir_bg = tls_dir.clone();
             let peers_bg = peers.clone();
-            let bind_addr_str = format!("http://{}", bind_addr);
+            // Use own address from peers (e.g. "http://witness:2126") so cert SAN
+            // includes the actual hostname, not "0.0.0.0".
+            let my_addr = peers
+                .iter()
+                .find(|p| p.id == node_id)
+                .map(|p| p.endpoint.clone())
+                .unwrap_or_else(|| format!("http://{}", bind_addr));
             tokio::spawn(async move {
-                tls_bootstrap_loop(node_id, &bind_addr_str, &peers_bg, &tls_dir_bg).await;
+                tls_bootstrap_loop(node_id, &my_addr, &peers_bg, &tls_dir_bg).await;
             });
         }
 

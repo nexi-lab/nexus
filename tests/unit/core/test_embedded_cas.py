@@ -17,7 +17,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # Mount points auto-created by factory boot.
-_SYSTEM_PATHS = frozenset({"/", "/agents"})
+_SYSTEM_PATHS = frozenset({"/", "/agents", "/nexus/pipes/audit-events"})
 
 
 @pytest.fixture

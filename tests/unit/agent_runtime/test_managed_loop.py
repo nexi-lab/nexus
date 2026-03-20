@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.vfs_paths import agent as agent_paths
+from nexus.contracts.vfs_paths import proc as proc_paths
 from nexus.system_services.agent_runtime.observer import AgentObserver
 
 # =============================================================================
@@ -153,10 +155,10 @@ def _make_vfs_loop(
         sys_write=sys_write_mock,
         stream_read=stream_read_mock,
         llm_service=llm_service,
-        agent_path="/zone/agents/test-agent",
-        llm_path="/zone/llm/openai",
-        conv_path="/zone/agents/test-agent/conversation",
-        proc_path="/zone/proc/pid-123",
+        zone_id="zone",
+        agent_id="test-agent",
+        pid="pid-123",
+        llm_mount="/zone/llm/openai",
         model="gpt-4o",
     )
 
@@ -228,7 +230,7 @@ class TestManagedAgentLoop:
 
         # sys_write called for conversation persistence
         write_store = mocks["write_store"]
-        conv_key = "/zone/agents/test-agent/conversation"
+        conv_key = agent_paths.conversation("zone", "test-agent")
         assert conv_key in write_store
 
         # Conversation contains system (if any) + user + assistant
@@ -246,7 +248,7 @@ class TestManagedAgentLoop:
         await loop.run("Hello")
 
         write_store = mocks["write_store"]
-        result_key = "/zone/proc/pid-123/result"
+        result_key = proc_paths.result("zone", "pid-123")
         assert result_key in write_store
 
         result_data = json.loads(write_store[result_key])
@@ -309,7 +311,7 @@ class TestManagedAgentLoop:
             {"role": "user", "content": "Previous message"},
             {"role": "assistant", "content": "Previous response"},
         ]
-        mocks["read_store"]["/zone/agents/test-agent/conversation"] = json.dumps(
+        mocks["read_store"][agent_paths.conversation("zone", "test-agent")] = json.dumps(
             saved_conv
         ).encode()
 

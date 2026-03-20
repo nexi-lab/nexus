@@ -1,34 +1,28 @@
 """ManagedAgentLoop — kernel-managed LLM reasoning loop (everything-is-a-file).
 
-1st-party agent where ALL I/O routes through kernel VFS syscalls:
+1st-party agent where ALL I/O routes through kernel VFS syscalls.
+Paths constructed via ``contracts.vfs_paths`` (single source of truth).
 
-    LLM call:       sys_write(llm_path, request) → DT_STREAM tokens
-    Token read:     sys_read(stream_path, offset) → real-time token delivery
-    Conversation:   sys_write(conv_path, messages) → CAS persistence
-    System prompt:  sys_read(agent_path/SYSTEM.md) → VFS-backed config
-    Tools config:   sys_read(agent_path/tools.json) → VFS-backed tool defs
+    LLM call:       LLMStreamingService → DT_STREAM tokens
+    Token read:     stream_read(llm_paths.stream(...)) → real-time
+    Conversation:   sys_write(agent_paths.conversation(...)) → CAS
+    System prompt:  sys_read(agent_paths.system_prompt(...))
+    Tools config:   sys_read(agent_paths.tools(...))
     Tool execution: sys_read / sys_write → VFS syscalls
-    Session result: sys_write(proc/{pid}/result) → VFS persistence
+    Session result: sys_write(proc_paths.result(...))
 
-No backend called directly. No in-memory-only state. Every I/O
-operation is observable via kernel dispatch (PRE → INTERCEPT → OBSERVE).
+No backend called directly. No in-memory-only state. No inline path
+construction. Every I/O observable via kernel dispatch.
 
-Reuses AgentObserver for notification accumulation (shared with
-3rd-party AcpConnection).
-
-DI dependencies (kernel syscall callables):
-    - sys_read:  NexusFS.sys_read wrapper
-    - sys_write: NexusFS.sys_write wrapper
-    - llm_streaming_service: LLMStreamingService for DT_STREAM delivery
-    - agent_path: VFS path for agent config (SYSTEM.md, tools.json)
-    - llm_path: VFS mount path for LLM backend
-    - conv_path: VFS path for conversation persistence (CAS)
-    - proc_path: VFS path for process state (/{zone}/proc/{pid})
+DI dependencies (kernel syscall callables + identity):
+    - sys_read / sys_write / stream_read: NexusFS wrappers
+    - llm_service: LLMStreamingService for DT_STREAM delivery
+    - zone_id, agent_id, pid, llm_mount: identity → paths via vfs_paths
 
 References:
     - Task #1510: AgentService (Tier 1)
     - Task #1589: LLM backend driver design
-    - system_services/acp/connection.py — AcpConnection pattern
+    - contracts/vfs_paths.py — path conventions SSOT
 """
 
 from __future__ import annotations
@@ -39,6 +33,9 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.vfs_paths import agent as agent_paths
+from nexus.contracts.vfs_paths import llm as llm_paths
+from nexus.contracts.vfs_paths import proc as proc_paths
 from nexus.system_services.agent_runtime.observer import AgentObserver, AgentTurnResult
 
 if TYPE_CHECKING:
@@ -79,10 +76,10 @@ class ManagedAgentLoop:
         sys_write: SysWriteFn,
         stream_read: StreamReadFn,
         llm_service: "LLMStreamingService",
-        agent_path: str,
-        llm_path: str,
-        conv_path: str,
-        proc_path: str,
+        zone_id: str,
+        agent_id: str,
+        pid: str,
+        llm_mount: str,
         model: str | None = None,
         max_turns: int = _MAX_TURNS,
     ) -> None:
@@ -90,10 +87,10 @@ class ManagedAgentLoop:
         self._sys_write = sys_write
         self._stream_read = stream_read
         self._llm_service = llm_service
-        self._agent_path = agent_path  # /{zone}/agents/{id}
-        self._llm_path = llm_path  # /{zone}/llm/openai
-        self._conv_path = conv_path  # /{zone}/agents/{id}/conversation
-        self._proc_path = proc_path  # /{zone}/proc/{pid}
+        self._zone_id = zone_id
+        self._agent_id = agent_id
+        self._pid = pid
+        self._llm_mount = llm_mount
         self._model = model
         self._max_turns = max_turns
         self._session_id = str(uuid.uuid4())
@@ -129,20 +126,22 @@ class ManagedAgentLoop:
         """
         # System prompt from VFS
         try:
-            prompt_bytes = await self._sys_read(f"{self._agent_path}/SYSTEM.md")
+            prompt_path = agent_paths.system_prompt(self._zone_id, self._agent_id)
+            prompt_bytes = await self._sys_read(prompt_path)
             system_prompt = prompt_bytes.decode("utf-8").strip()
             if system_prompt:
                 self._messages.append({"role": "system", "content": system_prompt})
         except Exception:
-            logger.debug("No system prompt at %s/SYSTEM.md", self._agent_path)
+            logger.debug("No system prompt at %s", prompt_path)
 
         # Tool definitions from VFS
         self._tools: list[dict[str, Any]] = []
         try:
-            tools_bytes = await self._sys_read(f"{self._agent_path}/tools.json")
+            tools_path = agent_paths.tools(self._zone_id, self._agent_id)
+            tools_bytes = await self._sys_read(tools_path)
             self._tools = json.loads(tools_bytes)
         except Exception:
-            logger.debug("No tools config at %s/tools.json", self._agent_path)
+            logger.debug("No tools config at %s", tools_path)
 
     # ------------------------------------------------------------------
     # Main reasoning loop
@@ -235,7 +234,8 @@ class ManagedAgentLoop:
             request["tools"] = self._tools
 
         request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
-        stream_path = f"{self._llm_path}/.streams/{self._session_id}-{uuid.uuid4().hex[:8]}"
+        stream_id = f"{self._session_id}-{uuid.uuid4().hex[:8]}"
+        stream_path = llm_paths.stream(self._llm_mount, stream_id)
 
         # Start LLM streaming via kernel service
         await self._llm_service.start_stream(request_bytes, stream_path)
@@ -321,10 +321,11 @@ class ManagedAgentLoop:
         Each mutation creates a new CAS hash. With MessageBoundaryStrategy
         CDC, shared message prefixes are deduplicated across sessions.
         """
+        conv_path = agent_paths.conversation(self._zone_id, self._agent_id)
         conv_bytes = json.dumps(self._messages, separators=(",", ":"), ensure_ascii=False).encode(
             "utf-8"
         )
-        await self._sys_write(self._conv_path, conv_bytes)
+        await self._sys_write(conv_path, conv_bytes)
 
     async def _persist_result(self, result: AgentTurnResult) -> None:
         """Persist turn result to proc filesystem via VFS."""
@@ -337,18 +338,20 @@ class ManagedAgentLoop:
             "session_id": self._session_id,
         }
         result_bytes = json.dumps(result_data, separators=(",", ":")).encode("utf-8")
+        result_path = proc_paths.result(self._zone_id, self._pid)
         try:
-            await self._sys_write(f"{self._proc_path}/result", result_bytes)
+            await self._sys_write(result_path, result_bytes)
         except Exception:
-            logger.debug("Could not persist result to %s/result", self._proc_path)
+            logger.debug("Could not persist result to %s", result_path)
 
     async def load_conversation(self) -> None:
         """Resume conversation from VFS (CAS-addressed)."""
+        conv_path = agent_paths.conversation(self._zone_id, self._agent_id)
         try:
-            conv_bytes = await self._sys_read(self._conv_path)
+            conv_bytes = await self._sys_read(conv_path)
             self._messages = json.loads(conv_bytes)
         except Exception:
-            logger.debug("No conversation to resume at %s", self._conv_path)
+            logger.debug("No conversation to resume at %s", conv_path)
 
     # ------------------------------------------------------------------
     # Session management

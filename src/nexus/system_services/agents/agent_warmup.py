@@ -40,7 +40,7 @@ from nexus.contracts.process_types import (
 )
 
 if TYPE_CHECKING:
-    from nexus.core.process_table import AgentRegistry
+    from nexus.core.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class AgentWarmupService:
     iterates the step list calling the registry.
 
     Args:
-        process_table: ProcessTable for state queries and transitions.
+        agent_registry: AgentRegistry for state queries and transitions.
         namespace_manager: Optional NamespaceManager for mount resolution.
         enabled_bricks: Set of brick names enabled in this deployment.
         cache_store: Optional CacheStoreABC for cache warming.
@@ -65,13 +65,13 @@ class AgentWarmupService:
 
     def __init__(
         self,
-        process_table: "AgentRegistry",
+        agent_registry: "AgentRegistry",
         namespace_manager: Any | None = None,
         enabled_bricks: frozenset[str] | None = None,
         cache_store: Any | None = None,
         mcp_config: dict[str, Any] | None = None,
     ) -> None:
-        self._process_table = process_table
+        self._agent_registry = agent_registry
         self._namespace_manager = namespace_manager
         self._enabled_bricks = enabled_bricks or frozenset()
         self._cache_store = cache_store
@@ -127,7 +127,7 @@ class AgentWarmupService:
         start = time.monotonic()
 
         # Edge case 1: Verify agent exists
-        record = self._process_table.get(agent_id)
+        record = self._agent_registry.get(agent_id)
         if record is None:
             return WarmupResult(
                 success=False,
@@ -153,7 +153,7 @@ class AgentWarmupService:
         ctx = WarmupContext(
             agent_id=agent_id,
             agent_record=record,
-            process_table=self._process_table,
+            agent_registry=self._agent_registry,
             namespace_manager=self._namespace_manager,
             enabled_bricks=self._enabled_bricks,
             cache_store=self._cache_store,
@@ -261,14 +261,14 @@ class AgentWarmupService:
         """
         try:
             # CAS check: verify generation hasn't changed
-            current = self._process_table.get(agent_id)
+            current = self._agent_registry.get(agent_id)
             if current is None:
                 raise ValueError(f"Agent '{agent_id}' not found")
             if current.generation != expected_generation:
                 raise InvalidTransitionError(
                     f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
                 )
-            self._process_table.signal(agent_id, AgentSignal.SIGCONT)
+            self._agent_registry.signal(agent_id, AgentSignal.SIGCONT)
         except (ValueError, InvalidTransitionError, AgentError) as exc:
             logger.warning("[WARMUP] Failed to transition agent %s to CONNECTED: %s", agent_id, exc)
             return WarmupResult(

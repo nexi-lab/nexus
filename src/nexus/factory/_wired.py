@@ -298,14 +298,14 @@ async def _boot_wired_services(
     if _acp_service is None:
         # System tier didn't create AcpService — construct inline.
         try:
-            from nexus.core.process_table import ProcessTable
+            from nexus.core.agent_registry import AgentRegistry
             from nexus.system_services.acp.service import AcpService
 
-            _acp_pt = getattr(system_services, "process_table", None)
+            _acp_pt = getattr(system_services, "agent_registry", None)
             if _acp_pt is None:
-                _acp_pt = ProcessTable()
+                _acp_pt = AgentRegistry()
             _acp_service = AcpService(
-                process_table=_acp_pt,
+                agent_registry=_acp_pt,
                 zone_id=ROOT_ZONE_ID,
             )
             logger.debug("[BOOT:WIRED] AcpService created (inline)")

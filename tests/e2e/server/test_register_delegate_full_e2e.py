@@ -20,7 +20,7 @@ from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.core.process_table import AgentRegistry
+from nexus.core.agent_registry import AgentRegistry
 from nexus.system_services.agents.agent_registration import AgentRegistrationService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
@@ -45,7 +45,7 @@ def entity_registry(record_store):
 
 
 @pytest.fixture()
-def process_table():
+def agent_registry():
     return AgentRegistry()
 
 
@@ -68,11 +68,11 @@ def ipc_provisioner(ipc_storage):
 
 @pytest.fixture()
 def registration_service(
-    record_store, process_table, entity_registry, rebac_manager, ipc_provisioner
+    record_store, agent_registry, entity_registry, rebac_manager, ipc_provisioner
 ):
     return AgentRegistrationService(
         record_store=record_store,
-        process_table=process_table,
+        agent_registry=agent_registry,
         entity_registry=entity_registry,
         rebac_manager=rebac_manager,
         ipc_provisioner=ipc_provisioner,
@@ -80,12 +80,12 @@ def registration_service(
 
 
 @pytest.fixture()
-def delegation_service(record_store, rebac_manager, entity_registry, process_table):
+def delegation_service(record_store, rebac_manager, entity_registry, agent_registry):
     return DelegationService(
         record_store=record_store,
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
-        process_table=process_table,
+        agent_registry=agent_registry,
     )
 
 

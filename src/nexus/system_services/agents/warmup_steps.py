@@ -33,9 +33,9 @@ async def load_credentials(ctx: "WarmupContext") -> bool:
         logger.warning("[WARMUP:credentials] Agent %s has no owner_id", ctx.agent_id)
         return False
 
-    from nexus.contracts.process_types import ProcessState
+    from nexus.contracts.process_types import AgentState
 
-    eligible = {ProcessState.REGISTERED, ProcessState.READY, ProcessState.SUSPENDED}
+    eligible = {AgentState.REGISTERED, AgentState.READY, AgentState.SUSPENDED}
     if record.state not in eligible:
         logger.warning(
             "[WARMUP:credentials] Agent %s in non-eligible state %s",

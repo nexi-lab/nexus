@@ -25,7 +25,7 @@ from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, PressureLevel, 
 
 if TYPE_CHECKING:
     from nexus.contracts.process_types import AgentDescriptor
-    from nexus.core.process_table import AgentRegistry
+    from nexus.core.agent_registry import AgentRegistry
     from nexus.lib.performance_tuning import EvictionTuning
     from nexus.system_services.agents.eviction_policy import EvictionPolicy
     from nexus.system_services.agents.resource_monitor import ResourceMonitor
@@ -60,7 +60,7 @@ class EvictionManager:
     triggered by premium agent registration when at capacity.
 
     Args:
-        process_table: AgentRegistry for state transitions and signals.
+        agent_registry: AgentRegistry for state transitions and signals.
         monitor: ResourceMonitor for pressure detection.
         policy: EvictionPolicy for candidate selection.
         tuning: EvictionTuning with thresholds and batch sizes.
@@ -68,12 +68,12 @@ class EvictionManager:
 
     def __init__(
         self,
-        process_table: "AgentRegistry",
+        agent_registry: "AgentRegistry",
         monitor: "ResourceMonitor",
         policy: "EvictionPolicy",
         tuning: "EvictionTuning",
     ) -> None:
-        self._process_table = process_table
+        self._agent_registry = agent_registry
         self._monitor = monitor
         self._policy = policy
         self._tuning = tuning
@@ -127,10 +127,10 @@ class EvictionManager:
             EvictionResult with eviction counts and reason.
         """
         from nexus.contracts.process_types import (
+            AgentError,
+            AgentSignal,
+            AgentState,
             InvalidTransitionError,
-            ProcessError,
-            ProcessSignal,
-            ProcessState,
         )
 
         # Consume urgent event if set, drain queue for highest-priority requester
@@ -155,7 +155,7 @@ class EvictionManager:
         # 1b. Check max_active_agents cap (secondary trigger, lightweight COUNT)
         over_cap = False
         if pressure is PressureLevel.NORMAL:
-            connected_count = self._process_table.count_by_state(ProcessState.BUSY)
+            connected_count = self._agent_registry.count_by_state(AgentState.BUSY)
             if connected_count > self._tuning.max_active_agents:
                 over_cap = True
                 logger.info(
@@ -192,7 +192,7 @@ class EvictionManager:
             )
 
         # 3. Get candidates from process table (synchronous in-memory)
-        candidates = self._process_table.list_by_priority(
+        candidates = self._agent_registry.list_by_priority(
             batch_size=self._tuning.eviction_batch_size,
         )
         if not candidates:
@@ -212,17 +212,17 @@ class EvictionManager:
             async with self._transition_semaphore:
                 try:
                     # CAS check: verify generation hasn't changed
-                    current = self._process_table.get(agent.pid)
+                    current = self._agent_registry.get(agent.pid)
                     if current is None or current.generation != agent.generation:
                         raise InvalidTransitionError(f"stale generation for {agent.pid}")
-                    self._process_table.signal(agent.pid, ProcessSignal.SIGSTOP)
+                    self._agent_registry.signal(agent.pid, AgentSignal.SIGSTOP)
                     logger.debug(
                         "[EVICTION] Sent SIGSTOP to process %s (gen=%d)",
                         agent.pid,
                         agent.generation,
                     )
                     return True
-                except (InvalidTransitionError, ProcessError) as exc:
+                except (InvalidTransitionError, AgentError) as exc:
                     logger.info(
                         "[EVICTION] Skipping process %s: %s",
                         agent.pid,
@@ -271,27 +271,27 @@ class EvictionManager:
             EvictionResult with eviction outcome.
         """
         from nexus.contracts.process_types import (
+            AgentError,
+            AgentSignal,
+            AgentState,
             InvalidTransitionError,
-            ProcessError,
-            ProcessSignal,
-            ProcessState,
         )
 
-        record = self._process_table.get(agent_id)
+        record = self._agent_registry.get(agent_id)
         if record is None:
             raise ValueError(f"Agent '{agent_id}' not found")
-        if record.state is not ProcessState.BUSY:
+        if record.state is not AgentState.BUSY:
             raise ValueError(f"Agent '{agent_id}' is {record.state}, not BUSY")
 
         # (Checkpoint skipped — will migrate to VFS writes)
 
         # Transition via CAS + signal
         try:
-            current = self._process_table.get(agent_id)
+            current = self._agent_registry.get(agent_id)
             if current is None or current.generation != record.generation:
                 raise InvalidTransitionError(f"stale generation for {agent_id}")
-            self._process_table.signal(agent_id, ProcessSignal.SIGSTOP)
-        except (InvalidTransitionError, ProcessError) as exc:
+            self._agent_registry.signal(agent_id, AgentSignal.SIGSTOP)
+        except (InvalidTransitionError, AgentError) as exc:
             logger.info("[EVICTION] Manual eviction skipped for %s: %s", agent_id, exc)
             return EvictionResult(evicted=0, reason=EvictionReason.MANUAL, skipped=1)
 

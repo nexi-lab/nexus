@@ -91,7 +91,7 @@ class AcpRPCService:
 
     @rpc_expose(description="List running ACP processes")
     def acp_list_processes(self, context: dict | None = None) -> list[dict]:
-        """List ACP-managed processes from the ProcessTable."""
+        """List ACP-managed processes from the AgentRegistry."""
         procs = self._acp.list_agents(
             zone_id=self._zone_id(context),
         )

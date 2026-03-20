@@ -29,7 +29,7 @@ from nexus.contracts.grant_helpers import GrantInput, grants_to_rebac_tuples
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.core.process_table import AgentRegistry
+    from nexus.core.agent_registry import AgentRegistry
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class AgentRegistrationService:
     Args:
         record_store: RecordStoreABC for session creation (API key step).
         entity_registry: EntityRegistry for persistent agent identity.
-        process_table: AgentRegistry for runtime agent liveness.
+        agent_registry: AgentRegistry for runtime agent liveness.
         rebac_manager: EnhancedReBACManager for permission tuples.
         ipc_provisioner: Optional IPC provisioner (AgentProvisioner) for IPC directories.
         key_service: Optional KeyService for Ed25519 public key storage.
@@ -77,14 +77,14 @@ class AgentRegistrationService:
         self,
         record_store: "RecordStoreABC",
         entity_registry: "EntityRegistryProtocol | None" = None,
-        process_table: "AgentRegistry | None" = None,
+        agent_registry: "AgentRegistry | None" = None,
         rebac_manager: Any = None,
         ipc_provisioner: Any = None,
         key_service: Any = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._entity_registry = entity_registry
-        self._process_table = process_table
+        self._agent_registry = agent_registry
         self._rebac_manager = rebac_manager
         self._ipc_provisioner = ipc_provisioner
         self._key_service = key_service
@@ -148,8 +148,8 @@ class AgentRegistrationService:
             )
 
         # ── Step 2: Runtime liveness in AgentRegistry ─────────────────
-        if self._process_table is not None:
-            self._process_table.register_external(
+        if self._agent_registry is not None:
+            self._agent_registry.register_external(
                 name,
                 owner_id,
                 effective_zone,
@@ -213,9 +213,9 @@ class AgentRegistrationService:
                         agent_id,
                         cleanup_exc,
                     )
-            if self._process_table is not None:
+            if self._agent_registry is not None:
                 with contextlib.suppress(Exception):
-                    self._process_table.unregister_external(agent_id)
+                    self._agent_registry.unregister_external(agent_id)
             if self._entity_registry is not None:
                 with contextlib.suppress(Exception):
                     self._entity_registry.delete_entity("agent", agent_id)

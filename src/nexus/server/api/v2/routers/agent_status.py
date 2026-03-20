@@ -190,16 +190,16 @@ def _spec_to_response(stored: Any) -> AgentSpecResponse:
 # ---------------------------------------------------------------------------
 
 
-async def _get_process_table(request: Request) -> Any:
-    """Get ProcessTable from app state (optional — may be None)."""
-    return getattr(request.app.state, "process_table", None)
+async def _get_agent_registry(request: Request) -> Any:
+    """Get AgentRegistry from app state (optional — may be None)."""
+    return getattr(request.app.state, "agent_registry", None)
 
 
-async def _require_process_table(request: Request) -> Any:
-    """Get ProcessTable, raising 503 if unavailable."""
-    pt = getattr(request.app.state, "process_table", None)
+async def _require_agent_registry(request: Request) -> Any:
+    """Get AgentRegistry, raising 503 if unavailable."""
+    pt = getattr(request.app.state, "agent_registry", None)
     if pt is None:
-        raise HTTPException(status_code=503, detail="ProcessTable not available")
+        raise HTTPException(status_code=503, detail="AgentRegistry not available")
     return pt
 
 
@@ -232,24 +232,24 @@ async def list_agents(
     limit: int = Query(default=50, ge=1, le=200, description="Max agents to return"),
     offset: int = Query(default=0, ge=0, description="Agents to skip"),
     _auth: dict = Depends(_get_require_auth()),
-    process_table: Any = Depends(_get_process_table),
+    agent_registry: Any = Depends(_get_agent_registry),
     nexus_fs: Any = Depends(_get_nexus_fs),
 ) -> AgentListResponse:
     """List agents in a zone with pagination.
 
     Merges two sources:
-    - ProcessTable: currently running agents (in-memory)
+    - AgentRegistry: currently running agents (in-memory)
     - Database: registered agent identities (APIKeyModel with subject_type=agent)
 
     Running agents show their live state; registered-but-not-running agents
     show as "registered".
     """
-    # 1. Running agents from ProcessTable (if available)
+    # 1. Running agents from AgentRegistry (if available)
     #    Use connection_id (real agent name) as key when available,
     #    so delegation-created workers show as "researcher" not "35c2c87cb31d"
     running_map: dict[str, Any] = {}
-    if process_table is not None:
-        for a in process_table.list_processes(zone_id=zone_id):
+    if agent_registry is not None:
+        for a in agent_registry.list_processes(zone_id=zone_id):
             ext = a.external_info
             agent_id = ext.connection_id if ext and ext.connection_id else a.pid
             running_map[agent_id] = AgentListItem(
@@ -333,11 +333,11 @@ async def list_agents(
 async def get_agent_status(
     agent_id: str,
     auth_result: dict = Depends(_get_require_auth()),
-    process_table: Any = Depends(_require_process_table),
+    agent_registry: Any = Depends(_require_agent_registry),
 ) -> AgentStatusResponse:
     """Get computed status for an agent."""
     _authorize_agent_access(auth_result, agent_id, "read status of")
-    desc = process_table.get(agent_id)
+    desc = agent_registry.get(agent_id)
     if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
@@ -372,13 +372,13 @@ async def set_agent_spec(
     agent_id: str,
     body: AgentSpecRequest,
     auth_result: dict = Depends(_get_require_auth()),
-    process_table: Any = Depends(_require_process_table),
+    agent_registry: Any = Depends(_require_agent_registry),
     vfs: Any = Depends(_get_vfs),
 ) -> AgentSpecResponse:
     """Set the desired state spec for an agent."""
     _authorize_agent_access(auth_result, agent_id, "set spec for")
 
-    desc = process_table.get(agent_id)
+    desc = agent_registry.get(agent_id)
     if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
@@ -423,13 +423,13 @@ async def set_agent_spec(
 async def get_agent_spec(
     agent_id: str,
     auth_result: dict = Depends(_get_require_auth()),
-    process_table: Any = Depends(_require_process_table),
+    agent_registry: Any = Depends(_require_agent_registry),
     vfs: Any = Depends(_get_vfs),
 ) -> AgentSpecResponse:
     """Get the stored spec for an agent."""
     _authorize_agent_access(auth_result, agent_id, "read spec of")
 
-    desc = process_table.get(agent_id)
+    desc = agent_registry.get(agent_id)
     if desc is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' has no spec")
 

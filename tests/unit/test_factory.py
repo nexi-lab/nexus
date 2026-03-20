@@ -183,7 +183,7 @@ class TestBootSystemServices:
             "zone_lifecycle",
             # (PipeManager is kernel-internal §4.2, not in SystemServices)
             # Process lifecycle (Issue #1509)
-            "process_table",
+            "agent_registry",
             "scheduler_service",
             # ACP coding agent service
             "acp_service",

@@ -196,17 +196,17 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_audit)
 
-    # Issue #1792: process_table close via callback (not kernel → _system_services)
-    _pt = getattr(_sys, "process_table", None)
+    # Issue #1792: agent_registry close via callback (not kernel → _system_services)
+    _pt = getattr(_sys, "agent_registry", None)
     if _pt is not None and hasattr(_pt, "close_all"):
 
-        def _close_process_table() -> None:
+        def _close_agent_registry() -> None:
             try:
                 _pt.close_all()
             except Exception as exc:
-                logger.debug("close: process_table.close_all() failed: %s", exc)
+                logger.debug("close: agent_registry.close_all() failed: %s", exc)
 
-        nx._close_callbacks.append(_close_process_table)
+        nx._close_callbacks.append(_close_agent_registry)
 
     # Issue #1791: overlay config resolver — kernel calls self._overlay_config_fn(path)
     # instead of reading workspace_registry from _system_services.

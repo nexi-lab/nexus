@@ -201,7 +201,7 @@ def create_nexus_services(
         # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
         # Process table + ACP
-        process_table=system_dict.get("process_table"),
+        agent_registry=system_dict.get("agent_registry"),
         acp_service=system_dict.get("acp_service"),
         # Distributed event bus — Tier 1 infrastructure (Issue #1701)
         event_bus=brick_dict["event_bus"],
@@ -538,8 +538,8 @@ async def _register_vfs_hooks(
     )
     await _enlist("virtual_view", _vview_resolver)
 
-    # ── ProcResolver (procfs virtual filesystem for ProcessTable — Issue #1570) ──
-    _proc_table = getattr(system_services, "process_table", None) if system_services else None
+    # ── ProcResolver (procfs virtual filesystem for AgentRegistry — Issue #1570) ──
+    _proc_table = getattr(system_services, "agent_registry", None) if system_services else None
     if _proc_table is not None:
         try:
             from nexus.system_services.proc.proc_resolver import ProcResolver

@@ -2,7 +2,7 @@
 
 Defines the contract for the ACP (Agent CLI Protocol) system service,
 which calls coding agent CLIs (Claude Code, Gemini CLI, Codex, etc.)
-as stateless one-shot subprocesses tracked by the kernel ProcessTable.
+as stateless one-shot subprocesses tracked by the kernel AgentRegistry.
 """
 
 from __future__ import annotations

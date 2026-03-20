@@ -22,7 +22,7 @@ from nexus.contracts.process_types import (
     ExternalProcessInfo,
     InvalidTransitionError,
 )
-from nexus.core.process_table import AgentRegistry
+from nexus.core.agent_registry import AgentRegistry
 
 # ---------------------------------------------------------------------------
 # Helpers

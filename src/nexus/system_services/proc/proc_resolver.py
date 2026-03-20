@@ -6,7 +6,7 @@ AgentRegistry's in-memory state at read time.  Like Linux ``/proc``,
 nothing is stored on disk.
 
     system_services/proc/proc_resolver.py = fs/proc/ (procfs)
-    core/process_table.py                 = kernel/fork.c (task_struct table)
+    core/agent_registry.py                = kernel/fork.c (task_struct table)
 
 Registration: factory/orchestrator.py registers ProcResolver via
 coordinator.enlist() at boot, after AgentRegistry creation.
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
-    from nexus.core.process_table import AgentRegistry
+    from nexus.core.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +40,8 @@ class ProcResolver:
 
     TRIE_PATTERN = "/{}/proc/{}/status"
 
-    def __init__(self, process_table: AgentRegistry) -> None:
-        self._process_table = process_table
+    def __init__(self, agent_registry: AgentRegistry) -> None:
+        self._agent_registry = agent_registry
 
     # -- HotSwappable protocol (registered via coordinator.enlist) --
 
@@ -60,7 +60,7 @@ class ProcResolver:
         if m is None:
             return None
         pid = m.group(2)
-        if self._process_table.get(pid) is None:
+        if self._agent_registry.get(pid) is None:
             return None
         return pid
 
@@ -77,7 +77,7 @@ class ProcResolver:
         if pid is None:
             return None
 
-        desc = self._process_table.get(pid)
+        desc = self._agent_registry.get(pid)
         if desc is None:
             return None
 

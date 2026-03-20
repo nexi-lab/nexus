@@ -1,7 +1,7 @@
 """VFS read resolver: /.tasks/tasks/{task_id}/agent/status → live ProcessDescriptor.
 
 Intercepts reads to the virtual path and returns the ProcessDescriptor
-for the task's worker agent, assembled live from ProcessTable.
+for the task's worker agent, assembled live from AgentRegistry.
 No data is stored on disk — like Linux /proc, it is generated on demand.
 
 Virtual path: /.tasks/tasks/{task_id}/agent/status
@@ -30,8 +30,8 @@ class TaskAgentResolver:
 
     TRIE_PATTERN = "/.tasks/tasks/{}/agent/status"
 
-    def __init__(self, process_table: Any) -> None:
-        self._process_table = process_table
+    def __init__(self, agent_registry: Any) -> None:
+        self._agent_registry = agent_registry
         self._worker_pids: dict[str, int] = {}  # task_id → worker_pid (sync cache)
 
     def hook_spec(self) -> "HookSpec":
@@ -70,7 +70,7 @@ class TaskAgentResolver:
         if not worker_pid:
             payload: dict[str, Any] = {"status": "no_worker", "task_id": task_id}
         else:
-            proc = self._process_table.get(worker_pid) if self._process_table else None
+            proc = self._agent_registry.get(worker_pid) if self._agent_registry else None
             if proc is None:
                 payload = {"status": "exited", "task_id": task_id, "worker_pid": worker_pid}
             else:

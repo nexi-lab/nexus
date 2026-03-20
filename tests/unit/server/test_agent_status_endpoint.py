@@ -8,8 +8,8 @@ Tests cover:
 5. GET /spec returns 404 for agent without spec
 6. Drift detection visible in status response
 
-Post-AgentRegistry deletion (PR #3109): endpoints now use ProcessTable
-directly.  Mocks target process_table.get() → AgentDescriptor.
+Post-AgentRegistry deletion (PR #3109): endpoints now use AgentRegistry
+directly.  Mocks target agent_registry.get() → AgentDescriptor.
 """
 
 import json
@@ -34,17 +34,17 @@ from nexus.server.api.v2.routers.agent_status import router
 
 
 def _create_test_app(
-    mock_process_table: Any,
+    mock_agent_registry: Any,
     mock_vfs: Any | None = None,
 ) -> FastAPI:
     """Create a minimal FastAPI app with the agent_status router."""
     app = FastAPI()
-    app.state.process_table = mock_process_table
+    app.state.agent_registry = mock_agent_registry
 
-    # Override process_table dependency for testing
-    from nexus.server.api.v2.routers.agent_status import _get_process_table, _get_vfs
+    # Override agent_registry dependency for testing
+    from nexus.server.api.v2.routers.agent_status import _get_agent_registry, _get_vfs
 
-    app.dependency_overrides[_get_process_table] = lambda: mock_process_table
+    app.dependency_overrides[_get_agent_registry] = lambda: mock_agent_registry
 
     if mock_vfs is not None:
         app.state.vfs = mock_vfs

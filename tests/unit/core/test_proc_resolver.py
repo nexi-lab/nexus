@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from nexus.core.process_table import AgentRegistry
+from nexus.core.agent_registry import AgentRegistry
 from nexus.system_services.proc.proc_resolver import ProcResolver
 
 ZONE = "test-zone"

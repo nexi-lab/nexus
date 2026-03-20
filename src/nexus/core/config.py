@@ -255,7 +255,7 @@ class SystemServices:
     # constructed in NexusFS.__init__ — not injected via SystemServices.)
 
     # Process lifecycle — kernel process table (Issue #1509)
-    process_table: Any = None
+    agent_registry: Any = None
 
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None

@@ -75,20 +75,20 @@ class AcpService:
         1. Look up ``AgentConfig`` by ``agent_id``
         2. Inject system prompt (VFS override > config default)
         3. Build ACP command (binary + acp_args, no prompt in argv)
-        4. Register process in ``ProcessTable`` (spawn → RUNNING)
+        4. Register process in ``AgentRegistry`` (spawn → REGISTERED)
         5. Create subprocess, wrap in StdioPipe, register DT_PIPEs
         6. ``AcpConnection`` → initialize → session/new → session/prompt
-        7. Disconnect, kill subprocess, destroy DT_PIPEs, → ZOMBIE
+        7. Disconnect, kill subprocess, destroy DT_PIPEs, → TERMINATED
         8. Map ``AcpPromptResult`` → ``AcpResult`` with unified metadata
         9. Persist result to VFS at ``/{zone}/proc/{pid}/result``
     """
 
     def __init__(
         self,
-        process_table: Any,
+        agent_registry: Any,
         zone_id: str = ROOT_ZONE_ID,
     ) -> None:
-        self._process_table = process_table
+        self._agent_registry = agent_registry
         self._zone_id = zone_id
         self._nexus_fs: VFSOperations | None = None
         self._pipe_manager: Any | None = None
@@ -188,8 +188,8 @@ class AcpService:
         if labels:
             merged_labels.update(labels)
 
-        # Register in ProcessTable via spawn (→ RUNNING directly, #1691).
-        desc = self._process_table.spawn(
+        # Register in AgentRegistry via spawn (→ REGISTERED directly, #1691).
+        desc = self._agent_registry.spawn(
             name=f"acp:{config.name}",
             owner_id=owner_id,
             zone_id=zone_id,
@@ -320,11 +320,11 @@ class AcpService:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(proc.wait(), timeout=5.0)
 
-        # Kill in ProcessTable (→ ZOMBIE)
+        # Kill in AgentRegistry (→ TERMINATED)
         try:
-            self._process_table.kill(pid, exit_code=exit_code)
+            self._agent_registry.kill(pid, exit_code=exit_code)
         except Exception:
-            logger.debug("ProcessTable.kill(%s) failed (may already be reaped)", pid)
+            logger.debug("AgentRegistry.kill(%s) failed (may already be reaped)", pid)
 
         result = AcpResult(
             pid=pid,
@@ -353,7 +353,7 @@ class AcpService:
                     self._pipe_manager.destroy(fd_path)
 
     def kill_agent(self, pid: str) -> AgentDescriptor:
-        """Kill a running agent connection and mark ZOMBIE in ProcessTable."""
+        """Kill a running agent connection and mark TERMINATED in AgentRegistry."""
         active = self._connections.pop(pid, None)
         if active is not None:
             try:
@@ -363,7 +363,7 @@ class AcpService:
                 pass
             self._teardown_agent(active)
 
-        desc: AgentDescriptor = self._process_table.kill(pid, exit_code=-9)
+        desc: AgentDescriptor = self._agent_registry.kill(pid, exit_code=-9)
         return desc
 
     def list_agents(
@@ -372,8 +372,8 @@ class AcpService:
         zone_id: str | None = None,
         owner_id: str | None = None,
     ) -> list[AgentDescriptor]:
-        """List ACP-managed processes from the ProcessTable."""
-        procs = self._process_table.list_processes(
+        """List ACP-managed processes from the AgentRegistry."""
+        procs = self._agent_registry.list_processes(
             kind=AgentKind.UNMANAGED,
             zone_id=zone_id,
             owner_id=owner_id,

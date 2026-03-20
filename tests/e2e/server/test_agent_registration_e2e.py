@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.core.process_table import AgentRegistry
+from nexus.core.agent_registry import AgentRegistry
 from nexus.server.api.v2.routers.agent_registration import (
     router as registration_router,
 )
@@ -47,7 +47,7 @@ def entity_registry(record_store):
 
 
 @pytest.fixture()
-def process_table():
+def agent_registry():
     return AgentRegistry()
 
 
@@ -70,12 +70,12 @@ def ipc_provisioner(ipc_storage):
 
 @pytest.fixture()
 def registration_service(
-    record_store, entity_registry, process_table, rebac_manager, ipc_provisioner
+    record_store, entity_registry, agent_registry, rebac_manager, ipc_provisioner
 ):
     return AgentRegistrationService(
         record_store=record_store,
         entity_registry=entity_registry,
-        process_table=process_table,
+        agent_registry=agent_registry,
         rebac_manager=rebac_manager,
         ipc_provisioner=ipc_provisioner,
     )

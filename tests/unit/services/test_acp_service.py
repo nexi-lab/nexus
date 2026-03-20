@@ -11,7 +11,7 @@ import pytest
 from nexus.system_services.acp.service import AcpService, _ActiveAgent
 
 # ---------------------------------------------------------------------------
-# Mock ProcessTable
+# Mock AgentRegistry
 # ---------------------------------------------------------------------------
 
 
@@ -24,7 +24,7 @@ class MockProcessDescriptor:
     labels: dict[str, str] = field(default_factory=dict)
 
 
-class MockProcessTable:
+class MockAgentRegistry:
     def __init__(self) -> None:
         self._next_pid = 1
         self._procs: dict[str, MockProcessDescriptor] = {}
@@ -73,22 +73,22 @@ class TestAcpServiceConstruction:
     """Test AcpService construction and late-binding."""
 
     def test_init(self):
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
+        pt = MockAgentRegistry()
+        svc = AcpService(agent_registry=pt)
         assert svc._pipe_manager is None
         assert svc._nexus_fs is None
 
     def test_bind_pipe_manager(self):
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
+        pt = MockAgentRegistry()
+        svc = AcpService(agent_registry=pt)
 
         pm = MockPipeManager()
         svc.bind_pipe_manager(pm)
         assert svc._pipe_manager is pm
 
     def test_bind_fs(self):
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
+        pt = MockAgentRegistry()
+        svc = AcpService(agent_registry=pt)
 
         mock_nx = MagicMock()
         svc.bind_fs(mock_nx)
@@ -99,7 +99,7 @@ class TestAcpServiceNoTransitionHack:
     """Verify the _transition(RUNNING) hack is gone."""
 
     def test_no_transition_call(self):
-        """ProcessTable.spawn() returns RUNNING directly (#1691).
+        """AgentRegistry.spawn() returns RUNNING directly (#1691).
         _transition should not be called anywhere in service.py."""
         import inspect
 
@@ -142,9 +142,9 @@ class TestAcpServiceKillAgent:
     """Test kill_agent teardown."""
 
     def test_kill_agent_destroys_pipes(self):
-        pt = MockProcessTable()
+        pt = MockAgentRegistry()
         pm = MockPipeManager()
-        svc = AcpService(process_table=pt)
+        svc = AcpService(agent_registry=pt)
         svc.bind_pipe_manager(pm)
 
         # Set up an active agent
@@ -178,8 +178,8 @@ class TestAcpServiceKillAgent:
 
     def test_kill_agent_without_pipe_manager(self):
         """Graceful degradation — no PipeManager bound."""
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
+        pt = MockAgentRegistry()
+        svc = AcpService(agent_registry=pt)
 
         mock_conn = MagicMock()
         mock_conn.disconnect = AsyncMock()
@@ -205,9 +205,9 @@ class TestAcpServiceCloseAll:
     """Test close_all teardown."""
 
     def test_close_all_cleans_up(self):
-        pt = MockProcessTable()
+        pt = MockAgentRegistry()
         pm = MockPipeManager()
-        svc = AcpService(process_table=pt)
+        svc = AcpService(agent_registry=pt)
         svc.bind_pipe_manager(pm)
 
         for i in range(3):
@@ -237,9 +237,9 @@ class TestAcpServiceCallAgent:
         """Verify call_agent reads agent config from VFS (SSOT)."""
         import json
 
-        pt = MockProcessTable()
+        pt = MockAgentRegistry()
         pm = MockPipeManager()
-        svc = AcpService(process_table=pt)
+        svc = AcpService(agent_registry=pt)
         svc.bind_pipe_manager(pm)
 
         # Mock NexusFS with agent config file
@@ -281,8 +281,8 @@ class TestAcpServiceCallAgent:
     @pytest.mark.asyncio
     async def test_call_agent_unknown_agent_raises(self):
         """call_agent raises ValueError when agent config not in VFS."""
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
+        pt = MockAgentRegistry()
+        svc = AcpService(agent_registry=pt)
 
         mock_nx = MagicMock()
         mock_nx.sys_read = AsyncMock(side_effect=FileNotFoundError)
@@ -351,8 +351,8 @@ class TestAcpServiceReadAgentConfig:
         """_read_agent_config reads /{zone}/agents/{id}/agent.json."""
         import json
 
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
+        pt = MockAgentRegistry()
+        svc = AcpService(agent_registry=pt)
 
         agent_json = json.dumps(
             {
@@ -376,8 +376,8 @@ class TestAcpServiceReadAgentConfig:
     @pytest.mark.asyncio
     async def test_read_returns_none_when_not_found(self):
         """_read_agent_config returns None for missing agent."""
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
+        pt = MockAgentRegistry()
+        svc = AcpService(agent_registry=pt)
 
         mock_nx = MagicMock()
         mock_nx.sys_read = AsyncMock(side_effect=FileNotFoundError)
@@ -389,8 +389,8 @@ class TestAcpServiceReadAgentConfig:
     @pytest.mark.asyncio
     async def test_read_returns_none_without_vfs(self):
         """_read_agent_config returns None when NexusFS not bound."""
-        pt = MockProcessTable()
-        svc = AcpService(process_table=pt)
+        pt = MockAgentRegistry()
+        svc = AcpService(agent_registry=pt)
 
         config = await svc._read_agent_config("claude", "root")
         assert config is None

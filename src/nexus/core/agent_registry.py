@@ -8,7 +8,7 @@ VFS visibility is provided by ProcResolver (procfs model): reading
 ``/{zone}/proc/{pid}/status`` generates content from memory at
 read time, like Linux ``/proc/{pid}/status``.
 
-    core/process_table.py  = kernel/fork.c + kernel/exit.c + kernel/signal.c
+    core/agent_registry.py  = kernel/fork.c + kernel/exit.c + kernel/signal.c
     system_services/proc/proc_resolver.py  = fs/proc/ (procfs virtual filesystem)
 
 Concurrency model:
@@ -403,8 +403,3 @@ class AgentRegistry:
         self._processes.clear()
         self._wait_events.clear()
         logger.debug("AgentRegistry closed — all agents cleared")
-
-
-# Backward-compat alias (Issue #1800)
-ProcessTable = AgentRegistry
-"""Deprecated alias — use ``AgentRegistry``."""

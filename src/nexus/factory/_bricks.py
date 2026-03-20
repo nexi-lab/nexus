@@ -205,7 +205,7 @@ def _boot_independent_bricks(
 
             task_dispatch_consumer = TaskDispatchPipeConsumer(
                 acp_service=system.get("acp_service"),
-                process_table=system.get("process_table"),
+                agent_registry=system.get("agent_registry"),
             )
             # TaskManagerService and TaskWriteHook are registered in _register_vfs_hooks
             # (needs NexusFS reference); consumer stored here for lifespan startup.

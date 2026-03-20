@@ -1,11 +1,13 @@
-"""Unit tests for AgentRecord and AgentState state machine (Issue #1240).
+"""Unit tests for AgentRecord with unified AgentState (Issue #1240, #1800).
 
 Tests cover:
-- AgentState enum: all 4 states exist and are distinct
-- VALID_TRANSITIONS: strict allowlist covering all 16 state pairs
-- validate_transition(): parametrized 16-cell matrix (Decision #9A)
+- AgentState: unified enum from process_types (REGISTERED, WARMING_UP, READY, BUSY, SUSPENDED, TERMINATED)
 - AgentRecord: frozen dataclass immutability, defaults, field access
-- Edge cases: self-transitions, exhaustive coverage of transition table
+- AgentRecord.state uses the unified AgentState (no more old UNKNOWN/CONNECTED/IDLE)
+
+Note: The old AgentState (UNKNOWN, CONNECTED, IDLE, SUSPENDED), VALID_TRANSITIONS,
+validate_transition(), and is_new_session() have been deleted (Issue #1800).
+State machine validation is handled by the kernel AgentRegistry (VALID_AGENT_TRANSITIONS).
 """
 
 import types
@@ -14,31 +16,29 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.contracts.agent_types import (
-    VALID_TRANSITIONS,
-    AgentRecord,
-    AgentState,
-    validate_transition,
-)
+from nexus.contracts.agent_types import AgentRecord
+from nexus.contracts.process_types import AgentState
 
 # ---------------------------------------------------------------------------
-# AgentState enum tests
+# AgentState — unified from process_types
 # ---------------------------------------------------------------------------
 
 
 class TestAgentState:
-    """Tests for the AgentState enum."""
+    """Tests for the unified AgentState enum (from process_types)."""
 
-    def test_has_four_states(self):
-        """AgentState enum must have exactly 4 members."""
-        assert len(AgentState) == 4
+    def test_has_six_states(self):
+        """Unified AgentState enum must have exactly 6 members."""
+        assert len(AgentState) == 6
 
     def test_state_values(self):
         """Each state has the expected string value."""
-        assert AgentState.UNKNOWN.value == "UNKNOWN"
-        assert AgentState.CONNECTED.value == "CONNECTED"
-        assert AgentState.IDLE.value == "IDLE"
-        assert AgentState.SUSPENDED.value == "SUSPENDED"
+        assert AgentState.REGISTERED.value == "registered"
+        assert AgentState.WARMING_UP.value == "warming_up"
+        assert AgentState.READY.value == "ready"
+        assert AgentState.BUSY.value == "busy"
+        assert AgentState.SUSPENDED.value == "suspended"
+        assert AgentState.TERMINATED.value == "terminated"
 
     def test_states_are_distinct(self):
         """All states are distinct enum members."""
@@ -47,129 +47,15 @@ class TestAgentState:
 
     def test_from_string(self):
         """AgentState can be constructed from string value."""
-        assert AgentState("UNKNOWN") is AgentState.UNKNOWN
-        assert AgentState("CONNECTED") is AgentState.CONNECTED
-        assert AgentState("IDLE") is AgentState.IDLE
-        assert AgentState("SUSPENDED") is AgentState.SUSPENDED
+        assert AgentState("registered") is AgentState.REGISTERED
+        assert AgentState("ready") is AgentState.READY
+        assert AgentState("busy") is AgentState.BUSY
+        assert AgentState("suspended") is AgentState.SUSPENDED
 
     def test_invalid_string_raises(self):
         """Invalid string raises ValueError."""
         with pytest.raises(ValueError):
             AgentState("INVALID")
-
-
-# ---------------------------------------------------------------------------
-# VALID_TRANSITIONS allowlist tests
-# ---------------------------------------------------------------------------
-
-
-class TestValidTransitions:
-    """Tests for the VALID_TRANSITIONS strict allowlist (Decision #8A)."""
-
-    def test_covers_all_states_as_keys(self):
-        """Every AgentState must appear as a key in VALID_TRANSITIONS."""
-        for state in AgentState:
-            assert state in VALID_TRANSITIONS, f"{state} missing from VALID_TRANSITIONS"
-
-    def test_no_extra_keys(self):
-        """VALID_TRANSITIONS should not have keys that aren't AgentState members."""
-        for key in VALID_TRANSITIONS:
-            assert isinstance(key, AgentState), f"Unexpected key: {key}"
-
-    def test_values_are_frozensets_of_agent_state(self):
-        """Each value must be a frozenset of AgentState members."""
-        for state, targets in VALID_TRANSITIONS.items():
-            assert isinstance(targets, frozenset), f"{state} targets not frozenset"
-            for target in targets:
-                assert isinstance(target, AgentState), (
-                    f"{state} has non-AgentState target: {target}"
-                )
-
-    def test_no_self_transitions(self):
-        """No state should be able to transition to itself."""
-        for state, targets in VALID_TRANSITIONS.items():
-            assert state not in targets, f"{state} allows self-transition"
-
-    def test_unknown_transitions(self):
-        """UNKNOWN can only transition to CONNECTED."""
-        assert VALID_TRANSITIONS[AgentState.UNKNOWN] == frozenset({AgentState.CONNECTED})
-
-    def test_connected_transitions(self):
-        """CONNECTED can transition to IDLE or SUSPENDED."""
-        assert VALID_TRANSITIONS[AgentState.CONNECTED] == frozenset(
-            {AgentState.IDLE, AgentState.SUSPENDED}
-        )
-
-    def test_idle_transitions(self):
-        """IDLE can transition to CONNECTED or SUSPENDED."""
-        assert VALID_TRANSITIONS[AgentState.IDLE] == frozenset(
-            {AgentState.CONNECTED, AgentState.SUSPENDED}
-        )
-
-    def test_suspended_transitions(self):
-        """SUSPENDED can only transition to CONNECTED."""
-        assert VALID_TRANSITIONS[AgentState.SUSPENDED] == frozenset({AgentState.CONNECTED})
-
-
-# ---------------------------------------------------------------------------
-# validate_transition() parametrized 16-cell matrix (Decision #9A)
-# ---------------------------------------------------------------------------
-
-_U = AgentState.UNKNOWN
-_C = AgentState.CONNECTED
-_I = AgentState.IDLE
-_S = AgentState.SUSPENDED
-
-
-class TestValidateTransition:
-    """Parametrized 16-cell state transition matrix (Decision #9A)."""
-
-    @pytest.mark.parametrize(
-        "current,target,valid",
-        [
-            # From UNKNOWN
-            (_U, _U, False),
-            (_U, _C, True),
-            (_U, _I, False),
-            (_U, _S, False),
-            # From CONNECTED
-            (_C, _U, False),
-            (_C, _C, False),
-            (_C, _I, True),
-            (_C, _S, True),
-            # From IDLE
-            (_I, _U, False),
-            (_I, _C, True),
-            (_I, _I, False),
-            (_I, _S, True),
-            # From SUSPENDED
-            (_S, _U, False),
-            (_S, _C, True),
-            (_S, _I, False),
-            (_S, _S, False),
-        ],
-        ids=[
-            "UNKNOWN->UNKNOWN",
-            "UNKNOWN->CONNECTED",
-            "UNKNOWN->IDLE",
-            "UNKNOWN->SUSPENDED",
-            "CONNECTED->UNKNOWN",
-            "CONNECTED->CONNECTED",
-            "CONNECTED->IDLE",
-            "CONNECTED->SUSPENDED",
-            "IDLE->UNKNOWN",
-            "IDLE->CONNECTED",
-            "IDLE->IDLE",
-            "IDLE->SUSPENDED",
-            "SUSPENDED->UNKNOWN",
-            "SUSPENDED->CONNECTED",
-            "SUSPENDED->IDLE",
-            "SUSPENDED->SUSPENDED",
-        ],
-    )
-    def test_state_transition_matrix(self, current, target, valid):
-        """Each cell in the 4x4 transition matrix returns expected validity."""
-        assert validate_transition(current, target) == valid
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +77,7 @@ class TestAgentRecord:
             owner_id="alice",
             zone_id="root",
             name="Test Agent",
-            state=AgentState.UNKNOWN,
+            state=AgentState.REGISTERED,
             generation=0,
             last_heartbeat=None,
             metadata=types.MappingProxyType({}),
@@ -202,7 +88,7 @@ class TestAgentRecord:
     def test_is_frozen(self, record):
         """AgentRecord is immutable (frozen dataclass)."""
         with pytest.raises(FrozenInstanceError):
-            record.state = AgentState.CONNECTED  # type: ignore[misc]
+            object.__setattr__(record, "state", AgentState.READY)
 
     def test_field_access(self, record):
         """All fields are accessible."""
@@ -210,7 +96,7 @@ class TestAgentRecord:
         assert record.owner_id == "alice"
         assert record.zone_id == "root"
         assert record.name == "Test Agent"
-        assert record.state is AgentState.UNKNOWN
+        assert record.state is AgentState.REGISTERED
         assert record.generation == 0
         assert record.last_heartbeat is None
         assert record.metadata == {}
@@ -222,14 +108,14 @@ class TestAgentRecord:
             owner_id="bob",
             zone_id=None,
             name=None,
-            state=AgentState.UNKNOWN,
+            state=AgentState.REGISTERED,
             generation=0,
             last_heartbeat=None,
             metadata=types.MappingProxyType({}),
             created_at=now,
             updated_at=now,
         )
-        assert record.state is AgentState.UNKNOWN
+        assert record.state is AgentState.REGISTERED
         assert record.generation == 0
 
     def test_equality(self, now):
@@ -239,7 +125,7 @@ class TestAgentRecord:
             owner_id="u",
             zone_id=None,
             name=None,
-            state=AgentState.UNKNOWN,
+            state=AgentState.REGISTERED,
             generation=0,
             last_heartbeat=None,
             metadata=types.MappingProxyType({}),
@@ -251,7 +137,7 @@ class TestAgentRecord:
             owner_id="u",
             zone_id=None,
             name=None,
-            state=AgentState.UNKNOWN,
+            state=AgentState.REGISTERED,
             generation=0,
             last_heartbeat=None,
             metadata=types.MappingProxyType({}),
@@ -267,7 +153,7 @@ class TestAgentRecord:
             owner_id="u",
             zone_id=None,
             name=None,
-            state=AgentState.UNKNOWN,
+            state=AgentState.REGISTERED,
             generation=0,
             last_heartbeat=None,
             metadata=types.MappingProxyType({}),
@@ -279,7 +165,7 @@ class TestAgentRecord:
             owner_id="u",
             zone_id=None,
             name=None,
-            state=AgentState.CONNECTED,
+            state=AgentState.BUSY,
             generation=1,
             last_heartbeat=None,
             metadata=types.MappingProxyType({}),
@@ -295,7 +181,7 @@ class TestAgentRecord:
             owner_id="u",
             zone_id=None,
             name=None,
-            state=AgentState.UNKNOWN,
+            state=AgentState.REGISTERED,
             generation=0,
             last_heartbeat=None,
             metadata=types.MappingProxyType(
@@ -313,7 +199,7 @@ class TestAgentRecord:
             owner_id="u",
             zone_id=None,
             name=None,
-            state=AgentState.UNKNOWN,
+            state=AgentState.REGISTERED,
             generation=0,
             last_heartbeat=None,
             metadata=types.MappingProxyType({}),
@@ -329,7 +215,7 @@ class TestAgentRecord:
             owner_id="u",
             zone_id=None,
             name=None,
-            state=AgentState.UNKNOWN,
+            state=AgentState.REGISTERED,
             generation=0,
             last_heartbeat=None,
             metadata=types.MappingProxyType({}),
@@ -345,7 +231,7 @@ class TestAgentRecord:
             owner_id="u",
             zone_id=None,
             name=None,
-            state=AgentState.CONNECTED,
+            state=AgentState.BUSY,
             generation=1,
             last_heartbeat=now,
             metadata=types.MappingProxyType({}),

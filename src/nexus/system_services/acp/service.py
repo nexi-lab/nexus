@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.process_types import ProcessDescriptor, ProcessKind
+from nexus.contracts.process_types import AgentDescriptor, AgentKind
 from nexus.core.stdio_pipe import StdioPipe
 
 from .agents import AgentConfig
@@ -191,7 +191,7 @@ class AcpService:
             name=f"acp:{config.name}",
             owner_id=owner_id,
             zone_id=zone_id,
-            kind=ProcessKind.UNMANAGED,
+            kind=AgentKind.UNMANAGED,
             labels=merged_labels,
         )
         pid = desc.pid
@@ -350,7 +350,7 @@ class AcpService:
                 with contextlib.suppress(Exception):
                     self._pipe_manager.destroy(fd_path)
 
-    def kill_agent(self, pid: str) -> ProcessDescriptor:
+    def kill_agent(self, pid: str) -> AgentDescriptor:
         """Kill a running agent connection and mark ZOMBIE in ProcessTable."""
         active = self._connections.pop(pid, None)
         if active is not None:
@@ -361,7 +361,7 @@ class AcpService:
                 pass
             self._teardown_agent(active)
 
-        desc: ProcessDescriptor = self._process_table.kill(pid, exit_code=-9)
+        desc: AgentDescriptor = self._process_table.kill(pid, exit_code=-9)
         return desc
 
     def list_agents(
@@ -369,10 +369,10 @@ class AcpService:
         *,
         zone_id: str | None = None,
         owner_id: str | None = None,
-    ) -> list[ProcessDescriptor]:
+    ) -> list[AgentDescriptor]:
         """List ACP-managed processes from the ProcessTable."""
         procs = self._process_table.list_processes(
-            kind=ProcessKind.UNMANAGED,
+            kind=AgentKind.UNMANAGED,
             zone_id=zone_id,
             owner_id=owner_id,
         )

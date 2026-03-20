@@ -1,6 +1,6 @@
 """Eviction manager orchestrating resource-pressure agent eviction (Issues #2170, #2171).
 
-Composes ResourceMonitor + EvictionPolicy + ProcessTable to implement the
+Composes ResourceMonitor + EvictionPolicy + AgentRegistry to implement the
 eviction pipeline: check pressure -> select candidates -> checkpoint -> evict.
 
 Follows Orleans watermark-based eviction pattern:
@@ -24,8 +24,8 @@ from nexus.contracts.agent_types import EvictionReason
 from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, PressureLevel, QoSClass
 
 if TYPE_CHECKING:
-    from nexus.contracts.process_types import ProcessDescriptor
-    from nexus.core.process_table import ProcessTable
+    from nexus.contracts.process_types import AgentDescriptor
+    from nexus.core.process_table import AgentRegistry
     from nexus.lib.performance_tuning import EvictionTuning
     from nexus.system_services.agents.eviction_policy import EvictionPolicy
     from nexus.system_services.agents.resource_monitor import ResourceMonitor
@@ -54,13 +54,13 @@ class EvictionManager:
     Composes:
     - ResourceMonitor: checks memory pressure
     - EvictionPolicy: selects which agents to evict
-    - ProcessTable: manages process state transitions and signals
+    - AgentRegistry: manages process state transitions and signals
 
     Issue #2171: Adds an asyncio.Event for immediate preemption cycles
     triggered by premium agent registration when at capacity.
 
     Args:
-        process_table: ProcessTable for state transitions and signals.
+        process_table: AgentRegistry for state transitions and signals.
         monitor: ResourceMonitor for pressure detection.
         policy: EvictionPolicy for candidate selection.
         tuning: EvictionTuning with thresholds and batch sizes.
@@ -68,7 +68,7 @@ class EvictionManager:
 
     def __init__(
         self,
-        process_table: "ProcessTable",
+        process_table: "AgentRegistry",
         monitor: "ResourceMonitor",
         policy: "EvictionPolicy",
         tuning: "EvictionTuning",
@@ -155,7 +155,7 @@ class EvictionManager:
         # 1b. Check max_active_agents cap (secondary trigger, lightweight COUNT)
         over_cap = False
         if pressure is PressureLevel.NORMAL:
-            connected_count = self._process_table.count_by_state(ProcessState.RUNNING)
+            connected_count = self._process_table.count_by_state(ProcessState.BUSY)
             if connected_count > self._tuning.max_active_agents:
                 over_cap = True
                 logger.info(
@@ -208,7 +208,7 @@ class EvictionManager:
         # 5. (Checkpoint skipped — will migrate to VFS writes)
 
         # 6. Transition concurrently to SUSPENDED (semaphore-bounded, CAS-safe)
-        async def _transition_one(agent: "ProcessDescriptor") -> bool:
+        async def _transition_one(agent: "AgentDescriptor") -> bool:
             async with self._transition_semaphore:
                 try:
                     # CAS check: verify generation hasn't changed
@@ -280,8 +280,8 @@ class EvictionManager:
         record = self._process_table.get(agent_id)
         if record is None:
             raise ValueError(f"Agent '{agent_id}' not found")
-        if record.state is not ProcessState.RUNNING:
-            raise ValueError(f"Agent '{agent_id}' is {record.state}, not RUNNING")
+        if record.state is not ProcessState.BUSY:
+            raise ValueError(f"Agent '{agent_id}' is {record.state}, not BUSY")
 
         # (Checkpoint skipped — will migrate to VFS writes)
 
@@ -306,7 +306,7 @@ class EvictionManager:
         return elapsed < self._tuning.eviction_cooldown_seconds
 
     @staticmethod
-    def _build_checkpoint(agent: "ProcessDescriptor") -> dict[str, Any]:
+    def _build_checkpoint(agent: "AgentDescriptor") -> dict[str, Any]:
         """Build checkpoint data for a process before eviction.
 
         Captures the essential state needed to restore the process on

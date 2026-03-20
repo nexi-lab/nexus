@@ -1,18 +1,20 @@
-"""Process lifecycle types — kernel-level process management (Issue #1509).
+"""Agent lifecycle types — kernel-level agent management (Issue #1509, #1800).
 
-Pure value objects for the kernel ProcessTable. Zero runtime dependencies
+Pure value objects for the kernel AgentRegistry. Zero runtime dependencies
 on kernel/services/bricks — only stdlib + contracts.
 
     contracts/process_types.py = include/linux/sched.h (task_struct fields)
 
 Defines:
-    ProcessState     — finite state machine (CREATED → RUNNING → … → ZOMBIE)
-    ProcessSignal    — POSIX-like signals (SIGTERM, SIGSTOP, SIGCONT, SIGKILL, SIGUSR1)
-    ProcessKind      — MANAGED (nexusd-spawned) vs UNMANAGED (self-managed via gRPC)
-    ProcessDescriptor — frozen PCB (Process Control Block)
+    AgentState       — finite state machine (REGISTERED → WARMING_UP → READY ↔ BUSY → TERMINATED)
+    AgentSignal      — POSIX-like signals (SIGTERM, SIGSTOP, SIGCONT, SIGKILL, SIGUSR1)
+    AgentKind        — MANAGED (nexusd-spawned) vs UNMANAGED (self-managed via gRPC)
+    AgentDescriptor  — frozen PCB (Process Control Block)
     ExternalProcessInfo — connection metadata for external agents
 
-See: core/process_table.py for the ProcessTable implementation.
+Backward-compat aliases (ProcessState, ProcessSignal, etc.) at bottom of file.
+
+See: core/process_table.py for the AgentRegistry implementation.
 """
 
 from __future__ import annotations
@@ -28,41 +30,51 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
-class ProcessState(StrEnum):
-    """Process lifecycle states — mirrors Linux task_struct.state."""
+class AgentState(StrEnum):
+    """Unified agent lifecycle states (Issue #1798, #1800).
 
-    CREATED = "created"
-    RUNNING = "running"
-    SLEEPING = "sleeping"
-    STOPPED = "stopped"
-    ZOMBIE = "zombie"
+    Single source of truth — replaces the dual ProcessState/AgentState
+    state machines that were out of sync.
+
+    Lifecycle::
+
+        REGISTERED → WARMING_UP → READY → BUSY → READY (loop)
+                                    ↓       ↓
+                                SUSPENDED ← ─┘
+                                    ↓
+                               TERMINATED
+    """
+
+    REGISTERED = "registered"  # Agent registered, not yet started
+    WARMING_UP = "warming_up"  # Initializing (load credentials, mount namespace)
+    READY = "ready"  # Idle, waiting for next prompt
+    BUSY = "busy"  # Actively processing a prompt / tool call
+    SUSPENDED = "suspended"  # Paused (admin / resource pressure eviction)
+    TERMINATED = "terminated"  # Finished, pending cleanup
 
 
-VALID_PROCESS_TRANSITIONS: dict[ProcessState, frozenset[ProcessState]] = {
-    ProcessState.CREATED: frozenset({ProcessState.RUNNING}),
-    ProcessState.RUNNING: frozenset(
-        {ProcessState.SLEEPING, ProcessState.STOPPED, ProcessState.ZOMBIE}
-    ),
-    ProcessState.SLEEPING: frozenset(
-        {ProcessState.RUNNING, ProcessState.STOPPED, ProcessState.ZOMBIE}
-    ),
-    ProcessState.STOPPED: frozenset({ProcessState.SLEEPING, ProcessState.ZOMBIE}),
-    ProcessState.ZOMBIE: frozenset(),  # terminal
+VALID_AGENT_TRANSITIONS: dict[AgentState, frozenset[AgentState]] = {
+    AgentState.REGISTERED: frozenset({AgentState.WARMING_UP, AgentState.TERMINATED}),
+    AgentState.WARMING_UP: frozenset({AgentState.READY, AgentState.TERMINATED}),
+    AgentState.READY: frozenset({AgentState.BUSY, AgentState.SUSPENDED, AgentState.TERMINATED}),
+    AgentState.BUSY: frozenset({AgentState.READY, AgentState.SUSPENDED, AgentState.TERMINATED}),
+    AgentState.SUSPENDED: frozenset({AgentState.READY, AgentState.TERMINATED}),
+    AgentState.TERMINATED: frozenset(),  # terminal
 }
 
 
-class ProcessSignal(StrEnum):
-    """POSIX-like process signals."""
+class AgentSignal(StrEnum):
+    """POSIX-like agent signals."""
 
-    SIGTERM = "SIGTERM"  # Graceful shutdown → ZOMBIE
-    SIGSTOP = "SIGSTOP"  # Suspend → STOPPED
-    SIGCONT = "SIGCONT"  # Resume → SLEEPING
+    SIGTERM = "SIGTERM"  # Graceful shutdown → TERMINATED
+    SIGSTOP = "SIGSTOP"  # Suspend → SUSPENDED
+    SIGCONT = "SIGCONT"  # Resume → READY
     SIGKILL = "SIGKILL"  # Immediate kill + reap
     SIGUSR1 = "SIGUSR1"  # User-defined (agent steering)
 
 
-class ProcessKind(StrEnum):
-    """Process kind — who controls the lifecycle."""
+class AgentKind(StrEnum):
+    """Agent kind — who controls the lifecycle."""
 
     MANAGED = "managed"  # nexusd spawns + owns lifecycle (spawn/kill/signal)
     UNMANAGED = "unmanaged"  # external agent connects, self-managed (register/heartbeat)
@@ -73,15 +85,15 @@ class ProcessKind(StrEnum):
 # ---------------------------------------------------------------------------
 
 
-class ProcessError(Exception):
-    """Base exception for process operations."""
+class AgentError(Exception):
+    """Base exception for agent operations."""
 
 
-class ProcessNotFoundError(ProcessError):
-    """Raised when a PID does not exist in the process table."""
+class AgentNotFoundError(AgentError):
+    """Raised when a PID does not exist in the agent registry."""
 
 
-class InvalidTransitionError(ProcessError):
+class InvalidTransitionError(AgentError):
     """Raised when a state transition is not allowed."""
 
 
@@ -102,8 +114,8 @@ class ExternalProcessInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class ProcessDescriptor:
-    """Frozen PCB (Process Control Block) — kernel process descriptor.
+class AgentDescriptor:
+    """Frozen PCB (Process Control Block) — kernel agent descriptor.
 
     Immutable. Use ``dataclasses.replace()`` for state transitions.
     """
@@ -114,10 +126,10 @@ class ProcessDescriptor:
     name: str
     owner_id: str
     zone_id: str
-    kind: ProcessKind
+    kind: AgentKind
 
     # Lifecycle
-    state: ProcessState
+    state: AgentState
     exit_code: int | None = None
     generation: int = 0
 
@@ -182,7 +194,7 @@ class ProcessDescriptor:
         return json.dumps(self.to_dict())
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> ProcessDescriptor:
+    def from_dict(cls, d: dict[str, Any]) -> AgentDescriptor:
         """Deserialize from dict."""
         ext_raw = d.get("external_info")
         ext_info = None
@@ -201,8 +213,8 @@ class ProcessDescriptor:
             name=d["name"],
             owner_id=d["owner_id"],
             zone_id=d["zone_id"],
-            kind=ProcessKind(d["kind"]),
-            state=ProcessState(d["state"]),
+            kind=AgentKind(d["kind"]),
+            state=AgentState(d["state"]),
             exit_code=d.get("exit_code"),
             generation=d.get("generation", 0),
             cwd=d.get("cwd", "/"),
@@ -215,6 +227,32 @@ class ProcessDescriptor:
         )
 
     @classmethod
-    def from_json(cls, s: str) -> ProcessDescriptor:
+    def from_json(cls, s: str) -> AgentDescriptor:
         """Deserialize from JSON string."""
         return cls.from_dict(json.loads(s))
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat aliases (Issue #1800)
+# ---------------------------------------------------------------------------
+
+ProcessState = AgentState
+"""Deprecated alias — use ``AgentState``."""
+
+VALID_PROCESS_TRANSITIONS = VALID_AGENT_TRANSITIONS
+"""Deprecated alias — use ``VALID_AGENT_TRANSITIONS``."""
+
+ProcessSignal = AgentSignal
+"""Deprecated alias — use ``AgentSignal``."""
+
+ProcessKind = AgentKind
+"""Deprecated alias — use ``AgentKind``."""
+
+ProcessError = AgentError
+"""Deprecated alias — use ``AgentError``."""
+
+ProcessNotFoundError = AgentNotFoundError
+"""Deprecated alias — use ``AgentNotFoundError``."""
+
+ProcessDescriptor = AgentDescriptor
+"""Deprecated alias — use ``AgentDescriptor``."""

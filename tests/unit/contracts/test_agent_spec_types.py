@@ -21,12 +21,12 @@ from nexus.contracts.agent_types import (
     AgentResources,
     AgentResourceUsage,
     AgentSpec,
-    AgentState,
     AgentStatus,
     QoSClass,
     derive_phase,
     detect_drift,
 )
+from nexus.contracts.process_types import AgentState
 
 # ---------------------------------------------------------------------------
 # QoSClass enum
@@ -262,10 +262,12 @@ class TestAgentStateToPhase:
             assert state in AGENT_STATE_TO_PHASE, f"{state} missing from mapping"
 
     def test_mapping_values(self) -> None:
-        assert AGENT_STATE_TO_PHASE[AgentState.UNKNOWN] is AgentPhase.WARMING
-        assert AGENT_STATE_TO_PHASE[AgentState.CONNECTED] is AgentPhase.ACTIVE
-        assert AGENT_STATE_TO_PHASE[AgentState.IDLE] is AgentPhase.IDLE
+        assert AGENT_STATE_TO_PHASE[AgentState.REGISTERED] is AgentPhase.WARMING
+        assert AGENT_STATE_TO_PHASE[AgentState.WARMING_UP] is AgentPhase.WARMING
+        assert AGENT_STATE_TO_PHASE[AgentState.READY] is AgentPhase.READY
+        assert AGENT_STATE_TO_PHASE[AgentState.BUSY] is AgentPhase.ACTIVE
         assert AGENT_STATE_TO_PHASE[AgentState.SUSPENDED] is AgentPhase.SUSPENDED
+        assert AGENT_STATE_TO_PHASE[AgentState.TERMINATED] is AgentPhase.EVICTED
 
 
 # ---------------------------------------------------------------------------
@@ -277,10 +279,12 @@ class TestDerivePhase:
     @pytest.mark.parametrize(
         "state,expected_phase",
         [
-            (AgentState.UNKNOWN, AgentPhase.WARMING),
-            (AgentState.CONNECTED, AgentPhase.ACTIVE),
-            (AgentState.IDLE, AgentPhase.IDLE),
+            (AgentState.REGISTERED, AgentPhase.WARMING),
+            (AgentState.WARMING_UP, AgentPhase.WARMING),
+            (AgentState.READY, AgentPhase.READY),
+            (AgentState.BUSY, AgentPhase.ACTIVE),
             (AgentState.SUSPENDED, AgentPhase.SUSPENDED),
+            (AgentState.TERMINATED, AgentPhase.EVICTED),
         ],
     )
     def test_base_mapping(self, state: AgentState, expected_phase: AgentPhase) -> None:
@@ -295,9 +299,9 @@ class TestDerivePhase:
             last_transition=datetime.now(UTC),
             observed_generation=1,
         )
-        assert derive_phase(AgentState.CONNECTED, (cond,)) == AgentPhase.READY
+        assert derive_phase(AgentState.BUSY, (cond,)) == AgentPhase.READY
 
-    def test_ready_condition_no_effect_on_idle(self) -> None:
+    def test_ready_condition_no_effect_on_ready(self) -> None:
         cond = AgentCondition(
             type="Ready",
             status="True",
@@ -306,7 +310,8 @@ class TestDerivePhase:
             last_transition=datetime.now(UTC),
             observed_generation=1,
         )
-        assert derive_phase(AgentState.IDLE, (cond,)) == AgentPhase.IDLE
+        # READY base phase is READY, not ACTIVE, so no override happens
+        assert derive_phase(AgentState.READY, (cond,)) == AgentPhase.READY
 
     def test_evicted_condition_overrides_any(self) -> None:
         cond = AgentCondition(
@@ -328,10 +333,10 @@ class TestDerivePhase:
             last_transition=datetime.now(UTC),
             observed_generation=1,
         )
-        assert derive_phase(AgentState.CONNECTED, (cond,)) == AgentPhase.THINKING
+        assert derive_phase(AgentState.BUSY, (cond,)) == AgentPhase.THINKING
 
     def test_no_conditions_returns_base(self) -> None:
-        assert derive_phase(AgentState.CONNECTED, ()) == AgentPhase.ACTIVE
+        assert derive_phase(AgentState.BUSY, ()) == AgentPhase.ACTIVE
 
 
 # ---------------------------------------------------------------------------

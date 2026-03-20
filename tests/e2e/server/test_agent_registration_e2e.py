@@ -1,6 +1,6 @@
 """E2E tests for POST /api/v2/agents/register (Issue #3130).
 
-Tests the full HTTP → AgentRegistrationService → EntityRegistry + ProcessTable
+Tests the full HTTP → AgentRegistrationService → EntityRegistry + AgentRegistry
 + ReBAC + IPC path using real in-memory SQLite, real IPC provisioner with
 InMemoryStorageDriver, and real service wiring. No mocks for core services.
 """
@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.core.process_table import ProcessTable
+from nexus.core.process_table import AgentRegistry
 from nexus.server.api.v2.routers.agent_registration import (
     router as registration_router,
 )
@@ -48,7 +48,7 @@ def entity_registry(record_store):
 
 @pytest.fixture()
 def process_table():
-    return ProcessTable()
+    return AgentRegistry()
 
 
 @pytest.fixture()

@@ -10,7 +10,7 @@ under resource pressure. Includes:
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
-from nexus.contracts.process_types import ProcessDescriptor
+from nexus.contracts.process_types import AgentDescriptor
 from nexus.contracts.qos import EVICTION_ORDER, EvictionContext, QoSClass
 
 
@@ -25,10 +25,10 @@ class EvictionPolicy(Protocol):
 
     def select_candidates(
         self,
-        agents: list[ProcessDescriptor],
+        agents: list[AgentDescriptor],
         batch_size: int,
         context: EvictionContext | None = None,
-    ) -> list[ProcessDescriptor]:
+    ) -> list[AgentDescriptor]:
         """Select which agents to evict from the candidates list.
 
         Args:
@@ -52,10 +52,10 @@ class LRUEvictionPolicy:
 
     def select_candidates(
         self,
-        agents: list[ProcessDescriptor],
+        agents: list[AgentDescriptor],
         batch_size: int,
         context: EvictionContext | None = None,  # noqa: ARG002
-    ) -> list[ProcessDescriptor]:
+    ) -> list[AgentDescriptor]:
         """Select least-recently-used agents for eviction.
 
         Args:
@@ -82,10 +82,10 @@ class QoSEvictionPolicy:
 
     def select_candidates(
         self,
-        agents: list[ProcessDescriptor],
+        agents: list[AgentDescriptor],
         batch_size: int,
         context: EvictionContext | None = None,
-    ) -> list[ProcessDescriptor]:
+    ) -> list[AgentDescriptor]:
         """Select agents for eviction with QoS-aware ordering.
 
         Args:
@@ -99,14 +99,14 @@ class QoSEvictionPolicy:
             List of agents to evict (up to batch_size).
         """
 
-        def _eviction_class(p: ProcessDescriptor) -> QoSClass:
+        def _eviction_class(p: AgentDescriptor) -> QoSClass:
             raw = p.labels.get("eviction_class", "standard")
             try:
                 return QoSClass(raw)
             except ValueError:
                 return QoSClass.STANDARD
 
-        def _heartbeat(p: ProcessDescriptor) -> datetime | None:
+        def _heartbeat(p: AgentDescriptor) -> datetime | None:
             if p.external_info is not None:
                 return p.external_info.last_heartbeat
             return p.updated_at

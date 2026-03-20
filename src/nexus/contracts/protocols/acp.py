@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.contracts.process_types import ProcessDescriptor
+    from nexus.contracts.process_types import AgentDescriptor
 
 
 @runtime_checkable
@@ -35,8 +35,8 @@ class AcpServiceProtocol(Protocol):
         *,
         zone_id: str | None = None,
         owner_id: str | None = None,
-    ) -> list[ProcessDescriptor]: ...
+    ) -> list[AgentDescriptor]: ...
 
-    def kill_agent(self, pid: str) -> ProcessDescriptor: ...
+    def kill_agent(self, pid: str) -> AgentDescriptor: ...
 
     def close_all(self) -> None: ...

@@ -1,4 +1,4 @@
-"""Tests for kernel ProcessTable (Issue #1509).
+"""Tests for kernel AgentRegistry (Issue #1509).
 
 Pure in-memory — no metastore persistence.
 Covers: spawn, kill, signal, wait, external processes, close_all, serialization.
@@ -12,17 +12,17 @@ from datetime import UTC, datetime
 import pytest
 
 from nexus.contracts.process_types import (
-    VALID_PROCESS_TRANSITIONS,
+    VALID_AGENT_TRANSITIONS,
+    AgentDescriptor,
+    AgentError,
+    AgentKind,
+    AgentNotFoundError,
+    AgentSignal,
+    AgentState,
     ExternalProcessInfo,
     InvalidTransitionError,
-    ProcessDescriptor,
-    ProcessError,
-    ProcessKind,
-    ProcessNotFoundError,
-    ProcessSignal,
-    ProcessState,
 )
-from nexus.core.process_table import ProcessTable
+from nexus.core.process_table import AgentRegistry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,8 +32,8 @@ ZONE = "test-zone"
 OWNER = "user-1"
 
 
-def _make_table() -> ProcessTable:
-    return ProcessTable()
+def _make_table() -> AgentRegistry:
+    return AgentRegistry()
 
 
 # ---------------------------------------------------------------------------
@@ -48,8 +48,8 @@ class TestSpawn:
         assert desc.name == "agent-1"
         assert desc.owner_id == OWNER
         assert desc.zone_id == ZONE
-        assert desc.state == ProcessState.RUNNING
-        assert desc.kind == ProcessKind.MANAGED
+        assert desc.state == AgentState.REGISTERED
+        assert desc.kind == AgentKind.MANAGED
         assert len(desc.pid) == 12
 
     def test_spawn_unique_pids(self) -> None:
@@ -69,7 +69,7 @@ class TestSpawn:
 
     def test_spawn_invalid_parent_raises(self) -> None:
         pt = _make_table()
-        with pytest.raises(ProcessNotFoundError):
+        with pytest.raises(AgentNotFoundError):
             pt.spawn("child", OWNER, ZONE, parent_pid="nonexistent")
 
     def test_spawn_with_labels(self) -> None:
@@ -111,114 +111,150 @@ class TestSpawn:
 
     def test_list_filter_kind(self) -> None:
         pt = _make_table()
-        pt.spawn("managed-agent", OWNER, ZONE, kind=ProcessKind.MANAGED)
-        pt.spawn("unmanaged-agent", OWNER, ZONE, kind=ProcessKind.UNMANAGED)
-        assert len(pt.list_processes(kind=ProcessKind.MANAGED)) == 1
+        pt.spawn("managed-agent", OWNER, ZONE, kind=AgentKind.MANAGED)
+        pt.spawn("unmanaged-agent", OWNER, ZONE, kind=AgentKind.UNMANAGED)
+        assert len(pt.list_processes(kind=AgentKind.MANAGED)) == 1
 
     def test_list_filter_state(self) -> None:
         pt = _make_table()
         pt.spawn("a1", OWNER, ZONE)
         desc = pt.spawn("a2", OWNER, ZONE)
-        # Transition a2 to SLEEPING
-        pt._transition(desc, ProcessState.SLEEPING)
-        assert len(pt.list_processes(state=ProcessState.RUNNING)) == 1
-        assert len(pt.list_processes(state=ProcessState.SLEEPING)) == 1
+        # Transition a2 to WARMING_UP (valid from REGISTERED)
+        pt._transition(desc, AgentState.WARMING_UP)
+        assert len(pt.list_processes(state=AgentState.REGISTERED)) == 1
+        assert len(pt.list_processes(state=AgentState.WARMING_UP)) == 1
 
 
 # ---------------------------------------------------------------------------
-# State Transitions (spawn creates processes in RUNNING state)
+# State Transitions (spawn creates processes in REGISTERED state)
 # ---------------------------------------------------------------------------
 
 
 class TestTransitions:
-    def test_spawn_starts_running(self) -> None:
-        """spawn() creates processes directly in RUNNING state."""
+    def test_spawn_starts_registered(self) -> None:
+        """spawn() creates processes directly in REGISTERED state."""
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        assert desc.state == ProcessState.RUNNING
+        assert desc.state == AgentState.REGISTERED
 
-    def test_running_to_sleeping(self) -> None:
+    def test_registered_to_warming_up(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        updated = pt._transition(desc, ProcessState.SLEEPING)
-        assert updated.state == ProcessState.SLEEPING
+        updated = pt._transition(desc, AgentState.WARMING_UP)
+        assert updated.state == AgentState.WARMING_UP
 
-    def test_running_to_stopped(self) -> None:
+    def test_warming_up_to_ready(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        updated = pt._transition(desc, ProcessState.STOPPED)
-        assert updated.state == ProcessState.STOPPED
+        desc = pt._transition(desc, AgentState.WARMING_UP)
+        updated = pt._transition(desc, AgentState.READY)
+        assert updated.state == AgentState.READY
 
-    def test_stopped_to_sleeping(self) -> None:
+    def test_ready_to_busy(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.STOPPED)
-        updated = pt._transition(desc, ProcessState.SLEEPING)
-        assert updated.state == ProcessState.SLEEPING
+        desc = pt._transition(desc, AgentState.WARMING_UP)
+        desc = pt._transition(desc, AgentState.READY)
+        updated = pt._transition(desc, AgentState.BUSY)
+        assert updated.state == AgentState.BUSY
+
+    def test_busy_to_ready(self) -> None:
+        pt = _make_table()
+        desc = pt.spawn("a", OWNER, ZONE)
+        desc = pt._transition(desc, AgentState.WARMING_UP)
+        desc = pt._transition(desc, AgentState.READY)
+        desc = pt._transition(desc, AgentState.BUSY)
+        updated = pt._transition(desc, AgentState.READY)
+        assert updated.state == AgentState.READY
+
+    def test_ready_to_suspended(self) -> None:
+        pt = _make_table()
+        desc = pt.spawn("a", OWNER, ZONE)
+        desc = pt._transition(desc, AgentState.WARMING_UP)
+        desc = pt._transition(desc, AgentState.READY)
+        updated = pt._transition(desc, AgentState.SUSPENDED)
+        assert updated.state == AgentState.SUSPENDED
+
+    def test_suspended_to_ready(self) -> None:
+        pt = _make_table()
+        desc = pt.spawn("a", OWNER, ZONE)
+        desc = pt._transition(desc, AgentState.WARMING_UP)
+        desc = pt._transition(desc, AgentState.READY)
+        desc = pt._transition(desc, AgentState.SUSPENDED)
+        updated = pt._transition(desc, AgentState.READY)
+        assert updated.state == AgentState.READY
 
     def test_invalid_transition_raises(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        # RUNNING→CREATED is invalid
+        # REGISTERED→BUSY is invalid (must go through WARMING_UP→READY first)
         with pytest.raises(InvalidTransitionError):
-            pt._transition(desc, ProcessState.CREATED)
+            pt._transition(desc, AgentState.BUSY)
 
-    def test_zombie_is_terminal(self) -> None:
+    def test_terminated_is_terminal(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt._transition(desc, ProcessState.ZOMBIE)
+        desc = pt._transition(desc, AgentState.TERMINATED)
         with pytest.raises(InvalidTransitionError):
-            pt._transition(desc, ProcessState.RUNNING)
+            pt._transition(desc, AgentState.REGISTERED)
 
     def test_all_valid_transitions(self) -> None:
-        """Verify VALID_PROCESS_TRANSITIONS is comprehensive."""
-        for state in ProcessState:
-            assert state in VALID_PROCESS_TRANSITIONS
+        """Verify VALID_AGENT_TRANSITIONS is comprehensive."""
+        for state in AgentState:
+            assert state in VALID_AGENT_TRANSITIONS
 
 
 # ---------------------------------------------------------------------------
-# Signals (spawn creates in RUNNING — no extra transition needed)
+# Signals (spawn creates in REGISTERED — transition to READY before signal tests)
 # ---------------------------------------------------------------------------
+
+
+def _spawn_ready(pt: AgentRegistry, name: str = "a") -> "AgentDescriptor":
+    """Spawn a process and advance it to READY state for signal tests."""
+    desc = pt.spawn(name, OWNER, ZONE)
+    desc = pt._transition(desc, AgentState.WARMING_UP)
+    desc = pt._transition(desc, AgentState.READY)
+    return desc
 
 
 class TestSignals:
     def test_sigstop(self) -> None:
         pt = _make_table()
-        desc = pt.spawn("a", OWNER, ZONE)
-        updated = pt.signal(desc.pid, ProcessSignal.SIGSTOP)
-        assert updated.state == ProcessState.STOPPED
+        desc = _spawn_ready(pt)
+        updated = pt.signal(desc.pid, AgentSignal.SIGSTOP)
+        assert updated.state == AgentState.SUSPENDED
 
     def test_sigcont(self) -> None:
         pt = _make_table()
-        desc = pt.spawn("a", OWNER, ZONE)
-        desc = pt.signal(desc.pid, ProcessSignal.SIGSTOP)
-        updated = pt.signal(desc.pid, ProcessSignal.SIGCONT)
-        assert updated.state == ProcessState.SLEEPING
+        desc = _spawn_ready(pt)
+        desc = pt.signal(desc.pid, AgentSignal.SIGSTOP)
+        updated = pt.signal(desc.pid, AgentSignal.SIGCONT)
+        assert updated.state == AgentState.READY
 
     def test_sigterm(self) -> None:
         pt = _make_table()
-        desc = pt.spawn("a", OWNER, ZONE)
-        updated = pt.signal(desc.pid, ProcessSignal.SIGTERM)
-        assert updated.state == ProcessState.ZOMBIE
+        desc = _spawn_ready(pt)
+        updated = pt.signal(desc.pid, AgentSignal.SIGTERM)
+        assert updated.state == AgentState.TERMINATED
 
     def test_sigkill(self) -> None:
         pt = _make_table()
-        desc = pt.spawn("a", OWNER, ZONE)
-        pt.signal(desc.pid, ProcessSignal.SIGKILL)
+        desc = _spawn_ready(pt)
+        pt.signal(desc.pid, AgentSignal.SIGKILL)
         # SIGKILL reaps immediately
         assert pt.get(desc.pid) is None
 
     def test_sigusr1_merges_payload(self) -> None:
         pt = _make_table()
         desc = pt.spawn("a", OWNER, ZONE, labels={"existing": "value"})
-        updated = pt.signal(desc.pid, ProcessSignal.SIGUSR1, payload={"steering": "pause"})
+        updated = pt.signal(desc.pid, AgentSignal.SIGUSR1, payload={"steering": "pause"})
         assert updated.labels["existing"] == "value"
         assert updated.labels["steering"] == "pause"
 
     def test_signal_unknown_pid_raises(self) -> None:
         pt = _make_table()
-        with pytest.raises(ProcessNotFoundError):
-            pt.signal("nonexistent", ProcessSignal.SIGTERM)
+        with pytest.raises(AgentNotFoundError):
+            pt.signal("nonexistent", AgentSignal.SIGTERM)
 
 
 # ---------------------------------------------------------------------------
@@ -241,11 +277,11 @@ class TestKillReap:
         # Not reaped — parent can wait()
         zombie = pt.get(child.pid)
         assert zombie is not None
-        assert zombie.state == ProcessState.ZOMBIE
+        assert zombie.state == AgentState.TERMINATED
 
     def test_kill_nonexistent_raises(self) -> None:
         pt = _make_table()
-        with pytest.raises(ProcessNotFoundError):
+        with pytest.raises(AgentNotFoundError):
             pt.kill("nonexistent")
 
     def test_kill_already_zombie(self) -> None:
@@ -255,14 +291,14 @@ class TestKillReap:
         pt.kill(child.pid)
         # Kill again — should be idempotent
         result = pt.kill(child.pid)
-        assert result.state == ProcessState.ZOMBIE
+        assert result.state == AgentState.TERMINATED
 
     def test_reap_removes_from_parent_children(self) -> None:
         pt = _make_table()
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
         # SIGKILL forces immediate reap
-        pt.signal(child.pid, ProcessSignal.SIGKILL)
+        pt.signal(child.pid, AgentSignal.SIGKILL)
         updated_parent = pt.get(parent.pid)
         assert updated_parent is not None
         assert child.pid not in updated_parent.children
@@ -275,14 +311,14 @@ class TestKillReap:
 
 class TestWait:
     @pytest.mark.asyncio
-    async def test_wait_already_zombie(self) -> None:
+    async def test_wait_already_terminated(self) -> None:
         pt = _make_table()
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
-        pt.kill(child.pid)  # ZOMBIE (not reaped — has parent)
+        pt.kill(child.pid)  # TERMINATED (not reaped — has parent)
         result = await pt.wait(child.pid)
         assert result is not None
-        assert result.state == ProcessState.ZOMBIE
+        assert result.state == AgentState.TERMINATED
 
     @pytest.mark.asyncio
     async def test_wait_blocks_until_state_change(self) -> None:
@@ -297,7 +333,7 @@ class TestWait:
         task = asyncio.create_task(_killer())
         result = await pt.wait(child.pid, timeout=2.0)
         assert result is not None
-        assert result.state == ProcessState.ZOMBIE
+        assert result.state == AgentState.TERMINATED
         await task
 
     @pytest.mark.asyncio
@@ -310,26 +346,26 @@ class TestWait:
     @pytest.mark.asyncio
     async def test_wait_nonexistent_raises(self) -> None:
         pt = _make_table()
-        with pytest.raises(ProcessNotFoundError):
+        with pytest.raises(AgentNotFoundError):
             await pt.wait("nonexistent")
 
     @pytest.mark.asyncio
     async def test_wait_custom_target_states(self) -> None:
         pt = _make_table()
-        desc = pt.spawn("a", OWNER, ZONE)
+        desc = _spawn_ready(pt)
 
         async def _stopper() -> None:
             await asyncio.sleep(0.05)
-            pt.signal(desc.pid, ProcessSignal.SIGSTOP)
+            pt.signal(desc.pid, AgentSignal.SIGSTOP)
 
         task = asyncio.create_task(_stopper())
         result = await pt.wait(
             desc.pid,
-            target_states=frozenset({ProcessState.STOPPED}),
+            target_states=frozenset({AgentState.SUSPENDED}),
             timeout=2.0,
         )
         assert result is not None
-        assert result.state == ProcessState.STOPPED
+        assert result.state == AgentState.SUSPENDED
         await task
 
     @pytest.mark.asyncio
@@ -338,7 +374,7 @@ class TestWait:
         parent = pt.spawn("parent", OWNER, ZONE)
         child = pt.spawn("child", OWNER, ZONE, parent_pid=parent.pid)
 
-        results: list[ProcessDescriptor | None] = []
+        results: list[AgentDescriptor | None] = []
 
         async def _waiter() -> None:
             r = await pt.wait(child.pid, timeout=2.0)
@@ -370,7 +406,7 @@ class TestExternalProcesses:
             host_pid=12345,
             remote_addr="127.0.0.1:50051",
         )
-        assert desc.kind == ProcessKind.UNMANAGED
+        assert desc.kind == AgentKind.UNMANAGED
         assert desc.external_info is not None
         assert desc.external_info.connection_id == "conn-1"
         assert desc.external_info.host_pid == 12345
@@ -385,7 +421,7 @@ class TestExternalProcesses:
     def test_heartbeat_on_managed_raises(self) -> None:
         pt = _make_table()
         desc = pt.spawn("managed", OWNER, ZONE)
-        with pytest.raises(ProcessError, match="heartbeat only for unmanaged"):
+        with pytest.raises(AgentError, match="heartbeat only for unmanaged"):
             pt.heartbeat(desc.pid)
 
     def test_unregister_external(self) -> None:
@@ -417,14 +453,14 @@ class TestCloseAll:
 class TestSerialization:
     def test_roundtrip(self) -> None:
         now = datetime.now(UTC)
-        desc = ProcessDescriptor(
+        desc = AgentDescriptor(
             pid="abc123",
             ppid=None,
             name="test",
             owner_id=OWNER,
             zone_id=ZONE,
-            kind=ProcessKind.MANAGED,
-            state=ProcessState.RUNNING,
+            kind=AgentKind.MANAGED,
+            state=AgentState.BUSY,
             exit_code=None,
             cwd="/workspace",
             children=("child1", "child2"),
@@ -433,7 +469,7 @@ class TestSerialization:
             labels={"key": "value"},
         )
         json_str = desc.to_json()
-        recovered = ProcessDescriptor.from_json(json_str)
+        recovered = AgentDescriptor.from_json(json_str)
         assert recovered.pid == desc.pid
         assert recovered.name == desc.name
         assert recovered.state == desc.state
@@ -442,14 +478,14 @@ class TestSerialization:
 
     def test_roundtrip_with_external_info(self) -> None:
         now = datetime.now(UTC)
-        desc = ProcessDescriptor(
+        desc = AgentDescriptor(
             pid="ext123",
             ppid=None,
             name="external",
             owner_id=OWNER,
             zone_id=ZONE,
-            kind=ProcessKind.UNMANAGED,
-            state=ProcessState.CREATED,
+            kind=AgentKind.UNMANAGED,
+            state=AgentState.REGISTERED,
             created_at=now,
             updated_at=now,
             external_info=ExternalProcessInfo(
@@ -461,7 +497,7 @@ class TestSerialization:
             ),
         )
         json_str = desc.to_json()
-        recovered = ProcessDescriptor.from_json(json_str)
+        recovered = AgentDescriptor.from_json(json_str)
         assert recovered.external_info is not None
         assert recovered.external_info.connection_id == "conn-1"
         assert recovered.external_info.host_pid == 9999

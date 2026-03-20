@@ -1,10 +1,15 @@
-"""Agent domain types shared across tiers (Issue #2032).
+"""Agent domain types shared across tiers (Issue #2032, #1800).
 
 Pure value objects for agent identity and lifecycle. These types have zero
-runtime dependencies on kernel, services, or bricks — only stdlib imports.
+runtime dependencies on kernel, services, or bricks — only stdlib imports
+(plus ``nexus.contracts.process_types`` for the unified ``AgentState``).
 
 Originally in ``nexus.system_services.agents.agent_record``; moved here so bricks
 can import them without violating the zero-core-imports rule.
+
+Issue #1800: The old ``AgentState`` enum (UNKNOWN, CONNECTED, IDLE, SUSPENDED)
+has been deleted. The unified ``AgentState`` from ``process_types`` is the single
+source of truth (REGISTERED, WARMING_UP, READY, BUSY, SUSPENDED, TERMINATED).
 
 Issue #2169: Added AgentSpec/AgentStatus for declarative agent management
 with drift detection (Kubernetes-inspired spec/status separation).
@@ -13,9 +18,10 @@ with drift detection (Kubernetes-inspired spec/status separation).
 import types
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum, StrEnum
+from enum import StrEnum
 from typing import Any
 
+from nexus.contracts.process_types import AgentState
 from nexus.contracts.qos import AgentQoS
 
 
@@ -35,82 +41,6 @@ class EvictionReason(StrEnum):
     CHECKPOINT_TIMEOUT = "checkpoint_timeout"
 
 
-class AgentState(Enum):
-    """Agent lifecycle states (external-agent philosophy).
-
-    State machine:
-        UNKNOWN -----> CONNECTED -----> IDLE
-           ^              |               |
-           |              v               v
-           +---------- SUSPENDED <--------+
-                          |
-                          +-----> CONNECTED (reactivation)
-
-    UNKNOWN: Agent registered but never connected (initial state)
-    CONNECTED: Agent has an active session (generation incremented)
-    IDLE: Agent session ended normally, can reconnect
-    SUSPENDED: Agent temporarily disabled (admin action or policy)
-    """
-
-    UNKNOWN = "UNKNOWN"
-    CONNECTED = "CONNECTED"
-    IDLE = "IDLE"
-    SUSPENDED = "SUSPENDED"
-
-
-# Strict allowlist for valid state transitions (Decision #8A).
-# Any transition not in this table is invalid. No self-transitions allowed.
-VALID_TRANSITIONS: dict[AgentState, frozenset[AgentState]] = {
-    AgentState.UNKNOWN: frozenset({AgentState.CONNECTED}),
-    AgentState.CONNECTED: frozenset({AgentState.IDLE, AgentState.SUSPENDED}),
-    AgentState.IDLE: frozenset({AgentState.CONNECTED, AgentState.SUSPENDED}),
-    AgentState.SUSPENDED: frozenset({AgentState.CONNECTED}),
-}
-
-# States that trigger generation increment when transitioning TO CONNECTED
-_NEW_SESSION_SOURCES = frozenset({AgentState.UNKNOWN, AgentState.IDLE, AgentState.SUSPENDED})
-
-
-def validate_transition(current: AgentState, target: AgentState) -> bool:
-    """Check if a state transition is valid according to the allowlist.
-
-    Pure function with no side effects. Does not modify any state.
-
-    Args:
-        current: Current agent state.
-        target: Desired target state.
-
-    Returns:
-        True if the transition is valid, False otherwise.
-
-    Examples:
-        >>> validate_transition(AgentState.UNKNOWN, AgentState.CONNECTED)
-        True
-        >>> validate_transition(AgentState.UNKNOWN, AgentState.IDLE)
-        False
-        >>> validate_transition(AgentState.CONNECTED, AgentState.CONNECTED)
-        False
-    """
-    allowed = VALID_TRANSITIONS.get(current, frozenset())
-    return target in allowed
-
-
-def is_new_session(current: AgentState, target: AgentState) -> bool:
-    """Check if a transition represents a new session (generation should increment).
-
-    A new session occurs when transitioning TO CONNECTED from any non-CONNECTED
-    state. This is the only time the generation counter increments (Decision #2A).
-
-    Args:
-        current: Current agent state.
-        target: Desired target state.
-
-    Returns:
-        True if this transition starts a new session.
-    """
-    return target is AgentState.CONNECTED and current in _NEW_SESSION_SOURCES
-
-
 @dataclass(frozen=True)
 class AgentRecord:
     """Immutable snapshot of an agent's identity and lifecycle state.
@@ -125,7 +55,7 @@ class AgentRecord:
         owner_id: User ID who owns this agent
         zone_id: Zone/organization ID for multi-zone isolation
         name: Human-readable display name
-        state: Current lifecycle state (AgentState enum)
+        state: Current lifecycle state (AgentState from process_types)
         generation: Session generation counter (increments on new session only)
         last_heartbeat: Timestamp of last heartbeat (None if never heartbeated)
         metadata: Arbitrary agent metadata (platform, endpoint_url, etc.)
@@ -214,10 +144,12 @@ class AgentPhase(StrEnum):
 
 # Mapping from internal state to external phase (default, before condition overrides).
 AGENT_STATE_TO_PHASE: dict[AgentState, AgentPhase] = {
-    AgentState.UNKNOWN: AgentPhase.WARMING,
-    AgentState.CONNECTED: AgentPhase.ACTIVE,
-    AgentState.IDLE: AgentPhase.IDLE,
+    AgentState.REGISTERED: AgentPhase.WARMING,
+    AgentState.WARMING_UP: AgentPhase.WARMING,
+    AgentState.READY: AgentPhase.READY,
+    AgentState.BUSY: AgentPhase.ACTIVE,
     AgentState.SUSPENDED: AgentPhase.SUSPENDED,
+    AgentState.TERMINATED: AgentPhase.EVICTED,
 }
 
 
@@ -328,7 +260,7 @@ def derive_phase(
     """Map internal state + conditions to an external phase.
 
     The base mapping comes from ``AGENT_STATE_TO_PHASE``. Conditions
-    can override the phase (e.g. a "Ready" condition on a CONNECTED
+    can override the phase (e.g. a "Ready" condition on a BUSY
     agent promotes it from ACTIVE to READY).
 
     Args:

@@ -6,17 +6,17 @@ Tests cover:
 - QoSEvictionPolicy: spot-first ordering, preemption filtering,
   fallback to LRU within same class, mixed QoS ordering
 
-Post-AgentRegistry deletion: tests use ProcessDescriptor instead of AgentRecord.
+Post-AgentRegistry deletion: tests use AgentDescriptor instead of AgentRecord.
 """
 
 from datetime import UTC, datetime, timedelta
 
 from nexus.contracts.agent_types import EvictionReason
 from nexus.contracts.process_types import (
+    AgentDescriptor,
+    AgentKind,
+    AgentState,
     ExternalProcessInfo,
-    ProcessDescriptor,
-    ProcessKind,
-    ProcessState,
 )
 from nexus.contracts.qos import EvictionContext, QoSClass
 from nexus.system_services.agents.eviction_policy import (
@@ -31,17 +31,17 @@ def _make_agent(
     agent_id: str,
     last_heartbeat: datetime | None = None,
     eviction_class: QoSClass = QoSClass.STANDARD,
-) -> ProcessDescriptor:
-    """Create a minimal ProcessDescriptor for testing."""
+) -> AgentDescriptor:
+    """Create a minimal AgentDescriptor for testing."""
     now = datetime.now(UTC)
-    return ProcessDescriptor(
+    return AgentDescriptor(
         pid=agent_id,
         ppid=None,
         name=agent_id,
         owner_id="test-owner",
         zone_id="root",
-        kind=ProcessKind.UNMANAGED,
-        state=ProcessState.RUNNING,
+        kind=AgentKind.UNMANAGED,
+        state=AgentState.BUSY,
         generation=1,
         created_at=now,
         updated_at=now,

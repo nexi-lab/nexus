@@ -1,1 +1,1 @@
-"""Proc system service — procfs virtual filesystem for ProcessTable."""
+"""Proc system service — procfs virtual filesystem for AgentRegistry."""

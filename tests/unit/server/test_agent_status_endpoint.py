@@ -9,7 +9,7 @@ Tests cover:
 6. Drift detection visible in status response
 
 Post-AgentRegistry deletion (PR #3109): endpoints now use ProcessTable
-directly.  Mocks target process_table.get() → ProcessDescriptor.
+directly.  Mocks target process_table.get() → AgentDescriptor.
 """
 
 import json
@@ -21,10 +21,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.contracts.process_types import (
+    AgentDescriptor,
+    AgentKind,
+    AgentState,
     ExternalProcessInfo,
-    ProcessDescriptor,
-    ProcessKind,
-    ProcessState,
 )
 from nexus.server.api.v2.routers.agent_status import router
 
@@ -70,16 +70,16 @@ def _override_auth(app: FastAPI) -> None:
 def _make_descriptor(
     pid: str = "agent-1",
     **overrides: Any,
-) -> ProcessDescriptor:
-    """Create a ProcessDescriptor with sensible defaults for testing."""
+) -> AgentDescriptor:
+    """Create a AgentDescriptor with sensible defaults for testing."""
     defaults: dict[str, Any] = {
         "pid": pid,
         "ppid": None,
         "name": "test-agent",
         "owner_id": "test-owner",
         "zone_id": "root",
-        "kind": ProcessKind.UNMANAGED,
-        "state": ProcessState.RUNNING,
+        "kind": AgentKind.UNMANAGED,
+        "state": AgentState.BUSY,
         "generation": 3,
         "created_at": datetime(2025, 6, 1, 12, 0, tzinfo=UTC),
         "updated_at": datetime(2025, 6, 1, 12, 5, tzinfo=UTC),
@@ -89,7 +89,7 @@ def _make_descriptor(
         ),
     }
     defaults.update(overrides)
-    return ProcessDescriptor(**defaults)
+    return AgentDescriptor(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +109,7 @@ class TestGetAgentStatus:
         resp = client.get("/api/v2/agents/agent-1/status")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["phase"] == "running"
+        assert data["phase"] == "busy"
         assert data["observed_generation"] == 3
         assert data["conditions"] == []
         assert data["inbox_depth"] == 0

@@ -780,9 +780,9 @@ class AgentRPCService:
 
             # Map legacy state names
             _STATE_MAP = {
-                "CONNECTED": ProcessState.RUNNING,
-                "IDLE": ProcessState.SLEEPING,
-                "SUSPENDED": ProcessState.STOPPED,
+                "CONNECTED": ProcessState.BUSY,
+                "IDLE": ProcessState.READY,
+                "SUSPENDED": ProcessState.SUSPENDED,
             }
             state_enum = _STATE_MAP.get(state.upper())
             if state_enum is None:

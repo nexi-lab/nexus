@@ -18,11 +18,11 @@ import pytest
 
 from nexus.contracts.agent_types import EvictionReason
 from nexus.contracts.process_types import (
+    AgentDescriptor,
+    AgentKind,
+    AgentState,
     ExternalProcessInfo,
     InvalidTransitionError,
-    ProcessDescriptor,
-    ProcessKind,
-    ProcessState,
 )
 from nexus.contracts.qos import QoSClass
 from nexus.lib.performance_tuning import EvictionTuning
@@ -35,15 +35,15 @@ def _make_process(
     pid: str,
     generation: int = 1,
     last_heartbeat: datetime | None = None,
-) -> ProcessDescriptor:
-    """Create a minimal ProcessDescriptor for testing."""
+) -> AgentDescriptor:
+    """Create a minimal AgentDescriptor for testing."""
     now = datetime.now(UTC)
-    return ProcessDescriptor(
+    return AgentDescriptor(
         pid=pid,
         ppid=None,
         name=pid,
-        kind=ProcessKind.UNMANAGED,
-        state=ProcessState.RUNNING,
+        kind=AgentKind.UNMANAGED,
+        state=AgentState.BUSY,
         owner_id="test-owner",
         zone_id="test-zone",
         generation=generation,
@@ -308,7 +308,7 @@ class TestBuildCheckpoint:
 
         checkpoint = EvictionManager._build_checkpoint(process)
 
-        assert checkpoint["state"] == str(ProcessState.RUNNING)
+        assert checkpoint["state"] == str(AgentState.BUSY)
         assert checkpoint["generation"] == 5
         assert checkpoint["last_heartbeat"] == now.isoformat()
         assert isinstance(checkpoint["evicted_at"], float)
@@ -321,7 +321,7 @@ class TestBuildCheckpoint:
         checkpoint = EvictionManager._build_checkpoint(process)
 
         assert checkpoint["last_heartbeat"] is None
-        assert checkpoint["state"] == str(ProcessState.RUNNING)
+        assert checkpoint["state"] == str(AgentState.BUSY)
         assert checkpoint["generation"] == 1
 
 
@@ -330,7 +330,7 @@ class TestManualEviction:
 
     @pytest.mark.asyncio
     async def test_evict_connected_agent(self, manager, mock_process_table):
-        """evict_agent() sends SIGSTOP to a RUNNING process."""
+        """evict_agent() sends SIGSTOP to a BUSY process."""
         process = _make_process("agent-1")
         mock_process_table.get.return_value = process
 
@@ -352,16 +352,16 @@ class TestManualEviction:
 
     @pytest.mark.asyncio
     async def test_evict_non_running_agent_raises(self, manager, mock_process_table):
-        """evict_agent() raises ValueError for non-RUNNING process."""
+        """evict_agent() raises ValueError for non-BUSY process."""
         now = datetime.now(UTC)
-        process = ProcessDescriptor(
+        process = AgentDescriptor(
             pid="agent-1",
             ppid=None,
             name="agent-1",
             owner_id="test-owner",
             zone_id="test-zone",
-            kind=ProcessKind.UNMANAGED,
-            state=ProcessState.SLEEPING,
+            kind=AgentKind.UNMANAGED,
+            state=AgentState.READY,
             generation=1,
             created_at=now,
             updated_at=now,
@@ -369,7 +369,7 @@ class TestManualEviction:
         )
         mock_process_table.get.return_value = process
 
-        with pytest.raises(ValueError, match="not RUNNING"):
+        with pytest.raises(ValueError, match="not BUSY"):
             await manager.evict_agent("agent-1")
 
 
@@ -383,16 +383,16 @@ def _make_qos_process(
     last_heartbeat: datetime | None = None,
     generation: int = 1,
     eviction_class: QoSClass = QoSClass.STANDARD,
-) -> ProcessDescriptor:
-    """Create a ProcessDescriptor with eviction_class label for QoS testing."""
+) -> AgentDescriptor:
+    """Create a AgentDescriptor with eviction_class label for QoS testing."""
     now = datetime.now(UTC)
     hb = last_heartbeat or (now - timedelta(hours=1))
-    return ProcessDescriptor(
+    return AgentDescriptor(
         pid=pid,
         ppid=None,
         name=pid,
-        kind=ProcessKind.UNMANAGED,
-        state=ProcessState.RUNNING,
+        kind=AgentKind.UNMANAGED,
+        state=AgentState.BUSY,
         owner_id="test-owner",
         zone_id="test-zone",
         generation=generation,

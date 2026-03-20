@@ -1,18 +1,18 @@
 """Tests for AgentWarmupService (Issue #2172).
 
 Covers:
-- Happy path: all required steps pass -> SLEEPING (connected)
+- Happy path: all required steps pass -> READY (connected)
 - Mixed required + optional steps
 - Required step failures (exception, timeout, returns False)
 - Optional step failures -> still connected
 - Edge cases: re-warmup, nonexistent agent, empty steps, concurrent, unregister-during
 - Step registry operations
 
-ProcessTable migration notes:
-  - External agents are registered via register_external() -> RUNNING (generation=1)
-  - To test warmup (which skips RUNNING), we SIGSTOP -> STOPPED first
-  - After warmup, SIGCONT transitions STOPPED -> SLEEPING, bumping generation
-  - ProcessTable.get() uses PID, not name
+AgentRegistry migration notes:
+  - External agents are registered via register_external() -> REGISTERED (generation=1)
+  - To test warmup (which skips BUSY), we advance to READY then SIGSTOP -> SUSPENDED
+  - After warmup, SIGCONT transitions SUSPENDED -> READY, bumping generation
+  - AgentRegistry.get() uses PID, not name
 """
 
 import asyncio
@@ -21,8 +21,8 @@ from datetime import timedelta
 import pytest
 
 from nexus.contracts.agent_warmup_types import WarmupContext, WarmupStep
-from nexus.contracts.process_types import ProcessSignal, ProcessState
-from nexus.core.process_table import ProcessTable
+from nexus.contracts.process_types import AgentSignal, AgentState
+from nexus.core.process_table import AgentRegistry
 from nexus.system_services.agents.agent_warmup import AgentWarmupService
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ from nexus.system_services.agents.agent_warmup import AgentWarmupService
 
 @pytest.fixture
 def process_table():
-    return ProcessTable()
+    return AgentRegistry()
 
 
 @pytest.fixture
@@ -45,19 +45,21 @@ def warmup_service(process_table):
 
 
 def _register_agent(
-    process_table: ProcessTable, name: str = "agent-1", owner: str = "alice"
+    process_table: AgentRegistry, name: str = "agent-1", owner: str = "alice"
 ) -> str:
     """Register an external agent and STOP it so warmup can proceed.
 
-    Returns the PID.  The process starts in RUNNING (from register_external),
-    then we SIGSTOP it to STOPPED so the warmup service does not skip it
-    (warmup skips agents already in RUNNING).
+    Returns the PID.  The process starts in REGISTERED (from register_external),
+    then we advance to READY via WARMING_UP, then SIGSTOP to SUSPENDED so the
+    warmup service does not skip it (warmup skips agents already in BUSY).
     """
     desc = process_table.register_external(
         name, owner_id=owner, zone_id="test", connection_id=f"conn-{name}"
     )
-    # Move RUNNING -> STOPPED so warmup will not short-circuit
-    process_table.signal(desc.pid, ProcessSignal.SIGSTOP)
+    # Move REGISTERED -> WARMING_UP -> READY -> SUSPENDED so warmup will not short-circuit
+    desc = process_table._transition(desc, AgentState.WARMING_UP)
+    desc = process_table._transition(desc, AgentState.READY)
+    process_table.signal(desc.pid, AgentSignal.SIGSTOP)
     return desc.pid
 
 
@@ -111,7 +113,7 @@ class TestStepRegistry:
 class TestHappyPath:
     @pytest.mark.asyncio
     async def test_all_required_steps_pass(self, warmup_service, process_table):
-        """All required steps pass -> agent transitions to SLEEPING (connected)."""
+        """All required steps pass -> agent transitions to READY (connected)."""
         pid = _register_agent(process_table)
 
         warmup_service.register_step("step_a", _always_pass)
@@ -131,9 +133,9 @@ class TestHappyPath:
         assert result.error is None
         assert result.duration_ms > 0
 
-        # Verify agent transitioned (SIGCONT: STOPPED -> SLEEPING, generation bumped)
+        # Verify agent transitioned (SIGCONT: SUSPENDED -> READY, generation bumped)
         desc = process_table.get(pid)
-        assert desc.state is ProcessState.SLEEPING
+        assert desc.state is AgentState.READY
         assert desc.generation == 2  # 1 from spawn, +1 from SIGCONT
 
     @pytest.mark.asyncio
@@ -191,7 +193,7 @@ class TestHappyPath:
 class TestRequiredStepFailure:
     @pytest.mark.asyncio
     async def test_required_step_exception(self, warmup_service, process_table):
-        """Required step that raises -> warmup fails, agent stays STOPPED."""
+        """Required step that raises -> warmup fails, agent stays SUSPENDED."""
         pid = _register_agent(process_table)
 
         warmup_service.register_step("boom", _raise_error)
@@ -204,7 +206,7 @@ class TestRequiredStepFailure:
         assert result.error is not None
 
         desc = process_table.get(pid)
-        assert desc.state is ProcessState.STOPPED
+        assert desc.state is AgentState.SUSPENDED
 
     @pytest.mark.asyncio
     async def test_required_step_timeout(self, warmup_service, process_table):
@@ -220,7 +222,7 @@ class TestRequiredStepFailure:
         assert result.failed_step == "slow"
 
         desc = process_table.get(pid)
-        assert desc.state is ProcessState.STOPPED
+        assert desc.state is AgentState.SUSPENDED
 
     @pytest.mark.asyncio
     async def test_required_step_returns_false(self, warmup_service, process_table):
@@ -236,7 +238,7 @@ class TestRequiredStepFailure:
         assert result.failed_step == "nope"
 
         desc = process_table.get(pid)
-        assert desc.state is ProcessState.STOPPED
+        assert desc.state is AgentState.SUSPENDED
 
     @pytest.mark.asyncio
     async def test_unregistered_required_step(self, warmup_service, process_table):
@@ -318,12 +320,15 @@ class TestOptionalStepFailure:
 
 class TestEdgeCases:
     @pytest.mark.asyncio
-    async def test_warmup_already_running(self, warmup_service, process_table):
-        """Warmup on already-RUNNING agent -> skipped (idempotent)."""
-        # register_external creates in RUNNING; do NOT stop it
+    async def test_warmup_already_busy(self, warmup_service, process_table):
+        """Warmup on already-BUSY agent -> skipped (idempotent)."""
+        # register_external creates in REGISTERED; advance to BUSY
         desc = process_table.register_external(
             "agent-1", owner_id="alice", zone_id="test", connection_id="conn-1"
         )
+        desc = process_table._transition(desc, AgentState.WARMING_UP)
+        desc = process_table._transition(desc, AgentState.READY)
+        desc = process_table._transition(desc, AgentState.BUSY)
 
         result = await warmup_service.warmup(desc.pid, steps=[])
         assert result.success is True
@@ -338,14 +343,14 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_empty_step_list(self, warmup_service, process_table):
-        """Empty step list -> immediate transition to SLEEPING."""
+        """Empty step list -> immediate transition to READY."""
         pid = _register_agent(process_table)
 
         result = await warmup_service.warmup(pid, steps=[])
         assert result.success is True
 
         desc = process_table.get(pid)
-        assert desc.state is ProcessState.SLEEPING
+        assert desc.state is AgentState.READY
 
     @pytest.mark.asyncio
     async def test_agent_unregistered_during_warmup(self, warmup_service, process_table):
@@ -375,13 +380,13 @@ class TestEdgeCases:
 
         steps = [WarmupStep("pass", timeout=timedelta(seconds=5))]
 
-        # First warmup succeeds: STOPPED -> SLEEPING via SIGCONT
+        # First warmup succeeds: SUSPENDED -> READY via SIGCONT
         result1 = await warmup_service.warmup(pid, steps=steps)
         assert result1.success is True
 
-        # Second warmup: agent is now SLEEPING (not RUNNING, so not skipped).
+        # Second warmup: agent is now READY (not BUSY, so not skipped).
         # Steps pass, but _transition_connected calls signal(SIGCONT) which
-        # tries SLEEPING -> SLEEPING -- an invalid transition. Warmup fails
+        # tries READY -> READY -- an invalid transition. Warmup fails
         # cleanly via InvalidTransitionError handling.
         result2 = await warmup_service.warmup(pid, steps=steps)
         assert result2.success is False

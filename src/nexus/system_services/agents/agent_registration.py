@@ -2,7 +2,7 @@
 
 Orchestrates the multi-step registration of a top-level agent:
 1. Register in entity_registry (persistent agent identity, DB)
-2. Register in ProcessTable (runtime liveness, in-memory)
+2. Register in AgentRegistry (runtime liveness, in-memory)
 3. Create ReBAC permission tuples for grants
 4. Create permanent API key (no TTL)
 5. Provision IPC directories (inbox/outbox/processed/dead_letter)
@@ -29,7 +29,7 @@ from nexus.contracts.grant_helpers import GrantInput, grants_to_rebac_tuples
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.core.process_table import ProcessTable
+    from nexus.core.process_table import AgentRegistry
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class AgentRegistrationService:
     Args:
         record_store: RecordStoreABC for session creation (API key step).
         entity_registry: EntityRegistry for persistent agent identity.
-        process_table: ProcessTable for runtime agent liveness.
+        process_table: AgentRegistry for runtime agent liveness.
         rebac_manager: EnhancedReBACManager for permission tuples.
         ipc_provisioner: Optional IPC provisioner (AgentProvisioner) for IPC directories.
         key_service: Optional KeyService for Ed25519 public key storage.
@@ -77,7 +77,7 @@ class AgentRegistrationService:
         self,
         record_store: "RecordStoreABC",
         entity_registry: "EntityRegistryProtocol | None" = None,
-        process_table: "ProcessTable | None" = None,
+        process_table: "AgentRegistry | None" = None,
         rebac_manager: Any = None,
         ipc_provisioner: Any = None,
         key_service: Any = None,
@@ -105,7 +105,7 @@ class AgentRegistrationService:
         Steps (in order):
             1. Register in entity_registry (persistent identity, DB).
                409 if agent_id already exists.
-            2. Register in ProcessTable (runtime liveness, in-memory).
+            2. Register in AgentRegistry (runtime liveness, in-memory).
             3. Create ReBAC permission tuples (if grants provided).
             4. Create permanent API key (no TTL, subject_type="agent").
             5. Provision IPC directories (if ipc=True, async filesystem).
@@ -147,7 +147,7 @@ class AgentRegistrationService:
                 entity_metadata={"name": name, "zone_id": effective_zone},
             )
 
-        # ── Step 2: Runtime liveness in ProcessTable ─────────────────
+        # ── Step 2: Runtime liveness in AgentRegistry ─────────────────
         if self._process_table is not None:
             self._process_table.register_external(
                 name,

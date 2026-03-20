@@ -316,7 +316,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         return content
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, content_id: str = "", *, context: "OperationContext | None" = None
     ) -> WriteResult:
         if not context or not context.backend_path:
             raise BackendError(
@@ -367,4 +367,4 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         if expected_version is not None:
             self._check_version(virtual_path, expected_version, context)
 
-        return self.write_content(content, context)
+        return self.write_content(content, context=context)

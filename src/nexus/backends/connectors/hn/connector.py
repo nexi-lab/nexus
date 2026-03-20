@@ -472,6 +472,8 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     def write_content(
         self,
         content: bytes,
+        content_id: str = "",
+        *,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write content (not supported - HN is read-only)."""

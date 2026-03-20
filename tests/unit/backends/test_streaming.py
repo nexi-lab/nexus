@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.backends.base.backend import Backend
-from nexus.backends.base.path_backend import PathAddressingEngine
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.hash_fast import create_hasher, hash_content

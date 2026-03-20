@@ -24,7 +24,7 @@ import time
 from typing import TYPE_CHECKING
 
 from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
-from nexus.backends.base.path_backend import PathAddressingEngine
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability

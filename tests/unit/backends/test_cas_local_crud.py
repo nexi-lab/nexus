@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.base.cas_backend import CASAddressingEngine
+from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.stripe_lock import _StripeLock
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError

@@ -17,7 +17,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from nexus.backends.base.cas_backend import CASAddressingEngine
+from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult

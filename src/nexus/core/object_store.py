@@ -29,7 +29,7 @@ __all__ = ["ObjectStoreABC", "WriteResult", "_validate_hash"]
 
 def _validate_hash(content_hash: str) -> None:
     """Validate SHA-256 hex string — re-export from CAS backend for backward compat."""
-    from nexus.backends.base.cas_backend import _validate_hash as _cas_validate
+    from nexus.backends.base.cas_addressing_engine import _validate_hash as _cas_validate
 
     _cas_validate(content_hash)
 

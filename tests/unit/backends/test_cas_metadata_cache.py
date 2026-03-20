@@ -12,7 +12,7 @@ Tests cover:
 import cachetools
 import pytest
 
-from nexus.backends.base.cas_backend import CASAddressingEngine
+from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from tests.unit.backends.test_cas_backend import InMemoryBlobTransport
 
 

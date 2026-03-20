@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.backends.base.path_backend import PathAddressingEngine
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
 from nexus.core.hash_fast import hash_content

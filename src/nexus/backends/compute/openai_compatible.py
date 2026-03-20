@@ -31,7 +31,7 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.backends.base.cas_backend import CASBackend
+from nexus.backends.base.cas_addressing_engine import CASBackend
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.compute.llm_blob_transport import LLMBlobTransport
 from nexus.contracts.capabilities import ConnectorCapability

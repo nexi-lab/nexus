@@ -26,7 +26,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.backends.base.cas_backend import CASAddressingEngine
+from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.base.stripe_lock import _StripeLock
 from nexus.backends.engines.cdc import CDCEngine

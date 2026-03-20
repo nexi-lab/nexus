@@ -593,25 +593,21 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
 
 
 async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Inject PipeManager and start DT_PIPE consumers (Issue #809, #810).
+    """Bind NexusFS and start DT_PIPE consumers (Issue #809, #810, #1772).
 
-    Two consumers are started here:
-    1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
-    2. ZoektPipeConsumer — async Zoekt index notifications via kernel IPC
-
-    Both follow the deferred-injection pattern: created in factory without
-    PipeManager, then PipeManager is injected here and start() spawns the
-    background consumer task.
+    Consumers use sys_read/sys_write via NexusFS instead of PipeManager directly.
+    The deferred-injection pattern remains: created in factory, NexusFS bound here,
+    start() creates pipe via sys_setattr and spawns background consumer.
     """
-    pipe_manager = svc.pipe_manager
-    if pipe_manager is None:
+    nx = svc.nexus_fs
+    if nx is None:
         return
 
     # Issue #809: PipedRecordStoreWriteObserver
     wo = svc.write_observer
-    if wo is not None and hasattr(wo, "set_pipe_manager"):
+    if wo is not None and hasattr(wo, "bind_fs"):
         try:
-            wo.set_pipe_manager(pipe_manager)
+            wo.bind_fs(nx)
             await wo.start()
             app.state.write_observer = wo
             logger.info("[PIPE] PipedRecordStoreWriteObserver started")
@@ -622,9 +618,9 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
 
     # Issue #810: ZoektPipeConsumer
     zpc = svc.zoekt_pipe_consumer
-    if zpc is not None and hasattr(zpc, "set_pipe_manager"):
+    if zpc is not None and hasattr(zpc, "bind_fs"):
         try:
-            zpc.set_pipe_manager(pipe_manager)
+            zpc.bind_fs(nx)
             await zpc.start()
             app.state.zoekt_pipe_consumer = zpc
             logger.info("[PIPE] ZoektPipeConsumer started")
@@ -634,36 +630,34 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
     # Fallback: create consumer if not provided by factory (e.g. no record_store)
-    if tdc is None:
-        nx = svc.nexus_fs
-        if nx is not None:
-            try:
-                from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
-
-                _task_svc = getattr(nx, "_task_manager_service", None)
-                # AcpService lives on AcpRPCService (created in _boot_wired_services)
-                _acp_svc = None
-                _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
-                if _acp_rpc_ref is not None:
-                    _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
-                    _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
-                _proc_tbl = app.state.process_table
-                if _task_svc is not None:
-                    tdc = TaskDispatchPipeConsumer(
-                        acp_service=_acp_svc,
-                        process_table=_proc_tbl,
-                    )
-                    tdc.set_task_service(_task_svc)
-                    # Wire into existing TaskWriteHook
-                    _twh = getattr(nx, "_task_write_hook", None)
-                    if _twh is not None:
-                        _twh.register_handler(tdc)
-                    logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
-            except Exception as e:
-                logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
-    if tdc is not None and hasattr(tdc, "set_pipe_manager"):
+    if tdc is None and nx is not None:
         try:
-            tdc.set_pipe_manager(pipe_manager)
+            from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
+
+            _task_svc = getattr(nx, "_task_manager_service", None)
+            # AcpService lives on AcpRPCService (created in _boot_wired_services)
+            _acp_svc = None
+            _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
+            if _acp_rpc_ref is not None:
+                _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
+                _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
+            _proc_tbl = app.state.process_table
+            if _task_svc is not None:
+                tdc = TaskDispatchPipeConsumer(
+                    acp_service=_acp_svc,
+                    process_table=_proc_tbl,
+                )
+                tdc.set_task_service(_task_svc)
+                # Wire into existing TaskWriteHook
+                _twh = getattr(nx, "_task_write_hook", None)
+                if _twh is not None:
+                    _twh.register_handler(tdc)
+                logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
+        except Exception as e:
+            logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
+    if tdc is not None and hasattr(tdc, "bind_fs"):
+        try:
+            tdc.bind_fs(nx)
             # Inject server base URL so enriched worker prompts can reference the API
             if hasattr(tdc, "set_server_info"):
                 _port = os.environ.get("NEXUS_PORT", "2026")

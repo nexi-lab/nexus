@@ -3,9 +3,8 @@
 Issue #3192 decision 9C: Test coordinator invalidation ordering,
 callback isolation, eager recompute resilience, and stats tracking.
 
-These tests validate the currently installed coordinator behavior and
-document known gaps (e.g., break-vs-continue in eager recompute) that
-are addressed in the worktree source but not yet installed.
+Tests the coordinator with DT_STREAM integration, callback failure
+isolation, and async eager recompute (break→continue fix verified).
 """
 
 import logging
@@ -263,12 +262,11 @@ class TestCacheCoordinatorEagerRecompute:
     """Tests for the eager recompute path (_eager_recompute)."""
 
     def test_eager_recompute_break_on_first_failure(self):
-        """Current behavior: _eager_recompute breaks on first failure.
+        """Eager recompute continues past failures (break→continue fix).
 
-        The installed code uses ``break`` on exception — so if the first
-        permission fails, subsequent permissions are NOT recomputed.
-        This documents the current behavior that decision 9C aims to fix
-        (changing break to continue).
+        When one permission computation fails, subsequent permissions
+        are still recomputed. The ``continue`` statement ensures
+        partial failures don't block other permissions.
         """
         # Arrange -- namespace with two permissions mapped to "editor"
         namespace = MagicMock()

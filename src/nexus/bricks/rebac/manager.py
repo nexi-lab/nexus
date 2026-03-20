@@ -368,15 +368,22 @@ class ReBACManager:
             cache_ttl_seconds=self.cache_ttl_seconds,
             get_tuple_version=lambda: self._tuple_version,
             set_tuple_version=lambda v: setattr(self, "_tuple_version", v),
-            # Issue #3192: DT_STREAM for ordered intra-zone invalidation
+            # Issue #3192: DT_STREAM + Pub/Sub
             invalidation_stream=self._create_invalidation_stream(),
+            pubsub=self._create_pubsub(),
         )
 
     def _create_invalidation_stream(self) -> "InvalidationStream":
-        """Create and return the DT_STREAM for this manager's coordinator."""
+        """Create the DT_STREAM for ordered intra-zone invalidation."""
         from nexus.bricks.rebac.cache.invalidation_stream import InvalidationStream
 
         return InvalidationStream()
+
+    def _create_pubsub(self) -> "PubSubInvalidation":
+        """Create the Pub/Sub for cross-zone invalidation hints."""
+        from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
+
+        return PubSubInvalidation()
 
     def rebac_check(
         self,

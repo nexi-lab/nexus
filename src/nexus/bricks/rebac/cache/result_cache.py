@@ -507,6 +507,22 @@ class ReBACPermissionCache:
             if current_time - cached_at < self._revision_cache_ttl:
                 return cached_rev // self._revision_quantization_window
 
+        # Issue #3192: Try SharedRingBuffer (cross-process mmap, no DB round-trip)
+        if self._revision_ring_buffer is not None:
+            try:
+                import json as _json
+
+                entries = self._revision_ring_buffer.read(from_seq=0)
+                if entries:
+                    _seq, data = entries[-1]  # latest entry
+                    rev_data = _json.loads(data)
+                    if rev_data.get("zone_id") == effective_zone:
+                        revision = rev_data.get("revision", 0)
+                        self._revision_cache[effective_zone] = (revision, current_time)
+                        return revision // self._revision_quantization_window
+            except Exception:
+                pass  # fall through to DB
+
         # Fetch from DB via callback
         if self._revision_fetcher:
             try:

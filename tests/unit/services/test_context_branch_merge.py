@@ -76,7 +76,7 @@ def _make_service(session_factory, manifest_store: dict[str, bytes]) -> ContextB
     def write_content(data, context=None):
         h = hashlib.sha256(data).hexdigest()
         manifest_store[h] = data
-        return SimpleNamespace(content_hash=h)
+        return SimpleNamespace(content_id=h)
 
     wm.backend.read_content = read_content
     wm.backend.write_content = write_content

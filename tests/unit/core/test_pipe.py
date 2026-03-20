@@ -305,11 +305,13 @@ class MockMetastore:
 class TestPipeManager:
     def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
         ms = MockMetastore()
-        return PipeManager(ms, zone_id="test-zone"), ms
+        return PipeManager(ms), ms
 
     def test_create_pipe(self) -> None:
         mgr, ms = self._make_manager()
-        buf = mgr.create("/nexus/pipes/test", capacity=4096, owner_id="agent-1")
+        buf = mgr.create(
+            "/nexus/pipes/test", capacity=4096, owner_id="agent-1", zone_id="test-zone"
+        )
 
         assert isinstance(buf, RingBuffer)
         assert buf.stats["capacity"] == 4096
@@ -679,7 +681,7 @@ class TestRingBufferU64:
 class TestPipeManagerMPMC:
     def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
         ms = MockMetastore()
-        return PipeManager(ms, zone_id="test-zone"), ms
+        return PipeManager(ms), ms
 
     @pytest.mark.asyncio
     async def test_concurrent_writers(self) -> None:
@@ -827,7 +829,7 @@ class TestSysSetAttrUpsert:
 
     def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
         ms = MockMetastore()
-        return PipeManager(ms, zone_id="test-zone"), ms
+        return PipeManager(ms), ms
 
     def test_setattr_create_pipe(self) -> None:
         """sys_setattr with entry_type=DT_PIPE creates a pipe (replaces sys_mkpipe)."""

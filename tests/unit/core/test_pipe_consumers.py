@@ -70,7 +70,7 @@ class TestZoektPipeConsumerE2E:
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         # Mock ZoektIndexManager
         zoekt = MagicMock()
@@ -100,7 +100,7 @@ class TestZoektPipeConsumerE2E:
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.05
@@ -123,7 +123,7 @@ class TestZoektPipeConsumerE2E:
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.1
@@ -168,7 +168,7 @@ class TestZoektPipeConsumerE2E:
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 0.5  # Long debounce
@@ -192,7 +192,7 @@ class TestZoektPipeConsumerE2E:
         from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         zoekt = MagicMock()
         zoekt.debounce_seconds = 10  # Very long debounce — consumer won't drain
@@ -245,7 +245,7 @@ class TestPipedWriteObserverE2E:
         )
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         observer = PipedRecordStoreWriteObserver(MagicMock())
         observer.set_pipe_manager(pm)
@@ -279,7 +279,7 @@ class TestPipedWriteObserverE2E:
         )
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         observer = PipedRecordStoreWriteObserver(MagicMock())
         observer.set_pipe_manager(pm)
@@ -319,7 +319,7 @@ class TestPipedWriteObserverE2E:
         )
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         observer = PipedRecordStoreWriteObserver(MagicMock())
         observer.set_pipe_manager(pm)
@@ -347,7 +347,7 @@ class TestPipedWriteObserverE2E:
         )
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         observer = PipedRecordStoreWriteObserver(MagicMock())
 
@@ -425,7 +425,7 @@ class TestPipedWriteObserverE2E:
         )
 
         ms = MockMetastore()
-        pm = PipeManager(ms, zone_id="test-zone")
+        pm = PipeManager(ms)
 
         observer = PipedRecordStoreWriteObserver(MagicMock())
         observer.set_pipe_manager(pm)

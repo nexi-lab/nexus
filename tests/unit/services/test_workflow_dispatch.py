@@ -51,7 +51,7 @@ class MockMetastore:
 def _make_service(
     *, enable_workflows: bool = True, pipe_manager: PipeManager | None = None
 ) -> tuple[WorkflowDispatchService, PipeManager | None]:
-    pm = pipe_manager or PipeManager(MockMetastore(), zone_id="test")
+    pm = pipe_manager or PipeManager(MockMetastore())
     engine = AsyncMock()
     svc = WorkflowDispatchService(
         pipe_manager=pm,

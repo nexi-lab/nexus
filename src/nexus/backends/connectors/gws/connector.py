@@ -268,11 +268,89 @@ class GmailConnector(CLIConnector):
 
     # Gmail label folders
     _LABELS = ["INBOX", "SENT", "STARRED", "IMPORTANT", "DRAFTS"]
+    _last_history_id: str | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         config = SheetsConnector._load_config("gmail.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+
+    def get_history_id(self) -> str | None:
+        """Get current Gmail historyId for delta sync."""
+        import json as _json
+
+        r = self._execute_cli(
+            [
+                "gws",
+                "gmail",
+                "users",
+                "getProfile",
+                "--params",
+                '{"userId":"me"}',
+                "--format",
+                "json",
+            ],
+        )
+        if r.ok:
+            try:
+                # Skip "Using keyring backend" line
+                raw = r.stdout[r.stdout.index("{") :]
+                data = _json.loads(raw)
+                return str(data.get("historyId", ""))
+            except Exception:
+                pass
+        return None
+
+    def get_delta_changes(self, since_history_id: str) -> tuple[list[str], list[str], str | None]:
+        """Get message IDs changed since a historyId.
+
+        Returns (added_ids, deleted_ids, new_history_id).
+        Uses Gmail history.list API for true delta sync.
+        """
+        import json as _json
+
+        r = self._execute_cli(
+            [
+                "gws",
+                "gmail",
+                "users",
+                "history",
+                "list",
+                "--params",
+                _json.dumps(
+                    {
+                        "userId": "me",
+                        "startHistoryId": since_history_id,
+                        "maxResults": 500,
+                    }
+                ),
+                "--format",
+                "json",
+            ],
+        )
+        if not r.ok:
+            return [], [], None
+
+        try:
+            raw = r.stdout[r.stdout.index("{") :]
+            data = _json.loads(raw)
+        except Exception:
+            return [], [], None
+
+        added: list[str] = []
+        deleted: list[str] = []
+        for entry in data.get("history", []):
+            for msg in entry.get("messagesAdded", []):
+                mid = msg.get("message", {}).get("id", "")
+                if mid:
+                    added.append(mid)
+            for msg in entry.get("messagesDeleted", []):
+                mid = msg.get("message", {}).get("id", "")
+                if mid:
+                    deleted.append(mid)
+
+        new_hid = data.get("historyId")
+        return added, deleted, str(new_hid) if new_hid else None
 
     def list_dir(
         self,
@@ -372,8 +450,35 @@ class GmailConnector(CLIConnector):
 
         return _yaml.dump(fields, default_flow_style=False, allow_unicode=True).encode("utf-8")
 
+    def sync_delta(self) -> dict[str, Any]:
+        """Perform delta sync using Gmail historyId.
+
+        Returns dict with added/deleted message IDs and new historyId.
+        Call this instead of full list_dir for incremental updates.
+        """
+        if self._last_history_id is None:
+            # First sync: get current historyId, return empty delta
+            self._last_history_id = self.get_history_id()
+            return {
+                "added": [],
+                "deleted": [],
+                "history_id": self._last_history_id,
+                "full_sync": True,
+            }
+
+        added, deleted, new_hid = self.get_delta_changes(self._last_history_id)
+        if new_hid:
+            self._last_history_id = new_hid
+
+        return {
+            "added": added,
+            "deleted": deleted,
+            "history_id": new_hid or self._last_history_id,
+            "full_sync": False,
+        }
+
     def get_file_info(self, path: str, context: Any = None) -> Any:
-        """Return file metadata so sync creates VFS entries."""
+        """Return file metadata with historyId as backend_version for delta detection."""
         from datetime import datetime
 
         from nexus.backends.base.backend import FileInfo
@@ -381,11 +486,12 @@ class GmailConnector(CLIConnector):
         if self.is_directory(path, context):
             return FileInfo(size=0, mtime=datetime.now(UTC))
 
-        # For email files, return approximate metadata
-        content = self.read_content("", context)
+        # Use historyId as backend_version so sync service detects changes
+        hid = self._last_history_id or self.get_history_id()
         return FileInfo(
-            size=len(content),
+            size=0,  # Size computed on read
             mtime=datetime.now(UTC),
+            backend_version=hid,
             content_hash=None,
         )
 

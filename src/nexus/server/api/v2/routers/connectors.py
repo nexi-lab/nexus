@@ -100,6 +100,10 @@ class SyncResponse(BaseModel):
     mount_point: str
     files_scanned: int = 0
     files_synced: int = 0
+    delta_added: int = 0
+    delta_deleted: int = 0
+    history_id: str | None = None
+    is_delta: bool = False
     error: str | None = None
 
 
@@ -346,19 +350,55 @@ async def sync_mount(
     request: Request,
     _: dict = Depends(require_auth),
 ) -> SyncResponse:
-    """Trigger sync for a mounted connector."""
+    """Trigger sync for a mounted connector.
+
+    If the backend supports delta sync (e.g., Gmail historyId, Calendar syncToken),
+    the response includes delta_added/delta_deleted counts and history_id.
+    """
+    import asyncio
+
+    nx = _get_nx(request)
     mount_svc = _get_mount_service(request)
+
+    # Check if backend supports delta sync
+    mp = req.mount_point.rstrip("/")
+    backend = None
+    try:
+        route = nx.router.route(f"{mp}/_.yaml")
+        if route:
+            backend = route.backend
+    except Exception:
+        pass
+
+    # Try delta sync first if backend supports it
+    delta_result: dict[str, Any] | None = None
+    if backend and hasattr(backend, "sync_delta") and not req.full_sync:
+        try:
+            delta_result = await asyncio.to_thread(backend.sync_delta)
+        except Exception:
+            delta_result = None
+
+    # Run full sync (populates metadata)
     try:
         result = await mount_svc.sync_mount(
             mount_point=req.mount_point,
             recursive=req.recursive,
             full_sync=req.full_sync,
         )
-        return SyncResponse(
+
+        resp = SyncResponse(
             mount_point=req.mount_point,
             files_scanned=result.get("files_scanned", 0),
             files_synced=result.get("files_synced", 0),
         )
+
+        if delta_result:
+            resp.is_delta = not delta_result.get("full_sync", True)
+            resp.delta_added = len(delta_result.get("added", []))
+            resp.delta_deleted = len(delta_result.get("deleted", []))
+            resp.history_id = delta_result.get("history_id")
+
+        return resp
     except Exception as e:
         return SyncResponse(mount_point=req.mount_point, error=str(e))
 

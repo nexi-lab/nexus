@@ -28,6 +28,10 @@ class _StubFS:
         self._dispatch.read_hook_count = 0
         self._dispatch.resolve_read.return_value = (False, None)
         self._overlay_resolver = None
+        # Kernel IPC primitives — empty registries (no pipes/streams in range tests)
+        self._pipe_manager = None
+        self._stream_manager = MagicMock()
+        self._stream_manager._buffers = {}
 
     def _validate_path(self, path):
         if not path.startswith("/"):

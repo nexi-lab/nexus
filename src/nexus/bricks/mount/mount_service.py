@@ -202,6 +202,21 @@ class MountService:
             except Exception:
                 logger.warning("Failed to generate skill docs for %s", mount_point, exc_info=True)
 
+    @staticmethod
+    async def _index_mount_content(indexing_svc: Any, mount_point: str, files_count: int) -> None:
+        """Index mount content for semantic search (background task)."""
+        try:
+            results = await indexing_svc.index_directory(mount_point)
+            indexed = len(results) if results else 0
+            logger.info(
+                "Semantic search indexed %d/%d files from %s",
+                indexed,
+                files_count,
+                mount_point,
+            )
+        except Exception:
+            logger.debug("Semantic indexing failed for %s", mount_point, exc_info=True)
+
     # =========================================================================
     # Sync Core Logic (inlined from MountCoreService)
     # =========================================================================
@@ -1429,6 +1444,43 @@ class MountService:
                     mount_point,
                     exc_info=True,
                 )
+
+            # Post-sync: index synced content for semantic search (Issue #3148).
+            # Use the indexing service to bulk-index all files in the mount.
+            files_scanned = sync_result.get("files_scanned", 0)
+            if files_scanned > 0 and self._search_service is not None:
+                try:
+                    # Try indexing service first (bulk, uses txtai)
+                    indexing_svc = getattr(self._search_service, "_indexing_service", None)
+                    if indexing_svc is not None and hasattr(indexing_svc, "index_directory"):
+                        asyncio.create_task(
+                            self._index_mount_content(indexing_svc, mount_point, files_scanned)
+                        )
+                    else:
+                        # Fallback: notify search daemon per-file
+                        search_daemon = getattr(self._search_service, "_search_daemon", None)
+                        if search_daemon and hasattr(search_daemon, "notify_file_change"):
+                            # Get file list from metadata and notify each
+                            try:
+                                if self._gw:
+                                    entries = self._gw.metadata_list(mount_point + "/")
+                                    for entry in (entries or [])[:500]:
+                                        p = getattr(entry, "path", str(entry))
+                                        if p.endswith(".yaml") or p.endswith(".json"):
+                                            await search_daemon.notify_file_change(p, "update")
+                                    logger.info(
+                                        "Notified search daemon for %s (%d files)",
+                                        mount_point,
+                                        len(entries or []),
+                                    )
+                            except Exception:
+                                logger.debug("Search notification failed", exc_info=True)
+                except Exception:
+                    logger.debug(
+                        "Post-sync search indexing failed for %s",
+                        mount_point,
+                        exc_info=True,
+                    )
 
         return sync_result
 

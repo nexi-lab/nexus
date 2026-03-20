@@ -164,6 +164,22 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_write_observer)
 
+    # Issue #3193: Cancel the delivery worker asyncio.Task on sync close.
+    # The coordinator's stop_persistent_services() is async and only runs
+    # during lifespan shutdown. For sync close (tests, CLI), we cancel
+    # the task directly so it doesn't block event loop cleanup.
+    _dw = getattr(_sys, "delivery_worker", None)
+    if _dw is not None and hasattr(_dw, "_consumer_task"):
+
+        def _close_delivery_worker() -> None:
+            task = getattr(_dw, "_consumer_task", None)
+            if task is not None and not task.done():
+                task.cancel()
+                _dw._consumer_task = None
+                _dw._stopped = True
+
+        nx._close_callbacks.append(_close_delivery_worker)
+
     # Issue #1771: inject _flush_write_observer_fn so kernel flush_write_observer()
     # no longer reads _system_services.
     if _wo is not None and hasattr(_wo, "flush"):

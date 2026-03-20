@@ -92,11 +92,6 @@ impl ZoneRaftRegistry {
         self.tls.read().unwrap().clone()
     }
 
-    /// Update TLS config at runtime (for plaintext→mTLS upgrade).
-    pub fn set_tls(&self, tls: Option<TlsConfig>) {
-        *self.tls.write().unwrap() = tls;
-    }
-
     /// Create a new zone with its own Raft group.
     ///
     /// # Arguments

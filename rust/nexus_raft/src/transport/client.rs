@@ -707,14 +707,15 @@ pub struct JoinClusterResult {
 
 /// Call JoinCluster on a leader to get a signed node certificate.
 ///
-/// Used during 2-phase TLS bootstrap by both fullnodes (via PyO3) and
-/// the witness binary. Connects over plaintext (no TLS — certs don't exist yet).
+/// Call JoinCluster on a leader to get a signed node certificate.
+///
+/// K3s-style: authenticates with join token password. The leader signs
+/// the cert server-side — CA key never leaves node-1.
 pub async fn call_join_cluster(
     leader_addr: &str,
     node_id: u64,
     node_address: &str,
     zone_id: &str,
-    peers_bootstrap: bool,
     password: &str,
     timeout_secs: u64,
 ) -> Result<JoinClusterResult> {
@@ -734,7 +735,6 @@ pub async fn call_join_cluster(
         node_id,
         node_address: node_address.to_string(),
         zone_id: zone_id.to_string(),
-        peers_bootstrap,
     };
 
     let response = client

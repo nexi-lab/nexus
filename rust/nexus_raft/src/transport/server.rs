@@ -70,94 +70,26 @@ pub struct RaftGrpcServer {
     config: ServerConfig,
     registry: Arc<ZoneRaftRegistry>,
     /// CA private key bytes — read once at startup, held in memory for JoinCluster cert signing.
-    /// The CA key never leaves this process (security: server-side cert signing).
     ca_key_pem: Option<Vec<u8>>,
     /// SHA-256 hash of the join token password — for JoinCluster verification.
     join_token_hash: Option<String>,
-    /// Base path for data directory — used for peers_joined marker file.
-    base_path: Option<PathBuf>,
-    /// Node IDs authorized for peers_bootstrap mode (from NEXUS_PEERS).
-    authorized_peer_ids: Option<Vec<u64>>,
-    /// Dynamic CA material — set by leader after CA generation (2-phase bootstrap).
-    /// Shared with the running service impl via Arc<RwLock<>>.
-    dynamic_ca: Arc<RwLock<Option<DynamicCaMaterial>>>,
-    /// Tracks which peers have successfully called JoinCluster (peers_bootstrap mode).
-    joined_peers: Arc<RwLock<std::collections::HashSet<u64>>>,
-}
-
-/// CA material injected at runtime for 2-phase TLS bootstrap.
-#[derive(Clone)]
-struct DynamicCaMaterial {
-    ca_pem: Vec<u8>,
-    ca_key_pem: Vec<u8>,
-}
-
-/// Handle for injecting CA material into a running server (2-phase bootstrap).
-pub struct TlsBootstrapHandle {
-    dynamic_ca: Arc<RwLock<Option<DynamicCaMaterial>>>,
-    /// Set of node IDs that have successfully called JoinCluster (peers_bootstrap mode).
-    joined_peers: Arc<RwLock<std::collections::HashSet<u64>>>,
-}
-
-impl TlsBootstrapHandle {
-    /// Set CA material so the running server can handle JoinCluster requests.
-    pub fn set_ca_material(&self, ca_pem: Vec<u8>, ca_key_pem: Vec<u8>) {
-        *self.dynamic_ca.write().unwrap() = Some(DynamicCaMaterial { ca_pem, ca_key_pem });
-    }
-
-    /// Get the set of node IDs that have called JoinCluster successfully.
-    pub fn joined_peer_ids(&self) -> Vec<u64> {
-        self.joined_peers.read().unwrap().iter().copied().collect()
-    }
 }
 
 impl RaftGrpcServer {
-    /// Create a new server backed by the given zone registry.
-    ///
-    /// # Arguments
-    /// * `registry` — Zone registry for routing requests.
-    /// * `config` — Server configuration.
     pub fn new(registry: Arc<ZoneRaftRegistry>, config: ServerConfig) -> Self {
         Self {
             config,
             registry,
             ca_key_pem: None,
             join_token_hash: None,
-            base_path: None,
-            authorized_peer_ids: None,
-            dynamic_ca: Arc::new(RwLock::new(None)),
-            joined_peers: Arc::new(RwLock::new(std::collections::HashSet::new())),
         }
     }
 
     /// Set cluster join parameters for JoinCluster RPC support.
-    ///
-    /// Reads the CA private key from disk once and holds it in memory.
-    /// The CA key never leaves this process — server signs certs for joiners.
-    pub fn with_join_config(
-        mut self,
-        ca_key_pem: Vec<u8>,
-        join_token_hash: String,
-        base_path: PathBuf,
-    ) -> Self {
+    pub fn with_join_config(mut self, ca_key_pem: Vec<u8>, join_token_hash: String) -> Self {
         self.ca_key_pem = Some(ca_key_pem);
         self.join_token_hash = Some(join_token_hash);
-        self.base_path = Some(base_path);
         self
-    }
-
-    /// Set authorized peer IDs for peers_bootstrap mode (from NEXUS_PEERS).
-    pub fn with_authorized_peers(mut self, peer_ids: Vec<u64>) -> Self {
-        self.authorized_peer_ids = Some(peer_ids);
-        self
-    }
-
-    /// Get a handle for injecting CA material into the running server (2-phase bootstrap).
-    pub fn tls_bootstrap_handle(&self) -> TlsBootstrapHandle {
-        TlsBootstrapHandle {
-            dynamic_ca: self.dynamic_ca.clone(),
-            joined_peers: self.joined_peers.clone(),
-        }
     }
 
     /// Get the bind address.
@@ -184,33 +116,19 @@ impl RaftGrpcServer {
             tls: self.config.tls.clone(),
             ca_key_pem: self.ca_key_pem.clone(),
             join_token_hash: self.join_token_hash.clone(),
-            base_path: self.base_path.clone(),
-            authorized_peer_ids: self.authorized_peer_ids.clone(),
-            dynamic_ca: self.dynamic_ca.clone(),
-            joined_peers: self.joined_peers.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-            let use_mtls = self
-                .base_path
-                .as_ref()
-                .map(|p| p.join("tls/peers_joined").exists())
-                .unwrap_or(true); // default to mTLS if no base_path
-            let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
-            if use_mtls {
-                let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-                tls_config = tls_config.client_ca_root(client_ca);
-                tracing::info!("TLS mode: full mTLS (client auth required)");
-            } else {
-                tracing::info!(
-                    "TLS mode: server-TLS only (no client auth — awaiting first joiner)"
-                );
-            }
+            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(client_ca);
             builder = builder
                 .tls_config(tls_config)
                 .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+            tracing::info!("TLS mode: mTLS (client auth required)");
         }
 
         builder
@@ -245,33 +163,19 @@ impl RaftGrpcServer {
             tls: self.config.tls.clone(),
             ca_key_pem: self.ca_key_pem.clone(),
             join_token_hash: self.join_token_hash.clone(),
-            base_path: self.base_path.clone(),
-            authorized_peer_ids: self.authorized_peer_ids.clone(),
-            dynamic_ca: self.dynamic_ca.clone(),
-            joined_peers: self.joined_peers.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-            let use_mtls = self
-                .base_path
-                .as_ref()
-                .map(|p| p.join("tls/peers_joined").exists())
-                .unwrap_or(true);
-            let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
-            if use_mtls {
-                let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-                tls_config = tls_config.client_ca_root(client_ca);
-                tracing::info!("TLS mode: full mTLS (client auth required)");
-            } else {
-                tracing::info!(
-                    "TLS mode: server-TLS only (no client auth — awaiting first joiner)"
-                );
-            }
+            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(client_ca);
             builder = builder
                 .tls_config(tls_config)
                 .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+            tracing::info!("TLS mode: mTLS (client auth required)");
         }
 
         builder
@@ -564,20 +468,12 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
 /// Zone-routed implementation of the ZoneApiService gRPC trait.
 struct ZoneApiServiceImpl {
     registry: Arc<ZoneRaftRegistry>,
-    /// TLS config for outbound connections.
+    /// TLS config (for CA cert access in JoinCluster handler).
     tls: Option<super::TlsConfig>,
     /// CA private key bytes — held in memory for server-side cert signing.
     ca_key_pem: Option<Vec<u8>>,
     /// SHA-256 hash of the join token password — for JoinCluster verification.
     join_token_hash: Option<String>,
-    /// Base path for data directory — used to write peers_joined marker.
-    base_path: Option<PathBuf>,
-    /// Node IDs authorized for peers_bootstrap mode (from NEXUS_PEERS).
-    authorized_peer_ids: Option<Vec<u64>>,
-    /// Dynamic CA material — set at runtime by leader (2-phase bootstrap).
-    dynamic_ca: Arc<RwLock<Option<DynamicCaMaterial>>>,
-    /// Tracks which peers have successfully called JoinCluster.
-    joined_peers: Arc<RwLock<std::collections::HashSet<u64>>>,
 }
 
 #[tonic::async_trait]
@@ -961,8 +857,7 @@ impl ZoneApiService for ZoneApiServiceImpl {
     /// Handle a JoinCluster request — TLS certificate provisioning.
     ///
     /// Two auth modes:
-    /// 1. Token-based (peers_bootstrap=false): verify password against join_token_hash
-    /// 2. Peers-based (peers_bootstrap=true): verify node_id is in authorized_peer_ids
+    /// Authenticates with join token password (K3s-style).
     ///
     /// In both modes, the server signs a node certificate and returns CA + cert + key.
     /// The CA private key never leaves this process.
@@ -985,68 +880,39 @@ impl ZoneApiService for ZoneApiServiceImpl {
             node_id = req.node_id,
             node_address = req.node_address,
             zone_id = req.zone_id,
-            peers_bootstrap = req.peers_bootstrap,
             "JoinCluster request received",
         );
 
-        // --- Authentication ---
-        if req.peers_bootstrap {
-            // Peers-based auth: verify node_id is in the static NEXUS_PEERS list
-            match &self.authorized_peer_ids {
-                Some(peers) if peers.contains(&req.node_id) => {
-                    tracing::info!(
-                        node_id = req.node_id,
-                        "JoinCluster: peers_bootstrap auth OK"
-                    );
-                }
-                Some(_) => {
-                    tracing::warn!(
-                        node_id = req.node_id,
-                        "JoinCluster: node_id not in authorized peers"
-                    );
-                    return Ok(err_resp("Node ID not in authorized peers list"));
-                }
-                None => {
-                    return Ok(err_resp("Peers bootstrap not configured on this node"));
-                }
+        // --- Token-based authentication (K3s-style) ---
+        let stored_hash = match &self.join_token_hash {
+            Some(h) => h,
+            None => {
+                return Ok(err_resp(
+                    "This node does not accept join requests (no join token configured)",
+                ));
             }
-        } else {
-            // Token-based auth: verify password hash
-            let stored_hash = match &self.join_token_hash {
-                Some(h) => h,
-                None => {
-                    return Ok(err_resp(
-                        "This node does not accept join requests (no join token configured)",
-                    ));
-                }
-            };
-            let candidate_hash = {
-                use sha2::{Digest, Sha256};
-                use std::fmt::Write;
-                let digest = Sha256::digest(req.password.as_bytes());
-                let mut hex = String::with_capacity(64);
-                for byte in &digest[..] {
-                    let _ = write!(hex, "{:02x}", byte);
-                }
-                hex
-            };
-            if candidate_hash != *stored_hash {
-                tracing::warn!(node_id = req.node_id, "JoinCluster: invalid password");
-                return Ok(err_resp("Invalid join token password"));
+        };
+        let candidate_hash = {
+            use sha2::{Digest, Sha256};
+            use std::fmt::Write;
+            let digest = Sha256::digest(req.password.as_bytes());
+            let mut hex = String::with_capacity(64);
+            for byte in &digest[..] {
+                let _ = write!(hex, "{:02x}", byte);
             }
+            hex
+        };
+        if candidate_hash != *stored_hash {
+            tracing::warn!(node_id = req.node_id, "JoinCluster: invalid password");
+            return Ok(err_resp("Invalid join token password"));
         }
 
-        // --- Get CA material ---
-        // Try static config first (set at startup), then dynamic (set by leader at runtime)
-        let (ca_pem, ca_key_pem) = if let (Some(ca_key), Some(tls)) = (&self.ca_key_pem, &self.tls)
-        {
-            (tls.ca_pem.clone(), ca_key.clone())
-        } else if let Some(dynamic) = self.dynamic_ca.read().unwrap().as_ref() {
-            (dynamic.ca_pem.clone(), dynamic.ca_key_pem.clone())
-        } else {
-            return Ok(err_resp(
-                "CA material not available (leader may not have generated CA yet)",
-            ));
+        // --- Get CA material (static — set at startup) ---
+        let (ca_pem, ca_key_pem) = match (&self.ca_key_pem, &self.tls) {
+            (Some(ca_key), Some(tls)) => (tls.ca_pem.clone(), ca_key.clone()),
+            _ => {
+                return Ok(err_resp("CA material not configured on this node"));
+            }
         };
 
         // --- Sign node certificate ---
@@ -1055,7 +921,6 @@ impl ZoneApiService for ZoneApiServiceImpl {
         } else {
             &req.zone_id
         };
-        // Extract hostname from node_address for cert SAN (CockroachDB pattern)
         let extra_hostnames = extract_hostnames(&req.node_address);
         let (node_cert_pem, node_key_pem) = match super::certgen::generate_node_cert(
             req.node_id,
@@ -1071,21 +936,9 @@ impl ZoneApiService for ZoneApiServiceImpl {
             }
         };
 
-        // Write peers_joined marker to signal mTLS upgrade on next restart
-        if let Some(ref base) = self.base_path {
-            let marker = base.join("tls/peers_joined");
-            if let Err(e) = std::fs::write(&marker, b"1") {
-                tracing::warn!("Failed to write peers_joined marker: {}", e);
-            }
-        }
-
-        // Track this peer as joined (for leader's all-ready check)
-        self.joined_peers.write().unwrap().insert(req.node_id);
-
         tracing::info!(
             node_id = req.node_id,
             node_address = req.node_address,
-            joined_count = self.joined_peers.read().unwrap().len(),
             "JoinCluster: node certificate signed and provisioned successfully",
         );
 

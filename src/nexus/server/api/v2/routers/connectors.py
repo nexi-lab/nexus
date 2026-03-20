@@ -177,7 +177,10 @@ def _get_mount_service(request: Request) -> Any:
 @router.get("", response_model=ConnectorsListResponse)
 def list_connectors(_: dict = Depends(require_auth)) -> ConnectorsListResponse:
     """List all registered connectors with their capabilities."""
+    from nexus.backends import _register_optional_backends
     from nexus.backends.base.registry import ConnectorRegistry
+
+    _register_optional_backends()
 
     connectors = []
     for info in ConnectorRegistry.list_all():

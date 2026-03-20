@@ -202,18 +202,69 @@ class MountService:
             except Exception:
                 logger.warning("Failed to generate skill docs for %s", mount_point, exc_info=True)
 
-    @staticmethod
-    async def _index_mount_content(indexing_svc: Any, mount_point: str, files_count: int) -> None:
-        """Index mount content for semantic search (background task)."""
+    async def _index_mount_content(self, mount_point: str, files_count: int) -> None:
+        """Index mounted connector content for semantic search.
+
+        Reads file content via sys_read (which calls gws CLI for external
+        connectors) and indexes directly into the search daemon's txtai backend.
+        """
         try:
-            results = await indexing_svc.index_directory(mount_point)
-            indexed = len(results) if results else 0
-            logger.info(
-                "Semantic search indexed %d/%d files from %s",
-                indexed,
-                files_count,
-                mount_point,
+            search_daemon = getattr(self._search_service, "_search_daemon", None)
+            if search_daemon is None or getattr(search_daemon, "_backend", None) is None:
+                logger.debug("No search daemon/txtai backend for indexing %s", mount_point)
+                return
+
+            # Get NexusFS for reading content
+            nx = self.nexus_fs or (
+                self._gw.nexus_fs if self._gw and hasattr(self._gw, "nexus_fs") else None
             )
+            if nx is None:
+                return
+
+            # List all files via metadata
+            from nexus.contracts.types import OperationContext
+
+            admin_ctx = OperationContext(user_id="system", groups=[], is_admin=True, is_system=True)
+
+            # Enumerate files from metadata
+            import contextlib
+
+            entries = []
+            if self._gw:
+                with contextlib.suppress(Exception):
+                    entries = self._gw.metadata_list(mount_point + "/") or []
+
+            if not entries:
+                return
+
+            # Read content and build documents for txtai
+            documents: list[tuple[str, str, None]] = []
+            indexed = 0
+            for entry in entries[:200]:  # Cap at 200 to avoid overloading
+                path = getattr(entry, "path", str(entry))
+                if not path.endswith((".yaml", ".json", ".md", ".txt")):
+                    continue
+                try:
+                    content = await nx.sys_read(path, context=admin_ctx)
+                    if isinstance(content, bytes):
+                        content = content.decode("utf-8", errors="ignore")
+                    if content and len(content) > 10:
+                        documents.append((path, str(content), None))
+                        indexed += 1
+                except Exception:
+                    continue
+
+            if documents:
+                # Index via txtai backend
+                backend = search_daemon._backend
+                await backend.upsert(documents)
+                logger.info(
+                    "Indexed %d/%d connector files from %s into txtai",
+                    indexed,
+                    files_count,
+                    mount_point,
+                )
+
         except Exception:
             logger.debug("Semantic indexing failed for %s", mount_point, exc_info=True)
 
@@ -1450,31 +1501,7 @@ class MountService:
             files_scanned = sync_result.get("files_scanned", 0)
             if files_scanned > 0 and self._search_service is not None:
                 try:
-                    # Try indexing service first (bulk, uses txtai)
-                    indexing_svc = getattr(self._search_service, "_indexing_service", None)
-                    if indexing_svc is not None and hasattr(indexing_svc, "index_directory"):
-                        asyncio.create_task(
-                            self._index_mount_content(indexing_svc, mount_point, files_scanned)
-                        )
-                    else:
-                        # Fallback: notify search daemon per-file
-                        search_daemon = getattr(self._search_service, "_search_daemon", None)
-                        if search_daemon and hasattr(search_daemon, "notify_file_change"):
-                            # Get file list from metadata and notify each
-                            try:
-                                if self._gw:
-                                    entries = self._gw.metadata_list(mount_point + "/")
-                                    for entry in (entries or [])[:500]:
-                                        p = getattr(entry, "path", str(entry))
-                                        if p.endswith(".yaml") or p.endswith(".json"):
-                                            await search_daemon.notify_file_change(p, "update")
-                                    logger.info(
-                                        "Notified search daemon for %s (%d files)",
-                                        mount_point,
-                                        len(entries or []),
-                                    )
-                            except Exception:
-                                logger.debug("Search notification failed", exc_info=True)
+                    asyncio.create_task(self._index_mount_content(mount_point, files_scanned))
                 except Exception:
                     logger.debug(
                         "Post-sync search indexing failed for %s",

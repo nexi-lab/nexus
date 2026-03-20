@@ -997,7 +997,7 @@ class CacheCoordinator:
                 object_id=object_id,
             )
         else:
-            for callback_id, callback in self._visibility_invalidators:
+            for callback_id, callback in self._visibility_invalidators:  # type: ignore[assignment]
                 try:
                     callback(zone_id, object_id)
                 except Exception:
@@ -1039,7 +1039,7 @@ class CacheCoordinator:
                 subject_id=subject_id,
             )
         else:
-            for callback_id, callback in self._namespace_invalidators:
+            for callback_id, callback in self._namespace_invalidators:  # type: ignore[assignment]
                 try:
                     callback(subject_type, subject_id, zone_id)
                 except Exception:

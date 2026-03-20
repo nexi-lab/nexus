@@ -326,7 +326,7 @@ class DeferredPermissionBuffer:
                 # Re-queue with retry tracking; dead-letter items that exceed max_retries
                 requeue_grants: list[dict[str, Any]] = []
                 for grant in grants_batch:
-                    key = (
+                    key: tuple[Any, ...] = (
                         grant["subject"],
                         grant["relation"],
                         grant["object"],

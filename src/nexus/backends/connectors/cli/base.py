@@ -267,6 +267,8 @@ class CLIConnector(
     def write_content(
         self,
         content: bytes,
+        content_id: str = "",
+        *,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write content by validating YAML and executing CLI command.
@@ -359,7 +361,7 @@ class CLIConnector(
             )
 
         content_hash = hashlib.sha256(result.stdout.encode()).hexdigest()
-        return WriteResult(content_hash=content_hash, size=len(content))
+        return WriteResult(content_hash, len(content))
 
     def _resolve_operation(self, path: str) -> str | None:
         """Map a backend_path to an operation name.

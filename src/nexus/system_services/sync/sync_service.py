@@ -602,7 +602,7 @@ class SyncService:
                                 loop.run_until_complete(
                                     self._gw.sys_write(write_path, fetch.content)
                                 )
-                                result.files_synced += 1
+                                result.cache_synced += 1
                         except Exception:
                             logger.debug(
                                 "Provider fetch_item failed for %s",
@@ -684,7 +684,7 @@ class SyncService:
         logger.info(
             "[SYNC_PROVIDER] Synced %d files (%d fetched, %d deleted) via provider for %s",
             result.files_scanned,
-            result.files_synced,
+            result.cache_synced,
             result.files_deleted,
             ctx.mount_point,
         )

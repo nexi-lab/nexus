@@ -367,8 +367,8 @@ class GmailConnector(CLIConnector):
         import hashlib
 
         return WriteResult(
-            content_hash=hashlib.sha256(result.stdout.encode()).hexdigest(),
-            size=len(content),
+            hashlib.sha256(result.stdout.encode()).hexdigest(),
+            len(content),
         )
 
     def get_history_id(self) -> str | None:

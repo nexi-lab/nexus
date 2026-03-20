@@ -147,20 +147,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let server = RaftWitnessServer::new(registry.clone(), server_config);
 
-        // If no certs, spawn a background task to call JoinCluster when leader is available
+        // If no certs, spawn a background task to call JoinCluster with token
         if needs_bootstrap && !peers.is_empty() {
-            let tls_dir_bg = tls_dir.clone();
-            let peers_bg = peers.clone();
-            // Use own address from peers (e.g. "http://witness:2126") so cert SAN
-            // includes the actual hostname, not "0.0.0.0".
-            let my_addr = peers
-                .iter()
-                .find(|p| p.id == node_id)
-                .map(|p| p.endpoint.clone())
-                .unwrap_or_else(|| format!("http://{}", bind_addr));
-            tokio::spawn(async move {
-                tls_bootstrap_loop(node_id, &my_addr, &peers_bg, &tls_dir_bg).await;
-            });
+            // Parse join token from NEXUS_JOIN_TOKEN (K3s-style: K10<password>::server:<fingerprint>)
+            let join_token = env::var("NEXUS_JOIN_TOKEN").unwrap_or_default();
+            let password = if let Some(body) = join_token.strip_prefix("K10") {
+                body.split("::server:").next().unwrap_or("").to_string()
+            } else {
+                if !join_token.is_empty() {
+                    tracing::warn!("NEXUS_JOIN_TOKEN has invalid format (expected K10...)");
+                } else {
+                    tracing::warn!("NEXUS_JOIN_TOKEN not set — cannot join cluster for TLS certs");
+                }
+                String::new()
+            };
+
+            if !password.is_empty() {
+                let tls_dir_bg = tls_dir.clone();
+                let peers_bg = peers.clone();
+                let my_addr = peers
+                    .iter()
+                    .find(|p| p.id == node_id)
+                    .map(|p| p.endpoint.clone())
+                    .unwrap_or_else(|| format!("http://{}", bind_addr));
+                tokio::spawn(async move {
+                    tls_bootstrap_loop(node_id, &my_addr, &peers_bg, &tls_dir_bg, &password).await;
+                });
+            }
         }
 
         tracing::info!("Witness server starting on {}", bind_addr);
@@ -222,6 +235,7 @@ async fn tls_bootstrap_loop(
     node_address: &str,
     peers: &[_nexus_raft::transport::NodeAddress],
     tls_dir: &std::path::Path,
+    password: &str,
 ) {
     use _nexus_raft::transport::call_join_cluster;
 
@@ -248,9 +262,8 @@ async fn tls_bootstrap_loop(
                 node_id,
                 node_address,
                 "root",
-                true, // peers_bootstrap
-                "",   // no password
-                10,   // timeout
+                password,
+                10, // timeout
             )
             .await
             {

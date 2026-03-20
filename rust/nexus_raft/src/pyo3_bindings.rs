@@ -760,11 +760,7 @@ impl PyZoneManager {
             let ca_key_pem = std::fs::read(ca_key_path).map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to read CA key for JoinCluster: {}", e))
             })?;
-            server = server.with_join_config(
-                ca_key_pem,
-                token_hash.to_string(),
-                std::path::PathBuf::from(base_path),
-            );
+            server = server.with_join_config(ca_key_pem, token_hash.to_string());
         }
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
@@ -1303,8 +1299,7 @@ fn join_cluster(peer_address: &str, join_token: &str, node_id: u64, tls_dir: &st
     let result = runtime
         .block_on(call_join_cluster(
             &endpoint, node_id, "", // node_address — not needed for pre-provision
-            "root", false, // peers_bootstrap = false (using password auth)
-            password, 30, // timeout_secs
+            "root", password, 30, // timeout_secs
         ))
         .map_err(|e| PyRuntimeError::new_err(format!("JoinCluster RPC failed: {}", e)))?;
 

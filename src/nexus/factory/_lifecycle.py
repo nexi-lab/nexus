@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 async def _do_link(
     nx: Any,
     *,
+    system_services: Any = None,
     enabled_bricks: "frozenset[str] | None" = None,
     parsing: Any = None,
     workflow_engine: Any = None,
@@ -31,7 +32,7 @@ async def _do_link(
     from nexus.factory._wired import _boot_wired_services
     from nexus.factory.service_routing import enlist_wired_services
 
-    _sys = nx._system_services
+    _sys = system_services
     _brk = nx._brick_services
     nx._permission_enforcer = _sys.permission_enforcer  # Issue #1706: override sentinel
 
@@ -103,6 +104,7 @@ async def _do_link(
 
     nx._initialize_fn = functools.partial(
         _do_initialize,
+        system_services=system_services,
         brick_on=_brick_on,
         parse_fn=_parse_fn,
         permission_checker=_permission_checker,
@@ -112,7 +114,7 @@ async def _do_link(
     _wired = await _boot_wired_services(
         nx,
         nx.router,  # Issue #1767: KernelServices wrapper removed
-        nx._system_services,
+        system_services,
         nx._brick_services,
         _brick_on,
     )
@@ -123,7 +125,7 @@ async def _do_link(
         ServiceLifecycleCoordinator,
     )
 
-    _blm = getattr(nx._system_services, "brick_lifecycle_manager", None)
+    _blm = getattr(system_services, "brick_lifecycle_manager", None)
     coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
     nx._service_coordinator = coordinator
     await enlist_wired_services(coordinator, _wired)
@@ -131,10 +133,10 @@ async def _do_link(
     # Issue #1666: Register system-tier PersistentService instances.
     # These are Q3 (PersistentService) — enlist() defers start() because
     # coordinator is not yet bootstrapped (mark_bootstrapped at bootstrap).
-    _dpb = getattr(nx._system_services, "deferred_permission_buffer", None)
+    _dpb = getattr(system_services, "deferred_permission_buffer", None)
     if _dpb is not None:
         await coordinator.enlist("deferred_permission_buffer", _dpb)
-    _dw = getattr(nx._system_services, "delivery_worker", None)
+    _dw = getattr(system_services, "delivery_worker", None)
     if _dw is not None:
         await coordinator.enlist("delivery_worker", _dw)
 
@@ -161,6 +163,16 @@ async def _do_link(
                 logger.debug("close: write_observer flush_sync failed (best-effort): %s", exc)
 
         nx._close_callbacks.append(_close_write_observer)
+
+    # Issue #1771: inject _flush_write_observer_fn so kernel flush_write_observer()
+    # no longer reads _system_services.
+    if _wo is not None and hasattr(_wo, "flush"):
+
+        async def _flush_wo() -> int:
+            result: int = await _wo.flush()
+            return result
+
+        nx._flush_write_observer_fn = _flush_wo
 
     _rebac = getattr(_sys, "rebac_manager", None)
     if _rebac is not None and hasattr(_rebac, "close"):
@@ -221,7 +233,12 @@ async def _do_link(
 
 
 async def _do_initialize(
-    nx: Any, *, brick_on: "Any" = None, parse_fn: "Any" = None, permission_checker: "Any" = None
+    nx: Any,
+    *,
+    system_services: Any = None,
+    brick_on: "Any" = None,
+    parse_fn: "Any" = None,
+    permission_checker: "Any" = None,
 ) -> None:
     """Phase 2 implementation: one-time side effects.  NO background threads.
 
@@ -245,6 +262,7 @@ async def _do_initialize(
 
     await _register_vfs_hooks(
         nx,
+        system_services=system_services,
         permission_checker=permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
         brick_on=brick_on,
@@ -252,7 +270,7 @@ async def _do_initialize(
     )
 
     # --- BLM registration for late bricks (Issue #1704, #2991) ---
-    _blm = getattr(nx._system_services, "brick_lifecycle_manager", None)
+    _blm = getattr(system_services, "brick_lifecycle_manager", None)
     if _blm is not None:
         from nexus.factory._helpers import _register_late_bricks
 
@@ -267,7 +285,7 @@ async def _do_initialize(
     # implement PersistentService and are auto-started by the coordinator's
     # start_persistent_services() at bootstrap.  Manual callbacks deleted.
 
-    _zl = getattr(nx._system_services, "zone_lifecycle", None) if nx._system_services else None
+    _zl = getattr(system_services, "zone_lifecycle", None) if system_services else None
     if _zl is not None and hasattr(_zl, "load_terminating_zones"):
 
         async def _load_zones() -> None:

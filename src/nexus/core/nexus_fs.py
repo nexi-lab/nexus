@@ -29,7 +29,6 @@ from nexus.core.config import (
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
-    SystemServices,
 )
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
@@ -72,7 +71,7 @@ class NexusFS(  # type: ignore[misc]
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
         kernel_services: KernelServices | None = None,
-        system_services: SystemServices | None = None,
+        system_services: Any = None,
         brick_services: BrickServices | None = None,
     ):
         """Initialize NexusFS kernel.
@@ -80,6 +79,11 @@ class NexusFS(  # type: ignore[misc]
         Kernel boots with MetastoreABC (inode layer) and an optional router
         (via KernelServices). Backends are mounted externally via
         ``router.add_mount()`` — like Linux VFS, no global backend.
+
+        .. deprecated:: Issue #1771
+            ``system_services`` is accepted for backward compatibility but the
+            kernel no longer reads it.  The factory layer sets
+            ``nx._system_services`` post-construction instead.
         """
         # Config defaults
         cache = cache or CacheConfig()
@@ -88,7 +92,6 @@ class NexusFS(  # type: ignore[misc]
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
         ksvc = kernel_services or KernelServices()
-        sys_svc = system_services or SystemServices()
         brk_svc = brick_services or BrickServices()
 
         # Per-instance VFS revision counter (H21: must not be class-level)
@@ -104,7 +107,16 @@ class NexusFS(  # type: ignore[misc]
         self._parse_config = parsing
         # Issue #1767: _kernel_services wrapper removed — only field was router,
         # which is already stored as self.router (set a few lines below).
-        self._system_services = sys_svc
+        # Issue #1771: _system_services removed from kernel logic — accepted
+        # only for backward compat (tests/server/CLI may still pass it).
+        # The factory layer re-sets this post-construction via setattr.
+        # Default to SystemServices() for backward compat with tests that
+        # call dataclasses.replace(nx._system_services, ...).
+        if system_services is None:
+            from nexus.core.config import SystemServices as _SystemServices
+
+            system_services = _SystemServices()
+        self._system_services = system_services
         self._brick_services = brk_svc
         self._config: Any | None = None
 
@@ -164,6 +176,9 @@ class NexusFS(  # type: ignore[misc]
         # Issue #1788: distributed lock manager — kernel knows (like _permission_enforcer).
         # In-process locks use _vfs_lock_manager (kernel owns); distributed locks use this.
         self._distributed_lock_manager: Any = None
+        # Issue #1771: factory-injected async flush fn — replaces _system_services read
+        # in flush_write_observer(). Captures write_observer via closure.
+        self._flush_write_observer_fn: Any = None
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
 
         # Lazy-init sentinels
@@ -4128,14 +4143,12 @@ class NexusFS(  # type: ignore[misc]
         if alias is not None:
             svc_attr, svc_method = alias
             svc = self.__dict__.get(svc_attr)
-            # Fallback: check containers for attrs removed from instance dict (Issue #1570)
+            # Fallback: check _brick_services container for attrs removed from
+            # instance dict (Issue #1570).  _system_services removed (Issue #1771).
             if svc is None:
-                _sys = object.__getattribute__(self, "_system_services")
                 _brk = object.__getattribute__(self, "_brick_services")
                 _bare = svc_attr.lstrip("_")
-                if _sys is not None:
-                    svc = getattr(_sys, _bare, None)
-                if svc is None and _brk is not None:
+                if _brk is not None:
                     svc = getattr(_brk, _bare, None)
             if svc is not None:
                 return getattr(svc, svc_method)
@@ -4144,14 +4157,12 @@ class NexusFS(  # type: ignore[misc]
         svc_attr_std = NexusFS._SERVICE_METHODS.get(name)
         if svc_attr_std is not None:
             svc = self.__dict__.get(svc_attr_std)
-            # Fallback: check containers for attrs removed from instance dict (Issue #1570)
+            # Fallback: check _brick_services container for attrs removed from
+            # instance dict (Issue #1570).  _system_services removed (Issue #1771).
             if svc is None:
-                _sys = object.__getattribute__(self, "_system_services")
                 _brk = object.__getattribute__(self, "_brick_services")
                 _bare = svc_attr_std.lstrip("_")
-                if _sys is not None:
-                    svc = getattr(_sys, _bare, None)
-                if svc is None and _brk is not None:
+                if _brk is not None:
                     svc = getattr(_brk, _bare, None)
             if svc is not None:
                 return getattr(svc, name)
@@ -4524,15 +4535,12 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Dict with ``flushed`` count.
         """
-        # Issue #1789: delegate to write_observer via service registry or
-        # _system_services as last resort.  _close_callbacks handles close().
-        wo = None
-        _sys = self._system_services
-        if _sys is not None:
-            wo = getattr(_sys, "write_observer", None)
-        if wo is None or not hasattr(wo, "flush"):
+        # Issue #1771: use factory-injected _flush_write_observer_fn instead of
+        # reading _system_services directly.  Captures write_observer via closure.
+        _flush_fn = self._flush_write_observer_fn
+        if _flush_fn is None:
             return {"flushed": 0}
-        flushed: int = NexusFS._run_async(wo.flush())
+        flushed: int = NexusFS._run_async(_flush_fn())
         return {"flushed": flushed}
 
     # ------------------------------------------------------------------

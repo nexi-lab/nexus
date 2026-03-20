@@ -366,6 +366,8 @@ async def create_nexus_fs(
     if brick_services is None:
         brick_services = _BrickServices()
 
+    import functools
+
     from nexus.factory._lifecycle import _do_initialize, _do_link
 
     nx = NexusFS(
@@ -379,11 +381,12 @@ async def create_nexus_fs(
         memory=memory,
         parsing=parsing,
         kernel_services=kernel_services,
-        system_services=system_services,
         brick_services=brick_services,
     )
-    nx._link_fn = _do_link
+    nx._link_fn = functools.partial(_do_link, system_services=system_services)
     nx._initialize_fn = _do_initialize
+    # Backward compat: server/CLI/tests may read nx._system_services directly.
+    nx._system_services = system_services
     await nx.link(
         enabled_bricks=enabled_bricks,
         parsing=parsing,
@@ -396,6 +399,7 @@ async def create_nexus_fs(
 async def _register_vfs_hooks(
     nx: "NexusFS",
     *,
+    system_services: Any = None,
     permission_checker: Any = None,
     auto_parse: bool = True,
     brick_on: "Callable[[str], bool] | None" = None,
@@ -425,7 +429,7 @@ async def _register_vfs_hooks(
     # Rejects writes to zones being deprovisioned (Issue #2061).
     # Replaces _check_zone_writable() in nexus_fs — kernel no longer
     # reads zone_lifecycle from _system_services.
-    _zl = getattr(nx._system_services, "zone_lifecycle", None) if nx._system_services else None
+    _zl = getattr(system_services, "zone_lifecycle", None) if system_services else None
     if _zl is not None:
         from nexus.system_services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook
 
@@ -440,18 +444,14 @@ async def _register_vfs_hooks(
             metadata_store=nx.metadata,
             default_context=nx._default_context,
             enforce_permissions=nx._enforce_permissions,
-            permission_enforcer=nx._system_services.permission_enforcer
-            if nx._system_services
-            else None,
+            permission_enforcer=system_services.permission_enforcer if system_services else None,
             descendant_checker=getattr(nx, "_descendant_checker", None),
         )
         await _enlist("permission", _perm_hook)
 
     # ── Audit write observer as interceptor (Issue #900) ──────────
     # Registered FIRST so it runs before other hooks (audit before side effects).
-    write_observer = (
-        getattr(nx._system_services, "write_observer", None) if nx._system_services else None
-    )
+    write_observer = getattr(system_services, "write_observer", None) if system_services else None
     if write_observer is not None:
         from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
@@ -461,8 +461,7 @@ async def _register_vfs_hooks(
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (
-        (getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None)
-        is not None
+        (getattr(system_services, "rebac_manager", None) if system_services else None) is not None
         and hasattr(nx, "get_dynamic_viewer_config")
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
@@ -498,9 +497,7 @@ async def _register_vfs_hooks(
         await _enlist("auto_parse", _auto_parse_hook)
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
-    _rebac_mgr = (
-        getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None
-    )
+    _rebac_mgr = getattr(system_services, "rebac_manager", None) if system_services else None
     tiger_cache = getattr(_rebac_mgr, "_tiger_cache", None) if _rebac_mgr else None
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
@@ -538,9 +535,7 @@ async def _register_vfs_hooks(
     await _enlist("virtual_view", _vview_resolver)
 
     # ── ProcResolver (procfs virtual filesystem for ProcessTable — Issue #1570) ──
-    _proc_table = (
-        getattr(nx._system_services, "process_table", None) if nx._system_services else None
-    )
+    _proc_table = getattr(system_services, "process_table", None) if system_services else None
     if _proc_table is not None:
         try:
             from nexus.system_services.proc.proc_resolver import ProcResolver
@@ -582,14 +577,8 @@ async def _register_vfs_hooks(
         await _enlist("snapshot_write", SnapshotWriteHook(_snapshot_svc))
 
     # ── Deferred permission buffer (Issue #1773, #1682) ────────────────
-    _dpb = (
-        getattr(nx._system_services, "deferred_permission_buffer", None)
-        if nx._system_services
-        else None
-    )
-    _rebac_for_perm = (
-        getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None
-    )
+    _dpb = getattr(system_services, "deferred_permission_buffer", None) if system_services else None
+    _rebac_for_perm = getattr(system_services, "rebac_manager", None) if system_services else None
     if _dpb is not None:
         from nexus.bricks.rebac.deferred_permission_hook import DeferredPermissionHook
 
@@ -599,9 +588,7 @@ async def _register_vfs_hooks(
         )
     else:
         # Sync fallback — same logic, runs as post-write hook instead of inline kernel code
-        _hier = (
-            getattr(nx._system_services, "hierarchy_manager", None) if nx._system_services else None
-        )
+        _hier = getattr(system_services, "hierarchy_manager", None) if system_services else None
         if _hier is not None or _rebac_for_perm is not None:
             from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
 
@@ -614,7 +601,7 @@ async def _register_vfs_hooks(
     # Replaces NexusFS._check_zone_writable() — kernel should not know
     # about zone lifecycle.  PRE hooks on all mutating ops block writes
     # to zones being deprovisioned.
-    _zl = getattr(nx._system_services, "zone_lifecycle", None) if nx._system_services else None
+    _zl = getattr(system_services, "zone_lifecycle", None) if system_services else None
     if _zl is not None:
         from nexus.system_services.lifecycle.zone_writability_hook import ZoneWritabilityHook
 
@@ -628,7 +615,7 @@ async def _register_vfs_hooks(
     from nexus.system_services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(
-        event_bus=nx._system_services.event_bus if nx._system_services else None
+        event_bus=system_services.event_bus if system_services else None
     )
     await _enlist("event_bus_observer", _bus_observer)
 

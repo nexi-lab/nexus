@@ -162,6 +162,9 @@ class NexusFS(  # type: ignore[misc]
         self._overlay_resolver = None
         # Issue #1791: factory-injected overlay config resolver (captures workspace_registry)
         self._overlay_config_fn: Callable[..., Any] | None = None
+        # Issue #1788: distributed lock manager — kernel knows (like _permission_enforcer).
+        # In-process locks use _vfs_lock_manager (kernel owns); distributed locks use this.
+        self._distributed_lock_manager: Any = None
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
 
         # Lazy-init sentinels
@@ -1167,10 +1170,7 @@ class NexusFS(  # type: ignore[misc]
         """
         import asyncio
 
-        # Issue #1570: lock_manager accessed from container, not flat attr.
-        _lm = (
-            getattr(self._system_services, "lock_manager", None) if self._system_services else None
-        )
+        _lm = self._distributed_lock_manager
         if _lm is None:
             raise RuntimeError(
                 "write(lock=True) called but distributed lock manager not configured. "
@@ -1221,10 +1221,7 @@ class NexusFS(  # type: ignore[misc]
         if not lock_id:
             return
 
-        # Issue #1570: lock_manager accessed from container, not flat attr.
-        _lm = (
-            getattr(self._system_services, "lock_manager", None) if self._system_services else None
-        )
+        _lm = self._distributed_lock_manager
         if _lm is None:
             return
 
@@ -2587,10 +2584,7 @@ class NexusFS(  # type: ignore[misc]
             ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
             ... )
         """
-        # Issue #1570: lock_manager accessed from container, not flat attr.
-        _lm = (
-            getattr(self._system_services, "lock_manager", None) if self._system_services else None
-        )
+        _lm = self._distributed_lock_manager
         if _lm is None:
             raise RuntimeError(
                 "atomic_update() requires distributed lock manager. "

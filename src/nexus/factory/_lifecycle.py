@@ -144,6 +144,9 @@ async def _do_link(
     if _dc is not None:
         nx._descendant_checker = _dc
 
+    # Issue #1788: inject distributed lock_manager directly (kernel knows pattern)
+    nx._distributed_lock_manager = getattr(_sys, "lock_manager", None)
+
     # --- Register close callbacks (Issue #1793, #1789) ---
     # Services that need cleanup at close() register callbacks here instead of
     # kernel reading _system_services directly.  Callbacks run BEFORE pillar

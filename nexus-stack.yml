@@ -122,6 +122,7 @@ services:
       # gRPC
       NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
       NEXUS_GRPC_BIND_ALL: "true"  # Required: Docker port-forwarding needs 0.0.0.0
+      NEXUS_GRPC_TLS: "${NEXUS_GRPC_TLS:-false}"  # Disable mTLS for standalone Docker (Issue #3192)
       # Runtime
       NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
     volumes:

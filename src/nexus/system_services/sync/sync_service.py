@@ -528,11 +528,14 @@ class SyncService:
             page_token: str | None = None
             while True:
                 page = loop.run_until_complete(
-                    provider.list_remote_items("", page_token=page_token, page_size=100)
+                    provider.list_remote_items(
+                        "", page_token=page_token, page_size=100, context=ctx.context
+                    )
                 )
 
                 for item in page.items:
-                    virtual_path = f"{ctx.mount_point}/{item.path}"
+                    rel_path = item.relative_path
+                    virtual_path = f"{ctx.mount_point}/{rel_path}"
                     files_found.add(virtual_path)
                     result.files_scanned += 1
 
@@ -546,7 +549,7 @@ class SyncService:
                         meta = FileMetadata(
                             path=virtual_path,
                             backend_name=backend.name,
-                            physical_path=item.path,
+                            physical_path=rel_path,
                             size=item.size or 0,
                             etag=item.content_hash,
                             created_at=now,

@@ -51,25 +51,26 @@ class CLISyncProvider:
         since: str | None = None,
         page_token: str | None = None,
         page_size: int = 100,
+        context: Any = None,
     ) -> SyncPage:
         """List remote items via CLI.
 
         Uses the sync delta_command if ``since`` is provided (incremental),
         otherwise falls back to full listing via the read list_command.
+
+        Args:
+            context: OperationContext for user-scoped auth propagation.
         """
         import asyncio
 
         args = self._build_list_args(path, since=since, page_token=page_token, page_size=page_size)
 
-        # Auth via env vars (consistent with base CLIConnector security model)
-        auth_env = (
-            self._connector._build_auth_env(self._connector._get_user_token(None) or "")
-            if hasattr(self._connector, "_build_auth_env")
-            else None
-        )
+        # Auth via env vars — propagate OperationContext for user-scoped connectors
+        token = self._connector._get_user_token(context)
+        auth_env = self._connector._build_auth_env(token) if token else None
 
         result: CLIResult = await asyncio.to_thread(
-            self._connector._execute_cli, args, env=auth_env
+            self._connector._execute_cli, args, context=context, env=auth_env
         )
 
         if not result.ok:
@@ -81,17 +82,18 @@ class CLISyncProvider:
 
         return self._parse_list_output(result.stdout)
 
-    async def fetch_item(self, item_id: str) -> FetchResult:
-        """Fetch a single item's content via CLI."""
+    async def fetch_item(self, item_id: str, context: Any = None) -> FetchResult:
+        """Fetch a single item's content via CLI.
+
+        Args:
+            context: OperationContext for user-scoped auth propagation.
+        """
         import asyncio
 
         args = self._build_get_args(item_id)
 
-        auth_env = (
-            self._connector._build_auth_env(self._connector._get_user_token(None) or "")
-            if hasattr(self._connector, "_build_auth_env")
-            else None
-        )
+        token = self._connector._get_user_token(context)
+        auth_env = self._connector._build_auth_env(token) if token else None
 
         result: CLIResult = await asyncio.to_thread(
             self._connector._execute_cli, args, env=auth_env

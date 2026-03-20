@@ -144,6 +144,43 @@ async def _do_link(
     if _dc is not None:
         nx._descendant_checker = _dc
 
+    # --- Register close callbacks (Issue #1793, #1789) ---
+    # Services that need cleanup at close() register callbacks here instead of
+    # kernel reading _system_services directly.  Callbacks run BEFORE pillar
+    # close (metadata_store, record_store) to ensure DB connections are still open.
+    _wo = getattr(_sys, "write_observer", None)
+    if _wo is not None and hasattr(_wo, "flush_sync"):
+
+        def _close_write_observer() -> None:
+            try:
+                _wo.flush_sync()
+            except Exception as exc:
+                logger.debug("close: write_observer flush_sync failed (best-effort): %s", exc)
+
+        nx._close_callbacks.append(_close_write_observer)
+
+    _rebac = getattr(_sys, "rebac_manager", None)
+    if _rebac is not None and hasattr(_rebac, "close"):
+
+        def _close_rebac() -> None:
+            try:
+                _rebac.close()
+            except Exception as exc:
+                logger.debug("close: rebac_manager.close() failed: %s", exc)
+
+        nx._close_callbacks.append(_close_rebac)
+
+    _audit = getattr(_sys, "audit_store", None)
+    if _audit is not None and hasattr(_audit, "close"):
+
+        def _close_audit() -> None:
+            try:
+                _audit.close()
+            except Exception as exc:
+                logger.debug("close: audit_store.close() failed: %s", exc)
+
+        nx._close_callbacks.append(_close_audit)
+
 
 async def _do_initialize(
     nx: Any, *, brick_on: "Any" = None, parse_fn: "Any" = None, permission_checker: "Any" = None

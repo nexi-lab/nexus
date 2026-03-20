@@ -10,18 +10,20 @@ Key guarantees:
   successful dispatch.  On crash, undelivered rows are retried.
 - **Concurrent safety**: ``SELECT ... FOR UPDATE SKIP LOCKED`` prevents
   two workers from processing the same batch.
-- **Backpressure**: exponential backoff on consecutive empty polls
-  (200ms -> 400ms -> 800ms -> cap) to reduce idle DB pressure.
+- **Signal-driven wakeup**: the write observer sets an ``asyncio.Event``
+  after each flush so the worker wakes immediately instead of polling
+  on a fixed timer (Issue #3193).
 - **DLQ routing**: events failing after max_retries are sent to the
   dead letter queue (Issue #1138).
 
-Tracked by: Issue #1241, #1138
+Tracked by: Issue #1241, #1138, #3193
 """
 
+from __future__ import annotations
+
 import asyncio
-import itertools
+import contextlib
 import logging
-import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -51,29 +53,6 @@ _OP_TO_EVENT_TYPE: dict[str, FileEventType] = {
     OperationType.SETFACL: FileEventType.METADATA_CHANGE,
 }
 
-# ---- Sync -> async bridge helper -------------------------------------------
-
-
-def _run_async(coro: Any, loop: asyncio.AbstractEventLoop | None = None) -> Any:
-    """Run an async coroutine from a sync context, properly awaiting the result.
-
-    If an event loop is provided and running, schedules via
-    run_coroutine_threadsafe and *awaits* the Future (fixes fire-and-forget bug).
-    Otherwise creates a temporary loop with asyncio.run().
-    """
-    if loop is None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-    if loop is not None and loop.is_running():
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        # Block until coroutine completes (fixes fire-and-forget bug)
-        return future.result(timeout=30.0)
-    else:
-        return asyncio.run(coro)
-
 
 class EventDeliveryWorker:
     """Background worker polling undelivered events from operation_log.
@@ -83,6 +62,9 @@ class EventDeliveryWorker:
     exporters (Kafka, NATS, Pub/Sub via ExporterRegistry).
     Marks events ``delivered = TRUE`` after successful dispatch.
     Routes failures to DLQ after max_retries.
+
+    Issue #3193: converted from threading.Thread to asyncio.Task with
+    drain-then-wait pattern driven by an ``asyncio.Event`` signal.
     """
 
     def __init__(
@@ -92,8 +74,8 @@ class EventDeliveryWorker:
         exporter_registry: "ExporterRegistry | None" = None,
         subscription_manager_getter: Callable[[], Any] | None = None,
         *,
-        event_loop: asyncio.AbstractEventLoop | None = None,
-        poll_interval_ms: int = 200,
+        event_signal: asyncio.Event | None = None,
+        fallback_poll_interval_s: float = 5.0,
         batch_size: int = 50,
         max_retries: int = 3,
         max_backoff_ms: int = 5000,
@@ -103,16 +85,15 @@ class EventDeliveryWorker:
         self._event_bus = event_bus
         self._exporter_registry = exporter_registry
         self._subscription_manager_getter = subscription_manager_getter
-        self._event_loop = event_loop
-        self._poll_interval_s = poll_interval_ms / 1000.0
+        self._event_signal = event_signal
+        self._fallback_poll_interval_s = fallback_poll_interval_s
         self._batch_size = batch_size
         self._max_retries = max_retries
         self._max_backoff_s = max_backoff_ms / 1000.0
         self._use_row_locking = use_row_locking
 
-        self._thread: threading.Thread | None = None
-        self._stop_event = threading.Event()
-        self._consecutive_empty = 0
+        self._consumer_task: asyncio.Task[None] | None = None
+        self._stopped = False
 
         # Metrics
         self._total_dispatched = 0
@@ -122,33 +103,28 @@ class EventDeliveryWorker:
     # ---- Lifecycle -----------------------------------------------------------
 
     async def start(self) -> None:
-        """Start background polling thread (PersistentService protocol)."""
-        if self._thread is not None and self._thread.is_alive():
+        """Start background consumer task (PersistentService protocol)."""
+        if self._consumer_task is not None and not self._consumer_task.done():
             logger.warning("EventDeliveryWorker already running")
             return
 
-        self._stop_event.clear()
-        self._thread = threading.Thread(
-            target=self._run_loop,
-            name="event-delivery-worker",
-            daemon=True,
-        )
-        self._thread.start()
+        self._stopped = False
+        self._consumer_task = asyncio.create_task(self._consume())
         logger.info(
-            "EventDeliveryWorker started (poll=%.0fms, batch=%d, exporters=%s)",
-            self._poll_interval_s * 1000,
+            "EventDeliveryWorker started (fallback_poll=%.1fs, batch=%d, exporters=%s)",
+            self._fallback_poll_interval_s,
             self._batch_size,
             self._exporter_registry.exporter_names if self._exporter_registry else "none",
         )
 
-    async def stop(self, timeout: float = 5.0) -> None:
-        """Graceful shutdown: signal stop, then wait for in-flight work (PersistentService protocol)."""
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=timeout)
-            if self._thread.is_alive():
-                logger.warning("EventDeliveryWorker did not stop within %.1fs", timeout)
-            self._thread = None
+    async def stop(self, timeout: float = 5.0) -> None:  # noqa: ARG002
+        """Graceful shutdown: cancel task and await completion (PersistentService protocol)."""
+        self._stopped = True
+        if self._consumer_task is not None:
+            self._consumer_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._consumer_task
+            self._consumer_task = None
         logger.info(
             "EventDeliveryWorker stopped (dispatched=%d, failed=%d, dlq=%d)",
             self._total_dispatched,
@@ -162,34 +138,39 @@ class EventDeliveryWorker:
             "total_dispatched": self._total_dispatched,
             "total_failed": self._total_failed,
             "total_dlq": self._total_dlq,
-            "consecutive_empty": self._consecutive_empty,
         }
 
-    # ---- Main loop -----------------------------------------------------------
+    # ---- Main loop (drain-then-wait, Issue #3193) ----------------------------
 
-    def _run_loop(self) -> None:
-        """Poll loop with exponential backoff on empty results."""
-        while not self._stop_event.is_set():
+    async def _consume(self) -> None:
+        """Drain-then-wait consumer loop.
+
+        1. Clear the signal (so we don't miss edges).
+        2. Poll and dispatch all undelivered rows.
+        3. If rows were found, loop immediately (drain).
+        4. If no rows, wait on the signal (or fallback sleep).
+        """
+        signal = self._event_signal
+        while not self._stopped:
             try:
-                count = self._poll_and_dispatch()
+                if signal is not None:
+                    signal.clear()
+                count = await self._poll_and_dispatch()
                 if count > 0:
-                    self._consecutive_empty = 0
+                    continue
+                if signal is not None:
+                    await signal.wait()
                 else:
-                    self._consecutive_empty += 1
+                    await asyncio.sleep(self._fallback_poll_interval_s)
+            except asyncio.CancelledError:
+                raise
             except Exception:
-                logger.exception("EventDeliveryWorker poll error")
-                self._consecutive_empty += 1
-
-            # Backoff: base interval * 2^(consecutive_empty), capped
-            backoff = min(
-                self._poll_interval_s * (2 ** min(self._consecutive_empty, 10)),
-                self._max_backoff_s,
-            )
-            self._stop_event.wait(backoff)
+                logger.exception("EventDeliveryWorker consume error")
+                await asyncio.sleep(1.0)
 
     # ---- Core: poll -> dispatch -> mark --------------------------------------
 
-    def _poll_and_dispatch(self) -> int:
+    async def _poll_and_dispatch(self) -> int:
         """Poll undelivered rows, dispatch events, mark delivered.
 
         Returns:
@@ -233,10 +214,12 @@ class EventDeliveryWorker:
                 return pair[1].zone_id or ROOT_ZONE_ID
 
             sorted_pairs = sorted(events_with_records, key=zone_key)
-            for _zone_id, zone_group in itertools.groupby(sorted_pairs, key=zone_key):
+            from itertools import groupby
+
+            for _zone_id, zone_group in groupby(sorted_pairs, key=zone_key):
                 for event, record in zone_group:
                     try:
-                        self._dispatch_event_internal(event, record)
+                        await self._dispatch_event_internal(event, record)
                         dispatched_ids.append(record.operation_id)
                         self._total_dispatched += 1
                     except Exception as exc:
@@ -245,7 +228,7 @@ class EventDeliveryWorker:
             # 2. Dispatch batch to external exporters (parallel)
             if self._exporter_registry and self._exporter_registry.exporter_names:
                 events = [ev for ev, _ in events_with_records]
-                self._dispatch_to_exporters(session, events, events_with_records)
+                await self._dispatch_to_exporters(session, events, events_with_records)
 
             # Mark successfully dispatched rows as delivered
             if dispatched_ids:
@@ -256,12 +239,12 @@ class EventDeliveryWorker:
 
         return len(dispatched_ids)
 
-    def _dispatch_event_internal(self, event: FileEvent, record: Any) -> None:
+    async def _dispatch_event_internal(self, event: FileEvent, record: Any) -> None:
         """Dispatch event to EventBus and webhook subscriptions."""
         # 1. Publish to EventBus (Redis Pub/Sub)
         bus = self._event_bus
         if bus is not None:
-            _run_async(bus.publish(event), self._event_loop)
+            await bus.publish(event)
 
         # 2. Broadcast to webhook subscriptions (injected getter, no server import)
         getter = self._subscription_manager_getter
@@ -269,21 +252,17 @@ class EventDeliveryWorker:
             sub_manager = getter()
             if sub_manager is not None:
                 event_type_str = str(event.type)
-
-                async def _broadcast() -> None:
-                    await sub_manager.broadcast(
-                        event_type=event_type_str,
-                        data={
-                            "file_path": event.path,
-                            "old_path": event.old_path,
-                            "size": event.size,
-                            "timestamp": event.timestamp,
-                            "sequence_number": event.sequence_number,
-                        },
-                        zone_id=event.zone_id or ROOT_ZONE_ID,
-                    )
-
-                _run_async(_broadcast(), self._event_loop)
+                await sub_manager.broadcast(
+                    event_type=event_type_str,
+                    data={
+                        "file_path": event.path,
+                        "old_path": event.old_path,
+                        "size": event.size,
+                        "timestamp": event.timestamp,
+                        "sequence_number": event.sequence_number,
+                    },
+                    zone_id=event.zone_id or ROOT_ZONE_ID,
+                )
 
         logger.debug(
             "[DELIVERY] Dispatched: %s %s (op=%s)",
@@ -332,7 +311,7 @@ class EventDeliveryWorker:
             )
         self._total_failed += 1
 
-    def _dispatch_to_exporters(
+    async def _dispatch_to_exporters(
         self,
         session: "Session",
         events: list[FileEvent],
@@ -344,7 +323,7 @@ class EventDeliveryWorker:
             return
 
         try:
-            failures = _run_async(registry.dispatch_batch(events), self._event_loop)
+            failures = await registry.dispatch_batch(events)
         except Exception:
             logger.exception("ExporterRegistry batch dispatch failed")
             return

@@ -29,10 +29,8 @@ def _start_background_services(system: dict[str, Any]) -> None:
     # RecordStoreWriteObserver (SQLite fallback) has no start().
 
     # Event Delivery Worker (system tier)
-    dw = system.get("delivery_worker")
-    if dw is not None and hasattr(dw, "start"):
-        dw.start()
-        logger.debug("[BOOT:BG] EventDeliveryWorker started")
+    # Issue #3193: start() is now async — moved to server lifespan
+    # (_startup_pipe_consumers) so it runs inside the event loop.
 
     # Zone Lifecycle — load Terminating zones from DB (Issue #2061)
     zl = system.get("zone_lifecycle")

@@ -3,9 +3,13 @@
 Provides cursor-based pagination over operation_log using sequence_number,
 plus an async generator for SSE streaming with poll-based tail.
 
+Issue #3193: ``stream()`` uses an ``asyncio.Event`` signal for instant
+wakeup instead of fixed-interval polling when a signal is provided.
+
 Shares filter logic with OperationLogger._apply_filters() where possible.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -100,8 +104,14 @@ def _record_from_row(row: Any) -> EventRecord:
 class EventReplayService:
     """Service for replaying and streaming historical events from operation_log."""
 
-    def __init__(self, record_store: "RecordStoreABC") -> None:
+    def __init__(
+        self,
+        record_store: "RecordStoreABC",
+        *,
+        event_signal: asyncio.Event | None = None,
+    ) -> None:
         self._session_factory = record_store.session_factory
+        self._event_signal = event_signal
 
     def replay(
         self,
@@ -182,13 +192,19 @@ class EventReplayService:
 
         Yields historical events first (if since_revision/since_timestamp given),
         then polls for new events until idle_timeout is reached.
-        """
-        import asyncio
 
+        Issue #3193: when an ``event_signal`` is provided, uses
+        clear-then-check-then-wait for instant wakeup instead of fixed sleep.
+        """
+        signal = self._event_signal
         last_seq = since_revision
         idle_elapsed = 0.0
 
         while True:
+            # Clear before check to avoid missing edges (Issue #3193)
+            if signal is not None:
+                signal.clear()
+
             result = self.replay(
                 zone_id=zone_id,
                 since_revision=last_seq,
@@ -206,11 +222,17 @@ class EventReplayService:
                     if event.sequence_number is not None:
                         last_seq = event.sequence_number
             else:
-                idle_elapsed += poll_interval
+                if signal is not None:
+                    try:
+                        await asyncio.wait_for(signal.wait(), timeout=poll_interval)
+                    except TimeoutError:
+                        idle_elapsed += poll_interval
+                else:
+                    await asyncio.sleep(poll_interval)
+                    idle_elapsed += poll_interval
+
                 if idle_elapsed >= idle_timeout:
                     return
-
-            await asyncio.sleep(poll_interval)
 
     def list_v1(
         self,

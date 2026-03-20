@@ -146,6 +146,7 @@ def _boot_system_services(
                 write_observer = PipedRecordStoreWriteObserver(
                     ctx.record_store,
                     strict_mode=ctx.audit.strict_mode,
+                    event_signal=ctx.event_signal,
                 )
             else:
                 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
@@ -320,7 +321,7 @@ def _boot_system_services(
 
             delivery_worker = EventDeliveryWorker(
                 record_store=ctx.record_store,
-                poll_interval_ms=200,
+                event_signal=ctx.event_signal,
                 batch_size=50,
             )
         except Exception as exc:
@@ -537,6 +538,7 @@ def _boot_system_services(
         "namespace_manager": namespace_manager,
         "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,
+        "event_signal": ctx.event_signal,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,

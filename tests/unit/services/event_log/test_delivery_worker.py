@@ -3,11 +3,12 @@
 Tests cover the new features added to the delivery worker:
 - ExporterRegistry integration (parallel dispatch)
 - DLQ routing after max_retries
-- _run_async helper (fire-and-forget fix)
 - Persistent retry counts across restarts (Issue #2751)
+
+Note: TestRunAsync has been removed — _run_async was replaced by native
+async/await in the asyncio conversion (Issue #3193).
 """
 
-import asyncio
 import tempfile
 import uuid
 from collections.abc import Generator
@@ -21,6 +22,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.system_services.event_bus.types import FileEvent
+from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
 
 @pytest.fixture
@@ -66,48 +68,6 @@ def _insert_undelivered(
 
 
 # =========================================================================
-# _run_async helper
-# =========================================================================
-
-
-class TestRunAsync:
-    """Test the sync->async bridge helper."""
-
-    def test_run_async_without_loop(self) -> None:
-        """_run_async should create a temporary loop when none is running."""
-        from nexus.system_services.event_log.delivery import _run_async
-
-        async def simple_coro():
-            return 42
-
-        result = _run_async(simple_coro())
-        assert result == 42
-
-    def test_run_async_with_loop(self) -> None:
-        """_run_async should use run_coroutine_threadsafe with an existing loop."""
-        from nexus.system_services.event_log.delivery import _run_async
-
-        loop = asyncio.new_event_loop()
-
-        import threading
-
-        thread = threading.Thread(target=loop.run_forever, daemon=True)
-        thread.start()
-
-        try:
-
-            async def simple_coro():
-                return 99
-
-            result = _run_async(simple_coro(), loop)
-            assert result == 99
-        finally:
-            loop.call_soon_threadsafe(loop.stop)
-            thread.join(timeout=2.0)
-            loop.close()
-
-
-# =========================================================================
 # ExporterRegistry integration
 # =========================================================================
 
@@ -115,8 +75,10 @@ class TestRunAsync:
 class TestExporterRegistryIntegration:
     """Test EventDeliveryWorker with ExporterRegistry wired in."""
 
-    def test_dispatch_calls_exporter_registry(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
+    @pytest.mark.asyncio
+    async def test_dispatch_calls_exporter_registry(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         from nexus.system_services.event_log.exporter_registry import ExporterRegistry
 
         _insert_undelivered(record_store.session_factory)
@@ -129,7 +91,7 @@ class TestExporterRegistryIntegration:
             record_store,
             exporter_registry=mock_registry,
         )
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 1
         mock_registry.dispatch_batch.assert_called_once()
@@ -139,8 +101,10 @@ class TestExporterRegistryIntegration:
         assert len(events) == 1
         assert isinstance(events[0], FileEvent)
 
-    def test_exporter_failure_routes_to_dlq(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
+    @pytest.mark.asyncio
+    async def test_exporter_failure_routes_to_dlq(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         from nexus.system_services.event_log.exporter_registry import ExporterRegistry
 
         _insert_undelivered(record_store.session_factory)
@@ -158,18 +122,19 @@ class TestExporterRegistryIntegration:
             record_store,
             exporter_registry=mock_registry,
         )
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
 
         # DLQ entries should have been created
         assert worker.metrics["total_dlq"] == 1
 
-    def test_no_exporter_registry_skips_export(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
+    @pytest.mark.asyncio
+    async def test_no_exporter_registry_skips_export(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         _insert_undelivered(record_store.session_factory)
 
         worker = EventDeliveryWorker(record_store)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         # Should still work without registry
         assert count == 1
@@ -184,9 +149,10 @@ class TestExporterRegistryIntegration:
 class TestDLQRouting:
     """Test DLQ routing after exhausting retries."""
 
-    def test_routes_to_dlq_after_max_retries(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
+    @pytest.mark.asyncio
+    async def test_routes_to_dlq_after_max_retries(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         op_id = _insert_undelivered(record_store.session_factory)
 
         mock_bus = MagicMock()
@@ -199,11 +165,11 @@ class TestDLQRouting:
         )
 
         # First attempt: retry 1
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_dlq"] == 0
 
         # Second attempt: retry 2 -> DLQ
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_dlq"] == 1
 
         # DLQ'd row should be marked delivered so it's not re-polled
@@ -212,10 +178,11 @@ class TestDLQRouting:
             assert row.delivered is True
             assert row.retry_count == 2
 
-    def test_retry_count_persists_then_delivers(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_retry_count_persists_then_delivers(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """After a failure bumps retry_count, a successful retry marks delivered."""
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         op_id = _insert_undelivered(record_store.session_factory)
 
         call_count = 0
@@ -237,7 +204,7 @@ class TestDLQRouting:
         )
 
         # First poll: fail -> retry_count bumped to 1 in DB
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_failed"] == 1
 
         # Verify retry_count persisted in DB
@@ -247,7 +214,7 @@ class TestDLQRouting:
             assert row.delivered is False
 
         # Second poll: succeed -> delivered
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_dispatched"] == 1
 
         # Verify delivered in DB
@@ -264,10 +231,11 @@ class TestDLQRouting:
 class TestPersistentRetryCounts:
     """Test that retry counts survive worker restarts via DB persistence."""
 
-    def test_retry_count_survives_worker_restart(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_retry_count_survives_worker_restart(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """A new worker picks up retry_count from DB, not from scratch."""
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         op_id = _insert_undelivered(record_store.session_factory)
 
         mock_bus = MagicMock()
@@ -279,7 +247,7 @@ class TestPersistentRetryCounts:
             event_bus=mock_bus,
             max_retries=3,
         )
-        worker1._poll_and_dispatch()
+        await worker1._poll_and_dispatch()
         assert worker1.metrics["total_failed"] == 1
 
         with record_store.session_factory() as session:
@@ -293,14 +261,14 @@ class TestPersistentRetryCounts:
             max_retries=3,
         )
         # Worker 2 fails again -> retry_count goes from 1 to 2
-        worker2._poll_and_dispatch()
+        await worker2._poll_and_dispatch()
 
         with record_store.session_factory() as session:
             row = session.get(OperationLogModel, op_id)
             assert row.retry_count == 2
 
         # Worker 2 fails once more -> retry_count 3 >= max_retries 3 -> DLQ
-        worker2._poll_and_dispatch()
+        await worker2._poll_and_dispatch()
         assert worker2.metrics["total_dlq"] == 1
 
         with record_store.session_factory() as session:
@@ -308,10 +276,9 @@ class TestPersistentRetryCounts:
             assert row.retry_count == 3
             assert row.delivered is True  # marked to stop re-polling
 
-    def test_dlq_row_not_repolled(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_dlq_row_not_repolled(self, record_store: SQLAlchemyRecordStore) -> None:
         """Once routed to DLQ and marked delivered, row is never picked up again."""
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         _insert_undelivered(record_store.session_factory)
 
         mock_bus = MagicMock()
@@ -324,11 +291,11 @@ class TestPersistentRetryCounts:
         )
 
         # First poll: retry_count 1 >= max_retries 1 -> DLQ + delivered=True
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_dlq"] == 1
 
         # Second poll: should find zero undelivered rows
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
         assert count == 0
         assert worker.metrics["total_dlq"] == 1  # no new DLQ entries
 

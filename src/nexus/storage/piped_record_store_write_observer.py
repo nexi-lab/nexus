@@ -72,9 +72,11 @@ class PipedRecordStoreWriteObserver:
         record_store: "RecordStoreABC",
         *,
         strict_mode: bool = True,
+        event_signal: "asyncio.Event | None" = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
+        self._event_signal = event_signal  # Issue #3193: wake delivery worker
 
         # NexusFS reference (deferred injection)
         self._nx: NexusFS | None = None
@@ -564,6 +566,11 @@ class PipedRecordStoreWriteObserver:
 
             duration = time.monotonic() - t0
             self._total_flushed += len(events)
+
+            # Issue #3193: signal delivery worker immediately after commit
+            if self._event_signal is not None:
+                self._event_signal.set()
+
             logger.info(
                 "[PIPE] Flushed %d events in %.3fs",
                 len(events),

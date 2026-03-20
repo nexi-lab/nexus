@@ -620,6 +620,20 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
                 "[PIPE] PipedRecordStoreWriteObserver start failed: %s", e, exc_info=True
             )
 
+    # Issue #3193: EventDeliveryWorker (now async, started in lifespan)
+    dw = svc.delivery_worker
+    if dw is not None and hasattr(dw, "start"):
+        try:
+            await dw.start()
+            app.state.delivery_worker = dw
+            logger.info("[PIPE] EventDeliveryWorker started")
+        except Exception as e:
+            logger.warning("[PIPE] EventDeliveryWorker start failed: %s", e, exc_info=True)
+
+    # Issue #3193: expose event_signal on app.state for replay service
+    if svc.event_signal is not None:
+        app.state.event_signal = svc.event_signal
+
     # Issue #810: ZoektPipeConsumer
     zpc = svc.zoekt_pipe_consumer
     if zpc is not None and hasattr(zpc, "set_pipe_manager"):
@@ -677,7 +691,17 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
 
 
 async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
-    """Stop DT_PIPE consumers (Issue #809, #810)."""
+    """Stop DT_PIPE consumers (Issue #809, #810, #3193)."""
+    # Issue #3193: EventDeliveryWorker — stop first so it doesn't process
+    # events after the write observer is shut down.
+    dw = getattr(app.state, "delivery_worker", None)
+    if dw is not None and hasattr(dw, "stop"):
+        try:
+            await dw.stop()
+            logger.info("[PIPE] EventDeliveryWorker stopped")
+        except Exception as e:
+            logger.warning("[PIPE] Error stopping EventDeliveryWorker: %s", e, exc_info=True)
+
     # Issue #809: PipedRecordStoreWriteObserver
     wo = getattr(app.state, "write_observer", None)
     if wo is not None and hasattr(wo, "stop"):

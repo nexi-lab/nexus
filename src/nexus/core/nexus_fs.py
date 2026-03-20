@@ -140,11 +140,10 @@ class NexusFS(  # type: ignore[misc]
         else:
             self.router = PathRouter(metadata_store)
 
-        # Default context for embedded mode
+        # Default context for embedded mode (no zone_id — federation injects it)
         self._default_context = OperationContext(
             user_id="anonymous",
             groups=[],
-            zone_id=ROOT_ZONE_ID,
             agent_id=None,
             is_admin=is_admin,
             is_system=False,
@@ -365,13 +364,13 @@ class NexusFS(  # type: ignore[misc]
         """Extract (zone_id, agent_id, is_admin) from context."""
         if context is None:
             return (
-                self._default_context.zone_id,
+                self._default_context.zone_id,  # None unless federation sets it
                 self._default_context.agent_id,
                 self._default_context.is_admin,
             )
         if isinstance(context, dict):
             return (
-                context.get("zone_id", self._default_context.zone_id),
+                context.get("zone_id"),
                 context.get("agent_id", self._default_context.agent_id),
                 context.get("is_admin", self.is_admin),
             )
@@ -383,7 +382,7 @@ class NexusFS(  # type: ignore[misc]
 
     @property
     def zone_id(self) -> str | None:
-        """Default zone_id from the instance context."""
+        """Zone ID from context. None in embedded mode (no federation)."""
         return self._default_context.zone_id
 
     @property

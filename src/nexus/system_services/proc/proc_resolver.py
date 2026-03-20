@@ -1,15 +1,15 @@
-"""ProcResolver — procfs virtual filesystem for ProcessTable.
+"""ProcResolver — procfs virtual filesystem for AgentRegistry.
 
 Implements VFSPathResolver ``try_*`` protocol (#1665) to provide
 ``/{zone}/proc/{pid}/status`` as virtual files generated from
-ProcessTable's in-memory state at read time.  Like Linux ``/proc``,
+AgentRegistry's in-memory state at read time.  Like Linux ``/proc``,
 nothing is stored on disk.
 
     system_services/proc/proc_resolver.py = fs/proc/ (procfs)
     core/process_table.py                 = kernel/fork.c (task_struct table)
 
 Registration: factory/orchestrator.py registers ProcResolver via
-coordinator.enlist() at boot, after ProcessTable creation.
+coordinator.enlist() at boot, after AgentRegistry creation.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
-    from nexus.core.process_table import ProcessTable
+    from nexus.core.process_table import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class ProcResolver:
 
     TRIE_PATTERN = "/{}/proc/{}/status"
 
-    def __init__(self, process_table: ProcessTable) -> None:
+    def __init__(self, process_table: AgentRegistry) -> None:
         self._process_table = process_table
 
     # -- HotSwappable protocol (registered via coordinator.enlist) --

@@ -1,7 +1,14 @@
-"""Phase/state compatibility matrix tests (Issue #2169).
+"""Phase/state compatibility matrix tests (Issue #2169, #1800).
 
 Ensures every AgentState maps to a valid AgentPhase and
 the mapping is stable across refactors.
+
+Updated for unified AgentState (Issue #1800):
+- REGISTERED/WARMING_UP -> WARMING
+- READY -> READY
+- BUSY -> ACTIVE
+- SUSPENDED -> SUSPENDED
+- TERMINATED -> EVICTED
 """
 
 import pytest
@@ -9,18 +16,20 @@ import pytest
 from nexus.contracts.agent_types import (
     AGENT_STATE_TO_PHASE,
     AgentPhase,
-    AgentState,
     derive_phase,
 )
+from nexus.contracts.process_types import AgentState
 
 
 @pytest.mark.parametrize(
     "state,expected_phase",
     [
-        (AgentState.UNKNOWN, AgentPhase.WARMING),
-        (AgentState.CONNECTED, AgentPhase.ACTIVE),
-        (AgentState.IDLE, AgentPhase.IDLE),
+        (AgentState.REGISTERED, AgentPhase.WARMING),
+        (AgentState.WARMING_UP, AgentPhase.WARMING),
+        (AgentState.READY, AgentPhase.READY),
+        (AgentState.BUSY, AgentPhase.ACTIVE),
         (AgentState.SUSPENDED, AgentPhase.SUSPENDED),
+        (AgentState.TERMINATED, AgentPhase.EVICTED),
     ],
 )
 def test_phase_derived_from_state(state: AgentState, expected_phase: AgentPhase) -> None:

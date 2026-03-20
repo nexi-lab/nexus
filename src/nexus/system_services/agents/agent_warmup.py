@@ -33,14 +33,14 @@ from nexus.contracts.agent_warmup_types import (
     WarmupStep,
 )
 from nexus.contracts.process_types import (
+    AgentError,
+    AgentSignal,
+    AgentState,
     InvalidTransitionError,
-    ProcessError,
-    ProcessSignal,
-    ProcessState,
 )
 
 if TYPE_CHECKING:
-    from nexus.core.process_table import ProcessTable
+    from nexus.core.process_table import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class AgentWarmupService:
 
     def __init__(
         self,
-        process_table: "ProcessTable",
+        process_table: "AgentRegistry",
         namespace_manager: Any | None = None,
         enabled_bricks: frozenset[str] | None = None,
         cache_store: Any | None = None,
@@ -137,8 +137,8 @@ class AgentWarmupService:
             )
 
         # Edge case 2: Already CONNECTED → skip (idempotent)
-        if record.state is ProcessState.RUNNING:
-            logger.info("[WARMUP] Agent %s already CONNECTED, skipping warmup", agent_id)
+        if record.state is AgentState.BUSY:
+            logger.info("[WARMUP] Agent %s already BUSY, skipping warmup", agent_id)
             return WarmupResult(
                 success=True,
                 agent_id=agent_id,
@@ -268,8 +268,8 @@ class AgentWarmupService:
                 raise InvalidTransitionError(
                     f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
                 )
-            self._process_table.signal(agent_id, ProcessSignal.SIGCONT)
-        except (ValueError, InvalidTransitionError, ProcessError) as exc:
+            self._process_table.signal(agent_id, AgentSignal.SIGCONT)
+        except (ValueError, InvalidTransitionError, AgentError) as exc:
             logger.warning("[WARMUP] Failed to transition agent %s to CONNECTED: %s", agent_id, exc)
             return WarmupResult(
                 success=False,

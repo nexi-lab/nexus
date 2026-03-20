@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from nexus.core.process_table import ProcessTable
+from nexus.core.process_table import AgentRegistry
 from nexus.system_services.proc.proc_resolver import ProcResolver
 
 ZONE = "test-zone"
@@ -20,8 +20,8 @@ OWNER = "user-1"
 # ---------------------------------------------------------------------------
 
 
-def _make_resolver() -> tuple[ProcessTable, ProcResolver]:
-    pt = ProcessTable()
+def _make_resolver() -> tuple[AgentRegistry, ProcResolver]:
+    pt = AgentRegistry()
     return pt, ProcResolver(pt)
 
 

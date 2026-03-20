@@ -1,6 +1,6 @@
-"""ProcessTableProtocol — kernel-level process lifecycle contract (Issue #1509).
+"""AgentRegistryProtocol — kernel-level agent lifecycle contract (Issue #1509, #1800).
 
-Kernel contract for process management. No LLM, no tools, no agent logic.
+Kernel contract for agent management. No LLM, no tools, no agent logic.
 Those belong in the service-layer AgentService (Phase 4).
 
     contracts/protocols/process_table.py = kernel syscall interface
@@ -12,17 +12,17 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.contracts.process_types import (
+        AgentDescriptor,
+        AgentKind,
+        AgentSignal,
+        AgentState,
         ExternalProcessInfo,
-        ProcessDescriptor,
-        ProcessKind,
-        ProcessSignal,
-        ProcessState,
     )
 
 
 @runtime_checkable
-class ProcessTableProtocol(Protocol):
-    """Kernel process table — PID allocation, state machine, signals, wait()."""
+class AgentRegistryProtocol(Protocol):
+    """Kernel agent registry — PID allocation, state machine, signals, wait()."""
 
     def spawn(
         self,
@@ -30,47 +30,47 @@ class ProcessTableProtocol(Protocol):
         owner_id: str,
         zone_id: str,
         *,
-        kind: ProcessKind = ...,
+        kind: AgentKind = ...,
         pid: str | None = None,
         parent_pid: str | None = None,
         cwd: str = "/",
         external_info: ExternalProcessInfo | None = None,
         labels: dict[str, str] | None = None,
-    ) -> ProcessDescriptor: ...
+    ) -> AgentDescriptor: ...
 
     def kill(
         self,
         pid: str,
         *,
         exit_code: int = 0,
-    ) -> ProcessDescriptor: ...
+    ) -> AgentDescriptor: ...
 
     def signal(
         self,
         pid: str,
-        sig: ProcessSignal,
+        sig: AgentSignal,
         *,
         payload: dict[str, Any] | None = None,
-    ) -> ProcessDescriptor: ...
+    ) -> AgentDescriptor: ...
 
     async def wait(
         self,
         pid: str,
         *,
-        target_states: frozenset[ProcessState] | None = None,
+        target_states: frozenset[AgentState] | None = None,
         timeout: float | None = None,
-    ) -> ProcessDescriptor | None: ...
+    ) -> AgentDescriptor | None: ...
 
-    def get(self, pid: str) -> ProcessDescriptor | None: ...
+    def get(self, pid: str) -> AgentDescriptor | None: ...
 
     def list_processes(
         self,
         *,
         zone_id: str | None = None,
         owner_id: str | None = None,
-        kind: ProcessKind | None = None,
-        state: ProcessState | None = None,
-    ) -> list[ProcessDescriptor]: ...
+        kind: AgentKind | None = None,
+        state: AgentState | None = None,
+    ) -> list[AgentDescriptor]: ...
 
     def register_external(
         self,
@@ -84,8 +84,13 @@ class ProcessTableProtocol(Protocol):
         protocol: str = "grpc",
         parent_pid: str | None = None,
         labels: dict[str, str] | None = None,
-    ) -> ProcessDescriptor: ...
+    ) -> AgentDescriptor: ...
 
-    def heartbeat(self, pid: str) -> ProcessDescriptor: ...
+    def heartbeat(self, pid: str) -> AgentDescriptor: ...
 
     def unregister_external(self, pid: str) -> None: ...
+
+
+# Backward-compat alias (Issue #1800)
+ProcessTableProtocol = AgentRegistryProtocol
+"""Deprecated alias — use ``AgentRegistryProtocol``."""

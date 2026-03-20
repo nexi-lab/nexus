@@ -17,7 +17,7 @@ from nexus.bricks.delegation.models import DelegationMode
 from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.core.process_table import ProcessTable
+from nexus.core.process_table import AgentRegistry
 from nexus.server.api.v2.routers.delegation import (
     DelegateRequest,
     DelegateResponse,
@@ -44,7 +44,7 @@ def entity_registry(record_store):
 
 @pytest.fixture()
 def process_table():
-    return ProcessTable()
+    return AgentRegistry()
 
 
 @pytest.fixture()

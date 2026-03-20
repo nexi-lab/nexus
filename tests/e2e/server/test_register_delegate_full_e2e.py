@@ -20,7 +20,7 @@ from nexus.bricks.delegation.service import DelegationService
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.rebac.entity_registry import EntityRegistry
 from nexus.bricks.rebac.manager import EnhancedReBACManager
-from nexus.core.process_table import ProcessTable
+from nexus.core.process_table import AgentRegistry
 from nexus.system_services.agents.agent_registration import AgentRegistrationService
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
 from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
@@ -46,7 +46,7 @@ def entity_registry(record_store):
 
 @pytest.fixture()
 def process_table():
-    return ProcessTable()
+    return AgentRegistry()
 
 
 @pytest.fixture()

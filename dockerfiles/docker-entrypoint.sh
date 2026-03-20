@@ -82,6 +82,15 @@ fix_data_dir_and_drop_privileges() {
             fi
         fi
 
+        # Fix CLI connector config permissions (Issue #3148)
+        # gws/gh configs are bind-mounted from the host and may be root-only.
+        # The nexus user needs read access for CLI connectors.
+        for cfg_dir in /home/nexus/.config/gws /home/nexus/.config/gh; do
+            if [ -d "$cfg_dir" ]; then
+                chown -R nexus:nexus "$cfg_dir" 2>/dev/null || chmod -R o+rX "$cfg_dir" 2>/dev/null || true
+            fi
+        done
+
         # Re-exec the entrypoint as the nexus user
         exec gosu nexus "$0" "$@"
     fi

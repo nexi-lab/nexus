@@ -107,18 +107,21 @@ class ConnectorSyncLoop:
             if hasattr(backend, "sync_delta"):
                 try:
                     delta = await asyncio.to_thread(backend.sync_delta)
-                    added = len(delta.get("added", []))
-                    deleted = len(delta.get("deleted", []))
-                    if added > 0 or deleted > 0:
+                    added_ids = delta.get("added", [])
+                    deleted_ids = delta.get("deleted", [])
+                    if added_ids or deleted_ids:
                         logger.info(
                             "[CONNECTOR_SYNC] %s: delta +%d -%d (hid=%s)",
                             mp,
-                            added,
-                            deleted,
+                            len(added_ids),
+                            len(deleted_ids),
                             delta.get("history_id"),
                         )
-                        # Trigger full sync to update metadata
-                        await self._mount_service.sync_mount(mount_point=mp, recursive=True)
+                        # Notify search daemon of new files so the kernel's
+                        # auto-index pipeline handles them (debounced, batched,
+                        # content-hash dedup). Much cheaper than full BFS re-read.
+                        if added_ids:
+                            await self._notify_new_files(mp, backend, added_ids)
                     else:
                         logger.debug("[CONNECTOR_SYNC] %s: no changes", mp)
                     continue
@@ -133,3 +136,40 @@ class ConnectorSyncLoop:
                     logger.debug("[CONNECTOR_SYNC] %s: scanned %d", mp, scanned)
             except Exception:
                 logger.debug("[CONNECTOR_SYNC] %s: sync failed", mp, exc_info=True)
+
+    async def _notify_new_files(
+        self, mount_point: str, backend: Any, message_ids: list[str]
+    ) -> None:
+        """Notify the search daemon about new files from delta sync.
+
+        Uses the kernel's notify_file_change() primitive which debounces
+        at 5s intervals, coalesces subtrees, and auto-indexes via the
+        IndexingService pipeline (with content-hash dedup).
+
+        This is O(delta) not O(total_files) — only notifies for new messages.
+        """
+        search_svc = getattr(self._mount_service, "_search_service", None)
+        if search_svc is None:
+            return
+        search_daemon = getattr(search_svc, "_search_daemon", None)
+        if search_daemon is None:
+            return
+
+        notified = 0
+        for msg_id in message_ids[:50]:  # Cap at 50 per delta cycle
+            # Notify for INBOX path (most common label for new messages).
+            # The daemon's _index_refresh_loop will read content via sys_read
+            # which routes through the connector backend automatically.
+            path = f"{mount_point}/INBOX/{msg_id}-{msg_id}.yaml"
+            try:
+                await search_daemon.notify_file_change(path, change_type="create")
+                notified += 1
+            except Exception:
+                continue
+
+        if notified:
+            logger.info(
+                "[CONNECTOR_SYNC] Notified search daemon of %d new files in %s",
+                notified,
+                mount_point,
+            )

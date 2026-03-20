@@ -1201,6 +1201,3 @@ class SyncService:
         Raises PermissionCheckError on infrastructure failures.
         """
         return check_permission(self._gw, path, permission, context)
-
-
-# Debug: Fri Mar 20 01:03:47 PDT 2026

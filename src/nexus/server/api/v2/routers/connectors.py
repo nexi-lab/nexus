@@ -381,15 +381,25 @@ async def sync_mount(
         except Exception:
             delta_result = None
 
+    # Build context with zone_id for metadata storage
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.types import OperationContext
+
+    sync_context = OperationContext(
+        user_id="system",
+        groups=[],
+        is_admin=True,
+        is_system=True,
+        zone_id=ROOT_ZONE_ID,
+    )
+
     # Run full sync (populates metadata)
     try:
-        logger.info(
-            f"[CONN_SYNC] Calling mount_svc.sync_mount({req.mount_point}), type={type(mount_svc).__name__}"
-        )
         result = await mount_svc.sync_mount(
             mount_point=req.mount_point,
             recursive=req.recursive,
             full_sync=req.full_sync,
+            context=sync_context,
         )
 
         resp = SyncResponse(

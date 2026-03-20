@@ -80,6 +80,8 @@ services:
       NEXUS_PORT: "2026"
       NEXUS_DATA_DIR: /app/data
       NEXUS_MODE: standalone
+      # Rate limiting uses Dragonfly — disable if connection issues cause 500s
+      NEXUS_RATE_LIMIT_ENABLED: ${NEXUS_RATE_LIMIT_ENABLED:-true}
       # Database
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
@@ -130,8 +132,9 @@ services:
       - ./configs:/app/configs:ro
       - /var/run/docker.sock:/var/run/docker.sock
       # CLI connector auth: mount host gws + gh configs (Issue #3148)
-      - ${GWS_CONFIG_DIR:-~/.config/gws}:/root/.config/gws
-      - ${GH_CONFIG_DIR:-~/.config/gh}:/root/.config/gh
+      # Mount to /home/nexus since the server runs as 'nexus' user (uid 1000)
+      - ${GWS_CONFIG_DIR:-~/.config/gws}:/home/nexus/.config/gws
+      - ${GH_CONFIG_DIR:-~/.config/gh}:/home/nexus/.config/gh
     user: root
     ports:
       - "${NEXUS_PORT:-2026}:2026"

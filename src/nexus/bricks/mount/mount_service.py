@@ -202,16 +202,25 @@ class MountService:
             except Exception:
                 logger.warning("Failed to generate skill docs for %s", mount_point, exc_info=True)
 
-    async def _index_mount_content(self, mount_point: str, files_count: int) -> None:
+    async def _index_mount_content(self, mount_point: str, _files_count: int = 0) -> None:
         """Index mounted connector content for semantic search.
 
-        Reads file content via sys_read (which calls gws CLI for external
-        connectors) and indexes directly into the search daemon's txtai backend.
+        Enumerates files via the connector backend's list_dir (BFS), reads
+        content via sys_read, and indexes via SearchDaemon.index_documents().
+
+        Uses list_dir instead of metadata_list because the Raft metastore
+        may not populate metadata entries for external connector files.
         """
         try:
             search_daemon = getattr(self._search_service, "_search_daemon", None)
-            if search_daemon is None or getattr(search_daemon, "_backend", None) is None:
-                logger.debug("No search daemon/txtai backend for indexing %s", mount_point)
+            if search_daemon is None:
+                # Fall back to semantic_search_index which uses IndexingService
+                semantic_fn = getattr(self._search_service, "semantic_search_index", None)
+                if semantic_fn is not None:
+                    await semantic_fn(mount_point, recursive=True)
+                    logger.info("Indexed mount %s via semantic_search_index", mount_point)
+                else:
+                    logger.debug("No search daemon for indexing %s", mount_point)
                 return
 
             # Get NexusFS for reading content
@@ -221,27 +230,52 @@ class MountService:
             if nx is None:
                 return
 
-            # List all files via metadata
+            # Get the connector backend via the router
+            backend = None
+            try:
+                route = self.router.route(mount_point)
+                if route:
+                    backend = route.backend
+            except Exception:
+                pass
+
             from nexus.contracts.types import OperationContext
 
             admin_ctx = OperationContext(user_id="system", groups=[], is_admin=True, is_system=True)
 
-            # Enumerate files from metadata
-            import contextlib
+            # Enumerate files via backend's list_dir (BFS) — works for all
+            # connector types including CLI-backed ones where the Raft metastore
+            # doesn't store file entries.
+            file_paths: list[str] = []
+            if backend and hasattr(backend, "list_dir"):
+                from collections import deque
 
-            entries = []
-            if self._gw:
-                with contextlib.suppress(Exception):
-                    entries = self._gw.metadata_list(mount_point + "/") or []
+                queue: deque[tuple[str, str]] = deque([("", mount_point)])
+                while queue and len(file_paths) < 200:
+                    backend_path, virtual_prefix = queue.popleft()
+                    try:
+                        entries = await asyncio.to_thread(backend.list_dir, backend_path, None)
+                    except Exception:
+                        continue
+                    for entry in entries:
+                        is_dir = entry.endswith("/")
+                        name = entry.rstrip("/")
+                        bp = f"{backend_path}/{name}" if backend_path else name
+                        vp = f"{virtual_prefix}/{name}"
+                        if is_dir:
+                            queue.append((bp, vp))
+                        else:
+                            file_paths.append(vp)
+                            if len(file_paths) >= 200:
+                                break
 
-            if not entries:
+            if not file_paths:
+                logger.debug("No files found for indexing at %s", mount_point)
                 return
 
-            # Read content and build documents for txtai
-            documents: list[tuple[str, str, None]] = []
-            indexed = 0
-            for entry in entries[:200]:  # Cap at 200 to avoid overloading
-                path = getattr(entry, "path", str(entry))
+            # Read content and build documents for SearchDaemon
+            documents: list[dict[str, Any]] = []
+            for path in file_paths:
                 if not path.endswith((".yaml", ".json", ".md", ".txt")):
                     continue
                 try:
@@ -249,20 +283,28 @@ class MountService:
                     if isinstance(content, bytes):
                         content = content.decode("utf-8", errors="ignore")
                     if content and len(content) > 10:
-                        documents.append((path, str(content), None))
-                        indexed += 1
+                        documents.append({"id": path, "text": str(content), "path": path})
                 except Exception:
                     continue
 
             if documents:
-                # Index via txtai backend
-                backend = search_daemon._backend
-                await backend.upsert(documents)
+                # Resolve zone_id from the mount point's route or default.
+                # Must match the zone_id used by search queries (typically
+                # "default" for API-key-authenticated users).
+                index_zone = "default"
+                try:
+                    route = self.router.route(mount_point)
+                    if route and hasattr(route, "zone_id") and route.zone_id:
+                        index_zone = route.zone_id
+                except Exception:
+                    pass
+
+                count = await search_daemon.index_documents(documents, zone_id=index_zone)
                 logger.info(
-                    "Indexed %d/%d connector files from %s into txtai",
-                    indexed,
-                    files_count,
+                    "Indexed %d connector files from %s into search (zone=%s)",
+                    count,
                     mount_point,
+                    index_zone,
                 )
 
         except Exception:

@@ -160,9 +160,9 @@ class CLISyncProvider:
         if isinstance(data, list):
             raw_items = data
         elif isinstance(data, dict):
-            raw_items = data.get("items", data.get("messages", data.get("results", [])))
+            raw_items = data.get("items", data.get("messages", data.get("results", []))) or []
             next_page_token = data.get("nextPageToken", data.get("next_page_token"))
-            deleted_ids = data.get("deleted", data.get("deleted_ids", []))
+            deleted_ids = data.get("deleted", data.get("deleted_ids", [])) or []
 
             # State token from configured field
             if self._config and self._config.sync:

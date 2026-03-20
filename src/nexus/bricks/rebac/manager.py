@@ -376,13 +376,13 @@ class ReBACManager:
         # Issue #3192: Wire SharedRingBuffer for cross-process revision broadcasting
         self._wire_shared_ring_buffer()
 
-    def _create_invalidation_stream(self) -> "InvalidationStream":
+    def _create_invalidation_stream(self) -> Any:
         """Create the DT_STREAM for ordered intra-zone invalidation."""
         from nexus.bricks.rebac.cache.invalidation_stream import InvalidationStream
 
         return InvalidationStream()
 
-    def _create_pubsub(self) -> "PubSubInvalidation":
+    def _create_pubsub(self) -> Any:
         """Create the Pub/Sub for cross-zone invalidation hints."""
         from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
 

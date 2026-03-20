@@ -308,9 +308,6 @@ class DescendantAccessChecker:
         )
         if tiger_cache is not None:
             try:
-                key = CacheKey(
-                    subject_tuple[0], subject_tuple[1], rebac_permission, "file", zone_id
-                )
                 accessible_ids = tiger_cache.get_accessible_resources(
                     subject_type=subject_tuple[0],
                     subject_id=subject_tuple[1],

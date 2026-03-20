@@ -12,7 +12,6 @@ The chain short-circuits once all paths are resolved.
 """
 
 import logging
-import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol

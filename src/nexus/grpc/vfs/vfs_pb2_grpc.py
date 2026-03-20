@@ -59,6 +59,11 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.FromString,
                 _registered_method=True)
+        self.ReadBlob = channel.unary_unary(
+                '/nexus.grpc.vfs.NexusVFSService/ReadBlob',
+                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobRequest.SerializeToString,
+                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobResponse.FromString,
+                _registered_method=True)
         self.Ping = channel.unary_unary(
                 '/nexus.grpc.vfs.NexusVFSService/Ping',
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.PingRequest.SerializeToString,
@@ -102,6 +107,15 @@ class NexusVFSServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReadBlob(self, request, context):
+        """CAS-level blob read by content hash — driver-to-driver protocol.
+        Used by federation chunk assembly (PeerBlobClient) and content replication.
+        Bypasses VFS path routing — direct ObjectStore access.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Ping(self, request, context):
         """Health check with server metadata.
         """
@@ -136,6 +150,11 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.StreamRead,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.SerializeToString,
+            ),
+            'ReadBlob': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReadBlob,
+                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobRequest.FromString,
+                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobResponse.SerializeToString,
             ),
             'Ping': grpc.unary_unary_rpc_method_handler(
                     servicer.Ping,
@@ -278,6 +297,33 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/StreamRead',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReadBlob(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/nexus.grpc.vfs.NexusVFSService/ReadBlob',
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobRequest.SerializeToString,
+            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobResponse.FromString,
             options,
             channel_credentials,
             insecure,

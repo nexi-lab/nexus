@@ -25,6 +25,11 @@ service NexusVFSService {
   rpc Delete(DeleteRequest) returns (DeleteResponse);
   rpc StreamRead(StreamReadRequest) returns (stream ReadChunk);
 
+  // CAS-level blob read by content hash — driver-to-driver protocol.
+  // Used by federation chunk assembly (PeerBlobClient) and content replication.
+  // Bypasses VFS path routing — direct ObjectStore access.
+  rpc ReadBlob(ReadBlobRequest) returns (ReadBlobResponse);
+
   // Health check with server metadata.
   rpc Ping(PingRequest) returns (PingResponse);
 }
@@ -96,6 +101,22 @@ message ReadChunk {
   bool is_error = 4;
   bytes error_payload = 5;
 }
+
+// --- CAS-level blob messages (driver-to-driver) ---
+
+message ReadBlobRequest {
+  string content_hash = 1;  // SHA-256 hex hash
+  string auth_token = 2;
+}
+
+message ReadBlobResponse {
+  bytes content = 1;        // Raw blob bytes — chunk or manifest
+  int64 size = 2;
+  bool is_error = 3;
+  bytes error_payload = 4;
+}
+
+// --- Health check messages ---
 
 message PingRequest {
   string auth_token = 1;

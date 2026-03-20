@@ -9,11 +9,18 @@ Zero kernel coupling: the kernel sees a standard VFSPathResolver.
 Federation topology, gRPC channels, and progressive replication are
 entirely encapsulated here.
 
+CDC-aware federation read (#1744):
+    When a PeerBlobClient and local ObjectStore are injected (Feature DI),
+    the resolver fetches CDC manifests by hash, checks which chunks exist
+    locally (bloom + stat), and only pulls missing chunks from the origin.
+    After fetch, all chunks + manifest are in local CAS — subsequent reads
+    are fully local (read-through caching).
+
 Design reference:
     - docs/architecture/federation-memo.md §Content Read Path
     - BackendAddress: contracts/backend_address.py
     - KernelDispatch: core/kernel_dispatch.py (PRE-DISPATCH phase)
-    - RPCTransport.read_file: remote/rpc_transport.py (sync Read RPC pattern)
+    - PeerBlobClient: remote/peer_blob_client.py (driver-to-driver blob fetch)
 """
 
 import logging
@@ -25,6 +32,7 @@ from nexus.contracts.exceptions import NexusFileNotFoundError
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.metastore import MetastoreABC
+    from nexus.remote.peer_blob_client import PeerBlobClient
     from nexus.security.tls.config import ZoneTlsConfig
 
 logger = logging.getLogger(__name__)
@@ -52,6 +60,8 @@ class FederationContentResolver:
         self_address: This node's advertise address (e.g., "10.0.0.5:50051").
         tls_config: Optional ZoneTlsConfig for mTLS peer channels.
         timeout: Read RPC timeout in seconds.
+        peer_blob_client: Optional PeerBlobClient for CDC-aware chunk assembly.
+        local_object_store: Optional local ObjectStore for local CAS check + write.
     """
 
     name = "federation-content"
@@ -62,11 +72,15 @@ class FederationContentResolver:
         self_address: str,
         tls_config: "ZoneTlsConfig | None" = None,
         timeout: float = 30.0,
+        peer_blob_client: "PeerBlobClient | None" = None,
+        local_object_store: Any = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
         self._tls_config = tls_config
         self._timeout = timeout
+        self._peer_blob_client = peer_blob_client
+        self._local_object_store = local_object_store
 
     # ------------------------------------------------------------------
     # HotSwappable protocol (#1710) — enables coordinator.enlist()
@@ -110,24 +124,13 @@ class FederationContentResolver:
             return None  # local content — kernel handles
 
         # Remote content — try each origin until one responds
+        content_hash = meta.etag or ""
         file_size = meta.size or 0
-        use_streaming = file_size > _STREAMING_THRESHOLD
         last_err: Exception | None = None
 
         for origin in addr.origins:
-            logger.info(
-                "Federation read: %s -> %s (etag=%s, size=%d, streaming=%s)",
-                path,
-                origin,
-                (meta.etag or "")[:12],
-                file_size,
-                use_streaming,
-            )
             try:
-                if use_streaming:
-                    content = self._fetch_from_peer_streaming(origin, path)
-                else:
-                    content = self._fetch_from_peer(origin, path)
+                content = self._read_from_origin(origin, path, content_hash, file_size)
 
                 if return_metadata:
                     return {
@@ -144,6 +147,101 @@ class FederationContentResolver:
                 continue
 
         raise NexusFileNotFoundError(path, f"All origins unreachable for {path}") from last_err
+
+    def _read_from_origin(self, origin: str, path: str, content_hash: str, file_size: int) -> bytes:
+        """Read content from a single origin — CDC-aware when possible.
+
+        Strategy selection:
+        1. PeerBlobClient + local ObjectStore available + content_hash known
+           → CDC-aware: fetch by hash, check manifest, local chunk assembly
+        2. Fallback → existing path-based Read/StreamRead
+        """
+        can_use_blob_fetch = (
+            self._peer_blob_client is not None
+            and self._local_object_store is not None
+            and content_hash
+        )
+
+        if can_use_blob_fetch:
+            logger.info(
+                "Federation read (blob): %s -> %s (hash=%s, size=%d)",
+                path,
+                origin,
+                content_hash[:12],
+                file_size,
+            )
+            return self._fetch_content_by_hash(origin, content_hash)
+
+        # Fallback: path-based fetch
+        use_streaming = file_size > _STREAMING_THRESHOLD
+        logger.info(
+            "Federation read (path): %s -> %s (size=%d, streaming=%s)",
+            path,
+            origin,
+            file_size,
+            use_streaming,
+        )
+        if use_streaming:
+            return self._fetch_from_peer_streaming(origin, path)
+        return self._fetch_from_peer(origin, path)
+
+    def _fetch_content_by_hash(self, origin: str, content_hash: str) -> bytes:
+        """CDC-aware content fetch: manifest → local check → fetch missing → assemble.
+
+        After this method completes, all blobs (manifest + chunks) are in
+        local CAS.  Returns the fully assembled content.
+        """
+        assert self._peer_blob_client is not None  # noqa: S101
+        assert self._local_object_store is not None  # noqa: S101
+        store = self._local_object_store
+        client = self._peer_blob_client
+
+        # Step 1: Check if content already exists locally (e.g. replicated)
+        if hasattr(store, "content_exists") and store.content_exists(content_hash):
+            logger.debug("Federation read: %s found in local CAS", content_hash[:12])
+            result: bytes = store.read_content(content_hash)
+            return result
+
+        # Step 2: Fetch the blob by hash from origin
+        blob_data = client.fetch_blob(origin, content_hash)
+
+        # Step 3: Check if it's a CDC manifest
+        from nexus.backends.engines.cdc import ChunkedReference
+
+        if not ChunkedReference.is_chunked_manifest(blob_data):
+            # Single-blob file — store locally and return
+            store.write_content(blob_data)
+            return blob_data
+
+        # Step 4: Parse manifest → check local CAS for each chunk
+        manifest = ChunkedReference.from_json(blob_data)
+        missing_hashes: list[str] = []
+        for ci in manifest.chunks:
+            if hasattr(store, "content_exists") and store.content_exists(ci.chunk_hash):
+                continue
+            missing_hashes.append(ci.chunk_hash)
+
+        logger.info(
+            "Federation chunked read: %d chunks, %d local, %d missing",
+            manifest.chunk_count,
+            manifest.chunk_count - len(missing_hashes),
+            len(missing_hashes),
+        )
+
+        # Step 5: Fetch missing chunks in parallel
+        if missing_hashes:
+            fetched = client.fetch_blobs(origin, missing_hashes)
+            for chunk_hash, chunk_data in fetched.items():
+                store.write_content(chunk_data)
+                logger.debug("Stored missing chunk %s (%d bytes)", chunk_hash[:12], len(chunk_data))
+
+        # Step 6: Store manifest blob locally
+        # write_content will hash it and store; the hash should match content_hash
+        store.write_content(blob_data)
+
+        # Step 7: Read assembled content via local CAS (CDCEngine handles assembly)
+        assembled: bytes = store.read_content(content_hash)
+        return assembled
 
     def try_write(self, _path: str, _content: bytes) -> dict[str, Any] | None:
         """Content writes are always local — return None to pass through."""

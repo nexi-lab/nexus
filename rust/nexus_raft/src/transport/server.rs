@@ -398,6 +398,29 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
 
 /// Check that a sender node is a known member of a zone.
 ///
+/// Extract hostnames from a node_address for cert SAN inclusion.
+///
+/// Parses addresses like "http://nexus-1:2126" or "0.0.0.0:2126" and returns
+/// the hostname/IP portion. Multiple formats are handled gracefully.
+fn extract_hostnames(node_address: &str) -> Vec<String> {
+    let addr = node_address
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+
+    // Split off port
+    let host = if let Some((h, _)) = addr.rsplit_once(':') {
+        h
+    } else {
+        addr
+    };
+
+    if host.is_empty() || host == "0.0.0.0" || host == "localhost" || host == "127.0.0.1" {
+        return vec![];
+    }
+
+    vec![host.to_string()]
+}
+
 /// Soft check: if the peer list is unavailable (e.g. during bootstrap), the
 /// request is allowed.  This prevents rogue nodes from injecting Raft messages
 /// for zones they don't belong to (CockroachDB/etcd pattern: zone auth at app
@@ -1032,14 +1055,21 @@ impl ZoneApiService for ZoneApiServiceImpl {
         } else {
             &req.zone_id
         };
-        let (node_cert_pem, node_key_pem) =
-            match super::certgen::generate_node_cert(req.node_id, zone_id, &ca_pem, &ca_key_pem) {
-                Ok(pair) => pair,
-                Err(e) => {
-                    tracing::error!("Failed to generate node cert: {}", e);
-                    return Ok(err_resp(&format!("Failed to generate node cert: {}", e)));
-                }
-            };
+        // Extract hostname from node_address for cert SAN (CockroachDB pattern)
+        let extra_hostnames = extract_hostnames(&req.node_address);
+        let (node_cert_pem, node_key_pem) = match super::certgen::generate_node_cert(
+            req.node_id,
+            zone_id,
+            &ca_pem,
+            &ca_key_pem,
+            &extra_hostnames,
+        ) {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::error!("Failed to generate node cert: {}", e);
+                return Ok(err_resp(&format!("Failed to generate node cert: {}", e)));
+            }
+        };
 
         // Write peers_joined marker to signal mTLS upgrade on next restart
         if let Some(ref base) = self.base_path {

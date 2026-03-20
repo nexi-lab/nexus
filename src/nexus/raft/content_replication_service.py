@@ -55,7 +55,8 @@ class ContentReplicationService:
       1. Refresh replication policies from mount configs
       2. For each replicated path prefix, scan metastore entries
       3. For entries where self_address not in backend_name.origins:
-         a. Pull content from any listed origin via gRPC Read RPC
+         a. Pull content from any listed origin via gRPC ReadBlob RPC
+            (hash-based, CDC-aware when PeerBlobClient is injected)
          b. Store in local ObjectStoreABC.write_content()
          c. Update backend_name to include self_address (via metastore.put())
 
@@ -74,6 +75,7 @@ class ContentReplicationService:
         tls_config: ZoneTlsConfig | None = None,
         scan_interval: float = _DEFAULT_SCAN_INTERVAL,
         timeout: float = 30.0,
+        peer_blob_client: Any = None,
     ) -> None:
         self._metastore = metastore
         self._object_store = object_store
@@ -82,6 +84,7 @@ class ContentReplicationService:
         self._tls_config = tls_config
         self._scan_interval = scan_interval
         self._timeout = timeout
+        self._peer_blob_client = peer_blob_client
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
 
@@ -161,22 +164,31 @@ class ContentReplicationService:
     def _replicate_entry(self, meta: FileMetadata, addr: BackendAddress) -> bool:
         """Pull content from a remote origin and store locally.
 
+        Uses hash-based ReadBlob when PeerBlobClient is available (CDC-aware),
+        falls back to path-based Read RPC otherwise.
+
         Returns True on success, False on failure (will retry next scan).
         """
+        content_hash = meta.etag or ""
+        use_blob_fetch = self._peer_blob_client is not None and content_hash
+
         for origin in addr.origins:
             try:
-                content = self._fetch_from_peer(origin, meta.path)
-                # Store locally
-                self._object_store.write_content(content)
+                if use_blob_fetch:
+                    self._replicate_by_hash(origin, content_hash)
+                else:
+                    content = self._fetch_from_peer(origin, meta.path)
+                    self._object_store.write_content(content)
+
                 # Update backend_name to include self
                 updated_addr = addr.with_origin(self._self_address)
                 updated_meta = replace(meta, backend_name=str(updated_addr))
                 self._metastore.put(updated_meta)
                 logger.debug(
-                    "[REPLICATION] %s pulled from %s (%d bytes)",
+                    "[REPLICATION] %s pulled from %s (hash=%s)",
                     meta.path,
                     origin,
-                    len(content),
+                    content_hash[:12] if content_hash else "n/a",
                 )
                 return True
             except Exception:
@@ -189,6 +201,43 @@ class ContentReplicationService:
 
         logger.warning("[REPLICATION] All origins unreachable for %s", meta.path)
         return False
+
+    def _replicate_by_hash(self, origin: str, content_hash: str) -> None:
+        """CDC-aware replication: fetch manifest → local check → fetch missing chunks.
+
+        Same logic as FederationContentResolver._fetch_content_by_hash but for
+        background replication (stores content locally, no assembly needed).
+        """
+        client = self._peer_blob_client
+        store = self._object_store
+
+        # Already replicated?
+        if hasattr(store, "content_exists") and store.content_exists(content_hash):
+            return
+
+        blob_data = client.fetch_blob(origin, content_hash)
+
+        from nexus.backends.engines.cdc import ChunkedReference
+
+        if not ChunkedReference.is_chunked_manifest(blob_data):
+            store.write_content(blob_data)
+            return
+
+        # CDC manifest — fetch missing chunks
+        manifest = ChunkedReference.from_json(blob_data)
+        missing = [
+            ci.chunk_hash
+            for ci in manifest.chunks
+            if not (hasattr(store, "content_exists") and store.content_exists(ci.chunk_hash))
+        ]
+
+        if missing:
+            fetched = client.fetch_blobs(origin, missing)
+            for chunk_data in fetched.values():
+                store.write_content(chunk_data)
+
+        # Store manifest
+        store.write_content(blob_data)
 
     # ------------------------------------------------------------------
     # gRPC content pull (reuses FederationContentResolver pattern)

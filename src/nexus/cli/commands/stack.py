@@ -659,8 +659,11 @@ def up(
         api_key_file = Path(data_dir) / ".admin-api-key"
         if api_key_file.exists():
             admin_api_key = api_key_file.read_text().strip() or None
+            if admin_api_key:
+                config["api_key"] = admin_api_key
 
     # Auto-discover TLS certs (Raft 2-phase bootstrap writes to data_dir/tls/)
+    # and persist them so downstream commands auto-discover mTLS credentials.
     tls_state: dict[str, str] = {}
     tls_dir = Path(data_dir) / "tls"
     if tls_dir.exists():
@@ -678,6 +681,14 @@ def up(
                 "key": str(tls_dir / "server.key"),
                 "ca": str(tls_dir / "ca.crt"),
             }
+
+    if tls_state:
+        config["tls"] = True
+        config["tls_cert"] = tls_state["cert"]
+        config["tls_key"] = tls_state["key"]
+        config["tls_ca"] = tls_state["ca"]
+
+    _save_project_config(config)
 
     # Write runtime state to {data_dir}/.state.json (NOT nexus.yaml)
     runtime_state: dict[str, Any] = {

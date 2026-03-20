@@ -207,17 +207,48 @@ async def connect(
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
 
-        # Build gRPC address from NEXUS_URL hostname + NEXUS_GRPC_PORT.
-        grpc_port = int(os.getenv("NEXUS_GRPC_PORT", "2028"))
+        # Build gRPC address from NEXUS_URL hostname + gRPC port.
+        # Port precedence: NEXUS_GRPC_PORT env > nexus.yaml ports.grpc > default 2028
+        _grpc_port_str = os.getenv("NEXUS_GRPC_PORT")
+        if not _grpc_port_str:
+            try:
+                import yaml as _yaml
+
+                _pf = Path("nexus.yaml")
+                if _pf.exists():
+                    with open(_pf) as _f:
+                        _pc = _yaml.safe_load(_f) or {}
+                    _grpc_port_str = str(_pc.get("ports", {}).get("grpc", ""))
+            except Exception:
+                pass
+        grpc_port = int(_grpc_port_str) if _grpc_port_str else 2028
         parsed = urlparse(server_url)
         grpc_address = f"{parsed.hostname}:{grpc_port}"
 
         # Single shared RPCTransport (gRPC channel) for all remote proxies.
         from nexus.remote.rpc_transport import RPCTransport
 
-        # TLS: auto-detect from NEXUS_DATA_DIR/tls/ (provisioned by 2-phase bootstrap)
+        # TLS auto-discovery (3-tier precedence):
+        #   1. NEXUS_DATA_DIR env var (2-phase bootstrap provisioned certs)
+        #   2. nexus.yaml in CWD (data_dir written by `nexus up`)
+        #   3. NexusConfig.data_dir field
         _tls_config = None
         _data_dir = os.getenv("NEXUS_DATA_DIR")
+        if not _data_dir:
+            # Read data_dir from nexus.yaml in CWD (written by nexus up)
+            _project_yaml = Path("nexus.yaml")
+            if _project_yaml.exists():
+                try:
+                    import yaml as _yaml
+
+                    with open(_project_yaml) as _f:
+                        _project_cfg = _yaml.safe_load(_f) or {}
+                    _data_dir = _project_cfg.get("data_dir")
+                except Exception:
+                    pass
+        if not _data_dir:
+            _data_dir = getattr(cfg, "data_dir", None)
+
         if _data_dir:
             from nexus.security.tls.config import ZoneTlsConfig
 

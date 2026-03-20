@@ -14,6 +14,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from nexus.contracts.vfs_paths import task as task_paths
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -75,23 +77,23 @@ class TaskManagerService:
 
     @staticmethod
     def _mission_path(mission_id: str) -> str:
-        return f"/.tasks/missions/{mission_id}.json"
+        return task_paths.mission(mission_id)
 
     @staticmethod
     def _task_path(task_id: str) -> str:
-        return f"/.tasks/tasks/{task_id}.json"
+        return task_paths.item(task_id)
 
     @staticmethod
     def _comment_dir(task_id: str) -> str:
-        return f"/.tasks/comments/{task_id}"
+        return f"{task_paths.ROOT}/comments/{task_id}"
 
     @staticmethod
     def _comment_path(task_id: str, comment_id: str) -> str:
-        return f"/.tasks/comments/{task_id}/{comment_id}.json"
+        return task_paths.comment(task_id, comment_id)
 
     @staticmethod
     def _artifact_path(artifact_id: str) -> str:
-        return f"/.tasks/artifacts/{artifact_id}.json"
+        return task_paths.artifact(artifact_id)
 
     # ------------------------------------------------------------------
     # I/O helpers
@@ -108,11 +110,11 @@ class TaskManagerService:
 
     @staticmethod
     def _audit_dir(task_id: str) -> str:
-        return f"/.tasks/audit/{task_id}"
+        return f"{task_paths.ROOT}/audit/{task_id}"
 
     @staticmethod
     def _audit_path(task_id: str, entry_id: str) -> str:
-        return f"/.tasks/audit/{task_id}/{entry_id}.json"
+        return task_paths.audit_entry(task_id, entry_id)
 
     async def _ensure_dirs(self) -> None:
         """Create required VFS directories on first use."""

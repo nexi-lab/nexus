@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.process_types import AgentDescriptor, AgentKind
+from nexus.contracts.vfs_paths import agent as agent_paths
+from nexus.contracts.vfs_paths import proc as proc_paths
 from nexus.core.stdio_pipe import StdioPipe
 
 from .agents import AgentConfig
@@ -201,9 +203,9 @@ class AcpService:
         fs_read, fs_write = self._make_fs_callables(host_cwd, zone_id)
 
         # DT_PIPE paths for VFS visibility
-        fd0_path = f"/{zone_id}/proc/{pid}/fd/0"
-        fd1_path = f"/{zone_id}/proc/{pid}/fd/1"
-        fd2_path = f"/{zone_id}/proc/{pid}/fd/2"
+        fd0_path = proc_paths.fd(zone_id, pid, 0)
+        fd1_path = proc_paths.fd(zone_id, pid, 1)
+        fd2_path = proc_paths.fd(zone_id, pid, 2)
 
         # Run ACP session
         timed_out = False
@@ -386,7 +388,7 @@ class AcpService:
         """
         if self._nexus_fs is None:
             return None
-        path = f"/{zone_id}/agents/{agent_id}/agent.json"
+        path = agent_paths.config(zone_id, agent_id)
         try:
             data: bytes = await self._nexus_fs.sys_read(path)
             if not data:
@@ -436,7 +438,7 @@ class AcpService:
     # ------------------------------------------------------------------
 
     def _system_prompt_path(self, agent_id: str, zone_id: str) -> str:
-        return f"/{zone_id}/agents/{agent_id}/SYSTEM.md"
+        return agent_paths.system_prompt(zone_id, agent_id)
 
     async def set_system_prompt(
         self,
@@ -488,7 +490,7 @@ class AcpService:
     # ------------------------------------------------------------------
 
     def _config_path(self, agent_id: str, zone_id: str) -> str:
-        return f"/{zone_id}/agents/{agent_id}/config"
+        return agent_paths.skills(zone_id, agent_id)
 
     async def set_enabled_skills(
         self,
@@ -626,7 +628,7 @@ class AcpService:
         if self._nexus_fs is None:
             logger.debug("ACP result not persisted (NexusFS not bound) for pid=%s", result.pid)
             return
-        path = f"/{zone_id}/proc/{result.pid}/result"
+        path = proc_paths.result(zone_id, result.pid)
         payload = {
             "pid": result.pid,
             "agent_id": result.agent_id,

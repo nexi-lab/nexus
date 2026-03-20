@@ -574,22 +574,22 @@ class GmailConnector(CLIConnector):
         }
 
     def get_file_info(self, path: str, context: Any = None) -> Any:
-        """Return file metadata with historyId as backend_version for delta detection."""
+        """Return file metadata wrapped in a response object for sync service.
+
+        The sync service expects .success and .data attributes on the return value.
+        """
         from datetime import datetime
+        from types import SimpleNamespace
 
         from nexus.backends.base.backend import FileInfo
 
         if self.is_directory(path, context):
-            return FileInfo(size=0, mtime=datetime.now(UTC))
+            fi = FileInfo(size=0, mtime=datetime.now(UTC))
+        else:
+            hid = self._last_history_id or self.get_history_id()
+            fi = FileInfo(size=0, mtime=datetime.now(UTC), backend_version=hid, content_hash=None)
 
-        # Use historyId as backend_version so sync service detects changes
-        hid = self._last_history_id or self.get_history_id()
-        return FileInfo(
-            size=0,  # Size computed on read
-            mtime=datetime.now(UTC),
-            backend_version=hid,
-            content_hash=None,
-        )
+        return SimpleNamespace(success=True, data=fi)
 
     def is_directory(self, path: str, context: Any = None) -> bool:
         path = path.strip("/")
@@ -735,20 +735,14 @@ class CalendarConnector(CLIConnector):
         return b""
 
     def get_file_info(self, path: str, context: Any = None) -> Any:
-        """Return file metadata so sync creates VFS entries."""
+        """Return file metadata wrapped in response for sync service."""
         from datetime import datetime
+        from types import SimpleNamespace
 
         from nexus.backends.base.backend import FileInfo
 
-        if self.is_directory(path, context):
-            return FileInfo(size=0, mtime=datetime.now(UTC))
-
-        content = self.read_content("", context)
-        return FileInfo(
-            size=len(content),
-            mtime=datetime.now(UTC),
-            content_hash=None,
-        )
+        fi = FileInfo(size=0, mtime=datetime.now(UTC), content_hash=None)
+        return SimpleNamespace(success=True, data=fi)
 
     def is_directory(self, path: str, context: Any = None) -> bool:
         path = path.strip("/")

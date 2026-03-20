@@ -6,55 +6,10 @@ Issue #1271: Added DelegationRecordModel for agent delegation.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Index, Integer, SmallInteger, String, Text
+from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base
-
-
-class AgentRecordModel(Base):
-    """Agent record for lifecycle tracking (Agent OS Phase 1, Issue #1240).
-
-    Stores agent identity, lifecycle state, session generation counter,
-    and heartbeat timestamps. Uses optimistic locking via the generation
-    column for cross-DB (SQLite + PostgreSQL) concurrency control.
-    """
-
-    __tablename__ = "agent_records"
-
-    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
-    owner_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    zone_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    state: Mapped[str] = mapped_column(String(20), nullable=False, default="UNKNOWN")
-    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    agent_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
-    eviction_priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=1)
-    agent_spec: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-
-    __table_args__ = (
-        Index("idx_agent_records_zone_state", "zone_id", "state"),
-        Index("idx_agent_records_state_heartbeat", "state", "last_heartbeat"),
-        Index("idx_agent_records_owner", "owner_id"),
-        Index(
-            "idx_agent_records_eviction_heartbeat",
-            "eviction_priority",
-            "last_heartbeat",
-        ),
-    )
-
-    def __repr__(self) -> str:
-        return (
-            f"<AgentRecordModel(agent_id={self.agent_id}, state={self.state}, "
-            f"generation={self.generation})>"
-        )
 
 
 class AgentEventModel(Base):

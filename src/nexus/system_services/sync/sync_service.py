@@ -505,10 +505,14 @@ class SyncService:
         provider: Any,
         result: SyncResult,
     ) -> set[str]:
-        """Sync metadata using a ConnectorSyncProvider (page/state-token protocol).
+        """Sync metadata and content using a ConnectorSyncProvider.
 
-        Iterates through paginated results from the provider, creating metadata
-        entries for each remote item. Supports delta sync via state tokens.
+        Implements the full page/state-token/deletion protocol:
+        1. Resumes from persisted state_token for delta sync (via ChangeLogStore)
+        2. Creates metadata entries for new/updated items
+        3. Fetches content via provider.fetch_item() and caches it
+        4. Processes deleted_ids from each page
+        5. Persists the final state_token for next sync cycle
 
         This is the preferred sync path for CLI-backed connectors (Issue #3148).
         Falls back to BFS list_dir if this fails.
@@ -522,17 +526,37 @@ class SyncService:
         created_by = self._get_created_by(ctx)
         zone_id = self._resolve_zone_id(ctx)
 
-        # Run the async provider in a sync context
+        # Resume from persisted state token for delta sync (unless full_sync)
+        since_token: str | None = None
+        state_key = f"__provider_state__{ctx.mount_point}"
+        if not ctx.full_sync:
+            cached = self._change_log.get_change_log(
+                state_key, backend.name, zone_id or ROOT_ZONE_ID
+            )
+            if cached and cached.backend_version:
+                since_token = cached.backend_version
+                logger.debug(
+                    "[SYNC_PROVIDER] Resuming delta sync for %s (token=%s)",
+                    ctx.mount_point,
+                    since_token[:20] if since_token else "None",
+                )
+
         loop = asyncio.new_event_loop()
+        last_state_token: str | None = None
         try:
             page_token: str | None = None
             while True:
                 page = loop.run_until_complete(
                     provider.list_remote_items(
-                        "", page_token=page_token, page_size=100, context=ctx.context
+                        "",
+                        since=since_token,
+                        page_token=page_token,
+                        page_size=100,
+                        context=ctx.context,
                     )
                 )
 
+                # Process new/updated items
                 for item in page.items:
                     rel_path = item.relative_path
                     virtual_path = f"{ctx.mount_point}/{rel_path}"
@@ -542,7 +566,7 @@ class SyncService:
                     if ctx.dry_run:
                         continue
 
-                    # Create metadata entry if not exists
+                    # Create or update metadata entry
                     existing = self._gw.metadata_get(virtual_path)
                     if not existing and zone_id:
                         now = datetime.now(UTC)
@@ -564,6 +588,36 @@ class SyncService:
                         except Exception as e:
                             result.errors.append(f"Failed to add {virtual_path}: {e}")
 
+                    # Fetch content via provider (populates cache for sys_read)
+                    if ctx.sync_content and not ctx.dry_run:
+                        try:
+                            fetch = loop.run_until_complete(
+                                provider.fetch_item(item.item_id, context=ctx.context)
+                            )
+                            if fetch.content and len(fetch.content) > 0:
+                                result.files_synced += 1
+                        except Exception:
+                            logger.debug(
+                                "Provider fetch_item failed for %s",
+                                virtual_path,
+                                exc_info=True,
+                            )
+
+                # Process deletions
+                for deleted_id in page.deleted_ids:
+                    del_path = f"{ctx.mount_point}/{deleted_id}"
+                    if not ctx.dry_run:
+                        try:
+                            self._gw.metadata_delete(del_path)
+                            result.files_deleted += 1
+                            logger.debug("[SYNC_PROVIDER] Deleted %s", del_path)
+                        except Exception:
+                            pass  # Already deleted or doesn't exist
+
+                # Track state token for persistence
+                if page.state_token:
+                    last_state_token = page.state_token
+
                 if not page.next_page_token:
                     break
                 page_token = page.next_page_token
@@ -571,9 +625,33 @@ class SyncService:
         finally:
             loop.close()
 
+        # Persist state token for next delta sync cycle
+        if last_state_token and zone_id and not ctx.dry_run:
+            from nexus.backends.base.backend import FileInfo
+
+            self._enqueue_change_log_upsert(
+                None,  # immediate upsert
+                state_key,
+                backend.name,
+                zone_id,
+                FileInfo(
+                    size=0,
+                    mtime=datetime.now(UTC),
+                    backend_version=last_state_token,
+                    content_hash=None,
+                ),
+            )
+            logger.debug(
+                "[SYNC_PROVIDER] Persisted state token for %s: %s",
+                ctx.mount_point,
+                last_state_token[:20],
+            )
+
         logger.info(
-            "[SYNC_PROVIDER] Synced %d files via provider for %s",
+            "[SYNC_PROVIDER] Synced %d files (%d fetched, %d deleted) via provider for %s",
             result.files_scanned,
+            result.files_synced,
+            result.files_deleted,
             ctx.mount_point,
         )
         return files_found

@@ -237,7 +237,11 @@ class CASAddressingEngine(Backend):
     # === Content Operations (ObjectStoreABC) ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
         # Feature DI: CDC routing for large files
         if self._cdc is not None and self._cdc.should_chunk(content):
@@ -249,7 +253,7 @@ class CASAddressingEngine(Backend):
             if self._cache is not None:
                 self._cache.put(content_hash, content)
 
-            return WriteResult(content_id=content_hash, size=len(content))
+            return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
         content_hash = hash_content(content)
         key = self._blob_key(content_hash)
@@ -280,7 +284,7 @@ class CASAddressingEngine(Backend):
             if is_new and self._on_write_callback is not None:
                 self._on_write_callback(key)
 
-            return WriteResult(content_id=content_hash, size=len(content))
+            return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
         except (BackendError, NexusFileNotFoundError):
             raise
@@ -477,6 +481,8 @@ class CASAddressingEngine(Backend):
     def write_stream(
         self,
         chunks: Iterator[bytes],
+        content_id: str = "",
+        *,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         import os
@@ -544,7 +550,7 @@ class CASAddressingEngine(Backend):
 
             # Skip cache for streamed content (avoid loading into memory)
 
-            return WriteResult(content_id=content_hash, size=total_size)
+            return WriteResult(content_id=content_hash, version=content_hash, size=total_size)
 
         except (BackendError, NexusFileNotFoundError):
             raise

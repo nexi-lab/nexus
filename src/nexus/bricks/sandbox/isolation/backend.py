@@ -102,8 +102,10 @@ class IsolatedBackend(Backend):
 
     # ── Content operations (CAS) ────────────────────────────────────────
 
-    def write_content(self, content: bytes, context: "Any | None" = None) -> WriteResult:
-        return cast(WriteResult, self._call("write_content", content, context=context))
+    def write_content(
+        self, content: bytes, content_id: str = "", *, context: "Any | None" = None
+    ) -> WriteResult:
+        return cast(WriteResult, self._call("write_content", content, content_id, context=context))
 
     def read_content(self, content_id: str, context: "Any | None" = None) -> bytes:
         return cast(bytes, self._call("read_content", content_id, context=context))
@@ -174,11 +176,13 @@ class IsolatedBackend(Backend):
     def write_stream(
         self,
         chunks: Iterator[bytes],
+        content_id: str = "",
+        *,
         context: "Any | None" = None,
     ) -> WriteResult:
         """Collect chunks locally, then write via pool."""
         content = b"".join(chunks)
-        return self.write_content(content, context=context)
+        return self.write_content(content, content_id, context=context)
 
     # ── Connection lifecycle ────────────────────────────────────────────
 

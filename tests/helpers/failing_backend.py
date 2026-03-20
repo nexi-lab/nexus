@@ -94,10 +94,10 @@ class FailingBackend(Backend):
     # === Content Operations ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, content_id: str = "", *, context: "OperationContext | None" = None
     ) -> WriteResult:
         self._maybe_fail("write_content")
-        return self._inner.write_content(content, context)
+        return self._inner.write_content(content, content_id, context=context)
 
     def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         self._maybe_fail("read_content")

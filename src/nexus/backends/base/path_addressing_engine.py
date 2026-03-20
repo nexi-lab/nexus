@@ -143,23 +143,32 @@ class PathAddressingEngine(Backend):
     # === Content Operations (ObjectStoreABC) ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
-        if not context or not context.backend_path:
+        # Use content_id as blob_path when provided; fall back to context.backend_path
+        if content_id:
+            backend_path = content_id
+        elif context and context.backend_path:
+            backend_path = context.backend_path
+        else:
             raise BackendError(
-                f"{self.name} connector requires backend_path in OperationContext. "
+                f"{self.name} connector requires content_id or backend_path in OperationContext. "
                 "This backend stores files at actual paths, not CAS hashes.",
                 backend=self.name,
             )
 
-        blob_path = self._get_blob_path(context.backend_path)
-        content_type = self._detect_content_type(context.backend_path, content)
+        blob_path = self._get_blob_path(backend_path)
+        content_type = self._detect_content_type(backend_path, content)
         result = self._transport.put_blob(blob_path, content, content_type)
 
         # If versioning, put_blob returns version_id; otherwise compute hash
         content_hash = result if result is not None else self._compute_hash(content)
 
-        return WriteResult(content_id=content_hash, size=len(content))
+        return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         if not context or not context.backend_path:

@@ -49,7 +49,9 @@ class _MockBackend(Backend):
     def _hash(self, content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
 
-    def write_content(self, content: bytes, context: Any = None) -> WriteResult:
+    def write_content(
+        self, content: bytes, content_id: str = "", *, context: Any = None
+    ) -> WriteResult:
         h = self._hash(content)
         if h in self._content:
             self._ref_counts[h] += 1
@@ -109,7 +111,7 @@ class _PartialClass:
     def name(self) -> str:
         return "partial"
 
-    def write_content(self, content: bytes, context: Any = None) -> Any:
+    def write_content(self, content: bytes, content_id: str = "", *, context: Any = None) -> Any:
         return None
 
     def read_content(self, content_hash: str, context: Any = None) -> Any:

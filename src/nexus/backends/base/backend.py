@@ -299,7 +299,11 @@ class Backend(ObjectStoreABC):
 
     @abstractmethod
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
         """
         Write content to storage and return a WriteResult.
@@ -309,10 +313,13 @@ class Backend(ObjectStoreABC):
 
         Args:
             content: File content as bytes
+            content_id: Target address for the content.
+                CAS backends: ignored (address = hash of content).
+                PAS backends: blob path where content will be stored.
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
-            WriteResult with content_id and size.
+            WriteResult with content_id, version, and size.
 
         Raises:
             BackendError: If write operation fails.
@@ -439,6 +446,8 @@ class Backend(ObjectStoreABC):
     def write_stream(
         self,
         chunks: Iterator[bytes],
+        content_id: str = "",
+        *,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """
@@ -450,10 +459,11 @@ class Backend(ObjectStoreABC):
 
         Args:
             chunks: Iterator yielding byte chunks
+            content_id: Target address (see ``write_content``).
             context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
-            WriteResult with content_id and size.
+            WriteResult with content_id, version, and size.
 
         Note:
             Default implementation collects all chunks and calls write_content().
@@ -462,7 +472,7 @@ class Backend(ObjectStoreABC):
         # Default implementation: collect chunks and call write_content()
         # Backends can override for true streaming with incremental hashing
         content = b"".join(chunks)
-        return self.write_content(content, context=context)
+        return self.write_content(content, content_id, context=context)
 
     @abstractmethod
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
@@ -726,7 +736,7 @@ class AsyncBackend(Protocol):
     async def close(self) -> None: ...
 
     async def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, content_id: str = "", *, context: "OperationContext | None" = None
     ) -> WriteResult: ...
 
     async def read_content(

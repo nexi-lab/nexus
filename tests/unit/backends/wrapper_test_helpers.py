@@ -47,10 +47,12 @@ def make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     storage: dict[str, bytes] = {}
     mock = make_leaf("storage-mock")
 
-    def write_content(content: bytes, context: object = None) -> WriteResult:
+    def write_content(
+        content: bytes, content_id: str = "", *, context: object = None
+    ) -> WriteResult:
         h = hashlib.sha256(content).hexdigest()
         storage[h] = content
-        return WriteResult(content_id=h, size=len(content))
+        return WriteResult(content_id=h, version=h, size=len(content))
 
     def read_content(content_hash: str, context: object = None) -> bytes:
         if content_hash in storage:

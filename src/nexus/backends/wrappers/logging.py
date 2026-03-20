@@ -100,11 +100,15 @@ class LoggingBackendWrapper(DelegatingBackend):
         return content
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> "WriteResult":
         result, elapsed_ms = self._timed(
             "write_content",
-            lambda: self._inner.write_content(content, context=context),
+            lambda: self._inner.write_content(content, content_id, context=context),
         )
         logger.debug(
             "write_content size=%d success=True hash=%s latency_ms=%.2f",

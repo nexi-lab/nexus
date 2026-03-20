@@ -644,7 +644,11 @@ class GmailConnectorBackend(
     # === Backend interface methods ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
         """
         Write content is not supported for Gmail connector (read-only).

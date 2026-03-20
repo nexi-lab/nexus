@@ -356,7 +356,11 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
     # === Backend interface methods ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
         """
         Write content (post message to Slack).
@@ -410,7 +414,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                 raise BackendError(f"Failed to post message: {error}", backend="slack")
 
             # Return message timestamp as content hash
-            return WriteResult(content_id=result["ts"], size=len(content))
+            msg_ts = result["ts"]
+            return WriteResult(content_id=msg_ts, version=msg_ts, size=len(content))
 
         except json.JSONDecodeError as e:
             raise BackendError(f"Invalid JSON content: {e}", backend="slack") from e

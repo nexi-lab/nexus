@@ -30,7 +30,9 @@ class _MockBackend(Backend):
     def _hash(self, content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
 
-    def write_content(self, content: bytes, context: Any = None) -> WriteResult:
+    def write_content(
+        self, content: bytes, content_id: str = "", *, context: Any = None
+    ) -> WriteResult:
         content_hash = self._hash(content)
         if content_hash in self._content:
             self._ref_counts[content_hash] += 1

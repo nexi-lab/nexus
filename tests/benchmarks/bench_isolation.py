@@ -51,7 +51,7 @@ class BenchMockBackend:
 
         return HandlerStatusResponse(success=True)
 
-    def write_content(self, content: bytes, context: Any = None) -> Any:  # noqa: ARG002
+    def write_content(self, content: bytes, content_id: str = "", *, context: Any = None) -> Any:  # noqa: ARG002
         from nexus.core.object_store import WriteResult
 
         h = hashlib.sha256(content).hexdigest()

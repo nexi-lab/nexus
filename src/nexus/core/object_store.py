@@ -56,18 +56,24 @@ class ObjectStoreABC(ABC):
     # === Content Operations (4 abstract) ===
 
     @abstractmethod
-    def write_content(self, content: bytes, context: OperationContext | None = None) -> WriteResult:
+    def write_content(
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        context: OperationContext | None = None,
+    ) -> WriteResult:
         """Write content to storage and return a ``WriteResult``.
-
-        If content already exists (same identifier), deduplication is
-        handled internally.
 
         Args:
             content: File content as bytes.
-            context: Operation context (optional, for user-scoped backends).
+            content_id: Target address for the content.
+                CAS backends: ignored (address = hash of content).
+                PAS backends: blob path where content will be stored.
+            context: Operation context (optional, for auth / cross-cutting).
 
         Returns:
-            ``WriteResult`` with ``content_id`` and ``size``.
+            ``WriteResult`` with ``content_id``, ``version``, and ``size``.
 
         Raises:
             BackendError: If write operation fails.
@@ -130,6 +136,8 @@ class ObjectStoreABC(ABC):
     def write_stream(
         self,
         chunks: Iterator[bytes],
+        content_id: str = "",
+        *,
         context: OperationContext | None = None,
     ) -> WriteResult:
         """Write content from an iterator of chunks.
@@ -140,13 +148,14 @@ class ObjectStoreABC(ABC):
 
         Args:
             chunks: Iterator yielding byte chunks.
+            content_id: Target address (see ``write_content``).
             context: Operation context (optional).
 
         Returns:
-            ``WriteResult`` with ``content_id`` and ``size``.
+            ``WriteResult`` with ``content_id``, ``version``, and ``size``.
         """
         content = b"".join(chunks)
-        return self.write_content(content, context=context)
+        return self.write_content(content, content_id, context=context)
 
     def stream_content(
         self,

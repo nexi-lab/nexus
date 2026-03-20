@@ -139,11 +139,11 @@ class TestPathAddressingEngineWriteContent:
         assert transport.files["docs/file.txt"] == b"hello world"
 
     def test_write_requires_backend_path(self, backend: PathAddressingEngine):
-        with pytest.raises(BackendError, match="requires backend_path"):
+        with pytest.raises(BackendError, match="requires content_id or backend_path"):
             backend.write_content(b"no context")
 
     def test_write_requires_context(self, backend: PathAddressingEngine):
-        with pytest.raises(BackendError, match="requires backend_path"):
+        with pytest.raises(BackendError, match="requires content_id or backend_path"):
             backend.write_content(b"no path", context=_make_context(""))
 
     def test_write_with_prefix(

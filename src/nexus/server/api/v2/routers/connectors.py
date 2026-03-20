@@ -286,20 +286,25 @@ async def list_mounted_connectors(
     mount_svc = _get_mount_service(request)
     mounts = await mount_svc.list_mounts()
 
+    nx = _get_nx(request)
     result = []
     for m in mounts:
         mp = m.get("mount_point", "")
-        # Get backend info
         skill_name = None
         operations: list[str] = []
         try:
-            nx = _get_nx(request)
-            route = nx._router.route(mp)
+            # Route to a dummy file path inside the mount to get the backend
+            route = nx.router.route(f"{mp.rstrip('/')}/_.yaml")
             if route:
                 backend = route.backend
                 skill_name = getattr(backend, "SKILL_NAME", None)
+                # Check multiple sources for operation names
                 schemas = getattr(backend, "SCHEMAS", {})
-                operations = list(schemas.keys()) if schemas else []
+                traits = getattr(backend, "OPERATION_TRAITS", {})
+                if schemas:
+                    operations = list(schemas.keys())
+                elif traits:
+                    operations = list(traits.keys())
         except Exception:
             pass
 
@@ -374,36 +379,46 @@ async def get_skill_doc(
         mount_path = f"/{mount_path}"
 
     nx = _get_nx(request)
+    mp = mount_path.rstrip("/")
 
-    # Read SKILL.md
-    skill_md_path = f"{mount_path.rstrip('/')}/.skill/SKILL.md"
+    # Get backend via router
+    backend = None
+    try:
+        route = nx.router.route(f"{mp}/_.yaml")
+        if route:
+            backend = route.backend
+    except Exception:
+        pass
+
+    # Generate skill doc from backend (preferred — always fresh)
     content = ""
-    try:
-        raw = await nx.sys_read(skill_md_path)
-        content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
-    except Exception:
-        # Fall back to generating from backend
-        try:
-            route = nx._router.route(mount_path)
-            if route and hasattr(route.backend, "generate_skill_doc"):
-                content = route.backend.generate_skill_doc(mount_path)
-        except Exception:
-            raise HTTPException(
-                status_code=404, detail=f"No skill docs found for {mount_path}"
-            ) from None
+    if backend and hasattr(backend, "generate_skill_doc"):
+        import contextlib
 
-    # List schemas
-    schemas: list[str] = []
-    try:
-        schemas_dir = f"{mount_path.rstrip('/')}/.skill/schemas"
-        entries = await nx.sys_readdir(schemas_dir)
-        schemas = [str(e).replace(".yaml", "") for e in entries if str(e).endswith(".yaml")]
-    except Exception:
-        # Fall back to SCHEMAS from backend
+        with contextlib.suppress(Exception):
+            content = backend.generate_skill_doc(mp)
+
+    # Fall back to reading from VFS if backend generation failed
+    if not content:
         try:
-            route = nx._router.route(mount_path)
-            if route:
-                schemas = list(getattr(route.backend, "SCHEMAS", {}).keys())
+            raw = await nx.sys_read(f"{mp}/.skill/SKILL.md")
+            content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        except Exception:
+            pass
+
+    if not content:
+        raise HTTPException(status_code=404, detail=f"No skill docs found for {mount_path}")
+
+    # List schemas — from backend first, then VFS
+    schemas: list[str] = []
+    if backend:
+        s = getattr(backend, "SCHEMAS", {})
+        t = getattr(backend, "OPERATION_TRAITS", {})
+        schemas = list(s.keys()) if s else list(t.keys())
+    if not schemas:
+        try:
+            entries = await nx.sys_readdir(f"{mp}/.skill/schemas")
+            schemas = [str(e).replace(".yaml", "") for e in entries if str(e).endswith(".yaml")]
         except Exception:
             pass
 
@@ -422,21 +437,20 @@ async def get_schema(
         mount_path = f"/{mount_path}"
 
     nx = _get_nx(request)
+    mp = mount_path.rstrip("/")
 
-    # Try reading from .skill/schemas/
-    schema_path = f"{mount_path.rstrip('/')}/.skill/schemas/{operation}.yaml"
+    # Get backend
+    backend = None
     try:
-        raw = await nx.sys_read(schema_path)
-        content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
-        return SchemaResponse(mount_point=mount_path, operation=operation, content=content)
+        route = nx.router.route(f"{mp}/_.yaml")
+        if route:
+            backend = route.backend
     except Exception:
         pass
 
-    # Fall back to generating from backend
-    try:
-        route = nx._router.route(mount_path)
-        if route:
-            backend = route.backend
+    # Try generating from backend's schema generator
+    if backend:
+        try:
             generator = getattr(backend, "_get_doc_generator", None)
             if generator:
                 doc_gen = generator()
@@ -446,6 +460,31 @@ async def get_schema(
                     return SchemaResponse(
                         mount_point=mount_path, operation=operation, content=content
                     )
+        except Exception:
+            pass
+
+        # For backends with OPERATION_TRAITS but no SCHEMAS (e.g., hand-written docs),
+        # extract the operation section from the full skill doc
+        traits = getattr(backend, "OPERATION_TRAITS", {})
+        if operation in traits:
+            try:
+                full_doc = backend.generate_skill_doc(mp)
+                # Find the operation section in the doc
+                op_display = operation.replace("_", " ").title()
+                idx = full_doc.lower().find(op_display.lower())
+                if idx >= 0:
+                    section = full_doc[idx : idx + 500]
+                    return SchemaResponse(
+                        mount_point=mount_path, operation=operation, content=section
+                    )
+            except Exception:
+                pass
+
+    # Try reading from VFS
+    try:
+        raw = await nx.sys_read(f"{mp}/.skill/schemas/{operation}.yaml")
+        content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        return SchemaResponse(mount_point=mount_path, operation=operation, content=content)
     except Exception:
         pass
 
@@ -470,10 +509,21 @@ async def write_to_connector(
 
     nx = _get_nx(request)
     try:
-        result = nx.write(mount_path, req.yaml_content.encode("utf-8"))
+        import asyncio
+
+        # nx.write may be sync or async — handle both
+        write_fn = getattr(nx, "write", None) or getattr(nx, "sys_write", None)
+        if write_fn is None:
+            return WriteResponse(success=False, error="NexusFS has no write method")
+
+        data = req.yaml_content.encode("utf-8")
+        result = write_fn(mount_path, data)
+        if asyncio.iscoroutine(result):
+            result = await result
+
         return WriteResponse(
             success=True,
-            content_hash=getattr(result, "content_hash", None),
+            content_hash=getattr(result, "content_hash", None) if result else None,
         )
     except Exception as e:
         return WriteResponse(success=False, error=str(e))

@@ -353,7 +353,13 @@ def create_app(
         except Exception as _exc:
             logger.debug("MetadataExportService unavailable: %s", _exc)
         # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
+        # Issue #3192: version_service lives on _brick_services, not as a direct
+        # NexusFS attribute. getattr(nexus_fs, "version_service") misses it.
         _version_svc = getattr(nexus_fs, "version_service", None)
+        if _version_svc is None:
+            _brk = getattr(nexus_fs, "_brick_services", None)
+            if _brk is not None:
+                _version_svc = getattr(_brk, "version_service", None)
         if _version_svc is not None:
             _brick_sources.append(_version_svc)
         # Issue #1520: FederationRPCService — zone lifecycle, share/join, mounts

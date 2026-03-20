@@ -383,6 +383,9 @@ async def sync_mount(
 
     # Run full sync (populates metadata)
     try:
+        logger.info(
+            f"[CONN_SYNC] Calling mount_svc.sync_mount({req.mount_point}), type={type(mount_svc).__name__}"
+        )
         result = await mount_svc.sync_mount(
             mount_point=req.mount_point,
             recursive=req.recursive,

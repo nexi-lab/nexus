@@ -132,6 +132,7 @@ class SyncService:
             ValueError: If mount_point doesn't exist
             RuntimeError: If backend doesn't support listing
         """
+        logger.info(f"[SYNC_MOUNT] Entry: mount_point={ctx.mount_point!r}")
         # Step 1: If no mount_point, sync all connector mounts
         if ctx.mount_point is None:
             return self._sync_all_mounts(ctx)
@@ -139,7 +140,7 @@ class SyncService:
         # Step 1.5: Acquire per-mount lock (non-blocking to avoid queueing)
         lock = self._get_mount_lock(ctx.mount_point)
         if not lock.acquire(blocking=False):
-            logger.warning(f"[SYNC_MOUNT] Sync already in progress for {ctx.mount_point}")
+            logger.info(f"[SYNC_MOUNT] Sync already in progress for {ctx.mount_point}")
             result = SyncResult()
             result.errors.append(f"Sync already in progress for {ctx.mount_point}")
             return result
@@ -152,7 +153,9 @@ class SyncService:
             result = SyncResult()
 
             # Step 3: Validate mount and get backend
+            logger.info(f"[SYNC_MOUNT] Step 3: validating mount {ctx.mount_point}")
             backend = self._validate_mount(ctx)
+            logger.info(f"[SYNC_MOUNT] Step 3: backend={type(backend).__name__}")
 
             # Step 4: Sync metadata (BFS traversal)
             files_found = self._sync_metadata(ctx, backend, result)
@@ -276,7 +279,7 @@ class SyncService:
 
             except Exception as e:
                 result.errors.append(f"[{mp}] Failed to sync: {e}")
-                logger.warning(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
+                logger.info(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
 
         logger.info(
             f"[SYNC_MOUNT] All mounts sync complete: "
@@ -386,6 +389,10 @@ class SyncService:
                 return found
 
         # BFS traversal using deque
+        logger.info(
+            f"[SYNC_MOUNT] BFS start: virtual={start_virtual_path}, "
+            f"backend={start_backend_path!r}, backend_type={type(backend).__name__}"
+        )
         queue: deque[tuple[str, str]] = deque([(start_virtual_path, start_backend_path)])
 
         while queue:
@@ -393,6 +400,10 @@ class SyncService:
 
             try:
                 entries = backend.list_dir(backend_path, context=ctx.context)
+                logger.info(
+                    f"[SYNC_MOUNT] list_dir({backend_path!r}): {len(entries)} entries "
+                    f"(backend={type(backend).__name__}, entries_sample={entries[:3] if entries else '[]'})"
+                )
 
                 for entry_name in entries:
                     is_dir = entry_name.endswith("/")
@@ -1190,3 +1201,6 @@ class SyncService:
         Raises PermissionCheckError on infrastructure failures.
         """
         return check_permission(self._gw, path, permission, context)
+
+
+# Debug: Fri Mar 20 01:03:47 PDT 2026

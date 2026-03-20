@@ -1455,6 +1455,9 @@ class MountService:
         Raises:
             RuntimeError: If sync_service not configured
         """
+        logger.info(
+            f"[MOUNT_SVC] sync_mount called: mount_point={mount_point}, _sync_service={type(self._sync_service).__name__}"
+        )
         if self._sync_service is None:
             raise RuntimeError(
                 "sync_mount requires sync_service. Pass sync_service to MountService.__init__"

@@ -20,6 +20,7 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.helpers.test_context import TEST_CONTEXT
 
 # Try to import RaftMetadataStore — skip if native module unavailable
 try:
@@ -72,6 +73,7 @@ async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[N
             parsing=ParseConfig(auto_parse=False),
             system_services=SystemServices(write_observer=write_observer),
         )
+        nx._default_context = TEST_CONTEXT
     else:
         nx = await create_nexus_fs(
             backend=CASLocalBackend(str(temp_dir / "data")),

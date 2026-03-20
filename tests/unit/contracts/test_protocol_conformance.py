@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.test_context import TEST_CONTEXT
+
 
 class TestDescribableConformance:
     """Verify concrete types implement the Describable protocol."""
@@ -51,6 +53,7 @@ class TestWirableFSConformance:
             metadata_store=mock_metadata,
             parsing=ParseConfig(auto_parse=False),
         )
+        nx._default_context = TEST_CONTEXT
         assert isinstance(nx, WirableFS)
 
 

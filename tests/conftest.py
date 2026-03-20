@@ -109,6 +109,7 @@ def make_test_nexus(
     record_store=None,
     use_raft=False,
     metadata_store=None,
+    context=None,
 ):
     """Create a NexusFS instance for testing with sensible defaults.
 
@@ -168,7 +169,6 @@ def make_test_nexus(
     nx = NexusFS(
         metadata_store=metadata_store,
         record_store=record_store,
-        is_admin=is_admin,
         permissions=permissions,
         parsing=parsing,
         cache=cache,
@@ -177,6 +177,13 @@ def make_test_nexus(
         kernel_services=services,
         system_services=system_services,
     )
+    # Issue #1801: inject default context externally (kernel never fabricates identity)
+    from tests.helpers.test_context import TEST_ADMIN_CONTEXT, TEST_CONTEXT
+
+    if context is not None:
+        nx._default_context = context
+    else:
+        nx._default_context = TEST_ADMIN_CONTEXT if is_admin else TEST_CONTEXT
 
     # Mount backend at root (same as factory/orchestrator.py: router.add_mount("/", backend))
     if backend is None:

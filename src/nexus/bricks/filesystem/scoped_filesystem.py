@@ -65,16 +65,6 @@ class ScopedFilesystem(ScopedPathMixin):
     # Properties
     # ============================================================
 
-    @property
-    def agent_id(self) -> str | None:
-        """Agent ID for this filesystem instance."""
-        return getattr(self._fs, "agent_id", None)
-
-    @property
-    def zone_id(self) -> str | None:
-        """Zone ID for this filesystem instance."""
-        return getattr(self._fs, "zone_id", None)
-
     # ============================================================
     # Content I/O (path-scoped)
     # ============================================================
@@ -314,9 +304,9 @@ class ScopedFilesystem(ScopedPathMixin):
     # Mount Operations
     # ============================================================
 
-    def get_top_level_mounts(self) -> builtins.list[str]:
+    def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:
         """Get list of top-level mount names."""
-        return self._fs.get_top_level_mounts()
+        return self._fs.get_top_level_mounts(context=context)
 
     # ============================================================
     # Service method forwarding

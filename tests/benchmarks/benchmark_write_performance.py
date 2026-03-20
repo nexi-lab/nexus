@@ -18,6 +18,7 @@ from pathlib import Path
 
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from tests.helpers.test_context import TEST_CONTEXT
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -103,13 +104,13 @@ async def run_benchmark(enable_deferred: bool = False):
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
-            is_admin=False,
             zone_id="benchmark_zone",
             enforce_permissions=True,
             auto_parse=False,
             enable_tiger_cache=False,  # SQLite doesn't support Tiger Cache
             enable_deferred_permissions=enable_deferred,  # Issue #1071
         )
+        nx._default_context = TEST_CONTEXT
 
         # Create user context
         ctx = OperationContext(

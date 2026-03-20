@@ -9,6 +9,7 @@ import pytest
 
 from nexus.core.config import WiredServices
 from nexus.factory.service_routing import enlist_wired_services
+from tests.helpers.test_context import TEST_CONTEXT
 
 
 class TestWiredServicesDataclass:
@@ -59,6 +60,7 @@ class TestEnlistWiredServices:
             kernel_services=KernelServices(),
             parsing=ParseConfig(auto_parse=False),
         )
+        nx._default_context = TEST_CONTEXT
         return nx
 
     @pytest.fixture()

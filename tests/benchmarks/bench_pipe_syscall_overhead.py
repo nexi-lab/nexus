@@ -76,6 +76,7 @@ def _setup(tmp_dir: Path):
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.pipe_manager import PipeManager
     from nexus.storage.raft_metadata_store import RaftMetadataStore
+    from tests.helpers.test_context import TEST_ADMIN_CONTEXT
 
     raft_path = tmp_dir / "raft"
 
@@ -84,9 +85,9 @@ def _setup(tmp_dir: Path):
 
     nx = NexusFS(
         metadata_store=metastore,
-        is_admin=True,
         parsing=ParseConfig(auto_parse=False),
     )
+    nx._default_context = TEST_ADMIN_CONTEXT
 
     # Create the benchmark pipe
     pipe_manager.create(_BENCH_PIPE_PATH, capacity=_BENCH_PIPE_CAPACITY, owner_id="bench")

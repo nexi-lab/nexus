@@ -372,7 +372,6 @@ async def create_nexus_fs(
         metadata_store=metadata_store,
         record_store=record_store,
         cache_store=cache_store,
-        is_admin=is_admin,
         cache=cache,
         permissions=permissions,
         distributed=distributed,
@@ -382,6 +381,10 @@ async def create_nexus_fs(
         system_services=system_services,
         brick_services=brick_services,
     )
+    # Issue #1801: factory owns identity — kernel never fabricates it.
+    from nexus.contracts.types import OperationContext as _OC
+
+    nx._default_context = _OC(user_id="system", groups=[], is_admin=is_admin)
     nx._link_fn = _do_link
     nx._initialize_fn = _do_initialize
     await nx.link(

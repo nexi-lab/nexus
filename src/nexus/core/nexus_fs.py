@@ -65,7 +65,6 @@ class NexusFS(  # type: ignore[misc]
         record_store: RecordStoreABC | None = None,
         cache_store: CacheStoreABC | None = None,
         *,
-        is_admin: bool = False,
         cache: CacheConfig | None = None,
         permissions: PermissionConfig | None = None,
         distributed: DistributedConfig | None = None,
@@ -115,7 +114,6 @@ class NexusFS(  # type: ignore[misc]
         self._enforce_permissions = permissions.enforce
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
         self.allow_admin_bypass = permissions.allow_admin_bypass
-        self.is_admin = is_admin
 
         # Three pillars: metadata (required), record store, cache store
         # No self.backend — all I/O goes through router.route().backend
@@ -140,15 +138,9 @@ class NexusFS(  # type: ignore[misc]
         else:
             self.router = PathRouter(metadata_store)
 
-        # Default context for embedded mode (no zone_id — federation injects it)
-        self._default_context = OperationContext(
-            user_id="anonymous",
-            groups=[],
-            agent_id=None,
-            is_admin=is_admin,
-            is_system=False,
-            admin_capabilities=set(),
-        )
+        # Issue #1801: kernel never fabricates identity.
+        # Factory / tests inject a default context after construction.
+        self._default_context: OperationContext | None = None
 
         # Issue #1706: sentinel — real value wired by factory._do_link().
         # Kept as sentinel (not deleted) because 8 kernel methods access without hasattr guard.
@@ -352,48 +344,47 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the runtime configuration object."""
         return self._config
 
+    def _require_context(self, context: OperationContext | None) -> OperationContext:
+        """Return *context* or the injected default; raise if neither available.
+
+        Issue #1801: kernel never fabricates identity — like Linux VFS,
+        every syscall requires credentials from the caller.
+        """
+        if context is not None:
+            return context
+        if self._default_context is not None:
+            return self._default_context
+        raise ValueError(
+            "No operation context provided and no default context configured. "
+            "Use factory create_nexus_fs() or inject nx._default_context after construction."
+        )
+
     def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking."""
         from nexus.lib.context_utils import get_created_by
 
-        return get_created_by(context, self._default_context)
+        fallback = self._require_context(context if isinstance(context, OperationContext) else None)
+        return get_created_by(context, fallback)
 
     def _get_context_identity(
         self, context: OperationContext | dict | None = None
     ) -> tuple[str | None, str | None, bool]:
         """Extract (zone_id, agent_id, is_admin) from context."""
         if context is None:
-            return (
-                self._default_context.zone_id,  # None unless federation sets it
-                self._default_context.agent_id,
-                self._default_context.is_admin,
-            )
+            ctx = self._require_context(None)
+            return (ctx.zone_id, ctx.agent_id, ctx.is_admin)
         if isinstance(context, dict):
+            fallback = self._require_context(None)
             return (
-                context.get("zone_id"),
-                context.get("agent_id", self._default_context.agent_id),
-                context.get("is_admin", self.is_admin),
+                context.get("zone_id", fallback.zone_id),
+                context.get("agent_id", fallback.agent_id),
+                context.get("is_admin", fallback.is_admin),
             )
-        return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
+        return context.zone_id, context.agent_id, getattr(context, "is_admin", False)
 
     # Issue #1790: _check_zone_writable() deleted — now handled by
     # ZoneWriteGuardHook (pre-intercept on all write-like operations).
     # Kernel no longer reads zone_lifecycle from _system_services.
-
-    @property
-    def zone_id(self) -> str | None:
-        """Zone ID from context. None in embedded mode (no federation)."""
-        return self._default_context.zone_id
-
-    @property
-    def agent_id(self) -> str | None:
-        """Default agent_id from the instance context."""
-        return self._default_context.agent_id
-
-    @property
-    def user_id(self) -> str | None:
-        """Default user_id from the instance context."""
-        return getattr(self._default_context, "user_id", None)
 
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
         """Parse context dict or OperationContext into OperationContext."""
@@ -462,7 +453,7 @@ class NexusFS(  # type: ignore[misc]
         now = datetime.now(UTC)
 
         # Use provided context or default
-        ctx = context if context is not None else self._default_context
+        ctx = self._require_context(context)
 
         # Note: UNIX permissions (owner/group/mode) are deprecated.
         # All permissions are now managed through ReBAC relationships.
@@ -505,7 +496,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # Use provided context or default
-        ctx = context if context is not None else self._default_context
+        ctx = self._require_context(context)
 
         # Block writes during zone deprovisioning (Issue #2061)
 
@@ -553,7 +544,7 @@ class NexusFS(  # type: ignore[misc]
         # Create explicit metadata entry for the directory
         self._create_directory_metadata(path, context=ctx)
 
-        ctx = context or self._default_context
+        ctx = self._require_context(context)
 
         # Issue #900/#1682: Unified two-phase dispatch for mkdir
         # Hierarchy tuples + owner grants moved to post_mkdir hooks.
@@ -622,19 +613,7 @@ class NexusFS(  # type: ignore[misc]
                 admin_capabilities=set(),
             )
         else:
-            ctx = (
-                self._default_context
-                if isinstance(self._default_context, OperationContext)
-                else OperationContext(
-                    user_id=self._default_context.user_id,
-                    groups=self._default_context.groups,
-                    zone_id=zone_id or self._default_context.zone_id,
-                    agent_id=agent_id or self._default_context.agent_id,
-                    is_admin=(is_admin if is_admin is not None else self._default_context.is_admin),
-                    is_system=self._default_context.is_system,
-                    admin_capabilities=set(),
-                )
-            )
+            ctx = self._require_context(None)
 
         # Check write permission on directory
 
@@ -758,7 +737,7 @@ class NexusFS(  # type: ignore[misc]
             path = self._validate_path(path)
 
             # Use provided context or default
-            ctx = context if context is not None else self._default_context
+            ctx = self._require_context(context)
 
             # Check if it's an implicit directory first (for optimization)
             is_implicit_dir = self.metadata.is_implicit_directory(path)
@@ -798,13 +777,14 @@ class NexusFS(  # type: ignore[misc]
             return False
 
     @rpc_expose(description="Get available namespaces")
-    def get_top_level_mounts(self) -> builtins.list[str]:
+    def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:
         """Return top-level mount names visible to the current user.
 
         Reads DT_MOUNT entries from metastore (kernel's single source of
         truth for mount points). Admin-only filtering uses the runtime
         mount table which carries mount options.
         """
+        ctx = self._require_context(context)
         # Build admin_only set from runtime mount table (mount options)
         admin_only = {m.mount_point for m in self.router.list_mounts() if m.admin_only}
 
@@ -815,7 +795,7 @@ class NexusFS(  # type: ignore[misc]
             top = meta.path.lstrip("/").split("/")[0]
             if not top:
                 continue
-            if meta.path in admin_only and not self.is_admin:
+            if meta.path in admin_only and not ctx.is_admin:
                 continue
             names.add(top)
         return sorted(names)
@@ -827,7 +807,7 @@ class NexusFS(  # type: ignore[misc]
         context: OperationContext | None = None,
     ) -> dict[str, Any] | None:
         """Get file metadata without reading content (FUSE getattr)."""
-        ctx = context or self._default_context
+        ctx = self._require_context(context)
         normalized = self._validate_path(path, allow_root=True)
 
         # Check if it's a directory first
@@ -1542,7 +1522,7 @@ class NexusFS(  # type: ignore[misc]
                 # Note: filter_list assumes READ permission, which is what we want
                 from nexus.contracts.types import OperationContext
 
-                ctx = context if context is not None else self._default_context
+                ctx = self._require_context(context)
                 assert isinstance(ctx, OperationContext), "Context must be OperationContext"
                 allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
                 allowed_set = set(allowed_paths)
@@ -2393,7 +2373,7 @@ class NexusFS(  # type: ignore[misc]
             wr = route.backend.write_content(content, context=context)
             content_hash = wr.content_hash
             new_version = (meta.version + 1) if meta else 1
-            ctx = context if context is not None else self._default_context
+            ctx = self._require_context(context)
             owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
             metadata = FileMetadata(
                 path=path,
@@ -2426,7 +2406,7 @@ class NexusFS(  # type: ignore[misc]
 
                 # Store metadata with content hash as both etag and physical_path
                 # Issue #920: Set owner_id for O(1) permission checks (only on new files)
-                ctx = context if context is not None else self._default_context
+                ctx = self._require_context(context)
                 owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
 
                 metadata = FileMetadata(
@@ -3398,7 +3378,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Check permission: TRAVERSE for implicit directories, READ for files
         # This enables `stat /skills` to work for authenticated users (TRAVERSE is auto-allowed)
-        ctx = context if context is not None else self._default_context
+        ctx = self._require_context(context)
         if is_implicit_dir:
             # Only check permissions if enforcement is enabled
             if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
@@ -3525,7 +3505,7 @@ class NexusFS(  # type: ignore[misc]
             try:
                 from nexus.contracts.types import OperationContext
 
-                ctx = context if context is not None else self._default_context
+                ctx = self._require_context(context)
                 assert isinstance(ctx, OperationContext), "Context must be OperationContext"
                 allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
                 allowed_set = set(allowed_paths)
@@ -3627,7 +3607,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Check permission if enforcement enabled
             if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                ctx = context if context is not None else self._default_context
+                ctx = self._require_context(context)
 
                 # OPTIMIZATION: For implicit directories, use TRAVERSE permission (O(1))
                 # instead of expensive descendant access check (O(n))
@@ -3755,7 +3735,7 @@ class NexusFS(  # type: ignore[misc]
 
                 # Check permission if enforcement enabled
                 if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                    ctx = context if context is not None else self._default_context
+                    ctx = self._require_context(context)
                     if not self._descendant_checker.has_access(path, Permission.READ, ctx):
                         results[path] = None
                         continue

@@ -207,6 +207,7 @@ class WriteBatchHookContext:
     """Context passed through write-batch hooks (Issue #900)."""
 
     items: list[tuple[Any, bool]]
+    context: OperationContext | None = None
     zone_id: str | None = None
     agent_id: str | None = None
     warnings: list[OperationWarning] = field(default_factory=list)

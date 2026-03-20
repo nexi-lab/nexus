@@ -581,28 +581,33 @@ async def _register_vfs_hooks(
 
         await _enlist("snapshot_write", SnapshotWriteHook(_snapshot_svc))
 
-    # ── Deferred permission buffer (Issue #1773) ──────────────────────
+    # ── Deferred permission buffer (Issue #1773, #1682) ────────────────
     _dpb = (
         getattr(nx._system_services, "deferred_permission_buffer", None)
         if nx._system_services
         else None
     )
+    _rebac_for_perm = (
+        getattr(nx._system_services, "rebac_manager", None) if nx._system_services else None
+    )
     if _dpb is not None:
         from nexus.bricks.rebac.deferred_permission_hook import DeferredPermissionHook
 
-        await _enlist("deferred_permission", DeferredPermissionHook(_dpb))
+        await _enlist(
+            "deferred_permission",
+            DeferredPermissionHook(_dpb, rebac_manager=_rebac_for_perm),
+        )
     else:
         # Sync fallback — same logic, runs as post-write hook instead of inline kernel code
         _hier = (
             getattr(nx._system_services, "hierarchy_manager", None) if nx._system_services else None
         )
-        _rebac = getattr(nx, "_rebac_manager", None)
-        if _hier is not None or _rebac is not None:
+        if _hier is not None or _rebac_for_perm is not None:
             from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
 
             await _enlist(
                 "sync_permission",
-                SyncPermissionWriteHook(hierarchy_manager=_hier, rebac_manager=_rebac),
+                SyncPermissionWriteHook(hierarchy_manager=_hier, rebac_manager=_rebac_for_perm),
             )
 
     # ── Zone writability gate (Issue #1371, #2061) ─────────────────────

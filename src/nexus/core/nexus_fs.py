@@ -448,21 +448,6 @@ class NexusFS(  # type: ignore[misc]
 
         for parent_dir in reversed(parents_to_create):
             self._create_directory_metadata(parent_dir, context=ctx)
-            _hier = (
-                getattr(self._system_services, "hierarchy_manager", None)
-                if self._system_services
-                else None
-            )
-            if _hier is not None:
-                try:
-                    logger.debug(
-                        f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
-                    )
-                    _hier.ensure_parent_tuples(parent_dir, zone_id=ctx.zone_id or ROOT_ZONE_ID)
-                except Exception as e:
-                    logger.warning(
-                        "mkdir: Failed to create parent tuples for %s: %s", parent_dir, e
-                    )
 
     def _create_directory_metadata(
         self, path: str, context: OperationContext | None = None
@@ -568,65 +553,10 @@ class NexusFS(  # type: ignore[misc]
         # Create explicit metadata entry for the directory
         self._create_directory_metadata(path, context=ctx)
 
-        # P0-3: Create parent relationship tuples for directory inheritance
-        # This enables granting access to /workspace to automatically grant access to subdirectories
-
-        logger.debug(
-            f"mkdir: Checking for hierarchy_manager: hasattr={hasattr(self, '_hierarchy_manager')}"
-        )
-
         ctx = context or self._default_context
 
-        _hier = (
-            getattr(self._system_services, "hierarchy_manager", None)
-            if self._system_services
-            else None
-        )
-        if _hier is not None:
-            try:
-                logger.debug(
-                    f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or ROOT_ZONE_ID}"
-                )
-                created_count = _hier.ensure_parent_tuples(
-                    path, zone_id=ctx.zone_id or ROOT_ZONE_ID
-                )
-                logger.debug("mkdir: Created %d parent tuples for %s", created_count, path)
-                if created_count > 0:
-                    logger.debug("Created %d parent tuples for %s", created_count, path)
-            except Exception as e:
-                # Log the error but don't fail the mkdir operation
-                # This helps diagnose issues with parent tuple creation
-                logger.warning(
-                    f"Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
-                )
-                import traceback
-
-                logger.debug(traceback.format_exc())
-
-        # Grant direct_owner permission to the user who created the directory
-        # Note: Use 'direct_owner' (not 'owner') as the base relation.
-        # 'owner' is a computed union of direct_owner + parent_owner in the ReBAC schema.
-        _rebac = (
-            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
-        )
-        if _rebac and ctx.user_id and not ctx.is_system:
-            try:
-                logger.debug(
-                    "mkdir: Granting direct_owner permission to %s for %s", ctx.user_id, path
-                )
-                _rebac.rebac_write(
-                    subject=("user", ctx.user_id),
-                    relation="direct_owner",
-                    object=("file", path),
-                    zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                )
-                logger.debug(
-                    "mkdir: Granted direct_owner permission to %s for %s", ctx.user_id, path
-                )
-            except Exception as e:
-                logger.warning("Failed to grant direct_owner permission for %s: %s", path, e)
-
-        # Issue #900: Unified two-phase dispatch for mkdir
+        # Issue #900/#1682: Unified two-phase dispatch for mkdir
+        # Hierarchy tuples + owner grants moved to post_mkdir hooks.
         from nexus.contracts.vfs_hooks import MkdirHookContext
 
         await self._dispatch.intercept_post_mkdir(
@@ -3102,6 +3032,7 @@ class NexusFS(  # type: ignore[misc]
         ]
         await self._dispatch.intercept_post_write_batch(
             items,
+            context=context,
             zone_id=zone_id,
             agent_id=agent_id,
         )
@@ -3122,110 +3053,7 @@ class NexusFS(  # type: ignore[misc]
                 )
             )
 
-        # Issue #548: Create parent tuples and grant direct_owner for new files
-        # This ensures agents can read files they create (via user inheritance)
-        # PERF OPTIMIZATION: Use batch operations instead of individual calls (20x faster)
-        ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "root"
-
-        # PERF: Batch hierarchy tuple creation (single transaction instead of N)
-        _hierarchy_start = time.perf_counter()
-        all_paths = [path for path, _ in validated_files]
-        _hier = (
-            getattr(self._system_services, "hierarchy_manager", None)
-            if self._system_services
-            else None
-        )
-        if _hier is not None and hasattr(_hier, "ensure_parent_tuples_batch"):
-            try:
-                created_count = _hier.ensure_parent_tuples_batch(
-                    all_paths, zone_id=zone_id_for_perms
-                )
-                logger.info(
-                    f"write_batch: Batch created {created_count} parent tuples for {len(all_paths)} files"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"write_batch: Batch parent tuples failed, falling back to individual: {e}"
-                )
-                # Fallback to individual calls if batch fails
-                for path in all_paths:
-                    try:
-                        _hier.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
-                    except Exception as e2:
-                        logger.warning(
-                            f"write_batch: Failed to create parent tuples for {path}: {e2}"
-                        )
-        elif _hier is not None:
-            # No batch method available, use individual calls
-            for path in all_paths:
-                try:
-                    _hier.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
-                except Exception as e:
-                    logger.warning(
-                        "write_batch: Failed to create parent tuples for %s: %s", path, e
-                    )
-        _hierarchy_elapsed = (time.perf_counter() - _hierarchy_start) * 1000
-
-        # PERF: Batch direct_owner grants (single transaction instead of N)
-        _rebac_start = time.perf_counter()
-        _rebac = (
-            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
-        )
-        if _rebac and ctx.user_id and not ctx.is_system:
-            # Collect all owner grants needed for new files
-            owner_grants = []
-            for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
-                is_new_file = existing_metadata.get(path) is None
-                if is_new_file:
-                    owner_grants.append(
-                        {
-                            "subject": ("user", ctx.user_id),
-                            "relation": "direct_owner",
-                            "object": ("file", path),
-                            "zone_id": zone_id_for_perms,
-                        }
-                    )
-
-            if owner_grants and hasattr(_rebac, "rebac_write_batch"):
-                try:
-                    grant_count = _rebac.rebac_write_batch(owner_grants)
-                    logger.info("write_batch: Batch granted direct_owner to %d files", grant_count)
-                except Exception as e:
-                    logger.warning(
-                        f"write_batch: Batch rebac_write failed, falling back to individual: {e}"
-                    )
-                    # Fallback to individual calls
-                    for grant in owner_grants:
-                        try:
-                            _rebac.rebac_write(
-                                subject=grant["subject"],
-                                relation=grant["relation"],
-                                object=grant["object"],
-                                zone_id=grant["zone_id"],
-                            )
-                        except Exception as e2:
-                            logger.warning("write_batch: Failed to grant direct_owner: %s", e2)
-            elif owner_grants:
-                # No batch method available, use individual calls
-                for grant in owner_grants:
-                    try:
-                        _rebac.rebac_write(
-                            subject=grant["subject"],
-                            relation=grant["relation"],
-                            object=grant["object"],
-                            zone_id=grant["zone_id"],
-                        )
-                    except Exception as e:
-                        logger.warning("write_batch: Failed to grant direct_owner: %s", e)
-        _rebac_elapsed = (time.perf_counter() - _rebac_start) * 1000
-
-        # Log detailed timing breakdown for performance analysis
-        logger.warning(
-            f"[WRITE-BATCH-PERF] files={len(validated_files)}, "
-            f"hierarchy={_hierarchy_elapsed:.1f}ms, rebac={_rebac_elapsed:.1f}ms, "
-            f"per_file_avg={(_hierarchy_elapsed + _rebac_elapsed) / len(validated_files):.1f}ms"
-        )
+        # Issue #1682: Hierarchy tuples + owner grants moved to post_write_batch hooks.
 
         return results
 
@@ -3526,42 +3354,7 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
-        # Update ReBAC permissions to follow the renamed file/directory
-        # This ensures permissions are preserved when files are moved
-        logger.warning("[RENAME-REBAC] Starting ReBAC update: %s -> %s", old_path, new_path)
-        _rebac = (
-            getattr(self._system_services, "rebac_manager", None) if self._system_services else None
-        )
-        logger.warning(
-            f"[RENAME-REBAC] has rebac_manager: {_rebac is not None}, is truthy: {bool(_rebac)}"
-        )
-
-        if _rebac:
-            try:
-                logger.warning(
-                    f"[RENAME-REBAC] Calling update_object_path: old={old_path}, new={new_path}, is_dir={is_directory}"
-                )
-
-                # Update all ReBAC tuples that reference this path
-                updated_count = _rebac.update_object_path(
-                    old_path=old_path,
-                    new_path=new_path,
-                    object_type="file",
-                    is_directory=is_directory,
-                )
-
-                # Log if any permissions were updated
-                logger.warning(
-                    f"[RENAME-REBAC] update_object_path returned: {updated_count} tuples updated"
-                )
-            except Exception as e:
-                # Don't fail the rename operation if ReBAC update fails
-                # The file is already renamed in metadata, we just couldn't update permissions
-                logger.error(
-                    f"[RENAME-REBAC] FAILED to update ReBAC permissions: {e}", exc_info=True
-                )
-        else:
-            logger.warning("[RENAME-REBAC] SKIPPED - no rebac_manager available")
+        # Issue #1682: ReBAC path update moved to post_rename hooks.
 
         # POST-INTERCEPT: post-rename hooks (Issue #900)
         await self._dispatch.intercept_post_rename(_rename_ctx)

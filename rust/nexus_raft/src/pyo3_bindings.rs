@@ -938,6 +938,37 @@ impl PyZoneManager {
         }
     }
 
+    /// Call JoinCluster RPC on the leader to get a signed node certificate.
+    /// Used by followers during 2-phase TLS bootstrap.
+    ///
+    /// Returns: (ca_pem, node_cert_pem, node_key_pem) as bytes.
+    #[pyo3(signature = (leader_addr, node_id, node_address, zone_id, peers_bootstrap=true, password="", timeout_secs=10))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_join_cluster(
+        &self,
+        leader_addr: &str,
+        node_id: u64,
+        node_address: &str,
+        zone_id: &str,
+        peers_bootstrap: bool,
+        password: &str,
+        timeout_secs: u64,
+    ) -> PyResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        let result = self
+            .runtime
+            .block_on(crate::transport::call_join_cluster(
+                leader_addr,
+                node_id,
+                node_address,
+                zone_id,
+                peers_bootstrap,
+                password,
+                timeout_secs,
+            ))
+            .map_err(|e| PyRuntimeError::new_err(format!("JoinCluster failed: {}", e)))?;
+        Ok((result.ca_pem, result.node_cert_pem, result.node_key_pem))
+    }
+
     /// Restart the gRPC server with TLS. Existing zones are preserved.
     /// Called after all nodes have received their certs (plaintext→mTLS upgrade).
     #[pyo3(signature = (tls_cert_path, tls_key_path, tls_ca_path, ca_key_path=None, join_token_hash=None, authorized_peer_ids=None))]

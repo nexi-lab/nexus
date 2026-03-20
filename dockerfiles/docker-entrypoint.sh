@@ -378,9 +378,9 @@ load_saved_mounts_if_needed() {
 }
 
 # join_cluster_if_needed() — REMOVED.
-# Cluster join is now integrated into nexusd startup via NEXUS_JOIN_TOKEN +
-# NEXUS_PEER env vars (see nexus.security.tls.cluster_join). The legacy
-# `nexus join` CLI command is deprecated.
+# TLS provisioning is now automatic via 2-phase TLS bootstrap.
+# All nodes start with NEXUS_PEERS; the Raft leader generates the CA
+# and signs certs for followers via JoinCluster RPC.
 
 cleanup_stale_pid_files() {
     # After an abnormal exit (e.g. SIGSEGV from a native extension), nexusd

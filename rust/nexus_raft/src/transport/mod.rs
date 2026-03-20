@@ -50,8 +50,8 @@ mod transport_loop;
 
 #[cfg(all(feature = "grpc", has_protos))]
 pub use client::{
-    ClientConfig, ClusterInfoResult, ProposeResult, QueryResult, RaftApiClient, RaftClient,
-    RaftClientPool,
+    call_join_cluster, ClientConfig, ClusterInfoResult, JoinClusterResult, ProposeResult,
+    QueryResult, RaftApiClient, RaftClient, RaftClientPool,
 };
 #[cfg(all(feature = "grpc", has_protos))]
 pub use server::{

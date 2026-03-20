@@ -43,7 +43,21 @@ class GitHubConnector(CLIConnector):
 
     SKILL_NAME = "github"
     CLI_NAME = "gh"
-    CLI_SERVICE = ""  # gh has no service subcommand — commands are "gh issue create", not "gh github issue create"
+    CLI_SERVICE = ""  # gh has no service subcommand
+
+    DIRECTORY_STRUCTURE = """\
+/mnt/github/
+  issues/
+    {number}.yaml                  # Issue as YAML (title, body, state, labels)
+    _new.yaml                      # ✏ Write here to CREATE an issue
+    _comment.yaml                  # ✏ Write here to COMMENT on an issue
+    _close.yaml                    # ✏ Write here to CLOSE an issue
+  pulls/
+    {number}.yaml                  # PR as YAML (title, body, state, reviews)
+    _new.yaml                      # ✏ Write here to CREATE a pull request
+    _merge.yaml                    # ✏ Write here to MERGE a PR (⚠ irreversible)
+  .skill/
+    SKILL.md"""
 
     SCHEMAS: dict[str, type] = {
         "create_issue": CreateIssueSchema,

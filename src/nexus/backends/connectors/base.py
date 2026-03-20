@@ -259,6 +259,10 @@ class SkillDocMixin:
                 field_examples=self.FIELD_EXAMPLES or None,
                 write_paths=write_paths or None,
             )
+            # Set directory structure if connector defines it
+            dir_structure = getattr(self, "DIRECTORY_STRUCTURE", None)
+            if dir_structure:
+                self._cached_doc_generator._directory_structure = dir_structure
         return self._cached_doc_generator
 
     def _get_error_formatter(self) -> "SkillErrorFormatter":

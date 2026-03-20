@@ -228,6 +228,20 @@ async def _boot_wired_services(
                 _wf_services.mount_sync = mount_service
                 logger.debug("[BOOT:WIRED] MountService -> WorkflowServices.mount_sync")
 
+    # Start ConnectorSyncLoop for periodic background sync (Issue #3148)
+    if mount_service is not None:
+        try:
+            from nexus.backends.connectors.cli.sync_loop import ConnectorSyncLoop
+
+            connector_sync = ConnectorSyncLoop(
+                mount_service=mount_service,
+                router=router,
+            )
+            nx._connector_sync_loop = connector_sync  # Keep reference for shutdown
+            logger.debug("[BOOT:WIRED] ConnectorSyncLoop created (starts on first request)")
+        except Exception:
+            logger.debug("[BOOT:WIRED] ConnectorSyncLoop not available")
+
     # --- ShareLinkService: Share link operations ---
     share_link_service: Any = None
     if _on("discovery"):

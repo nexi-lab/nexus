@@ -266,6 +266,23 @@ class GmailConnector(CLIConnector):
         ),
     }
 
+    DIRECTORY_STRUCTURE = """\
+/mnt/gmail/
+  INBOX/                           # Unread + read inbox emails
+    {threadId}-{msgId}.yaml        # Email as YAML (subject, from, to, body, labels)
+  SENT/                            # Sent emails
+    {threadId}-{msgId}.yaml
+    _new.yaml                      # ✏ Write here to SEND an email (irreversible)
+    _reply.yaml                    # ✏ Write here to REPLY to an email
+    _forward.yaml                  # ✏ Write here to FORWARD an email
+  STARRED/                         # Starred emails
+  IMPORTANT/                       # Important emails
+  DRAFTS/                          # Draft emails
+    _new.yaml                      # ✏ Write here to CREATE a draft (reversible)
+  .skill/                          # Skill documentation
+    SKILL.md
+    schemas/                       # Per-operation YAML schemas"""
+
     # Gmail label folders
     _LABELS = ["INBOX", "SENT", "STARRED", "IMPORTANT", "DRAFTS"]
     _last_history_id: str | None = None
@@ -598,6 +615,18 @@ class CalendarConnector(CLIConnector):
     CLI_NAME = "gws"
     CLI_SERVICE = "calendar"
     use_metadata_listing = True
+
+    DIRECTORY_STRUCTURE = """\
+/mnt/calendar/
+  primary/                         # Primary calendar
+    {eventId}.yaml                 # Event as YAML (summary, start, end, attendees)
+    _new.yaml                      # ✏ Write here to CREATE an event
+    _update.yaml                   # ✏ Write here to UPDATE an event
+    _delete.yaml                   # ✏ Write here to DELETE an event (irreversible)
+  {calendarId}/                    # Other calendars (shared, holidays, etc.)
+    {eventId}.yaml
+  .skill/
+    SKILL.md"""
 
     SCHEMAS: dict[str, type] = {
         "create_event": CreateEventSchema,

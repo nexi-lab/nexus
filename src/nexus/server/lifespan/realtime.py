@@ -32,6 +32,7 @@ async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     _startup_exporter_registry(app, svc)
     await _startup_websocket(app, svc)
     await _startup_writeback(app, svc)
+    await _startup_connector_sync(app, svc)
     await _startup_lock_manager(app, svc)
 
     return bg_tasks
@@ -211,6 +212,20 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.info("WriteBack service started (in-memory fallback)")
     except Exception as e:
         logger.warning("Failed to start WriteBack service: %s", e)
+
+
+async def _startup_connector_sync(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Start ConnectorSyncLoop for periodic background sync (Issue #3148)."""
+    if not svc.nexus_fs:
+        return
+
+    sync_loop = getattr(svc.nexus_fs, "_connector_sync_loop", None)
+    if sync_loop is not None:
+        try:
+            await sync_loop.start()
+            app.state.connector_sync_loop = sync_loop
+        except Exception as e:
+            logger.warning("Failed to start connector sync loop: %s", e)
 
 
 async def _startup_lock_manager(_app: "FastAPI", svc: "LifespanServices") -> None:

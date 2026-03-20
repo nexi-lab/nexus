@@ -58,6 +58,8 @@ class SkillDocGenerator:
         self._field_examples = field_examples or {}
         # operation_name -> write path (e.g., "send_email" -> "SENT/_new.yaml")
         self._write_paths = write_paths or {}
+        # Optional directory structure description (set by connector)
+        self._directory_structure: str | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -79,6 +81,12 @@ class SkillDocGenerator:
             f"`{mount_path}`",
             "",
         ]
+
+        # Directory structure (if provided)
+        if self._directory_structure:
+            lines.extend(
+                ["## Directory Structure", "", "```", self._directory_structure, "```", ""]
+            )
 
         # Read patterns + write operations (Issue #3148)
         lines.extend(self._generate_read_patterns_section(mount_path))

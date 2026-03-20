@@ -654,6 +654,12 @@ pub struct PyZoneManager {
     runtime: tokio::runtime::Runtime,
     shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
     node_id: u64,
+    /// Handle for injecting CA material into the running server (2-phase bootstrap).
+    tls_bootstrap_handle: Option<crate::transport::TlsBootstrapHandle>,
+    /// Bind address (stored for server restart).
+    bind_addr: std::net::SocketAddr,
+    /// Base path (stored for server restart).
+    base_path_str: String,
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
@@ -673,8 +679,9 @@ impl PyZoneManager {
     ///     tls_ca_path: Path to PEM CA certificate file (mTLS).
     ///     ca_key_path: Path to CA private key file (read once at startup for server-side cert signing).
     ///     join_token_hash: SHA-256 hash of join token password (for JoinCluster verification).
+    ///     authorized_peer_ids: Node IDs authorized for peers_bootstrap JoinCluster (from NEXUS_PEERS).
     #[new]
-    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
+    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None, authorized_peer_ids=None))]
     #[allow(clippy::too_many_arguments)] // PyO3 constructor — Python API needs flat keyword args
     pub fn new(
         node_id: u64,
@@ -685,10 +692,23 @@ impl PyZoneManager {
         tls_ca_path: Option<&str>,
         ca_key_path: Option<&str>,
         join_token_hash: Option<&str>,
+        authorized_peer_ids: Option<Vec<u64>>,
     ) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
         use crate::transport::{RaftGrpcServer, ServerConfig, TlsConfig};
         use std::sync::Arc;
+
+        // Initialize Rust tracing (once) so gRPC server logs are visible.
+        // Uses RUST_LOG env var (e.g., "info,nexus_raft=debug").
+        static TRACING_INIT: std::sync::Once = std::sync::Once::new();
+        TRACING_INIT.call_once(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive("info".parse().unwrap()),
+                )
+                .try_init();
+        });
 
         // Parse TLS config from file paths (all-or-nothing)
         let tls_config = match (tls_cert_path, tls_key_path, tls_ca_path) {
@@ -754,6 +774,10 @@ impl PyZoneManager {
                 std::path::PathBuf::from(base_path),
             );
         }
+        if let Some(peer_ids) = authorized_peer_ids {
+            server = server.with_authorized_peers(peer_ids);
+        }
+        let tls_bootstrap_handle = server.tls_bootstrap_handle();
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
             let shutdown = async move {
@@ -777,6 +801,9 @@ impl PyZoneManager {
             runtime,
             shutdown_tx: Some(shutdown_tx),
             node_id,
+            tls_bootstrap_handle: Some(tls_bootstrap_handle),
+            bind_addr: bind_socket,
+            base_path_str: base_path.to_string(),
         })
     }
 
@@ -884,6 +911,117 @@ impl PyZoneManager {
             let _ = tx.send(true);
         }
         tracing::info!("ZoneManager node {} shut down", self.node_id);
+        Ok(())
+    }
+
+    /// Set CA material on the running server for JoinCluster (2-phase bootstrap).
+    /// Called by the leader after generating the CA, before followers request certs.
+    pub fn set_ca_material(&self, ca_pem: Vec<u8>, ca_key_pem: Vec<u8>) -> PyResult<()> {
+        match &self.tls_bootstrap_handle {
+            Some(handle) => {
+                handle.set_ca_material(ca_pem, ca_key_pem);
+                tracing::info!("CA material set on running server for JoinCluster");
+                Ok(())
+            }
+            None => Err(PyRuntimeError::new_err(
+                "TLS bootstrap handle not available",
+            )),
+        }
+    }
+
+    /// Get the set of node IDs that have successfully called JoinCluster.
+    /// Used by the leader to check if all peers have their certs before proposing TLS upgrade.
+    pub fn joined_peer_ids(&self) -> PyResult<Vec<u64>> {
+        match &self.tls_bootstrap_handle {
+            Some(handle) => Ok(handle.joined_peer_ids()),
+            None => Ok(vec![]),
+        }
+    }
+
+    /// Restart the gRPC server with TLS. Existing zones are preserved.
+    /// Called after all nodes have received their certs (plaintext→mTLS upgrade).
+    #[pyo3(signature = (tls_cert_path, tls_key_path, tls_ca_path, ca_key_path=None, join_token_hash=None, authorized_peer_ids=None))]
+    pub fn restart_with_tls(
+        &mut self,
+        tls_cert_path: &str,
+        tls_key_path: &str,
+        tls_ca_path: &str,
+        ca_key_path: Option<&str>,
+        join_token_hash: Option<&str>,
+        authorized_peer_ids: Option<Vec<u64>>,
+    ) -> PyResult<()> {
+        use crate::transport::{RaftGrpcServer, ServerConfig, TlsConfig};
+
+        // Read TLS material from files
+        let cert_pem = std::fs::read(tls_cert_path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to read TLS cert: {}", e)))?;
+        let key_pem = std::fs::read(tls_key_path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to read TLS key: {}", e)))?;
+        let ca_pem = std::fs::read(tls_ca_path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to read TLS CA: {}", e)))?;
+        let tls_config = TlsConfig {
+            cert_pem,
+            key_pem,
+            ca_pem,
+        };
+
+        // 1. Shutdown existing gRPC server
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(true);
+        }
+        // Brief pause for server to shut down
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // 2. Update registry TLS config + upgrade peer schemes
+        self.registry.set_tls(Some(tls_config.clone()));
+        self.registry.upgrade_peer_schemes();
+
+        // 3. Start new server with TLS
+        let config = ServerConfig {
+            bind_address: self.bind_addr,
+            tls: Some(tls_config),
+            ..Default::default()
+        };
+        let mut server = RaftGrpcServer::new(self.registry.clone(), config);
+
+        // Configure JoinCluster support
+        if let Some(ca_key_path) = ca_key_path {
+            if let Some(token_hash) = join_token_hash {
+                let ca_key_pem = std::fs::read(ca_key_path).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to read CA key: {}", e))
+                })?;
+                server = server.with_join_config(
+                    ca_key_pem,
+                    token_hash.to_string(),
+                    std::path::PathBuf::from(&self.base_path_str),
+                );
+            }
+        }
+        if let Some(peer_ids) = authorized_peer_ids {
+            server = server.with_authorized_peers(peer_ids);
+        }
+
+        let new_handle = server.tls_bootstrap_handle();
+        let (new_shutdown_tx, new_shutdown_rx) = tokio::sync::watch::channel(false);
+
+        self.runtime.spawn(async move {
+            let shutdown = async move {
+                let mut rx = new_shutdown_rx;
+                let _ = rx.changed().await;
+            };
+            if let Err(e) = server.serve_with_shutdown(shutdown).await {
+                tracing::error!("ZoneManager gRPC server error after TLS restart: {}", e);
+            }
+        });
+
+        self.shutdown_tx = Some(new_shutdown_tx);
+        self.tls_bootstrap_handle = Some(new_handle);
+
+        tracing::info!(
+            "ZoneManager node {} restarted with mTLS (bind={})",
+            self.node_id,
+            self.bind_addr,
+        );
         Ok(())
     }
 }

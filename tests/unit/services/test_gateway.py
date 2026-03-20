@@ -66,7 +66,7 @@ def mock_fs():
     fs.SessionLocal = MagicMock()
     fs.read = AsyncMock(return_value={"content": b"data", "path": "/test/file.txt"})
     fs.read_bulk = MagicMock(return_value={"/a": b"data"})
-    fs._get_routing_params = MagicMock(return_value=("zone1", "agent1", False))
+    fs._get_context_identity = MagicMock(return_value=("zone1", "agent1", False))
     fs._get_backend_directory_entries = MagicMock(return_value={"file.txt"})
     fs.backend = MagicMock()
     return fs

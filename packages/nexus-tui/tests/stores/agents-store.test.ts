@@ -235,7 +235,7 @@ describe("AgentsStore", () => {
         },
       });
 
-      await useAgentsStore.getState().fetchDelegations(client);
+      await useAgentsStore.getState().fetchDelegations("coordinator", client);
       const state = useAgentsStore.getState();
 
       expect(state.delegations).toHaveLength(2);
@@ -251,7 +251,7 @@ describe("AgentsStore", () => {
         get: mock(async () => { throw new Error("Delegation service down"); }),
       } as unknown as FetchClient;
 
-      await useAgentsStore.getState().fetchDelegations(client);
+      await useAgentsStore.getState().fetchDelegations("coordinator", client);
       const state = useAgentsStore.getState();
       expect(state.delegationsLoading).toBe(false);
       expect(state.error).toBe("Delegation service down");
@@ -281,7 +281,7 @@ describe("AgentsStore", () => {
       expect(state.inboxLoading).toBe(false);
     });
 
-    it("sets error on failure", async () => {
+    it("returns empty on failure (graceful degradation)", async () => {
       const client = {
         get: mock(async () => { throw new Error("Inbox unavailable"); }),
       } as unknown as FetchClient;
@@ -289,7 +289,10 @@ describe("AgentsStore", () => {
       await useAgentsStore.getState().fetchInbox("agent-1", client);
       const state = useAgentsStore.getState();
       expect(state.inboxLoading).toBe(false);
-      expect(state.error).toBe("Inbox unavailable");
+      // All three fetches (inbox, processed, dead_letter) catch errors
+      // and return empty arrays — no error propagated
+      expect(state.inboxMessages.length).toBe(0);
+      expect(state.inboxCount).toBe(0);
     });
   });
 

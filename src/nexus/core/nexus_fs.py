@@ -353,10 +353,10 @@ class NexusFS(  # type: ignore[misc]
 
         return get_created_by(context, self._default_context)
 
-    def _get_routing_params(
+    def _get_context_identity(
         self, context: OperationContext | dict | None = None
     ) -> tuple[str | None, str | None, bool]:
-        """Extract (zone_id, agent_id, is_admin) from context for router.route()."""
+        """Extract (zone_id, agent_id, is_admin) from context."""
         if context is None:
             return (
                 self._default_context.zone_id,
@@ -371,24 +371,9 @@ class NexusFS(  # type: ignore[misc]
             )
         return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
 
-    def _check_zone_writable(self, context: OperationContext | dict | None = None) -> None:
-        """Raise ZoneTerminatingError if the zone is being deprovisioned.
-
-        Issue #2061: Write-gating during zone finalization (Decision #4A).
-        Issue #1570: zone_lifecycle accessed from container, not flat attr.
-        """
-        _zl = (
-            getattr(self._system_services, "zone_lifecycle", None)
-            if self._system_services
-            else None
-        )
-        if _zl is None:
-            return
-        zone_id, _, _ = self._get_routing_params(context)
-        if zone_id and _zl.is_zone_terminating(zone_id):
-            from nexus.contracts.exceptions import ZoneTerminatingError
-
-            raise ZoneTerminatingError(zone_id)
+    # Issue #1790: _check_zone_writable() deleted — now handled by
+    # ZoneWriteGuardHook (pre-intercept on all write-like operations).
+    # Kernel no longer reads zone_lifecycle from _system_services.
 
     @property
     def zone_id(self) -> str | None:
@@ -533,7 +518,6 @@ class NexusFS(  # type: ignore[misc]
         ctx = context if context is not None else self._default_context
 
         # Block writes during zone deprovisioning (Issue #2061)
-        self._check_zone_writable(ctx)
 
         # PRE-INTERCEPT: pre-mkdir hooks (Issue #899)
         from nexus.contracts.vfs_hooks import MkdirHookContext
@@ -676,7 +660,6 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # Block writes during zone deprovisioning (Issue #2061)
-        self._check_zone_writable(context)
 
         # P0 Fixes: Create OperationContext
         if context is not None:
@@ -978,8 +961,6 @@ class NexusFS(  # type: ignore[misc]
             Dict with path, created flag, and type-specific fields.
         """
         path = self._validate_path(path)
-        ctx = context or self._default_context
-        self._check_zone_writable(ctx)
 
         meta = self.metadata.get(path)
 
@@ -1061,7 +1042,7 @@ class NexusFS(  # type: ignore[misc]
             # For root path, try routing "/" to find the root mount's backend
             if not path or path == "/":
                 try:
-                    zone_id, _agent_id, is_admin = self._get_routing_params(context)
+                    zone_id, _agent_id, is_admin = self._get_context_identity(context)
                     root_route = self.router.route("/", is_admin=is_admin, check_write=False)
                     entries = root_route.backend.list_dir(root_route.backend_path)
                     for entry in entries:
@@ -1074,7 +1055,7 @@ class NexusFS(  # type: ignore[misc]
                     pass
             else:
                 # Non-root path - use router with context
-                zone_id, _agent_id, is_admin = self._get_routing_params(context)
+                zone_id, _agent_id, is_admin = self._get_context_identity(context)
                 route = self.router.route(
                     path.rstrip("/"),
                     is_admin=is_admin,
@@ -1323,7 +1304,7 @@ class NexusFS(  # type: ignore[misc]
                 perm_check_elapsed * 1000,
             )
 
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(path, is_admin=is_admin, check_write=False)
 
         # DT_PIPE / DT_STREAM bypass (sync — range reads not applicable)
@@ -1458,7 +1439,7 @@ class NexusFS(  # type: ignore[misc]
             )
 
         # Normal file path - proceed with regular read
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -1652,7 +1633,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Read allowed files
         read_start = time.time()
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
 
         # Group paths by backend for potential bulk optimization
         # Use get_batch for metadata lookup (single query instead of N queries)
@@ -1983,7 +1964,7 @@ class NexusFS(  # type: ignore[misc]
         if not has_post_hooks:
             self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, agent_id, is_admin = self._get_context_identity(context)
             route = self.router.route(path, is_admin=is_admin, check_write=False)
 
             meta = self.metadata.get(path)
@@ -2056,7 +2037,7 @@ class NexusFS(  # type: ignore[misc]
         self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
         # Route to backend with access control
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -2101,7 +2082,7 @@ class NexusFS(  # type: ignore[misc]
 
         self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -2156,10 +2137,9 @@ class NexusFS(  # type: ignore[misc]
             >>> result = nx.write_stream("/workspace/large.bin", file_chunks("/tmp/large.bin"))
         """
         path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route to backend with write access check
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -2282,7 +2262,6 @@ class NexusFS(  # type: ignore[misc]
             return {"path": path, "bytes_written": n, "created": False}
 
         path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _result = self._dispatch.resolve_write(path, buf)
@@ -2388,7 +2367,6 @@ class NexusFS(  # type: ignore[misc]
             buf = buf[:count]
 
         path = self._validate_path(path)
-        self._check_zone_writable(context)
 
         # PRE-DISPATCH: virtual path resolvers
         _handled, _result = self._dispatch.resolve_write(path, buf)
@@ -2422,7 +2400,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
 
         route = self.router.route(
             path,
@@ -2463,17 +2441,17 @@ class NexusFS(  # type: ignore[misc]
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # Remote backends (external_content capability): the typed Write RPC
-        # already performs the full write (content + metadata) on the server.
-        # Skip local metadata management to avoid overwriting the server's
-        # inline/CAS decisions with stale client-side metadata.
+        # External_content backends manage their own content storage.
+        # Remote backends (RPC-based) also persist metadata on the remote server,
+        # so we skip local metadata.put() to avoid overwriting.
+        # Local external_content backends (e.g. LocalConnector) write content
+        # to disk but do NOT manage metadata — we must persist metadata locally.
         _backend_caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
+        _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
         if "external_content" in _backend_caps:
             wr = route.backend.write_content(content, context=context)
             content_hash = wr.content_hash
             new_version = (meta.version + 1) if meta else 1
-            # Build a lightweight metadata object for event dispatch / hooks.
-            # The server already persisted the real metadata via the typed Write RPC.
             ctx = context if context is not None else self._default_context
             owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
             metadata = FileMetadata(
@@ -2489,6 +2467,9 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=zone_id or "root",
                 owner_id=owner_id,
             )
+            # Local external_content backends need metadata persisted locally
+            if not _is_remote:
+                self.metadata.put(metadata, consistency=consistency)
         else:
             # VFS I/O Lock: exclusive write lock around backend write + metadata put.
             # Like Linux i_rwsem: held for I/O duration only, released before observers.
@@ -3011,8 +2992,6 @@ class NexusFS(  # type: ignore[misc]
         if not files:
             return []
 
-        self._check_zone_writable(context)  # Issue #2061: write-gating
-
         # Validate all paths first
         validated_files: list[tuple[str, bytes]] = []
         for path, content in files:
@@ -3020,7 +2999,7 @@ class NexusFS(  # type: ignore[misc]
             validated_files.append((validated_path, content))
 
         # Route all paths and check write access
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         routes = []
         for path, _ in validated_files:
             route = self.router.route(
@@ -3269,7 +3248,6 @@ class NexusFS(  # type: ignore[misc]
             PermissionError: If path is read-only or user doesn't have write permission
         """
         path = self._validate_path(path)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _result = self._dispatch.resolve_delete(path, context=context)
@@ -3285,7 +3263,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
             path,
             is_admin=is_admin,
@@ -3401,10 +3379,9 @@ class NexusFS(  # type: ignore[misc]
         new_path = self._validate_path(new_path)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
-        self._check_zone_writable(context)  # Issue #2061: write-gating
 
         # Route both paths
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
         old_route = self.router.route(
             old_path,
             is_admin=is_admin,
@@ -3651,7 +3628,7 @@ class NexusFS(  # type: ignore[misc]
         size = meta.size
         if size is None and meta.etag:
             # Try to get size from backend
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, agent_id, is_admin = self._get_context_identity(context)
             route = self.router.route(
                 path,
                 is_admin=is_admin,
@@ -4027,7 +4004,6 @@ class NexusFS(  # type: ignore[misc]
             ...     else:
             ...         print(f"Failed {path}: {result['error']}")
         """
-        self._check_zone_writable(context)  # Issue #2061: write-gating
         results = {}
         for path in paths:
             try:
@@ -4078,7 +4054,7 @@ class NexusFS(  # type: ignore[misc]
         import errno
 
         path = self._validate_path(path)
-        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
 
         route = self.router.route(
             path,
@@ -4664,6 +4640,10 @@ class NexusFS(  # type: ignore[misc]
                             and self.metadata.is_implicit_directory(e.path)
                         )
                         else e.entry_type,
+                        "zone_id": e.zone_id,
+                        "owner_id": e.owner_id,
+                        "modified_at": e.modified_at.isoformat() if e.modified_at else None,
+                        "version": e.version,
                     }
                     for e in result.items
                 ]
@@ -4685,6 +4665,10 @@ class NexusFS(  # type: ignore[misc]
                         and self.metadata.is_implicit_directory(e.path)
                     )
                     else e.entry_type,
+                    "zone_id": e.zone_id,
+                    "owner_id": e.owner_id,
+                    "modified_at": e.modified_at.isoformat() if e.modified_at else None,
+                    "version": e.version,
                 }
                 for e in entries
             ]

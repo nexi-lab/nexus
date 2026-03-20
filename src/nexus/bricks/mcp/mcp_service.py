@@ -134,14 +134,11 @@ class MCPService:
                 context=context
             )
         """
-        import asyncio
-
         # Get MCP mount manager
         manager = self._get_mcp_mount_manager()
 
-        # List mounts (run in thread to avoid blocking)
-        mounts = await asyncio.to_thread(
-            manager.list_mounts,
+        # list_mounts is async — await it directly
+        mounts = await manager.list_mounts(
             include_unmounted=include_unmounted,
             tier=tier,
             context=context,

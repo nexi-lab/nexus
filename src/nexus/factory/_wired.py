@@ -482,6 +482,28 @@ def _initialize_wired_ipc(nx: Any, brick_services: "BrickServices") -> None:
             _ipc_data_dir.mkdir(parents=True, exist_ok=True)
             _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
             nx.router.add_mount("/agents", _ipc_connector)
+
+            # Ensure the /agents metadata entry has target_zone_id set so
+            # ZonePathResolver doesn't fail on it. sys_mkdir creates a DT_DIR
+            # entry but doesn't set target_zone_id for the mount.
+            try:
+                from nexus.core.metadata import DT_DIR, DT_MOUNT
+
+                _zone_id = getattr(nx, "_zone_id", None) or "root"
+                existing = nx.metadata.get("/agents")
+                if existing is not None and not existing.target_zone_id:
+                    from dataclasses import replace as _replace
+
+                    updated = _replace(
+                        existing,
+                        entry_type=DT_DIR | DT_MOUNT,
+                        target_zone_id=_zone_id,
+                    )
+                    nx.metadata.put(updated)
+                    logger.debug("[BOOT:WIRED] Set target_zone_id=%s on /agents mount", _zone_id)
+            except Exception as e:
+                logger.debug("[BOOT:WIRED] Could not set /agents target_zone_id: %s", e)
+
             logger.debug(
                 "[BOOT:WIRED] IPC KernelVFSAdapter bound + LocalConnector mounted at /agents"
             )

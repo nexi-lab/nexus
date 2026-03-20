@@ -74,13 +74,33 @@ class TestSysReaddir:
     @pytest.mark.asyncio
     async def test_sys_readdir_details(self, mock_fs, context):
         """sys_readdir with details=True returns dicts from metadata."""
-        entry = SimpleNamespace(path="/data/a.txt", size=42, etag="abc", entry_type=0)
+        entry = SimpleNamespace(
+            path="/data/a.txt",
+            size=42,
+            etag="abc",
+            entry_type=0,
+            zone_id="root",
+            owner_id=None,
+            modified_at=None,
+            version=1,
+        )
         mock_fs.metadata.list = MagicMock(return_value=[entry])
         mock_fs.metadata.is_implicit_directory = MagicMock(return_value=False)
 
         result = await mock_fs.sys_readdir(path="/data", details=True, context=context)
 
-        assert result == [{"path": "/data/a.txt", "size": 42, "etag": "abc", "entry_type": 0}]
+        assert result == [
+            {
+                "path": "/data/a.txt",
+                "size": 42,
+                "etag": "abc",
+                "entry_type": 0,
+                "zone_id": "root",
+                "owner_id": None,
+                "modified_at": None,
+                "version": 1,
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_sys_readdir_root_prefix(self, mock_fs, context):

@@ -57,8 +57,9 @@ pub struct ZoneRaftRegistry {
     base_path: PathBuf,
     /// This node's global ID (same across all zones on this node).
     node_id: u64,
-    /// Optional TLS config for outbound client connections (shared across all zones).
-    tls: Option<TlsConfig>,
+    /// Shared TLS config — can be updated at runtime for plaintext→mTLS upgrade.
+    /// All zones' client pools read from this on new connections.
+    tls: Arc<RwLock<Option<TlsConfig>>>,
 }
 
 impl ZoneRaftRegistry {
@@ -72,7 +73,7 @@ impl ZoneRaftRegistry {
             zones: DashMap::new(),
             base_path,
             node_id,
-            tls: None,
+            tls: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -82,8 +83,32 @@ impl ZoneRaftRegistry {
             zones: DashMap::new(),
             base_path,
             node_id,
-            tls,
+            tls: Arc::new(RwLock::new(tls)),
         }
+    }
+
+    /// Get a snapshot of the current TLS config.
+    pub fn tls_config(&self) -> Option<TlsConfig> {
+        self.tls.read().unwrap().clone()
+    }
+
+    /// Update TLS config at runtime (for plaintext→mTLS upgrade).
+    pub fn set_tls(&self, tls: Option<TlsConfig>) {
+        *self.tls.write().unwrap() = tls;
+    }
+
+    /// Upgrade all peer endpoints from http:// to https:// scheme.
+    /// Called after TLS upgrade so outbound connections use TLS.
+    pub fn upgrade_peer_schemes(&self) {
+        for entry in self.zones.iter() {
+            let mut peers = entry.peers.write().unwrap();
+            for addr in peers.values_mut() {
+                if addr.endpoint.starts_with("http://") {
+                    addr.endpoint = addr.endpoint.replacen("http://", "https://", 1);
+                }
+            }
+        }
+        tracing::info!("Upgraded all peer endpoints to https://");
     }
 
     /// Create a new zone with its own Raft group.
@@ -187,7 +212,7 @@ impl ZoneRaftRegistry {
         driver.set_peer_map(shared_peers.clone());
 
         let client_config = ClientConfig {
-            tls: self.tls.clone(),
+            tls: self.tls.read().unwrap().clone(),
             ..Default::default()
         };
         let transport_loop = TransportLoop::new(

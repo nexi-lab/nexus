@@ -22,7 +22,7 @@ import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { CommandOutput } from "../../shared/components/command-output.js";
 import { useCommandRunnerStore, executeLocalCommand } from "../../services/command-runner.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { focusColor } from "../../shared/theme.js";
+import { agentStateColor, focusColor, statusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
 const ALL_TABS: readonly TabDef<AgentTab>[] = [
@@ -49,7 +49,7 @@ export default function AgentsPanel(): React.ReactNode {
   // Zone ID for fetchAgents
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
   const serverZoneId = useGlobalStore((s) => s.zoneId);
-  const effectiveZoneId = configZoneId ?? serverZoneId ?? undefined;
+  const effectiveZoneId = configZoneId ?? serverZoneId ?? "root";
 
   const knownAgents = useAgentsStore((s) => s.knownAgents);
   const agents = useAgentsStore((s) => s.agents);
@@ -132,13 +132,22 @@ export default function AgentsPanel(): React.ReactNode {
     if (!client) return;
 
     if (activeTab === "status" && selectedAgentId) {
-      fetchAgentStatus(selectedAgentId, client);
-      fetchAgentSpec(selectedAgentId, client);
-      fetchAgentIdentity(selectedAgentId, client);
-      fetchTrustScore(selectedAgentId, client);
-      fetchAgentReputation(selectedAgentId, client);
-    } else if (activeTab === "delegations") {
-      fetchDelegations(client);
+      // Fetch permissions for all agents (works for registered + running)
+      client.get<{ permissions: readonly { relation: string; object_type: string; object_id: string }[] }>(
+        `/api/v2/agents/${encodeURIComponent(selectedAgentId)}/permissions`,
+      ).then((r) => useAgentsStore.setState({ agentPermissions: r.permissions }))
+        .catch(() => useAgentsStore.setState({ agentPermissions: [] }));
+      // Only fetch live status for running agents
+      const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
+      if (selectedAgent && selectedAgent.state !== "registered" && selectedAgent.state !== "delegated") {
+        fetchAgentStatus(selectedAgentId, client);
+        fetchAgentSpec(selectedAgentId, client);
+        fetchAgentIdentity(selectedAgentId, client);
+        fetchTrustScore(selectedAgentId, client);
+        fetchAgentReputation(selectedAgentId, client);
+      }
+    } else if (activeTab === "delegations" && selectedAgentId) {
+      fetchDelegations(selectedAgentId, client);
     } else if (activeTab === "inbox" && selectedAgentId) {
       fetchInbox(selectedAgentId, client);
     } else if (activeTab === "trajectories" && selectedAgentId) {
@@ -341,10 +350,16 @@ export default function AgentsPanel(): React.ReactNode {
                   const prefix = isSelected ? "> " : "  ";
                   const suffix = isActive ? " *" : "";
                   const agentEntry = agents.find((a) => a.agent_id === agentId);
-                  const stateLabel = agentEntry ? ` [${agentEntry.state}]` : "";
+                  const state = agentEntry?.state ?? "";
+                  const stateColor = agentStateColor[state] ?? statusColor.dim;
                   return (
                     <box key={agentId} height={1} width="100%">
-                      <text>{`${prefix}${agentId}${stateLabel}${suffix}`}</text>
+                      <text>
+                        <span>{prefix}</span>
+                        <span bold={isActive}>{agentId}</span>
+                        {state ? <span foregroundColor={stateColor}>{` [${state}]`}</span> : ""}
+                        <span dimColor>{suffix}</span>
+                      </text>
                     </box>
                   );
                 })}
@@ -380,16 +395,47 @@ export default function AgentsPanel(): React.ReactNode {
 
           {/* Detail content */}
           <box flexGrow={1} borderStyle="single">
-            {activeTab === "status" && (
-              <AgentStatusView
-                status={agentStatus}
-                spec={agentSpec}
-                identity={agentIdentity}
-                loading={statusLoading}
-                trustScore={trustScore}
-                reputation={reputation}
-              />
-            )}
+            {activeTab === "status" && (() => {
+              const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
+              if (selectedAgent?.state === "registered" || selectedAgent?.state === "delegated") {
+                const perms = useAgentsStore.getState().agentPermissions;
+                return (
+                  <box height="100%" width="100%" flexDirection="column" padding={1}>
+                    <text bold>{`Agent: ${selectedAgent.agent_id}`}</text>
+                    <text>{""}</text>
+                    <text><span foregroundColor="cyan">{"State:  "}</span><span>{"registered"}</span></text>
+                    <text><span foregroundColor="cyan">{"Name:   "}</span><span>{selectedAgent.name ?? selectedAgent.agent_id}</span></text>
+                    <text><span foregroundColor="cyan">{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
+                    <text><span foregroundColor="cyan">{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
+                    <text>{""}</text>
+                    <text bold foregroundColor="cyan">{"Permissions:"}</text>
+                    {perms.length === 0 ? (
+                      <text dimColor>{"  No permissions assigned"}</text>
+                    ) : (
+                      perms.map((p, i) => (
+                        <text key={`perm-${i}`}>
+                          <span foregroundColor="green">{`  ${p.relation}`}</span>
+                          <span dimColor>{" on "}</span>
+                          <span foregroundColor="blue">{`${p.object_type}:${p.object_id}`}</span>
+                        </text>
+                      ))
+                    )}
+                    <text>{""}</text>
+                    <text dimColor>{"Agent is registered but not running."}</text>
+                  </box>
+                );
+              }
+              return (
+                <AgentStatusView
+                  status={agentStatus}
+                  spec={agentSpec}
+                  identity={agentIdentity}
+                  loading={statusLoading}
+                  trustScore={trustScore}
+                  reputation={reputation}
+                />
+              );
+            })()}
             {activeTab === "delegations" && (
               <DelegationList
                 delegations={delegations}
@@ -402,6 +448,8 @@ export default function AgentsPanel(): React.ReactNode {
               <InboxView
                 messages={inboxMessages}
                 count={inboxCount}
+                processedMessages={useAgentsStore.getState().processedMessages}
+                deadLetterMessages={useAgentsStore.getState().deadLetterMessages}
                 loading={inboxLoading}
               />
             )}

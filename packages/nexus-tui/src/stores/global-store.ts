@@ -117,7 +117,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
 
     try {
       // Consolidated connection check (Decision 5A): health + features + auth in one flow
-      const [health, features, userInfo] = await Promise.all([
+      let [health, features, userInfo] = await Promise.all([
         client.get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
           "/api/v2/bricks/health",
         ).catch(() => null),
@@ -125,8 +125,40 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
         client.get<UserInfo>("/auth/me").catch(() => null),
       ]);
 
-      // If health check succeeds, consider the server connected even if
-      // /auth/me fails (e.g. "Authentication provider not configured").
+      // Auto-discovery: if health check fails, scan common ports to find the server.
+      // Only probe when running interactively (not in tests) — probing creates real
+      // HTTP connections that cause test timeouts.
+      if (!health && typeof process !== "undefined" && process.stdout?.isTTY) {
+        const configuredUrl = get().config.baseUrl ?? "";
+        const hostname = configuredUrl.replace(/:\d+$/, "").replace(/^https?:\/\//, "");
+        const protocol = configuredUrl.startsWith("https") ? "https" : "http";
+        const PROBE_PORTS = [2026, 2027, 2042, 2043, 8080, 2122];
+
+        for (const port of PROBE_PORTS) {
+          if (configuredUrl.includes(`:${port}`)) continue;
+          try {
+            const probeUrl = `${protocol}://${hostname || "localhost"}:${port}`;
+            const probeClient = new FetchClient({ ...get().config, baseUrl: probeUrl, timeout: 3000, maxRetries: 0 });
+            const probeHealth = await probeClient.get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
+              "/api/v2/bricks/health",
+            ).catch(() => null);
+            if (probeHealth) {
+              const newConfig = resolveConfig({ transformKeys: false, baseUrl: probeUrl });
+              const newClient = new FetchClient(newConfig);
+              [health, features, userInfo] = await Promise.all([
+                Promise.resolve(probeHealth),
+                newClient.get<FeaturesResponse>("/api/v2/features").catch(() => null),
+                newClient.get<UserInfo>("/auth/me").catch(() => null),
+              ]);
+              set({ config: newConfig, client: newClient });
+              break;
+            }
+          } catch {
+            // probe failed, try next port
+          }
+        }
+      }
+
       if (!health) {
         throw new Error("Server health check failed");
       }

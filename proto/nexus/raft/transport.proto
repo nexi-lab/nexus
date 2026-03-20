@@ -139,12 +139,15 @@ message JoinZoneResponse {
   optional ClusterConfig config = 4;
 }
 
-// JoinClusterRequest is sent by `nexus join` to provision TLS certificates.
-// The caller authenticates with the join token password. The server signs a
-// node certificate and returns it along with the CA cert. The CA private key
-// never leaves the initial node (security fix: server-side cert signing).
+// JoinClusterRequest is sent during TLS bootstrap to provision certificates.
+//
+// Two auth modes:
+//   1. Token-based: password field contains join token password (legacy/external join)
+//   2. Peers-based: peers_bootstrap=true, server verifies node_id is in NEXUS_PEERS
+//
+// The server signs a node certificate — CA key never leaves the leader.
 message JoinClusterRequest {
-  // Join token password (64-char hex string).
+  // Join token password (64-char hex string). Empty for peers_bootstrap mode.
   string password = 1;
   // The joining node's Raft ID.
   uint64 node_id = 2;
@@ -152,6 +155,9 @@ message JoinClusterRequest {
   string node_address = 3;
   // Zone ID for the node certificate CN (e.g., "root").
   string zone_id = 4;
+  // When true, authenticate by verifying node_id is in the static peers list
+  // instead of requiring a join token password. Used during 2-phase TLS bootstrap.
+  bool peers_bootstrap = 5;
 }
 
 // JoinClusterResponse returns cluster TLS material on success.

@@ -227,16 +227,18 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     if not user_id:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
-    if params.subject_type == "user" or not params.subject_type:
-        _record_store = _resolve_record_store(auth_provider)
-        if _record_store is not None:
-            entity_registry = EntityRegistry(_record_store)
-            entity_registry.register_entity(
-                entity_type="user",
-                entity_id=user_id,
-                parent_type="zone",
-                parent_id=params.zone_id,
-            )
+    _record_store = _resolve_record_store(auth_provider)
+    if _record_store is not None:
+        entity_registry = EntityRegistry(_record_store)
+        subject_type = params.subject_type or "user"
+        entity_id = params.subject_id or user_id if subject_type == "agent" else user_id
+        entity_registry.register_entity(
+            entity_type=subject_type,
+            entity_id=entity_id,
+            parent_type="zone",
+            parent_id=params.zone_id,
+            entity_metadata={"name": params.name} if params.name else None,
+        )
 
     expires_at = None
     if params.expires_days:

@@ -16,6 +16,14 @@ function mockClient(responses: Record<string, unknown>): FetchClient {
       }
       throw new Error(`Unmocked path: ${path}`);
     }),
+    rawRequest: mock(async (_method: string, path: string) => {
+      for (const [pattern, response] of Object.entries(responses)) {
+        if (path.includes(pattern)) {
+          return { ok: true, status: 200, json: async () => response };
+        }
+      }
+      return { ok: false, status: 404, json: async () => ({ detail: "Not found" }) };
+    }),
   } as unknown as FetchClient;
 }
 
@@ -138,6 +146,7 @@ describe("ZonesStore", () => {
     it("sets error on fetch failure", async () => {
       const client = {
         get: mock(async () => { throw new Error("Zone service down"); }),
+        rawRequest: mock(async () => { throw new Error("Zone service down"); }),
       } as unknown as FetchClient;
 
       await useZonesStore.getState().fetchZones(client);

@@ -61,7 +61,7 @@ services:
     command: >
       dragonfly
       --maxmemory=256mb
-      --proactor_threads=2
+      --proactor_threads=1
       --logtostderr
       --cache_mode=true
     ports:
@@ -135,11 +135,11 @@ services:
     networks:
       - dyn-nexus-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:2026/healthz/live"]
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 60s
+      retries: 12
+      start_period: 30s
 
   # ==========================================================================
   # NexusFS Node 2 — Full node (follower)
@@ -191,11 +191,11 @@ services:
     networks:
       - dyn-nexus-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:2026/healthz/live"]
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 60s
+      retries: 12
+      start_period: 30s
 
   # ==========================================================================
   # Raft Witness — vote-only node (no static zones)

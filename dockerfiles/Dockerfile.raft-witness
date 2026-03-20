@@ -39,7 +39,7 @@ RUN for d in nexus_core nexus_pyo3 nexus_tasks; do \
 
 # Build the witness binary
 WORKDIR /build/rust/nexus_raft
-RUN cargo build --release --features grpc --bin nexus-witness
+RUN cargo build --release --no-default-features --features grpc --bin nexus-witness
 
 # ---------- Production image ----------
 FROM debian:bookworm-slim

@@ -275,7 +275,9 @@ async def resolve_auth(
                 "is_admin": True,
                 "subject_type": "user",
                 "subject_id": "admin",
+                "zone_id": x_nexus_zone_id,
                 "inherit_permissions": True,  # Static admin key always inherits
+                "x_agent_id": x_agent_id,
             }
         return None
 

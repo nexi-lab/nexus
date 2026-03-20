@@ -25,11 +25,17 @@ import yaml
 
 from nexus.cli.commands.demo_data import (
     CONFIG_SEARCH_PATHS,
+    DEMO_AGENT_PERMISSIONS,
     DEMO_AGENTS,
+    DEMO_DELEGATIONS,
     DEMO_DIRS,
     DEMO_FILES,
+    DEMO_IPC_DEAD_LETTER,
+    DEMO_IPC_MESSAGES,
+    DEMO_IPC_PROCESSED,
     DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
+    DEMO_ZONES,
     HERB_CORPUS,
     MANIFEST_FILENAME,
     PLAN_VERSIONS,
@@ -235,7 +241,7 @@ def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any])
     if manifest.get("permissions_seeded"):
         return 0
 
-    tuples = DEMO_PERMISSION_TUPLES
+    tuples = DEMO_PERMISSION_TUPLES + DEMO_AGENT_PERMISSIONS
     preset = config.get("preset", "local")
 
     if preset in ("shared", "demo"):
@@ -486,6 +492,364 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     manifest["identities_seeded"] = True
     manifest["identity_keys"] = identity_keys
     return created
+
+
+def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
+    """Seed demo zones and populate them with data.
+
+    Creates a 'research' zone with HERB employee/product data, separate
+    from customer data in the root zone. This enables cross-zone semantic
+    search demos.
+    """
+    if manifest.get("zones_seeded"):
+        return 0
+
+    import urllib.request
+
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    base_url = f"http://localhost:{http_port}"
+
+    admin_key = _resolve_admin_key(config)
+    if not admin_key:
+        return 0
+
+    created = 0
+    for zone in DEMO_ZONES:
+        # Create zone record in DB via direct SQL (zone creation API requires
+        # DatabaseLocalAuth which may not be configured)
+        try:
+            # Use the files/write endpoint with zone header to seed data
+            # First check if zone already exists in the zones list
+            req = urllib.request.Request(
+                f"{base_url}/api/zones",
+                headers={"Authorization": f"Bearer {admin_key}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                zones_data = json.loads(resp.read())
+                existing_ids = [z.get("zone_id") for z in zones_data.get("zones", [])]
+                if zone["zone_id"] in existing_ids:
+                    created += 1
+                    continue
+        except Exception:
+            pass
+
+        # Insert zone record via docker exec on the postgres container.
+        # The zone metadata record needs to exist in the zones table first.
+        # Use docker exec to insert if in Docker mode, otherwise skip.
+        # Insert zone record via docker exec on the postgres container.
+        # Find the postgres container by name pattern (handles any compose project).
+        preset = config.get("preset", "local")
+        if preset in ("shared", "demo"):
+            try:
+                # Find postgres container for this stack
+                # Find postgres container matching our stack's port
+                pg_port = str(ports.get("postgres", 5433))
+                ps_result = subprocess.run(
+                    [
+                        "docker",
+                        "ps",
+                        "--filter",
+                        "name=postgres",
+                        "--filter",
+                        f"publish={pg_port}",
+                        "--format",
+                        "{{.Names}}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                pg_containers = [
+                    c.strip() for c in ps_result.stdout.strip().split("\n") if c.strip()
+                ]
+                if not pg_containers:
+                    # Fallback: any postgres container
+                    ps_result = subprocess.run(
+                        ["docker", "ps", "--filter", "name=postgres", "--format", "{{.Names}}"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    pg_containers = [
+                        c.strip() for c in ps_result.stdout.strip().split("\n") if c.strip()
+                    ]
+                pg_container = pg_containers[0] if pg_containers else None
+                if pg_container:
+                    insert_sql = (
+                        f"INSERT INTO zones (zone_id, name, description, phase, finalizers, created_at, updated_at) "
+                        f"VALUES ('{zone['zone_id']}', '{zone['name']}', "
+                        f"'{zone['description'][:200]}', 'Active', '[]', NOW(), NOW()) "
+                        f"ON CONFLICT (zone_id) DO NOTHING;"
+                    )
+                    result = subprocess.run(
+                        [
+                            "docker",
+                            "exec",
+                            pg_container,
+                            "psql",
+                            "-U",
+                            "postgres",
+                            "-d",
+                            "nexus",
+                            "-c",
+                            insert_sql,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if result.returncode == 0:
+                        created += 1
+                        logger.debug(
+                            "Created zone '%s' via docker exec on %s", zone["zone_id"], pg_container
+                        )
+            except Exception as e:
+                logger.debug("Could not create zone via docker: %s", e)
+
+    # Seed HERB employees + products into /workspace/research/
+    # In standalone mode, all files live in the same backend — zone isolation
+    # is enforced via ReBAC permissions, not storage boundaries.
+    research_files_written = 0
+    if created > 0:
+        # Create research directories with zone header.
+        # Use parents=false to avoid retagging /workspace (root zone) to research.
+        for dirname in [
+            "/workspace/research",
+            "/workspace/research/employees",
+            "/workspace/research/products",
+        ]:
+            try:
+                body = json.dumps({"path": dirname, "parents": False}).encode()
+                req = urllib.request.Request(
+                    f"{base_url}/api/v2/files/mkdir",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {admin_key}",
+                        "Content-Type": "application/json",
+                        "X-Nexus-Zone-ID": "research",
+                    },
+                    data=body,
+                )
+                urllib.request.urlopen(req, timeout=10)
+            except Exception:
+                pass
+
+        herb_research_files = [
+            item
+            for item in HERB_CORPUS
+            if "/herb/employees/" in item[0] or "/herb/products/" in item[0]
+        ]
+        for path, content, _desc in herb_research_files:
+            research_path = path.replace("/workspace/demo/herb/", "/workspace/research/")
+            try:
+                body = json.dumps({"path": research_path, "content": content}).encode()
+                req = urllib.request.Request(
+                    f"{base_url}/api/v2/files/write",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {admin_key}",
+                        "Content-Type": "application/json",
+                        "X-Nexus-Zone-ID": "research",
+                    },
+                    data=body,
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        research_files_written += 1
+            except Exception as e:
+                logger.debug("Could not write %s: %s", research_path, e)
+        logger.debug("Wrote %d files to /workspace/research/", research_files_written)
+
+    # Only mark as seeded if we actually created zones — otherwise future
+    # runs will skip zone seeding even if the docker path was unavailable.
+    if created > 0:
+        manifest["zones_seeded"] = True
+    return created
+
+
+def _seed_agent_coordination(config: dict[str, Any], manifest: dict[str, Any]) -> dict[str, int]:
+    """Seed agent coordination scenario: IPC provisioning, delegations, messages.
+
+    Uses REST API calls with the agents' own API keys so that delegation
+    and IPC endpoints accept the requests (they require subject_type=agent).
+
+    Returns counts of provisioned/delegated/messaged items.
+    """
+    if manifest.get("agent_coordination_seeded"):
+        return {"provisioned": 0, "delegated": 0, "messages": 0}
+
+    import urllib.request
+
+    ports = config.get("ports", {})
+    http_port = ports.get("http", 2026)
+    base_url = f"http://localhost:{http_port}"
+
+    admin_key = _resolve_admin_key(config)
+    if not admin_key:
+        logger.debug("No admin API key — skipping agent coordination seeding")
+        return {"provisioned": 0, "delegated": 0, "messages": 0}
+
+    identity_keys = manifest.get("identity_keys", {})
+
+    # 1. Provision IPC for coordinator (top-level agent only)
+    provisioned = 0
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/api/v2/ipc/provision/coordinator",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {admin_key}",
+                "Content-Type": "application/json",
+            },
+            data=b"{}",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                provisioned += 1
+    except Exception as e:
+        logger.debug("Could not provision IPC for coordinator: %s", e)
+
+    # 2. Delegate: coordinator → researcher, coordinator → coder
+    #    Delegation creates the worker agents (API keys + grants + IPC dirs).
+    #    researcher and coder are NOT top-level registered agents — they exist
+    #    only via delegation from coordinator.
+    delegated = 0
+    worker_keys: dict[str, str] = {}
+    coordinator_key = identity_keys.get("coordinator", {}).get("api_key", "")
+    if coordinator_key:
+        for deleg in DEMO_DELEGATIONS:
+            try:
+                body = json.dumps(deleg).encode()
+                req = urllib.request.Request(
+                    f"{base_url}/api/v2/agents/delegate",
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {coordinator_key}",
+                        "Content-Type": "application/json",
+                    },
+                    data=body,
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        result = json.loads(resp.read())
+                        delegated += 1
+                        worker_id = str(deleg["worker_id"])
+                        api_key = result.get("api_key", "")
+                        if api_key:
+                            worker_keys[worker_id] = api_key
+                        # Provision IPC for the delegated worker
+                        try:
+                            prov_req = urllib.request.Request(
+                                f"{base_url}/api/v2/ipc/provision/{worker_id}",
+                                method="POST",
+                                headers={
+                                    "Authorization": f"Bearer {admin_key}",
+                                    "Content-Type": "application/json",
+                                },
+                                data=b"{}",
+                            )
+                            with urllib.request.urlopen(prov_req, timeout=10):
+                                provisioned += 1
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug("Could not create delegation for %s: %s", deleg["worker_id"], e)
+    else:
+        logger.debug("No coordinator API key — skipping delegations")
+
+    # 3. Seed IPC messages via /api/v2/ipc/send (inbox messages)
+    messages_sent = 0
+    for msg in DEMO_IPC_MESSAGES:
+        send_body = {
+            "sender": msg["sender"],
+            "recipient": msg["recipient"],
+            "type": msg["type"],
+            "payload": msg["payload"],
+        }
+        if msg.get("correlation_id"):
+            send_body["correlation_id"] = msg["correlation_id"]
+        try:
+            body = json.dumps(send_body).encode()
+            req = urllib.request.Request(
+                f"{base_url}/api/v2/ipc/send",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=body,
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    messages_sent += 1
+        except Exception as e:
+            logger.debug("Could not send IPC message: %s", e)
+
+    # 4. Seed processed messages (consumed by agent — shows delivery lifecycle)
+    for msg in DEMO_IPC_PROCESSED:
+        recipient = msg["recipient"]
+        corr_id = msg.get("correlation_id", f"processed-{messages_sent}")
+        sender = msg["sender"]
+        filename = f"{corr_id}-from-{sender}-processed.json"
+        file_path = f"/agents/{recipient}/processed/{filename}"
+        content = json.dumps(msg, indent=2) + "\n"
+        try:
+            body = json.dumps({"path": file_path, "content": content}).encode()
+            req = urllib.request.Request(
+                f"{base_url}/api/v2/ipc/send",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=body,
+            )
+            # ipc/send only writes to inbox — write processed via sys_write
+            # by sending a task that the "agent already handled"
+            # Actually, write directly: processed/ messages are just files
+            req2 = urllib.request.Request(
+                f"{base_url}/api/v2/files/write",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=json.dumps({"path": file_path, "content": content}).encode(),
+            )
+            with urllib.request.urlopen(req2, timeout=10) as resp:
+                if resp.status == 200:
+                    messages_sent += 1
+        except Exception as e:
+            logger.debug("Could not write processed message to %s: %s", file_path, e)
+
+    # 5. Seed dead_letter messages (expired — shows error handling)
+    for msg in DEMO_IPC_DEAD_LETTER:
+        recipient = msg["recipient"]
+        corr_id = msg.get("correlation_id", f"dead-{messages_sent}")
+        sender = msg["sender"]
+        filename = f"{corr_id}-from-{sender}-expired.json"
+        file_path = f"/agents/{recipient}/dead_letter/{filename}"
+        content = json.dumps(msg, indent=2) + "\n"
+        try:
+            body = json.dumps({"path": file_path, "content": content}).encode()
+            req = urllib.request.Request(
+                f"{base_url}/api/v2/files/write",
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {admin_key}",
+                    "Content-Type": "application/json",
+                },
+                data=body,
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    messages_sent += 1
+        except Exception as e:
+            logger.debug("Could not write dead_letter message to %s: %s", file_path, e)
+
+    manifest["agent_coordination_seeded"] = True
+    return {"provisioned": provisioned, "delegated": delegated, "messages": messages_sent}
 
 
 def _revoke_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
@@ -1093,6 +1457,20 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     # 5. Seed permissions (best-effort)
     perms_created = _seed_permissions(nx, config, manifest)
 
+    # 5b. Seed agent coordination: IPC, delegations, messages (best-effort)
+    coord_counts = {"provisioned": 0, "delegated": 0, "messages": 0}
+    try:
+        coord_counts = _seed_agent_coordination(config, manifest)
+    except Exception as e:
+        logger.debug("Agent coordination seeding failed: %s", e)
+
+    # 5c. Seed zones (best-effort)
+    zones_created = 0
+    try:
+        zones_created = _seed_zones(config, manifest)
+    except Exception as e:
+        logger.debug("Zone seeding failed: %s", e)
+
     # 6. Initialize semantic search and index demo files (best-effort)
     semantic_ready = False
     if not skip_semantic:
@@ -1137,6 +1515,18 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print(f"  Permissions:  {perms_created} tuples")
     else:
         console.print("  Permissions:  skipped (not available)")
+    if any(coord_counts.get(k, 0) > 0 for k in ("provisioned", "delegated", "messages")):
+        console.print(
+            f"  Agents:       {coord_counts['provisioned']} provisioned, "
+            f"{coord_counts['delegated']} delegations, "
+            f"{coord_counts['messages']} messages"
+        )
+    else:
+        console.print("  Agents:       skipped (coordination not available)")
+    if zones_created > 0:
+        console.print(f"  Zones:        {zones_created} created (research zone with HERB data)")
+    else:
+        console.print("  Zones:        skipped")
     if skip_semantic:
         console.print("  Semantic:     skipped")
     elif semantic_ready:

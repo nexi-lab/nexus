@@ -131,7 +131,12 @@ export interface AgentsState {
   // Inbox
   readonly inboxMessages: readonly InboxMessage[];
   readonly inboxCount: number;
+  readonly processedMessages: readonly InboxMessage[];
+  readonly deadLetterMessages: readonly InboxMessage[];
   readonly inboxLoading: boolean;
+
+  // Permissions
+  readonly agentPermissions: readonly { readonly relation: string; readonly object_type: string; readonly object_id: string }[];
 
   // Trajectories
   readonly trajectories: readonly TrajectoryItem[];
@@ -149,7 +154,7 @@ export interface AgentsState {
   readonly fetchAgentStatus: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchAgentSpec: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchAgentIdentity: (agentId: string, client: FetchClient) => Promise<void>;
-  readonly fetchDelegations: (client: FetchClient) => Promise<void>;
+  readonly fetchDelegations: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchInbox: (agentId: string, client: FetchClient) => Promise<void>;
   readonly fetchTrajectories: (agentId: string, client: FetchClient) => Promise<void>;
   readonly revokeDelegation: (delegationId: string, client: FetchClient) => Promise<void>;
@@ -182,8 +187,11 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   delegationsLoading: false,
   selectedDelegationIndex: 0,
   inboxMessages: [],
+  processedMessages: [],
+  deadLetterMessages: [],
   inboxCount: 0,
   inboxLoading: false,
+  agentPermissions: [],
   trajectories: [],
   trajectoriesLoading: false,
   error: null,
@@ -232,14 +240,15 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     },
   }),
 
-  fetchDelegations: createApiAction<AgentsState, [FetchClient]>(set, {
+  fetchDelegations: createApiAction<AgentsState, [string, FetchClient]>(set, {
     loadingKey: "delegationsLoading",
     source: SOURCE,
-    action: async (client) => {
+    action: async (agentId, client) => {
+      const agentParam = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : "";
       const response = await client.get<{
         readonly delegations: readonly DelegationItem[];
         readonly total: number;
-      }>("/api/v2/agents/delegate?limit=50&offset=0");
+      }>(`/api/v2/agents/delegate?limit=50&offset=0${agentParam}`);
       return { delegations: response.delegations, selectedDelegationIndex: 0 };
     },
   }),
@@ -248,12 +257,29 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     loadingKey: "inboxLoading",
     source: SOURCE,
     action: async (agentId, client) => {
-      const response = await client.get<{
-        readonly agent_id: string;
-        readonly messages: readonly InboxMessage[];
-        readonly total: number;
-      }>(`/api/v2/ipc/inbox/${encodeURIComponent(agentId)}`);
-      return { inboxMessages: response.messages, inboxCount: response.total };
+      const encodedId = encodeURIComponent(agentId);
+      type InboxResp = { readonly messages: readonly InboxMessage[]; readonly total: number };
+      type FilesResp = { readonly items: readonly { readonly name: string }[] };
+
+      // Fetch inbox via IPC endpoint, processed/dead_letter via files API
+      const listFolder = (folder: string): Promise<readonly InboxMessage[]> =>
+        client.get<FilesResp>(
+          `/api/v2/files/list?path=${encodeURIComponent(`/agents/${agentId}/${folder}`)}&limit=100`,
+        ).then((r) => r.items.filter((f) => f.name.endsWith(".json")).map((f) => ({ filename: f.name })))
+          .catch(() => []);
+
+      const [inboxResp, processedMsgs, deadLetterMsgs] = await Promise.all([
+        client.get<InboxResp>(`/api/v2/ipc/inbox/${encodedId}`)
+          .catch(() => ({ messages: [] as InboxMessage[], total: 0 })),
+        listFolder("processed"),
+        listFolder("dead_letter"),
+      ]);
+      return {
+        inboxMessages: inboxResp.messages,
+        inboxCount: inboxResp.total,
+        processedMessages: processedMsgs,
+        deadLetterMessages: deadLetterMsgs,
+      };
     },
   }),
 

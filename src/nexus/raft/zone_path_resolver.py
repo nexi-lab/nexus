@@ -110,11 +110,18 @@ class ZonePathResolver:
             entry = current_store.get(prefix)
 
             if entry is not None and entry.is_mount:
-                # Cross zone boundary
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    raise FileNotFoundError(f"DT_MOUNT at '{prefix}' has no target_zone_id")
+                    # Safety: DT_MOUNT with missing target_zone_id.
+                    # The proper fix is in _wired.py which sets target_zone_id
+                    # on mount creation. This handles stale metadata from
+                    # previous boots or incomplete mount setup.
+                    logger.warning(
+                        "DT_MOUNT at '%s' has no target_zone_id, treating as local", prefix
+                    )
+                    continue
 
+                # Cross zone boundary
                 mount_chain.append((current_zone_id, prefix))
 
                 if len(mount_chain) > MAX_MOUNT_DEPTH:
@@ -180,7 +187,10 @@ class ZonePathResolver:
             if entry is not None and entry.is_mount:
                 target_zone_id = entry.target_zone_id
                 if not target_zone_id:
-                    raise FileNotFoundError(f"DT_MOUNT at '{prefix}' has no target_zone_id")
+                    logger.warning(
+                        "DT_MOUNT at '%s' has no target_zone_id, treating as local", prefix
+                    )
+                    continue
 
                 mount_chain.append((zone_id, prefix))
 

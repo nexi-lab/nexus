@@ -1,15 +1,20 @@
-"""Adapter: WriteObserverProtocol → VFS interceptor hooks.
+"""Audit interceptor: serialize VFS mutations → DT_PIPE via sys_write.
 
-Wraps the audit write observer as standard VFS interceptor hooks,
-registered by factory via ``dispatch.register_intercept_*()``.
-The kernel dispatch has no knowledge of audit policy or write
-observer specifics — error policy is handled here.
+Async VFS interceptor hook that serializes each mutation event to JSON
+and writes it into a DT_PIPE via ``nx.sys_write(pipe_path, data)``.
+The pipe is consumed by ``PipedRecordStoreWriteObserver`` which flushes
+events to RecordStore in batches.
 
-Issue #900.
+By using ``sys_write`` instead of ``PipeManager`` directly, the
+interceptor is decoupled from kernel internals and benefits from the
+IPC fast-path (~1μs).
+
+Issue #900, #1772.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -23,22 +28,25 @@ if TYPE_CHECKING:
         WriteBatchHookContext,
         WriteHookContext,
     )
-    from nexus.contracts.write_observer import WriteObserverProtocol
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
 
 class AuditWriteInterceptor:
-    """Wraps WriteObserverProtocol as VFS interceptor hooks.
+    """Async VFS interceptor: serialize mutation events → sys_write to pipe.
 
-    Implements all mutation hook protocols so it can be registered via
-    the standard ``register_intercept_*()`` API.  The audit error policy
-    (abort vs log-and-continue) is observer-level config, not dispatch-level.
+    Registered as an async POST hook via ``register_intercept_*()``.
+    The Rust HookRegistry auto-classifies it as async because
+    ``on_post_write`` is ``async def``.
+
+    Error policy: ``strict_mode=True`` aborts with AuditLogError on
+    pipe write failure; ``strict_mode=False`` logs and continues.
     """
 
     name = "audit_write_observer"
 
-    __slots__ = ("_observer", "_strict_mode")
+    __slots__ = ("_nx", "_pipe_path", "_strict_mode")
 
     # ── HotSwappable protocol (Issue #1613) ────────────────────────────
 
@@ -60,90 +68,98 @@ class AuditWriteInterceptor:
     async def activate(self) -> None:
         pass
 
-    def __init__(self, observer: WriteObserverProtocol, *, strict_mode: bool = True) -> None:
-        self._observer = observer
+    def __init__(self, nx: "NexusFS", pipe_path: str, *, strict_mode: bool = True) -> None:
+        self._nx = nx
+        self._pipe_path = pipe_path
         self._strict_mode = strict_mode
 
     # ── VFSWriteHook ──────────────────────────────────────────────────
 
-    def on_post_write(self, ctx: WriteHookContext) -> None:
-        self._call(
-            "write",
-            ctx.path,
-            metadata=ctx.metadata,
-            is_new=ctx.is_new_file,
-            path=ctx.path,
-            old_metadata=ctx.old_metadata,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-        )
+    async def on_post_write(self, ctx: "WriteHookContext") -> None:
+        event = {
+            "op": "write",
+            "path": ctx.path,
+            "is_new": ctx.is_new_file,
+            "zone_id": ctx.zone_id,
+            "agent_id": ctx.agent_id,
+            "snapshot_hash": ctx.old_metadata.etag if ctx.old_metadata else None,
+            "metadata_snapshot": ctx.old_metadata.to_dict() if ctx.old_metadata else None,
+            "metadata": ctx.metadata.to_dict() if ctx.metadata else None,
+        }
+        await self._emit(event, "write", ctx.path)
 
     # ── VFSWriteBatchHook ─────────────────────────────────────────────
 
-    def on_post_write_batch(self, ctx: WriteBatchHookContext) -> None:
-        self._call(
-            "write_batch",
-            "<batch>",
-            items=ctx.items,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-        )
+    async def on_post_write_batch(self, ctx: "WriteBatchHookContext") -> None:
+        for metadata, is_new in ctx.items:
+            event = {
+                "op": "write",
+                "path": metadata.path,
+                "is_new": is_new,
+                "zone_id": ctx.zone_id,
+                "agent_id": ctx.agent_id,
+                "snapshot_hash": metadata.etag,
+                "metadata": metadata.to_dict(),
+            }
+            await self._emit(event, "write_batch", metadata.path)
 
     # ── VFSDeleteHook ─────────────────────────────────────────────────
 
-    def on_post_delete(self, ctx: DeleteHookContext) -> None:
-        self._call(
-            "delete",
-            ctx.path,
-            path=ctx.path,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-            metadata=ctx.metadata,
-        )
+    async def on_post_delete(self, ctx: "DeleteHookContext") -> None:
+        event = {
+            "op": "delete",
+            "path": ctx.path,
+            "zone_id": ctx.zone_id,
+            "agent_id": ctx.agent_id,
+            "snapshot_hash": ctx.metadata.etag if ctx.metadata else None,
+            "metadata_snapshot": ctx.metadata.to_dict() if ctx.metadata else None,
+        }
+        await self._emit(event, "delete", ctx.path)
 
     # ── VFSRenameHook ─────────────────────────────────────────────────
 
-    def on_post_rename(self, ctx: RenameHookContext) -> None:
-        self._call(
-            "rename",
-            ctx.old_path,
-            old_path=ctx.old_path,
-            new_path=ctx.new_path,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-            metadata=ctx.metadata,
-        )
+    async def on_post_rename(self, ctx: "RenameHookContext") -> None:
+        event = {
+            "op": "rename",
+            "path": ctx.old_path,
+            "new_path": ctx.new_path,
+            "zone_id": ctx.zone_id,
+            "agent_id": ctx.agent_id,
+            "snapshot_hash": ctx.metadata.etag if ctx.metadata else None,
+            "metadata_snapshot": ctx.metadata.to_dict() if ctx.metadata else None,
+        }
+        await self._emit(event, "rename", ctx.old_path)
 
     # ── VFSMkdirHook ─────────────────────────────────────────────────
 
-    def on_post_mkdir(self, ctx: MkdirHookContext) -> None:
-        self._call(
-            "mkdir",
-            ctx.path,
-            path=ctx.path,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-        )
+    async def on_post_mkdir(self, ctx: "MkdirHookContext") -> None:
+        event = {
+            "op": "mkdir",
+            "path": ctx.path,
+            "zone_id": ctx.zone_id,
+            "agent_id": ctx.agent_id,
+        }
+        await self._emit(event, "mkdir", ctx.path)
 
     # ── VFSRmdirHook ─────────────────────────────────────────────────
 
-    def on_post_rmdir(self, ctx: RmdirHookContext) -> None:
-        self._call(
-            "rmdir",
-            ctx.path,
-            path=ctx.path,
-            zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
-            recursive=ctx.recursive,
-        )
+    async def on_post_rmdir(self, ctx: "RmdirHookContext") -> None:
+        event = {
+            "op": "rmdir",
+            "path": ctx.path,
+            "zone_id": ctx.zone_id,
+            "agent_id": ctx.agent_id,
+            "recursive": ctx.recursive,
+        }
+        await self._emit(event, "rmdir", ctx.path)
 
     # ── Internal ──────────────────────────────────────────────────────
 
-    def _call(self, operation: str, op_path: str, **kwargs: Any) -> None:
-        """Dispatch to WriteObserverProtocol with audit error policy."""
+    async def _emit(self, event: dict[str, Any], operation: str, op_path: str) -> None:
+        """Serialize event to JSON and write to pipe via sys_write."""
         try:
-            method = getattr(self._observer, f"on_{operation}")
-            method(**kwargs)
+            data = json.dumps(event).encode()
+            await self._nx.sys_write(self._pipe_path, data)
         except Exception as e:
             from nexus.contracts.exceptions import AuditLogError
 

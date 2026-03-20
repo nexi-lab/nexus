@@ -25,12 +25,13 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.bricks.task_manager.service import TaskManagerService
-    from nexus.core.pipe_manager import PipeManager
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -71,19 +72,21 @@ class TaskDispatchPipeConsumer:
     """
 
     def __init__(self, *, llm_fn: LLMCallable | None = None) -> None:
-        self._pipe_manager: PipeManager | None = None
+        self._nx: NexusFS | None = None
         self._task_svc: TaskManagerService | None = None
         self._llm_fn: LLMCallable = llm_fn or _no_llm
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
+        self._write_buffer: deque[bytes] = deque(maxlen=10_000)
+        self._flush_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Deferred injection
     # ------------------------------------------------------------------
 
-    def set_pipe_manager(self, pipe_manager: PipeManager) -> None:
-        """Inject PipeManager after server lifespan initialization."""
-        self._pipe_manager = pipe_manager
+    def bind_fs(self, nx: "NexusFS") -> None:
+        """Bind NexusFS for sys_read/sys_write pipe access."""
+        self._nx = nx
 
     def set_task_service(self, task_svc: TaskManagerService) -> None:
         """Inject TaskManagerService for direct VFS-backed operations."""
@@ -94,51 +97,51 @@ class TaskDispatchPipeConsumer:
     # ------------------------------------------------------------------
 
     def on_task_signal(self, signal_type: str, payload: dict[str, Any]) -> None:
-        """Serialize signal and write to pipe (non-blocking)."""
-        if self._pipe_manager is None or not self._pipe_ready:
+        """Buffer signal for async flush via sys_write (non-blocking)."""
+        if self._nx is None or not self._pipe_ready:
             return
 
-        from nexus.core.pipe import PipeClosedError, PipeFullError
-
-        try:
-            data = json.dumps({"type": signal_type, "payload": payload}).encode()
-            self._pipe_manager.pipe_write_nowait(_TASK_DISPATCH_PIPE_PATH, data)
-        except (PipeClosedError, PipeFullError):
-            logger.warning("[TASK-DISPATCH] pipe full/closed, dropping signal: %s", signal_type)
+        data = json.dumps({"type": signal_type, "payload": payload}).encode()
+        self._write_buffer.append(data)
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Create the dispatch pipe and start the background consumer."""
+        """Create the dispatch pipe via sys_setattr and start background tasks."""
         if self._pipe_ready:
             return
 
-        if self._pipe_manager is None:
+        if self._nx is None:
             return
 
-        from nexus.core.pipe import PipeError
+        from nexus.contracts.metadata import DT_PIPE
 
-        try:
-            self._pipe_manager.create(
+        with contextlib.suppress(Exception):
+            await self._nx.sys_setattr(
                 _TASK_DISPATCH_PIPE_PATH,
-                capacity=_TASK_DISPATCH_PIPE_CAPACITY,
+                entry_type=DT_PIPE,
                 owner_id="kernel",
             )
-        except PipeError:
-            self._pipe_manager.open(_TASK_DISPATCH_PIPE_PATH, capacity=_TASK_DISPATCH_PIPE_CAPACITY)
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())
+        self._flush_task = asyncio.create_task(self._flush_loop())
         logger.info("[TASK-DISPATCH] pipe consumer started")
 
     async def stop(self) -> None:
-        """Graceful shutdown: signal pipe closed, drain, then cancel."""
+        """Graceful shutdown: stop flush, signal pipe closed, drain consumer."""
+        if self._flush_task is not None and not self._flush_task.done():
+            self._flush_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._flush_task
+            self._flush_task = None
+
         if self._consumer_task is not None and not self._consumer_task.done():
-            if self._pipe_manager is not None and self._pipe_ready:
+            if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
-                    self._pipe_manager.signal_close(_TASK_DISPATCH_PIPE_PATH)
+                    await self._nx.sys_unlink(_TASK_DISPATCH_PIPE_PATH)
 
             try:
                 await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
@@ -156,17 +159,32 @@ class TaskDispatchPipeConsumer:
     # Consumer loop
     # ------------------------------------------------------------------
 
-    async def _consume(self) -> None:
-        """Background loop: read from pipe, deserialize, dispatch."""
-        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
+    async def _flush_loop(self) -> None:
+        """Background task: drain _write_buffer into pipe via sys_write."""
+        assert self._nx is not None
+        nx = self._nx
 
-        assert self._pipe_manager is not None
-        pipe_mgr = self._pipe_manager
+        while True:
+            if self._write_buffer:
+                while self._write_buffer:
+                    data = self._write_buffer.popleft()
+                    try:
+                        await nx.sys_write(_TASK_DISPATCH_PIPE_PATH, data)
+                    except Exception:
+                        logger.warning("[TASK-DISPATCH] pipe write failed, dropping signal")
+            await asyncio.sleep(0.01)  # 10ms poll interval
+
+    async def _consume(self) -> None:
+        """Background loop: read from pipe via sys_read, deserialize, dispatch."""
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        assert self._nx is not None
+        nx = self._nx
 
         while True:
             try:
-                data = await pipe_mgr.pipe_read(_TASK_DISPATCH_PIPE_PATH)
-            except (PipeClosedError, PipeNotFoundError):
+                data = await nx.sys_read(_TASK_DISPATCH_PIPE_PATH)
+            except NexusFileNotFoundError:
                 logger.debug("[TASK-DISPATCH] pipe closed, consumer exiting")
                 break
 

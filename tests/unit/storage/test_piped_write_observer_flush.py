@@ -79,10 +79,20 @@ class TestPipedObserverPreBufferFlush:
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         observer = PipedRecordStoreWriteObserver(record_store)
-        # Pipe is NOT ready — events go to pre-buffer
+        # Pipe is NOT ready — manually populate pre-buffer (producer is now AuditWriteInterceptor)
 
         metadata = _make_metadata("/prebuf.txt", etag="h1")
-        observer.on_write(metadata, is_new=True, path="/prebuf.txt", zone_id="root")
+        event = {
+            "op": "write",
+            "path": "/prebuf.txt",
+            "is_new": True,
+            "zone_id": "root",
+            "agent_id": None,
+            "snapshot_hash": None,
+            "metadata_snapshot": None,
+            "metadata": metadata.to_dict(),
+        }
+        observer._pre_buffer.append(json.dumps(event).encode())
 
         # Pre-buffer should have one event
         assert len(observer._pre_buffer) == 1
@@ -119,12 +129,32 @@ class TestPipedObserverPreBufferFlush:
     ) -> None:
         observer = PipedRecordStoreWriteObserver(record_store)
 
-        # Write, then update
+        # Write, then update — populate pre-buffer directly
         m1 = _make_metadata("/multi.txt", etag="v1")
-        observer.on_write(m1, is_new=True, path="/multi.txt", zone_id="root")
+        e1 = {
+            "op": "write",
+            "path": "/multi.txt",
+            "is_new": True,
+            "zone_id": "root",
+            "agent_id": None,
+            "snapshot_hash": None,
+            "metadata_snapshot": None,
+            "metadata": m1.to_dict(),
+        }
+        observer._pre_buffer.append(json.dumps(e1).encode())
 
         m2 = _make_metadata("/multi.txt", etag="v2", version=2)
-        observer.on_write(m2, is_new=False, path="/multi.txt", zone_id="root")
+        e2 = {
+            "op": "write",
+            "path": "/multi.txt",
+            "is_new": False,
+            "zone_id": "root",
+            "agent_id": None,
+            "snapshot_hash": None,
+            "metadata_snapshot": None,
+            "metadata": m2.to_dict(),
+        }
+        observer._pre_buffer.append(json.dumps(e2).encode())
 
         assert len(observer._pre_buffer) == 2
 
@@ -143,7 +173,7 @@ class TestPipedObserverPipeFlush:
     async def test_flush_drains_pipe_events(self, record_store: SQLAlchemyRecordStore) -> None:
         observer = PipedRecordStoreWriteObserver(record_store)
 
-        # Simulate pipe being ready
+        # Simulate pipe being ready with mocked NexusFS
         metadata = _make_metadata("/piped.txt", etag="ph1")
         event = {
             "op": "write",
@@ -156,23 +186,23 @@ class TestPipedObserverPipeFlush:
             "metadata": metadata.to_dict(),
         }
 
-        mock_pm = MagicMock()
-        observer._pipe_manager = mock_pm
+        mock_nx = MagicMock()
+        observer._nx = mock_nx
         observer._pipe_ready = True
 
-        # pipe_read returns one event then raises PipeEmptyError
-        from nexus.core.pipe import PipeEmptyError
+        # sys_read returns one event then raises NexusFileNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         call_count = 0
 
-        async def mock_pipe_read(path, blocking=True):
+        async def mock_sys_read(path, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 return json.dumps(event).encode()
-            raise PipeEmptyError(path)
+            raise NexusFileNotFoundError(path)
 
-        mock_pm.pipe_read = mock_pipe_read
+        mock_nx.sys_read = mock_sys_read
 
         flushed = await observer.flush()
         assert flushed == 1
@@ -187,16 +217,16 @@ class TestPipedObserverPipeFlush:
     async def test_flush_empty_pipe_returns_zero(self, record_store: SQLAlchemyRecordStore) -> None:
         observer = PipedRecordStoreWriteObserver(record_store)
 
-        mock_pm = MagicMock()
-        observer._pipe_manager = mock_pm
+        mock_nx = MagicMock()
+        observer._nx = mock_nx
         observer._pipe_ready = True
 
-        from nexus.core.pipe import PipeEmptyError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        async def mock_pipe_read(path, blocking=True):
-            raise PipeEmptyError(path)
+        async def mock_sys_read(path, **kwargs):
+            raise NexusFileNotFoundError(path)
 
-        mock_pm.pipe_read = mock_pipe_read
+        mock_nx.sys_read = mock_sys_read
 
         flushed = await observer.flush()
         assert flushed == 0
@@ -211,7 +241,17 @@ class TestPipedObserverFlushMetrics:
     ) -> None:
         observer = PipedRecordStoreWriteObserver(record_store)
         metadata = _make_metadata("/metrics.txt", etag="mh1")
-        observer.on_write(metadata, is_new=True, path="/metrics.txt", zone_id="root")
+        event = {
+            "op": "write",
+            "path": "/metrics.txt",
+            "is_new": True,
+            "zone_id": "root",
+            "agent_id": None,
+            "snapshot_hash": None,
+            "metadata_snapshot": None,
+            "metadata": metadata.to_dict(),
+        }
+        observer._pre_buffer.append(json.dumps(event).encode())
 
         assert observer.metrics["total_flushed"] == 0
 

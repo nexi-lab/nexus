@@ -1,20 +1,20 @@
 """DT_PIPE-backed Zoekt index notification consumer.
 
 Replaces the sync ``on_write_callback`` → ``ZoektIndexManager.notify_write()``
-chain with DT_PIPE kernel IPC, decoupling the ObjectStore write hot path
-from Zoekt's threading.Lock + threading.Timer debounce machinery.
+chain with DT_PIPE kernel IPC via sys_write/sys_read, decoupling the
+ObjectStore write hot path from Zoekt's threading.Lock + timer debounce.
 
 Issue #810: Decouple Zoekt on_write_callback sync from ObjectStore write path.
-Issue #808: Follows WorkflowDispatchService DT_PIPE pattern.
+Issue #1772: Migrate from PipeManager to sys_write/sys_read.
 
 Architecture:
     CASLocalBackend.write_content() (sync)
       -> ZoektPipeConsumer.notify_write(path)
-        -> pipe_write_nowait()  # ~5us, replaces lock acquisition + timer cancel
+        -> deque buffer → flush task → sys_write  # decoupled
 
     Background consumer (async)
       -> _consume() loop
-        -> pipe_read() (async, blocking)
+        -> sys_read() (async, blocking)
         -> accumulate paths in set
         -> debounce via asyncio.wait_for timeout
         -> trigger_reindex_async() on ZoektIndexManager
@@ -24,11 +24,12 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections import deque
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.bricks.search.zoekt_client import ZoektIndexManager
-    from nexus.core.pipe_manager import PipeManager
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -38,17 +39,17 @@ _ZOEKT_PIPE_CAPACITY = 65_536  # 64KB
 
 
 class ZoektPipeConsumer:
-    """DT_PIPE consumer for Zoekt index notifications.
+    """DT_PIPE consumer for Zoekt index notifications via NexusFS syscalls.
 
     Provides ``notify_write(path)`` and ``notify_sync_complete(files_synced)``
-    as sync callbacks for CASLocalBackend. Events are written into a DT_PIPE
-    ring buffer (~5us). A background consumer accumulates paths and triggers
-    ``trigger_reindex_async()`` after a debounce window.
+    as sync callbacks for CASLocalBackend. Events are buffered in a deque
+    and flushed asynchronously via ``sys_write``. A background consumer
+    reads via ``sys_read`` and triggers ``trigger_reindex_async()``.
 
     Lifecycle:
         1. Created in factory (brick tier) with zoekt_index_manager
-        2. PipeManager injected via set_pipe_manager() (deferred)
-        3. start() creates pipe, spawns consumer
+        2. NexusFS bound via bind_fs() (deferred)
+        3. start() creates pipe via sys_setattr, spawns consumer + flush task
         4. stop() cancels consumer
     """
 
@@ -61,18 +62,22 @@ class ZoektPipeConsumer:
         self._zoekt = zoekt_index_manager
         self._debounce = debounce_seconds or zoekt_index_manager.debounce_seconds
 
-        # Pipe state (deferred injection)
-        self._pipe_manager: "PipeManager | None" = None
+        # NexusFS reference (deferred injection)
+        self._nx: "NexusFS | None" = None
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
+        self._flush_task: asyncio.Task[None] | None = None
+
+        # Sync-to-async bridge: sync callers buffer here, flush task drains via sys_write
+        self._write_buffer: deque[bytes] = deque(maxlen=10_000)
 
     # ------------------------------------------------------------------
     # Deferred injection
     # ------------------------------------------------------------------
 
-    def set_pipe_manager(self, pm: "PipeManager") -> None:
-        """Inject PipeManager after factory boot."""
-        self._pipe_manager = pm
+    def bind_fs(self, nx: "NexusFS") -> None:
+        """Bind NexusFS for sys_read/sys_write pipe access."""
+        self._nx = nx
 
     # ------------------------------------------------------------------
     # Sync callbacks (replace on_write_callback / on_sync_callback)
@@ -80,32 +85,22 @@ class ZoektPipeConsumer:
 
     def notify_write(self, path: str) -> None:
         """Notify that a file was written. Used as on_write_callback."""
-        if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeClosedError, PipeFullError
+        if self._nx is not None and self._pipe_ready:
+            data = json.dumps({"type": "write", "path": path}).encode()
+            self._write_buffer.append(data)
+            return
 
-            try:
-                data = json.dumps({"type": "write", "path": path}).encode()
-                self._pipe_manager.pipe_write_nowait(_ZOEKT_PIPE_PATH, data)
-                return
-            except (PipeClosedError, PipeFullError):
-                logger.warning("Zoekt pipe full/closed, falling back to direct call: %s", path)
-
-        # Fallback: direct call (CLI mode, pre-startup, or pipe error)
+        # Fallback: direct call (CLI mode, pre-startup)
         self._zoekt.notify_write(path)
 
     def notify_sync_complete(self, files_synced: int = 0) -> None:
         """Notify that a sync completed. Used as on_sync_callback."""
-        if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeClosedError, PipeFullError
+        if self._nx is not None and self._pipe_ready:
+            data = json.dumps({"type": "sync", "files_synced": files_synced}).encode()
+            self._write_buffer.append(data)
+            return
 
-            try:
-                data = json.dumps({"type": "sync", "files_synced": files_synced}).encode()
-                self._pipe_manager.pipe_write_nowait(_ZOEKT_PIPE_PATH, data)
-                return
-            except (PipeClosedError, PipeFullError):
-                logger.warning("Zoekt pipe full/closed, falling back to direct sync call")
-
-        # Fallback: direct call (CLI mode, pre-startup, or pipe error)
+        # Fallback: direct call (CLI mode, pre-startup)
         self._zoekt.notify_sync_complete(files_synced)
 
     # ------------------------------------------------------------------
@@ -113,36 +108,41 @@ class ZoektPipeConsumer:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Create zoekt pipe and spawn consumer."""
+        """Create zoekt pipe via sys_setattr and spawn consumer + flush task."""
         if self._pipe_ready:
             return
 
-        if self._pipe_manager is None:
+        if self._nx is None:
             return  # CLI mode
 
-        from nexus.core.pipe import PipeError
+        from nexus.contracts.metadata import DT_PIPE
 
-        try:
-            self._pipe_manager.create(
+        with contextlib.suppress(Exception):
+            await self._nx.sys_setattr(
                 _ZOEKT_PIPE_PATH,
-                capacity=_ZOEKT_PIPE_CAPACITY,
+                entry_type=DT_PIPE,
                 owner_id="kernel",
             )
-        except PipeError:
-            self._pipe_manager.open(_ZOEKT_PIPE_PATH, capacity=_ZOEKT_PIPE_CAPACITY)
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())
+        self._flush_task = asyncio.create_task(self._flush_loop())
 
     async def stop(self) -> None:
-        """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
-        if self._consumer_task is not None and not self._consumer_task.done():
-            # Signal close — wakes blocked consumer, allows drain of remaining messages
-            if self._pipe_manager is not None and self._pipe_ready:
-                with contextlib.suppress(Exception):
-                    self._pipe_manager.signal_close(_ZOEKT_PIPE_PATH)
+        """Graceful shutdown: cancel flush task, signal pipe closed, drain consumer."""
+        # Stop flush task first
+        if self._flush_task is not None and not self._flush_task.done():
+            self._flush_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._flush_task
+            self._flush_task = None
 
-            # Let consumer drain naturally, with timeout
+        if self._consumer_task is not None and not self._consumer_task.done():
+            # Signal close via sys_unlink
+            if self._nx is not None and self._pipe_ready:
+                with contextlib.suppress(Exception):
+                    await self._nx.sys_unlink(_ZOEKT_PIPE_PATH)
+
             try:
                 await asyncio.wait_for(asyncio.shield(self._consumer_task), timeout=5.0)
             except (TimeoutError, asyncio.CancelledError):
@@ -154,16 +154,35 @@ class ZoektPipeConsumer:
         self._pipe_ready = False
 
     # ------------------------------------------------------------------
+    # Flush loop: drain sync buffer → sys_write
+    # ------------------------------------------------------------------
+
+    async def _flush_loop(self) -> None:
+        """Background task: drain _write_buffer into pipe via sys_write."""
+        assert self._nx is not None
+        nx = self._nx
+
+        while True:
+            if self._write_buffer:
+                while self._write_buffer:
+                    data = self._write_buffer.popleft()
+                    try:
+                        await nx.sys_write(_ZOEKT_PIPE_PATH, data)
+                    except Exception:
+                        logger.warning("Zoekt pipe write failed, dropping event")
+            await asyncio.sleep(0.01)  # 10ms poll interval
+
+    # ------------------------------------------------------------------
     # Background consumer with debounce
     # ------------------------------------------------------------------
 
     async def _consume(self) -> None:
-        """Background consumer: read from pipe, debounce, trigger reindex."""
-        from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeNotFoundError
+        """Background consumer: read from pipe via sys_read, debounce, trigger reindex."""
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        assert self._pipe_manager is not None
+        assert self._nx is not None
 
-        pipe_mgr = self._pipe_manager
+        nx = self._nx
         pending_paths: set[str] = set()
         has_sync = False
 
@@ -171,8 +190,8 @@ class ZoektPipeConsumer:
             # If nothing pending, block until first event
             if not pending_paths and not has_sync:
                 try:
-                    first = await pipe_mgr.pipe_read(_ZOEKT_PIPE_PATH)
-                except (PipeClosedError, PipeNotFoundError):
+                    first = await nx.sys_read(_ZOEKT_PIPE_PATH)
+                except NexusFileNotFoundError:
                     logger.debug("Zoekt pipe closed, consumer exiting")
                     break
                 msg = json.loads(first)
@@ -189,7 +208,7 @@ class ZoektPipeConsumer:
                     break
                 try:
                     data = await asyncio.wait_for(
-                        pipe_mgr.pipe_read(_ZOEKT_PIPE_PATH),
+                        nx.sys_read(_ZOEKT_PIPE_PATH),
                         timeout=remaining,
                     )
                     msg = json.loads(data)
@@ -199,9 +218,9 @@ class ZoektPipeConsumer:
                         has_sync = True
                 except TimeoutError:
                     break
-                except (PipeClosedError, PipeNotFoundError):
+                except NexusFileNotFoundError:
                     break
-                except PipeEmptyError:
+                except Exception:
                     break
 
             # Trigger reindex

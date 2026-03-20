@@ -1,33 +1,21 @@
-"""DT_PIPE-backed write observer — async RecordStore sync via kernel IPC.
+"""DT_PIPE consumer — async RecordStore sync via kernel IPC.
 
-Replaces BufferedRecordStoreWriteObserver's WriteBuffer (deque + threading.Thread)
-with DT_PIPE kernel IPC (~5us per enqueue vs ~0.1ms amortized).
-
-Implements WriteObserverProtocol. The kernel calls on_write()/on_delete()/
-on_rename()/on_write_batch()/on_mkdir()/on_rmdir() synchronously after
-Metastore mutations. This observer serializes each event to JSON and writes
-it into a DT_PIPE ring buffer via PipeManager.pipe_write_nowait() (~5us).
-
-A background asyncio consumer task drains the pipe, batches events, and
-flushes them to RecordStore in a single transaction:
-  - OperationLogger: audit trail (who did what, when)
-  - VersionRecorder: file version history
+Pure consumer: reads audit events from a DT_PIPE via ``nx.sys_read()``
+and flushes them to RecordStore in batches.  The producer side is
+``AuditWriteInterceptor`` which writes events via ``nx.sys_write()``.
 
 Issue #809: Decouple write_observer.on_write() sync DB write from hot path.
-Issue #808: Follows WorkflowDispatchService DT_PIPE pattern.
+Issue #1772: Migrate from PipeManager to sys_write/sys_read.
 
 Architecture:
-    Kernel hot path (sync)
-      -> PipedRecordStoreWriteObserver.on_write()
-        -> JSON serialize -> pipe_write_nowait()  # ~5us
-        -> PipeFullError? -> drop + warn
+    AuditWriteInterceptor (async POST hook)
+      -> JSON serialize -> nx.sys_write(pipe_path)  # ~1μs via fast-path
 
-    Background consumer (async)
-      -> _consume() loop
-        -> pipe_read() (async, blocking)
-        -> batch coalesce (drain available events)
-        -> single RecordStore transaction (OperationLogger + VersionRecorder)
-        -> retry with exponential backoff on failure
+    PipedRecordStoreWriteObserver (background consumer)
+      -> nx.sys_read(pipe_path) (async, blocking)
+      -> batch coalesce (drain available events)
+      -> single RecordStore transaction (OperationLogger + VersionRecorder)
+      -> retry with exponential backoff on failure
 """
 
 import asyncio
@@ -39,10 +27,8 @@ from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.metadata import FileMetadata
-
 if TYPE_CHECKING:
-    from nexus.core.pipe_manager import PipeManager
+    from nexus.core.nexus_fs import NexusFS
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
@@ -56,8 +42,10 @@ _MAX_BATCH_DRAIN = 100  # Max events to drain per batch
 _MAX_RETRIES = 3
 
 
-def _metadata_from_dict(d: dict[str, Any]) -> FileMetadata:
+def _metadata_from_dict(d: dict[str, Any]) -> Any:
     """Reconstruct FileMetadata from to_dict() output."""
+    from nexus.contracts.metadata import FileMetadata
+
     if d.get("created_at") and isinstance(d["created_at"], str):
         d["created_at"] = datetime.fromisoformat(d["created_at"])
     if d.get("modified_at") and isinstance(d["modified_at"], str):
@@ -66,16 +54,16 @@ def _metadata_from_dict(d: dict[str, Any]) -> FileMetadata:
 
 
 class PipedRecordStoreWriteObserver:
-    """DT_PIPE-backed write observer for async RecordStore sync.
+    """DT_PIPE consumer for async RecordStore sync.
 
-    Implements WriteObserverProtocol. Enqueues events into a DT_PIPE ring
-    buffer via PipeManager (~5us). A background consumer flushes batches
-    to RecordStore (OperationLogger + VersionRecorder).
+    Pure consumer — reads audit events from a DT_PIPE via ``nx.sys_read()``
+    and flushes them to RecordStore (OperationLogger + VersionRecorder).
+    The producer is ``AuditWriteInterceptor``.
 
     Lifecycle:
         1. Created in factory (system tier) with record_store
-        2. PipeManager injected via set_pipe_manager() (deferred)
-        3. start() creates pipe, drains pre-startup buffer, spawns consumer
+        2. NexusFS bound via bind_fs() (deferred)
+        3. start() creates pipe via sys_setattr, spawns consumer
         4. stop() cancels consumer, flushes remaining events
     """
 
@@ -88,8 +76,8 @@ class PipedRecordStoreWriteObserver:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
 
-        # Pipe state (deferred injection)
-        self._pipe_manager: PipeManager | None = None
+        # NexusFS reference (deferred injection)
+        self._nx: NexusFS | None = None
         self._pipe_ready = False
         self._consumer_task: asyncio.Task[None] | None = None
 
@@ -111,9 +99,9 @@ class PipedRecordStoreWriteObserver:
     # Deferred injection
     # ------------------------------------------------------------------
 
-    def set_pipe_manager(self, pm: "PipeManager") -> None:
-        """Inject PipeManager after factory boot."""
-        self._pipe_manager = pm
+    def bind_fs(self, nx: "NexusFS") -> None:
+        """Bind NexusFS for sys_read/sys_write pipe access."""
+        self._nx = nx
 
     def register_post_flush_hook(self, hook: Any) -> None:
         """Register a callback invoked after each successful flush.
@@ -125,184 +113,27 @@ class PipedRecordStoreWriteObserver:
         self._post_flush_hooks.append(hook)
 
     # ------------------------------------------------------------------
-    # WriteObserverProtocol — sync hot path
-    # ------------------------------------------------------------------
-
-    def on_write(
-        self,
-        metadata: FileMetadata,
-        *,
-        is_new: bool,
-        path: str,
-        old_metadata: FileMetadata | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """Enqueue a write event via DT_PIPE. Returns in ~5us."""
-        event = {
-            "op": "write",
-            "path": path,
-            "is_new": is_new,
-            "zone_id": zone_id,
-            "agent_id": agent_id,
-            "snapshot_hash": old_metadata.etag if old_metadata else None,
-            "metadata_snapshot": old_metadata.to_dict() if old_metadata else None,
-            "metadata": metadata.to_dict(),
-        }
-        self._enqueue(event)
-
-    def on_write_batch(
-        self,
-        items: list[tuple[FileMetadata, bool]],
-        *,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        urgency: str | None = None,  # noqa: ARG002
-    ) -> None:
-        """Enqueue a batch of write events via DT_PIPE."""
-        for metadata, is_new in items:
-            event = {
-                "op": "write",
-                "path": metadata.path,
-                "is_new": is_new,
-                "zone_id": zone_id,
-                "agent_id": agent_id,
-                "snapshot_hash": metadata.etag,
-                "metadata": metadata.to_dict(),
-            }
-            self._enqueue(event)
-
-    def on_rename(
-        self,
-        old_path: str,
-        new_path: str,
-        *,
-        metadata: FileMetadata | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """Enqueue a rename event via DT_PIPE."""
-        event = {
-            "op": "rename",
-            "path": old_path,
-            "new_path": new_path,
-            "zone_id": zone_id,
-            "agent_id": agent_id,
-            "snapshot_hash": metadata.etag if metadata else None,
-            "metadata_snapshot": metadata.to_dict() if metadata else None,
-        }
-        self._enqueue(event)
-
-    def on_delete(
-        self,
-        path: str,
-        *,
-        metadata: FileMetadata | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """Enqueue a delete event via DT_PIPE."""
-        event = {
-            "op": "delete",
-            "path": path,
-            "zone_id": zone_id,
-            "agent_id": agent_id,
-            "snapshot_hash": metadata.etag if metadata else None,
-            "metadata_snapshot": metadata.to_dict() if metadata else None,
-        }
-        self._enqueue(event)
-
-    def on_mkdir(
-        self,
-        path: str,
-        *,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """Enqueue a mkdir event via DT_PIPE."""
-        self._enqueue({"op": "mkdir", "path": path, "zone_id": zone_id, "agent_id": agent_id})
-
-    def on_rmdir(
-        self,
-        path: str,
-        *,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        recursive: bool = False,
-    ) -> None:
-        """Enqueue a rmdir event via DT_PIPE."""
-        self._enqueue(
-            {
-                "op": "rmdir",
-                "path": path,
-                "zone_id": zone_id,
-                "agent_id": agent_id,
-                "recursive": recursive,
-            }
-        )
-
-    # ------------------------------------------------------------------
-    # Internal enqueue
-    # ------------------------------------------------------------------
-
-    def _enqueue(self, event: dict[str, Any]) -> None:
-        """Serialize and write to pipe (or pre-startup buffer)."""
-        data = json.dumps(event).encode()
-        self._total_enqueued += 1
-
-        if self._pipe_manager is not None and self._pipe_ready:
-            from nexus.core.pipe import PipeClosedError, PipeFullError
-
-            try:
-                self._pipe_manager.pipe_write_nowait(_AUDIT_PIPE_PATH, data)
-            except PipeClosedError:
-                # Pipe closing — buffer for flush_sync() to pick up
-                self._pre_buffer.append(data)
-            except PipeFullError:
-                self._total_dropped += 1
-                logger.warning(
-                    "Audit pipe full, dropping event: %s:%s", event.get("op"), event.get("path")
-                )
-        else:
-            # Pre-startup: buffer in memory (deque with maxlen=1000)
-            self._pre_buffer.append(data)
-
-    # ------------------------------------------------------------------
-    # Async lifecycle (follows WorkflowDispatchService pattern)
+    # Async lifecycle
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Create audit pipe, drain pre-startup buffer, spawn consumer."""
+        """Create audit pipe via sys_setattr, spawn consumer."""
         if self._pipe_ready:
             return
 
-        if self._pipe_manager is None:
-            return  # CLI mode — no pipe manager
+        if self._nx is None:
+            return  # CLI mode — no NexusFS
 
-        from nexus.core.pipe import PipeError
+        from nexus.contracts.metadata import DT_PIPE
 
-        try:
-            self._pipe_manager.create(
+        with contextlib.suppress(Exception):
+            await self._nx.sys_setattr(
                 _AUDIT_PIPE_PATH,
-                capacity=_AUDIT_PIPE_CAPACITY,
+                entry_type=DT_PIPE,
                 owner_id="kernel",
             )
-        except PipeError:
-            self._pipe_manager.open(_AUDIT_PIPE_PATH, capacity=_AUDIT_PIPE_CAPACITY)
 
         self._pipe_ready = True
-
-        # Drain pre-startup buffer into pipe
-        from nexus.core.pipe import PipeFullError
-
-        while self._pre_buffer:
-            data = self._pre_buffer.popleft()
-            try:
-                self._pipe_manager.pipe_write_nowait(_AUDIT_PIPE_PATH, data)
-            except PipeFullError:
-                self._total_dropped += 1
-                logger.warning("Audit pipe full during pre-startup drain, dropping event")
-
         self._consumer_task = asyncio.create_task(self._consume())
 
     async def flush(self, timeout: float = 5.0) -> int:
@@ -311,20 +142,17 @@ class PipedRecordStoreWriteObserver:
         Blocks until all enqueued events have been committed to the database,
         ensuring that subsequent queries (e.g. list_versions) see the data.
 
-        This fixes the race condition where sys_write() returns before the
-        background consumer has flushed version records to the DB.
-
         Args:
             timeout: Maximum seconds to wait for events to appear. Defaults to 5.
 
         Returns:
             Number of events flushed.
         """
-        if not self._pipe_ready or self._pipe_manager is None:
+        if not self._pipe_ready or self._nx is None:
             # Pipe not started — flush pre-buffer directly via sync path
             return self._flush_pre_buffer_sync()
 
-        from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
         # Drain all available events from the pipe (non-blocking)
         batch: list[dict[str, Any]] = []
@@ -332,9 +160,9 @@ class PipedRecordStoreWriteObserver:
 
         while time.monotonic() < deadline:
             try:
-                data = await self._pipe_manager.pipe_read(_AUDIT_PIPE_PATH, blocking=False)
+                data = await self._nx.sys_read(_AUDIT_PIPE_PATH)
                 batch.append(json.loads(data))
-            except (PipeEmptyError, PipeClosedError, PipeNotFoundError):
+            except (NexusFileNotFoundError, Exception):
                 break
 
         if batch:
@@ -427,10 +255,10 @@ class PipedRecordStoreWriteObserver:
     async def stop(self) -> None:
         """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
         if self._consumer_task is not None and not self._consumer_task.done():
-            # Signal close — wakes blocked consumer, allows drain of remaining messages
-            if self._pipe_manager is not None and self._pipe_ready:
+            # Signal close — wakes blocked consumer via sys_unlink
+            if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
-                    self._pipe_manager.signal_close(_AUDIT_PIPE_PATH)
+                    await self._nx.sys_unlink(_AUDIT_PIPE_PATH)
 
             # Let consumer drain naturally, with timeout
             try:
@@ -478,27 +306,27 @@ class PipedRecordStoreWriteObserver:
     # ------------------------------------------------------------------
 
     async def _consume(self) -> None:
-        """Background consumer: read from pipe, batch, flush to RecordStore."""
-        from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeNotFoundError
+        """Background consumer: read from pipe via sys_read, batch, flush."""
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        assert self._pipe_manager is not None
+        assert self._nx is not None
 
-        pipe_mgr = self._pipe_manager
+        nx = self._nx
         while True:
             # Block until first event arrives
             try:
-                first = await pipe_mgr.pipe_read(_AUDIT_PIPE_PATH)
-            except (PipeClosedError, PipeNotFoundError):
+                first = await nx.sys_read(_AUDIT_PIPE_PATH)
+            except NexusFileNotFoundError:
                 logger.debug("Audit pipe closed, consumer exiting")
                 break
 
-            # Drain available events for batching
+            # Drain available events for batching (non-blocking via fast-path)
             batch: list[dict[str, Any]] = [json.loads(first)]
             for _ in range(_MAX_BATCH_DRAIN - 1):
                 try:
-                    data = await pipe_mgr.pipe_read(_AUDIT_PIPE_PATH, blocking=False)
+                    data = await nx.sys_read(_AUDIT_PIPE_PATH)
                     batch.append(json.loads(data))
-                except (PipeEmptyError, PipeClosedError, PipeNotFoundError):
+                except (NexusFileNotFoundError, Exception):
                     break
 
             await self._flush_batch(batch)

@@ -164,6 +164,18 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_write_observer)
 
+    # Cancel PipedRecordStoreWriteObserver's consumer task on sync close.
+    # Without this, the pipe consumer blocks event loop cleanup in tests.
+    if _wo is not None and hasattr(_wo, "_consumer_task"):
+
+        def _close_write_observer_task() -> None:
+            task = getattr(_wo, "_consumer_task", None)
+            if task is not None and not task.done():
+                task.cancel()
+                _wo._consumer_task = None
+
+        nx._close_callbacks.append(_close_write_observer_task)
+
     # Issue #3193: Cancel the delivery worker asyncio.Task on sync close.
     # The coordinator's stop_persistent_services() is async and only runs
     # during lifespan shutdown. For sync close (tests, CLI), we cancel

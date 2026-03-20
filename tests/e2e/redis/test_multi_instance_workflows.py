@@ -46,10 +46,6 @@ pytestmark = [
         reason="File watching only supported on Linux and Windows",
     ),
     pytest.mark.timeout(60),
-    pytest.mark.quarantine(
-        reason="Multi-instance Redis event propagation unreliable in CI — "
-        "events never arrive within timeout (pre-existing, fails on develop)"
-    ),
 ]
 
 # =============================================================================
@@ -131,12 +127,11 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
             distributed=DistributedConfig(enable_locks=True),
         )
 
-    # Use shared event bus (same Redis connection = events propagate).
-    # Issue #1701: directly update _event_bus on the already-registered observer.
-    # swap_service() conflicts with BLM pre-bootstrap; direct attr set is correct here.
+    # Inject shared Redis event bus into both the observer and events service.
+    # The observer publishes events on write; the events service subscribes.
     obs = nexus.service("event_bus_observer")
-    if obs is not None:
-        obs._event_bus = shared_event_bus
+    assert obs is not None, "event_bus_observer not registered — events won't propagate"
+    obs._event_bus = shared_event_bus
     nexus.service("events")._event_bus = shared_event_bus
 
     # Start cache invalidation (events from other instances will invalidate local cache)
@@ -144,8 +139,9 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
 
     yield nexus
 
-    # Stop cache invalidation
+    # Stop cache invalidation + proper async cleanup
     nexus.service("events")._stop_cache_invalidation()
+    await nexus.aclose()
 
 
 @pytest.fixture
@@ -175,12 +171,10 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
             distributed=DistributedConfig(enable_locks=True),
         )
 
-    # Use shared event bus (same Redis connection = events propagate).
-    # Issue #1701: directly update _event_bus on the already-registered observer.
-    # swap_service() conflicts with BLM pre-bootstrap; direct attr set is correct here.
+    # Inject shared Redis event bus.
     obs = nexus.service("event_bus_observer")
-    if obs is not None:
-        obs._event_bus = shared_event_bus
+    assert obs is not None, "event_bus_observer not registered — events won't propagate"
+    obs._event_bus = shared_event_bus
     nexus.service("events")._event_bus = shared_event_bus
 
     # Start cache invalidation (events from other instances will invalidate local cache)
@@ -188,8 +182,9 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
 
     yield nexus
 
-    # Stop cache invalidation
+    # Stop cache invalidation + proper async cleanup
     nexus.service("events")._stop_cache_invalidation()
+    await nexus.aclose()
 
 
 # =============================================================================

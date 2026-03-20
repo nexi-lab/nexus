@@ -108,7 +108,9 @@ class CLIConnector(
         token_manager_db: str | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
+        # Don't pass arbitrary kwargs to super — Backend/ObjectStoreABC/object
+        # don't accept them. Swallow unknown config keys from BackendFactory.
+        super().__init__()
 
         # Fall back to class-level _DEFAULT_CONFIG for subclasses created
         # by create_connector_class_from_yaml() (Phase 5 config dir loading).

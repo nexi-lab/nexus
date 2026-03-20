@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from nexus.backends.base.registry import register_connector
 from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
@@ -31,6 +32,12 @@ from nexus.backends.connectors.github.schemas import (
 logger = logging.getLogger(__name__)
 
 
+@register_connector(
+    "gws_github",
+    description="GitHub via gh CLI",
+    category="cli",
+    service_name="github",
+)
 class GitHubConnector(CLIConnector):
     """GitHub CLI connector via ``gh``."""
 

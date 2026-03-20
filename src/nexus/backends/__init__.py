@@ -49,6 +49,35 @@ _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
         "nexus.backends.connectors.calendar.connector",
         "GoogleCalendarConnectorBackend",
     ),
+    # GWS CLI connectors (Issue #3148 — gws-backed replacements)
+    "GmailCLIConnector": (
+        "nexus.backends.connectors.gws.connector",
+        "GmailConnector",
+    ),
+    "CalendarCLIConnector": (
+        "nexus.backends.connectors.gws.connector",
+        "CalendarConnector",
+    ),
+    "SheetsCLIConnector": (
+        "nexus.backends.connectors.gws.connector",
+        "SheetsConnector",
+    ),
+    "DocsCLIConnector": (
+        "nexus.backends.connectors.gws.connector",
+        "DocsConnector",
+    ),
+    "ChatCLIConnector": (
+        "nexus.backends.connectors.gws.connector",
+        "ChatConnector",
+    ),
+    "DriveCLIConnector": (
+        "nexus.backends.connectors.gws.connector",
+        "DriveConnector",
+    ),
+    "GitHubCLIConnector": (
+        "nexus.backends.connectors.github.connector",
+        "GitHubConnector",
+    ),
 }
 
 _optional_backends_registered = False

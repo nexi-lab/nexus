@@ -61,11 +61,9 @@ class StreamManager:
     def __init__(
         self,
         metastore: "MetastoreABC",
-        zone_id: str = ROOT_ZONE_ID,
         self_address: str | None = None,
     ) -> None:
         self._metastore = metastore
-        self._zone_id = zone_id
         self._self_address = self_address
         self._buffers: dict[str, StreamBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -81,6 +79,7 @@ class StreamManager:
         *,
         capacity: int = 65_536,
         owner_id: str | None = None,
+        zone_id: str = ROOT_ZONE_ID,
     ) -> StreamBuffer:
         """Create a new named stream at the given VFS path.
 
@@ -117,7 +116,7 @@ class StreamManager:
             physical_path="mem://",
             size=capacity,
             entry_type=DT_STREAM,
-            zone_id=self._zone_id,
+            zone_id=zone_id,
             owner_id=owner_id,
         )
         self._metastore.put(metadata)
@@ -170,6 +169,7 @@ class StreamManager:
         backend: StreamBackend,
         *,
         owner_id: str | None = None,
+        zone_id: str = ROOT_ZONE_ID,
     ) -> StreamBackend:
         """Create a named stream backed by an external StreamBackend.
 
@@ -207,7 +207,7 @@ class StreamManager:
             physical_path="mem://",
             size=0,
             entry_type=DT_STREAM,
-            zone_id=self._zone_id,
+            zone_id=zone_id,
             owner_id=owner_id,
         )
         self._metastore.put(metadata)

@@ -196,12 +196,10 @@ class NexusFS(  # type: ignore[misc]
         _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
         self._pipe_manager = PipeManager(
             metadata_store,
-            zone_id=ROOT_ZONE_ID,
             self_address=_ipc_self_addr,
         )
         self._stream_manager = StreamManager(
             metadata_store,
-            zone_id=ROOT_ZONE_ID,
             self_address=_ipc_self_addr,
         )
         logger.info(

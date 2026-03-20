@@ -21,7 +21,7 @@ OWNER = "user-1"
 
 
 def _make_resolver() -> tuple[ProcessTable, ProcResolver]:
-    pt = ProcessTable(zone_id=ZONE)
+    pt = ProcessTable()
     return pt, ProcResolver(pt)
 
 

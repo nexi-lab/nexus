@@ -303,7 +303,7 @@ async def _boot_wired_services(
 
             _acp_pt = getattr(system_services, "process_table", None)
             if _acp_pt is None:
-                _acp_pt = ProcessTable(zone_id=ROOT_ZONE_ID)
+                _acp_pt = ProcessTable()
             _acp_service = AcpService(
                 process_table=_acp_pt,
                 zone_id=ROOT_ZONE_ID,

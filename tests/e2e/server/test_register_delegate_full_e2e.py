@@ -46,7 +46,7 @@ def entity_registry(record_store):
 
 @pytest.fixture()
 def process_table():
-    return ProcessTable(zone_id=ZONE)
+    return ProcessTable()
 
 
 @pytest.fixture()

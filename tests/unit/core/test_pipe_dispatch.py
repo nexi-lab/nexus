@@ -56,7 +56,7 @@ class TestPathRouterPipeRoute:
     def test_pipe_path_returns_pipe_route_result(self) -> None:
         ms = MockMetastore()
         router = PathRouter(ms)
-        mgr = PipeManager(ms, zone_id="test-zone")
+        mgr = PipeManager(ms)
         mgr.create("/pipes/inbox", capacity=1024)
 
         result = router.route("/pipes/inbox")
@@ -91,7 +91,7 @@ class TestPathRouterPipeRoute:
         """DT_PIPE only matches at exact target path, not parent paths."""
         ms = MockMetastore()
         router = PathRouter(ms)
-        mgr = PipeManager(ms, zone_id="test-zone")
+        mgr = PipeManager(ms)
         mgr.create("/pipes/inbox", capacity=1024)
 
         # /pipes/inbox is a pipe
@@ -113,7 +113,7 @@ class TestPathRouterPipeRoute:
 class TestPipeReadWrite:
     def test_pipe_write_then_read(self) -> None:
         ms = MockMetastore()
-        mgr = PipeManager(ms, zone_id="test-zone")
+        mgr = PipeManager(ms)
         buf = mgr.create("/pipes/roundtrip", capacity=1024)
 
         mgr.pipe_write_nowait("/pipes/roundtrip", b"hello")
@@ -122,7 +122,7 @@ class TestPipeReadWrite:
 
     def test_pipe_write_full_raises(self) -> None:
         ms = MockMetastore()
-        mgr = PipeManager(ms, zone_id="test-zone")
+        mgr = PipeManager(ms)
         mgr.create("/pipes/tiny", capacity=10)
         mgr.pipe_write_nowait("/pipes/tiny", b"x" * 10)
 
@@ -131,7 +131,7 @@ class TestPipeReadWrite:
 
     def test_pipe_destroy(self) -> None:
         ms = MockMetastore()
-        mgr = PipeManager(ms, zone_id="test-zone")
+        mgr = PipeManager(ms)
         buf = mgr.create("/pipes/delme", capacity=1024)
 
         mgr.destroy("/pipes/delme")

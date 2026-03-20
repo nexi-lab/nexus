@@ -1,13 +1,12 @@
-"""Unit tests for EventDeliveryWorker — extended for Issue #1138/#1139.
+"""Unit tests for EventDeliveryWorker — async + notification-driven (Issue #3193).
 
-Tests cover the new features added to the delivery worker:
+Tests cover:
 - ExporterRegistry integration (parallel dispatch)
 - DLQ routing after max_retries
-- _run_async helper (fire-and-forget fix)
 - Error classification and retry tracking
+- Async dispatch (no _run_async bridge)
 """
 
-import asyncio
 import tempfile
 import uuid
 from collections.abc import Generator
@@ -66,48 +65,6 @@ def _insert_undelivered(
 
 
 # =========================================================================
-# _run_async helper
-# =========================================================================
-
-
-class TestRunAsync:
-    """Test the sync->async bridge helper."""
-
-    def test_run_async_without_loop(self) -> None:
-        """_run_async should create a temporary loop when none is running."""
-        from nexus.services.event_subsystem.log.delivery import _run_async
-
-        async def simple_coro():
-            return 42
-
-        result = _run_async(simple_coro())
-        assert result == 42
-
-    def test_run_async_with_loop(self) -> None:
-        """_run_async should use run_coroutine_threadsafe with an existing loop."""
-        from nexus.services.event_subsystem.log.delivery import _run_async
-
-        loop = asyncio.new_event_loop()
-
-        import threading
-
-        thread = threading.Thread(target=loop.run_forever, daemon=True)
-        thread.start()
-
-        try:
-
-            async def simple_coro():
-                return 99
-
-            result = _run_async(simple_coro(), loop)
-            assert result == 99
-        finally:
-            loop.call_soon_threadsafe(loop.stop)
-            thread.join(timeout=2.0)
-            loop.close()
-
-
-# =========================================================================
 # ExporterRegistry integration
 # =========================================================================
 
@@ -115,7 +72,10 @@ class TestRunAsync:
 class TestExporterRegistryIntegration:
     """Test EventDeliveryWorker with ExporterRegistry wired in."""
 
-    def test_dispatch_calls_exporter_registry(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_dispatch_calls_exporter_registry(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
         from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 
@@ -129,7 +89,7 @@ class TestExporterRegistryIntegration:
             record_store,
             exporter_registry=mock_registry,
         )
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 1
         mock_registry.dispatch_batch.assert_called_once()
@@ -139,7 +99,10 @@ class TestExporterRegistryIntegration:
         assert len(events) == 1
         assert isinstance(events[0], FileEvent)
 
-    def test_exporter_failure_routes_to_dlq(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_exporter_failure_routes_to_dlq(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
         from nexus.services.event_subsystem.log.exporter_registry import ExporterRegistry
 
@@ -158,18 +121,21 @@ class TestExporterRegistryIntegration:
             record_store,
             exporter_registry=mock_registry,
         )
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
 
         # DLQ entries should have been created
         assert worker.metrics["total_dlq"] == 1
 
-    def test_no_exporter_registry_skips_export(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_no_exporter_registry_skips_export(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         _insert_undelivered(record_store.session_factory)
 
         worker = EventDeliveryWorker(record_store)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         # Should still work without registry
         assert count == 1
@@ -184,7 +150,10 @@ class TestExporterRegistryIntegration:
 class TestDLQRouting:
     """Test DLQ routing after exhausting retries."""
 
-    def test_routes_to_dlq_after_max_retries(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_routes_to_dlq_after_max_retries(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         _insert_undelivered(record_store.session_factory)
@@ -199,14 +168,15 @@ class TestDLQRouting:
         )
 
         # First attempt: retry 1
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_dlq"] == 0
 
         # Second attempt: retry 2 -> DLQ
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_dlq"] == 1
 
-    def test_retry_count_clears_on_success(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_retry_count_clears_on_success(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         _insert_undelivered(record_store.session_factory)
@@ -230,11 +200,11 @@ class TestDLQRouting:
         )
 
         # First poll: fail
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_failed"] == 1
 
         # Second poll: succeed -> retry count should be cleared
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
         assert worker.metrics["total_dispatched"] == 1
         # Internal retry counts should be empty
         assert len(worker._retry_counts) == 0

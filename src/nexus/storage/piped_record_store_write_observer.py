@@ -84,9 +84,11 @@ class PipedRecordStoreWriteObserver:
         record_store: "RecordStoreABC",
         *,
         strict_mode: bool = True,
+        event_signal: "asyncio.Event | None" = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
+        self._event_signal = event_signal
 
         # Pipe state (deferred injection)
         self._pipe_manager: PipeManager | None = None
@@ -404,6 +406,13 @@ class PipedRecordStoreWriteObserver:
 
             duration = time.monotonic() - t0
             self._total_flushed += len(events)
+
+            # Issue #3193: signal consumers (EventDeliveryWorker,
+            # EventReplayService) that new events are available.
+            # Post-commit: consumers never see phantom events.
+            if self._event_signal is not None:
+                self._event_signal.set()
+
             logger.debug(
                 "PipedRecordStoreWriteObserver flushed %d events in %.3fs",
                 len(events),

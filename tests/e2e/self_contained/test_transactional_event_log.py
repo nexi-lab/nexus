@@ -1,16 +1,17 @@
-"""Integration test for Transactional Event Log (Issue #1241).
+"""Integration test for Transactional Event Log (Issue #1241, #3193).
 
 End-to-end flow:
 1. Write file via RecordStoreWriteObserver → verify operation_log has delivered=FALSE
 2. Run EventDeliveryWorker → verify event dispatched to mock EventBus
 3. Verify delivered=TRUE after dispatch
 4. Verify retry on dispatch failure
+5. Verify notification-driven delivery via event signal
 """
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
-import time
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -69,13 +70,14 @@ def _make_metadata(
 class TestTransactionalOutboxIntegration:
     """Full cycle: write → undelivered → delivery worker → delivered."""
 
-    def test_write_creates_undelivered_then_worker_delivers(
+    @pytest.mark.asyncio
+    async def test_write_creates_undelivered_then_worker_delivers(
         self,
         syncer: RecordStoreWriteObserver,
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Write via syncer → start worker → verify delivery."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         # Step 1: Write file via syncer (transactional)
         metadata = _make_metadata("/integration.txt", etag="ihash")
@@ -103,13 +105,12 @@ class TestTransactionalOutboxIntegration:
         mock_bus.publish = AsyncMock(side_effect=capture_publish)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
-            poll_interval_ms=50,
         )
 
-        # Step 3: Poll once (synchronous call)
-        count = worker._poll_and_dispatch()
+        # Step 3: Poll once
+        count = await worker._poll_and_dispatch()
         assert count == 1
 
         # Step 4: Verify event was dispatched correctly
@@ -124,13 +125,14 @@ class TestTransactionalOutboxIntegration:
             record = session.get(OperationLogModel, op_id)
             assert record.delivered is True
 
-    def test_multiple_operations_delivered_in_order(
+    @pytest.mark.asyncio
+    async def test_multiple_operations_delivered_in_order(
         self,
         syncer: RecordStoreWriteObserver,
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Multiple writes + delete → all delivered in created_at order."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         # Create multiple operations
         m1 = _make_metadata("/a.txt", etag="h1")
@@ -163,11 +165,11 @@ class TestTransactionalOutboxIntegration:
         mock_bus.publish = AsyncMock(side_effect=capture)
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
             batch_size=50,
         )
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
         assert count == 3
 
         # All paths delivered
@@ -185,13 +187,14 @@ class TestTransactionalOutboxIntegration:
             )
             assert undelivered == 0
 
-    def test_crash_recovery_retries_undelivered(
+    @pytest.mark.asyncio
+    async def test_crash_recovery_retries_undelivered(
         self,
         syncer: RecordStoreWriteObserver,
         record_store: SQLAlchemyRecordStore,
     ) -> None:
         """Simulate crash: dispatch fails → restart → events retried."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
         # Write a file
         m = _make_metadata("/crash.txt", etag="crash")
@@ -201,8 +204,8 @@ class TestTransactionalOutboxIntegration:
         failing_bus = MagicMock()
         failing_bus.publish = AsyncMock(side_effect=RuntimeError("crash!"))
 
-        worker1 = EventDeliveryWorker(record_store.session_factory, event_bus=failing_bus)
-        count1 = worker1._poll_and_dispatch()
+        worker1 = EventDeliveryWorker(record_store, event_bus=failing_bus)
+        count1 = await worker1._poll_and_dispatch()
         assert count1 == 0  # Nothing delivered
 
         # Verify still undelivered
@@ -214,8 +217,8 @@ class TestTransactionalOutboxIntegration:
         success_bus = MagicMock()
         success_bus.publish = AsyncMock()
 
-        worker2 = EventDeliveryWorker(record_store.session_factory, event_bus=success_bus)
-        count2 = worker2._poll_and_dispatch()
+        worker2 = EventDeliveryWorker(record_store, event_bus=success_bus)
+        count2 = await worker2._poll_and_dispatch()
         assert count2 == 1
 
         # Now delivered
@@ -223,33 +226,38 @@ class TestTransactionalOutboxIntegration:
             ops = session.query(OperationLogModel).all()
             assert ops[0].delivered is True
 
-    def test_worker_background_delivery(
+    @pytest.mark.asyncio
+    async def test_worker_background_delivery_with_signal(
         self,
         syncer: RecordStoreWriteObserver,
         record_store: SQLAlchemyRecordStore,
     ) -> None:
-        """Worker running in background picks up events automatically."""
-        from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+        """Worker running in background picks up events via signal notification."""
+        from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
+        signal = asyncio.Event()
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(
-            record_store.session_factory,
+            record_store,
             event_bus=mock_bus,
-            poll_interval_ms=50,
+            event_signal=signal,
         )
-        worker.start()
+        await worker.start()
 
         try:
             # Write file while worker is running
             m = _make_metadata("/bg.txt", etag="bghash")
             syncer.on_write(m, is_new=True, path="/bg.txt", zone_id="root")
 
+            # Signal the worker
+            signal.set()
+
             # Wait for delivery
-            deadline = time.monotonic() + 5.0
+            deadline = asyncio.get_event_loop().time() + 5.0
             delivered = False
-            while time.monotonic() < deadline:
+            while asyncio.get_event_loop().time() < deadline:
                 with record_store.session_factory() as session:
                     ops = (
                         session.query(OperationLogModel)
@@ -259,8 +267,8 @@ class TestTransactionalOutboxIntegration:
                     if ops and ops[0].delivered:
                         delivered = True
                         break
-                time.sleep(0.1)
+                await asyncio.sleep(0.05)
 
             assert delivered, "Background worker did not deliver event"
         finally:
-            worker.stop(timeout=3.0)
+            await worker.stop()

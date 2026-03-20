@@ -1,6 +1,7 @@
-"""Unit tests for EventReplayService — cursor pagination and filtering.
+"""Unit tests for EventReplayService — cursor pagination, filtering, and streaming.
 
 Issue #1139: Event Replay.
+Issue #3193: Notification-driven streaming.
 
 Tests cover:
 - Empty table returns empty result
@@ -11,8 +12,13 @@ Tests cover:
 - since_revision gaps
 - Invalid cursor handling
 - Boundary conditions
+- stream() async generator: historical + live tail
+- stream() with event signal (notification-driven)
+- stream() idle timeout
+- stream() lost-wakeup prevention
 """
 
+import asyncio
 import tempfile
 import uuid
 from collections.abc import Generator
@@ -444,3 +450,247 @@ class TestListV1:
         result = service.list_v1(zone_id="z1", agent_id="a1")
         assert len(result.events) == 1
         assert result.events[0].zone_id == "z1"
+
+
+# =========================================================================
+# stream() — async generator (Issue #3193)
+# =========================================================================
+
+
+class TestStream:
+    """Test the stream() async generator for SSE streaming."""
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_historical_events(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """stream() should yield historical events first."""
+        for i in range(3):
+            _insert_event(
+                record_store.session_factory,
+                path=f"/stream{i}.txt",
+                sequence_number=i + 1,
+            )
+
+        service = EventReplayService(record_store=record_store)
+        events = []
+        async for event in service.stream(idle_timeout=0.1, poll_interval=0.05):
+            events.append(event)
+
+        assert len(events) == 3
+        assert events[0].path == "/stream0.txt"
+        assert events[2].path == "/stream2.txt"
+
+    @pytest.mark.asyncio
+    async def test_stream_idle_timeout_returns(self, record_store: SQLAlchemyRecordStore) -> None:
+        """stream() should return after idle_timeout when no new events."""
+        service = EventReplayService(record_store=record_store)
+        events = []
+        async for event in service.stream(idle_timeout=0.2, poll_interval=0.05):
+            events.append(event)
+
+        assert len(events) == 0  # No events, timed out
+
+    @pytest.mark.asyncio
+    async def test_stream_last_seq_tracks_correctly(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """stream() should track last_seq and not re-yield old events."""
+        _insert_event(record_store.session_factory, path="/a.txt", sequence_number=1)
+
+        service = EventReplayService(record_store=record_store)
+        events = []
+        async for event in service.stream(since_revision=0, idle_timeout=0.2, poll_interval=0.05):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0].sequence_number == 1
+
+    @pytest.mark.asyncio
+    async def test_stream_since_timestamp_used_only_first_iteration(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """since_timestamp should only apply on first iteration, not subsequent polls."""
+        base = datetime(2024, 1, 1, tzinfo=UTC)
+        _insert_event(
+            record_store.session_factory,
+            path="/old.txt",
+            sequence_number=1,
+            created_at=base,
+        )
+        _insert_event(
+            record_store.session_factory,
+            path="/new.txt",
+            sequence_number=2,
+            created_at=base + timedelta(hours=1),
+        )
+
+        service = EventReplayService(record_store=record_store)
+        events = []
+        async for event in service.stream(
+            since_timestamp=base + timedelta(minutes=30),
+            idle_timeout=0.2,
+            poll_interval=0.05,
+        ):
+            events.append(event)
+
+        # Should only get the event after the timestamp
+        assert len(events) == 1
+        assert events[0].path == "/new.txt"
+
+
+# =========================================================================
+# stream() with event_signal (Issue #3193, notification-driven)
+# =========================================================================
+
+
+class TestStreamWithSignal:
+    """Test stream() using asyncio.Event notification for live tail."""
+
+    @pytest.mark.asyncio
+    async def test_stream_wakes_on_signal(self, record_store: SQLAlchemyRecordStore) -> None:
+        """stream() should wake immediately when event_signal is set."""
+        signal = asyncio.Event()
+        _insert_event(record_store.session_factory, path="/first.txt", sequence_number=1)
+
+        service = EventReplayService(record_store=record_store, event_signal=signal)
+        events = []
+
+        async def consume():
+            async for event in service.stream(idle_timeout=2.0, poll_interval=10.0):
+                events.append(event)
+                if len(events) >= 2:
+                    return
+
+        # Start consuming in background
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.1)  # Let it pick up the first event
+
+        # Insert second event and signal
+        _insert_event(record_store.session_factory, path="/second.txt", sequence_number=2)
+        signal.set()
+
+        # Should complete quickly (not wait for 10s poll)
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except TimeoutError:
+            task.cancel()
+            pytest.fail("stream() did not wake on signal — took too long")
+
+        assert len(events) == 2
+        assert events[1].path == "/second.txt"
+
+    @pytest.mark.asyncio
+    async def test_stream_no_lost_wakeup(self, record_store: SQLAlchemyRecordStore) -> None:
+        """Signal between clear() and wait() should not cause lost events."""
+        signal = asyncio.Event()
+        service = EventReplayService(record_store=record_store, event_signal=signal)
+        events = []
+
+        async def consume():
+            async for event in service.stream(idle_timeout=2.0, poll_interval=10.0):
+                events.append(event)
+                if len(events) >= 3:
+                    return
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.1)  # Let it start
+
+        # Rapid-fire: insert + signal three times
+        for i in range(3):
+            _insert_event(
+                record_store.session_factory,
+                path=f"/rapid{i}.txt",
+                sequence_number=i + 1,
+            )
+            signal.set()
+            await asyncio.sleep(0)  # Yield to event loop
+
+        try:
+            await asyncio.wait_for(task, timeout=3.0)
+        except TimeoutError:
+            task.cancel()
+            pytest.fail("stream() missed events — possible lost wakeup")
+
+        assert len(events) == 3
+
+
+# =========================================================================
+# Observer Event notification (Issue #3193, Issue 10/14)
+# =========================================================================
+
+
+class TestObserverEventNotification:
+    """Test PipedRecordStoreWriteObserver signals event_signal after commit."""
+
+    @pytest.mark.asyncio
+    async def test_event_signal_set_after_flush(self, record_store: SQLAlchemyRecordStore) -> None:
+        """_flush_batch should signal the event after successful DB commit."""
+        from nexus.storage.piped_record_store_write_observer import (
+            PipedRecordStoreWriteObserver,
+        )
+
+        signal = asyncio.Event()
+        observer = PipedRecordStoreWriteObserver(record_store, event_signal=signal)
+
+        # Simulate a batch flush with a write event
+        events = [
+            {
+                "op": "write",
+                "path": "/notify.txt",
+                "is_new": True,
+                "zone_id": "root",
+                "agent_id": None,
+                "snapshot_hash": None,
+                "metadata_snapshot": None,
+                "metadata": {
+                    "path": "/notify.txt",
+                    "backend_name": "local",
+                    "physical_path": "abc",
+                    "size": 100,
+                    "etag": "abc",
+                    "mime_type": "text/plain",
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "modified_at": datetime.now(UTC).isoformat(),
+                    "version": 1,
+                    "zone_id": "root",
+                    "created_by": "test",
+                    "owner_id": "test",
+                },
+            }
+        ]
+
+        assert not signal.is_set()
+        await observer._flush_batch(events)
+        assert signal.is_set(), "Event signal should be set after successful flush"
+
+    @pytest.mark.asyncio
+    async def test_event_signal_not_set_on_flush_failure(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """_flush_batch should NOT signal the event if DB commit fails."""
+
+        from nexus.storage.piped_record_store_write_observer import (
+            PipedRecordStoreWriteObserver,
+        )
+
+        signal = asyncio.Event()
+        observer = PipedRecordStoreWriteObserver(record_store, event_signal=signal)
+
+        # Create an event that will fail during flush (bad metadata)
+        events = [
+            {
+                "op": "write",
+                "path": "/fail.txt",
+                "is_new": True,
+                "zone_id": "root",
+                "agent_id": None,
+                "snapshot_hash": None,
+                "metadata_snapshot": None,
+                "metadata": {},  # Invalid — will fail on _metadata_from_dict
+            }
+        ]
+
+        # Flush should fail (bad metadata), event should NOT be signaled
+        await observer._flush_batch(events)  # Retries then drops
+        assert not signal.is_set(), "Event signal should NOT be set after failed flush"

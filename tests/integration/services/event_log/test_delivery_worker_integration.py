@@ -1,13 +1,15 @@
-"""Integration tests for EventDeliveryWorker with real SQLite.
+"""Integration tests for EventDeliveryWorker with real SQLite (Issue #3193).
 
 Tests the full poll -> dispatch -> mark cycle with a real database,
 in-memory event bus mock, and ExporterRegistry.
 
-Issue #1241, #1138.
+Updated for async notification-driven delivery worker.
+
+Issue #1241, #1138, #3193.
 """
 
+import asyncio
 import tempfile
-import time
 import uuid
 from collections.abc import Generator
 from datetime import UTC, datetime
@@ -63,14 +65,15 @@ def _insert_undelivered(
 class TestFullPollDispatchMarkCycle:
     """Integration test: poll -> dispatch -> mark delivered."""
 
-    def test_full_cycle_with_event_bus(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_full_cycle_with_event_bus(self, record_store: SQLAlchemyRecordStore) -> None:
         op_id = _insert_undelivered(record_store.session_factory)
 
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 1
         mock_bus.publish.assert_called_once()
@@ -80,7 +83,10 @@ class TestFullPollDispatchMarkCycle:
             record = session.get(OperationLogModel, op_id)
             assert record.delivered is True
 
-    def test_full_cycle_with_exporter_registry(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_full_cycle_with_exporter_registry(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         _insert_undelivered(record_store.session_factory)
 
         mock_exporter = MagicMock()
@@ -96,12 +102,15 @@ class TestFullPollDispatchMarkCycle:
             record_store,
             exporter_registry=registry,
         )
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 1
         mock_exporter.publish_batch.assert_called_once()
 
-    def test_concurrent_worker_safety_sqlite(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_concurrent_worker_safety_sqlite(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Two workers should not process the same event (SQLite: no SKIP LOCKED)."""
         for i in range(10):
             _insert_undelivered(
@@ -117,9 +126,9 @@ class TestFullPollDispatchMarkCycle:
         worker2 = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=5)
 
         # Worker 1 takes first 5
-        count1 = worker1._poll_and_dispatch()
+        count1 = await worker1._poll_and_dispatch()
         # Worker 2 takes remaining 5
-        count2 = worker2._poll_and_dispatch()
+        count2 = await worker2._poll_and_dispatch()
 
         assert count1 + count2 == 10
 
@@ -127,7 +136,8 @@ class TestFullPollDispatchMarkCycle:
 class TestDLQIntegration:
     """Integration test: DLQ routing with real database."""
 
-    def test_dlq_entries_persisted(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_dlq_entries_persisted(self, record_store: SQLAlchemyRecordStore) -> None:
         _insert_undelivered(record_store.session_factory)
 
         mock_bus = MagicMock()
@@ -140,7 +150,7 @@ class TestDLQIntegration:
         )
 
         # First poll triggers DLQ after 1 retry
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
 
         # Verify DLQ entry exists
         with record_store.session_factory() as session:
@@ -154,31 +164,40 @@ class TestDLQIntegration:
 
 
 class TestWorkerLifecycleIntegration:
-    """Integration test: start/stop with actual event processing."""
+    """Integration test: async start/stop with actual event processing."""
 
-    def test_worker_processes_events_during_run(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_worker_processes_events_during_run(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         op_id = _insert_undelivered(record_store.session_factory)
 
+        signal = asyncio.Event()
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(
             record_store,
             event_bus=mock_bus,
-            poll_interval_ms=50,
+            event_signal=signal,
         )
-        worker.start()
+        await worker.start()
 
-        # Wait for event to be processed
-        deadline = time.monotonic() + 5.0
-        delivered = False
-        while time.monotonic() < deadline:
-            with record_store.session_factory() as session:
-                record = session.get(OperationLogModel, op_id)
-                if record and record.delivered:
-                    delivered = True
-                    break
-            time.sleep(0.1)
+        try:
+            # Signal that events are available
+            signal.set()
 
-        worker.stop(timeout=2.0)
-        assert delivered, "Worker did not deliver event within timeout"
+            # Wait for event to be processed
+            deadline = asyncio.get_event_loop().time() + 5.0
+            delivered = False
+            while asyncio.get_event_loop().time() < deadline:
+                with record_store.session_factory() as session:
+                    record = session.get(OperationLogModel, op_id)
+                    if record and record.delivered:
+                        delivered = True
+                        break
+                await asyncio.sleep(0.05)
+
+            assert delivered, "Worker did not deliver event within timeout"
+        finally:
+            await worker.stop()

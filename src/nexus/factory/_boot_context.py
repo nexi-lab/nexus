@@ -1,6 +1,7 @@
 """Boot context dataclass — carries shared deps between tier functions."""
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -44,3 +45,9 @@ class _BootContext:
     wal_dir: str | None = None
     wal_sync_mode: str | None = None
     wal_segment_size: int | None = None
+
+    # Shared notification signal for event delivery pipeline (Issue #3193).
+    # PipedRecordStoreWriteObserver signals this after each operation_log
+    # commit; EventDeliveryWorker and EventReplayService await it for µs
+    # wakeup instead of polling.
+    event_signal: asyncio.Event = field(default_factory=asyncio.Event)

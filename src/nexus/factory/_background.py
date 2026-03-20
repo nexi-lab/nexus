@@ -28,11 +28,8 @@ def _start_background_services(system: dict[str, Any]) -> None:
     # called from server lifespan after PipeManager injection (Issue #809).
     # RecordStoreWriteObserver (SQLite fallback) has no start().
 
-    # Event Delivery Worker (system tier)
-    dw = system.get("delivery_worker")
-    if dw is not None and hasattr(dw, "start"):
-        dw.start()
-        logger.debug("[BOOT:BG] EventDeliveryWorker started")
+    # Event Delivery Worker — now an async task (Issue #3193),
+    # started from server lifespan alongside pipe consumers.
 
     # Zone Lifecycle — load Terminating zones from DB (Issue #2061)
     zl = system.get("zone_lifecycle")

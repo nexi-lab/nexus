@@ -1,11 +1,17 @@
-"""EventReplayService — replay and stream historical events (Issue #1139).
+"""EventReplayService — replay and stream historical events (Issue #1139, #3193).
 
 Provides cursor-based pagination over operation_log using sequence_number,
-plus an async generator for SSE streaming with poll-based tail.
+plus an async generator for SSE streaming with event-driven tail.
+
+The ``stream()`` method uses an ``asyncio.Event`` notification from the
+write observer (fired after each operation_log commit) for µs-latency
+live tail instead of 1 s polling.  Falls back to periodic polling if no
+event signal is provided (backward-compatible).
 
 Shares filter logic with OperationLogger._apply_filters() where possible.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -96,8 +102,14 @@ def _record_from_row(row: Any) -> EventRecord:
 class EventReplayService:
     """Service for replaying and streaming historical events from operation_log."""
 
-    def __init__(self, record_store: "RecordStoreABC") -> None:
+    def __init__(
+        self,
+        record_store: "RecordStoreABC",
+        *,
+        event_signal: asyncio.Event | None = None,
+    ) -> None:
         self._session_factory = record_store.session_factory
+        self._event_signal = event_signal
 
     def replay(
         self,
@@ -175,17 +187,29 @@ class EventReplayService:
         poll_interval: float = 1.0,
         idle_timeout: float = 300.0,
     ) -> AsyncIterator[EventRecord]:
-        """Async generator that yields events, polling for new ones.
+        """Async generator that yields events with event-driven tail (Issue #3193).
 
         Yields historical events first (if since_revision/since_timestamp given),
-        then polls for new events until idle_timeout is reached.
-        """
-        import asyncio
+        then awaits an ``asyncio.Event`` notification for µs-latency live tail
+        instead of polling.  Falls back to periodic polling if no event signal
+        was injected.
 
+        Uses clear-then-check-then-wait to prevent lost wakeups::
+
+            signal.clear()        # clear BEFORE checking DB
+            result = replay(...)  # check DB
+            if no events:
+                await signal.wait()  # returns immediately if set between clear and wait
+        """
+        signal = self._event_signal
         last_seq = since_revision
         idle_elapsed = 0.0
 
         while True:
+            # Clear BEFORE checking DB to prevent lost wakeup
+            if signal is not None:
+                signal.clear()
+
             result = self.replay(
                 zone_id=zone_id,
                 since_revision=last_seq,
@@ -203,11 +227,18 @@ class EventReplayService:
                     if event.sequence_number is not None:
                         last_seq = event.sequence_number
             else:
-                idle_elapsed += poll_interval
+                # No new events — wait for notification or fall back to poll
+                if signal is not None:
+                    try:
+                        await asyncio.wait_for(signal.wait(), timeout=poll_interval)
+                    except TimeoutError:
+                        idle_elapsed += poll_interval
+                else:
+                    await asyncio.sleep(poll_interval)
+                    idle_elapsed += poll_interval
+
                 if idle_elapsed >= idle_timeout:
                     return
-
-            await asyncio.sleep(poll_interval)
 
     def list_v1(
         self,

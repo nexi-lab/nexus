@@ -124,6 +124,7 @@ def _boot_system_services(
             write_observer = PipedRecordStoreWriteObserver(
                 ctx.record_store,
                 strict_mode=ctx.audit.strict_mode,
+                event_signal=ctx.event_signal,
             )
         else:
             from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
@@ -314,17 +315,17 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] AsyncVFSRouter unavailable: %s", exc)
 
-    # --- Event Delivery Worker (Issue #1241, constructed, NOT started) ---
+    # --- Event Delivery Worker (Issue #1241, #3193, constructed, NOT started) ---
     delivery_worker = None
     if not _on("eventlog"):
         logger.debug("[BOOT:SYSTEM] EventDeliveryWorker disabled by profile")
     elif ctx.db_url.startswith(("postgres", "postgresql")):
         try:
-            from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+            from nexus.services.event_subsystem.log.delivery import EventDeliveryWorker
 
             delivery_worker = EventDeliveryWorker(
-                session_factory=ctx.record_store.session_factory,
-                poll_interval_ms=200,
+                record_store=ctx.record_store,
+                event_signal=ctx.event_signal,
                 batch_size=50,
             )
         except Exception as exc:
@@ -521,6 +522,7 @@ def _boot_system_services(
         "async_namespace_manager": async_namespace_manager,
         "async_vfs_router": async_vfs_router,
         "delivery_worker": delivery_worker,
+        "event_signal": ctx.event_signal,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,

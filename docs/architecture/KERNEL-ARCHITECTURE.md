@@ -125,10 +125,10 @@ required (structural typing).
 | `HotSwappable` | `hook_spec()`, `drain()`, `activate()` | Hook registration into KernelDispatch + activate on bootstrap; drain + unregister on shutdown |
 | `PersistentService` | `start()`, `stop()` | `start()` on bootstrap (dependency order); `stop()` on shutdown (reverse order) |
 
-One-click contract: implement protocol → `coordinator.register_service()` →
-kernel handles the rest. `ServiceLifecycleCoordinator` (optional, injected by
-factory) scans the registry and auto-calls the appropriate methods during
-`NexusFS.bootstrap()` / `NexusFS.aclose()`.
+One-click contract: implement protocol → `coordinator.enlist()` →
+kernel handles the rest. `ServiceLifecycleCoordinator` (kernel-owned, created by
+factory at link time) scans the registry and auto-calls the appropriate methods during
+`NexusFS.bootstrap()` / `NexusFS.close()`.
 
 **Source of truth:** `contracts/protocols/service_lifecycle.py`
 
@@ -377,7 +377,8 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **PipeManager + RingBuffer** | `system_services` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `system_services` + `core.stream` | append-only log | VFS named streams — inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
-| **ZoneAccessGuard** | `core.nexus_fs` (to extract) | `fs/namespace.c` mount readonly | Zone write permission check on every mutating syscall. Rejects writes to read-only zones before routing |
+| **ZoneWriteGuardHook** | `system_services.lifecycle` | `fs/namespace.c` mount readonly | Zone write permission check via KernelDispatch PRE hook (Issue #1790). Rejects writes to terminating zones |
+| **ServiceLifecycleCoordinator** | `system_services.lifecycle` | `init/main.c` + `module.c` | Kernel-owned bridge: ServiceRegistry + BrickLifecycleManager. Manages enlist/swap/shutdown for all 4 service quadrants |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock

@@ -67,15 +67,31 @@ class TestFormatShell:
         assert "export NEXUS_API_KEY='sk-abc'" in output
         assert "export NEXUS_URL='http://localhost:2026'" in output
 
+    def test_bash_escapes_single_quotes(self) -> None:
+        env = {"VAL": "it's a test"}
+        output = _format_shell(env, "bash")
+        # bash: single quotes escaped as '\''
+        assert "it'\\''s a test" in output
+
     def test_fish(self) -> None:
         env = {"NEXUS_URL": "http://localhost:2026"}
         output = _format_shell(env, "fish")
         assert "set -gx NEXUS_URL 'http://localhost:2026';" in output
 
+    def test_fish_escapes_single_quotes(self) -> None:
+        env = {"VAL": "it's a test"}
+        output = _format_shell(env, "fish")
+        assert "it\\'s a test" in output
+
     def test_powershell(self) -> None:
         env = {"NEXUS_URL": "http://localhost:2026"}
         output = _format_shell(env, "powershell")
         assert "$env:NEXUS_URL = 'http://localhost:2026'" in output
+
+    def test_powershell_escapes_single_quotes(self) -> None:
+        env = {"VAL": "it's a test"}
+        output = _format_shell(env, "powershell")
+        assert "it''s a test" in output
 
 
 class TestFormatDotenv:
@@ -85,6 +101,12 @@ class TestFormatDotenv:
         assert "NEXUS_API_KEY=sk-abc" in output
         assert "NEXUS_URL=http://localhost:2026" in output
         assert "export" not in output
+
+    def test_quotes_special_chars(self) -> None:
+        env = {"VAL": "has spaces", "QUOTE": 'has"quote'}
+        output = _format_dotenv(env)
+        assert 'QUOTE="has\\"quote"' in output
+        assert 'VAL="has spaces"' in output
 
 
 class TestDetectShell:

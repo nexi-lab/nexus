@@ -38,23 +38,48 @@ def _detect_shell() -> str:
     return "bash"
 
 
+def _shell_escape(value: str, shell: str) -> str:
+    """Escape a value for safe embedding in shell syntax.
+
+    For bash/zsh/sh: single-quote with internal single-quotes escaped as '\\''
+    For fish: single-quote with internal single-quotes escaped as \\'
+    For powershell: single-quote with internal single-quotes doubled
+    """
+    if shell == "powershell":
+        return "'" + value.replace("'", "''") + "'"
+    if shell == "fish":
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    # bash / zsh / sh: end quote, escaped literal quote, reopen quote
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
 def _format_shell(env_vars: dict[str, str], shell: str) -> str:
     """Format env vars for the target shell."""
     lines: list[str] = []
     for key, value in sorted(env_vars.items()):
+        escaped = _shell_escape(value, shell)
         if shell == "fish":
-            lines.append(f"set -gx {key} '{value}';")
+            lines.append(f"set -gx {key} {escaped};")
         elif shell == "powershell":
-            lines.append(f"$env:{key} = '{value}'")
+            lines.append(f"$env:{key} = {escaped}")
         else:
             # bash / zsh / sh
-            lines.append(f"export {key}='{value}'")
+            lines.append(f"export {key}={escaped}")
     return "\n".join(lines)
 
 
 def _format_dotenv(env_vars: dict[str, str]) -> str:
-    """Format as .env file (KEY=VALUE, no export prefix)."""
-    return "\n".join(f"{k}={v}" for k, v in sorted(env_vars.items()))
+    """Format as .env file (KEY=VALUE with quoting for special chars)."""
+    lines: list[str] = []
+    for k, v in sorted(env_vars.items()):
+        # Quote values that contain special chars (spaces, quotes, #, etc.)
+        if any(c in v for c in ("'", '"', " ", "\n", "#", "=")):
+            # Double-quote with internal double-quotes and backslashes escaped
+            escaped = v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+            lines.append(f'{k}="{escaped}"')
+        else:
+            lines.append(f"{k}={v}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

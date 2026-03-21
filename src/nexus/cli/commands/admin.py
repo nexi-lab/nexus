@@ -77,6 +77,18 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
         data_dir = cfg.get("data_dir", "./nexus-data")
         state = load_runtime_state(data_dir)
         grpc_port = state.get("ports", {}).get("grpc", cfg.get("ports", {}).get("grpc", 2028))
+
+        # Propagate TLS paths from state.json into env so ZoneTlsConfig.from_env()
+        # picks them up. This bridges the gap for TLS-enabled stacks where certs
+        # are runtime-discovered by nexus up but not set in the shell environment.
+        tls = state.get("tls", {})
+        if tls.get("cert") and not os.environ.get("NEXUS_TLS_CERT"):
+            os.environ["NEXUS_TLS_CERT"] = tls["cert"]
+            os.environ["NEXUS_TLS_KEY"] = tls.get("key", "")
+            os.environ["NEXUS_TLS_CA"] = tls.get("ca", "")
+        if not os.environ.get("NEXUS_DATA_DIR") and data_dir:
+            os.environ["NEXUS_DATA_DIR"] = data_dir
+
     grpc_address = f"{parsed.hostname}:{grpc_port}"
 
     tls_config = ZoneTlsConfig.from_env()

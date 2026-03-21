@@ -311,7 +311,11 @@ async def mount_connector(
 
                 meta_store = nx.metadata
                 if meta_store:
-                    for dir_path in ["/skills", f"/skills/{connector_name}"]:
+                    for dir_path in [
+                        "/skills",
+                        f"/skills/{connector_name}",
+                        f"/skills/{connector_name}/schemas",
+                    ]:
                         try:
                             if not meta_store.get(dir_path):
                                 meta_store.put(

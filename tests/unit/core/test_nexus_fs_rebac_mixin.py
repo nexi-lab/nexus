@@ -37,15 +37,9 @@ requires_pandas = pytest.mark.skipif(not PANDAS_AVAILABLE, reason="pandas packag
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
-    """Create a temporary directory for tests.
-
-    Uses manual cleanup — redb may hold file locks briefly after close().
-    """
-    import shutil
-
-    tmpdir = tempfile.mkdtemp()
-    yield Path(tmpdir)
-    shutil.rmtree(tmpdir, ignore_errors=True)
+    """Create a temporary directory for tests."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
 
 
 @pytest.fixture

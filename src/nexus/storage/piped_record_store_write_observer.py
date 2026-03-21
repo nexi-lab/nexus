@@ -127,10 +127,13 @@ class PipedRecordStoreWriteObserver:
             return  # CLI mode — no NexusFS
 
         from nexus.contracts.metadata import DT_PIPE
+        from nexus.contracts.types import OperationContext
 
+        ctx = OperationContext(user_id="system", groups=[], is_system=True)
         with contextlib.suppress(Exception):
             await self._nx.sys_setattr(
                 _AUDIT_PIPE_PATH,
+                context=ctx,
                 entry_type=DT_PIPE,
                 owner_id="kernel",
             )

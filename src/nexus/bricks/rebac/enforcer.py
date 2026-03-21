@@ -79,6 +79,9 @@ SEQUENTIAL_DEPTH_THRESHOLD = 3
 SYSTEM_BYPASS_SCOPE = "/system/"
 """Prefix for system-bypass write/delete operations."""
 
+SYSTEM_BYPASS_EXTRA_PREFIXES = ("/nexus/pipes/",)
+"""Additional prefixes allowed for system write bypass (e.g. audit pipe)."""
+
 
 class PermissionEnforcer:
     """Pure ReBAC permission enforcement for Nexus filesystem (v0.6.0+).
@@ -801,9 +804,14 @@ class PermissionEnforcer:
         if permission == "read":
             return True
 
-        # For other operations, only allow /system paths
+        # For other operations, only allow /system paths and approved extras
         # Use strict matching: /system/ or exactly /system (not /systemdata, etc.)
-        if not (path.startswith(SYSTEM_BYPASS_SCOPE) or path == SYSTEM_BYPASS_SCOPE.rstrip("/")):
+        allowed = (
+            path.startswith(SYSTEM_BYPASS_SCOPE)
+            or path == SYSTEM_BYPASS_SCOPE.rstrip("/")
+            or any(path.startswith(p) for p in SYSTEM_BYPASS_EXTRA_PREFIXES)
+        )
+        if not allowed:
             return False
 
         # Allow common operations on /system paths

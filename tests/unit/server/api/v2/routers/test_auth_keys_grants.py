@@ -59,6 +59,10 @@ def rebac_manager(record_store):
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
     yield manager
+    # Invalidate all caches before engine disposal to prevent
+    # "Cannot operate on a closed database" from stale cache refresh.
+    if hasattr(manager, "_cache_coordinator"):
+        manager._cache_coordinator.invalidate_all()
     manager.close()
 
 

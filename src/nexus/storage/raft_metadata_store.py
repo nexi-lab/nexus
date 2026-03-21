@@ -472,10 +472,14 @@ class RaftMetadataStore(MetastoreABC):
             self._engine.flush()
         # ZoneHandle: no explicit teardown needed (managed by ZoneManager)
 
-        # Release the Rust object → triggers Drop → releases redb file lock.
-        # Set to None instead of del — other code may still reference _engine
-        # after close (e.g. __del__, gc finalizers).
+        # Release redb file lock by dropping all Rust references.
+        # PyMetastore holds Arc<Database> in store + state machine trees.
+        # Setting to None drops PyMetastore → Rust Drop → flock release.
+        # gc.collect() handles any circular refs preventing immediate drop.
+        import gc
+
         self._engine = None
+        gc.collect()
 
     # =========================================================================
     # Zone-level reserved keys (federation ref counting)

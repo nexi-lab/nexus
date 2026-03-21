@@ -288,6 +288,7 @@ async def mount_connector(
     )
 
     mount_svc = _get_mount_service(request)
+
     try:
         result = await mount_svc.add_mount(
             mount_point=req.mount_point,

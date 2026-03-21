@@ -464,7 +464,9 @@ async def _register_vfs_hooks(
             from nexus.storage.piped_record_store_write_observer import _AUDIT_PIPE_PATH
             from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
-            audit = AuditWriteInterceptor(nx, _AUDIT_PIPE_PATH, strict_mode=strict)
+            audit: AuditWriteInterceptor | SyncAuditWriteInterceptor = AuditWriteInterceptor(
+                nx, _AUDIT_PIPE_PATH, strict_mode=strict
+            )
         else:
             from nexus.storage.write_observer_hooks import SyncAuditWriteInterceptor
 

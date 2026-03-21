@@ -268,9 +268,25 @@ def get_connector_capabilities(name: str) -> ConnectorCapabilitiesResponse:
 async def mount_connector(
     req: MountRequest,
     request: Request,
-    _: dict = Depends(require_auth),
+    auth: dict = Depends(require_auth),
 ) -> MountResponse:
-    """Mount a connector at a VFS path."""
+    """Mount a connector at a VFS path.
+
+    Inherits the API key's zone and permissions. Parent directories
+    (e.g., /mnt for /mnt/gmail) are auto-created in the same zone.
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.types import OperationContext
+
+    # Build context from the authenticated user's identity
+    mount_context = OperationContext(
+        user_id=auth.get("subject_id", "system"),
+        groups=[],
+        is_admin=auth.get("is_admin", True),
+        is_system=True,
+        zone_id=auth.get("zone_id") or ROOT_ZONE_ID,
+    )
+
     mount_svc = _get_mount_service(request)
     try:
         result = await mount_svc.add_mount(
@@ -278,6 +294,7 @@ async def mount_connector(
             backend_type=req.connector_type,
             backend_config=req.config,
             readonly=req.readonly,
+            context=mount_context,
         )
         return MountResponse(mounted=True, mount_point=str(result))
     except Exception as e:

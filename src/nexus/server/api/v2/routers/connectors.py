@@ -309,12 +309,12 @@ async def mount_connector(
 
                 from nexus.contracts.metadata import FileMetadata
 
-                gw = getattr(nx, "_gateway", None) or getattr(request.app.state, "gateway", None)
-                if gw:
+                meta_store = nx.metadata
+                if meta_store:
                     for dir_path in ["/skills", f"/skills/{connector_name}"]:
                         try:
-                            if not gw.metadata_get(dir_path):
-                                gw.metadata_put(
+                            if not meta_store.get(dir_path):
+                                meta_store.put(
                                     FileMetadata(
                                         path=dir_path,
                                         backend_name="__skill__",

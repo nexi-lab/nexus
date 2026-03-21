@@ -85,19 +85,14 @@ class PathTrie:
             List of ancestor paths from immediate parent to root
         """
         segments = self._split_path(path)
-        ancestors = []
-        current_path = ""
+        ancestors = ["/"]  # root is always an ancestor
 
+        current_path = ""
         for i in range(len(segments) - 1):
             current_path = "/" + "/".join(segments[: i + 1])
             ancestors.append(current_path)
 
-        ancestors.append("/")
-        ancestors.reverse()  # immediate parent first
-
-        # Remove root's double entry if present
-        if len(ancestors) > 1 and ancestors[-1] == "/":
-            pass  # keep root at end
+        ancestors.reverse()  # immediate parent first, root last
 
         return ancestors
 

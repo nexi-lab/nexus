@@ -88,7 +88,7 @@ services:
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
       # gRPC
-      NEXUS_GRPC_PORT: "${NEXUS_GRPC_PORT:-2028}"
+      NEXUS_GRPC_PORT: "2028"  # Fixed inside container; host port varies via port mapping
       # Zoekt (external container, not built-in sidecar)
       ZOEKT_ENABLED: "false"
       ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
@@ -96,7 +96,7 @@ services:
       - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/app/data
     ports:
       - "${NEXUS_PORT:-2026}:2026"
-      - "${NEXUS_GRPC_PORT:-2028}:${NEXUS_GRPC_PORT:-2028}"
+      - "${NEXUS_GRPC_PORT:-2028}:2028"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
       interval: 10s

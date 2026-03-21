@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
@@ -26,19 +25,12 @@ if TYPE_CHECKING:
 # Project config helpers
 # ---------------------------------------------------------------------------
 
-CONFIG_SEARCH_PATHS = ("./nexus.yaml", "./nexus.yml")
-
 
 def _load_project_config_optional() -> dict[str, Any]:
     """Try loading nexus.yaml; return empty dict if not found."""
-    import yaml
+    from nexus.cli.state import load_project_config_optional
 
-    for candidate in CONFIG_SEARCH_PATHS:
-        p = Path(candidate)
-        if p.exists():
-            with open(p) as f:
-                return yaml.safe_load(f) or {}
-    return {}
+    return load_project_config_optional()
 
 
 def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
@@ -277,7 +269,21 @@ def status(
         nexus status --json        # machine-readable
         nexus status --watch       # auto-refresh every 2s
     """
-    server_url = url or "http://localhost:2026"
+    # Resolve server URL from state.json / nexus.yaml / default
+    if url:
+        server_url = url
+    else:
+        cfg = _load_project_config_optional()
+        if cfg:
+            from nexus.cli.state import load_runtime_state
+
+            data_dir = cfg.get("data_dir", "./nexus-data")
+            state = load_runtime_state(data_dir)
+            ports = state.get("ports", cfg.get("ports", {}))
+            http_port = ports.get("http", 2026)
+            server_url = f"http://localhost:{http_port}"
+        else:
+            server_url = "http://localhost:2026"
     profile_list = list(profiles) if profiles else None
 
     try:

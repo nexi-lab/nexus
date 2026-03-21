@@ -1,8 +1,12 @@
-"""Stack lifecycle commands — up, down, logs, restart, upgrade.
+"""Stack lifecycle commands — up, down, logs, restart, upgrade, stop, start.
 
 These commands manage the Docker Compose stack for ``shared`` and ``demo``
 presets.  They wrap ``docker compose`` via subprocess, adding pre-flight
 port conflict detection, parallel health polling, and rich status output.
+
+Runtime state (resolved ports, API key, image used) is written to
+``{data_dir}/.state.json`` — **not** back to ``nexus.yaml`` — so that the
+declarative config stays clean and concurrent worktrees don't collide.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import shutil
 import subprocess
 import time
 import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,38 +36,18 @@ from nexus.cli.port_utils import (
     check_port_available,
     resolve_ports,
 )
+from nexus.cli.state import (
+    load_project_config as _load_project_config,
+)
+from nexus.cli.state import (
+    load_runtime_state,
+    resolve_connection_env,
+    save_runtime_state,
+)
+from nexus.cli.state import (
+    save_project_config as _save_project_config,
+)
 from nexus.cli.utils import console
-
-# ---------------------------------------------------------------------------
-# Config helpers
-# ---------------------------------------------------------------------------
-
-CONFIG_SEARCH_PATHS = ("./nexus.yaml", "./nexus.yml")
-
-
-def _load_project_config() -> dict[str, Any]:
-    """Load the project-local nexus.yaml."""
-    for candidate in CONFIG_SEARCH_PATHS:
-        p = Path(candidate)
-        if p.exists():
-            with open(p) as f:
-                return yaml.safe_load(f) or {}
-    console.print("[red]Error:[/red] No nexus.yaml found. Run `nexus init` first.")
-    raise SystemExit(1)
-
-
-def _save_project_config(config: dict[str, Any], path: str | None = None) -> None:
-    """Persist config back to nexus.yaml (e.g. after port resolution)."""
-    target = Path(path) if path else None
-    if target is None:
-        for candidate in CONFIG_SEARCH_PATHS:
-            if Path(candidate).exists():
-                target = Path(candidate)
-                break
-    if target is None:
-        target = Path(CONFIG_SEARCH_PATHS[0])
-    with open(target, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
 def _resolve_image_ref_from_config(config: dict[str, Any]) -> str:
@@ -140,7 +125,13 @@ def _derive_project_env(
         env["NEXUS_IMAGE_REF"] = image_ref
 
     # TLS is provisioned automatically by 2-phase TLS bootstrap.
-    # No env vars needed — certs are auto-detected from disk.
+    # Certs are auto-detected from disk inside the container.
+    # NEXUS_GRPC_TLS is set explicitly so the gRPC server doesn't
+    # rely on auto-detection, which can surprise users.
+    if config.get("tls"):
+        env["NEXUS_GRPC_TLS"] = "true"
+    else:
+        env["NEXUS_GRPC_TLS"] = "false"
 
     return env
 
@@ -371,6 +362,8 @@ def register_commands(cli: click.Group) -> None:
     cli.add_command(logs)
     cli.add_command(restart)
     cli.add_command(upgrade)
+    cli.add_command(stop)
+    cli.add_command(start)
 
 
 @click.command()
@@ -406,6 +399,12 @@ def register_commands(cli: click.Group) -> None:
     help="Build images locally instead of pulling from GHCR (default: pull).",
 )
 @click.option(
+    "--pull/--no-pull",
+    "force_pull",
+    default=None,
+    help="Force image pull from remote (clears local build mode).",
+)
+@click.option(
     "--timeout", type=int, default=180, show_default=True, help="Health check timeout in seconds."
 )
 def up(
@@ -414,6 +413,7 @@ def up(
     port_strategy: str,
     compose_file: str | None,
     build: bool | None,
+    force_pull: bool | None,
     timeout: int,
 ) -> None:
     """Start the Nexus stack.
@@ -426,13 +426,15 @@ def up(
     (with ``build:`` directives) rebuild automatically.
 
     Use ``--build`` to force a local build, or ``--no-build`` to skip.
+    After a ``--build``, subsequent ``nexus up`` reuses the local image.
+    Use ``--pull`` to discard the local build and pull from remote.
 
     Examples:
         nexus up                        # start from nexus.yaml
         nexus up --with nats            # add NATS event bus
         nexus up --port-strategy prompt # ask on conflicts
         nexus up --build                # force rebuild images
-        nexus up --no-build             # skip rebuild
+        nexus up --pull                 # discard local build, pull remote
     """
     config = _load_project_config()
     preset = config.get("preset", "local")
@@ -452,17 +454,28 @@ def up(
         console.print("[yellow]Hint:[/yellow] Ensure nexus-stack.yml is in the project root.")
         raise SystemExit(1)
 
+    data_dir = str(Path(config.get("data_dir", "./nexus-data")).resolve())
+
+    # Check previous runtime state for local build reuse
+    prev_state = load_runtime_state(data_dir)
+    using_local_build = False
+
     # Default: pull prebuilt image.  Only build when explicitly requested
     # via --build (local dev iteration).
     if build is None:
+        # Reuse local build if previous state says so (and not --pull)
+        if prev_state.get("build_mode") == "local" and force_pull is not True:
+            using_local_build = True
         build = False
+
+    # --pull clears local build mode
+    if force_pull:
+        using_local_build = False
 
     # Build profiles list (single source of truth via _resolve_profiles)
     profiles = _resolve_profiles(config, addons)
 
     # Validate profiles against what the compose file actually defines.
-    # This catches attempts to use repo-only add-ons (frontend, langgraph,
-    # observability) with the portable bundled stack.
     available_profiles = _compose_profiles(cf)
     if available_profiles:
         missing = [p for p in profiles if p not in available_profiles]
@@ -473,10 +486,26 @@ def up(
                 )
             profiles = [p for p in profiles if p in available_profiles]
 
-    # Port conflict resolution — check all ports in config (not filtered by services)
+    # Port resolution: reuse previous state.json ports if they're still bound
+    # (our own containers), otherwise resolve from config defaults.
     ports = config.get("ports", {})
     active_services = config.get("services", [])
-    resolved_ports, port_messages = resolve_ports(ports, strategy=port_strategy)
+
+    prev_ports = prev_state.get("ports", {})
+    if prev_ports and prev_state.get("project_name"):
+        # Check if the previous ports are still in use (by our containers).
+        # If so, reuse them — avoids port drift on repeated `nexus up`.
+        all_prev_bound = all(
+            not check_port_available(p) for p in prev_ports.values() if isinstance(p, int)
+        )
+        if all_prev_bound:
+            resolved_ports = prev_ports
+            port_messages: list[str] = []
+        else:
+            # Some ports freed up (containers stopped) — re-resolve from config
+            resolved_ports, port_messages = resolve_ports(ports, strategy=port_strategy)
+    else:
+        resolved_ports, port_messages = resolve_ports(ports, strategy=port_strategy)
 
     # Print header
     console.print()
@@ -484,6 +513,10 @@ def up(
     console.print(f"  Using stack: {cf}")
     if build:
         console.print("  Image: [green]local build[/green] (from Dockerfile)")
+    elif using_local_build:
+        console.print(
+            f"  Image: [green]{prev_state.get('image_used', 'local')}[/green] (reusing local build)"
+        )
     else:
         image_ref = _resolve_image_ref_from_config(config)
         if image_ref:
@@ -496,42 +529,48 @@ def up(
     for msg in port_messages:
         console.print(f"  [yellow]{msg}[/yellow]")
 
-    # Persist resolved ports back to config
-    if resolved_ports != ports:
-        config["ports"] = resolved_ports
-        _save_project_config(config)
+    # NOTE: resolved ports are NOT written back to nexus.yaml.
+    # They go into .state.json (written after health check).
 
     # Build environment from config (project name, ports, data dir, auth, image, TLS)
     compose_env = _derive_project_env(config, resolved_ports=resolved_ports)
 
-    # When --build is requested, drop NEXUS_IMAGE_REF so docker compose
-    # uses the ``build:`` directive from the compose file (local source)
-    # instead of pulling the pinned remote image.  Only safe when the
-    # compose file actually has a build: stanza (repo checkouts); the
-    # bundled portable compose file has no build: directive.
+    # Track effective image and build mode for state.json
+    effective_build_mode = "remote"
+    effective_image_used = compose_env.get("NEXUS_IMAGE_REF", "")
+
+    # When reusing a local build, set the local image tag and skip pull
+    if using_local_build and not build:
+        local_image = prev_state.get("image_used", "")
+        if local_image:
+            compose_env["NEXUS_IMAGE_REF"] = local_image
+            effective_image_used = local_image
+            effective_build_mode = "local"
+
+    # When --build is requested, build with a local-only tag
     if build:
+        project_hash = compose_env["COMPOSE_PROJECT_NAME"].split("-")[-1]
+        local_tag = f"nexus:local-{project_hash}"
+
         if _compose_has_build(cf):
             compose_env.pop("NEXUS_IMAGE_REF", None)
+            effective_build_mode = "local"
+            effective_image_used = local_tag
         else:
             # No build: directive in compose file.  Fall back to building
-            # the Docker image from the repo Dockerfile if one exists,
-            # then tag it so compose uses it (Issue #3134).
+            # the Docker image from the repo Dockerfile if one exists.
             repo_dockerfile = _find_repo_dockerfile()
             if repo_dockerfile:
-                image_ref = compose_env.get(
-                    "NEXUS_IMAGE_REF", config.get("image_ref", "ghcr.io/nexi-lab/nexus:latest")
-                )
                 console.print(
                     f"[cyan]Nexus:[/cyan] building image from {repo_dockerfile.relative_to(repo_dockerfile.parent.parent)} "
-                    f"→ {image_ref}"
+                    f"→ {local_tag}"
                 )
                 build_result = subprocess.run(
                     [
                         "docker",
                         "build",
-                        "--no-cache",
                         "-t",
-                        image_ref,
+                        local_tag,
                         "-f",
                         str(repo_dockerfile),
                         str(repo_dockerfile.parent),
@@ -541,7 +580,10 @@ def up(
                 if build_result.returncode != 0:
                     console.print("[red]Error:[/red] Docker build failed.")
                     raise SystemExit(1)
-                console.print(f"[green]Nexus:[/green] built image {image_ref} from source")
+                console.print(f"[green]Nexus:[/green] built image {local_tag} from source")
+                compose_env["NEXUS_IMAGE_REF"] = local_tag
+                effective_image_used = local_tag
+                effective_build_mode = "local"
                 build = False  # don't pass --build to compose (no build: directive)
             else:
                 console.print(
@@ -550,8 +592,6 @@ def up(
                 )
                 build = False
 
-    data_dir = compose_env["NEXUS_HOST_DATA_DIR"]
-
     # Start compose
     compose_args: list[str] = ["up"]
     if detach:
@@ -559,12 +599,17 @@ def up(
     if build:
         compose_args.append("--build")
 
-    # For channel-following configs (stable/edge), always pull the latest
-    # image so mutable tags pick up new releases.  Pinned configs skip
-    # this — their tag is immutable and already cached.
-    if not build and _is_channel_following(config):
-        compose_args.append("--pull")
-        compose_args.append("always")
+    # Pull logic:
+    # - --pull flag: always pull
+    # - Channel-following + not local build: pull to get latest mutable tag
+    # - Local build mode: skip pull (preserve local image)
+    if (
+        force_pull
+        or not build
+        and effective_build_mode != "local"
+        and _is_channel_following(config)
+    ):
+        compose_args.extend(["--pull", "always"])
 
     result = _run_compose(cf, profiles, *compose_args, extra_env=compose_env)
     if result.returncode != 0:
@@ -598,15 +643,46 @@ def up(
 
     # Bootstrap auth: prefer the key from nexus.yaml (generated by nexus init),
     # fall back to .admin-api-key written by docker-entrypoint.sh.
-    data_dir = config.get("data_dir", "./nexus-data")
     admin_api_key: str | None = config.get("api_key") or None
     if not admin_api_key:
         api_key_file = Path(data_dir) / ".admin-api-key"
         if api_key_file.exists():
-            admin_api_key = api_key_file.read_text().strip()
-            if admin_api_key:
-                config["api_key"] = admin_api_key
-                _save_project_config(config)
+            admin_api_key = api_key_file.read_text().strip() or None
+
+    # Auto-discover TLS certs (Raft 2-phase bootstrap writes to data_dir/tls/)
+    tls_state: dict[str, str] = {}
+    tls_dir = Path(data_dir) / "tls"
+    if tls_dir.exists():
+        # Raft-style certs
+        if (tls_dir / "ca.pem").exists():
+            tls_state = {
+                "cert": str(tls_dir / "node.pem"),
+                "key": str(tls_dir / "node-key.pem"),
+                "ca": str(tls_dir / "ca.pem"),
+            }
+        # OpenSSL-style certs (from nexus init --tls)
+        elif (tls_dir / "ca.crt").exists():
+            tls_state = {
+                "cert": str(tls_dir / "server.crt"),
+                "key": str(tls_dir / "server.key"),
+                "ca": str(tls_dir / "ca.crt"),
+            }
+
+    # Write runtime state to {data_dir}/.state.json (NOT nexus.yaml)
+    runtime_state: dict[str, Any] = {
+        "ports": resolved_ports,
+        "api_key": admin_api_key or "",
+        "image_used": effective_image_used,
+        "build_mode": effective_build_mode,
+        "project_name": compose_env["COMPOSE_PROJECT_NAME"],
+        "started_at": datetime.now(UTC).isoformat(),
+    }
+    if tls_state:
+        runtime_state["tls"] = tls_state
+    save_runtime_state(data_dir, runtime_state)
+
+    # Build connection env vars for display
+    conn_env = resolve_connection_env(config, runtime_state)
 
     # Print final status table
     console.print()
@@ -626,16 +702,16 @@ def up(
     if "zoekt" in active_services:
         console.print(f"  zoekt       http://localhost:{zk_port}")
 
-    # Surface the admin API key so the user can authenticate downstream
-    if admin_api_key:
-        console.print()
-        console.print("[bold]Admin API key:[/bold]")
-        console.print(f"  export NEXUS_API_KEY='{admin_api_key}'")
-        console.print(f"  export NEXUS_URL='http://localhost:{http_port}'")
+    # Surface connection info
+    console.print()
+    console.print("[bold]Connection:[/bold]")
+    for key, value in sorted(conn_env.items()):
+        console.print(f"  export {key}='{value}'")
 
     # Print next steps
     console.print()
     console.print("[bold]Next steps:[/bold]")
+    console.print("  eval $(nexus env)        # load env vars into shell")
     if preset == "demo":
         console.print("  nexus demo init")
     console.print("  nexus status")
@@ -888,3 +964,62 @@ def upgrade(
     _save_project_config(config)
     console.print(f"[green]✓[/green] Updated nexus.yaml → {new_ref}")
     console.print("  Run `nexus restart` to apply.")
+
+
+@click.command()
+def stop() -> None:
+    """Pause the Nexus stack (keep containers and volumes).
+
+    Containers are paused but not removed.  Resume with ``nexus start``.
+    This is faster than ``nexus down`` + ``nexus up`` because it skips
+    port resolution, image pulls, and health checks.
+
+    Examples:
+        nexus stop
+    """
+    config = _load_project_config()
+    preset = config.get("preset", "local")
+
+    if preset == "local":
+        console.print("[yellow]Preset 'local' has no Docker services to stop.[/yellow]")
+        raise SystemExit(0)
+
+    cf = config.get("compose_file", "./nexus-stack.yml")
+    profiles = _resolve_profiles(config)
+    compose_env = _derive_project_env(config)
+
+    result = _run_compose(cf, profiles, "stop", extra_env=compose_env)
+    if result.returncode == 0:
+        console.print("[green]✓[/green] Stack paused. Resume with `nexus start`.")
+    else:
+        console.print("[red]Error:[/red] Failed to stop stack.")
+        raise SystemExit(result.returncode)
+
+
+@click.command()
+def start() -> None:
+    """Resume a paused Nexus stack.
+
+    Resumes containers that were stopped with ``nexus stop``.
+    Does not perform port checks, image pulls, or health polling.
+
+    Examples:
+        nexus start
+    """
+    config = _load_project_config()
+    preset = config.get("preset", "local")
+
+    if preset == "local":
+        console.print("[yellow]Preset 'local' has no Docker services to start.[/yellow]")
+        raise SystemExit(0)
+
+    cf = config.get("compose_file", "./nexus-stack.yml")
+    profiles = _resolve_profiles(config)
+    compose_env = _derive_project_env(config)
+
+    result = _run_compose(cf, profiles, "start", extra_env=compose_env)
+    if result.returncode == 0:
+        console.print("[green]✓[/green] Stack resumed.")
+    else:
+        console.print("[red]Error:[/red] Failed to start stack.")
+        raise SystemExit(result.returncode)

@@ -51,7 +51,9 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     "connect_cmd": ("connect",),  # Interactive connection setup
     "config_cmd": ("config",),  # Config show/set/get/reset
     # Issue #2915: Stack lifecycle
-    "stack": ("up", "down", "logs", "restart", "upgrade"),
+    "stack": ("up", "down", "logs", "restart", "upgrade", "stop", "start"),
+    # DX: environment variable management
+    "env_cmd": ("env", "run"),
     # Issue #2929: MCL replay for index rebuild
     "reindex": ("reindex",),
     # Issue #2930: Catalog and aspects commands

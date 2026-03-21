@@ -68,7 +68,15 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     from nexus.security.tls.config import ZoneTlsConfig
 
     parsed = urlparse(url)
-    grpc_port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
+    # Try env var first, then state.json/nexus.yaml, then default
+    grpc_port = int(os.environ.get("NEXUS_GRPC_PORT", "0"))
+    if not grpc_port:
+        from nexus.cli.state import load_project_config_optional, load_runtime_state
+
+        cfg = load_project_config_optional()
+        data_dir = cfg.get("data_dir", "./nexus-data")
+        state = load_runtime_state(data_dir)
+        grpc_port = state.get("ports", {}).get("grpc", cfg.get("ports", {}).get("grpc", 2028))
     grpc_address = f"{parsed.hostname}:{grpc_port}"
 
     tls_config = ZoneTlsConfig.from_env()

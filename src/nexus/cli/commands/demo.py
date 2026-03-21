@@ -51,10 +51,17 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_admin_key(config: dict[str, Any]) -> str:
-    """Resolve the admin API key from config or on-disk key file."""
-    api_key: str = config.get("api_key", "")
+    """Resolve the admin API key from state.json, config, or on-disk key file."""
+    from nexus.cli.state import load_runtime_state
+
+    data_dir: str = config.get("data_dir", "./nexus-data")
+    state = load_runtime_state(data_dir)
+
+    # State.json first (runtime truth), then nexus.yaml, then .admin-api-key file
+    api_key: str = state.get("api_key", "")
     if not api_key:
-        data_dir: str = config.get("data_dir", "./nexus-data")
+        api_key = config.get("api_key", "")
+    if not api_key:
         key_file = Path(data_dir) / ".admin-api-key"
         if key_file.exists():
             api_key = key_file.read_text().strip()

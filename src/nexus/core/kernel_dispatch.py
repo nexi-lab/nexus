@@ -39,6 +39,7 @@ Issue #900, #889, #1665.
 
 import asyncio
 import logging
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import AuditLogError
@@ -76,6 +77,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _PythonHookRegistry:
+    """Pure-Python fallback when ``nexus_fast`` is unavailable."""
+
+    def __init__(self) -> None:
+        self._hooks: dict[str, list[Any]] = defaultdict(list)
+
+    def register(self, op: str, hook: Any) -> None:
+        self._hooks[op].append(hook)
+
+    def unregister(self, op: str, hook: Any) -> bool:
+        hooks = self._hooks.get(op, [])
+        try:
+            hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def count(self, op: str) -> int:
+        return len(self._hooks.get(op, []))
+
+    def get_pre_hooks(self, op: str) -> list[Any]:
+        method = f"on_pre_{op}"
+        return [hook for hook in self._hooks.get(op, []) if hasattr(hook, method)]
+
+    def get_post_hooks(self, op: str) -> tuple[list[Any], list[Any]]:
+        method = f"on_post_{op}"
+        sync_hooks: list[Any] = []
+        async_hooks: list[Any] = []
+        for hook in self._hooks.get(op, []):
+            fn = getattr(hook, method, None)
+            if fn is None:
+                continue
+            if asyncio.iscoroutinefunction(fn):
+                async_hooks.append(hook)
+            else:
+                sync_hooks.append(hook)
+        return sync_hooks, async_hooks
+
+
 class KernelDispatch:
     """Unified three-phase VFS dispatch (PRE-DISPATCH / INTERCEPT / OBSERVE).
 
@@ -110,11 +150,10 @@ class KernelDispatch:
         self._fallback_resolvers: list[VFSPathResolver] = []
         self._next_resolver_idx: int = 0
 
-        # INTERCEPT: Rust HookRegistry caches has_pre/is_async at registration (#1317)
-        if _HookRegistry is None:  # pragma: no cover
-            msg = "nexus_fast.HookRegistry required — build Rust extension first"
-            raise RuntimeError(msg)
-        self._registry: Any = _HookRegistry()
+        # INTERCEPT: prefer Rust HookRegistry, fall back to pure Python for source checkouts.
+        self._registry: Any = (
+            _HookRegistry() if _HookRegistry is not None else _PythonHookRegistry()
+        )
 
         # OBSERVE: generic mutation observers
         self._observers: list[VFSObserver] = []

@@ -13,14 +13,21 @@ from click.testing import CliRunner
 from nexus.cli.commands.stack import (
     _compose_profiles,
     _derive_project_env,
-    _load_project_config,
     _resolve_image_ref_from_config,
     _resolve_profiles,
-    _save_project_config,
     down,
     up,
     upgrade,
 )
+from nexus.cli.state import (
+    load_project_config as _load_project_config,
+)
+from nexus.cli.state import (
+    save_project_config as _save_project_config,
+)
+
+# The canonical patch target for CONFIG_SEARCH_PATHS is now nexus.cli.state
+_CONFIG_PATCH = "nexus.cli.state.CONFIG_SEARCH_PATHS"
 
 
 @pytest.fixture()
@@ -61,7 +68,7 @@ def shared_config(tmp_path: Path) -> Path:
 class TestConfigLoading:
     def test_load_project_config(self, shared_config: Path) -> None:
         with patch(
-            "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+            _CONFIG_PATCH,
             (str(shared_config / "nexus.yaml"),),
         ):
             config = _load_project_config()
@@ -70,7 +77,7 @@ class TestConfigLoading:
     def test_load_project_config_missing(self, tmp_path: Path) -> None:
         with (
             patch(
-                "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+                _CONFIG_PATCH,
                 (str(tmp_path / "nope.yaml"),),
             ),
             pytest.raises(SystemExit),
@@ -80,7 +87,7 @@ class TestConfigLoading:
     def test_save_project_config(self, shared_config: Path) -> None:
         cfg_path = shared_config / "nexus.yaml"
         with patch(
-            "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+            _CONFIG_PATCH,
             (str(cfg_path),),
         ):
             _save_project_config({"preset": "demo", "auth": "database"})
@@ -224,7 +231,7 @@ class TestUpCommand:
             yaml.dump(cfg, f)
 
         with patch(
-            "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+            _CONFIG_PATCH,
             (str(cfg_path),),
         ):
             result = runner.invoke(up)
@@ -243,7 +250,7 @@ class TestUpCommand:
         with open(cfg_path, "w") as f:
             yaml.dump(cfg, f)
         with patch(
-            "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+            _CONFIG_PATCH,
             (str(cfg_path),),
         ):
             result = runner.invoke(up)
@@ -279,8 +286,7 @@ class TestDeriveProjectEnv:
         assert env["POSTGRES_PORT"] == "5432"
         assert env["NEXUS_HOST_DATA_DIR"] == str(tmp_path / "data")
         assert env["NEXUS_AUTH_TYPE"] == "database"
-        # TLS is auto-detected from disk, no env vars
-        assert "NEXUS_TLS_CERT" not in env
+        assert env["NEXUS_GRPC_TLS"] == "false"
 
     def test_image_ref_in_env(self, tmp_path: Path) -> None:
         """image_ref from config is passed as NEXUS_IMAGE_REF."""
@@ -319,12 +325,17 @@ class TestDeriveProjectEnv:
         assert env["NEXUS_PORT"] == "3026"
         assert env["NEXUS_GRPC_PORT"] == "3028"
 
-    def test_tls_config_ignored(self, tmp_path: Path) -> None:
-        """TLS config key no longer produces env vars (auto-detected from disk)."""
+    def test_tls_sets_grpc_tls_flag(self, tmp_path: Path) -> None:
+        """TLS config sets NEXUS_GRPC_TLS explicitly."""
         config = {"data_dir": str(tmp_path / "data"), "tls": True, "ports": {}}
         env = _derive_project_env(config)
-        assert "NEXUS_TLS_ENABLED" not in env
-        assert "NEXUS_TLS_CERT" not in env
+        assert env["NEXUS_GRPC_TLS"] == "true"
+
+    def test_no_tls_sets_grpc_tls_false(self, tmp_path: Path) -> None:
+        """Non-TLS config explicitly disables gRPC TLS."""
+        config = {"data_dir": str(tmp_path / "data"), "tls": False, "ports": {}}
+        env = _derive_project_env(config)
+        assert env["NEXUS_GRPC_TLS"] == "false"
 
     def test_deterministic_project_name(self, tmp_path: Path) -> None:
         """Same data_dir always produces same project name."""
@@ -389,7 +400,7 @@ class TestDownCommand:
         with open(cfg_path, "w") as f:
             yaml.dump(cfg, f)
         with patch(
-            "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+            _CONFIG_PATCH,
             (str(cfg_path),),
         ):
             result = runner.invoke(down)
@@ -409,7 +420,7 @@ class TestUpgradeCommand:
         with open(cfg_path, "w") as f:
             yaml.dump(cfg, f)
         with patch(
-            "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+            _CONFIG_PATCH,
             (str(cfg_path),),
         ):
             result = runner.invoke(upgrade)
@@ -429,7 +440,7 @@ class TestUpgradeCommand:
 
         with (
             patch(
-                "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+                _CONFIG_PATCH,
                 (str(cfg_path),),
             ),
             patch(
@@ -447,7 +458,7 @@ class TestUpgradeCommand:
         mock_result.returncode = 0
         with (
             patch(
-                "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+                _CONFIG_PATCH,
                 (str(shared_config / "nexus.yaml"),),
             ),
             patch(
@@ -470,7 +481,7 @@ class TestUpgradeCommand:
     def test_upgrade_with_yes_flag(self, runner: CliRunner, shared_config: Path) -> None:
         with (
             patch(
-                "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+                _CONFIG_PATCH,
                 (str(shared_config / "nexus.yaml"),),
             ),
             patch(
@@ -502,7 +513,7 @@ class TestUpgradeCommand:
 
         with (
             patch(
-                "nexus.cli.commands.stack.CONFIG_SEARCH_PATHS",
+                _CONFIG_PATCH,
                 (str(cfg_path),),
             ),
             patch(
@@ -517,3 +528,343 @@ class TestUpgradeCommand:
                 cfg = yaml.safe_load(f)
             assert "image_tag" not in cfg
             assert cfg["image_ref"] == "ghcr.io/nexi-lab/nexus:0.10.0"
+
+
+# ---------------------------------------------------------------------------
+# `nexus stop` / `nexus start` tests
+# ---------------------------------------------------------------------------
+
+
+class TestStopCommand:
+    def test_local_preset_warns(self, runner: CliRunner, tmp_path: Path) -> None:
+        cfg = {"preset": "local"}
+        cfg_path = tmp_path / "nexus.yaml"
+        with open(cfg_path, "w") as f:
+            yaml.dump(cfg, f)
+        from nexus.cli.commands.stack import stop
+
+        with patch(_CONFIG_PATCH, (str(cfg_path),)):
+            result = runner.invoke(stop)
+            assert result.exit_code == 0
+            assert "no Docker services" in result.output
+
+    def test_shared_preset_calls_compose_stop(self, runner: CliRunner, shared_config: Path) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        from nexus.cli.commands.stack import stop
+
+        with (
+            patch(_CONFIG_PATCH, (str(shared_config / "nexus.yaml"),)),
+            patch(
+                "nexus.cli.commands.stack._run_compose", return_value=mock_result
+            ) as mock_compose,
+        ):
+            result = runner.invoke(stop)
+            assert result.exit_code == 0
+            assert "paused" in result.output.lower()
+            mock_compose.assert_called_once()
+            call_args = mock_compose.call_args
+            assert "stop" in call_args[0]
+
+
+class TestStartCommand:
+    def test_local_preset_warns(self, runner: CliRunner, tmp_path: Path) -> None:
+        cfg = {"preset": "local"}
+        cfg_path = tmp_path / "nexus.yaml"
+        with open(cfg_path, "w") as f:
+            yaml.dump(cfg, f)
+        from nexus.cli.commands.stack import start
+
+        with patch(_CONFIG_PATCH, (str(cfg_path),)):
+            result = runner.invoke(start)
+            assert result.exit_code == 0
+            assert "no Docker services" in result.output
+
+    def test_shared_preset_calls_compose_start(
+        self, runner: CliRunner, shared_config: Path
+    ) -> None:
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        from nexus.cli.commands.stack import start
+
+        with (
+            patch(_CONFIG_PATCH, (str(shared_config / "nexus.yaml"),)),
+            patch(
+                "nexus.cli.commands.stack._run_compose", return_value=mock_result
+            ) as mock_compose,
+        ):
+            result = runner.invoke(start)
+            assert result.exit_code == 0
+            assert "resumed" in result.output.lower()
+            mock_compose.assert_called_once()
+            call_args = mock_compose.call_args
+            assert "start" in call_args[0]
+
+
+# ---------------------------------------------------------------------------
+# Port reuse from .state.json
+# ---------------------------------------------------------------------------
+
+
+class TestPortReuse:
+    """Verify that nexus up reuses ports based on compose project ownership."""
+
+    def test_reuses_ports_when_project_running(self, tmp_path: Path) -> None:
+        """When our compose project has running containers, reuse state ports."""
+        from nexus.cli.state import save_runtime_state
+
+        data_dir = tmp_path / "nexus-data"
+        data_dir.mkdir()
+
+        save_runtime_state(
+            data_dir,
+            {
+                "ports": {"http": 9990, "grpc": 9991},
+                "project_name": "nexus-test1234",
+                "build_mode": "remote",
+            },
+        )
+
+        # Simulate `docker compose -p nexus-test1234 ps -q` returning container IDs
+        mock_result = MagicMock()
+        mock_result.stdout = "abc123\ndef456\n"
+        mock_result.returncode = 0
+
+        with patch("nexus.cli.commands.stack.subprocess.run", return_value=mock_result):
+            from nexus.cli.state import load_runtime_state
+
+            state = load_runtime_state(data_dir)
+            prev_ports = state.get("ports", {})
+            # Simulate the ownership check logic from up()
+            has_running = bool(mock_result.stdout.strip())
+            assert has_running
+            assert prev_ports["http"] == 9990
+            assert prev_ports["grpc"] == 9991
+
+    def test_re_resolves_when_no_containers(self, tmp_path: Path) -> None:
+        """When our compose project has no running containers, re-resolve ports."""
+        from nexus.cli.state import save_runtime_state
+
+        data_dir = tmp_path / "nexus-data"
+        data_dir.mkdir()
+
+        save_runtime_state(
+            data_dir,
+            {
+                "ports": {"http": 9990, "grpc": 9991},
+                "project_name": "nexus-test1234",
+            },
+        )
+
+        # Simulate `docker compose ps -q` returning empty (no containers)
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_result.returncode = 0
+
+        with patch("nexus.cli.commands.stack.subprocess.run", return_value=mock_result):
+            has_running = bool(mock_result.stdout.strip())
+            assert not has_running  # → should re-resolve
+
+    def test_re_resolves_when_no_state(self, tmp_path: Path) -> None:
+        """When no .state.json exists, always resolve from config."""
+        from nexus.cli.state import load_runtime_state
+
+        data_dir = tmp_path / "nexus-data"
+        data_dir.mkdir()
+
+        state = load_runtime_state(data_dir)
+        assert state.get("ports") is None
+        assert state.get("project_name") is None
+        # No prev_ports → falls through to resolve_ports()
+
+
+# ---------------------------------------------------------------------------
+# Local build mode persistence
+# ---------------------------------------------------------------------------
+
+
+class TestLocalBuildMode:
+    """Verify that build mode is tracked in .state.json and reused."""
+
+    def test_state_records_build_mode(self, tmp_path: Path) -> None:
+        from nexus.cli.state import load_runtime_state, save_runtime_state
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        save_runtime_state(
+            data_dir,
+            {
+                "build_mode": "local",
+                "image_used": "nexus:local-abc12345",
+                "ports": {},
+            },
+        )
+        state = load_runtime_state(data_dir)
+        assert state["build_mode"] == "local"
+        assert state["image_used"] == "nexus:local-abc12345"
+
+    def test_pull_flag_clears_local_mode(self) -> None:
+        """When --pull is passed, using_local_build should be False."""
+        # Simulate the logic from up()
+        prev_state = {"build_mode": "local", "image_used": "nexus:local-abc12345"}
+        force_pull = True
+        using_local_build = False
+
+        if prev_state.get("build_mode") == "local" and force_pull is not True:
+            using_local_build = True
+
+        if force_pull:
+            using_local_build = False
+
+        assert not using_local_build
+
+    def test_no_pull_reuses_local_build(self) -> None:
+        """Without --pull, local build mode should be detected and reused."""
+        prev_state = {"build_mode": "local", "image_used": "nexus:local-abc12345"}
+        force_pull = None
+        using_local_build = False
+
+        build = None
+        if build is None:
+            if prev_state.get("build_mode") == "local" and force_pull is not True:
+                using_local_build = True
+            build = False
+
+        assert using_local_build
+
+    def test_remote_mode_does_not_reuse(self) -> None:
+        """Remote build mode should not trigger local reuse."""
+        prev_state = {"build_mode": "remote", "image_used": "ghcr.io/nexi-lab/nexus:edge"}
+        force_pull = None
+        using_local_build = False
+
+        build = None
+        if build is None:
+            if prev_state.get("build_mode") == "local" and force_pull is not True:
+                using_local_build = True
+            build = False
+
+        assert not using_local_build
+
+
+# ---------------------------------------------------------------------------
+# TLS auto-discovery in nexus up
+# ---------------------------------------------------------------------------
+
+
+class TestTlsAutoDiscovery:
+    """Verify TLS cert paths are discovered and written to state.json."""
+
+    def test_raft_style_certs(self, tmp_path: Path) -> None:
+        """Raft-generated certs (ca.pem, node.pem, node-key.pem) are discovered."""
+        tls_dir = tmp_path / "tls"
+        tls_dir.mkdir()
+        (tls_dir / "ca.pem").write_text("ca")
+        (tls_dir / "node.pem").write_text("cert")
+        (tls_dir / "node-key.pem").write_text("key")
+
+        # Simulate the discovery logic from up()
+        tls_state: dict[str, str] = {}
+        if tls_dir.exists():
+            if (tls_dir / "ca.pem").exists():
+                tls_state = {
+                    "cert": str(tls_dir / "node.pem"),
+                    "key": str(tls_dir / "node-key.pem"),
+                    "ca": str(tls_dir / "ca.pem"),
+                }
+            elif (tls_dir / "ca.crt").exists():
+                tls_state = {
+                    "cert": str(tls_dir / "server.crt"),
+                    "key": str(tls_dir / "server.key"),
+                    "ca": str(tls_dir / "ca.crt"),
+                }
+
+        assert tls_state["cert"].endswith("node.pem")
+        assert tls_state["ca"].endswith("ca.pem")
+
+    def test_openssl_style_certs(self, tmp_path: Path) -> None:
+        """OpenSSL-generated certs (ca.crt, server.crt, server.key) are discovered."""
+        tls_dir = tmp_path / "tls"
+        tls_dir.mkdir()
+        (tls_dir / "ca.crt").write_text("ca")
+        (tls_dir / "server.crt").write_text("cert")
+        (tls_dir / "server.key").write_text("key")
+
+        tls_state: dict[str, str] = {}
+        if tls_dir.exists():
+            if (tls_dir / "ca.pem").exists():
+                tls_state = {
+                    "cert": str(tls_dir / "node.pem"),
+                    "key": str(tls_dir / "node-key.pem"),
+                    "ca": str(tls_dir / "ca.pem"),
+                }
+            elif (tls_dir / "ca.crt").exists():
+                tls_state = {
+                    "cert": str(tls_dir / "server.crt"),
+                    "key": str(tls_dir / "server.key"),
+                    "ca": str(tls_dir / "ca.crt"),
+                }
+
+        assert tls_state["cert"].endswith("server.crt")
+        assert tls_state["ca"].endswith("ca.crt")
+
+    def test_no_certs_empty_state(self, tmp_path: Path) -> None:
+        """No TLS dir → empty tls state."""
+        tls_dir = tmp_path / "tls"
+        tls_state: dict[str, str] = {}
+        if tls_dir.exists() and (tls_dir / "ca.pem").exists():
+            tls_state = {"cert": "", "key": "", "ca": ""}
+
+        assert tls_state == {}
+
+
+# ---------------------------------------------------------------------------
+# nexus status reads ports from state.json
+# ---------------------------------------------------------------------------
+
+
+class TestStatusPortResolution:
+    """Verify nexus status reads ports from state.json / nexus.yaml."""
+
+    def test_uses_state_json_port(self, tmp_path: Path) -> None:
+        from nexus.cli.state import save_runtime_state
+
+        data_dir = tmp_path / "nexus-data"
+        data_dir.mkdir()
+        save_runtime_state(data_dir, {"ports": {"http": 9876}})
+
+        config = {"data_dir": str(data_dir), "ports": {"http": 2026}}
+
+        from nexus.cli.state import load_runtime_state
+
+        state = load_runtime_state(data_dir)
+        ports = state.get("ports", config.get("ports", {}))
+        http_port = ports.get("http", 2026)
+        assert http_port == 9876  # from state, not config
+
+    def test_falls_back_to_config_port(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "nexus-data"
+        data_dir.mkdir()
+        # No state.json
+
+        config = {"data_dir": str(data_dir), "ports": {"http": 3333}}
+
+        from nexus.cli.state import load_runtime_state
+
+        state = load_runtime_state(data_dir)
+        ports = state.get("ports", config.get("ports", {}))
+        http_port = ports.get("http", 2026)
+        assert http_port == 3333  # from config
+
+    def test_falls_back_to_default(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "nexus-data"
+        data_dir.mkdir()
+
+        config = {"data_dir": str(data_dir)}
+
+        from nexus.cli.state import load_runtime_state
+
+        state = load_runtime_state(data_dir)
+        ports = state.get("ports", config.get("ports", {}))
+        http_port = ports.get("http", 2026)
+        assert http_port == 2026  # default

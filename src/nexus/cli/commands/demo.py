@@ -50,11 +50,53 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _resolve_admin_key(config: dict[str, Any]) -> str:
-    """Resolve the admin API key from config or on-disk key file."""
-    api_key: str = config.get("api_key", "")
+def _resolve_runtime_connection(config: dict[str, Any]) -> dict[str, Any]:
+    """Resolve runtime connection info from state.json, falling back to config.
+
+    Returns a dict with ``http_port``, ``grpc_port``, ``base_url``, and ``api_key``.
+    All downstream demo helpers should use this instead of reading config["ports"]
+    directly, because ``nexus up`` may have resolved to different ports.
+    """
+    from nexus.cli.state import load_runtime_state, resolve_connection_env
+
+    data_dir = config.get("data_dir", "./nexus-data")
+    state = load_runtime_state(data_dir)
+    conn = resolve_connection_env(config, state)
+    ports = state.get("ports", config.get("ports", {}))
+
+    # Set env vars so downstream RPCTransport / SDK picks up TLS and port
+    if conn.get("NEXUS_TLS_CERT"):
+        os.environ["NEXUS_TLS_CERT"] = conn["NEXUS_TLS_CERT"]
+        os.environ["NEXUS_TLS_KEY"] = conn.get("NEXUS_TLS_KEY", "")
+        os.environ["NEXUS_TLS_CA"] = conn.get("NEXUS_TLS_CA", "")
+
+    grpc_port = ports.get("grpc", 2028)
+    os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
+
+    api_key = conn.get("NEXUS_API_KEY", config.get("api_key", ""))
     if not api_key:
-        data_dir: str = config.get("data_dir", "./nexus-data")
+        api_key = _resolve_admin_key(config)
+
+    return {
+        "http_port": ports.get("http", 2026),
+        "grpc_port": grpc_port,
+        "base_url": conn.get("NEXUS_URL", f"http://localhost:{ports.get('http', 2026)}"),
+        "api_key": api_key,
+    }
+
+
+def _resolve_admin_key(config: dict[str, Any]) -> str:
+    """Resolve the admin API key from state.json, config, or on-disk key file."""
+    from nexus.cli.state import load_runtime_state
+
+    data_dir: str = config.get("data_dir", "./nexus-data")
+    state = load_runtime_state(data_dir)
+
+    # State.json first (runtime truth), then nexus.yaml, then .admin-api-key file
+    api_key: str = state.get("api_key", "")
+    if not api_key:
+        api_key = config.get("api_key", "")
+    if not api_key:
         key_file = Path(data_dir) / ".admin-api-key"
         if key_file.exists():
             api_key = key_file.read_text().strip()
@@ -94,8 +136,9 @@ def _save_manifest(data_dir: str, manifest: dict[str, Any]) -> None:
 async def _get_nexus_client(config: dict[str, Any]) -> Any:
     """Connect to a running Nexus server via gRPC, or fall back to local.
 
-    For remote presets (shared/demo), sets NEXUS_GRPC_PORT from nexus.yaml
-    so the SDK connects to the correct gRPC port published by the compose stack.
+    For remote presets (shared/demo), reads runtime state from
+    ``.state.json`` for the actual resolved ports and TLS paths,
+    falling back to ``nexus.yaml`` config values.
 
     Raises on failure — does not silently fall back to a separate local instance
     when a remote preset is expected.
@@ -103,33 +146,41 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
     import nexus
 
     preset = config.get("preset", "local")
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    grpc_port = ports.get("grpc", 2028)
 
     if preset in ("shared", "demo"):
+        from nexus.cli.state import load_runtime_state, resolve_connection_env
+
+        data_dir = config.get("data_dir", "./nexus-data")
+        state = load_runtime_state(data_dir)
+        conn = resolve_connection_env(config, state)
+
+        # Use runtime-resolved ports (from state.json) over config defaults
+        http_port = state.get("ports", config.get("ports", {})).get("http", 2026)
+        grpc_port = state.get("ports", config.get("ports", {})).get("grpc", 2028)
+
         # Set NEXUS_GRPC_PORT so nexus.connect() uses the right port
         os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
 
-        # Resolve the admin API key — prefer nexus.yaml, fall back to the
-        # key file written by the container entrypoint.
+        # Set TLS env vars if available so RPCTransport picks them up
+        if conn.get("NEXUS_TLS_CERT"):
+            os.environ["NEXUS_TLS_CERT"] = conn["NEXUS_TLS_CERT"]
+            os.environ["NEXUS_TLS_KEY"] = conn.get("NEXUS_TLS_KEY", "")
+            os.environ["NEXUS_TLS_CA"] = conn.get("NEXUS_TLS_CA", "")
+
         api_key = _resolve_admin_key(config)
 
-        # When TLS is enabled, set env vars so nexus.connect() builds
-        # an RPCTransport with mTLS credentials (dev certs double as
-        # TLS is auto-detected from NEXUS_DATA_DIR/tls/ (provisioned by 2-phase bootstrap)
+        # Use the scheme from resolve_connection_env (https if TLS)
+        url = conn.get("NEXUS_URL", f"http://localhost:{http_port}")
 
         try:
             nx = await nexus.connect(
                 config={
                     "profile": "remote",
-                    "url": f"http://localhost:{http_port}",
+                    "url": url,
                     "api_key": api_key,
                 }
             )
             # Verify connectivity with a lightweight read-only call.
-            # Use sys_readdir (returns list) instead of sys_stat (goes through
-            # MetadataMapper.from_json which can fail on schema mismatches).
             await nx.sys_readdir("/")
             return nx
         except Exception as e:
@@ -359,11 +410,8 @@ def _seed_permissions_rpc(config: dict[str, Any], tuples: list[dict[str, Any]]) 
     Fallback for non-Docker remote deployments where docker exec is
     unavailable but the server has the admin_write_permission handler.
     """
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    grpc_port = ports.get("grpc", 2028)
-
-    api_key = _resolve_admin_key(config)
+    rt = _resolve_runtime_connection(config)
+    api_key = rt["api_key"]
 
     if not api_key:
         logger.debug("No admin API key — skipping permission seeding via RPC")
@@ -372,8 +420,7 @@ def _seed_permissions_rpc(config: dict[str, Any], tuples: list[dict[str, Any]]) 
     try:
         from nexus.cli.commands.admin import get_admin_rpc
 
-        os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
-        call_rpc = get_admin_rpc(f"http://localhost:{http_port}", api_key)
+        call_rpc = get_admin_rpc(rt["base_url"], api_key)
         result = call_rpc("admin_write_permission", {"tuples": tuples})
         created: int = result.get("created", 0) if isinstance(result, dict) else 0
         return created
@@ -414,12 +461,8 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
         manifest["identities_seeded"] = True
         return 0
 
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    grpc_port = ports.get("grpc", 2028)
-
-    # Resolve admin API key
-    api_key = _resolve_admin_key(config)
+    rt = _resolve_runtime_connection(config)
+    api_key = rt["api_key"]
 
     if not api_key:
         logger.debug("No admin API key available — skipping identity seeding")
@@ -428,8 +471,7 @@ def _seed_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     try:
         from nexus.cli.commands.admin import get_admin_rpc
 
-        os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
-        call_rpc = get_admin_rpc(f"http://localhost:{http_port}", api_key)
+        call_rpc = get_admin_rpc(rt["base_url"], api_key)
     except Exception as e:
         logger.debug("Could not connect admin RPC for identity seeding: %s", e)
         return 0
@@ -498,11 +540,9 @@ def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
 
     import urllib.request
 
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    base_url = f"http://localhost:{http_port}"
-
-    admin_key = _resolve_admin_key(config)
+    rt = _resolve_runtime_connection(config)
+    base_url = rt["base_url"]
+    admin_key = rt["api_key"]
     if not admin_key:
         return 0
 
@@ -536,7 +576,11 @@ def _seed_zones(config: dict[str, Any], manifest: dict[str, Any]) -> int:
             try:
                 # Find postgres container for this stack
                 # Find postgres container matching our stack's port
-                pg_port = str(ports.get("postgres", 5433))
+                from nexus.cli.state import load_runtime_state
+
+                _state = load_runtime_state(config.get("data_dir", "./nexus-data"))
+                _ports = _state.get("ports", config.get("ports", {}))
+                pg_port = str(_ports.get("postgres", 5433))
                 ps_result = subprocess.run(
                     [
                         "docker",
@@ -673,11 +717,9 @@ def _seed_agent_coordination(config: dict[str, Any], manifest: dict[str, Any]) -
 
     import urllib.request
 
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    base_url = f"http://localhost:{http_port}"
-
-    admin_key = _resolve_admin_key(config)
+    rt = _resolve_runtime_connection(config)
+    base_url = rt["base_url"]
+    admin_key = rt["api_key"]
     if not admin_key:
         logger.debug("No admin API key — skipping agent coordination seeding")
         return {"provisioned": 0, "delegated": 0, "messages": 0}
@@ -854,22 +896,15 @@ def _revoke_identities(config: dict[str, Any], manifest: dict[str, Any]) -> int:
     if not identity_keys:
         return 0
 
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    grpc_port = ports.get("grpc", 2028)
-
-    api_key = _resolve_admin_key(config)
+    rt = _resolve_runtime_connection(config)
+    api_key = rt["api_key"]
     if not api_key:
         return 0
-
-    # Set TLS env vars so admin RPC uses mTLS when TLS is enabled
-    # TLS is auto-detected from NEXUS_DATA_DIR/tls/
 
     try:
         from nexus.cli.commands.admin import get_admin_rpc
 
-        os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
-        call_rpc = get_admin_rpc(f"http://localhost:{http_port}", api_key)
+        call_rpc = get_admin_rpc(rt["base_url"], api_key)
     except Exception:
         return 0
 
@@ -1047,10 +1082,8 @@ def _seed_catalog(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> 
 
     from nexus.cli.api_client import NexusApiClient
 
-    api_key = _resolve_admin_key(config)
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    client = NexusApiClient(url=f"http://localhost:{http_port}", api_key=api_key)
+    rt = _resolve_runtime_connection(config)
+    client = NexusApiClient(url=rt["base_url"], api_key=rt["api_key"])
 
     data_files = [
         "/workspace/demo/data/sales.csv",
@@ -1085,10 +1118,8 @@ def _seed_aspects(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> 
     from nexus.cli.api_client import NexusApiClient
     from nexus.contracts.urn import NexusURN
 
-    api_key = _resolve_admin_key(config)
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    client = NexusApiClient(url=f"http://localhost:{http_port}", api_key=api_key)
+    rt = _resolve_runtime_connection(config)
+    client = NexusApiClient(url=rt["base_url"], api_key=rt["api_key"])
 
     aspects_to_seed = [
         (
@@ -1534,22 +1565,8 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     console.print()
 
     if preset in ("shared", "demo"):
-        ports = config.get("ports", {})
-        http_port = ports.get("http", 2026)
-        grpc_port = ports.get("grpc", 2028)
-        api_key = config.get("api_key", "")
-        if not api_key:
-            # Fallback: read from the key file that docker-entrypoint.sh writes
-            key_file = Path(data_dir) / ".admin-api-key"
-            if key_file.exists():
-                api_key = key_file.read_text().strip()
-        console.print("[bold]Set these env vars to talk to the running stack:[/bold]")
-        console.print(f"  export NEXUS_URL=http://localhost:{http_port}")
-        if api_key:
-            console.print(f"  export NEXUS_API_KEY={api_key}")
-        else:
-            console.print("  export NEXUS_API_KEY=<see nexus up output>")
-        console.print(f"  export NEXUS_GRPC_PORT={grpc_port}")
+        console.print("[bold]Load env vars:[/bold]")
+        console.print("  eval $(nexus env)")
         console.print()
 
     console.print("[bold]Try these commands:[/bold]")

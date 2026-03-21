@@ -59,6 +59,7 @@ Nexus fixes this. One VFS-style interface — start embedded in a single Python 
 pip install nexus-ai-fs                       # CLI + SDK
 nexus init --preset demo                       # writes nexus.yaml + nexus-stack.yml
 nexus up                                       # pulls image, starts Nexus + Postgres + Dragonfly + Zoekt
+eval $(nexus env)                              # load connection vars into your shell
 ```
 
 Open `http://localhost:2026`. That's it.
@@ -168,6 +169,7 @@ nexus init                                    # writes nexus.yaml for local embe
 # Shared daemon
 nexus init --preset shared                    # writes nexus.yaml + nexus-stack.yml
 nexus up                                      # pulls image, starts stack, waits for health
+eval $(nexus env)                             # load NEXUS_URL, NEXUS_API_KEY, etc.
 
 # Demo with seed data
 nexus init --preset demo && nexus up
@@ -181,11 +183,24 @@ nexus init --preset shared --accelerator cuda
 # Pin to a specific version
 nexus init --preset shared --image-tag 0.9.4
 
+# Build from local source (for contributors)
+nexus up --build                              # build + tag as nexus:local-{hash}
+nexus up                                      # reuses local build (no pull)
+nexus up --pull                               # discard local build, pull from remote
+
 # Stack lifecycle
-nexus down                                    # stop all services
+nexus stop                                    # pause containers (fast, no teardown)
+nexus start                                   # resume paused containers (fast)
+nexus down                                    # stop and remove containers
 nexus logs                                    # tail logs
 nexus restart                                 # down + up
 nexus upgrade                                 # pull latest image for your channel
+
+# Environment variables
+nexus env                                     # print export statements for your shell
+nexus env --json                              # machine-readable
+nexus env --dotenv > .env                     # write .env file
+nexus run python my_agent.py                  # run command with env vars injected
 ```
 
 ### Docker image

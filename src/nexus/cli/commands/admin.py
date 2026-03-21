@@ -68,7 +68,31 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     from nexus.security.tls.config import ZoneTlsConfig
 
     parsed = urlparse(url)
-    grpc_port = int(os.environ.get("NEXUS_GRPC_PORT", "2028"))
+
+    # Load runtime state unconditionally for both port and TLS discovery.
+    # This avoids the bug where TLS fallback only ran when NEXUS_GRPC_PORT
+    # was absent — the two are independent concerns.
+    from nexus.cli.state import load_project_config_optional, load_runtime_state
+
+    cfg = load_project_config_optional()
+    data_dir = cfg.get("data_dir", "./nexus-data")
+    state = load_runtime_state(data_dir)
+
+    # gRPC port: env var > state.json > config > default
+    grpc_port = int(os.environ.get("NEXUS_GRPC_PORT", "0"))
+    if not grpc_port:
+        grpc_port = state.get("ports", {}).get("grpc", cfg.get("ports", {}).get("grpc", 2028))
+
+    # TLS: propagate state.json paths into env so ZoneTlsConfig.from_env()
+    # picks them up. Always run this regardless of how grpc_port was resolved.
+    tls = state.get("tls", {})
+    if tls.get("cert") and not os.environ.get("NEXUS_TLS_CERT"):
+        os.environ["NEXUS_TLS_CERT"] = tls["cert"]
+        os.environ["NEXUS_TLS_KEY"] = tls.get("key", "")
+        os.environ["NEXUS_TLS_CA"] = tls.get("ca", "")
+    if not os.environ.get("NEXUS_DATA_DIR") and data_dir:
+        os.environ["NEXUS_DATA_DIR"] = data_dir
+
     grpc_address = f"{parsed.hostname}:{grpc_port}"
 
     tls_config = ZoneTlsConfig.from_env()

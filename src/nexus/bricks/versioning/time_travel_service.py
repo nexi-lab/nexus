@@ -150,11 +150,11 @@ class TimeTravelService:
 
             if state_1 and state_2:
                 content_changed = state_1["content"] != state_2["content"]
-                size_diff = state_2["metadata"]["size"] - state_1["metadata"]["size"]
+                size_diff = self._content_size(state_2) - self._content_size(state_1)
             elif state_1 and not state_2:
-                size_diff = -state_1["metadata"]["size"]
+                size_diff = -self._content_size(state_1)
             elif not state_1 and state_2:
-                size_diff = state_2["metadata"]["size"]
+                size_diff = self._content_size(state_2)
             else:
                 content_changed = False
 
@@ -164,6 +164,15 @@ class TimeTravelService:
                 "content_changed": content_changed,
                 "size_diff": size_diff,
             }
+
+    @staticmethod
+    def _content_size(state: dict[str, Any]) -> int:
+        content = state.get("content", b"")
+        if isinstance(content, bytes):
+            return len(content)
+        if isinstance(content, str):
+            return len(content.encode())
+        return len(bytes(content))
 
     # ------------------------------------------------------------------
     # Internal helpers (merged from storage/time_travel.TimeTravelReader)

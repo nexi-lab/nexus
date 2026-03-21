@@ -4,14 +4,18 @@ Tests cover:
 - Happy path: poll → build FileEvent → dispatch → mark delivered
 - Retry on failure: dispatch fails → record stays undelivered → retry
 - Batch processing: multiple records polled and dispatched
-- Empty outbox: worker idles, backoff increases
+- Empty outbox: worker idles
 - Partial batch failure: only successful dispatches marked delivered
 - Graceful shutdown: stop() completes cleanly
 - Event type mapping: operation_type → FileEventType
+- Async lifecycle: start/stop with asyncio.Task (Issue #3193)
+- Drain-then-wait: signal-driven wakeup pattern
+- Lost-wakeup prevention: clear-before-check
+- Fallback polling: when no signal is provided
 """
 
+import asyncio
 import tempfile
-import time
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +26,7 @@ import pytest
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.system_services.event_bus.types import FileEventType
+from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
 
 @pytest.fixture
@@ -75,8 +80,6 @@ class TestBuildFileEvent:
     """Test _build_file_event() mapping from operation_log to FileEvent."""
 
     def test_write_maps_to_file_write(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="write")
 
@@ -89,8 +92,6 @@ class TestBuildFileEvent:
         assert event.zone_id == "root"
 
     def test_delete_maps_to_file_delete(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="delete")
 
@@ -103,8 +104,6 @@ class TestBuildFileEvent:
     def test_rename_maps_to_file_rename_with_old_path(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(
             record_store.session_factory,
@@ -122,8 +121,6 @@ class TestBuildFileEvent:
         assert event.old_path == "/new.txt"  # new_path column stores old_path for renames
 
     def test_mkdir_maps_to_dir_create(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="mkdir")
 
@@ -134,8 +131,6 @@ class TestBuildFileEvent:
         assert event.type == FileEventType.DIR_CREATE
 
     def test_chmod_maps_to_metadata_change(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         worker = EventDeliveryWorker(record_store)
         op_id = _insert_undelivered(record_store.session_factory, operation_type="chmod")
 
@@ -154,16 +149,17 @@ class TestBuildFileEvent:
 class TestPollAndDispatch:
     """Test the core poll-dispatch-mark cycle."""
 
-    def test_poll_dispatches_and_marks_delivered(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
+    @pytest.mark.asyncio
+    async def test_poll_dispatches_and_marks_delivered(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         op_id = _insert_undelivered(record_store.session_factory)
 
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 1
         assert worker.metrics["total_dispatched"] == 1
@@ -173,18 +169,16 @@ class TestPollAndDispatch:
             record = session.get(OperationLogModel, op_id)
             assert record.delivered is True
 
-    def test_empty_outbox_returns_zero(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
+    @pytest.mark.asyncio
+    async def test_empty_outbox_returns_zero(self, record_store: SQLAlchemyRecordStore) -> None:
         worker = EventDeliveryWorker(record_store)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 0
         assert worker.metrics["total_dispatched"] == 0
 
-    def test_batch_dispatches_multiple(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
+    @pytest.mark.asyncio
+    async def test_batch_dispatches_multiple(self, record_store: SQLAlchemyRecordStore) -> None:
         # Insert 5 undelivered records
         op_ids = []
         for i in range(5):
@@ -198,7 +192,7 @@ class TestPollAndDispatch:
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=10)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 5
         assert worker.metrics["total_dispatched"] == 5
@@ -209,9 +203,8 @@ class TestPollAndDispatch:
                 record = session.get(OperationLogModel, op_id)
                 assert record.delivered is True
 
-    def test_batch_size_limits_poll(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
+    @pytest.mark.asyncio
+    async def test_batch_size_limits_poll(self, record_store: SQLAlchemyRecordStore) -> None:
         # Insert 10 records but batch_size=3
         for i in range(10):
             _insert_undelivered(record_store.session_factory, path=f"/file{i}.txt")
@@ -220,12 +213,12 @@ class TestPollAndDispatch:
         mock_bus.publish = AsyncMock()
 
         worker = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=3)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 3  # Only 3 dispatched in first poll
 
         # Second poll picks up more
-        count2 = worker._poll_and_dispatch()
+        count2 = await worker._poll_and_dispatch()
         assert count2 == 3
 
 
@@ -237,16 +230,17 @@ class TestPollAndDispatch:
 class TestDispatchFailure:
     """Test behavior when event dispatch fails."""
 
-    def test_failed_dispatch_leaves_undelivered(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
+    @pytest.mark.asyncio
+    async def test_failed_dispatch_leaves_undelivered(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
         op_id = _insert_undelivered(record_store.session_factory)
 
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock(side_effect=ConnectionError("Redis down"))
 
         worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 0
         assert worker.metrics["total_failed"] == 1
@@ -256,11 +250,10 @@ class TestDispatchFailure:
             record = session.get(OperationLogModel, op_id)
             assert record.delivered is False
 
-    def test_partial_batch_failure_marks_only_successful(
+    @pytest.mark.asyncio
+    async def test_partial_batch_failure_marks_only_successful(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         op_ids = []
         for i in range(3):
             op_id = _insert_undelivered(record_store.session_factory, path=f"/file{i}.txt")
@@ -279,27 +272,26 @@ class TestDispatchFailure:
         mock_bus.publish = AsyncMock(side_effect=failing_second)
 
         worker = EventDeliveryWorker(record_store, event_bus=mock_bus, batch_size=10)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 2  # 2 succeeded, 1 failed
         assert worker.metrics["total_dispatched"] == 2
         assert worker.metrics["total_failed"] == 1
 
-    def test_retry_on_next_poll(self, record_store: SQLAlchemyRecordStore) -> None:
+    @pytest.mark.asyncio
+    async def test_retry_on_next_poll(self, record_store: SQLAlchemyRecordStore) -> None:
         """Previously failed event should be picked up on next poll."""
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         op_id = _insert_undelivered(record_store.session_factory)
 
         # First poll: fail
         mock_bus = MagicMock()
         mock_bus.publish = AsyncMock(side_effect=ConnectionError("down"))
         worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
-        worker._poll_and_dispatch()
+        await worker._poll_and_dispatch()
 
         # Second poll: succeed
         mock_bus.publish = AsyncMock(return_value=0)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
         assert count == 1
 
         with record_store.session_factory() as session:
@@ -308,103 +300,46 @@ class TestDispatchFailure:
 
 
 # =========================================================================
-# Backoff behavior
-# =========================================================================
-
-
-class TestBackoff:
-    """Test exponential backoff on empty polls.
-
-    Note: _consecutive_empty is managed by _run_loop, not _poll_and_dispatch.
-    We simulate the _run_loop logic directly.
-    """
-
-    def test_consecutive_empty_increments_in_run_loop(
-        self, record_store: SQLAlchemyRecordStore
-    ) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
-        worker = EventDeliveryWorker(record_store)
-
-        # Simulate what _run_loop does: poll → check result → update counter
-        count = worker._poll_and_dispatch()
-        if count == 0:
-            worker._consecutive_empty += 1
-        assert worker._consecutive_empty == 1
-
-        count = worker._poll_and_dispatch()
-        if count == 0:
-            worker._consecutive_empty += 1
-        assert worker._consecutive_empty == 2
-
-    def test_successful_dispatch_resets_backoff(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
-        mock_bus = MagicMock()
-        mock_bus.publish = AsyncMock()
-
-        worker = EventDeliveryWorker(record_store, event_bus=mock_bus)
-
-        # Simulate empty polls
-        worker._consecutive_empty = 5
-
-        # Add a record and dispatch it
-        _insert_undelivered(record_store.session_factory)
-        count = worker._poll_and_dispatch()
-        assert count == 1
-
-        # Simulate _run_loop reset
-        if count > 0:
-            worker._consecutive_empty = 0
-        assert worker._consecutive_empty == 0
-
-
-# =========================================================================
-# Start / Stop lifecycle
+# Start / Stop lifecycle (asyncio-based, Issue #3193)
 # =========================================================================
 
 
 class TestLifecycle:
-    """Test start() and stop() lifecycle."""
+    """Test start() and stop() lifecycle with asyncio tasks."""
 
-    async def test_start_creates_daemon_thread(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
-        worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
+    @pytest.mark.asyncio
+    async def test_start_creates_consumer_task(self, record_store: SQLAlchemyRecordStore) -> None:
+        worker = EventDeliveryWorker(record_store, fallback_poll_interval_s=0.05)
         await worker.start()
 
         try:
-            assert worker._thread is not None
-            assert worker._thread.is_alive()
-            assert worker._thread.daemon is True
+            assert worker._consumer_task is not None
+            assert not worker._consumer_task.done()
         finally:
-            await worker.stop(timeout=2.0)
+            await worker.stop()
 
-    async def test_stop_joins_thread(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
-        worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
+    @pytest.mark.asyncio
+    async def test_stop_cancels_task(self, record_store: SQLAlchemyRecordStore) -> None:
+        worker = EventDeliveryWorker(record_store, fallback_poll_interval_s=0.05)
         await worker.start()
-        await worker.stop(timeout=2.0)
+        await worker.stop()
 
-        assert worker._thread is None
+        assert worker._consumer_task is None
 
+    @pytest.mark.asyncio
     async def test_double_start_is_noop(self, record_store: SQLAlchemyRecordStore) -> None:
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
-        worker = EventDeliveryWorker(record_store, poll_interval_ms=50)
+        worker = EventDeliveryWorker(record_store, fallback_poll_interval_s=0.05)
         await worker.start()
-        thread1 = worker._thread
+        task1 = worker._consumer_task
 
-        await worker.start()  # Should not create a new thread
-        assert worker._thread is thread1
+        await worker.start()  # Should not create a new task
+        assert worker._consumer_task is task1
 
-        await worker.stop(timeout=2.0)
+        await worker.stop()
 
+    @pytest.mark.asyncio
     async def test_worker_processes_during_run(self, record_store: SQLAlchemyRecordStore) -> None:
         """Worker should process events while running."""
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         op_id = _insert_undelivered(record_store.session_factory)
 
         mock_bus = MagicMock()
@@ -413,22 +348,22 @@ class TestLifecycle:
         worker = EventDeliveryWorker(
             record_store,
             event_bus=mock_bus,
-            poll_interval_ms=50,
+            fallback_poll_interval_s=0.05,
         )
         await worker.start()
 
         # Wait for worker to pick up the event
-        deadline = time.monotonic() + 5.0
+        deadline = asyncio.get_event_loop().time() + 5.0
         delivered = False
-        while time.monotonic() < deadline:
+        while asyncio.get_event_loop().time() < deadline:
             with record_store.session_factory() as session:
                 record = session.get(OperationLogModel, op_id)
                 if record and record.delivered:
                     delivered = True
                     break
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
-        await worker.stop(timeout=2.0)
+        await worker.stop()
         assert delivered, "Worker did not deliver event within timeout"
 
 
@@ -440,20 +375,208 @@ class TestLifecycle:
 class TestNoBus:
     """Test that worker works even without an event bus."""
 
-    def test_dispatch_without_bus_marks_delivered(
+    @pytest.mark.asyncio
+    async def test_dispatch_without_bus_marks_delivered(
         self, record_store: SQLAlchemyRecordStore
     ) -> None:
         """If no event bus is available, dispatch still succeeds (no-op publish)."""
-        from nexus.system_services.event_log.delivery import EventDeliveryWorker
-
         op_id = _insert_undelivered(record_store.session_factory)
 
         # No event_bus provided — worker should still mark delivered
         worker = EventDeliveryWorker(record_store)
-        count = worker._poll_and_dispatch()
+        count = await worker._poll_and_dispatch()
 
         assert count == 1
 
         with record_store.session_factory() as session:
             record = session.get(OperationLogModel, op_id)
             assert record.delivered is True
+
+
+# =========================================================================
+# Async lifecycle: drain-then-wait pattern (Issue #3193)
+# =========================================================================
+
+
+class TestDrainThenWait:
+    """Test the drain-then-wait consumer loop with asyncio.Event signal."""
+
+    @pytest.mark.asyncio
+    async def test_signal_wakes_worker_immediately(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """Worker wakes instantly when event_signal is set (no polling delay)."""
+        signal = asyncio.Event()
+        mock_bus = MagicMock()
+        mock_bus.publish = AsyncMock()
+
+        worker = EventDeliveryWorker(
+            record_store,
+            event_bus=mock_bus,
+            event_signal=signal,
+            fallback_poll_interval_s=60.0,  # Very long fallback
+        )
+        await worker.start()
+
+        try:
+            # Insert an event and signal
+            _insert_undelivered(record_store.session_factory, path="/signal.txt")
+            signal.set()
+
+            # Should be delivered quickly despite long fallback interval
+            delivered = False
+            for _ in range(50):
+                with record_store.session_factory() as session:
+                    from sqlalchemy import select
+
+                    rows = list(
+                        session.execute(
+                            select(OperationLogModel).where(OperationLogModel.path == "/signal.txt")
+                        ).scalars()
+                    )
+                    if rows and rows[0].delivered:
+                        delivered = True
+                        break
+                await asyncio.sleep(0.05)
+
+            assert delivered, "Signal-driven wakeup did not deliver event"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_drain_continues_until_empty(self, record_store: SQLAlchemyRecordStore) -> None:
+        """Worker drains all events before waiting for next signal."""
+        signal = asyncio.Event()
+        mock_bus = MagicMock()
+        mock_bus.publish = AsyncMock()
+
+        # Insert multiple events
+        for i in range(5):
+            _insert_undelivered(record_store.session_factory, path=f"/drain{i}.txt")
+
+        worker = EventDeliveryWorker(
+            record_store,
+            event_bus=mock_bus,
+            event_signal=signal,
+            fallback_poll_interval_s=60.0,
+            batch_size=2,  # Small batch to force multiple drain iterations
+        )
+        await worker.start()
+
+        try:
+            signal.set()
+            # Wait for all 5 to be delivered
+            for _ in range(50):
+                with record_store.session_factory() as session:
+                    from sqlalchemy import func, select
+
+                    count = session.execute(
+                        select(func.count())
+                        .select_from(OperationLogModel)
+                        .where(OperationLogModel.delivered == True)  # noqa: E712
+                    ).scalar()
+                    if count == 5:
+                        break
+                await asyncio.sleep(0.05)
+            else:
+                pytest.fail("Not all events drained")
+        finally:
+            await worker.stop()
+
+
+# =========================================================================
+# Lost-wakeup prevention (Issue #3193)
+# =========================================================================
+
+
+class TestLostWakeup:
+    """Test that the clear-before-check pattern prevents lost wakeups."""
+
+    @pytest.mark.asyncio
+    async def test_signal_set_during_poll_not_lost(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """If signal is set while _poll_and_dispatch runs, next iteration picks it up."""
+        signal = asyncio.Event()
+        mock_bus = MagicMock()
+        mock_bus.publish = AsyncMock()
+
+        worker = EventDeliveryWorker(
+            record_store,
+            event_bus=mock_bus,
+            event_signal=signal,
+            fallback_poll_interval_s=60.0,
+        )
+        await worker.start()
+
+        try:
+            # Insert event, set signal
+            _insert_undelivered(record_store.session_factory, path="/lost-wakeup.txt")
+            signal.set()
+
+            delivered = False
+            for _ in range(50):
+                with record_store.session_factory() as session:
+                    from sqlalchemy import select
+
+                    rows = list(
+                        session.execute(
+                            select(OperationLogModel).where(
+                                OperationLogModel.path == "/lost-wakeup.txt"
+                            )
+                        ).scalars()
+                    )
+                    if rows and rows[0].delivered:
+                        delivered = True
+                        break
+                await asyncio.sleep(0.05)
+
+            assert delivered, "Lost wakeup: event not delivered"
+        finally:
+            await worker.stop()
+
+
+# =========================================================================
+# Fallback polling (no signal provided)
+# =========================================================================
+
+
+class TestFallbackPolling:
+    """Test that worker falls back to timed polling when no signal is provided."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_poll_delivers_events(self, record_store: SQLAlchemyRecordStore) -> None:
+        """Without signal, worker uses fallback_poll_interval_s."""
+        mock_bus = MagicMock()
+        mock_bus.publish = AsyncMock()
+
+        worker = EventDeliveryWorker(
+            record_store,
+            event_bus=mock_bus,
+            fallback_poll_interval_s=0.05,  # Fast fallback for test
+        )
+        await worker.start()
+
+        try:
+            _insert_undelivered(record_store.session_factory, path="/fallback.txt")
+
+            delivered = False
+            for _ in range(50):
+                with record_store.session_factory() as session:
+                    from sqlalchemy import select
+
+                    rows = list(
+                        session.execute(
+                            select(OperationLogModel).where(
+                                OperationLogModel.path == "/fallback.txt"
+                            )
+                        ).scalars()
+                    )
+                    if rows and rows[0].delivered:
+                        delivered = True
+                        break
+                await asyncio.sleep(0.05)
+
+            assert delivered, "Fallback polling did not deliver event"
+        finally:
+            await worker.stop()

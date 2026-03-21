@@ -457,7 +457,13 @@ class RaftMetadataStore(MetastoreABC):
             yield metadata
 
     def close(self) -> None:
-        """Close the metadata store and release resources."""
+        """Close the metadata store and release resources.
+
+        Explicitly deletes the engine reference to trigger Rust Drop,
+        which releases the redb file lock. Without this, Python's
+        non-deterministic GC may hold the lock, causing 'Directory not
+        empty' errors when cleaning up temp directories in tests.
+        """
         if hasattr(self._engine, "shutdown"):
             # ZoneManager: gracefully stop gRPC server + transport loop
             self._engine.shutdown()
@@ -465,6 +471,19 @@ class RaftMetadataStore(MetastoreABC):
             # Metastore: flush redb to disk
             self._engine.flush()
         # ZoneHandle: no explicit teardown needed (managed by ZoneManager)
+
+        # Release redb file lock by dropping all Rust references.
+        # PyMetastore holds Arc<Database> in store + state machine trees.
+        # Setting to None drops PyMetastore → Rust Drop → flock release.
+        # gc.collect() handles any circular refs preventing immediate drop.
+        import gc
+        import time
+
+        self._engine = None
+        gc.collect()
+        # Brief yield to allow OS to release flock after Rust Drop.
+        # Prevents rare "Directory not empty" race during temp dir cleanup.
+        time.sleep(0.01)
 
     # =========================================================================
     # Zone-level reserved keys (federation ref counting)

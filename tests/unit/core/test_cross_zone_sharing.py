@@ -37,7 +37,7 @@ def zone_aware_manager(engine):
     """
     manager = ReBACManager(
         engine=engine,
-        cache_ttl_seconds=0,  # Disable cache for predictable tests
+        cache_ttl_seconds=1,  # Disable cache for predictable tests
         max_depth=10,
         enforce_zone_isolation=True,
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
@@ -365,7 +365,7 @@ class TestCrossZoneRustPathFix:
 
         manager = EnhancedReBACManager(
             engine=engine,
-            cache_ttl_seconds=0,
+            cache_ttl_seconds=1,
             max_depth=10,
             enforce_zone_isolation=True,
             namespace_store=MetastoreNamespaceStore(DictMetastore()),
@@ -441,7 +441,7 @@ class TestCrossZonePermissionExpansion:
 
         manager = ReBACManager(
             engine=engine,
-            cache_ttl_seconds=0,
+            cache_ttl_seconds=1,
             max_depth=10,
             enforce_zone_isolation=True,
             namespace_store=MetastoreNamespaceStore(DictMetastore()),

@@ -424,7 +424,7 @@ end:
         # Set backend path in context
         operation_context.backend_path = "primary/_new.yaml"
 
-        response = calendar_backend.write_content(content, operation_context)
+        response = calendar_backend.write_content(content, context=operation_context)
 
         assert response.content_id == "test_event_123"
 
@@ -436,7 +436,7 @@ summary: Updated Project Discussion
 
         operation_context.backend_path = "primary/test_event_123.yaml"
 
-        response = calendar_backend.write_content(content, operation_context)
+        response = calendar_backend.write_content(content, context=operation_context)
 
         assert response.content_id == "updated"
 

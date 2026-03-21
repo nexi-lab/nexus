@@ -362,6 +362,28 @@ class CacheCoordinator:
         """
         self._invalidate_zone_graph(zone_id)
 
+    def close(self) -> None:
+        """Shut down the coordinator: stop background work, clear caches, release DB refs.
+
+        Must be called before the underlying database engine is disposed
+        to prevent 'Cannot operate on a closed database' errors from
+        stale cache refresh or eager recompute queries.
+        """
+        # Disable eager recompute — prevents new background DB queries
+        self._async_recompute_enabled = False
+
+        # Release database connection callbacks — prevents any future DB access
+        self._connection_factory = None
+        self._get_connection = None
+        self._close_connection = None
+        self._create_cursor = None
+        self._compute_permission_cb = None
+        self._cache_check_result_cb = None
+        self._get_namespace_cb = None
+
+        # Note: don't set _stream = None here — the InvalidationStream may hold
+        # references to Rust objects whose Drop can segfault during teardown.
+
     def invalidate_all(self, zone_id: str | None = None) -> None:
         """Nuclear option: invalidate all caches for a zone (or all zones).
 

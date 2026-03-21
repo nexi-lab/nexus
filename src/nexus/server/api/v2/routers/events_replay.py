@@ -65,7 +65,10 @@ def _get_replay_service(request: Request) -> Any:
 
     from nexus.system_services.event_log.replay import EventReplayService
 
-    service = EventReplayService(record_store)
+    service = EventReplayService(
+        record_store,
+        event_signal=getattr(request.app.state, "event_signal", None),
+    )
     request.app.state.replay_service = service
     return service
 

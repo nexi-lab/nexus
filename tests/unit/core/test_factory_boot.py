@@ -73,6 +73,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "agent_registry",
         "scheduler_service",
         "acp_service",
+        "event_signal",
     }
 )
 

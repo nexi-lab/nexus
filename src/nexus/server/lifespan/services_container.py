@@ -65,6 +65,10 @@ class LifespanServices:
     # --- Issue #2195, #2360: Scheduler (from SystemServices) ----
     scheduler_service: "SchedulerProtocol | None" = None
 
+    # --- Issue #3193: delivery worker + event signal -------------------------
+    delivery_worker: Any = None
+    event_signal: Any = None
+
     # --- DT_PIPE consumers (Issue #810) -----------------------------------
     zoekt_pipe_consumer: Any = None
     task_dispatch_consumer: Any = None  # Task Manager DT_PIPE consumer
@@ -124,6 +128,9 @@ class LifespanServices:
             enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
             profile_tuning=getattr(app.state, "profile_tuning", None),
             thread_pool_size=getattr(app.state, "thread_pool_size", 40),
+            # Issue #3193: delivery worker + event signal
+            delivery_worker=(getattr(_sys, "delivery_worker", None) if _sys else None),
+            event_signal=(getattr(_sys, "event_signal", None) if _sys else None),
             # System services
             brick_lifecycle_manager=(
                 getattr(_sys, "brick_lifecycle_manager", None) if _sys else None

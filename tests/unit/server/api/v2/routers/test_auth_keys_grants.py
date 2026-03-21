@@ -54,10 +54,17 @@ def record_store():
 def rebac_manager(record_store):
     manager = EnhancedReBACManager(
         engine=record_store.engine,
-        cache_ttl_seconds=0,
+        cache_ttl_seconds=1,  # Short TTL — tests don't need caching
         max_depth=10,
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
+    # Disable all caching — this test checks revocation correctness, not
+    # cache behavior. Without this, the coordinator's background recompute
+    # executor and L1 cache cause "closed database" races during teardown.
+    manager._l1_cache = None
+    manager._boundary_cache = None
+    manager._cache_coordinator._async_recompute_enabled = False
+    manager._cache_coordinator._stream = None
     yield manager
     manager.close()
 

@@ -4021,12 +4021,14 @@ class ReBACManager:
         self._cache_coordinator.reset_cache_stats()
 
     def close(self) -> None:
-        """Close database connection.
+        """Close the manager: shut down cache coordinator and release DB resources.
 
-        Note: With fresh connections, there's nothing to close here.
-        Connections are closed immediately after each operation.
+        Must be called before the underlying database engine is disposed.
+        Stops background recompute threads, clears all caches, and releases
+        database connection callbacks to prevent use-after-close errors.
         """
-        pass
+        if hasattr(self, "_cache_coordinator") and self._cache_coordinator is not None:
+            self._cache_coordinator.close()
 
 
 # Backward-compat alias — many tests and call-sites still reference the old name.

@@ -85,6 +85,9 @@ async def nexus_fs(isolated_db, tmp_path):
         permissions=PermissionConfig(enforce=False),  # Disable permissions for testing
     )
     yield nx
+    # Use sync close — aclose() drains all hooks with 10s timeouts per hook,
+    # causing teardown hangs in CI.  Sync close is fine for SQLite tests with
+    # no async background tasks (no delivery worker, no piped observer consumer).
     nx.close()
 
 

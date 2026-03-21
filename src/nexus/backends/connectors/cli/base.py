@@ -170,10 +170,16 @@ class CLIConnector(
     def get_sync_provider(self) -> Any:
         """Return a CLISyncProvider for this connector.
 
-        Called by SyncService to use the page/state-token sync protocol
-        instead of raw list_dir/get_file_info when available.
+        Only used for connectors that rely on the generic YAML config for
+        list/fetch. Connectors with custom list_dir (e.g., GmailConnector,
+        CalendarConnector) use the BFS path instead — their list_dir has
+        connector-specific logic that the generic provider can't replicate.
         """
         if self._config is None:
+            return None
+        # If the subclass overrides list_dir, it has custom sync logic —
+        # don't use the generic provider which builds wrong CLI commands.
+        if "list_dir" in type(self).__dict__:
             return None
         try:
             from nexus.backends.connectors.cli.sync_provider import CLISyncProvider

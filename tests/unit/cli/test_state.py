@@ -168,7 +168,8 @@ class TestResolveConnectionEnv:
             }
         }
         env = resolve_connection_env(config, state)
-        assert env["NEXUS_URL"].startswith("https://")
+        # NEXUS_URL is always http (TLS is gRPC-only, not HTTP)
+        assert env["NEXUS_URL"].startswith("http://")
         assert env["NEXUS_TLS_CERT"] == "/data/tls/node.pem"
         assert env["NEXUS_TLS_CA"] == "/data/tls/ca.pem"
 

@@ -155,13 +155,11 @@ def resolve_connection_env(
     http_port = ports.get("http", 2026)
     grpc_port = ports.get("grpc", 2028)
 
-    scheme = "http"
-    tls = state.get("tls", {})
-    if tls.get("cert") or config.get("tls"):
-        scheme = "https"
-
+    # NEXUS_URL is always http:// — the HTTP server does not serve TLS.
+    # TLS is gRPC-only (mTLS for zone federation). The TLS env vars
+    # (NEXUS_TLS_CERT/KEY/CA) are emitted separately for gRPC clients.
     env_vars: dict[str, str] = {
-        "NEXUS_URL": f"{scheme}://localhost:{http_port}",
+        "NEXUS_URL": f"http://localhost:{http_port}",
         "NEXUS_GRPC_HOST": f"localhost:{grpc_port}",
         "NEXUS_GRPC_PORT": str(grpc_port),
     }
@@ -169,7 +167,8 @@ def resolve_connection_env(
     if api_key:
         env_vars["NEXUS_API_KEY"] = api_key
 
-    # TLS paths — prefer state.json (runtime-discovered), fall back to config
+    # TLS paths for gRPC — prefer state.json (runtime-discovered), fall back to config
+    tls = state.get("tls", {})
     if tls.get("cert"):
         env_vars["NEXUS_TLS_CERT"] = tls["cert"]
         env_vars["NEXUS_TLS_KEY"] = tls.get("key", "")

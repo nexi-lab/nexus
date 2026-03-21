@@ -587,7 +587,14 @@ class GmailConnector(CLIConnector):
             fi = FileInfo(size=0, mtime=datetime.now(UTC))
         else:
             hid = self._last_history_id or self.get_history_id()
-            fi = FileInfo(size=0, mtime=datetime.now(UTC), backend_version=hid, content_hash=None)
+            # size > 0 and content_hash set so the file isn't mistaken for
+            # a directory (the heuristic: size=0 + no etag = directory).
+            fi = FileInfo(
+                size=1,
+                mtime=datetime.now(UTC),
+                backend_version=hid,
+                content_hash=f"gmail:{path}",
+            )
 
         return SimpleNamespace(success=True, data=fi)
 
@@ -741,7 +748,10 @@ class CalendarConnector(CLIConnector):
 
         from nexus.backends.base.backend import FileInfo
 
-        fi = FileInfo(size=0, mtime=datetime.now(UTC), content_hash=None)
+        if self.is_directory(path, context):
+            fi = FileInfo(size=0, mtime=datetime.now(UTC))
+        else:
+            fi = FileInfo(size=1, mtime=datetime.now(UTC), content_hash=f"cal:{path}")
         return SimpleNamespace(success=True, data=fi)
 
     def is_directory(self, path: str, context: Any = None) -> bool:

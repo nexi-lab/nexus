@@ -801,15 +801,17 @@ class SyncService:
                 else:
                     file_size = self._get_file_size(backend, backend_path, ctx)
 
-                # Issue #1126: etag=None during metadata sync
-                # Content hash is computed later by cache_mixin.sync_content_to_cache() when content is read
-                # This avoids the bug of storing path hash instead of content hash
+                # Use content_hash from file_info as etag when available.
+                # For connector backends this distinguishes files (etag set)
+                # from directories (etag=None, size=0) in the TUI.
+                etag = file_info.content_hash if file_info else None
+
                 meta = FileMetadata(
                     path=virtual_path,
                     backend_name=backend.name,
                     physical_path=backend_path,
                     size=file_size,
-                    etag=None,
+                    etag=etag,
                     created_at=now,
                     modified_at=now,
                     version=1,

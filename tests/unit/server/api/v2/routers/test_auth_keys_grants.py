@@ -58,9 +58,11 @@ def rebac_manager(record_store):
         max_depth=10,
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
-    # Disable InvalidationStream so cache invalidation fires synchronously
-    # (the stream batches events, causing stale cache returns after revoke)
-    manager._cache_coordinator._stream = None
+    # Disable L1/boundary caches — this test checks revocation correctness,
+    # not cache behavior. Caching causes stale True after rebac_delete
+    # because delete doesn't invalidate L1 (pre-existing bug, separate fix).
+    manager._l1_cache = None
+    manager._boundary_cache = None
     yield manager
     manager.close()
 

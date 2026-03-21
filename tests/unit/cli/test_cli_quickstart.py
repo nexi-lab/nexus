@@ -1,15 +1,10 @@
-"""Regression tests for the documented local CLI quickstart.
-
-Note: test_local_cli_quickstart_persists_across_invocations is xfail
-due to redb/PyO3 metastore persistence timing issues (flaky in full suite).
-"""
+"""Regression tests for the documented local CLI quickstart."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import click
-import pytest
 from click.testing import CliRunner
 
 from nexus.cli.commands import LazyCommandGroup, register_all_commands
@@ -17,10 +12,6 @@ from nexus.cli.main import main
 from nexus.raft import zone_manager
 
 
-@pytest.mark.xfail(
-    reason="Metastore persistence across CLI invocations unreliable — flaky in full suite (redb/PyO3 timing)",
-    strict=False,
-)
 def test_local_cli_quickstart_persists_across_invocations(
     tmp_path: Path,
     monkeypatch,

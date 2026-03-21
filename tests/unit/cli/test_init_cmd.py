@@ -238,6 +238,22 @@ class TestBuildConfig:
         assert "nexus" in cfg["services"]
         assert "postgres" in cfg["services"]
 
+
+class TestInitWorkspaceArg:
+    def test_positional_workspace_sets_config_and_data_dir(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        workspace = tmp_path / "demo-workspace"
+
+        result = runner.invoke(init, [str(workspace)])
+
+        assert result.exit_code == 0, result.output
+        cfg = yaml.safe_load((workspace / "nexus.yaml").read_text())
+        assert Path(cfg["data_dir"]) == (workspace / "nexus-data").resolve()
+        assert (workspace / "nexus-data").exists()
+
     def test_channel_override(self) -> None:
         cfg = _build_config("shared", "./data", False, {}, (), channel="edge")
         assert cfg["image_channel"] == "edge"

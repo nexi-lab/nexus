@@ -61,17 +61,7 @@ sys.modules["fuse"] = _fuse_mock
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Mark known-flaky tests as xfail so they don't block CI."""
-    for item in items:
-        if item.nodeid.endswith(
-            "test_cli_quickstart.py::test_local_cli_quickstart_persists_across_invocations"
-        ):
-            item.add_marker(
-                pytest.mark.xfail(
-                    reason="Pre-existing flaky test: local metastore state lost under xdist (develop #2897)",
-                    strict=False,
-                )
-            )
+    """Apply collection-time suite adjustments."""
 
 
 @pytest.fixture(autouse=True)

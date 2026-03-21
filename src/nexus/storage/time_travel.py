@@ -343,13 +343,13 @@ class TimeTravelReader:
 
         if state_1 and state_2:
             content_changed = state_1["content"] != state_2["content"]
-            size_diff = state_2["metadata"]["size"] - state_1["metadata"]["size"]
+            size_diff = len(state_2["content"]) - len(state_1["content"])
         elif state_1 and not state_2:
             # File was deleted
-            size_diff = -state_1["metadata"]["size"]
+            size_diff = -len(state_1["content"])
         elif not state_1 and state_2:
             # File was created
-            size_diff = state_2["metadata"]["size"]
+            size_diff = len(state_2["content"])
         else:
             # File doesn't exist at either point
             content_changed = False

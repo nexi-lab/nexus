@@ -14,6 +14,7 @@ from nexus.bricks.versioning.time_travel_service import TimeTravelService
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
+from nexus.storage.dict_metastore import DictMetastore
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -59,7 +60,10 @@ class TestTimeTravelDebug:
         """
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
+        try:
+            metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
+        except RuntimeError:
+            metadata_store = DictMetastore(data_dir / "raft-metadata.json")
         nx = await create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
@@ -68,6 +72,7 @@ class TestTimeTravelDebug:
         )
         yield nx
         nx.close()
+        metadata_store.close()
 
     @pytest.fixture
     def time_travel(self, record_store, backend):
@@ -201,10 +206,6 @@ class TestTimeTravelDebug:
         assert "/workspace/file2.txt" in paths
         assert "/workspace/file3.txt" in paths
 
-    @pytest.mark.xfail(
-        reason="Pre-existing CAS padding mismatch in size_diff assertion (flaky)",
-        strict=False,
-    )
     @pytest.mark.asyncio
     async def test_time_travel_diff_operations(self, nx, record_store, time_travel):
         """Test diffing file state between two operations."""

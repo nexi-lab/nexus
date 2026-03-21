@@ -73,11 +73,15 @@ def _resolve_runtime_connection(config: dict[str, Any]) -> dict[str, Any]:
     grpc_port = ports.get("grpc", 2028)
     os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
 
+    api_key = conn.get("NEXUS_API_KEY", config.get("api_key", ""))
+    if not api_key:
+        api_key = _resolve_admin_key(config)
+
     return {
         "http_port": ports.get("http", 2026),
         "grpc_port": grpc_port,
         "base_url": conn.get("NEXUS_URL", f"http://localhost:{ports.get('http', 2026)}"),
-        "api_key": conn.get("NEXUS_API_KEY", config.get("api_key", "")),
+        "api_key": api_key,
     }
 
 

@@ -379,6 +379,7 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
 
 
 @click.command(name="init")
+@click.argument("workspace", required=False, type=click.Path())
 @click.option(
     "--preset",
     type=click.Choice(VALID_PRESETS),
@@ -453,6 +454,7 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     help="Explicit image digest (sha256:...). Overrides tag and channel.",
 )
 def init(
+    workspace: str | None,
     preset: str,
     data_dir: str,
     tls: bool,
@@ -482,6 +484,11 @@ def init(
     """
     cfg_path = Path(config_path)
     d_dir = Path(data_dir)
+
+    if workspace is not None:
+        workspace_path = Path(workspace)
+        cfg_path = workspace_path / "nexus.yaml"
+        d_dir = workspace_path / "nexus-data"
 
     # Guard: don't overwrite existing config without --force
     if cfg_path.exists() and not force:

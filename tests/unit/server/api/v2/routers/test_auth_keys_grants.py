@@ -58,6 +58,9 @@ def rebac_manager(record_store):
         max_depth=10,
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
+    # Disable InvalidationStream so cache invalidation fires synchronously
+    # (the stream batches events, causing stale cache returns after revoke)
+    manager._cache_coordinator._stream = None
     yield manager
     manager.close()
 

@@ -381,8 +381,8 @@ class CacheCoordinator:
         self._cache_check_result_cb = None
         self._get_namespace_cb = None
 
-        # Close invalidation stream
-        self._stream = None
+        # Note: don't set _stream = None here — the InvalidationStream may hold
+        # references to Rust objects whose Drop can segfault during teardown.
 
     def invalidate_all(self, zone_id: str | None = None) -> None:
         """Nuclear option: invalidate all caches for a zone (or all zones).

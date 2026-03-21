@@ -343,25 +343,52 @@ class MountService:
     ) -> None:
         """Setup mount point with directory and permissions.
 
+        Creates directory entries for the mount path and all parent
+        directories (e.g., /mnt/gmail creates both /mnt and /mnt/gmail)
+        so the TUI file explorer can navigate to the mount point.
+
         Args:
             mount_point: Virtual path
             context: Operation context
         """
         logger.info(f"Setting up mount point: {mount_point}")
 
-        # Create directory entry
+        # Create directory entries for mount point AND parent directories
+        # via sync metadata_put (gateway.sys_mkdir is async and can't be
+        # called from this sync context).
         if self._gw is not None:
-            try:
-                self._gw.sys_mkdir(mount_point, parents=True, exist_ok=True, context=context)
-                logger.info(f"Created directory entry for mount point: {mount_point}")
-            except Exception as e:
-                logger.warning(f"Failed to create directory entry: {e}")
-        elif self.nexus_fs and hasattr(self.nexus_fs, "sys_mkdir"):
-            try:
-                self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
-                logger.info(f"Created directory entry for mount point: {mount_point}")
-            except Exception as e:
-                logger.warning(f"Failed to create directory entry: {e}")
+            from datetime import UTC, datetime
+
+            from nexus.contracts.metadata import FileMetadata
+            from nexus.lib.context_utils import get_zone_id
+
+            zone_id = get_zone_id(context) if context else "default"
+            created_by = getattr(context, "user_id", None) if context else None
+
+            parts = mount_point.rstrip("/").split("/")
+            for i in range(2, len(parts) + 1):
+                dir_path = "/".join(parts[:i])
+                try:
+                    existing = self._gw.metadata_get(dir_path)
+                    if existing:
+                        continue
+                    now = datetime.now(UTC)
+                    meta = FileMetadata(
+                        path=dir_path,
+                        backend_name="__mount__",
+                        physical_path=dir_path,
+                        size=0,
+                        etag=None,
+                        created_at=now,
+                        modified_at=now,
+                        version=1,
+                        created_by=created_by,
+                        zone_id=zone_id,
+                    )
+                    self._gw.metadata_put(meta)
+                    logger.info(f"Created directory entry: {dir_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to create directory entry {dir_path}: {e}")
 
         # Grant owner permission
         self._grant_owner_permission(mount_point, context)

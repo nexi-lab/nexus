@@ -326,13 +326,13 @@ class DeferredPermissionBuffer:
                 # Re-queue with retry tracking; dead-letter items that exceed max_retries
                 requeue_grants: list[dict[str, Any]] = []
                 for grant in grants_batch:
-                    key: tuple[Any, ...] = (
+                    gkey: tuple[Any, ...] = (
                         grant["subject"],
                         grant["relation"],
                         grant["object"],
                         grant["zone_id"],
                     )
-                    count = self._grants_retry_counts.get(key, 0) + 1
+                    count = self._grants_retry_counts.get(gkey, 0) + 1
                     if count >= self._max_retries:
                         logger.error(
                             f"Grant item dead-lettered after {count} retries: "
@@ -347,14 +347,14 @@ class DeferredPermissionBuffer:
                                     "retries": count,
                                 }
                             )
-                        self._grants_retry_counts.pop(key, None)
+                        self._grants_retry_counts.pop(gkey, None)
                     else:
                         logger.warning(
                             f"Grant flush failed (attempt {count}/{self._max_retries}), "
                             f"re-queueing: subject={grant['subject']}, "
                             f"object={grant['object']}, error={e}"
                         )
-                        self._grants_retry_counts[key] = count
+                        self._grants_retry_counts[gkey] = count
                         requeue_grants.append(grant)
                 if requeue_grants:
                     with self._lock:

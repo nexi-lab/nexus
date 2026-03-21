@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 try:
     from cachebox import TTLCache
 except ImportError:
-    from cachetools import TTLCache  # type: ignore[no-redef]
+    from cachetools import TTLCache  # type: ignore[assignment]
 
 try:
     from fastbloom_rs import BloomFilter
@@ -127,7 +127,7 @@ class DirectoryVisibilityCache:
                 logger.debug(
                     f"[DirVisCache] HIT: {subject_type}:{subject_id} -> {dir_path} = {entry.visible} ({entry.reason})"
                 )
-                return entry.visible
+                return bool(entry.visible)
 
             self._misses += 1
             return None

@@ -867,7 +867,7 @@ class CacheCoordinator:
                 [InvalidationEventType.BOUNDARY],
             )
 
-        for callback_id, callback in self._visibility_invalidators:
+        for vis_id, vis_cb in self._visibility_invalidators:
 
             def _make_visibility_handler(cb: Any) -> Any:
                 def handler(event: Any) -> None:
@@ -877,12 +877,12 @@ class CacheCoordinator:
                 return handler
 
             self._stream.register_consumer(
-                f"visibility:{callback_id}",
-                _make_visibility_handler(callback),
+                f"visibility:{vis_id}",
+                _make_visibility_handler(vis_cb),
                 [InvalidationEventType.VISIBILITY],
             )
 
-        for callback_id, callback in self._namespace_invalidators:
+        for ns_id, ns_cb in self._namespace_invalidators:
 
             def _make_namespace_handler(cb: Any) -> Any:
                 def handler(event: Any) -> None:
@@ -896,8 +896,8 @@ class CacheCoordinator:
                 return handler
 
             self._stream.register_consumer(
-                f"namespace:{callback_id}",
-                _make_namespace_handler(callback),
+                f"namespace:{ns_id}",
+                _make_namespace_handler(ns_cb),
                 [InvalidationEventType.NAMESPACE],
             )
 
@@ -997,7 +997,7 @@ class CacheCoordinator:
                 object_id=object_id,
             )
         else:
-            for callback_id, callback in self._visibility_invalidators:  # type: ignore[assignment]
+            for callback_id, callback in self._visibility_invalidators:
                 try:
                     callback(zone_id, object_id)
                 except Exception:
@@ -1039,7 +1039,7 @@ class CacheCoordinator:
                 subject_id=subject_id,
             )
         else:
-            for callback_id, callback in self._namespace_invalidators:  # type: ignore[assignment]
+            for callback_id, callback in self._namespace_invalidators:
                 try:
                     callback(subject_type, subject_id, zone_id)
                 except Exception:

@@ -1229,8 +1229,10 @@ class TigerCache:
         def run_batch_get() -> dict[CacheKey, tuple[bytes, int] | None]:
             import redis
 
+            url = self._dragonfly_url
+            assert url is not None
             client = redis.from_url(
-                self._dragonfly_url,
+                url,
                 decode_responses=False,
                 socket_timeout=3.0,
                 socket_connect_timeout=2.0,
@@ -1261,7 +1263,8 @@ class TigerCache:
 
         try:
             future = self._l2_executor.submit(run_batch_get)
-            return future.result(timeout=5.0)
+            result: dict[CacheKey, tuple[bytes, int] | None] = future.result(timeout=5.0)
+            return result
         except concurrent.futures.TimeoutError:
             logger.warning("[TIGER] Batch L2 Dragonfly get timed out")
             return dict.fromkeys(keys)

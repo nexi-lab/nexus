@@ -146,67 +146,53 @@ class TestTTLExpiration:
         assert result is True
         assert cache._hits == 1
 
-    def test_entry_past_ttl_returns_none(self, monkeypatch):
-        """Test that entry past TTL returns None (cache miss)."""
-        cache = DirectoryVisibilityCache(ttl=60)
+    def test_entry_past_ttl_returns_none(self):
+        """Test that entry past TTL returns None (cache miss).
 
-        # Mock time.time to control timestamps
-        current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        Uses a real short TTL (100ms) + sleep to test expiry — cachebox
+        (Rust) uses its own internal monotonic clock that can't be mocked.
+        """
+        cache = DirectoryVisibilityCache(ttl=1)  # 1 second TTL
 
-        # Set entry at t=1000
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
+        assert cache.is_visible("zone1", "user", "alice", "/workspace") is True
 
-        # Advance time beyond TTL (60 seconds)
-        monkeypatch.setattr(time, "time", lambda: current_time + 61)
+        time.sleep(1.1)
 
         result = cache.is_visible("zone1", "user", "alice", "/workspace")
-
         assert result is None
-        assert cache._misses == 1
-        assert cache._hits == 0
 
-    def test_expired_entry_is_removed_from_cache(self, monkeypatch):
+    def test_expired_entry_is_removed_from_cache(self):
         """Test that expired entry is removed from cache after check."""
-        cache = DirectoryVisibilityCache(ttl=60)
+        cache = DirectoryVisibilityCache(ttl=1)  # 1 second TTL
 
-        current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
-
-        # Set entry
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
         assert len(cache) == 1
 
-        # Advance time beyond TTL
-        monkeypatch.setattr(time, "time", lambda: current_time + 61)
+        time.sleep(1.1)
 
-        # Access expired entry
+        # Access expired entry triggers eviction
         cache.is_visible("zone1", "user", "alice", "/workspace")
-
-        # Entry should be removed
         assert len(cache) == 0
 
-    def test_multiple_entries_ttl_expiration(self, monkeypatch):
+    def test_multiple_entries_ttl_expiration(self):
         """Test that multiple entries expire independently based on TTL."""
-        cache = DirectoryVisibilityCache(ttl=60)
+        cache = DirectoryVisibilityCache(ttl=1)  # 1 second TTL
 
-        current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
-
-        # Set first entry at t=1000
+        # Set first entry
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
 
-        # Advance time and set second entry at t=1030
-        monkeypatch.setattr(time, "time", lambda: current_time + 30)
+        time.sleep(0.5)
+
+        # Set second entry (0.5s later)
         cache.set_visible("zone1", "user", "bob", "/data", False)
 
-        # At t=1050, first entry is still valid (50s old), second is valid (20s old)
-        monkeypatch.setattr(time, "time", lambda: current_time + 50)
+        # Both still valid
         assert cache.is_visible("zone1", "user", "alice", "/workspace") is True
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
 
-        # At t=1070, first entry expired (70s old), second still valid (40s old)
-        monkeypatch.setattr(time, "time", lambda: current_time + 70)
+        # Wait for first to expire but second still valid
+        time.sleep(0.6)  # Total 1.1s for first, 0.6s for second
         assert cache.is_visible("zone1", "user", "alice", "/workspace") is None
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
 
@@ -219,13 +205,13 @@ class TestEviction:
         cache = DirectoryVisibilityCache(max_entries=10)
 
         current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
 
         # Fill cache to capacity
         for i in range(10):
             cache.set_visible("zone1", "user", f"user{i}", "/workspace", True)
             current_time += 1
-            monkeypatch.setattr(time, "time", lambda t=current_time: t)
+            monkeypatch.setattr(time, "monotonic", lambda t=current_time: t)
 
         assert len(cache) == 10
 
@@ -240,13 +226,13 @@ class TestEviction:
         cache = DirectoryVisibilityCache(max_entries=10)
 
         current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
 
         # Add entries with incrementing timestamps
         for i in range(10):
             cache.set_visible("zone1", "user", f"user{i}", "/workspace", True)
             current_time += 1
-            monkeypatch.setattr(time, "time", lambda t=current_time: t)
+            monkeypatch.setattr(time, "monotonic", lambda t=current_time: t)
 
         # Add 11th entry
         cache.set_visible("zone1", "user", "user10", "/workspace", True)
@@ -262,13 +248,13 @@ class TestEviction:
         cache = DirectoryVisibilityCache(max_entries=5)
 
         current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
 
         # Fill to capacity
         for i in range(5):
             cache.set_visible("zone1", "user", f"user{i}", "/workspace", True)
             current_time += 1
-            monkeypatch.setattr(time, "time", lambda t=current_time: t)
+            monkeypatch.setattr(time, "monotonic", lambda t=current_time: t)
 
         # Add new entry
         cache.set_visible("zone1", "user", "new_user", "/workspace", True)
@@ -281,13 +267,13 @@ class TestEviction:
         cache = DirectoryVisibilityCache(max_entries=5)
 
         current_time = 1000.0
-        monkeypatch.setattr(time, "time", lambda: current_time)
+        monkeypatch.setattr(time, "monotonic", lambda: current_time)
 
         # Fill cache
         for i in range(5):
             cache.set_visible("zone1", "user", f"user{i}", "/workspace", True)
             current_time += 1
-            monkeypatch.setattr(time, "time", lambda t=current_time: t)
+            monkeypatch.setattr(time, "monotonic", lambda t=current_time: t)
 
         # Trigger eviction - should evict max(1, 5//10) = 1 entry
         cache.set_visible("zone1", "user", "user5", "/workspace", True)

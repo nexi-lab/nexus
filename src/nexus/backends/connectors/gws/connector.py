@@ -279,9 +279,14 @@ class GmailConnector(CLIConnector):
   IMPORTANT/                       # Important emails
   DRAFTS/                          # Draft emails
     _new.yaml                      # ✏ Write here to CREATE a draft (reversible)
-  .skill/                          # Skill documentation
-    SKILL.md
-    schemas/                       # Per-operation YAML schemas"""
+
+/skills/gmail/                     # Skill docs (this file + schemas)
+  SKILL.md                         # This document
+  schemas/
+    send_email.yaml                # Schema for sending email
+    reply_email.yaml               # Schema for replying
+    forward_email.yaml             # Schema for forwarding
+    create_draft.yaml              # Schema for drafts"""
 
     # Gmail label folders
     _LABELS = ["INBOX", "SENT", "STARRED", "IMPORTANT", "DRAFTS"]

@@ -299,10 +299,16 @@ async def mount_connector(
         temp_backend = BackendFactory.create(req.connector_type, req.config or {})
         if hasattr(temp_backend, "generate_skill_doc"):
             mp = req.mount_point.rstrip("/")
+            # Extract connector name from mount path (e.g., /mnt/gmail → gmail)
+            connector_name = mp.rsplit("/", 1)[-1]
+            # Write skill docs OUTSIDE the mount path so they're not shadowed
+            # by the connector backend. /skills/{name}/ stays in the Raft
+            # metastore and is always readable by agents and the TUI.
+            skill_base = f"/skills/{connector_name}"
             skill_content = temp_backend.generate_skill_doc(mp)
             if skill_content:
                 await nx.sys_write(
-                    f"{mp}/.skill/SKILL.md",
+                    f"{skill_base}/SKILL.md",
                     skill_content.encode("utf-8"),
                     context=mount_context,
                 )
@@ -314,14 +320,14 @@ async def mount_connector(
                         try:
                             schema_yaml = doc_gen._generate_annotated_schema(op_name, schema_cls)
                             await nx.sys_write(
-                                f"{mp}/.skill/schemas/{op_name}.yaml",
+                                f"{skill_base}/schemas/{op_name}.yaml",
                                 schema_yaml.encode("utf-8"),
                                 context=mount_context,
                             )
                         except Exception:
                             pass
 
-                # Index skill doc into semantic search so agents can find it
+                # Index skill doc into semantic search
                 search_svc = getattr(mount_svc, "_search_service", None)
                 if search_svc:
                     search_daemon = getattr(search_svc, "_search_daemon", None)
@@ -332,9 +338,9 @@ async def mount_connector(
                             await search_daemon.index_documents(
                                 [
                                     {
-                                        "id": f"{mp}/.skill/SKILL.md",
+                                        "id": f"{skill_base}/SKILL.md",
                                         "text": skill_content,
-                                        "path": f"{mp}/.skill/SKILL.md",
+                                        "path": f"{skill_base}/SKILL.md",
                                     }
                                 ],
                                 zone_id=mount_context.zone_id or "default",

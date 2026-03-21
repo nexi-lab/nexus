@@ -228,14 +228,17 @@ async def connect(
         # Single shared RPCTransport (gRPC channel) for all remote proxies.
         from nexus.remote.rpc_transport import RPCTransport
 
-        # TLS auto-discovery (3-tier precedence):
-        #   1. NEXUS_DATA_DIR env var (2-phase bootstrap provisioned certs)
-        #   2. nexus.yaml in CWD (data_dir written by `nexus up`)
-        #   3. NexusConfig.data_dir field
+        # TLS: only use TLS when explicitly requested via:
+        #   1. NEXUS_DATA_DIR env var (2-phase bootstrap)
+        #   2. nexus.yaml tls: true (written by `nexus up` when server uses mTLS)
+        # Do NOT auto-discover from data_dir/tls/ alone — the server may
+        # generate certs but run gRPC insecure (new default on develop).
         _tls_config = None
+        _tls_enabled = False
         _data_dir = os.getenv("NEXUS_DATA_DIR")
+        if _data_dir:
+            _tls_enabled = True  # Explicit env var = TLS intended
         if not _data_dir:
-            # Read data_dir from nexus.yaml in CWD (written by nexus up)
             _project_yaml = Path("nexus.yaml")
             if _project_yaml.exists():
                 try:
@@ -244,12 +247,13 @@ async def connect(
                     with open(_project_yaml) as _f:
                         _project_cfg = _yaml.safe_load(_f) or {}
                     _data_dir = _project_cfg.get("data_dir")
+                    _tls_enabled = bool(_project_cfg.get("tls"))
                 except Exception:
                     pass
         if not _data_dir:
             _data_dir = getattr(cfg, "data_dir", None)
 
-        if _data_dir:
+        if _data_dir and _tls_enabled:
             from nexus.security.tls.config import ZoneTlsConfig
 
             _tls_config = ZoneTlsConfig.from_data_dir(_data_dir)

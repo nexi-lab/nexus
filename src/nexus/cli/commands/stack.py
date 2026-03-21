@@ -666,7 +666,8 @@ def up(
     # and persist them so downstream commands auto-discover mTLS credentials.
     tls_state: dict[str, str] = {}
     tls_dir = Path(data_dir) / "tls"
-    if tls_dir.exists():
+    # Only persist TLS config when the server is configured to use mTLS.
+    if config.get("tls") and tls_dir.exists():
         # Raft-style certs
         if (tls_dir / "ca.pem").exists():
             tls_state = {

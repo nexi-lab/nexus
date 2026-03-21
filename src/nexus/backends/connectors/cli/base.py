@@ -360,8 +360,8 @@ class CLIConnector(
                 created_state={"cli_output": result.stdout[:1000]},
             )
 
-        content_hash = hashlib.sha256(result.stdout.encode()).hexdigest()
-        return WriteResult(content_hash, len(content))
+        content_id = hashlib.sha256(result.stdout.encode()).hexdigest()
+        return WriteResult(content_id=content_id, size=len(content))
 
     def _resolve_operation(self, path: str) -> str | None:
         """Map a backend_path to an operation name.

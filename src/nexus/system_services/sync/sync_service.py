@@ -839,7 +839,30 @@ class SyncService:
             except Exception as e:
                 result.errors.append(f"Failed to add {virtual_path}: {e}")
         else:
-            # File exists - check if it needs updating (for existing files)
+            # File exists — update metadata if stale (e.g., missing etag/size
+            # from before the connector file-type fix).
+            if file_info and (not existing_meta.etag or existing_meta.size == 0):
+                try:
+                    etag = file_info.content_hash if file_info else None
+                    file_size = file_info.size if file_info and file_info.size else 1
+                    now = datetime.now(UTC)
+                    updated = FileMetadata(
+                        path=virtual_path,
+                        backend_name=existing_meta.backend_name,
+                        physical_path=existing_meta.physical_path,
+                        size=file_size,
+                        etag=etag,
+                        created_at=existing_meta.created_at or now,
+                        modified_at=now,
+                        version=(existing_meta.version or 0) + 1,
+                        created_by=existing_meta.created_by,
+                        zone_id=existing_meta.zone_id,
+                    )
+                    self._gw.metadata_put(updated)
+                    result.files_updated += 1
+                except Exception:
+                    pass
+
             # Issue #1127: Update change log even for existing files
             if file_info:
                 self._enqueue_change_log_upsert(

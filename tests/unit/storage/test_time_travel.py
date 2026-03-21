@@ -19,6 +19,12 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
+async def _flush(nx) -> None:
+    """Flush async write observer so operation_log is up to date."""
+    if nx._flush_write_observer_fn:
+        await nx._flush_write_observer_fn()
+
+
 class TestTimeTravelDebug:
     """Test time-travel debugging for reading files at historical operation points."""
 
@@ -80,6 +86,7 @@ class TestTimeTravelDebug:
         await nx.sys_write(path, b"Version 1")
         await nx.sys_write(path, b"Version 2")
         await nx.sys_write(path, b"Version 3")
+        await _flush(nx)
 
         # Get all operations (most recent first)
         with record_store.session_factory() as session:
@@ -112,6 +119,7 @@ class TestTimeTravelDebug:
 
         # Write file
         await nx.sys_write(path, b"Content before delete")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -124,6 +132,7 @@ class TestTimeTravelDebug:
         # Delete file — hold extra CAS reference so blob survives unlink
         backend.write_content(b"Content before delete")
         await nx.sys_unlink(path)
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -146,6 +155,7 @@ class TestTimeTravelDebug:
         """Test listing directory at historical operation point."""
         # Create multiple files
         await nx.sys_write("/workspace/file1.txt", b"File 1")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -156,6 +166,7 @@ class TestTimeTravelDebug:
 
         # Add more files
         await nx.sys_write("/workspace/file2.txt", b"File 2")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -163,6 +174,7 @@ class TestTimeTravelDebug:
             op_2 = ops_2[0].operation_id
 
         await nx.sys_write("/workspace/file3.txt", b"File 3")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -200,6 +212,7 @@ class TestTimeTravelDebug:
 
         # Write version 1
         await nx.sys_write(path, b"Hello World")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -208,6 +221,7 @@ class TestTimeTravelDebug:
 
         # Write version 2 (changed content)
         await nx.sys_write(path, b"Hello World - Updated!")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -229,6 +243,7 @@ class TestTimeTravelDebug:
         """Test diff when file was created between operations."""
         # Create a baseline operation
         await nx.sys_write("/workspace/baseline.txt", b"Baseline")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -238,6 +253,7 @@ class TestTimeTravelDebug:
         # Now create the target file
         path = "/workspace/new_file.txt"
         await nx.sys_write(path, b"New content")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -260,6 +276,7 @@ class TestTimeTravelDebug:
 
         # Create file
         await nx.sys_write(path, b"Will be deleted")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -269,6 +286,7 @@ class TestTimeTravelDebug:
         # Delete file -- hold extra CAS reference so blob survives unlink
         backend.write_content(b"Will be deleted")
         await nx.sys_unlink(path)
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -294,6 +312,7 @@ class TestTimeTravelDebug:
 
         path = "/workspace/agent_file.txt"
         await nx.sys_write(path, b"Agent 1 content", context=context)
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)
@@ -323,6 +342,7 @@ class TestTimeTravelDebug:
 
         # Write file
         await nx.sys_write(path, b"Content")
+        await _flush(nx)
 
         # Set permissions using ReBAC (v0.6.0+)
         nx.service("rebac").rebac_create_sync(
@@ -331,6 +351,7 @@ class TestTimeTravelDebug:
 
         # Write again to create a new version
         await nx.sys_write(path, b"Updated content")
+        await _flush(nx)
 
         with record_store.session_factory() as session:
             logger = OperationLogger(session)

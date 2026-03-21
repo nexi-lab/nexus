@@ -33,6 +33,101 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class SyncAuditWriteInterceptor:
+    """Sync VFS interceptor: call RecordStoreWriteObserver methods directly.
+
+    Used when the write observer is the synchronous RecordStoreWriteObserver
+    (SQLite mode, ``enable_write_buffer=False``).  Unlike the async
+    ``AuditWriteInterceptor`` which serializes events to a DT_PIPE for the
+    piped consumer, this hook calls ``on_write`` / ``on_delete`` /
+    ``on_rename`` / ``on_mkdir`` / ``on_rmdir`` inline, matching the
+    pre-#1772 kernel behaviour.
+
+    Registered as a **sync** POST hook because all ``on_post_*`` methods are
+    plain ``def`` (not ``async def``).  The Rust HookRegistry dispatches them
+    serially before async hooks.
+    """
+
+    name = "audit_write_observer"
+
+    __slots__ = ("_observer", "_strict_mode")
+
+    # ── HotSwappable protocol ──────────────────────────────────────────
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(
+            write_hooks=(self,),
+            write_batch_hooks=(self,),
+            delete_hooks=(self,),
+            rename_hooks=(self,),
+            mkdir_hooks=(self,),
+            rmdir_hooks=(self,),
+        )
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
+
+    def __init__(self, observer: Any, *, strict_mode: bool = True) -> None:
+        self._observer = observer
+        self._strict_mode = strict_mode
+
+    # ── Sync POST hooks (called by KernelDispatch serial path) ─────────
+
+    def on_post_write(self, ctx: "WriteHookContext") -> None:
+        self._observer.on_write(
+            ctx.metadata,
+            is_new=ctx.is_new_file,
+            path=ctx.path,
+            old_metadata=ctx.old_metadata,
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+        )
+
+    def on_post_write_batch(self, ctx: "WriteBatchHookContext") -> None:
+        self._observer.on_write_batch(
+            ctx.items,
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+        )
+
+    def on_post_delete(self, ctx: "DeleteHookContext") -> None:
+        self._observer.on_delete(
+            path=ctx.path,
+            metadata=ctx.metadata,
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+        )
+
+    def on_post_rename(self, ctx: "RenameHookContext") -> None:
+        self._observer.on_rename(
+            old_path=ctx.old_path,
+            new_path=ctx.new_path,
+            metadata=ctx.metadata,
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+        )
+
+    def on_post_mkdir(self, ctx: "MkdirHookContext") -> None:
+        self._observer.on_mkdir(
+            path=ctx.path,
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+        )
+
+    def on_post_rmdir(self, ctx: "RmdirHookContext") -> None:
+        self._observer.on_rmdir(
+            path=ctx.path,
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+            recursive=ctx.recursive,
+        )
+
+
 class AuditWriteInterceptor:
     """Async VFS interceptor: serialize mutation events → sys_write to pipe.
 

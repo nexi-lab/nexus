@@ -117,6 +117,12 @@ class TestVersionGCSettings:
         assert "max_versions=50" in repr_str
 
 
+async def _flush(nx) -> None:
+    """Flush async write observer so version_history is up to date."""
+    if nx._flush_write_observer_fn:
+        await nx._flush_write_observer_fn()
+
+
 class TestVersionHistoryGC:
     """Test VersionHistoryGC garbage collector."""
 
@@ -163,6 +169,7 @@ class TestVersionHistoryGC:
         # Create multiple versions
         for i in range(5):
             await nx.sys_write(path, f"Version {i + 1}".encode())
+        await _flush(nx)
 
         # Run GC with very aggressive settings (0 retention, 1 max version)
         gc = VersionHistoryGC(record_store)
@@ -188,6 +195,7 @@ class TestVersionHistoryGC:
         # Create multiple versions
         for i in range(3):
             await nx.sys_write(path, f"Version {i + 1}".encode())
+        await _flush(nx)
 
         # Get initial version count
         with record_store.session_factory() as session:
@@ -217,6 +225,7 @@ class TestVersionHistoryGC:
         # Create 10 versions
         for i in range(10):
             await nx.sys_write(path, f"Version {i + 1}".encode())
+        await _flush(nx)
 
         # Get the resource_id (path_id) for this file
         with record_store.session_factory() as session:
@@ -261,6 +270,7 @@ class TestVersionHistoryGC:
         # Create a file
         path = "/workspace/stats_test.txt"
         await nx.sys_write(path, b"Content")
+        await _flush(nx)
 
         gc = VersionHistoryGC(record_store)
         table_stats = gc.get_stats()
@@ -282,6 +292,7 @@ class TestVersionHistoryGC:
             path = f"/workspace/file{file_num}.txt"
             for version in range(5):
                 await nx.sys_write(path, f"File {file_num} Version {version}".encode())
+        await _flush(nx)
 
         # Run GC with max 2 versions
         gc = VersionHistoryGC(record_store)
@@ -307,6 +318,7 @@ class TestVersionHistoryGC:
         path = "/workspace/override_test.txt"
         for i in range(5):
             await nx.sys_write(path, f"V{i}".encode())
+        await _flush(nx)
 
         gc = VersionHistoryGC(record_store)
         default_config = VersionGCSettings(

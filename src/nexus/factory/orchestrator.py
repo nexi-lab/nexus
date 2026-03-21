@@ -452,15 +452,23 @@ async def _register_vfs_hooks(
         )
         await _enlist("permission", _perm_hook)
 
-    # ── Audit write interceptor → sys_write to DT_PIPE (Issue #900, #1772) ──
-    # Async POST hook: serializes mutations → pipe. Consumer is PipedRecordStoreWriteObserver.
+    # ── Audit write interceptor (Issue #900, #1772) ──
+    # Piped observer → async AuditWriteInterceptor serializes mutations → DT_PIPE.
+    # Sync observer  → sync SyncAuditWriteInterceptor calls on_write() directly.
     write_observer = getattr(system_services, "write_observer", None) if system_services else None
     if write_observer is not None:
-        from nexus.storage.piped_record_store_write_observer import _AUDIT_PIPE_PATH
-        from nexus.storage.write_observer_hooks import AuditWriteInterceptor
+        from nexus.storage.piped_record_store_write_observer import PipedRecordStoreWriteObserver
 
         strict = getattr(write_observer, "_strict_mode", True)
-        audit = AuditWriteInterceptor(nx, _AUDIT_PIPE_PATH, strict_mode=strict)
+        if isinstance(write_observer, PipedRecordStoreWriteObserver):
+            from nexus.storage.piped_record_store_write_observer import _AUDIT_PIPE_PATH
+            from nexus.storage.write_observer_hooks import AuditWriteInterceptor
+
+            audit = AuditWriteInterceptor(nx, _AUDIT_PIPE_PATH, strict_mode=strict)
+        else:
+            from nexus.storage.write_observer_hooks import SyncAuditWriteInterceptor
+
+            audit = SyncAuditWriteInterceptor(write_observer, strict_mode=strict)
         await _enlist("audit", audit)
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)

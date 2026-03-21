@@ -35,7 +35,7 @@ class TestHotSwappableConformance:
     def test_audit_interceptor(self) -> None:
         from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
-        hook = AuditWriteInterceptor(observer=MagicMock())
+        hook = AuditWriteInterceptor(nx=MagicMock(), pipe_path="/nexus/pipes/audit")
         assert isinstance(hook, HotSwappable)
 
     def test_dynamic_viewer_hook(self) -> None:
@@ -128,7 +128,7 @@ class TestHookSpecDeclarations:
     def test_audit_6_channels(self) -> None:
         from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
-        hook = AuditWriteInterceptor(observer=MagicMock())
+        hook = AuditWriteInterceptor(nx=MagicMock(), pipe_path="/nexus/pipes/audit")
         spec = hook.hook_spec()
         assert spec.write_hooks == (hook,)
         assert spec.write_batch_hooks == (hook,)
@@ -240,7 +240,7 @@ class TestDrainActivate:
     async def test_audit_interceptor_lifecycle(self) -> None:
         from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
-        hook = AuditWriteInterceptor(observer=MagicMock())
+        hook = AuditWriteInterceptor(nx=MagicMock(), pipe_path="/nexus/pipes/audit")
         await hook.drain()
         await hook.activate()
 

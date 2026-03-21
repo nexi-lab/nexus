@@ -310,10 +310,12 @@ class PipedRecordStoreWriteObserver:
     async def _consume(self) -> None:
         """Background consumer: read from pipe via sys_read, batch, flush."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
+        from nexus.core.pipe import PipeClosedError, PipeEmptyError
 
         assert self._nx is not None
 
         nx = self._nx
+        pm = nx._pipe_manager
         while True:
             # Block until first event arrives
             try:
@@ -322,14 +324,17 @@ class PipedRecordStoreWriteObserver:
                 logger.debug("Audit pipe closed, consumer exiting")
                 break
 
-            # Drain available events for batching (non-blocking via fast-path)
+            # Drain available events for batching (non-blocking read_nowait)
             batch: list[dict[str, Any]] = [json.loads(first)]
-            for _ in range(_MAX_BATCH_DRAIN - 1):
-                try:
-                    data = await nx.sys_read(_AUDIT_PIPE_PATH)
-                    batch.append(json.loads(data))
-                except (NexusFileNotFoundError, Exception):
-                    break
+            if pm is not None:
+                buf = pm._buffers.get(_AUDIT_PIPE_PATH)
+                if buf is not None:
+                    for _ in range(_MAX_BATCH_DRAIN - 1):
+                        try:
+                            data = buf.read_nowait()
+                            batch.append(json.loads(data))
+                        except (PipeEmptyError, PipeClosedError, Exception):
+                            break
 
             await self._flush_batch(batch)
 

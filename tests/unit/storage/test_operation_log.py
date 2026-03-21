@@ -14,6 +14,12 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
+async def _flush(nx) -> None:
+    """Flush async write observer so operation_log rows are visible."""
+    if nx._flush_write_observer_fn:
+        await nx._flush_write_observer_fn()
+
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
@@ -59,6 +65,7 @@ async def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecor
 
     # Write file
     await nx.sys_write(path, content)
+    await _flush(nx)
 
     # Check operation log
     with record_store.session_factory() as session:
@@ -88,6 +95,7 @@ async def test_write_update_operation_logged(
 
     # Update file
     await nx.sys_write(path, content2)
+    await _flush(nx)
 
     # Check operation log
     with record_store.session_factory() as session:
@@ -120,6 +128,7 @@ async def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
     result = await nx.write(path, content)
     content_hash = result["etag"]
     await nx.sys_unlink(path)
+    await _flush(nx)
 
     # Check operation log
     with record_store.session_factory() as session:
@@ -154,6 +163,7 @@ async def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
     # Write and then rename
     await nx.sys_write(old_path, content)
     await nx.sys_rename(old_path, new_path)
+    await _flush(nx)
 
     # Check operation log — two-row rename pattern (Issue #2929)
     with record_store.session_factory() as session:
@@ -188,6 +198,7 @@ async def test_operation_log_filtering_by_agent(
 
     context2 = OperationContext(user_id="test", groups=[], agent_id="agent-2")
     await nx.sys_write("/file2.txt", b"Content 2", context=context2)
+    await _flush(nx)
 
     # Check operation log filtering
     with record_store.session_factory() as session:
@@ -216,6 +227,7 @@ async def test_operation_log_filtering_by_type(
     await nx.sys_write(path, b"Updated")
     await nx.sys_rename(path, "/renamed.txt")
     await nx.sys_unlink("/renamed.txt")
+    await _flush(nx)
 
     # Check operation log filtering
     with record_store.session_factory() as session:
@@ -246,6 +258,7 @@ async def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore
     await nx.sys_write(path, b"Version 1")
     await nx.sys_write(path, b"Version 2")
     await nx.sys_write(path, b"Version 3")
+    await _flush(nx)
 
     # Check path history
     with record_store.session_factory() as session:
@@ -263,6 +276,7 @@ async def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordSto
     # Perform operations
     await nx.sys_write("/file1.txt", b"Content 1")
     await nx.sys_write("/file2.txt", b"Content 2")
+    await _flush(nx)
 
     # Get last operation
     with record_store.session_factory() as session:
@@ -304,6 +318,7 @@ async def test_undo_write_update(
 
     # Update file
     await nx.sys_write(path, content2)
+    await _flush(nx)
 
     # Get the update operation
     with record_store.session_factory() as session:
@@ -336,6 +351,7 @@ async def test_undo_delete(
     content_hash = result["etag"]
     local_backend.write_content(content)  # Hold extra CAS reference so blob survives unlink
     await nx.sys_unlink(path)
+    await _flush(nx)
     assert not await nx.sys_access(path)
 
     # Get delete operation
@@ -370,6 +386,7 @@ async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
     # Write and rename
     await nx.sys_write(old_path, content)
     await nx.sys_rename(old_path, new_path)
+    await _flush(nx)
     assert not await nx.sys_access(old_path)
     assert await nx.sys_access(new_path)
 

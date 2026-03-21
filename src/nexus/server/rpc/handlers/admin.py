@@ -63,7 +63,7 @@ def _create_grants_for_key(
     if record_store is None:
         raise RuntimeError("Cannot create grants: record_store not available")
 
-    manager = ReBACManager(engine=record_store.engine, cache_ttl_seconds=0, max_depth=5)
+    manager = ReBACManager(engine=record_store.engine, cache_ttl_seconds=1, max_depth=5)
     try:
         tuples: list[dict[str, Any]] = []
         created: list[dict[str, str]] = []

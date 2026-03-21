@@ -472,8 +472,10 @@ class RaftMetadataStore(MetastoreABC):
             self._engine.flush()
         # ZoneHandle: no explicit teardown needed (managed by ZoneManager)
 
-        # Release the Rust object → triggers Drop → releases redb file lock
-        del self._engine
+        # Release the Rust object → triggers Drop → releases redb file lock.
+        # Set to None instead of del — other code may still reference _engine
+        # after close (e.g. __del__, gc finalizers).
+        self._engine = None
 
     # =========================================================================
     # Zone-level reserved keys (federation ref counting)

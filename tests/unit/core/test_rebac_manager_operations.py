@@ -41,9 +41,17 @@ pytestmark = pytest.mark.xdist_group(name="rebac_sqlite")
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
-    """Create a temporary directory for tests."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+    """Create a temporary directory for tests.
+
+    Uses manual cleanup with retry — redb (Raft metadata store) may hold
+    file locks briefly after close(), causing TemporaryDirectory rmtree
+    to fail with 'Directory not empty' on Linux CI.
+    """
+    import shutil
+
+    tmpdir = tempfile.mkdtemp()
+    yield Path(tmpdir)
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @pytest.fixture

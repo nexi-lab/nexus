@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
     from nexus.bricks.rebac.hierarchy_manager import HierarchyManager
     from nexus.bricks.rebac.rebac_manager import ReBACManager
 
@@ -46,6 +47,7 @@ class DeferredPermissionBuffer:
         hierarchy_manager: "HierarchyManager | None" = None,
         flush_interval_sec: float = 0.1,  # 100ms default
         max_batch_size: int = 1000,
+        max_retries: int = 3,
     ):
         """Initialize the deferred permission buffer.
 
@@ -54,16 +56,29 @@ class DeferredPermissionBuffer:
             hierarchy_manager: HierarchyManager for batch hierarchy tuple creation
             flush_interval_sec: How often to flush pending operations (default 100ms)
             max_batch_size: Trigger immediate flush if queue exceeds this size
+            max_retries: Max retry attempts before dead-lettering a failed item
         """
         self._rebac_manager = rebac_manager
         self._hierarchy_manager = hierarchy_manager
         self._flush_interval = flush_interval_sec
         self._max_batch_size = max_batch_size
+        self._max_retries = max_retries
 
         # Pending operations (thread-safe with lock)
         self._pending_hierarchy: deque[tuple[str, str]] = deque()  # (path, zone_id)
         self._pending_grants: deque[dict[str, Any]] = deque()
         self._lock = threading.Lock()
+
+        # Retry tracking: maps (path, zone_id) -> attempt count for hierarchy,
+        # and (subject, relation, object, zone_id) -> attempt count for grants
+        self._hierarchy_retry_counts: dict[tuple[str, str], int] = {}
+        self._grants_retry_counts: dict[tuple[Any, ...], int] = {}
+
+        # Dead letter queue for permanently failed items
+        self._dead_letter: list[dict[str, Any]] = []
+
+        # Pub/Sub for cross-zone flush coordination (Issue #3192)
+        self._pubsub: "PubSubInvalidation | None" = None
 
         # Background flush thread
         self._flush_thread: threading.Thread | None = None
@@ -122,6 +137,10 @@ class DeferredPermissionBuffer:
             f"grants={self._total_grants_flushed}, "
             f"flushes={self._flush_count}"
         )
+
+    def set_pubsub(self, pubsub: "PubSubInvalidation") -> None:
+        """Set Pub/Sub for cross-zone flush coordination."""
+        self._pubsub = pubsub
 
     def queue_hierarchy(self, path: str, zone_id: str) -> None:
         """Queue hierarchy tuple creation (non-blocking).
@@ -190,7 +209,17 @@ class DeferredPermissionBuffer:
             "total_hierarchy_flushed": self._total_hierarchy_flushed,
             "total_grants_flushed": self._total_grants_flushed,
             "flush_count": self._flush_count,
+            "dead_letter_count": len(self._dead_letter),
         }
+
+    def get_dead_letter(self) -> list[dict[str, Any]]:
+        """Return a copy of the dead-letter queue for inspection.
+
+        Returns:
+            List of dicts, each containing 'type', 'item', 'error', and 'retries'.
+        """
+        with self._lock:
+            return list(self._dead_letter)
 
     def _trigger_flush(self) -> None:
         """Trigger an immediate flush (called when batch size exceeded)."""
@@ -232,8 +261,8 @@ class DeferredPermissionBuffer:
             try:
                 # Group by zone_id
                 by_zone: dict[str, list[str]] = {}
-                for path, zone_id in hierarchy_batch:
-                    by_zone.setdefault(zone_id, []).append(path)
+                for _path, zone_id in hierarchy_batch:
+                    by_zone.setdefault(zone_id, []).append(_path)
 
                 for zone_id, paths in by_zone.items():
                     self._hierarchy_manager.ensure_parent_tuples_batch(
@@ -243,11 +272,40 @@ class DeferredPermissionBuffer:
                     hierarchy_count += len(paths)
 
                 self._total_hierarchy_flushed += hierarchy_count
+                # Clear retry counts for successfully flushed items
+                for item in hierarchy_batch:
+                    self._hierarchy_retry_counts.pop(item, None)
             except (OperationalError, TimeoutError, RuntimeError) as e:
-                logger.warning(f"Hierarchy flush failed, re-queueing: {e}")
-                # Re-queue on failure
-                with self._lock:
-                    self._pending_hierarchy.extend(hierarchy_batch)
+                # Re-queue with retry tracking; dead-letter items that exceed max_retries
+                requeue: list[tuple[str, str]] = []
+                for item in hierarchy_batch:
+                    key = item  # (path, zone_id)
+                    count = self._hierarchy_retry_counts.get(key, 0) + 1
+                    if count >= self._max_retries:
+                        logger.error(
+                            f"Hierarchy item dead-lettered after {count} retries: "
+                            f"path={item[0]}, zone={item[1]}, error={e}"
+                        )
+                        with self._lock:
+                            self._dead_letter.append(
+                                {
+                                    "type": "hierarchy",
+                                    "item": {"path": item[0], "zone_id": item[1]},
+                                    "error": str(e),
+                                    "retries": count,
+                                }
+                            )
+                        self._hierarchy_retry_counts.pop(key, None)
+                    else:
+                        logger.warning(
+                            f"Hierarchy flush failed (attempt {count}/{self._max_retries}), "
+                            f"re-queueing: path={item[0]}, zone={item[1]}, error={e}"
+                        )
+                        self._hierarchy_retry_counts[key] = count
+                        requeue.append(item)
+                if requeue:
+                    with self._lock:
+                        self._pending_hierarchy.extend(requeue)
 
         # Batch owner grants
         if grants_batch and self._rebac_manager:
@@ -255,11 +313,52 @@ class DeferredPermissionBuffer:
                 self._rebac_manager.rebac_write_batch(grants_batch)
                 grants_count = len(grants_batch)
                 self._total_grants_flushed += grants_count
+                # Clear retry counts for successfully flushed items
+                for grant in grants_batch:
+                    gkey = (
+                        grant["subject"],
+                        grant["relation"],
+                        grant["object"],
+                        grant["zone_id"],
+                    )
+                    self._grants_retry_counts.pop(gkey, None)
             except (OperationalError, TimeoutError, RuntimeError) as e:
-                logger.warning(f"Grant flush failed, re-queueing: {e}")
-                # Re-queue on failure
-                with self._lock:
-                    self._pending_grants.extend(grants_batch)
+                # Re-queue with retry tracking; dead-letter items that exceed max_retries
+                requeue_grants: list[dict[str, Any]] = []
+                for grant in grants_batch:
+                    gkey = (
+                        grant["subject"],
+                        grant["relation"],
+                        grant["object"],
+                        grant["zone_id"],
+                    )
+                    count = self._grants_retry_counts.get(gkey, 0) + 1
+                    if count >= self._max_retries:
+                        logger.error(
+                            f"Grant item dead-lettered after {count} retries: "
+                            f"subject={grant['subject']}, object={grant['object']}, error={e}"
+                        )
+                        with self._lock:
+                            self._dead_letter.append(
+                                {
+                                    "type": "grant",
+                                    "item": grant,
+                                    "error": str(e),
+                                    "retries": count,
+                                }
+                            )
+                        self._grants_retry_counts.pop(gkey, None)
+                    else:
+                        logger.warning(
+                            f"Grant flush failed (attempt {count}/{self._max_retries}), "
+                            f"re-queueing: subject={grant['subject']}, "
+                            f"object={grant['object']}, error={e}"
+                        )
+                        self._grants_retry_counts[gkey] = count
+                        requeue_grants.append(grant)
+                if requeue_grants:
+                    with self._lock:
+                        self._pending_grants.extend(requeue_grants)
 
         if hierarchy_count > 0 or grants_count > 0:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -268,6 +367,24 @@ class DeferredPermissionBuffer:
                 f"[DEFERRED-FLUSH] hierarchy={hierarchy_count}, "
                 f"grants={grants_count}, elapsed={elapsed_ms:.1f}ms"
             )
+
+            # Pub/Sub: notify other zones about flushed permissions (Issue #3192)
+            if self._pubsub:
+                zones_flushed = set()
+                for _path, zone_id in hierarchy_batch:
+                    zones_flushed.add(zone_id)
+                for grant in grants_batch:
+                    zones_flushed.add(grant.get("zone_id", ""))
+                for zone_id in zones_flushed:
+                    if zone_id:
+                        self._pubsub.publish_invalidation(
+                            zone_id=zone_id,
+                            layer="deferred_flush",
+                            payload={
+                                "hierarchy_count": hierarchy_count,
+                                "grants_count": grants_count,
+                            },
+                        )
 
 
 # Singleton instance for easy access

@@ -90,7 +90,21 @@ class FederatedMetadataProxy(MetastoreABC):
     # Path remapping helpers
     # =========================================================================
 
+    # Internal path prefixes that bypass zone resolution (stored in root zone only).
+    _INTERNAL_PREFIXES = ("ns:", "mnt:", "/_internal/")
+
     def _resolve(self, path: str) -> "ResolvedPath":
+        # Internal paths (namespace configs, mount configs) stay in root zone
+        # without going through zone path resolution. (Issue #3192)
+        if any(path.startswith(p) for p in self._INTERNAL_PREFIXES):
+            from nexus.raft.zone_path_resolver import ResolvedPath
+
+            return ResolvedPath(
+                store=self._root_store,
+                zone_id=getattr(self._root_store, "_zone_id", "root"),
+                path=path,
+                mount_chain=[],
+            )
         return self._resolver.resolve(path)
 
     @staticmethod

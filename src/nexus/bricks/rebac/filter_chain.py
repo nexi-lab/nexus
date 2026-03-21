@@ -12,10 +12,11 @@ The chain short-circuits once all paths are resolved.
 """
 
 import logging
-import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
+
+from nexus.bricks.rebac.cache.path_trie import PathTrie
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.enforcer_cache import PermissionCacheCoordinator
@@ -112,11 +113,8 @@ class HierarchyPreFilterStrategy:
             # Not worth the overhead for small sets
             return FilterResult(allowed=[], remaining=remaining)
 
-        # Group paths by their immediate parent directory
-        paths_by_parent: dict[str, list[str]] = defaultdict(list)
-        for p in remaining:
-            parent = os.path.dirname(p) or "/"
-            paths_by_parent[parent].append(p)
+        # Group paths by immediate parent via PathTrie (Issue #3192)
+        paths_by_parent = self._group_paths_by_ancestor(remaining)
 
         unique_parents = list(paths_by_parent.keys())
 
@@ -171,6 +169,24 @@ class HierarchyPreFilterStrategy:
             return FilterResult(allowed=[], remaining=kept)
 
         return FilterResult(allowed=[], remaining=remaining)
+
+    def _group_paths_by_ancestor(self, paths: list[str]) -> dict[str, list[str]]:
+        """Group paths by immediate parent directory.
+
+        Uses PathTrie.get_ancestors() for O(depth) parent lookup instead
+        of os.path.dirname() string operations.
+        """
+        trie = PathTrie()
+        for p in paths:
+            trie.insert(p)
+
+        groups: dict[str, list[str]] = defaultdict(list)
+        for p in paths:
+            ancestors = trie.get_ancestors(p)
+            # get_ancestors returns [immediate_parent, ..., "/"]
+            parent = ancestors[0] if ancestors else "/"
+            groups[parent].append(p)
+        return dict(groups)
 
     def _top_level_prune(
         self,

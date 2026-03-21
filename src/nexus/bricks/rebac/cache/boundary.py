@@ -34,7 +34,11 @@ import os
 import threading
 from typing import Any
 
-from cachetools import TTLCache
+# Issue #3192: Rust-backed TTLCache for lock-free cache internals
+try:
+    from cachebox import TTLCache
+except ImportError:
+    from cachetools import TTLCache  # type: ignore[assignment]
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 

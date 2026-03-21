@@ -368,7 +368,62 @@ class ReBACManager:
             cache_ttl_seconds=self.cache_ttl_seconds,
             get_tuple_version=lambda: self._tuple_version,
             set_tuple_version=lambda v: setattr(self, "_tuple_version", v),
+            # Issue #3192: DT_STREAM + Pub/Sub
+            invalidation_stream=self._create_invalidation_stream(),
+            pubsub=self._create_pubsub(),
         )
+
+        # Issue #3192: Wire SharedRingBuffer for cross-process revision broadcasting
+        self._wire_shared_ring_buffer()
+
+    def _create_invalidation_stream(self) -> Any:
+        """Create the DT_STREAM for ordered intra-zone invalidation."""
+        from nexus.bricks.rebac.cache.invalidation_stream import InvalidationStream
+
+        return InvalidationStream()
+
+    def _create_pubsub(self) -> Any:
+        """Create the Pub/Sub for cross-zone invalidation hints."""
+        from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
+
+        return PubSubInvalidation()
+
+    def _wire_shared_ring_buffer(self) -> None:
+        """Create and inject SharedRingBuffers for cross-process IPC (Issue #3192).
+
+        Uses separate buffers for each message type to avoid multiplexing
+        incompatible schemas. Each buffer is SPSC: one producer per process,
+        one consumer per process. Multi-process safety is achieved by using
+        unique buffer names per process (PID suffix).
+        """
+        try:
+            import os
+
+            from nexus.bricks.rebac.cache.shared_ring_buffer import SharedRingBuffer
+
+            pid = os.getpid()
+
+            # Separate buffer for zone graph tuple notifications
+            if self._zone_loader is not None:
+                zone_ring = SharedRingBuffer(
+                    name=f"rebac-zone-tuples-{pid}",
+                    entry_size=256,
+                    capacity=1024,
+                ).open_producer()
+                self._zone_loader.set_ring_buffer(zone_ring)
+
+            # Separate buffer for revision sequence broadcasting
+            if self._l1_cache is not None:
+                rev_ring = SharedRingBuffer(
+                    name=f"rebac-revisions-{pid}",
+                    entry_size=128,
+                    capacity=1024,
+                ).open_producer()
+                self._l1_cache.set_revision_ring_buffer(rev_ring)
+
+            logger.info("[RING-BUFFER] SharedRingBuffers wired (pid=%d)", pid)
+        except Exception as e:
+            logger.debug("[RING-BUFFER] SharedRingBuffer not available: %s", e)
 
     def rebac_check(
         self,
@@ -1893,6 +1948,7 @@ class ReBACManager:
             namespace = self.get_namespace(obj_type)
             if namespace:
                 configs[obj_type] = namespace.config
+
         return configs
 
     def _compute_permission_zone_aware_with_limits(
@@ -2582,7 +2638,22 @@ class ReBACManager:
 
     def _increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
         """Increment and return the new revision. Delegates to TupleRepository (Issue #1459)."""
-        return self._repo.increment_zone_revision(zone_id, conn)
+        new_rev = self._repo.increment_zone_revision(zone_id, conn)
+
+        # Issue #3192: Broadcast revision via SharedRingBuffer
+        if self._l1_cache is not None:
+            ring = getattr(self._l1_cache, "_revision_ring_buffer", None)
+            if ring is not None:
+                try:
+                    import json
+
+                    ring.write(
+                        json.dumps({"zone_id": zone_id or "root", "revision": new_rev}).encode()
+                    )
+                except Exception:
+                    pass  # best-effort broadcast
+
+        return new_rev
 
     @contextmanager
     def _connection(self, *, readonly: bool = False) -> Any:

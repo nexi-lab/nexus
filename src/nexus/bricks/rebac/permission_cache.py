@@ -67,6 +67,14 @@ class PermissionCacheCoordinator:
 
             self._hotspot_detector = HotspotDetector()
 
+        # Issue #3192: Wire Pub/Sub into HotspotDetector for distributed prefetch
+        if self._hotspot_detector is not None and rebac_manager is not None:
+            _coord = getattr(rebac_manager, "_cache_coordinator", None)
+            if _coord is not None:
+                _pubsub = getattr(_coord, "_pubsub", None)
+                if _pubsub is not None:
+                    self._hotspot_detector.set_pubsub(_pubsub)
+
         # perf19: Bitmap completeness cache
         # Tracks users whose Tiger bitmap contains ALL their permissions
         self._bitmap_completeness_cache: TTLCache[tuple[str, str, str], bool] = TTLCache(

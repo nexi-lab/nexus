@@ -302,6 +302,38 @@ class DescendantAccessChecker:
             except Exception:
                 logger.debug("has_access: rebac_check_bulk_sync failed, using individual checks")
 
+        # Issue #3192: Try Tiger Cache bitmap before individual fallback
+        tiger_cache = (
+            getattr(self._rebac_manager, "_tiger_cache", None) if self._rebac_manager else None
+        )
+        if tiger_cache is not None:
+            try:
+                accessible_ids = tiger_cache.get_accessible_resources(
+                    subject_type=subject_tuple[0],
+                    subject_id=subject_tuple[1],
+                    permission=rebac_permission,
+                    resource_type="file",
+                    zone_id=zone_id,
+                )
+                if accessible_ids:
+                    resource_map = tiger_cache._resource_map
+                    prefix = path.rstrip("/") + "/" if path != "/" else "/"
+                    for int_id in accessible_ids:
+                        res_info = resource_map.get_resource_id(int_id)
+                        if res_info and (res_info[1] == path or res_info[1].startswith(prefix)):
+                            if self._dir_visibility_cache is not None:
+                                self._dir_visibility_cache.set_visible(
+                                    zone_id,
+                                    context.subject_type,
+                                    subject_id,
+                                    path,
+                                    True,
+                                    f"tiger_fallback:{res_info[1]}",
+                                )
+                            return True
+            except Exception:
+                logger.debug("has_access: Tiger Cache fallback failed, using individual checks")
+
         # Final fallback: individual checks with early exit
         for meta in all_descendants:
             descendant_access = self._rebac_service.rebac_check_sync(

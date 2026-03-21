@@ -231,6 +231,12 @@ def _boot_system_services(
                 hierarchy_manager=hierarchy_manager,
                 flush_interval_sec=ctx.perm.deferred_flush_interval,
             )
+            # Issue #3192: Wire Pub/Sub for cross-zone flush coordination
+            if hasattr(rebac_manager, "_cache_coordinator"):
+                _coord = rebac_manager._cache_coordinator
+                _pubsub = getattr(_coord, "_pubsub", None)
+                if _pubsub is not None:
+                    deferred_permission_buffer.set_pubsub(_pubsub)
             logger.debug("[BOOT:SYSTEM] DeferredPermissionBuffer created")
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] DeferredPermissionBuffer unavailable: %s", exc)

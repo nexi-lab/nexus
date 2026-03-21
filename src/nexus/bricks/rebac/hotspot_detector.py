@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
     from nexus.bricks.rebac.cache.tiger import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,10 @@ class HotspotDetector:
         self._access_log: dict[tuple[str, str, str, str, str], list[float]] = {}
         self._lock = threading.RLock()
 
+        # Pub/Sub for distributed prefetch hints (Issue #3192)
+        self._pubsub: PubSubInvalidation | None = None
+        self._prefetch_hints_published: int = 0
+
         # Metrics
         self._total_accesses: int = 0
         self._hot_entries_detected: int = 0
@@ -109,6 +114,10 @@ class HotspotDetector:
     def config(self) -> HotspotConfig:
         """Get current configuration."""
         return self._config
+
+    def set_pubsub(self, pubsub: "PubSubInvalidation") -> None:
+        """Set Pub/Sub for distributed prefetch coordination."""
+        self._pubsub = pubsub
 
     def record_access(
         self,
@@ -193,17 +202,31 @@ class HotspotDetector:
                 recent = [t for t in timestamps if t > cutoff]
                 if len(recent) >= self._config.hot_threshold:
                     subject_type, subject_id, resource_type, permission, zone_id = key
-                    hot.append(
-                        HotspotEntry(
-                            subject_type=subject_type,
-                            subject_id=subject_id,
-                            resource_type=resource_type,
-                            permission=permission,
-                            zone_id=zone_id,
-                            access_count=len(recent),
-                            last_access=max(recent) if recent else 0,
-                        )
+                    entry = HotspotEntry(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        resource_type=resource_type,
+                        permission=permission,
+                        zone_id=zone_id,
+                        access_count=len(recent),
+                        last_access=max(recent) if recent else 0,
                     )
+                    hot.append(entry)
+
+                    # Publish prefetch hint for distributed coordination (Issue #3192)
+                    if self._pubsub:
+                        self._pubsub.publish_invalidation(
+                            zone_id=entry.zone_id,
+                            layer="prefetch",
+                            payload={
+                                "subject_type": entry.subject_type,
+                                "subject_id": entry.subject_id,
+                                "resource_type": entry.resource_type,
+                                "permission": entry.permission,
+                                "access_count": entry.access_count,
+                            },
+                        )
+                        self._prefetch_hints_published += 1
 
             self._hot_entries_detected = len(hot)
 
@@ -348,6 +371,7 @@ class HotspotDetector:
                 "total_accesses": self._total_accesses,
                 "hot_entries_detected": self._hot_entries_detected,
                 "prefetches_triggered": self._prefetches_triggered,
+                "prefetch_hints_published": self._prefetch_hints_published,
             }
 
     def reset(self) -> None:
@@ -357,6 +381,7 @@ class HotspotDetector:
             self._total_accesses = 0
             self._hot_entries_detected = 0
             self._prefetches_triggered = 0
+            self._prefetch_hints_published = 0
 
 
 class HotspotPrefetcher:

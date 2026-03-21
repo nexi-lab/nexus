@@ -72,7 +72,7 @@ class MetastoreNamespaceStore:
         """Create namespace only if it does not already exist."""
         key = f"{_NS_PREFIX}{namespace.object_type}"
         existing = self._metastore.get(key)
-        if existing is not None and existing.backend_name == _NS_BACKEND:
+        if existing is not None and existing.backend_name.startswith(_NS_BACKEND):
             return
         self.create_or_update(namespace)
 
@@ -83,7 +83,7 @@ class MetastoreNamespaceStore:
         """
         key = f"{_NS_PREFIX}{namespace.object_type}"
         existing = self._metastore.get(key)
-        if existing is not None and existing.backend_name == _NS_BACKEND:
+        if existing is not None and existing.backend_name.startswith(_NS_BACKEND):
             try:
                 data = json.loads(existing.physical_path)
                 if data.get("namespace_id") != namespace.namespace_id:
@@ -100,7 +100,7 @@ class MetastoreNamespaceStore:
             or None if not found.
         """
         fm = self._metastore.get(f"{_NS_PREFIX}{object_type}")
-        if fm is None or fm.backend_name != _NS_BACKEND:
+        if fm is None or not fm.backend_name.startswith(_NS_BACKEND):
             return None
         try:
             data: dict[str, Any] = json.loads(fm.physical_path)
@@ -117,7 +117,7 @@ class MetastoreNamespaceStore:
         entries = self._metastore.list(_NS_PREFIX)
         results: list[dict[str, Any]] = []
         for fm in entries:
-            if fm.backend_name != _NS_BACKEND:
+            if not fm.backend_name.startswith(_NS_BACKEND):
                 continue
             try:
                 data: dict[str, Any] = json.loads(fm.physical_path)
@@ -135,7 +135,7 @@ class MetastoreNamespaceStore:
         """
         key = f"{_NS_PREFIX}{object_type}"
         existing = self._metastore.get(key)
-        if existing is None or existing.backend_name != _NS_BACKEND:
+        if existing is None or not existing.backend_name.startswith(_NS_BACKEND):
             return False
         self._metastore.delete(key)
         return True

@@ -351,7 +351,7 @@ async def unmount_connector(
 async def sync_mount(
     req: SyncRequest,
     request: Request,
-    _: dict = Depends(require_auth),
+    auth: dict = Depends(require_auth),
 ) -> SyncResponse:
     """Trigger sync for a mounted connector.
 
@@ -381,16 +381,18 @@ async def sync_mount(
         except Exception:
             delta_result = None
 
-    # Build context with zone_id for metadata storage
+    # Build context with zone_id from authenticated user — ensures synced
+    # files are in the same zone as the user's API key, so they're visible
+    # in the TUI and HTTP file listing (which apply zone isolation).
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
     sync_context = OperationContext(
-        user_id="system",
+        user_id=auth.get("subject_id", "system"),
         groups=[],
-        is_admin=True,
+        is_admin=auth.get("is_admin", True),
         is_system=True,
-        zone_id=ROOT_ZONE_ID,
+        zone_id=auth.get("zone_id") or ROOT_ZONE_ID,
     )
 
     # Run full sync (populates metadata)

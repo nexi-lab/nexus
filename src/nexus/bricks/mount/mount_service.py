@@ -202,14 +202,17 @@ class MountService:
             except Exception:
                 logger.warning("Failed to generate skill docs for %s", mount_point, exc_info=True)
 
-    async def _index_mount_content(self, mount_point: str, _files_count: int = 0) -> None:
+    async def _index_mount_content(self, mount_point: str, *, zone_id: str | None = None) -> None:
         """Index mounted connector content for semantic search.
 
         Enumerates files via the connector backend's list_dir (BFS), reads
         content via sys_read, and indexes via SearchDaemon.index_documents().
 
-        Uses list_dir instead of metadata_list because the Raft metastore
-        may not populate metadata entries for external connector files.
+        Args:
+            mount_point: VFS path of the mount.
+            zone_id: Zone to index into. Must match the zone used during sync
+                so that search queries (which apply zone isolation) find the
+                indexed content.
         """
         try:
             search_daemon = getattr(self._search_service, "_search_daemon", None)
@@ -288,16 +291,11 @@ class MountService:
                     continue
 
             if documents:
-                # Resolve zone_id from the mount point's route or default.
-                # Must match the zone_id used by search queries (typically
-                # "default" for API-key-authenticated users).
-                index_zone = "default"
-                try:
-                    route = self.router.route(mount_point)
-                    if route and hasattr(route, "zone_id") and route.zone_id:
-                        index_zone = route.zone_id
-                except Exception:
-                    pass
+                # Use the zone_id from the sync context (matches the zone where
+                # metadata was stored, so search queries find indexed content).
+                from nexus.contracts.constants import ROOT_ZONE_ID
+
+                index_zone = zone_id or ROOT_ZONE_ID
 
                 count = await search_daemon.index_documents(documents, zone_id=index_zone)
                 logger.info(
@@ -1546,7 +1544,8 @@ class MountService:
             files_scanned = sync_result.get("files_scanned", 0)
             if files_scanned > 0 and self._search_service is not None:
                 try:
-                    asyncio.create_task(self._index_mount_content(mount_point, files_scanned))
+                    _zone = getattr(context, "zone_id", None) if context else None
+                    asyncio.create_task(self._index_mount_content(mount_point, zone_id=_zone))
                 except Exception:
                     logger.debug(
                         "Post-sync search indexing failed for %s",

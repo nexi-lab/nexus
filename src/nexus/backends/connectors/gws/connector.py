@@ -57,7 +57,6 @@ _CONFIGS_DIR = Path(__file__).parent / "configs"
     "gws_sheets",
     description="Google Sheets via gws CLI",
     category="cli",
-    service_name="sheets",
 )
 class SheetsConnector(CLIConnector):
     """Google Sheets CLI connector via ``gws sheets``."""
@@ -107,7 +106,6 @@ class SheetsConnector(CLIConnector):
     "gws_docs",
     description="Google Docs via gws CLI",
     category="cli",
-    service_name="docs",
 )
 class DocsConnector(CLIConnector):
     """Google Docs CLI connector via ``gws docs``."""
@@ -148,7 +146,6 @@ class DocsConnector(CLIConnector):
     "gws_chat",
     description="Google Chat via gws CLI",
     category="cli",
-    service_name="chat",
 )
 class ChatConnector(CLIConnector):
     """Google Chat CLI connector via ``gws chat``."""
@@ -187,7 +184,6 @@ class ChatConnector(CLIConnector):
     "gws_drive",
     description="Google Drive via gws CLI",
     category="cli",
-    service_name="drive",
 )
 class DriveConnector(CLIConnector):
     """Google Drive CLI connector via ``gws drive``."""

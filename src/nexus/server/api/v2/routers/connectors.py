@@ -596,21 +596,8 @@ async def write_to_connector(
 
     nx = _get_nx(request)
     try:
-        import asyncio
-
-        # Route to the connector backend directly (bypasses VFS audit hooks
-        # which fail on /nexus/pipes permission for non-root users).
-        route = nx.router.route(mount_path)
-        if not route:
-            return WriteResponse(success=False, error=f"No backend for {mount_path}")
-
-        # Set backend_path on context so the connector knows the relative path
-        from dataclasses import replace
-
-        write_context = replace(write_context, backend_path=route.backend_path)
-
         data = req.yaml_content.encode("utf-8")
-        result = await asyncio.to_thread(route.backend.write_content, data, context=write_context)
+        result = await nx.sys_write(mount_path, data, context=write_context)
 
         return WriteResponse(
             success=True,

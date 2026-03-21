@@ -607,16 +607,15 @@ class TestStartCommand:
 
 
 class TestPortReuse:
-    """Verify that nexus up reuses ports from .state.json when containers are running."""
+    """Verify that nexus up reuses ports based on compose project ownership."""
 
-    def test_reuses_ports_when_all_bound(self, tmp_path: Path) -> None:
-        """When all previous ports are still in use, skip re-resolution."""
+    def test_reuses_ports_when_project_running(self, tmp_path: Path) -> None:
+        """When our compose project has running containers, reuse state ports."""
         from nexus.cli.state import save_runtime_state
 
         data_dir = tmp_path / "nexus-data"
         data_dir.mkdir()
 
-        # Write state with specific ports
         save_runtime_state(
             data_dir,
             {
@@ -626,24 +625,24 @@ class TestPortReuse:
             },
         )
 
-        # Mock all state.json ports as "in use" (bound by our containers)
-        with patch("nexus.cli.commands.stack.check_port_available", return_value=False):
+        # Simulate `docker compose -p nexus-test1234 ps -q` returning container IDs
+        mock_result = MagicMock()
+        mock_result.stdout = "abc123\ndef456\n"
+        mock_result.returncode = 0
+
+        with patch("nexus.cli.commands.stack.subprocess.run", return_value=mock_result):
             from nexus.cli.state import load_runtime_state
 
             state = load_runtime_state(data_dir)
             prev_ports = state.get("ports", {})
-            # Simulate the logic from the up command
-            all_prev_bound = all(
-                not False  # check_port_available returns False → port in use
-                for p in prev_ports.values()
-                if isinstance(p, int)
-            )
-            assert all_prev_bound
+            # Simulate the ownership check logic from up()
+            has_running = bool(mock_result.stdout.strip())
+            assert has_running
             assert prev_ports["http"] == 9990
             assert prev_ports["grpc"] == 9991
 
-    def test_re_resolves_when_ports_freed(self, tmp_path: Path) -> None:
-        """When previous ports are free (containers stopped), re-resolve."""
+    def test_re_resolves_when_no_containers(self, tmp_path: Path) -> None:
+        """When our compose project has no running containers, re-resolve ports."""
         from nexus.cli.state import save_runtime_state
 
         data_dir = tmp_path / "nexus-data"
@@ -657,18 +656,26 @@ class TestPortReuse:
             },
         )
 
-        # All ports are available (containers stopped)
-        with patch("nexus.cli.commands.stack.check_port_available", return_value=True):
-            from nexus.cli.state import load_runtime_state
+        # Simulate `docker compose ps -q` returning empty (no containers)
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_result.returncode = 0
 
-            state = load_runtime_state(data_dir)
-            prev_ports = state.get("ports", {})
-            all_prev_bound = all(
-                not True  # check_port_available returns True → port is free
-                for p in prev_ports.values()
-                if isinstance(p, int)
-            )
-            assert not all_prev_bound  # → should re-resolve
+        with patch("nexus.cli.commands.stack.subprocess.run", return_value=mock_result):
+            has_running = bool(mock_result.stdout.strip())
+            assert not has_running  # → should re-resolve
+
+    def test_re_resolves_when_no_state(self, tmp_path: Path) -> None:
+        """When no .state.json exists, always resolve from config."""
+        from nexus.cli.state import load_runtime_state
+
+        data_dir = tmp_path / "nexus-data"
+        data_dir.mkdir()
+
+        state = load_runtime_state(data_dir)
+        assert state.get("ports") is None
+        assert state.get("project_name") is None
+        # No prev_ports → falls through to resolve_ports()
 
 
 # ---------------------------------------------------------------------------

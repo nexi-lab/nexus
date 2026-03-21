@@ -275,13 +275,13 @@ def status(
     else:
         cfg = _load_project_config_optional()
         if cfg:
-            from nexus.cli.state import load_runtime_state
+            from nexus.cli.state import load_runtime_state, resolve_connection_env
 
             data_dir = cfg.get("data_dir", "./nexus-data")
             state = load_runtime_state(data_dir)
-            ports = state.get("ports", cfg.get("ports", {}))
-            http_port = ports.get("http", 2026)
-            server_url = f"http://localhost:{http_port}"
+            conn = resolve_connection_env(cfg, state)
+            # resolve_connection_env handles http vs https based on TLS state
+            server_url = conn.get("NEXUS_URL", "http://localhost:2026")
         else:
             server_url = "http://localhost:2026"
     profile_list = list(profiles) if profiles else None

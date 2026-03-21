@@ -101,8 +101,9 @@ def _save_manifest(data_dir: str, manifest: dict[str, Any]) -> None:
 async def _get_nexus_client(config: dict[str, Any]) -> Any:
     """Connect to a running Nexus server via gRPC, or fall back to local.
 
-    For remote presets (shared/demo), sets NEXUS_GRPC_PORT from nexus.yaml
-    so the SDK connects to the correct gRPC port published by the compose stack.
+    For remote presets (shared/demo), reads runtime state from
+    ``.state.json`` for the actual resolved ports and TLS paths,
+    falling back to ``nexus.yaml`` config values.
 
     Raises on failure — does not silently fall back to a separate local instance
     when a remote preset is expected.
@@ -110,33 +111,41 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
     import nexus
 
     preset = config.get("preset", "local")
-    ports = config.get("ports", {})
-    http_port = ports.get("http", 2026)
-    grpc_port = ports.get("grpc", 2028)
 
     if preset in ("shared", "demo"):
+        from nexus.cli.state import load_runtime_state, resolve_connection_env
+
+        data_dir = config.get("data_dir", "./nexus-data")
+        state = load_runtime_state(data_dir)
+        conn = resolve_connection_env(config, state)
+
+        # Use runtime-resolved ports (from state.json) over config defaults
+        http_port = state.get("ports", config.get("ports", {})).get("http", 2026)
+        grpc_port = state.get("ports", config.get("ports", {})).get("grpc", 2028)
+
         # Set NEXUS_GRPC_PORT so nexus.connect() uses the right port
         os.environ["NEXUS_GRPC_PORT"] = str(grpc_port)
 
-        # Resolve the admin API key — prefer nexus.yaml, fall back to the
-        # key file written by the container entrypoint.
+        # Set TLS env vars if available so RPCTransport picks them up
+        if conn.get("NEXUS_TLS_CERT"):
+            os.environ["NEXUS_TLS_CERT"] = conn["NEXUS_TLS_CERT"]
+            os.environ["NEXUS_TLS_KEY"] = conn.get("NEXUS_TLS_KEY", "")
+            os.environ["NEXUS_TLS_CA"] = conn.get("NEXUS_TLS_CA", "")
+
         api_key = _resolve_admin_key(config)
 
-        # When TLS is enabled, set env vars so nexus.connect() builds
-        # an RPCTransport with mTLS credentials (dev certs double as
-        # TLS is auto-detected from NEXUS_DATA_DIR/tls/ (provisioned by 2-phase bootstrap)
+        # Use the scheme from resolve_connection_env (https if TLS)
+        url = conn.get("NEXUS_URL", f"http://localhost:{http_port}")
 
         try:
             nx = await nexus.connect(
                 config={
                     "profile": "remote",
-                    "url": f"http://localhost:{http_port}",
+                    "url": url,
                     "api_key": api_key,
                 }
             )
             # Verify connectivity with a lightweight read-only call.
-            # Use sys_readdir (returns list) instead of sys_stat (goes through
-            # MetadataMapper.from_json which can fail on schema mismatches).
             await nx.sys_readdir("/")
             return nx
         except Exception as e:

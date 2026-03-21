@@ -486,24 +486,35 @@ def up(
                 )
             profiles = [p for p in profiles if p in available_profiles]
 
-    # Port resolution: reuse previous state.json ports if they're still bound
-    # (our own containers), otherwise resolve from config defaults.
+    # Port resolution: reuse previous state.json ports if OUR containers
+    # still own them, otherwise resolve from config defaults.
     ports = config.get("ports", {})
     active_services = config.get("services", [])
 
     prev_ports = prev_state.get("ports", {})
-    if prev_ports and prev_state.get("project_name"):
-        # Check if the previous ports are still in use (by our containers).
-        # If so, reuse them — avoids port drift on repeated `nexus up`.
-        all_prev_bound = all(
-            not check_port_available(p) for p in prev_ports.values() if isinstance(p, int)
-        )
-        if all_prev_bound:
-            resolved_ports = prev_ports
-            port_messages: list[str] = []
-        else:
-            # Some ports freed up (containers stopped) — re-resolve from config
-            resolved_ports, port_messages = resolve_ports(ports, strategy=port_strategy)
+    prev_project = prev_state.get("project_name", "")
+    reuse_ports = False
+
+    if prev_ports and prev_project:
+        # Verify ownership: check if our compose project has running containers.
+        # This avoids the false-positive where an unrelated process binds
+        # one of our remembered ports after our stack was stopped.
+        try:
+            ownership_check = subprocess.run(
+                [*_find_docker_compose().split(), "-p", prev_project, "ps", "-q"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            has_running_containers = bool(ownership_check.stdout.strip())
+            reuse_ports = has_running_containers
+        except (subprocess.TimeoutExpired, OSError):
+            # Can't verify — fall through to re-resolve
+            pass
+
+    if reuse_ports:
+        resolved_ports = prev_ports
+        port_messages: list[str] = []
     else:
         resolved_ports, port_messages = resolve_ports(ports, strategy=port_strategy)
 

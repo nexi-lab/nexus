@@ -301,6 +301,37 @@ async def mount_connector(
             mp = req.mount_point.rstrip("/")
             # Extract connector name from mount path (e.g., /mnt/gmail → gmail)
             connector_name = mp.rsplit("/", 1)[-1]
+            # Create /skills/ directory entry via metadata_put so it shows
+            # in root-level readdir. sys_write creates files but the HTTP
+            # readdir doesn't synthesize parent directories from child paths.
+            try:
+                from datetime import UTC, datetime
+
+                from nexus.contracts.metadata import FileMetadata
+
+                gw = getattr(nx, "_gateway", None) or getattr(request.app.state, "gateway", None)
+                if gw:
+                    for dir_path in ["/skills", f"/skills/{connector_name}"]:
+                        try:
+                            if not gw.metadata_get(dir_path):
+                                gw.metadata_put(
+                                    FileMetadata(
+                                        path=dir_path,
+                                        backend_name="__skill__",
+                                        physical_path=dir_path,
+                                        size=0,
+                                        etag=None,
+                                        created_at=datetime.now(UTC),
+                                        modified_at=datetime.now(UTC),
+                                        version=1,
+                                        zone_id=mount_context.zone_id,
+                                    )
+                                )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             # Write skill docs OUTSIDE the mount path so they're not shadowed
             # by the connector backend. /skills/{name}/ stays in the Raft
             # metastore and is always readable by agents and the TUI.

@@ -37,6 +37,7 @@ class MockNexusFS:
     def __init__(self) -> None:
         self._pipes: dict[str, asyncio.Queue[bytes]] = {}
         self._closed: set[str] = set()
+        self._pipe_manager = None  # No real PipeManager in tests
 
     async def sys_setattr(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
         """Create a pipe (asyncio.Queue)."""
@@ -312,8 +313,10 @@ class TestPipedWriteObserverE2E:
             try:
                 # Simulate AuditWriteInterceptor writing an event
                 await mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_write_event("/workspace/test.txt"))
-                await asyncio.sleep(0.15)
-
+                for _ in range(50):
+                    if observer._total_flushed >= 1:
+                        break
+                    await asyncio.sleep(0.05)
                 assert observer._total_flushed >= 1
             finally:
                 await observer.stop()
@@ -343,8 +346,10 @@ class TestPipedWriteObserverE2E:
                         _AUDIT_PIPE_PATH,
                         _make_write_event(f"/workspace/file{i}.txt", size=i * 10),
                     )
-                await asyncio.sleep(0.15)
-
+                for _ in range(50):
+                    if observer._total_flushed >= 5:
+                        break
+                    await asyncio.sleep(0.05)
                 assert observer._total_flushed >= 5
             finally:
                 await observer.stop()
@@ -372,8 +377,10 @@ class TestPipedWriteObserverE2E:
                 await mock_nx.sys_write(
                     _AUDIT_PIPE_PATH, _make_delete_event("/workspace/deleted.txt")
                 )
-                await asyncio.sleep(0.15)
-
+                for _ in range(50):
+                    if observer._total_flushed >= 1:
+                        break
+                    await asyncio.sleep(0.05)
                 assert observer._total_flushed >= 1
             finally:
                 await observer.stop()
@@ -460,7 +467,10 @@ class TestPipedWriteObserverE2E:
                 await mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_mkdir_event("/workspace/newdir"))
                 await mock_nx.sys_write(_AUDIT_PIPE_PATH, _make_rmdir_event("/workspace/olddir"))
 
-                await asyncio.sleep(0.15)
+                for _ in range(50):
+                    if observer._total_flushed >= 3:
+                        break
+                    await asyncio.sleep(0.05)
 
                 metrics = observer.metrics
                 assert metrics["total_flushed"] >= 3

@@ -592,7 +592,6 @@ async def write_to_connector(
         is_admin=auth.get("is_admin", True),
         is_system=True,
         zone_id=auth.get("zone_id") or ROOT_ZONE_ID,
-        backend_path=mount_path,
     )
 
     nx = _get_nx(request)

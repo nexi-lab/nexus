@@ -54,7 +54,7 @@ def record_store():
 def rebac_manager(record_store):
     manager = EnhancedReBACManager(
         engine=record_store.engine,
-        cache_ttl_seconds=1,
+        cache_ttl_seconds=300,  # Keep default; tests don't need cache expiry
         max_depth=10,
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )

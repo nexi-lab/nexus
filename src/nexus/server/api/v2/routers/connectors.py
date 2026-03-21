@@ -577,25 +577,28 @@ async def write_to_connector(
     mount_path: str,
     req: WriteRequest,
     request: Request,
-    _: dict = Depends(require_auth),
+    auth: dict = Depends(require_auth),
 ) -> WriteResponse:
     """Write validated YAML to a connector path."""
     if not mount_path.startswith("/"):
         mount_path = f"/{mount_path}"
 
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.types import OperationContext
+
+    write_context = OperationContext(
+        user_id=auth.get("subject_id", "system"),
+        groups=[],
+        is_admin=auth.get("is_admin", True),
+        is_system=True,
+        zone_id=auth.get("zone_id") or ROOT_ZONE_ID,
+        backend_path=mount_path,
+    )
+
     nx = _get_nx(request)
     try:
-        import asyncio
-
-        # nx.write may be sync or async — handle both
-        write_fn = getattr(nx, "write", None) or getattr(nx, "sys_write", None)
-        if write_fn is None:
-            return WriteResponse(success=False, error="NexusFS has no write method")
-
         data = req.yaml_content.encode("utf-8")
-        result = write_fn(mount_path, data)
-        if asyncio.iscoroutine(result):
-            result = await result
+        result = await nx.sys_write(mount_path, data, context=write_context)
 
         return WriteResponse(
             success=True,

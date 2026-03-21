@@ -41,6 +41,9 @@ def rebac_manager(engine):
         max_depth=10,
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
+    # Disable InvalidationStream so namespace invalidators fire synchronously.
+    # The stream batches events, but these tests expect immediate callback.
+    manager._cache_coordinator._stream = None
     yield manager
     manager.close()
 

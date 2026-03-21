@@ -58,11 +58,13 @@ def rebac_manager(record_store):
         max_depth=10,
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
     )
-    # Disable L1/boundary caches — this test checks revocation correctness,
-    # not cache behavior. Caching causes stale True after rebac_delete
-    # because delete doesn't invalidate L1 (pre-existing bug, separate fix).
+    # Disable all caching — this test checks revocation correctness, not
+    # cache behavior. Without this, the coordinator's background recompute
+    # executor and L1 cache cause "closed database" races during teardown.
     manager._l1_cache = None
     manager._boundary_cache = None
+    manager._cache_coordinator._async_recompute_enabled = False
+    manager._cache_coordinator._stream = None
     yield manager
     manager.close()
 

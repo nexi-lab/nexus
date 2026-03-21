@@ -143,6 +143,17 @@ class SkillDocGenerator:
             result["skill_md"] = skill_md_path
             logger.info("Generated SKILL.md at %s", skill_md_path)
 
+            # Write example files
+            if self._examples:
+                examples_dir = posixpath.join(skill_dir, "examples")
+                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
+
+                for filename, file_content in self._examples.items():
+                    example_path = posixpath.join(examples_dir, filename)
+                    filesystem.write(example_path, file_content.encode("utf-8"))
+                    result["examples"].append(example_path)
+                    logger.debug("Generated example at %s", example_path)
+
             # Write individual schema files (Issue #3148, Decision #7B)
             if self._schemas:
                 schemas_dir = posixpath.join(skill_dir, "schemas")
@@ -154,17 +165,6 @@ class SkillDocGenerator:
                     filesystem.write(schema_path, schema_content.encode("utf-8"))
                     result["schemas"].append(schema_path)
                     logger.debug("Generated schema at %s", schema_path)
-
-            # Write example files
-            if self._examples:
-                examples_dir = posixpath.join(skill_dir, "examples")
-                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
-
-                for filename, file_content in self._examples.items():
-                    example_path = posixpath.join(examples_dir, filename)
-                    filesystem.write(example_path, file_content.encode("utf-8"))
-                    result["examples"].append(example_path)
-                    logger.debug("Generated example at %s", example_path)
 
             return result
 
@@ -201,7 +201,7 @@ class SkillDocGenerator:
 
         # Add write operations with exact paths and inline schemas
         if self._schemas:
-            lines.extend(["## Write Operations", ""])
+            lines.extend(["## Operations", ""])
 
             for op_name, schema in self._schemas.items():
                 traits = self._operation_traits.get(op_name, OpTraits())

@@ -228,7 +228,6 @@ class DriveConnector(CLIConnector):
     "gws_gmail",
     description="Gmail via gws CLI",
     category="cli",
-    service_name="gmail",
 )
 class GmailConnector(CLIConnector):
     """Gmail CLI connector via ``gws gmail``.

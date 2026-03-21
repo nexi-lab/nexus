@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import yaml
 
@@ -285,6 +285,12 @@ class CLIConnector(
         Pipeline: parse YAML → resolve operation → validate schema →
         check traits → get token → execute CLI → return result.
         """
+        # Backward compatibility: many existing call sites pass
+        # write_content(content, context) positionally.
+        if context is None and hasattr(content_id, "backend_path"):
+            context = cast("OperationContext", content_id)
+            content_id = ""
+
         if not context or not context.backend_path:
             from nexus.contracts.exceptions import BackendError
 

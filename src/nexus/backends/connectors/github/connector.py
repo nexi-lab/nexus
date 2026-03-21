@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
     "gws_github",
     description="GitHub via gh CLI",
     category="cli",
-    service_name="github",
 )
 class GitHubConnector(CLIConnector):
     """GitHub CLI connector via ``gh``."""

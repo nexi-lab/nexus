@@ -613,7 +613,6 @@ class GmailConnector(CLIConnector):
     "gws_calendar",
     description="Google Calendar via gws CLI",
     category="cli",
-    service_name="calendar",
 )
 class CalendarConnector(CLIConnector):
     """Calendar CLI connector via ``gws calendar``.

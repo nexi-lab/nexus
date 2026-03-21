@@ -477,9 +477,13 @@ class RaftMetadataStore(MetastoreABC):
         # Setting to None drops PyMetastore → Rust Drop → flock release.
         # gc.collect() handles any circular refs preventing immediate drop.
         import gc
+        import time
 
         self._engine = None
         gc.collect()
+        # Brief yield to allow OS to release flock after Rust Drop.
+        # Prevents rare "Directory not empty" race during temp dir cleanup.
+        time.sleep(0.01)
 
     # =========================================================================
     # Zone-level reserved keys (federation ref counting)

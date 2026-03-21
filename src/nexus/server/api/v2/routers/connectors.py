@@ -288,6 +288,59 @@ async def mount_connector(
     )
 
     mount_svc = _get_mount_service(request)
+    nx = _get_nx(request)
+
+    # Write skill docs BEFORE mounting — after mount, the path routes to the
+    # connector backend instead of Raft. Writing first puts SKILL.md + schemas
+    # in the Raft metastore where the TUI file explorer can browse them.
+    try:
+        from nexus.backends import BackendFactory
+
+        temp_backend = BackendFactory.create(req.connector_type, req.config or {})
+        if hasattr(temp_backend, "generate_skill_doc"):
+            mp = req.mount_point.rstrip("/")
+            skill_content = temp_backend.generate_skill_doc(mp)
+            if skill_content:
+                await nx.sys_write(
+                    f"{mp}/.skill/SKILL.md",
+                    skill_content.encode("utf-8"),
+                    context=mount_context,
+                )
+                # Write individual schema files
+                schemas = getattr(temp_backend, "SCHEMAS", {})
+                if schemas and hasattr(temp_backend, "_get_doc_generator"):
+                    doc_gen = temp_backend._get_doc_generator()
+                    for op_name, schema_cls in schemas.items():
+                        try:
+                            schema_yaml = doc_gen._generate_annotated_schema(op_name, schema_cls)
+                            await nx.sys_write(
+                                f"{mp}/.skill/schemas/{op_name}.yaml",
+                                schema_yaml.encode("utf-8"),
+                                context=mount_context,
+                            )
+                        except Exception:
+                            pass
+
+                # Index skill doc into semantic search so agents can find it
+                search_svc = getattr(mount_svc, "_search_service", None)
+                if search_svc:
+                    search_daemon = getattr(search_svc, "_search_daemon", None)
+                    if search_daemon:
+                        import contextlib
+
+                        with contextlib.suppress(Exception):
+                            await search_daemon.index_documents(
+                                [
+                                    {
+                                        "id": f"{mp}/.skill/SKILL.md",
+                                        "text": skill_content,
+                                        "path": f"{mp}/.skill/SKILL.md",
+                                    }
+                                ],
+                                zone_id=mount_context.zone_id or "default",
+                            )
+    except Exception:
+        pass  # Best effort — mount works without skill docs
 
     try:
         result = await mount_svc.add_mount(

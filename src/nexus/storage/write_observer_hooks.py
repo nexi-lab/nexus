@@ -254,7 +254,10 @@ class AuditWriteInterceptor:
         """Serialize event to JSON and write to pipe via sys_write."""
         try:
             data = json.dumps(event).encode()
-            await self._nx.sys_write(self._pipe_path, data)
+            from nexus.contracts.types import OperationContext
+
+            ctx = OperationContext(user_id="system", groups=[], is_system=True)
+            await self._nx.sys_write(self._pipe_path, data, context=ctx)
         except Exception as e:
             from nexus.contracts.exceptions import AuditLogError
 

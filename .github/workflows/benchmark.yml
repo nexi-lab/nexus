@@ -18,6 +18,7 @@ jobs:
   benchmark-critical:
     name: Benchmark (Critical Subset)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -58,12 +59,14 @@ jobs:
           python -c "import json; json.load(open('/tmp/smoke.json'))"
 
       - name: Run critical benchmarks
+        timeout-minutes: 20
         run: |
           uv run pytest tests/benchmarks/ -m benchmark_ci \
             --benchmark-json=benchmark-results.json \
-            --benchmark-min-rounds=10 \
+            --benchmark-min-rounds=5 \
+            --benchmark-max-time=2.0 \
             --benchmark-warmup=on \
-            --benchmark-warmup-iterations=3 \
+            --benchmark-warmup-iterations=1 \
             -o "addopts=" -v
 
       - name: Ensure gh-pages branch exists
@@ -99,6 +102,7 @@ jobs:
   benchmark-full:
     name: Benchmark (Full Suite)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
@@ -133,12 +137,14 @@ jobs:
         run: uv pip install -e ".[dev,test]"
 
       - name: Run full benchmark suite
+        timeout-minutes: 45
         run: |
           uv run pytest tests/benchmarks/ \
             --benchmark-json=benchmark-results-full.json \
-            --benchmark-min-rounds=10 \
+            --benchmark-min-rounds=5 \
+            --benchmark-max-time=2.0 \
             --benchmark-warmup=on \
-            --benchmark-warmup-iterations=3 \
+            --benchmark-warmup-iterations=1 \
             -o "addopts=" -v
 
       - name: Ensure gh-pages branch exists

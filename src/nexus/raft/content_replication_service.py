@@ -45,7 +45,7 @@ class _MetastoreProto(Protocol):
 
 class _ObjectStoreProto(Protocol):
     def write_content(
-        self, content: bytes, content_id: str = "", *, context: Any = None
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
     ) -> Any: ...
     def read_content(self, content_id: str, context: Any = None) -> bytes: ...
 

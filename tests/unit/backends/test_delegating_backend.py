@@ -110,7 +110,7 @@ class TestContentDelegation:
         expected = WriteResult(content_id="hash123", size=4)
         mock_inner.write_content.return_value = expected
         result = delegating.write_content(b"data")
-        mock_inner.write_content.assert_called_once_with(b"data", "", context=None)
+        mock_inner.write_content.assert_called_once_with(b"data", "", offset=0, context=None)
         assert result is expected
 
     def test_delete_content(self, delegating: DelegatingBackend, mock_inner: MagicMock) -> None:

@@ -50,7 +50,7 @@ class _MockBackend(Backend):
         return hashlib.sha256(content).hexdigest()
 
     def write_content(
-        self, content: bytes, content_id: str = "", *, context: Any = None
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
     ) -> WriteResult:
         h = self._hash(content)
         if h in self._content:
@@ -111,7 +111,9 @@ class _PartialClass:
     def name(self) -> str:
         return "partial"
 
-    def write_content(self, content: bytes, content_id: str = "", *, context: Any = None) -> Any:
+    def write_content(
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
+    ) -> Any:
         return None
 
     def read_content(self, content_hash: str, context: Any = None) -> Any:

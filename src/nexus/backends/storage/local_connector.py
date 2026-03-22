@@ -363,6 +363,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write content directly to local path.
@@ -391,6 +392,16 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             raise BackendError("Path required for local_connector backend")
 
         physical = self._to_physical(write_path)
+
+        # Offset write: read-splice-write (Issue #1395)
+        if offset > 0:
+            try:
+                old_data = physical.read_bytes() if physical.exists() else b""
+            except OSError:
+                old_data = b""
+            if offset > len(old_data):
+                old_data = old_data + b"\x00" * (offset - len(old_data))
+            content = old_data[:offset] + content + old_data[offset + len(content) :]
 
         try:
             physical.parent.mkdir(parents=True, exist_ok=True)

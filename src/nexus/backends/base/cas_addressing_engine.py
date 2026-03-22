@@ -241,8 +241,13 @@ class CASAddressingEngine(Backend):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
+        # Offset write: read-modify-write for partial content update (Issue #1395)
+        if offset > 0 and content_id:
+            return self._write_at_offset(content, content_id, offset, context)
+
         # Feature DI: CDC routing for large files
         if self._cdc is not None and self._cdc.should_chunk(content):
             content_hash = self._cdc.write_chunked(content, context)
@@ -294,6 +299,50 @@ class CASAddressingEngine(Backend):
                 backend=self.name,
                 path=content_hash,
             ) from e
+
+    def _write_at_offset(
+        self,
+        buf: bytes,
+        old_content_id: str,
+        offset: int,
+        context: "OperationContext | None" = None,
+    ) -> WriteResult:
+        """Partial write: splice ``buf`` at ``offset`` within existing content.
+
+        CAS RMW: read old content, splice, write new content as whole-file.
+        For CDC-chunked files, delegates to CDCEngine.write_chunked_partial()
+        for chunk-level RMW (only affected chunks rewritten).
+
+        Args:
+            buf: Bytes to splice in.
+            old_content_id: Content hash of the existing file.
+            offset: Byte offset within the existing file.
+            context: Operation context.
+
+        Returns:
+            WriteResult with new content_id, version, and total size.
+        """
+        # CDC + chunked → chunk-level partial write
+        if self._cdc is not None and self._cdc.is_chunked(old_content_id):
+            new_hash = self._cdc.write_chunked_partial(old_content_id, buf, offset, context)
+            # Read manifest to get total size
+            total_size = self._cdc.get_size(new_hash)
+            if self._bloom is not None:
+                self._bloom.add(new_hash)
+            return WriteResult(content_id=new_hash, version=new_hash, size=total_size)
+
+        # Single blob → read old, splice, write new (offset=0)
+        try:
+            old_data = self.read_content(old_content_id, context=context)
+        except Exception:
+            old_data = b""
+
+        # Zero-fill gap if offset > len(old_data)
+        if offset > len(old_data):
+            old_data = old_data + b"\x00" * (offset - len(old_data))
+
+        new_data = old_data[:offset] + buf + old_data[offset + len(buf) :]
+        return self.write_content(new_data, context=context)
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash

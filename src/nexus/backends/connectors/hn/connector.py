@@ -476,6 +476,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write content (not supported - HN is read-only)."""

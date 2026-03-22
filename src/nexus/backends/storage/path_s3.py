@@ -288,7 +288,12 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
         return content
 
     def write_content(
-        self, content: bytes, content_id: str = "", *, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        offset: int = 0,
+        context: "OperationContext | None" = None,
     ) -> WriteResult:
         if not context or not context.backend_path:
             raise BackendError(

@@ -187,6 +187,22 @@ _MCP_TO_SERVICE: dict[str, str] = {}
 _synced = False
 
 
+def _service_is_mcp_only(service: ServiceInfo) -> bool:
+    """True when the service is intentionally tools-only with no connector."""
+    return bool(service.klavis_mcp) and service.capabilities == ["tools"]
+
+
+def _connector_priority(name: str) -> tuple[int, int, int]:
+    """Prefer canonical backends over CLI aliases for service-map lookups."""
+    from nexus.backends.base.registry import ConnectorRegistry
+
+    info = ConnectorRegistry.get_info(name)
+    category_penalty = 1 if info and info.category == "cli" else 0
+    alias_penalty = 1 if name.startswith(("gws_", "cli:")) else 0
+    canonical_bonus = 1 if name.endswith("_connector") else 0
+    return (-category_penalty, -alias_penalty, canonical_bonus)
+
+
 def _sync_from_connector_registry() -> None:
     """Auto-derive connector fields from ConnectorRegistry.
 
@@ -213,15 +229,21 @@ def _sync_from_connector_registry() -> None:
     for info in ConnectorRegistry.list_all():
         if info.service_name and info.service_name in SERVICE_REGISTRY:
             service = SERVICE_REGISTRY[info.service_name]
-            if service.connector is not None and service.connector != info.name:
-                logger.warning(
-                    "Service '%s' connector mismatch: static=%s, registry=%s. "
-                    "Using registry value.",
+            if _service_is_mcp_only(service):
+                continue
+
+            if service.connector is None:
+                service.connector = info.name
+                continue
+
+            if _connector_priority(info.name) > _connector_priority(service.connector):
+                logger.info(
+                    "Service '%s' prefers connector %s over %s",
                     info.service_name,
-                    service.connector,
                     info.name,
+                    service.connector,
                 )
-            service.connector = info.name
+                service.connector = info.name
 
     # Rebuild reverse lookup maps
     _CONNECTOR_TO_SERVICE.clear()

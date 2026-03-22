@@ -319,6 +319,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "nexus.cli" = ["data/*.yml", "data/*.Dockerfile", "data/*.sql"]
+"nexus.backends.connectors.gws" = ["configs/*.yaml"]
+"nexus.backends.connectors.github" = ["*.yaml"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

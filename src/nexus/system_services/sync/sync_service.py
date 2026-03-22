@@ -132,6 +132,7 @@ class SyncService:
             ValueError: If mount_point doesn't exist
             RuntimeError: If backend doesn't support listing
         """
+        logger.info(f"[SYNC_MOUNT] Entry: mount_point={ctx.mount_point!r}")
         # Step 1: If no mount_point, sync all connector mounts
         if ctx.mount_point is None:
             return self._sync_all_mounts(ctx)
@@ -139,7 +140,7 @@ class SyncService:
         # Step 1.5: Acquire per-mount lock (non-blocking to avoid queueing)
         lock = self._get_mount_lock(ctx.mount_point)
         if not lock.acquire(blocking=False):
-            logger.warning(f"[SYNC_MOUNT] Sync already in progress for {ctx.mount_point}")
+            logger.info(f"[SYNC_MOUNT] Sync already in progress for {ctx.mount_point}")
             result = SyncResult()
             result.errors.append(f"Sync already in progress for {ctx.mount_point}")
             return result
@@ -152,7 +153,9 @@ class SyncService:
             result = SyncResult()
 
             # Step 3: Validate mount and get backend
+            logger.info(f"[SYNC_MOUNT] Step 3: validating mount {ctx.mount_point}")
             backend = self._validate_mount(ctx)
+            logger.info(f"[SYNC_MOUNT] Step 3: backend={type(backend).__name__}")
 
             # Step 4: Sync metadata (BFS traversal)
             files_found = self._sync_metadata(ctx, backend, result)
@@ -276,7 +279,7 @@ class SyncService:
 
             except Exception as e:
                 result.errors.append(f"[{mp}] Failed to sync: {e}")
-                logger.warning(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
+                logger.info(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
 
         logger.info(
             f"[SYNC_MOUNT] All mounts sync complete: "
@@ -292,6 +295,10 @@ class SyncService:
     ) -> set[str]:
         """Scan backend and sync metadata using BFS traversal.
 
+        If the backend exposes a ConnectorSyncProvider (via get_sync_provider()),
+        delegates to the provider's page/state-token protocol for paginated
+        and delta-aware sync. Otherwise falls back to direct BFS via list_dir().
+
         Args:
             ctx: SyncContext
             backend: Backend instance
@@ -302,6 +309,21 @@ class SyncService:
         """
 
         assert ctx.mount_point is not None
+
+        # Try the ConnectorSyncProvider path for CLI-backed connectors
+        # that expose paginated/delta-aware sync (Issue #3148).
+        provider = None
+        if hasattr(backend, "get_sync_provider"):
+            provider = backend.get_sync_provider()
+        if provider is not None:
+            try:
+                return self._sync_via_provider(ctx, backend, provider, result)
+            except Exception:
+                logger.debug(
+                    "ConnectorSyncProvider failed for %s, falling back to BFS",
+                    ctx.mount_point,
+                    exc_info=True,
+                )
 
         files_found: set[str] = set()
         paths_needing_tuples: list[str] = []
@@ -386,6 +408,10 @@ class SyncService:
                 return found
 
         # BFS traversal using deque
+        logger.info(
+            f"[SYNC_MOUNT] BFS start: virtual={start_virtual_path}, "
+            f"backend={start_backend_path!r}, backend_type={type(backend).__name__}"
+        )
         queue: deque[tuple[str, str]] = deque([(start_virtual_path, start_backend_path)])
 
         while queue:
@@ -393,6 +419,10 @@ class SyncService:
 
             try:
                 entries = backend.list_dir(backend_path, context=ctx.context)
+                logger.info(
+                    f"[SYNC_MOUNT] list_dir({backend_path!r}): {len(entries)} entries "
+                    f"(backend={type(backend).__name__}, entries_sample={entries[:3] if entries else '[]'})"
+                )
 
                 for entry_name in entries:
                     is_dir = entry_name.endswith("/")
@@ -466,6 +496,198 @@ class SyncService:
                 f"{total_tuples_created} tuples created total"
             )
 
+        return files_found
+
+    def _sync_via_provider(
+        self,
+        ctx: SyncContext,
+        backend: Any,
+        provider: Any,
+        result: SyncResult,
+    ) -> set[str]:
+        """Sync metadata and content using a ConnectorSyncProvider.
+
+        Implements the full page/state-token/deletion protocol:
+        1. Resumes from persisted state_token for delta sync (via ChangeLogStore)
+        2. Creates metadata entries for new/updated items
+        3. Fetches content via provider.fetch_item() and caches it
+        4. Processes deleted_ids from each page
+        5. Persists the final state_token for next sync cycle
+
+        This is the preferred sync path for CLI-backed connectors (Issue #3148).
+        Falls back to BFS list_dir if this fails.
+        """
+        import asyncio
+
+        from nexus.contracts.metadata import FileMetadata
+
+        assert ctx.mount_point is not None
+        files_found: set[str] = set()
+        created_by = self._get_created_by(ctx)
+        zone_id = self._resolve_zone_id(ctx)
+
+        # Resume from persisted state token for delta sync (unless full_sync)
+        since_token: str | None = None
+        state_key = f"__provider_state__{ctx.mount_point}"
+        if not ctx.full_sync:
+            cached = self._change_log.get_change_log(
+                state_key, backend.name, zone_id or ROOT_ZONE_ID
+            )
+            if cached and cached.backend_version:
+                since_token = cached.backend_version
+                logger.debug(
+                    "[SYNC_PROVIDER] Resuming delta sync for %s (token=%s)",
+                    ctx.mount_point,
+                    since_token[:20] if since_token else "None",
+                )
+
+        loop = asyncio.new_event_loop()
+        last_state_token: str | None = None
+        try:
+            page_token: str | None = None
+            while True:
+                page = loop.run_until_complete(
+                    provider.list_remote_items(
+                        "",
+                        since=since_token,
+                        page_token=page_token,
+                        page_size=100,
+                        context=ctx.context,
+                    )
+                )
+
+                # Process new/updated items
+                for item in page.items:
+                    rel_path = item.relative_path
+                    virtual_path = f"{ctx.mount_point}/{rel_path}"
+                    files_found.add(virtual_path)
+                    result.files_scanned += 1
+
+                    if ctx.dry_run:
+                        continue
+
+                    # Create or update metadata entry
+                    existing = self._gw.metadata_get(virtual_path)
+                    if not existing and zone_id:
+                        now = datetime.now(UTC)
+                        meta = FileMetadata(
+                            path=virtual_path,
+                            backend_name=backend.name,
+                            physical_path=rel_path,
+                            size=item.size or 0,
+                            etag=item.content_hash,
+                            created_at=now,
+                            modified_at=now,
+                            version=1,
+                            created_by=created_by,
+                            zone_id=zone_id,
+                        )
+                        try:
+                            self._gw.metadata_put(meta)
+                            result.files_created += 1
+                        except Exception as e:
+                            result.errors.append(f"Failed to add {virtual_path}: {e}")
+
+                    # Fetch content via provider and write to VFS.
+                    # Honor fetch.relative_path if it differs from list-derived path.
+                    if ctx.sync_content and not ctx.dry_run:
+                        try:
+                            fetch = loop.run_until_complete(
+                                provider.fetch_item(item.item_id, context=ctx.context)
+                            )
+                            if fetch.content and len(fetch.content) > 0:
+                                write_path = virtual_path
+                                if fetch.relative_path and fetch.relative_path != rel_path:
+                                    write_path = f"{ctx.mount_point}/{fetch.relative_path}"
+                                loop.run_until_complete(
+                                    self._gw.sys_write(write_path, fetch.content)
+                                )
+                                result.cache_synced += 1
+                        except Exception:
+                            logger.debug(
+                                "Provider fetch_item failed for %s",
+                                virtual_path,
+                                exc_info=True,
+                            )
+
+                # Process deletions — deleted_ids are item IDs (e.g. bare
+                # Gmail msgId), not VFS paths.  We must scan the metadata
+                # store for the mount prefix to find stored paths that
+                # contain the deleted ID, since the deleted item is typically
+                # NOT in the current page.items.
+                if page.deleted_ids and not ctx.dry_run:
+                    # Build id→path from metadata store (covers previously synced files)
+                    id_to_path: dict[str, str] = {}
+                    try:
+                        stored = self._gw.metadata_list(ctx.mount_point + "/", recursive=True) or []
+                        for entry in stored:
+                            p = getattr(entry, "path", str(entry))
+                            stem = p.rsplit("/", 1)[-1].replace(".yaml", "")
+                            id_to_path[stem] = p
+                            # Gmail: "threadId-msgId" → also index by msgId suffix
+                            if "-" in stem:
+                                id_to_path[stem.rsplit("-", 1)[-1]] = p
+                    except Exception:
+                        pass  # metadata_list unavailable (Raft store)
+
+                    # Also index from files_found in this run
+                    for known_path in files_found:
+                        stem = known_path.rsplit("/", 1)[-1].replace(".yaml", "")
+                        id_to_path[stem] = known_path
+                        if "-" in stem:
+                            id_to_path[stem.rsplit("-", 1)[-1]] = known_path
+
+                    for deleted_id in page.deleted_ids:
+                        del_path = id_to_path.get(deleted_id)
+                        if not del_path:
+                            del_path = f"{ctx.mount_point}/{deleted_id}"
+                        try:
+                            self._gw.metadata_delete(del_path)
+                            result.files_deleted += 1
+                            logger.debug("[SYNC_PROVIDER] Deleted %s", del_path)
+                        except Exception:
+                            pass
+
+                # Track state token for persistence
+                if page.state_token:
+                    last_state_token = page.state_token
+
+                if not page.next_page_token:
+                    break
+                page_token = page.next_page_token
+
+        finally:
+            loop.close()
+
+        # Persist state token for next delta sync cycle
+        if last_state_token and zone_id and not ctx.dry_run:
+            from nexus.backends.base.backend import FileInfo
+
+            self._enqueue_change_log_upsert(
+                None,  # immediate upsert
+                state_key,
+                backend.name,
+                zone_id,
+                FileInfo(
+                    size=0,
+                    mtime=datetime.now(UTC),
+                    backend_version=last_state_token,
+                    content_hash=None,
+                ),
+            )
+            logger.debug(
+                "[SYNC_PROVIDER] Persisted state token for %s: %s",
+                ctx.mount_point,
+                last_state_token[:20],
+            )
+
+        logger.info(
+            "[SYNC_PROVIDER] Synced %d files (%d fetched, %d deleted) via provider for %s",
+            result.files_scanned,
+            result.cache_synced,
+            result.files_deleted,
+            ctx.mount_point,
+        )
         return files_found
 
     def _sync_file(
@@ -579,15 +801,17 @@ class SyncService:
                 else:
                     file_size = self._get_file_size(backend, backend_path, ctx)
 
-                # Issue #1126: etag=None during metadata sync
-                # Content hash is computed later by cache_mixin.sync_content_to_cache() when content is read
-                # This avoids the bug of storing path hash instead of content hash
+                # Use content_hash from file_info as etag when available.
+                # For connector backends this distinguishes files (etag set)
+                # from directories (etag=None, size=0) in the TUI.
+                etag = file_info.content_hash if file_info else None
+
                 meta = FileMetadata(
                     path=virtual_path,
                     backend_name=backend.name,
                     physical_path=backend_path,
                     size=file_size,
-                    etag=None,
+                    etag=etag,
                     created_at=now,
                     modified_at=now,
                     version=1,
@@ -615,7 +839,30 @@ class SyncService:
             except Exception as e:
                 result.errors.append(f"Failed to add {virtual_path}: {e}")
         else:
-            # File exists - check if it needs updating (for existing files)
+            # File exists — update metadata if stale (e.g., missing etag/size
+            # from before the connector file-type fix).
+            if file_info and (not existing_meta.etag or existing_meta.size == 0):
+                try:
+                    etag = file_info.content_hash if file_info else None
+                    file_size = file_info.size if file_info and file_info.size else 1
+                    now = datetime.now(UTC)
+                    updated = FileMetadata(
+                        path=virtual_path,
+                        backend_name=existing_meta.backend_name,
+                        physical_path=existing_meta.physical_path,
+                        size=file_size,
+                        etag=etag,
+                        created_at=existing_meta.created_at or now,
+                        modified_at=now,
+                        version=(existing_meta.version or 0) + 1,
+                        created_by=existing_meta.created_by,
+                        zone_id=existing_meta.zone_id,
+                    )
+                    self._gw.metadata_put(updated)
+                    result.files_updated += 1
+                except Exception:
+                    pass
+
             # Issue #1127: Update change log even for existing files
             if file_info:
                 self._enqueue_change_log_upsert(

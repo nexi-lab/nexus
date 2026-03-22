@@ -110,6 +110,7 @@ def _boot_independent_bricks(
         _manifest_status: dict[str, bool] | None = None
         if desc.manifest is not None:
             _manifest_status = desc.manifest.verify_imports()
+            assert _manifest_status is not None  # Set on line above
             _required_ok = all(
                 _manifest_status.get(mod, False) for mod in desc.manifest.required_modules
             )
@@ -382,6 +383,8 @@ def _boot_independent_bricks(
 
         from nexus.factory._distributed import _create_workflow_engine
 
+        # mount_sync wired post-boot via WorkflowServices.mount_sync = mount_service
+        # (see _wired.py where MountService is created after bricks)
         workflow_engine = _create_workflow_engine(ctx.record_store, _glob_match_fn)
     elif not _on("workflows"):
         logger.debug("[BOOT:BRICK] Workflows brick disabled by profile")

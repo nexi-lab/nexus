@@ -83,6 +83,7 @@ class MountService:
         persist_service: Any = None,
         rmdir_fn: Any = None,
         token_manager_fn: Any = None,
+        search_service: Any = None,
     ):
         """Initialize mount service.
 
@@ -98,6 +99,7 @@ class MountService:
             persist_service: MountPersistService (alias, used by delete_connector)
             rmdir_fn: Callback to delete directories (NexusFS.rmdir)
             token_manager_fn: Callback to get token manager for OAuth revocation
+            search_service: Optional SearchService for post-mount indexing (Issue #3148)
         """
         self.router = router
         self.mount_manager = mount_manager
@@ -110,8 +112,201 @@ class MountService:
         self._persist_service = persist_service
         self._rmdir_fn = rmdir_fn
         self._token_manager_fn = token_manager_fn
+        self._search_service = search_service
 
         logger.info("[MountService] Initialized")
+
+    # =========================================================================
+    # Post-mount hooks (Issue #3148)
+    # =========================================================================
+
+    async def _run_post_mount_hooks(self, mount_point: str) -> None:
+        """Run async post-mount hooks after a mount is added.
+
+        Hooks are best-effort: failures are logged as warnings but do not
+        fail the mount operation (Decision #12).
+
+        Runs:
+        - Skill doc generation for SkillDocMixin backends
+        - Search indexing via search_service (Issue #3148 Gap 1)
+        """
+        try:
+            # Get backend from router to check capabilities
+            route = self.router.route(mount_point)
+            backend = route.backend if route else None
+            if backend is None:
+                return
+
+            # Skill doc generation (via mount_hooks if available)
+            from nexus.contracts.capabilities import ConnectorCapability
+
+            if hasattr(backend, "has_capability") and backend.has_capability(
+                ConnectorCapability.SKILL_DOC
+            ):
+                await asyncio.to_thread(self._generate_skill_docs, mount_point, backend)
+
+            # Search indexing — index the mount point so content is discoverable.
+            # Uses search_service DI (Issue #3148 Phase 1).
+            if self._search_service is not None:
+                try:
+                    index_fn = getattr(self._search_service, "index_directory", None)
+                    if index_fn is not None:
+                        await asyncio.to_thread(index_fn, mount_point)
+                        logger.info("Indexed mount point %s for search", mount_point)
+                    else:
+                        # Fall back to semantic_search_index if available
+                        semantic_fn = getattr(self._search_service, "semantic_search_index", None)
+                        if semantic_fn is not None:
+                            asyncio.create_task(semantic_fn(mount_point, recursive=True))
+                            logger.info("Queued semantic search indexing for %s", mount_point)
+                except Exception:
+                    logger.warning(
+                        "Post-mount search indexing failed for %s",
+                        mount_point,
+                        exc_info=True,
+                    )
+
+        except Exception:
+            logger.warning(
+                "Post-mount hooks failed for %s (mount still active)", mount_point, exc_info=True
+            )
+
+    def _generate_skill_docs(self, mount_point: str, backend: Any) -> None:
+        """Generate .skill/ directory for a connector backend (sync).
+
+        Called from post-mount hooks and sync completion.
+        """
+        from nexus.backends.connectors.base import SkillDocMixin
+
+        if not isinstance(backend, SkillDocMixin):
+            return
+        if not backend.SKILL_NAME:
+            return
+
+        backend.set_mount_path(mount_point)
+
+        # Determine filesystem to write to
+        fs = None
+        if self._gw is not None and hasattr(self._gw, "nexus_fs"):
+            fs = self._gw.nexus_fs
+        elif self.nexus_fs is not None:
+            fs = self.nexus_fs
+
+        if fs is not None:
+            try:
+                result = backend.write_skill_docs(mount_point, fs)
+                if result.get("skill_md"):
+                    logger.info(
+                        "Generated skill docs for %s at %s", mount_point, result["skill_md"]
+                    )
+            except Exception:
+                logger.warning("Failed to generate skill docs for %s", mount_point, exc_info=True)
+
+    async def _index_mount_content(self, mount_point: str, *, zone_id: str | None = None) -> None:
+        """Index mounted connector content for semantic search.
+
+        Enumerates files via the connector backend's list_dir (BFS), reads
+        content via sys_read, and indexes via SearchDaemon.index_documents().
+
+        Args:
+            mount_point: VFS path of the mount.
+            zone_id: Zone to index into. Must match the zone used during sync
+                so that search queries (which apply zone isolation) find the
+                indexed content.
+        """
+        try:
+            search_daemon = getattr(self._search_service, "_search_daemon", None)
+            if search_daemon is None:
+                # Fall back to semantic_search_index which uses IndexingService
+                semantic_fn = getattr(self._search_service, "semantic_search_index", None)
+                if semantic_fn is not None:
+                    await semantic_fn(mount_point, recursive=True)
+                    logger.info("Indexed mount %s via semantic_search_index", mount_point)
+                else:
+                    logger.debug("No search daemon for indexing %s", mount_point)
+                return
+
+            # Get NexusFS for reading content
+            nx = self.nexus_fs or (
+                self._gw.nexus_fs if self._gw and hasattr(self._gw, "nexus_fs") else None
+            )
+            if nx is None:
+                return
+
+            # Get the connector backend via the router
+            backend = None
+            try:
+                route = self.router.route(mount_point)
+                if route:
+                    backend = route.backend
+            except Exception:
+                pass
+
+            from nexus.contracts.types import OperationContext
+
+            admin_ctx = OperationContext(user_id="system", groups=[], is_admin=True, is_system=True)
+
+            # Enumerate files via backend's list_dir (BFS) — works for all
+            # connector types including CLI-backed ones where the Raft metastore
+            # doesn't store file entries.
+            file_paths: list[str] = []
+            if backend and hasattr(backend, "list_dir"):
+                from collections import deque
+
+                queue: deque[tuple[str, str]] = deque([("", mount_point)])
+                while queue and len(file_paths) < 200:
+                    backend_path, virtual_prefix = queue.popleft()
+                    try:
+                        entries = await asyncio.to_thread(backend.list_dir, backend_path, None)
+                    except Exception:
+                        continue
+                    for entry in entries:
+                        is_dir = entry.endswith("/")
+                        name = entry.rstrip("/")
+                        bp = f"{backend_path}/{name}" if backend_path else name
+                        vp = f"{virtual_prefix}/{name}"
+                        if is_dir:
+                            queue.append((bp, vp))
+                        else:
+                            file_paths.append(vp)
+                            if len(file_paths) >= 200:
+                                break
+
+            if not file_paths:
+                logger.debug("No files found for indexing at %s", mount_point)
+                return
+
+            # Read content and build documents for SearchDaemon
+            documents: list[dict[str, Any]] = []
+            for path in file_paths:
+                if not path.endswith((".yaml", ".json", ".md", ".txt")):
+                    continue
+                try:
+                    content = await nx.sys_read(path, context=admin_ctx)
+                    if isinstance(content, bytes):
+                        content = content.decode("utf-8", errors="ignore")
+                    if content and len(content) > 10:
+                        documents.append({"id": path, "text": str(content), "path": path})
+                except Exception:
+                    continue
+
+            if documents:
+                # Use the zone_id from the sync context (matches the zone where
+                # metadata was stored, so search queries find indexed content).
+                from nexus.contracts.constants import ROOT_ZONE_ID
+
+                index_zone = zone_id or ROOT_ZONE_ID
+
+                count = await search_daemon.index_documents(documents, zone_id=index_zone)
+                logger.info(
+                    "Indexed %d connector files from %s into search (zone=%s)",
+                    count,
+                    mount_point,
+                    index_zone,
+                )
+
+        except Exception:
+            logger.debug("Semantic indexing failed for %s", mount_point, exc_info=True)
 
     # =========================================================================
     # Sync Core Logic (inlined from MountCoreService)
@@ -148,25 +343,52 @@ class MountService:
     ) -> None:
         """Setup mount point with directory and permissions.
 
+        Creates directory entries for the mount path and all parent
+        directories (e.g., /mnt/gmail creates both /mnt and /mnt/gmail)
+        so the TUI file explorer can navigate to the mount point.
+
         Args:
             mount_point: Virtual path
             context: Operation context
         """
         logger.info(f"Setting up mount point: {mount_point}")
 
-        # Create directory entry
+        # Create directory entries for mount point AND parent directories
+        # via sync metadata_put (gateway.sys_mkdir is async and can't be
+        # called from this sync context).
         if self._gw is not None:
-            try:
-                self._gw.sys_mkdir(mount_point, parents=True, exist_ok=True, context=context)
-                logger.info(f"Created directory entry for mount point: {mount_point}")
-            except Exception as e:
-                logger.warning(f"Failed to create directory entry: {e}")
-        elif self.nexus_fs and hasattr(self.nexus_fs, "sys_mkdir"):
-            try:
-                self.nexus_fs.sys_mkdir(mount_point, parents=True, exist_ok=True)
-                logger.info(f"Created directory entry for mount point: {mount_point}")
-            except Exception as e:
-                logger.warning(f"Failed to create directory entry: {e}")
+            from datetime import UTC, datetime
+
+            from nexus.contracts.metadata import FileMetadata
+            from nexus.lib.context_utils import get_zone_id
+
+            zone_id = get_zone_id(context) if context else "default"
+            created_by = getattr(context, "user_id", None) if context else None
+
+            parts = mount_point.rstrip("/").split("/")
+            for i in range(2, len(parts) + 1):
+                dir_path = "/".join(parts[:i])
+                try:
+                    existing = self._gw.metadata_get(dir_path)
+                    if existing:
+                        continue
+                    now = datetime.now(UTC)
+                    meta = FileMetadata(
+                        path=dir_path,
+                        backend_name="__mount__",
+                        physical_path=dir_path,
+                        size=0,
+                        etag=None,
+                        created_at=now,
+                        modified_at=now,
+                        version=1,
+                        created_by=created_by,
+                        zone_id=zone_id,
+                    )
+                    self._gw.metadata_put(meta)
+                    logger.info(f"Created directory entry: {dir_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to create directory entry {dir_path}: {e}")
 
         # Grant owner permission
         self._grant_owner_permission(mount_point, context)
@@ -299,8 +521,12 @@ class MountService:
     ) -> str:
         """Add a dynamic backend mount (synchronous).
 
-        This is the core sync implementation used by both the async RPC
-        wrapper and NexusFS facade methods.
+        .. deprecated::
+            Use ``await add_mount(...)`` instead. This sync entry point
+            skips async post-mount hooks (skill doc regeneration, search
+            indexing). Retained for internal use by MountPersistService
+            and NexusFS facade during startup. Will be made private in
+            a future release.
 
         Args:
             mount_point: Virtual path where backend is mounted
@@ -737,7 +963,7 @@ class MountService:
             PermissionError: If user lacks write permission on parent path
             RuntimeError: If backend type is not supported
         """
-        return await asyncio.to_thread(
+        mount_id = await asyncio.to_thread(
             self.add_mount_sync,
             mount_point=mount_point,
             backend_type=backend_type,
@@ -746,6 +972,14 @@ class MountService:
             io_profile=io_profile,
             context=context,
         )
+
+        # --- Post-mount hooks (Issue #3148, Decision #1A) ---
+        # These run only through the async path. Sync callers (startup,
+        # persist service) skip hooks — a separate generate_all_skill_docs
+        # pass handles startup.
+        await self._run_post_mount_hooks(mount_point)
+
+        return mount_id
 
     @rpc_expose(description="Remove backend mount")
     async def remove_mount(
@@ -849,6 +1083,148 @@ class MountService:
                 - user_scoped: Whether connector requires per-user OAuth (bool)
         """
         return await asyncio.to_thread(self.list_connectors_sync, category)
+
+    @rpc_expose(description="Update mount backend configuration")
+    async def update_mount(
+        self,
+        mount_point: str,
+        backend_config: dict[str, Any],
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Update a mount's backend configuration without removing it.
+
+        Reconfigures the backend (new endpoint, rotated key, updated token)
+        while preserving the DT_MOUNT entry, permissions, and metadata index.
+        This avoids the remove+add cycle that loses permissions and search index.
+
+        Phase 5 (Issue #3148).
+
+        Args:
+            mount_point: Virtual path of mount to update
+            backend_config: New backend configuration (merged with existing)
+            context: Operation context for permission checks
+
+        Returns:
+            Dict with update details: {updated, mount_point, changed_keys}
+
+        Raises:
+            PermissionError: If user lacks write permission on mount
+            ValueError: If mount does not exist
+        """
+        if not self._check_permission(mount_point, "write", context):
+            raise PermissionError(f"Cannot update mount {mount_point}: no write permission")
+
+        route = self.router.route(mount_point)
+        if route is None:
+            raise ValueError(f"Mount not found: {mount_point}")
+
+        backend = route.backend
+        result: dict[str, Any] = {
+            "updated": False,
+            "mount_point": mount_point,
+            "changed_keys": [],
+        }
+
+        # Apply config updates to backend
+        for key, value in backend_config.items():
+            if hasattr(backend, key):
+                old_val = getattr(backend, key, None)
+                if old_val != value:
+                    setattr(backend, key, value)
+                    result["changed_keys"].append(key)
+            elif hasattr(backend, f"_{key}"):
+                old_val = getattr(backend, f"_{key}", None)
+                if old_val != value:
+                    setattr(backend, f"_{key}", value)
+                    result["changed_keys"].append(key)
+
+        result["updated"] = len(result["changed_keys"]) > 0
+
+        if result["updated"]:
+            logger.info(
+                "Updated mount %s config: %s",
+                mount_point,
+                ", ".join(result["changed_keys"]),
+            )
+
+        return result
+
+    @rpc_expose(description="Refresh OAuth credentials for a mount")
+    async def reauth_mount(
+        self,
+        mount_point: str,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Refresh or rotate OAuth credentials for a mounted connector.
+
+        Triggers a token refresh via TokenManager without unmounting.
+        Useful for credential rotation, expired tokens, or provider changes.
+
+        Phase 5 (Issue #3148).
+
+        Args:
+            mount_point: Virtual path of mount to reauth
+            provider: OAuth provider name (auto-detected from backend if not given)
+            user_email: User email for token lookup (auto-detected from context)
+            context: Operation context
+
+        Returns:
+            Dict with reauth details: {refreshed, provider, user_email}
+
+        Raises:
+            PermissionError: If user lacks write permission on mount
+            ValueError: If mount not found or not OAuth-capable
+        """
+        if not self._check_permission(mount_point, "write", context):
+            raise PermissionError(f"Cannot reauth mount {mount_point}: no write permission")
+
+        route = self.router.route(mount_point)
+        if route is None:
+            raise ValueError(f"Mount not found: {mount_point}")
+
+        backend = route.backend
+
+        # Auto-detect provider from backend
+        if provider is None:
+            provider = getattr(backend, "provider", None) or getattr(backend, "_provider", None)
+        if provider is None:
+            raise ValueError(f"Cannot determine OAuth provider for {mount_point}")
+
+        # Auto-detect user_email from context
+        if user_email is None and context is not None:
+            user_email = getattr(context, "user_id", None)
+        if user_email is None:
+            raise ValueError("user_email required for reauth")
+
+        # Get token manager from backend or service
+        token_manager = getattr(backend, "_token_manager", None)
+        if token_manager is None and self._token_manager_fn is not None:
+            token_manager = self._token_manager_fn()
+
+        if token_manager is None:
+            raise ValueError(f"No token manager available for {mount_point}")
+
+        # Refresh token
+        zone_id = getattr(context, "zone_id", None) if context else None
+        try:
+            await asyncio.to_thread(
+                token_manager.refresh_token,
+                user_email=user_email,
+                provider=provider,
+                zone_id=zone_id,
+            )
+            logger.info("Refreshed OAuth token for %s (%s/%s)", mount_point, provider, user_email)
+            return {"refreshed": True, "provider": provider, "user_email": user_email}
+        except Exception as e:
+            logger.warning("Token refresh failed for %s: %s", mount_point, e)
+            return {
+                "refreshed": False,
+                "provider": provider,
+                "user_email": user_email,
+                "error": str(e),
+            }
 
     @rpc_expose(description="List all backend mounts")
     async def list_mounts(self, context: "OperationContext | None" = None) -> list[dict[str, Any]]:
@@ -1146,6 +1522,9 @@ class MountService:
         Raises:
             RuntimeError: If sync_service not configured
         """
+        logger.info(
+            f"[MOUNT_SVC] sync_mount called: mount_point={mount_point}, _sync_service={type(self._sync_service).__name__}"
+        )
         if self._sync_service is None:
             raise RuntimeError(
                 "sync_mount requires sync_service. Pass sync_service to MountService.__init__"
@@ -1171,7 +1550,37 @@ class MountService:
             result = self._sync_service.sync_mount(ctx)
             return cast(dict[str, Any], result.to_dict())
 
-        return await asyncio.to_thread(_sync_mount_sync)
+        sync_result = await asyncio.to_thread(_sync_mount_sync)
+
+        # Post-sync: regenerate .skill/ directory (Issue #3148, Decision #7B).
+        # Schema files are re-generated on every sync so they stay fresh.
+        if mount_point and not dry_run:
+            try:
+                route = self.router.route(mount_point)
+                if route:
+                    await asyncio.to_thread(self._generate_skill_docs, mount_point, route.backend)
+            except Exception:
+                logger.warning(
+                    "Post-sync skill doc regeneration failed for %s",
+                    mount_point,
+                    exc_info=True,
+                )
+
+            # Post-sync: index synced content for semantic search (Issue #3148).
+            # Use the indexing service to bulk-index all files in the mount.
+            files_scanned = sync_result.get("files_scanned", 0)
+            if files_scanned > 0 and self._search_service is not None:
+                try:
+                    _zone = getattr(context, "zone_id", None) if context else None
+                    asyncio.create_task(self._index_mount_content(mount_point, zone_id=_zone))
+                except Exception:
+                    logger.debug(
+                        "Post-sync search indexing failed for %s",
+                        mount_point,
+                        exc_info=True,
+                    )
+
+        return sync_result
 
     @rpc_expose(description="Start async sync job for a mount")
     async def sync_mount_async(

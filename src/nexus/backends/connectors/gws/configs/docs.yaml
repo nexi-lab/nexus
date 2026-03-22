@@ -1,0 +1,30 @@
+version: 1
+type: cli
+cli: gws
+service: docs
+auth:
+  provider: google
+  scopes:
+    - https://www.googleapis.com/auth/documents
+read:
+  list_command: documents.list
+  get_command: documents.get
+  format: json
+write:
+  - path: "_insert.yaml"
+    operation: insert_text
+    schema_ref: nexus.backends.connectors.gws.schemas.InsertTextSchema
+    command: documents.batchUpdate
+    traits:
+      reversibility: partial
+      confirm: intent
+  - path: "_replace.yaml"
+    operation: replace_text
+    schema_ref: nexus.backends.connectors.gws.schemas.ReplaceTextSchema
+    command: documents.batchUpdate
+    traits:
+      reversibility: partial
+      confirm: explicit
+sync:
+  delta_command: "documents.list --modified-after {since}"
+  state_field: lastModifiedTime

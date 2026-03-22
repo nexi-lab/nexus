@@ -62,7 +62,31 @@ def rpc_transport():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
     from nexus.remote.rpc_transport import RPCTransport
 
-    return RPCTransport(f"localhost:{GRPC_PORT}", auth_token=ADMIN_KEY)
+    # Auto-discover mTLS certs from nexus.yaml data_dir
+    tls_config = None
+    try:
+        from pathlib import Path
+
+        import yaml
+
+        nexus_yaml = Path(os.path.dirname(__file__), "..", "nexus.yaml")
+        if nexus_yaml.exists():
+            with open(nexus_yaml) as f:
+                cfg = yaml.safe_load(f)
+            tls_dir = Path(cfg.get("data_dir", "")) / "tls"
+            if tls_dir.exists() and (tls_dir / "ca.pem").exists():
+
+                class _TlsCfg:
+                    def __init__(self, d: Path):
+                        self.ca_pem = (d / "ca.pem").read_bytes()
+                        self.node_key_pem = (d / "node-key.pem").read_bytes()
+                        self.node_cert_pem = (d / "node.pem").read_bytes()
+
+                tls_config = _TlsCfg(tls_dir)
+    except Exception:
+        pass  # Fall back to insecure
+
+    return RPCTransport(f"localhost:{GRPC_PORT}", auth_token=ADMIN_KEY, tls_config=tls_config)
 
 
 def main() -> None:

@@ -46,6 +46,7 @@ class SkillDocGenerator:
         skill_dir: str = ".skill",
         nested_examples: dict[str, list[str]] | None = None,
         field_examples: dict[str, str] | None = None,
+        write_paths: dict[str, str] | None = None,
     ) -> None:
         self._skill_name = skill_name
         self._schemas = schemas
@@ -55,6 +56,10 @@ class SkillDocGenerator:
         self._skill_dir = skill_dir
         self._nested_examples = nested_examples or {}
         self._field_examples = field_examples or {}
+        # operation_name -> write path (e.g., "send_email" -> "SENT/_new.yaml")
+        self._write_paths = write_paths or {}
+        # Optional directory structure description (set by connector)
+        self._directory_structure: str | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -77,8 +82,14 @@ class SkillDocGenerator:
             "",
         ]
 
-        if self._schemas:
-            lines.extend(self._generate_operations_section())
+        # Directory structure (if provided)
+        if self._directory_structure:
+            lines.extend(
+                ["## Directory Structure", "", "```", self._directory_structure, "```", ""]
+            )
+
+        # Read patterns + write operations (Issue #3148)
+        lines.extend(self._generate_read_patterns_section(mount_path))
 
         if self._operation_traits:
             lines.extend(self._generate_required_format_section())
@@ -98,6 +109,8 @@ class SkillDocGenerator:
         Creates:
             <mount_path>/.skill/
                 SKILL.md           # Main documentation
+                schemas/           # Individual schema YAML files (Issue #3148)
+                    <operation>.yaml
                 examples/          # Example YAML files
                     <example>.yaml
 
@@ -106,9 +119,9 @@ class SkillDocGenerator:
             filesystem: NexusFS instance to write to (optional).
 
         Returns:
-            Dict of written paths: {"skill_md": path, "examples": [paths...]}.
+            Dict of written paths: {"skill_md": path, "schemas": [...], "examples": [...]}.
         """
-        result: dict[str, Any] = {"skill_md": None, "examples": []}
+        result: dict[str, Any] = {"skill_md": None, "schemas": [], "examples": []}
 
         if not self._skill_name:
             logger.warning("Cannot write skill docs: skill_name not configured")
@@ -123,12 +136,14 @@ class SkillDocGenerator:
         try:
             filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
 
+            # Write SKILL.md
             skill_md_path = posixpath.join(skill_dir, "SKILL.md")
             content = self.generate_skill_doc(mount_path)
             filesystem.write(skill_md_path, content.encode("utf-8"))
             result["skill_md"] = skill_md_path
             logger.info("Generated SKILL.md at %s", skill_md_path)
 
+            # Write example files
             if self._examples:
                 examples_dir = posixpath.join(skill_dir, "examples")
                 filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
@@ -139,11 +154,206 @@ class SkillDocGenerator:
                     result["examples"].append(example_path)
                     logger.debug("Generated example at %s", example_path)
 
+            # Write individual schema files (Issue #3148, Decision #7B)
+            if self._schemas:
+                schemas_dir = posixpath.join(skill_dir, "schemas")
+                filesystem.mkdir(schemas_dir, parents=True, exist_ok=True)
+
+                for op_name, schema in self._schemas.items():
+                    schema_content = self._generate_annotated_schema(op_name, schema)
+                    schema_path = posixpath.join(schemas_dir, f"{op_name}.yaml")
+                    filesystem.write(schema_path, schema_content.encode("utf-8"))
+                    result["schemas"].append(schema_path)
+                    logger.debug("Generated schema at %s", schema_path)
+
             return result
 
         except Exception as e:
             logger.warning("Failed to write skill docs to %s: %s", skill_dir, e)
             return result
+
+    def _generate_read_patterns_section(self, mount_path: str) -> list[str]:
+        """Generate Read Patterns section showing how to list, cat, grep content.
+
+        Provides agents with L0-L1 discovery: how to explore connector content
+        before attempting write operations. Issue #3148.
+        """
+        mp = mount_path.rstrip("/")
+        lines = [
+            "## Read Patterns",
+            "",
+            "### List content",
+            "```bash",
+            f"nexus ls {mp}/",
+            "```",
+            "",
+            "### Read a file",
+            "```bash",
+            f"nexus cat {mp}/<path>",
+            "```",
+            "",
+            "### Search content",
+            "```bash",
+            f'nexus grep "keyword" {mp}/',
+            "```",
+            "",
+        ]
+
+        # Add write operations with exact paths and inline schemas
+        if self._schemas:
+            lines.extend(["## Operations", ""])
+
+            for op_name, schema in self._schemas.items():
+                traits = self._operation_traits.get(op_name, OpTraits())
+                display = op_name.replace("_", " ").title()
+                write_path = self._write_paths.get(op_name, "_new.yaml")
+
+                lines.append(f"### {display}")
+                lines.append("")
+                lines.append(f"Write to `{mp}/{write_path}`:")
+                lines.append(f"- Reversibility: **{traits.reversibility.value}**")
+                lines.append(f"- Confirm: **{traits.confirm.value}**")
+
+                if traits.confirm == ConfirmLevel.USER:
+                    lines.append("- **⚠ IRREVERSIBLE** — requires `user_confirmed: true`")
+
+                lines.append("")
+                lines.append("```yaml")
+
+                if traits.confirm >= ConfirmLevel.INTENT:
+                    lines.append("# agent_intent: <why you are doing this — min 10 chars>")
+                if traits.confirm >= ConfirmLevel.EXPLICIT:
+                    lines.append("# confirm: true")
+                if traits.confirm == ConfirmLevel.USER:
+                    lines.append("# user_confirmed: true  # ask user first")
+
+                # Inline schema fields
+                for field_name, field_info in schema.model_fields.items():
+                    if field_name in ("agent_intent", "confirm", "user_confirmed"):
+                        continue
+                    required = field_info.is_required()
+                    req_tag = "REQUIRED" if required else "optional"
+                    desc = field_info.description or ""
+                    example = self._get_field_example(
+                        field_name, field_info, field_info.annotation, required
+                    )
+                    lines.append(
+                        f"{field_name}: {example}  # {req_tag}{' — ' + desc if desc else ''}"
+                    )
+
+                lines.append("```")
+                lines.append("")
+
+                for warning in traits.warnings:
+                    lines.append(f"> **Warning:** {warning}")
+                    lines.append("")
+
+            lines.append("")
+
+        # Add schema discovery
+        lines.extend(
+            [
+                "### Schema discovery",
+                "```bash",
+                f"nexus mounts skills {mp}",
+                f"nexus mounts schema {mp} <operation>",
+                "```",
+                "",
+            ]
+        )
+
+        return lines
+
+    def _generate_annotated_schema(self, op_name: str, schema: type[BaseModel]) -> str:
+        """Generate an annotated YAML schema file for a single operation.
+
+        Each field includes type, required/optional, constraints, and description
+        from Pydantic field metadata. This is the L2 discovery layer that agents
+        use to construct valid writes.
+
+        Args:
+            op_name: Operation name (e.g., "send_email").
+            schema: Pydantic model class.
+
+        Returns:
+            Annotated YAML content as string.
+        """
+        traits = self._operation_traits.get(op_name, OpTraits())
+        lines = [
+            f"# Schema: {op_name}",
+            f"# Connector: {self._format_display_name()}",
+            f"# Reversibility: {traits.reversibility.value}",
+            f"# Confirm level: {traits.confirm.value}",
+            "#",
+        ]
+
+        if traits.confirm >= ConfirmLevel.INTENT:
+            lines.append("# agent_intent: <required, min 10 chars — why you are doing this>")
+        if traits.confirm >= ConfirmLevel.EXPLICIT:
+            lines.append("# confirm: true  # REQUIRED")
+
+        lines.append("")
+
+        for field_name, field_info in schema.model_fields.items():
+            if field_name in ("agent_intent", "confirm", "user_confirmed"):
+                continue
+
+            annotation = field_info.annotation
+            required = field_info.is_required()
+            description = field_info.description or ""
+            req_label = "required" if required else "optional"
+
+            # Type name
+            type_name = self._get_type_name(annotation)
+
+            # Constraints from metadata
+            constraints = self._get_field_constraints(field_info)
+            constraint_str = f", {constraints}" if constraints else ""
+
+            comment = f"# {req_label}, {type_name}{constraint_str}"
+            if description:
+                comment += f" — {description}"
+
+            lines.append(comment)
+
+            example = self._get_field_example(field_name, field_info, annotation, required)
+            lines.append(f"{field_name}: {example}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _get_type_name(annotation: Any) -> str:
+        """Get human-readable type name from annotation."""
+        if annotation is None:
+            return "any"
+        origin = getattr(annotation, "__origin__", None)
+        if origin is list:
+            args = getattr(annotation, "__args__", ())
+            inner = args[0].__name__ if args else "any"
+            return f"list[{inner}]"
+        if origin is dict:
+            return "dict"
+        if hasattr(annotation, "__name__"):
+            return str(annotation.__name__)
+        return str(annotation)
+
+    @staticmethod
+    def _get_field_constraints(field_info: Any) -> str:
+        """Extract constraint string from Pydantic field metadata."""
+        parts = []
+        for meta in field_info.metadata or []:
+            if hasattr(meta, "min_length") and meta.min_length is not None:
+                parts.append(f"min_length={meta.min_length}")
+            if hasattr(meta, "max_length") and meta.max_length is not None:
+                parts.append(f"max_length={meta.max_length}")
+            if hasattr(meta, "ge") and meta.ge is not None:
+                parts.append(f"min={meta.ge}")
+            if hasattr(meta, "le") and meta.le is not None:
+                parts.append(f"max={meta.le}")
+            if hasattr(meta, "pattern") and meta.pattern is not None:
+                parts.append(f"pattern={meta.pattern}")
+        return ", ".join(parts)
 
     # ------------------------------------------------------------------
     # Section generators

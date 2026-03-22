@@ -114,6 +114,8 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             ConnectorCapability.EXTERNAL_CONTENT,
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
+            ConnectorCapability.SKILL_DOC,
+            ConnectorCapability.SYNC,
         }
     )
 

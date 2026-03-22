@@ -951,6 +951,317 @@ async def _async_sync_jobs(
         handle_error(e)
 
 
+@mounts_group.command(name="skills")
+@click.argument("mount_point", type=str)
+@add_backend_options
+@add_output_options
+def list_skills(
+    mount_point: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    """List available skills for a mounted connector.
+
+    Shows operations, write paths, and traits for a connector.
+    Reads from the .skill/ directory at the mount point.
+
+    MOUNT_POINT: Path of the mount (e.g., /mnt/gmail)
+
+    Examples:
+        nexus mounts skills /mnt/gmail
+        nexus mounts skills /mnt/calendar --format json
+    """
+    import asyncio
+
+    asyncio.run(_async_list_skills(mount_point, remote_url, remote_api_key, output_opts))
+
+
+async def _async_list_skills(
+    mount_point: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    timing = CommandTiming()
+    try:
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
+        mp = mount_point.rstrip("/")
+        skill_md_path = f"{mp}/.skill/SKILL.md"
+        schemas_dir = f"{mp}/.skill/schemas"
+
+        with timing.phase("server"):
+            # Read SKILL.md
+            try:
+                raw = await nx.sys_read(skill_md_path)
+                content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            except Exception:
+                console.print(f"[yellow]No skill documentation found at {skill_md_path}[/yellow]")
+                console.print("[dim]This mount may not be a connector with skill docs.[/dim]")
+                return
+
+            # List schema files
+            schema_files: list[str] = []
+            try:
+                entries = await nx.sys_readdir(schemas_dir)
+                schema_files = [e.rstrip("/") for e in entries if str(e).endswith(".yaml")]
+            except Exception:
+                pass  # No schemas directory is OK
+
+        def _render(data: dict[str, Any]) -> None:
+            console.print(f"[bold cyan]Skills for {mp}[/bold cyan]")
+            console.print()
+            console.print(data["content"])
+            if data["schemas"]:
+                console.print()
+                console.print("[bold]Available Schemas:[/bold]")
+                for s in data["schemas"]:
+                    op_name = s.replace(".yaml", "")
+                    console.print(
+                        f"  [green]{op_name}[/green]  \u2192  nexus mounts schema {mp} {op_name}"
+                    )
+
+        result_data = {"mount_point": mp, "content": content, "schemas": schema_files}
+
+        render_output(
+            data=result_data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=lambda d: _render(d),
+        )
+
+    except Exception as e:
+        handle_error(e)
+
+
+@mounts_group.command(name="schema")
+@click.argument("mount_point", type=str)
+@click.argument("operation", type=str)
+@add_backend_options
+@add_output_options
+def show_schema(
+    mount_point: str,
+    operation: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    """Show annotated schema for a connector operation.
+
+    Displays the full schema with field types, constraints, and
+    descriptions for a specific write operation.
+
+    MOUNT_POINT: Path of the mount (e.g., /mnt/gmail)
+
+    OPERATION: Operation name (e.g., send_email, create_event)
+
+    Examples:
+        nexus mounts schema /mnt/gmail send_email
+        nexus mounts schema /mnt/calendar create_event --format json
+    """
+    import asyncio
+
+    asyncio.run(_async_show_schema(mount_point, operation, remote_url, remote_api_key, output_opts))
+
+
+async def _async_show_schema(
+    mount_point: str,
+    operation: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    timing = CommandTiming()
+    try:
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
+        mp = mount_point.rstrip("/")
+        schema_path = f"{mp}/.skill/schemas/{operation}.yaml"
+
+        with timing.phase("server"):
+            try:
+                raw = await nx.sys_read(schema_path)
+                content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            except Exception:
+                console.print(f"[red]Schema not found:[/red] {schema_path}")
+                console.print()
+                console.print("[dim]Available operations:[/dim]")
+                try:
+                    entries = await nx.sys_readdir(f"{mp}/.skill/schemas")
+                    for e in entries:
+                        if str(e).endswith(".yaml"):
+                            console.print(f"  [green]{str(e).replace('.yaml', '')}[/green]")
+                except Exception:
+                    console.print("  [yellow]No schemas found for this mount[/yellow]")
+                return
+
+        def _render(data: dict[str, Any]) -> None:
+            console.print(f"[bold cyan]Schema: {operation}[/bold cyan]  ({mp})")
+            console.print()
+            console.print(data["content"])
+
+        render_output(
+            data={"mount_point": mp, "operation": operation, "content": content},
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=lambda d: _render(d),
+        )
+
+    except Exception as e:
+        handle_error(e)
+
+
+@mounts_group.command(name="reauth")
+@click.argument("mount_point", type=str)
+@click.option("--provider", type=str, default=None, help="OAuth provider name (auto-detected)")
+@click.option("--email", type=str, default=None, help="User email for token lookup")
+@add_backend_options
+@add_output_options
+def reauth_mount(
+    mount_point: str,
+    provider: str | None,
+    email: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    """Refresh OAuth credentials for a mounted connector.
+
+    Triggers a token refresh without unmounting. Useful for expired
+    tokens or credential rotation.
+
+    MOUNT_POINT: Path of the mount (e.g., /mnt/gmail)
+
+    Examples:
+        nexus mounts reauth /mnt/gmail
+        nexus mounts reauth /mnt/drive --provider google --email alice@example.com
+    """
+    import asyncio
+
+    asyncio.run(
+        _async_reauth_mount(mount_point, provider, email, remote_url, remote_api_key, output_opts)
+    )
+
+
+async def _async_reauth_mount(
+    mount_point: str,
+    provider: str | None,
+    email: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    timing = CommandTiming()
+    try:
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
+        mount_svc = nx.service("mount")
+        if mount_svc is None:
+            console.print("[red]Error:[/red] Mount service not available")
+            sys.exit(1)
+
+        with timing.phase("server"):
+            result = await mount_svc.reauth_mount(
+                mount_point=mount_point,
+                provider=provider,
+                user_email=email,
+            )
+
+        def _render(data: dict[str, Any]) -> None:
+            if data.get("refreshed"):
+                console.print(
+                    f"[green]Token refreshed[/green] for {mount_point} "
+                    f"(provider={data.get('provider')}, user={data.get('user_email')})"
+                )
+            else:
+                console.print(f"[red]Token refresh failed[/red] for {mount_point}")
+                if data.get("error"):
+                    console.print(f"  Error: {data['error']}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=lambda d: _render(d),
+        )
+
+    except Exception as e:
+        handle_error(e)
+
+
+@mounts_group.command(name="update")
+@click.argument("mount_point", type=str)
+@click.argument("config_json", type=str)
+@add_backend_options
+@add_output_options
+def update_mount(
+    mount_point: str,
+    config_json: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    """Update mount backend configuration without unmounting.
+
+    Reconfigures the backend (new endpoint, rotated key) while preserving
+    permissions, metadata index, and mount state.
+
+    MOUNT_POINT: Path of the mount (e.g., /mnt/gmail)
+
+    CONFIG_JSON: New configuration as JSON string (merged with existing)
+
+    Examples:
+        nexus mounts update /mnt/crm '{"api_url": "https://crm-v2.internal"}'
+    """
+    import asyncio
+
+    asyncio.run(
+        _async_update_mount(mount_point, config_json, remote_url, remote_api_key, output_opts)
+    )
+
+
+async def _async_update_mount(
+    mount_point: str,
+    config_json: str,
+    remote_url: str | None,
+    remote_api_key: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    timing = CommandTiming()
+    try:
+        nx: Any = await get_filesystem(remote_url, remote_api_key)
+        mount_svc = nx.service("mount")
+        if mount_svc is None:
+            console.print("[red]Error:[/red] Mount service not available")
+            sys.exit(1)
+
+        config = json.loads(config_json)
+
+        with timing.phase("server"):
+            result = await mount_svc.update_mount(
+                mount_point=mount_point,
+                backend_config=config,
+            )
+
+        def _render(data: dict[str, Any]) -> None:
+            if data.get("updated"):
+                console.print(f"[green]Updated[/green] {mount_point}")
+                console.print(f"  Changed: {', '.join(data.get('changed_keys', []))}")
+            else:
+                console.print(f"[yellow]No changes[/yellow] for {mount_point}")
+
+        render_output(
+            data=result,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=lambda d: _render(d),
+        )
+
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Invalid JSON:[/red] {e}")
+        sys.exit(1)
+    except Exception as e:
+        handle_error(e)
+
+
 def register_commands(cli: click.Group) -> None:
     """Register mount commands with the CLI.
 

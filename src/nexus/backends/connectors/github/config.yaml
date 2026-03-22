@@ -1,0 +1,50 @@
+version: 1
+type: cli
+cli: gh
+service: github
+auth:
+  provider: github
+read:
+  list_command: issue list
+  get_command: issue view
+  format: json
+write:
+  - path: "issues/_new.yaml"
+    operation: create_issue
+    schema_ref: nexus.backends.connectors.github.schemas.CreateIssueSchema
+    command: "issue create"
+    traits:
+      reversibility: full
+      confirm: intent
+  - path: "pulls/_new.yaml"
+    operation: create_pr
+    schema_ref: nexus.backends.connectors.github.schemas.CreatePRSchema
+    command: "pr create"
+    traits:
+      reversibility: full
+      confirm: explicit
+  - path: "issues/_comment.yaml"
+    operation: comment_issue
+    schema_ref: nexus.backends.connectors.github.schemas.CommentIssueSchema
+    command: "issue comment"
+    traits:
+      reversibility: partial
+      confirm: intent
+  - path: "issues/_close.yaml"
+    operation: close_issue
+    schema_ref: nexus.backends.connectors.github.schemas.CloseIssueSchema
+    command: "issue close"
+    traits:
+      reversibility: full
+      confirm: explicit
+  - path: "pulls/_merge.yaml"
+    operation: merge_pr
+    schema_ref: nexus.backends.connectors.github.schemas.MergePRSchema
+    command: "pr merge"
+    traits:
+      reversibility: none
+      confirm: user
+sync:
+  delta_command: "issue list --json number,title,state,updatedAt --state all --limit 100"
+  state_field: updatedAt
+  page_size: 100

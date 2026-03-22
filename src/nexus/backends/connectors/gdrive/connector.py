@@ -38,6 +38,20 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.backend import Backend, HandlerStatusResponse
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.connectors.base import (
+    ConfirmLevel,
+    ErrorDef,
+    OpTraits,
+    Reversibility,
+    SkillDocMixin,
+    TraitBasedMixin,
+    ValidatedMixin,
+)
+from nexus.backends.connectors.gws.schemas import (
+    DeleteFileSchema,
+    UpdateFileSchema,
+    UploadFileSchema,
+)
 from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -94,7 +108,7 @@ EXPORT_FORMATS = {
     requires=["google-api-python-client", "google-auth-oauthlib"],
     service_name="google-drive",
 )
-class GoogleDriveConnectorBackend(Backend):
+class GoogleDriveConnectorBackend(Backend, SkillDocMixin, ValidatedMixin, TraitBasedMixin):
     """
     Google Drive connector backend with OAuth 2.0 authentication.
 
@@ -118,8 +132,65 @@ class GoogleDriveConnectorBackend(Backend):
     _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
         {
             ConnectorCapability.EXTERNAL_CONTENT,
+            ConnectorCapability.SKILL_DOC,
+            ConnectorCapability.WRITE_BACK,
         }
     )
+
+    # =========================================================================
+    # Mixin Configuration
+    # =========================================================================
+
+    # SkillDocMixin config
+    SKILL_NAME = "gdrive"
+
+    # ValidatedMixin config
+    SCHEMAS = {
+        "upload_file": UploadFileSchema,
+        "update_file": UpdateFileSchema,
+        "delete_file": DeleteFileSchema,
+    }
+
+    # TraitBasedMixin config
+    OPERATION_TRAITS = {
+        "upload_file": OpTraits(
+            reversibility=Reversibility.FULL,
+            confirm=ConfirmLevel.INTENT,
+            checkpoint=True,
+            intent_min_length=10,
+        ),
+        "update_file": OpTraits(
+            reversibility=Reversibility.PARTIAL,
+            confirm=ConfirmLevel.EXPLICIT,
+            checkpoint=True,
+            intent_min_length=10,
+        ),
+        "delete_file": OpTraits(
+            reversibility=Reversibility.PARTIAL,  # Can restore from trash
+            confirm=ConfirmLevel.USER,
+            checkpoint=True,
+            intent_min_length=10,
+        ),
+    }
+
+    # Error registry for self-correcting messages
+    ERROR_REGISTRY: dict[str, ErrorDef] = {
+        "MISSING_AGENT_INTENT": ErrorDef(
+            message="Drive operations require agent_intent explaining why",
+            skill_section="required-format",
+            fix_example="agent_intent: Uploading quarterly report for team review",
+        ),
+        "MISSING_FILE_ID": ErrorDef(
+            message="Update and delete operations require a file_id",
+            skill_section="update-file",
+            fix_example="file_id: 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
+        ),
+        "MISSING_CONFIRM": ErrorDef(
+            message="This operation requires explicit confirmation",
+            skill_section="required-format",
+            fix_example="confirm: true",
+        ),
+    }
 
     user_scoped = True
 

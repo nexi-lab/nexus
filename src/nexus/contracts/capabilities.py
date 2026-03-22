@@ -103,6 +103,23 @@ class ConnectorCapability(StrEnum):
     RESUMABLE_UPLOAD = "resumable_upload"
     """Backend supports resumable uploads (e.g., GCS resumable, S3 multipart with resume)."""
 
+    # --- Connector protocol capabilities (Issue #3148) ---
+
+    SKILL_DOC = "skill_doc"
+    """Backend supports SkillDocMixin (auto-generated .skill/ documentation)."""
+
+    SYNC = "sync"
+    """Backend implements ConnectorSyncProvider for delta sync."""
+
+    WATCH = "watch"
+    """Sync provider supports real-time watch() for push-based updates."""
+
+    WRITE_BACK = "write_back"
+    """Backend supports write operations (validated YAML → backend action)."""
+
+    CLI_BACKED = "cli_backed"
+    """Backend delegates execution to an external CLI subprocess."""
+
 
 # --- Capability-to-Protocol mapping ---
 # Used for registration-time validation: if a backend claims a capability
@@ -133,3 +150,13 @@ OAUTH_CONNECTOR_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
     }
 )
 """Common capabilities for OAuth-based connectors."""
+
+CLI_CONNECTOR_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
+    {
+        ConnectorCapability.CLI_BACKED,
+        ConnectorCapability.WRITE_BACK,
+        ConnectorCapability.SKILL_DOC,
+        ConnectorCapability.SYNC,
+    }
+)
+"""Common capabilities for CLI-backed connectors (gws, gh)."""

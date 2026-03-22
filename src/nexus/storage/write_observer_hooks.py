@@ -251,13 +251,22 @@ class AuditWriteInterceptor:
     # ── Internal ──────────────────────────────────────────────────────
 
     async def _emit(self, event: dict[str, Any], operation: str, op_path: str) -> None:
-        """Serialize event to JSON and write to pipe via sys_write."""
+        """Serialize event to JSON and write to pipe via sys_write.
+
+        Uses a system context so audit logging is never blocked by user
+        permissions — audit is an internal operation, not a user action.
+        """
         try:
-            data = json.dumps(event).encode()
             from nexus.contracts.types import OperationContext
 
-            ctx = OperationContext(user_id="system", groups=[], is_system=True)
-            await self._nx.sys_write(self._pipe_path, data, context=ctx)
+            _audit_ctx = OperationContext(
+                user_id="__audit__",
+                groups=[],
+                is_admin=True,
+                is_system=True,
+            )
+            data = json.dumps(event).encode()
+            await self._nx.sys_write(self._pipe_path, data, context=_audit_ctx)
         except Exception as e:
             from nexus.contracts.exceptions import AuditLogError
 

@@ -419,3 +419,8 @@ class WriteResult:
     content_id: str
     version: str = ""
     size: int = 0
+
+    @property
+    def content_hash(self) -> str:
+        """Backward-compatible alias for legacy callers/tests."""
+        return self.content_id

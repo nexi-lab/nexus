@@ -1,0 +1,38 @@
+version: 1
+type: cli
+cli: gws
+service: drive
+auth:
+  provider: google
+  scopes:
+    - https://www.googleapis.com/auth/drive
+read:
+  list_command: drive.files.list
+  get_command: drive.files.get
+  format: json
+write:
+  - path: "_upload.yaml"
+    operation: upload_file
+    schema_ref: nexus.backends.connectors.gws.schemas.UploadFileSchema
+    command: "drive.files.create"
+    traits:
+      reversibility: full
+      confirm: intent
+  - path: "_update.yaml"
+    operation: update_file
+    schema_ref: nexus.backends.connectors.gws.schemas.UpdateFileSchema
+    command: "drive.files.update"
+    traits:
+      reversibility: partial
+      confirm: explicit
+  - path: "_delete.yaml"
+    operation: delete_file
+    schema_ref: nexus.backends.connectors.gws.schemas.DeleteFileSchema
+    command: "drive.files.delete"
+    traits:
+      reversibility: partial
+      confirm: user
+sync:
+  delta_command: "drive.changes.list --page-token {since}"
+  state_field: newStartPageToken
+  page_size: 100

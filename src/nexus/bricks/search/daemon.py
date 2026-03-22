@@ -430,6 +430,7 @@ class SearchDaemon:
             self._owns_engine = True
 
             # Warm the pool by executing a simple query
+            assert self._async_engine is not None  # Set on line 429
             async with self._async_engine.connect() as conn:
                 from sqlalchemy import text
 
@@ -1061,7 +1062,7 @@ class SearchDaemon:
                     if not self._pending_refresh_paths and not self._pending_delete_paths:
                         continue
 
-                    paths = list(self._pending_refresh_paths)
+                    paths = self._coalesce_subtrees(self._pending_refresh_paths)
                     self._pending_refresh_paths.clear()
                     delete_paths = list(self._pending_delete_paths)
                     self._pending_delete_paths.clear()
@@ -1102,6 +1103,55 @@ class SearchDaemon:
 
         m = re.match(r"^/zone/[^/]+(/.*)", path)
         return m.group(1) if m else path
+
+    @staticmethod
+    def _coalesce_subtrees(
+        paths: set[str],
+        threshold: int = 20,
+    ) -> list[str]:
+        """Coalesce many file paths under the same directory into one entry.
+
+        When a sync writes hundreds of files under the same subtree, indexing
+        each individually is wasteful. This groups paths by parent directory
+        and replaces groups larger than ``threshold`` with the parent dir.
+
+        Smaller groups (< threshold) are returned as individual paths.
+
+        Issue #3148, Decision #13B: debounce in search daemon.
+
+        Args:
+            paths: Set of file paths to coalesce.
+            threshold: Minimum paths per directory to trigger coalescing.
+
+        Returns:
+            Coalesced list of paths (may include directories).
+        """
+        if len(paths) < threshold:
+            return list(paths)
+
+        import posixpath
+        from collections import Counter
+
+        # Count paths per parent directory
+        parent_counts: Counter[str] = Counter()
+        for p in paths:
+            parent = posixpath.dirname(p)
+            parent_counts[parent] += 1
+
+        result: list[str] = []
+        coalesced_parents: set[str] = set()
+
+        for parent, count in parent_counts.items():
+            if count >= threshold:
+                result.append(parent)
+                coalesced_parents.add(parent)
+
+        # Add paths whose parents were NOT coalesced
+        for p in paths:
+            if posixpath.dirname(p) not in coalesced_parents:
+                result.append(p)
+
+        return result
 
     async def _index_to_document_chunks(self, path_id: str, path: str, content: str) -> None:
         """Insert content as document_chunks for FTS search."""

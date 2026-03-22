@@ -134,6 +134,16 @@ def _get_zone_id(request: Request) -> str:
     return getattr(request.app.state, "zone_id", None) or ROOT_ZONE_ID
 
 
+def _get_ipc_wakeup_notifiers(request: Request) -> list[Any]:
+    """Get IPC wakeup notifiers from app.state (Issue #3197)."""
+    return getattr(request.app.state, "ipc_wakeup_notifiers", [])
+
+
+def _get_ipc_cache_store(request: Request) -> Any:
+    """Get IPC cache store from app.state for TTL scheduling (Issue #3197)."""
+    return getattr(request.app.state, "ipc_cache_store", None)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -145,6 +155,8 @@ async def send_message(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     storage: Any = Depends(_get_ipc_storage),
     zone_id: str = Depends(_get_zone_id),
+    wakeup_notifiers: list[Any] = Depends(_get_ipc_wakeup_notifiers),
+    cache_store: Any = Depends(_get_ipc_cache_store),
 ) -> SendMessageResponse:
     """Send a message to an agent's inbox.
 
@@ -181,7 +193,12 @@ async def send_message(
         }
     )
 
-    sender = MessageSender(storage, zone_id=zone_id)
+    sender = MessageSender(
+        storage,
+        zone_id=zone_id,
+        wakeup_notifiers=wakeup_notifiers or None,
+        cache_store=cache_store,
+    )
     try:
         await sender.send(envelope)
     except Exception as exc:

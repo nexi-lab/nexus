@@ -292,6 +292,7 @@ jobs:
       - name: Smoke test — critical imports
         run: |
           docker run --rm --entrypoint "" \
+            -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
           import nexus_fast

@@ -23,6 +23,17 @@ if [ "$(uname -m)" = "aarch64" ]; then
     export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
 fi
 
+# ---------------------------------------------------------------------------
+# libgomp preload (all architectures)
+# Loading libgomp early avoids "cannot allocate memory in static TLS block"
+# when many shared libraries with TLS are dlopen'd (ggml, numpy, etc.).
+# ---------------------------------------------------------------------------
+if [ -z "${LD_PRELOAD:-}" ]; then
+    _gomp=$(find /usr/lib -name 'libgomp.so.1' -print -quit 2>/dev/null || true)
+    [ -n "$_gomp" ] && export LD_PRELOAD="$_gomp"
+    unset _gomp
+fi
+
 # Load helpers (same directory as this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=dockerfiles/entrypoint-helpers.sh

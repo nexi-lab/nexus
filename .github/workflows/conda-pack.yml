@@ -115,14 +115,14 @@ jobs:
             -m rust/nexus_pyo3/Cargo.toml
 
       # Use --features python only: consensus + grpc are EXPERIMENTAL and
-      # "not used in production" (see Cargo.toml). Skipping them avoids
-      # the protobuf-build protoc version-check bug entirely.
+      # "not used in production" (see Cargo.toml). --no-default-features is
+      # required because default = ["full"] pulls in grpc which needs protoc.
       - name: Build nexus_raft wheel  (rust/nexus_raft --features python)
         shell: bash -el {0}
         run: |
           mkdir -p build/dist
           conda run -n nexus maturin build --release \
-            --features python \
+            --no-default-features --features python \
             --out build/dist \
             -m rust/nexus_raft/Cargo.toml
 

@@ -457,8 +457,8 @@ main() {
     setup_admin_api_key
     init_semantic_search_if_enabled
     start_zoekt_if_enabled
-    # Note: cluster join is now handled by nexusd itself when
-    # NEXUS_JOIN_TOKEN + NEXUS_PEER env vars are set.
+    # Note: TLS provisioning is file-based. If {data_dir}/tls/join-token
+    # exists, nexusd reads it and provisions certs from the leader.
     start_nexus_server
 }
 

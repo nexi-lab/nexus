@@ -81,6 +81,12 @@ jobs:
         shell: bash -el {0}
         run: rustup component add rustfmt clippy
 
+      # raft-proto build.rs requires protoc >= 3.1.0 for codegen
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       # Cache compiled Rust artifacts across runs to speed up re-builds.
       - name: Rust build cache
         uses: Swatinem/rust-cache@v2

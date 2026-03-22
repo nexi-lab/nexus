@@ -147,6 +147,7 @@ class PathAddressingEngine(Backend):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         # Use content_id as blob_path when provided; fall back to context.backend_path
@@ -160,6 +161,18 @@ class PathAddressingEngine(Backend):
                 "This backend stores files at actual paths, not CAS hashes.",
                 backend=self.name,
             )
+
+        # Offset write: read old content, splice, write back (Issue #1395)
+        if offset > 0:
+            blob_path = self._get_blob_path(backend_path)
+            try:
+                old_data, _ = self._transport.get_blob(blob_path)
+            except Exception:
+                old_data = b""
+            # Zero-fill gap if offset > len(old_data)
+            if offset > len(old_data):
+                old_data = old_data + b"\x00" * (offset - len(old_data))
+            content = old_data[:offset] + content + old_data[offset + len(content) :]
 
         blob_path = self._get_blob_path(backend_path)
         content_type = self._detect_content_type(backend_path, content)

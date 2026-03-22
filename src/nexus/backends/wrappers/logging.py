@@ -104,11 +104,12 @@ class LoggingBackendWrapper(DelegatingBackend):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> "WriteResult":
         result, elapsed_ms = self._timed(
             "write_content",
-            lambda: self._inner.write_content(content, content_id, context=context),
+            lambda: self._inner.write_content(content, content_id, offset=offset, context=context),
         )
         logger.debug(
             "write_content size=%d success=True hash=%s latency_ms=%.2f",

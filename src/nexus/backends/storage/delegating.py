@@ -151,6 +151,7 @@ class DelegatingBackend(Backend):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> "WriteResult":
         """Transform content via ``_transform_on_write``, then write to inner.
@@ -158,7 +159,7 @@ class DelegatingBackend(Backend):
         If ``_transform_on_write`` raises, the exception propagates.
         """
         transformed = self._transform_on_write(content)
-        return self._inner.write_content(transformed, content_id, context=context)
+        return self._inner.write_content(transformed, content_id, offset=offset, context=context)
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """Read from inner, then transform via ``_transform_on_read``."""

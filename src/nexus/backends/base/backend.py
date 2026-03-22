@@ -303,6 +303,7 @@ class Backend(ObjectStoreABC):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """
@@ -736,7 +737,12 @@ class AsyncBackend(Protocol):
     async def close(self) -> None: ...
 
     async def write_content(
-        self, content: bytes, content_id: str = "", *, context: "OperationContext | None" = None
+        self,
+        content: bytes,
+        content_id: str = "",
+        *,
+        offset: int = 0,
+        context: "OperationContext | None" = None,
     ) -> WriteResult: ...
 
     async def read_content(

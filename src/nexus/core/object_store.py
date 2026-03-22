@@ -61,6 +61,7 @@ class ObjectStoreABC(ABC):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: OperationContext | None = None,
     ) -> WriteResult:
         """Write content to storage and return a ``WriteResult``.
@@ -71,6 +72,9 @@ class ObjectStoreABC(ABC):
                 CAS backends: ignored (address = hash of content).
                 PAS backends: blob path where content will be stored.
             context: Operation context (optional, for auth / cross-cutting).
+            offset: Byte offset for partial write (POSIX pwrite semantics).
+                0 = whole-file replace (default, backward compatible).
+                >0 = splice ``content`` at offset within existing content.
 
         Returns:
             ``WriteResult`` with ``content_id``, ``version``, and ``size``.

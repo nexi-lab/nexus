@@ -409,3 +409,41 @@ class TestPathAddressingEngineName:
 
     def test_supports_rename(self, backend: PathAddressingEngine):
         assert backend.supports_rename is True
+
+
+class TestPathAddressingEngineOffsetWrite:
+    """Test offset write (POSIX pwrite semantics) for PAS."""
+
+    def test_offset_write_splice(
+        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+    ):
+        """Write at offset splices into existing content."""
+        ctx = _make_context("file.txt")
+        backend.write_content(b"Hello World", context=ctx)
+        backend.write_content(b"Earth", offset=6, context=ctx)
+
+        data = backend.read_content("", context=ctx)
+        assert data == b"Hello Earth"
+
+    def test_offset_write_beyond_eof_zero_fills(
+        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+    ):
+        """Offset beyond EOF zero-fills the gap."""
+        ctx = _make_context("file.txt")
+        backend.write_content(b"ABC", context=ctx)
+        result = backend.write_content(b"XY", offset=5, context=ctx)
+
+        data = backend.read_content("", context=ctx)
+        assert data == b"ABC\x00\x00XY"
+        assert result.size == 7
+
+    def test_offset_zero_unchanged(
+        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+    ):
+        """offset=0 (default) behaves as whole-file replace."""
+        ctx = _make_context("file.txt")
+        backend.write_content(b"original", context=ctx)
+        backend.write_content(b"replaced", offset=0, context=ctx)
+
+        data = backend.read_content("", context=ctx)
+        assert data == b"replaced"

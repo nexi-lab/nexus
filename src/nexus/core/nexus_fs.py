@@ -2161,7 +2161,7 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual path to write.
             buf: File content as bytes or str (str will be UTF-8 encoded).
             count: Max bytes to write (None = len(buf)).
-            offset: Byte offset to start writing at (currently ignored — whole-file).
+            offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Optional operation context for permission checks.
 
         Returns:
@@ -2217,7 +2217,7 @@ class NexusFS(  # type: ignore[misc]
             offset = self._stream_write(path, buf)
             return {"path": path, "bytes_written": len(buf), "created": False, "offset": offset}
 
-        await self._write_internal(path=path, content=buf, context=context)
+        await self._write_internal(path=path, content=buf, offset=offset, context=context)
         return {"path": path, "bytes_written": len(buf), "created": _meta is None}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
@@ -2291,7 +2291,7 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual file path.
             buf: File content as bytes or str.
             count: Max bytes to write (None = len(buf)).
-            offset: Byte offset (currently ignored — whole-file).
+            offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Operation context.
 
         Returns:
@@ -2309,7 +2309,7 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return _result
 
-        return await self._write_internal(path=path, content=buf, context=context)
+        return await self._write_internal(path=path, content=buf, offset=offset, context=context)
 
     async def _write_internal(
         self,
@@ -2320,6 +2320,7 @@ class NexusFS(  # type: ignore[misc]
         if_none_match: bool = False,
         force: bool = False,
         consistency: str = "sc",
+        offset: int = 0,
     ) -> dict[str, Any]:
         """Kernel write implementation — OCC-free.
 
@@ -2385,7 +2386,12 @@ class NexusFS(  # type: ignore[misc]
         _backend_caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
         _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
         if "external_content" in _backend_caps:
-            wr = route.backend.write_content(content, context=context)
+            wr = route.backend.write_content(
+                content,
+                content_id=meta.physical_path if (offset > 0 and meta) else "",
+                offset=offset,
+                context=context,
+            )
             content_hash = wr.content_id
             new_version = (meta.version + 1) if meta else 1
             ctx = self._require_context(context)
@@ -2394,7 +2400,7 @@ class NexusFS(  # type: ignore[misc]
                 path=path,
                 backend_name=route.backend.name,
                 physical_path=content_hash,
-                size=len(content),
+                size=wr.size if offset > 0 else len(content),
                 etag=content_hash,
                 created_at=meta.created_at if meta else now,
                 modified_at=now,
@@ -2410,7 +2416,13 @@ class NexusFS(  # type: ignore[misc]
             # VFS I/O Lock: exclusive write lock around backend write + metadata put.
             # Like Linux i_rwsem: held for I/O duration only, released before observers.
             with self._vfs_locked(path, "write"):
-                content_hash = route.backend.write_content(content, context=context).content_id
+                _wr = route.backend.write_content(
+                    content,
+                    content_id=meta.physical_path if (offset > 0 and meta) else "",
+                    offset=offset,
+                    context=context,
+                )
+                content_hash = _wr.content_id
 
                 # NOTE: sys_write does NOT release old content on overwrite.
                 # HDFS/GFS pattern: content cleanup is async via background GC.
@@ -2428,7 +2440,7 @@ class NexusFS(  # type: ignore[misc]
                     path=path,
                     backend_name=route.backend.name,
                     physical_path=content_hash,
-                    size=len(content),
+                    size=_wr.size if offset > 0 else len(content),
                     etag=content_hash,
                     created_at=meta.created_at if meta else now,
                     modified_at=now,
@@ -2450,7 +2462,7 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=zone_id or ROOT_ZONE_ID,
                 agent_id=agent_id,
                 etag=content_hash,
-                size=len(content),
+                size=metadata.size,
                 version=new_version,
                 is_new=(meta is None),
             )
@@ -2478,7 +2490,7 @@ class NexusFS(  # type: ignore[misc]
             "etag": content_hash,
             "version": new_version,
             "modified_at": now,
-            "size": len(content),
+            "size": metadata.size,
         }
 
     async def atomic_update(

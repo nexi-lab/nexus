@@ -648,6 +648,7 @@ class GmailConnectorBackend(
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """

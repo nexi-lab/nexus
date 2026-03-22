@@ -536,6 +536,7 @@ send_notifications: true
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write event content - handles create and update.

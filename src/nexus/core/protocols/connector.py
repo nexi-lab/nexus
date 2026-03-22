@@ -29,9 +29,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
+    from nexus.contracts.capabilities import ConnectorCapability
     from nexus.contracts.types import OperationContext
     from nexus.core.object_store import WriteResult
-    from nexus.contracts.capabilities import ConnectorCapability
 
 # ---------------------------------------------------------------------------
 # SearchableConnector (Issue #2367)
@@ -90,7 +90,7 @@ class ContentStoreProtocol(Protocol):
     def name(self) -> str: ...
 
     def write_content(
-        self, content: bytes, content_id: str = "", *, context: "OperationContext | None" = None
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: "OperationContext | None" = None
     ) -> "WriteResult": ...
 
     def read_content(

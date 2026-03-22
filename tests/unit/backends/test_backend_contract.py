@@ -31,7 +31,7 @@ class _MockBackend(Backend):
         return hashlib.sha256(content).hexdigest()
 
     def write_content(
-        self, content: bytes, content_id: str = "", *, context: Any = None
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
     ) -> WriteResult:
         content_hash = self._hash(content)
         if content_hash in self._content:

@@ -39,7 +39,7 @@ class TestBackendWriteStreamDefault:
                 return False
 
             def write_content(
-                self, content: bytes, content_id: str = "", *, context=None
+                self, content: bytes, content_id: str = "", *, offset: int = 0, context=None
             ) -> ObjectStoreWriteResult:
                 self.written_content = content
                 return ObjectStoreWriteResult(content_id=hash_content(content), size=len(content))

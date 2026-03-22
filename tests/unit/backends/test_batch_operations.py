@@ -433,7 +433,9 @@ class MockGCSBackend(Backend):
     def name(self) -> str:
         return "gcs"
 
-    def write_content(self, content, content_id: str = "", *, context=None) -> WriteResult:
+    def write_content(
+        self, content, content_id: str = "", *, offset: int = 0, context=None
+    ) -> WriteResult:
         from nexus.core.hash_fast import hash_content
 
         h = hash_content(content)

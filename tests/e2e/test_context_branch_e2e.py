@@ -46,7 +46,7 @@ class InMemoryCAS:
             raise FileNotFoundError(f"CAS blob {content_hash} not found")
         return data
 
-    def write_content(self, data, content_id: str = "", *, context=None):
+    def write_content(self, data, content_id: str = "", *, offset: int = 0, context=None):
         from nexus.core.object_store import WriteResult
 
         h = hashlib.sha256(data).hexdigest()

@@ -688,7 +688,11 @@ class BulkPermissionChecker:
                 tuples_graph,
                 namespace_configs,
                 force_python=False,
-                tuple_version=self._tuple_version,
+                # Force a fresh Rust graph build per bulk-check call.
+                # The Rust GRAPH_CACHE is process-global, so small integer
+                # tuple_version values can collide across manager instances
+                # and leak stale results between tests/call sites.
+                tuple_version=time.time_ns(),
             )
             rust_elapsed = time.perf_counter() - rust_start
             per_check_us = (rust_elapsed / len(cache_misses)) * 1_000_000

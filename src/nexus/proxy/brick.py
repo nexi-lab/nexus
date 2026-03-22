@@ -244,6 +244,10 @@ class ProxyVFSBrick(ProxyBrick):
         encoded = base64.b64encode(data).decode()
         await self._forward("write", path=path, content=encoded, zone_id=zone_id)
 
+    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+        """Tier 2 write with create-on-write — delegates to sys_write for proxy."""
+        await self.sys_write(path, data, zone_id)
+
     async def sys_readdir(self, path: str, zone_id: str) -> list[str]:
         return cast(list[str], await self._forward("list_dir", path=path, zone_id=zone_id))
 

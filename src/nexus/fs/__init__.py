@@ -113,10 +113,36 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     metastore = SQLiteMetastore(db_path)
     router = PathRouter(metastore)
 
-    # Mount each backend
+    # Mount each backend and create DT_MOUNT entries in the metastore
+    from datetime import UTC, datetime
+
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.metadata import FileMetadata
+    from nexus.contracts.types import OperationContext
+    from nexus.core.hash_fast import hash_content
+
+    empty_hash = hash_content(b"")
+    now = datetime.now(UTC)
+
     for spec, mp in resolved_mounts:
         backend = _create_backend(spec)
         router.add_mount(mp, backend)
+        # Create DT_MOUNT entry so stat(mount_point) works
+        metastore.put(
+            FileMetadata(
+                path=mp,
+                backend_name=backend.name,
+                physical_path=empty_hash,
+                size=0,
+                etag=empty_hash,
+                mime_type="inode/directory",
+                created_at=now,
+                modified_at=now,
+                version=1,
+                zone_id=ROOT_ZONE_ID,
+                entry_type=2,  # DT_MOUNT
+            )
+        )
 
     # Build kernel (minimal — no factory, no bricks)
     from nexus.core.config import BrickServices, KernelServices, PermissionConfig
@@ -128,15 +154,8 @@ async def mount(*uris: str, at: str | None = None) -> Any:
         brick_services=BrickServices(),
     )
 
-    # Create parent directories for each mount point
-    from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.contracts.types import OperationContext
-
     ctx = OperationContext(user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True)
     kernel._default_context = ctx
-
-    for _, mp in resolved_mounts:
-        await kernel.sys_mkdir(mp, parents=True, exist_ok=True, context=ctx)
 
     return SlimNexusFS(kernel)
 

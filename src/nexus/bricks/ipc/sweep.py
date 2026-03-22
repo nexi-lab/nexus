@@ -168,7 +168,7 @@ class TTLSweeper:
                     self._pending_agents.clear()
                     expired = 0
                     for agent_id in agents_to_sweep:
-                        expired += await self._sweep_agent(agent_id)
+                        expired += await self._sweep_agent(agent_id, skip_recent=False)
                     if expired > 0:
                         logger.info(
                             "TTL event sweep: moved %d expired messages for %d agents",
@@ -188,31 +188,51 @@ class TTLSweeper:
 
         Receives events from MessageSender when messages with TTLs are
         created. Each event triggers a debounced targeted sweep.
+
+        Auto-reconnects with exponential backoff on failure (consistent
+        with the delivery.py listener pattern).
         """
         if self._cache_store is None:
             return
         channel = f"ipc:ttl:schedule:{self._zone_id}"
-        try:
-            async with self._cache_store.subscribe(channel) as messages:
-                async for msg in messages:
-                    if not self._running:
-                        break
-                    try:
-                        data = json.loads(msg)
-                        agent_id = data.get("agent_id")
-                        if agent_id:
-                            self._pending_agents.add(agent_id)
-                            self._schedule_debounced_sweep()
-                    except Exception:
-                        logger.debug("Invalid TTL schedule event", exc_info=True)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.error(
-                "TTL sweeper pub/sub listener crashed for zone %s",
-                self._zone_id,
-                exc_info=True,
-            )
+        max_retries = 5
+        consecutive_failures = 0
+        while self._running:
+            try:
+                async with self._cache_store.subscribe(channel) as messages:
+                    consecutive_failures = 0
+                    async for msg in messages:
+                        if not self._running:
+                            return
+                        try:
+                            data = json.loads(msg)
+                            agent_id = data.get("agent_id")
+                            if agent_id:
+                                self._pending_agents.add(agent_id)
+                                self._schedule_debounced_sweep()
+                        except Exception:
+                            logger.debug("Invalid TTL schedule event", exc_info=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                consecutive_failures += 1
+                if consecutive_failures >= max_retries:
+                    logger.error(
+                        "TTL sweeper pub/sub listener failed %d times for zone %s, stopping",
+                        max_retries,
+                        self._zone_id,
+                    )
+                    return
+                delay = min(2**consecutive_failures, 30)
+                logger.warning(
+                    "TTL sweeper pub/sub listener error for zone %s (attempt %d/%d), retrying in %ds",
+                    self._zone_id,
+                    consecutive_failures,
+                    max_retries,
+                    delay,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
 
     def _schedule_debounced_sweep(self) -> None:
         """Schedule a sweep after debounce delay, resetting if already pending.
@@ -236,8 +256,15 @@ class TTLSweeper:
     # Per-agent sweep
     # ------------------------------------------------------------------
 
-    async def _sweep_agent(self, agent_id: str) -> int:
-        """Sweep a single agent's inbox for expired messages."""
+    async def _sweep_agent(self, agent_id: str, *, skip_recent: bool = True) -> int:
+        """Sweep a single agent's inbox for expired messages.
+
+        Args:
+            agent_id: Agent whose inbox to sweep.
+            skip_recent: If True, skip messages whose filename timestamp is
+                newer than ``_interval``. Set to False for event-driven sweeps
+                where a short-TTL message may expire within the interval window.
+        """
         agent_inbox = inbox_path(agent_id)
         expired = 0
 
@@ -252,9 +279,9 @@ class TTLSweeper:
                 continue
 
             # P1: Skip recently-created messages based on filename timestamp.
-            # Messages newer than the sweep interval can't have been sitting
-            # long enough to matter — they'll be checked on the next cycle.
-            if self._is_recent_by_filename(filename, now):
+            # Only for poll-based sweeps — event-driven sweeps disable this
+            # because short-TTL messages may expire within the interval window.
+            if skip_recent and self._is_recent_by_filename(filename, now):
                 continue
 
             msg_path = f"{agent_inbox}/{filename}"

@@ -24,11 +24,14 @@ if [ "$(uname -m)" = "aarch64" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# libgomp preload (all images)
-# Loading libgomp early avoids "cannot allocate memory in static TLS block"
-# when many shared libraries with TLS are dlopen'd (ggml, numpy, etc.).
+# TLS block exhaustion fix (ggml, numpy, etc.)
+# CPU: LD_PRELOAD loads libgomp before TLS slots fill up.
+# CUDA: LD_PRELOAD conflicts with NVIDIA's libgomp (SIGILL); use
+#       GLIBC_TUNABLES to expand the static TLS reservation instead.
 # ---------------------------------------------------------------------------
-if [ -z "${LD_PRELOAD:-}" ]; then
+if [ -d /usr/local/cuda ]; then
+    export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
+elif [ -z "${LD_PRELOAD:-}" ]; then
     _gomp=$(find /usr/lib -name 'libgomp.so.1' -print -quit 2>/dev/null || true)
     [ -n "$_gomp" ] && export LD_PRELOAD="$_gomp"
     unset _gomp

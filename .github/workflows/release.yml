@@ -291,11 +291,17 @@ jobs:
 
       - name: Smoke test — critical imports
         run: |
-          # Preload libgomp early to avoid "cannot allocate memory in static
-          # TLS block" when many shared libs are dlopen'd (ggml, numpy).
-          # Both cpu and cuda images use python:3.13-slim with the same libgomp.
+          # Avoid "cannot allocate memory in static TLS block" (ggml/numpy).
+          # CPU: LD_PRELOAD loads libgomp before TLS slots fill up.
+          # CUDA: LD_PRELOAD conflicts with NVIDIA's libgomp (SIGILL),
+          #       so we expand the TLS reservation via GLIBC_TUNABLES instead.
+          if [ "${{ matrix.variant }}" = "cpu" ]; then
+            TLS_FIX="-e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1"
+          else
+            TLS_FIX="-e GLIBC_TUNABLES=glibc.rtld.optional_static_tls=16384"
+          fi
           docker run --rm --entrypoint "" \
-            -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
+            $TLS_FIX \
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
           import nexus_fast

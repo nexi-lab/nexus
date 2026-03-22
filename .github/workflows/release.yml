@@ -291,8 +291,15 @@ jobs:
 
       - name: Smoke test — critical imports
         run: |
+          # CPU image needs libgomp preloaded early to avoid TLS block
+          # exhaustion when many shared libs are dlopen'd (ggml, numpy).
+          # CUDA image ships its own libgomp via NVIDIA runtime — skip.
+          PRELOAD_FLAG=""
+          if [ "${{ matrix.variant }}" = "cpu" ]; then
+            PRELOAD_FLAG="-e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1"
+          fi
           docker run --rm --entrypoint "" \
-            -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
+            $PRELOAD_FLAG \
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
           import nexus_fast

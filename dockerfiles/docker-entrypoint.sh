@@ -24,11 +24,12 @@ if [ "$(uname -m)" = "aarch64" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# libgomp preload (all architectures)
+# libgomp preload (CPU images only)
 # Loading libgomp early avoids "cannot allocate memory in static TLS block"
 # when many shared libraries with TLS are dlopen'd (ggml, numpy, etc.).
+# Skip when NVIDIA CUDA runtime is present — it ships its own libgomp.
 # ---------------------------------------------------------------------------
-if [ -z "${LD_PRELOAD:-}" ]; then
+if [ -z "${LD_PRELOAD:-}" ] && [ ! -d /usr/local/cuda ]; then
     _gomp=$(find /usr/lib -name 'libgomp.so.1' -print -quit 2>/dev/null || true)
     [ -n "$_gomp" ] && export LD_PRELOAD="$_gomp"
     unset _gomp

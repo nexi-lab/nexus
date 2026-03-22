@@ -938,3 +938,55 @@ class TestPipeManagerSelfAddress:
         assert addr.backend_type == "pipe"
         assert addr.has_origin is False
         assert addr.origins == ()
+
+
+# ======================================================================
+# sys_setattr — idempotent open (restart recovery)
+# ======================================================================
+
+
+class TestSysSetAttrIdempotentOpen:
+    """Test that sys_setattr with same entry_type on existing inode
+    recovers the in-memory buffer (idempotent open) instead of raising."""
+
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms), ms
+
+    def test_idempotent_open_recovers_buffer(self) -> None:
+        """setattr DT_PIPE on existing DT_PIPE metadata → buffer recovered, created=False."""
+        mgr, ms = self._make_manager()
+        # Create pipe, then close buffer to simulate restart
+        buf = mgr.create("/nexus/pipes/recover")
+        buf.close()
+
+        # Idempotent open should recover
+        recovered = mgr.open("/nexus/pipes/recover", capacity=65_536)
+        assert not recovered.closed
+        assert recovered is not buf  # new buffer instance
+
+    def test_idempotent_open_noop_when_alive(self) -> None:
+        """setattr DT_PIPE on existing DT_PIPE with buffer still alive → returns existing."""
+        mgr, ms = self._make_manager()
+        buf = mgr.create("/nexus/pipes/alive")
+
+        # open() on alive buffer returns same instance
+        same = mgr.open("/nexus/pipes/alive")
+        assert same is buf
+
+    def test_setattr_rejects_type_change(self) -> None:
+        """setattr DT_PIPE on existing DT_REG → ValueError."""
+        ms = MockMetastore()
+        # Manually insert a DT_REG inode
+        reg_meta = FileMetadata(
+            path="/nexus/files/regular",
+            entry_type=DT_REG,
+            backend_name="local",
+            physical_path="/tmp/regular",
+            size=0,
+        )
+        ms.put(reg_meta)
+
+        mgr = PipeManager(ms)
+        with pytest.raises(PipeNotFoundError):
+            mgr.open("/nexus/files/regular")

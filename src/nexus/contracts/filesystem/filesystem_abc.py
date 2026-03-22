@@ -129,7 +129,8 @@ class NexusFilesystemABC(ABC):
         - Path missing + entry_type provided → CREATE inode
         - Path missing + no entry_type → NexusFileNotFoundError
         - Path exists + no entry_type → UPDATE mutable fields
-        - Path exists + entry_type → ValueError (immutable after creation)
+        - Path exists + same entry_type (DT_PIPE/DT_STREAM) → IDEMPOTENT OPEN (recover buffer)
+        - Path exists + different entry_type → ValueError (immutable after creation)
 
         Args:
             path: Virtual file path.

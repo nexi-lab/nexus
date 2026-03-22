@@ -36,6 +36,7 @@ def mock_nexus_fs():
     """Mock SlimNexusFS facade with async methods."""
     fs = AsyncMock()
     fs.read = AsyncMock(return_value=b"hello world")
+    fs.read_range = AsyncMock(return_value=b"hello world")
     fs.write = AsyncMock(return_value={"path": "/test.txt", "size": 11, "etag": "abc"})
     fs.ls = AsyncMock(
         return_value=[
@@ -252,6 +253,16 @@ class TestOpenRead:
         with nexus_fsspec._open("/file.txt", mode="rb") as f:
             data = f.read()
             assert data == b"hello world"
+
+    def test_open_read_uses_read_range_not_full_read(self, nexus_fsspec, mock_nexus_fs):
+        """Verify _open() uses read_range() for streaming, not read() which loads full file."""
+        mock_nexus_fs.stat.return_value = {"path": "/file.txt", "size": 11, "is_directory": False}
+        mock_nexus_fs.read_range = AsyncMock(return_value=b"hello")
+        with nexus_fsspec._open("/file.txt", mode="rb") as f:
+            f.read(5)
+        mock_nexus_fs.read_range.assert_called_once()
+        # read() should NOT be called — only read_range()
+        mock_nexus_fs.read.assert_not_called()
 
     def test_open_read_seek_tell(self, nexus_fsspec, mock_nexus_fs):
         mock_nexus_fs.stat.return_value = {"path": "/file.txt", "size": 11, "is_directory": False}

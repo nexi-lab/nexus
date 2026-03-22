@@ -74,8 +74,32 @@ nexus = "nexus.fs._fsspec:NexusFileSystem"
 nexus-fs = "nexus.fs._cli:main"
 
 [tool.hatch.build.targets.wheel]
-# Slim package owns these directories from the monorepo src/
+# Slim package: only include the core/contracts/backends/lib/storage/fs layers.
+# Excludes bricks/, server/, factory/, raft/, cli/ (those live in nexus-ai-fs).
 packages = ["../../src/nexus"]
+include = [
+    "nexus/__init__.py",
+    "nexus/py.typed",
+    "nexus/fs/**",
+    "nexus/core/**",
+    "nexus/contracts/**",
+    "nexus/backends/**",
+    "nexus/lib/**",
+    "nexus/storage/**",
+    "nexus/config.py",
+]
+exclude = [
+    "nexus/bricks/**",
+    "nexus/server/**",
+    "nexus/factory/**",
+    "nexus/raft/**",
+    "nexus/cli/**",
+    "nexus/fuse/**",
+    "nexus/remote/**",
+    "nexus/system_services/**",
+    "nexus/grpc/**",
+    "nexus/security/**",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

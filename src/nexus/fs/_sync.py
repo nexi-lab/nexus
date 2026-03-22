@@ -94,6 +94,10 @@ class SyncNexusFS:
         with self._portal_provider as portal:
             return portal.call(self._async.copy, src, dst)
 
+    def read_range(self, path: str, start: int, end: int) -> bytes:
+        with self._portal_provider as portal:
+            return portal.call(self._async.read_range, path, start, end)
+
     def list_mounts(self) -> list:
         """List all mount points (synchronous — no portal needed)."""
         return self._async.list_mounts()

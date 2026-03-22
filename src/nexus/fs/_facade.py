@@ -69,6 +69,21 @@ class SlimNexusFS:
         """
         return await self._kernel.sys_read(path, context=self._ctx)
 
+    async def read_range(self, path: str, start: int, end: int) -> bytes:
+        """Read a specific byte range from a file.
+
+        Memory-efficient — only fetches the requested range from the backend.
+
+        Args:
+            path: Virtual file path.
+            start: Start byte offset (inclusive).
+            end: End byte offset (exclusive).
+
+        Returns:
+            Bytes in the requested range.
+        """
+        return await self._kernel.read_range(path, start, end, context=self._ctx)
+
     # -- Write operations --
 
     async def write(self, path: str, content: bytes) -> dict[str, Any]:

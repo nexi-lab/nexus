@@ -243,7 +243,11 @@ class NexusBufferedFile:
         self._closed = False
 
     def read(self, length: int = -1) -> bytes:
-        """Read up to length bytes from current position."""
+        """Read up to length bytes from current position.
+
+        Uses read_range() for memory-efficient byte-range fetching — only
+        the requested range is transferred from the backend, not the full file.
+        """
         if self._closed:
             raise ValueError("I/O operation on closed file")
         if self._pos >= self.size:
@@ -251,9 +255,8 @@ class NexusBufferedFile:
 
         end = self.size if length == -1 else min(self._pos + length, self.size)
 
-        # Fetch the byte range from the kernel
-        content = self._sync(self._nexus.read(self.path))
-        data = content[self._pos : end]
+        # Fetch only the requested byte range — NOT the full file
+        data = self._sync(self._nexus.read_range(self.path, self._pos, end))
         self._pos = end
         return data
 

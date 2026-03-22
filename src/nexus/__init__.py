@@ -365,35 +365,31 @@ async def connect(
         advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
 
-        # K3s-style pre-provision: if NEXUS_JOIN_TOKEN is set and certs
-        # don't exist yet, provision TLS from the leader BEFORE creating
-        # ZoneManager (so Raft transport starts with mTLS from the start).
-        join_token = os.environ.get("NEXUS_JOIN_TOKEN")
-        if join_token:
-            tls_dir_pre = Path(zones_dir) / "tls"
-            if not (tls_dir_pre / "node.pem").exists():
-                # Find a peer address to join from NEXUS_PEERS
-                join_peer = None
-                for entry in (os.environ.get("NEXUS_PEERS", "")).split(","):
-                    entry = entry.strip()
-                    if "@" in entry:
-                        peer_id_str, peer_addr = entry.split("@", 1)
-                        if peer_id_str.strip() != str(node_id):
-                            join_peer = peer_addr.strip()
-                            break
-                if join_peer:
-                    from _nexus_raft import join_cluster as _join_cluster
+        # K3s-style TLS pre-provision: if a join-token FILE exists and
+        # certs don't exist yet, provision TLS from the leader BEFORE
+        # creating ZoneManager (so Raft starts with mTLS from the start).
+        # Token is file-only (no env var) — consistent with nexus being file-based.
+        tls_dir_pre = Path(zones_dir) / "tls"
+        token_file = tls_dir_pre / "join-token"
+        if token_file.exists() and not (tls_dir_pre / "node.pem").exists():
+            join_token = token_file.read_text().strip()
+            # Find a peer address to join from NEXUS_PEERS
+            join_peer = None
+            for entry in (os.environ.get("NEXUS_PEERS", "")).split(","):
+                entry = entry.strip()
+                if "@" in entry:
+                    peer_id_str, peer_addr = entry.split("@", 1)
+                    if peer_id_str.strip() != str(node_id):
+                        join_peer = peer_addr.strip()
+                        break
+            if join_peer:
+                from _nexus_raft import join_cluster as _join_cluster
 
-                    logger.info(
-                        "NEXUS_JOIN_TOKEN set -- provisioning TLS from %s",
-                        join_peer,
-                    )
-                    _join_cluster(join_peer, join_token, node_id, str(tls_dir_pre))
-                    logger.info("TLS provisioning complete")
-                else:
-                    raise RuntimeError(
-                        "NEXUS_JOIN_TOKEN set but no peer found in NEXUS_PEERS to join"
-                    )
+                logger.info("Join token found — provisioning TLS from %s", join_peer)
+                _join_cluster(join_peer, join_token, node_id, str(tls_dir_pre))
+                logger.info("TLS provisioning complete")
+            else:
+                raise RuntimeError("Join token found but no peer in NEXUS_PEERS to join")
 
         zone_mgr = ZoneManager(
             node_id=node_id,

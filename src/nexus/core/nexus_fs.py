@@ -880,7 +880,8 @@ class NexusFS(  # type: ignore[misc]
         - Path missing + entry_type provided → CREATE inode
         - Path missing + no entry_type → NexusFileNotFoundError
         - Path exists + no entry_type → UPDATE mutable fields
-        - Path exists + entry_type → ValueError (immutable after creation)
+        - Path exists + same entry_type (DT_PIPE/DT_STREAM) → IDEMPOTENT OPEN (recover buffer)
+        - Path exists + different entry_type → ValueError (immutable after creation)
 
         Args:
             path: Virtual file path.
@@ -901,9 +902,20 @@ class NexusFS(  # type: ignore[misc]
                 raise NexusFileNotFoundError(path)
             return self._setattr_create(path, entry_type, attrs)
 
-        # --- REJECT: entry_type is immutable after creation ---
+        # --- IDEMPOTENT OPEN: same entry_type → recover buffer ---
         if "entry_type" in attrs:
-            raise ValueError(f"entry_type is immutable after creation (current={meta.entry_type})")
+            from nexus.contracts.metadata import DT_PIPE, DT_STREAM
+
+            requested_type = attrs["entry_type"]
+            if meta.entry_type == requested_type and requested_type == DT_PIPE:
+                self._pipe_manager.open(path, capacity=attrs.get("capacity", 65_536))
+                return {"path": path, "created": False, "entry_type": requested_type}
+            if meta.entry_type == requested_type and requested_type == DT_STREAM:
+                self._stream_manager.open(path, capacity=attrs.get("capacity", 65_536))
+                return {"path": path, "created": False, "entry_type": requested_type}
+            raise ValueError(
+                f"entry_type is immutable (cannot change {meta.entry_type} → {requested_type})"
+            )
 
         # --- UPDATE path (existing inode, mutable fields only) ---
         from dataclasses import replace

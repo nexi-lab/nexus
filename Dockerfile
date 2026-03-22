@@ -227,7 +227,10 @@ USER nexus
 # ARM64-specific mitigations (FAISS_OPT_LEVEL, OMP_NUM_THREADS, GLIBC_TUNABLES)
 # are applied conditionally at runtime in docker-entrypoint.sh to avoid
 # regressing x86_64 throughput (Issue #3125).
-ENV PYTHONUNBUFFERED=1 \
+# Preload libgomp to avoid "cannot allocate memory in static TLS block"
+# when many shared libs with TLS are loaded (ggml, numpy, scikit-learn).
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
+    PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
     NEXUS_PORT=2026 \

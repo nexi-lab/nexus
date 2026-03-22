@@ -128,7 +128,7 @@ class TestProxyWithRealFastAPIPermissions:
 
         try:
             # Write through proxy — exercises base64 encoding + _forward
-            await proxy.sys_write("/proxy-e2e.txt", b"hello world", "root")
+            await proxy.write("/proxy-e2e.txt", b"hello world", "root")
 
             # Read through proxy — exercises _forward + response decoding
             data = await proxy.sys_read("/proxy-e2e.txt", "root")

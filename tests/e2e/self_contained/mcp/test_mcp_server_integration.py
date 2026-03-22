@@ -109,7 +109,7 @@ async def test_files(nexus_fs, tmp_path):
     }
 
     for path, content in test_data.items():
-        await nexus_fs.sys_write(path, content)
+        await nexus_fs.write(path, content)
 
     return test_data
 
@@ -235,13 +235,13 @@ class TestSearchIntegration:
     async def test_grep_search(self, mcp_server, nexus_fs):
         """Test grep search with real file content."""
         # Create files with searchable content
-        await nexus_fs.sys_write(
+        await nexus_fs.write(
             "/search/file1.py", b"def hello():\n    print('Hello')\n# TODO: fix this"
         )
-        await nexus_fs.sys_write(
+        await nexus_fs.write(
             "/search/file2.py", b"class MyClass:\n    def __init__(self):\n        pass"
         )
-        await nexus_fs.sys_write("/search/file3.py", b"# TODO: implement feature\nimport sys")
+        await nexus_fs.write("/search/file3.py", b"# TODO: implement feature\nimport sys")
 
         grep_tool = get_tool(mcp_server, "nexus_grep")
 

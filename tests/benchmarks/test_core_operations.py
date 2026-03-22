@@ -27,9 +27,7 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            benchmark_loop.run_until_complete(
-                nx.sys_write(f"/bench_tiny_{counter[0]}.txt", content)
-            )
+            benchmark_loop.run_until_complete(nx.write(f"/bench_tiny_{counter[0]}.txt", content))
 
         benchmark(write_file)
 
@@ -42,9 +40,7 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            benchmark_loop.run_until_complete(
-                nx.sys_write(f"/bench_small_{counter[0]}.txt", content)
-            )
+            benchmark_loop.run_until_complete(nx.write(f"/bench_small_{counter[0]}.txt", content))
 
         benchmark(write_file)
 
@@ -56,9 +52,7 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            benchmark_loop.run_until_complete(
-                nx.sys_write(f"/bench_medium_{counter[0]}.txt", content)
-            )
+            benchmark_loop.run_until_complete(nx.write(f"/bench_medium_{counter[0]}.txt", content))
 
         benchmark(write_file)
 
@@ -70,9 +64,7 @@ class TestFileOperationBenchmarks:
 
         def write_file():
             counter[0] += 1
-            benchmark_loop.run_until_complete(
-                nx.sys_write(f"/bench_large_{counter[0]}.txt", content)
-            )
+            benchmark_loop.run_until_complete(nx.write(f"/bench_large_{counter[0]}.txt", content))
 
         benchmark(write_file)
 
@@ -161,7 +153,7 @@ class TestFileOperationBenchmarks:
         def delete_file():
             counter[0] += 1
             path = f"/delete_bench_{counter[0]}.txt"
-            benchmark_loop.run_until_complete(nx.sys_write(path, content))
+            benchmark_loop.run_until_complete(nx.write(path, content))
             benchmark_loop.run_until_complete(nx.sys_unlink(path))
 
         benchmark(delete_file)
@@ -248,7 +240,7 @@ class TestGlobBenchmarks:
 
         async def _setup():
             for i in range(1000):
-                await nx.sys_write(f"/bench_1k/file_{i:04d}.txt", b"x")
+                await nx.write(f"/bench_1k/file_{i:04d}.txt", b"x")
 
         benchmark_loop.run_until_complete(_setup())
 
@@ -264,7 +256,7 @@ class TestGlobBenchmarks:
 
         async def _setup():
             for i in range(10_000):
-                await nx.sys_write(f"/bench_10k/file_{i:05d}.txt", b"x")
+                await nx.write(f"/bench_10k/file_{i:05d}.txt", b"x")
 
         benchmark_loop.run_until_complete(_setup())
 

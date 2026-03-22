@@ -125,16 +125,16 @@ def populated_nexus(benchmark_nexus, sample_files, benchmark_loop):
         # Create files of various sizes
         for size_name, content in sample_files.items():
             if size_name != "xlarge":  # Skip xlarge for setup speed
-                await nx.sys_write(f"/test_{size_name}.bin", content)
+                await nx.write(f"/test_{size_name}.bin", content)
                 # Create copies in subdirectories
                 for i in range(5):
-                    await nx.sys_write(f"/dir_{i}/test_{size_name}.bin", content)
+                    await nx.write(f"/dir_{i}/test_{size_name}.bin", content)
 
         # Create many small files for glob/list benchmarks
         for i in range(100):
-            await nx.sys_write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
-            await nx.sys_write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
-            await nx.sys_write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
+            await nx.write(f"/many_files/file_{i:04d}.txt", f"Content {i}".encode())
+            await nx.write(f"/many_files/file_{i:04d}.py", f"# Python {i}".encode())
+            await nx.write(f"/many_files/file_{i:04d}.json", f'{{"id": {i}}}'.encode())
 
     benchmark_loop.run_until_complete(_populate())
     yield nx
@@ -150,7 +150,7 @@ def deep_directory_nexus(benchmark_nexus, benchmark_loop):
         for i in range(20):
             current_path += f"/level_{i}"
             await nx.sys_mkdir(current_path, parents=True)
-            await nx.sys_write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
+            await nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
 
     benchmark_loop.run_until_complete(_populate())
     yield nx

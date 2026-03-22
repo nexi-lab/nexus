@@ -366,7 +366,7 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write a file as admin
-        await nx.sys_write("/test/cached_file.txt", b"cached content", context=admin)
+        await nx.write("/test/cached_file.txt", b"cached content", context=admin)
 
         # First read — cache miss, reads from backend
         content = await nx.sys_read("/test/cached_file.txt", context=admin)
@@ -393,7 +393,7 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write a file as admin
-        await nx.sys_write("/test/secret.txt", b"secret data", context=admin)
+        await nx.write("/test/secret.txt", b"secret data", context=admin)
 
         # Read as admin to populate cache
         content = await nx.sys_read("/test/secret.txt", context=admin)
@@ -420,7 +420,7 @@ class TestCachingPermissions:
         # Non-admin user should be denied write
         unauthorized = OperationContext(user_id="eve", groups=[], is_admin=False)
         with pytest.raises(PermissionError):
-            await nx.sys_write("/test/protected/hack.txt", b"pwned", context=unauthorized)
+            await nx.write("/test/protected/hack.txt", b"pwned", context=unauthorized)
 
     @pytest.mark.asyncio
     async def test_cached_content_not_leaked_across_users(self, nexus_with_cache):
@@ -429,8 +429,8 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write multiple files as admin
-        await nx.sys_write("/test/public.txt", b"public info", context=admin)
-        await nx.sys_write("/test/private.txt", b"private info", context=admin)
+        await nx.write("/test/public.txt", b"public info", context=admin)
+        await nx.write("/test/private.txt", b"private info", context=admin)
 
         # Admin reads both (populates cache for both)
         assert await nx.sys_read("/test/public.txt", context=admin) == b"public info"
@@ -462,7 +462,7 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Write and read to populate cache
-        await nx.sys_write("/test/delete_me.txt", b"temp data", context=admin)
+        await nx.write("/test/delete_me.txt", b"temp data", context=admin)
         assert await nx.sys_read("/test/delete_me.txt", context=admin) == b"temp data"
 
         # Delete the file
@@ -503,7 +503,7 @@ class TestCachingPermissions:
             admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
             # Write-through: write populates cache immediately
-            await nx.sys_write("/wt/file.txt", b"write through data", context=admin)
+            await nx.write("/wt/file.txt", b"write through data", context=admin)
 
             # Read should be from cache (fast)
             content = await nx.sys_read("/wt/file.txt", context=admin)
@@ -595,9 +595,9 @@ class TestCachingWithFastAPIServer:
         # from parent directories to all children.  Using isolated dirs
         # ensures that a grant on /alice_area/readme.md does NOT bleed to
         # /secret_area/secret.txt.
-        await nx.sys_write("/alice_area/readme.md", b"# HTTP Cache Test", context=admin)
-        await nx.sys_write("/secret_area/secret.txt", b"top secret data", context=admin)
-        await nx.sys_write("/shared_area/shared.txt", b"shared content", context=admin)
+        await nx.write("/alice_area/readme.md", b"# HTTP Cache Test", context=admin)
+        await nx.write("/secret_area/secret.txt", b"top secret data", context=admin)
+        await nx.write("/shared_area/shared.txt", b"shared content", context=admin)
 
         # Grant ReBAC permissions
         rebac = nx._rebac_manager

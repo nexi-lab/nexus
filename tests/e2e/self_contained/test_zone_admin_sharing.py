@@ -74,7 +74,7 @@ class TestZoneAdminSharing:
 
         # Create a file owned by a regular user (bob)
         file_path = f"{zone_path}/doc.txt"
-        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.service("rebac").rebac_create_sync(
@@ -125,7 +125,7 @@ class TestZoneAdminSharing:
 
         # Create a file
         file_path = f"{zone_path}/doc.txt"
-        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership of file
         nx.service("rebac").rebac_create_sync(
@@ -166,7 +166,7 @@ class TestZoneAdminSharing:
         zone1_path = "/zone/acme"
         await nx.sys_mkdir(zone1_path, context=OperationContext(**admin_context))
         file1_path = f"{zone1_path}/doc.txt"
-        await nx.sys_write(file1_path, b"test", context=OperationContext(**admin_context))
+        await nx.write(file1_path, b"test", context=OperationContext(**admin_context))
         nx.service("rebac").rebac_create_sync(
             subject=("user", "bob"),
             relation="direct_owner",
@@ -178,7 +178,7 @@ class TestZoneAdminSharing:
         zone2_path = "/zone/techcorp"
         await nx.sys_mkdir(zone2_path, context=OperationContext(**admin_context))
         file2_path = f"{zone2_path}/doc.txt"
-        await nx.sys_write(file2_path, b"test", context=OperationContext(**admin_context))
+        await nx.write(file2_path, b"test", context=OperationContext(**admin_context))
         nx.service("rebac").rebac_create_sync(
             subject=("user", "dave"),
             relation="direct_owner",
@@ -217,7 +217,7 @@ class TestZoneAdminSharing:
         zone_path = f"/zone/{zone_id}"
         await nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.service("rebac").rebac_create_sync(
@@ -259,7 +259,7 @@ class TestZoneAdminSharing:
         zone_path = f"/zone/{zone_id}"
         await nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.service("rebac").rebac_create_sync(
@@ -331,7 +331,7 @@ class TestBackwardCompatibility:
         zone_path = f"/zone/{zone_id}"
         await nx.sys_mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
-        await nx.sys_write(file_path, b"test content", context=OperationContext(**admin_context))
+        await nx.write(file_path, b"test content", context=OperationContext(**admin_context))
 
         # Grant bob ownership
         nx.service("rebac").rebac_create_sync(

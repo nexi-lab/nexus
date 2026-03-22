@@ -287,21 +287,21 @@ class TestGatewayDelegationOverhead:
         benchmark(run)
 
     def test_gateway_write_bytes(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.sys_write() delegation with bytes."""
+        """Benchmark gateway.write() delegation with bytes."""
 
         def run():
             delegation_loop.run_until_complete(
-                mock_gateway.sys_write("/test/file.txt", b"content", context=context)
+                mock_gateway.write("/test/file.txt", b"content", context=context)
             )
 
         benchmark(run)
 
     def test_gateway_write_str_conversion(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.sys_write() with str->bytes conversion."""
+        """Benchmark gateway.write() with str->bytes conversion."""
 
         def run():
             delegation_loop.run_until_complete(
-                mock_gateway.sys_write("/test/file.txt", "text content", context=context)
+                mock_gateway.write("/test/file.txt", "text content", context=context)
             )
 
         benchmark(run)

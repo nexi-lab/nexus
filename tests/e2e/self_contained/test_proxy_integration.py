@@ -203,7 +203,7 @@ class TestLargePayloadStreaming:
         proxy = ProxyVFSBrick(config, transport=http_transport)
         await proxy.start()
         try:
-            await proxy.sys_write("/big.bin", b"x" * 200, "z1")
+            await proxy.write("/big.bin", b"x" * 200, "z1")
             assert streamed
         finally:
             await proxy.stop()

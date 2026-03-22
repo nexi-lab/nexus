@@ -208,7 +208,7 @@ class TestAPIKeyLifecycle:
         self, tmp_path: Path, nexus_fs_open: NexusFS, _session_factory, monkeypatch
     ):
         """Create a key, send a request with it, expect 200."""
-        await nexus_fs_open.sys_write("/hello.txt", b"world")
+        await nexus_fs_open.write("/hello.txt", b"world")
 
         with _session_factory() as session:
             _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
@@ -330,7 +330,7 @@ class TestZoneIsolation:
 
         # Write as admin in zone_a
         admin_a = self._admin_ctx("zone_a")
-        await nx.sys_write(zone_a_path, b"top secret", context=admin_a)
+        await nx.write(zone_a_path, b"top secret", context=admin_a)
 
         # Attempt read from zone_b context (admin but NO MANAGE_ZONES capability)
         admin_b = self._admin_ctx("zone_b")
@@ -342,7 +342,7 @@ class TestZoneIsolation:
         """Listing zone A prefix from zone B context must return empty (no visibility)."""
         nx = nexus_fs_enforced
         admin_a = self._admin_ctx("zone_a")
-        await nx.sys_write("/zone/zone_a/user:admin/data.csv", b"a,b,c", context=admin_a)
+        await nx.write("/zone/zone_a/user:admin/data.csv", b"a,b,c", context=admin_a)
 
         # List from zone_b context at the zone_a prefix — returns empty, no cross-zone visibility
         admin_b = self._admin_ctx("zone_b")
@@ -356,7 +356,7 @@ class TestZoneIsolation:
         admin_b = self._admin_ctx("zone_b")
 
         with pytest.raises(PermissionError, match="[Cc]ross.zone"):
-            await nx.sys_write(
+            await nx.write(
                 "/zone/zone_a/user:admin/injected.txt",
                 b"evil",
                 context=admin_b,
@@ -398,7 +398,7 @@ class TestPermissionEnforcement:
             zone_id="root",
             is_admin=True,
         )
-        await nx.sys_write("/workspace/confidential.txt", b"secret stuff", context=admin_ctx)
+        await nx.write("/workspace/confidential.txt", b"secret stuff", context=admin_ctx)
 
         # Unprivileged user with no grants
         user_ctx = OperationContext(
@@ -421,7 +421,7 @@ class TestPermissionEnforcement:
             zone_id="root",
             is_admin=True,
         )
-        await nx.sys_write(file_path, b"# readme", context=admin_ctx)
+        await nx.write(file_path, b"# readme", context=admin_ctx)
 
         # Create a read-only grant for "viewer" via ReBAC
         if nx._rebac_manager:
@@ -444,7 +444,7 @@ class TestPermissionEnforcement:
 
         # Write should fail (viewer has no write permission)
         with pytest.raises(PermissionError, match="[Aa]ccess denied"):
-            await nx.sys_write(file_path, b"overwritten!", context=viewer_ctx)
+            await nx.write(file_path, b"overwritten!", context=viewer_ctx)
 
     @pytest.mark.asyncio
     async def test_edit_denied_without_permission(self, nexus_fs_enforced: NexusFS):
@@ -457,7 +457,7 @@ class TestPermissionEnforcement:
             is_admin=True,
         )
         file_path = "/workspace/protected.py"
-        await nx.sys_write(file_path, b"def foo():\n    return 1\n", context=admin_ctx)
+        await nx.write(file_path, b"def foo():\n    return 1\n", context=admin_ctx)
 
         # Unprivileged user with no grants
         user_ctx = OperationContext(
@@ -484,7 +484,7 @@ class TestPermissionEnforcement:
             zone_id="root",
             is_admin=True,
         )
-        await nx.sys_write(file_path, b"def hello():\n    return 'world'\n", context=admin_ctx)
+        await nx.write(file_path, b"def hello():\n    return 'world'\n", context=admin_ctx)
 
         # Create a read-only grant for "viewer" via ReBAC
         if nx._rebac_manager:
@@ -529,7 +529,7 @@ class TestPermissionEnforcement:
             zone_id="root",
             is_admin=True,
         )
-        await nx.sys_write(file_path, b"x = 1\n", context=admin_ctx)
+        await nx.write(file_path, b"x = 1\n", context=admin_ctx)
 
         # Create a write grant for "editor" via ReBAC
         if nx._rebac_manager:
@@ -591,7 +591,7 @@ class TestStaleSessionDetection:
             zone_id="root",
             is_admin=True,
         )
-        await nx.sys_write("/workspace/agent-test.txt", b"hello", context=admin_ctx)
+        await nx.write("/workspace/agent-test.txt", b"hello", context=admin_ctx)
 
         # Grant the agent read access via ReBAC
         if nx._rebac_manager:
@@ -645,7 +645,7 @@ class TestStaleSessionDetection:
             zone_id="root",
             is_admin=True,
         )
-        await nx.sys_write("/workspace/agent-ok.txt", b"ok", context=admin_ctx)
+        await nx.write("/workspace/agent-ok.txt", b"ok", context=admin_ctx)
 
         if nx._rebac_manager:
             nx._rebac_manager.rebac_write(
@@ -696,7 +696,7 @@ class TestStaleSessionDetection:
             zone_id="root",
             is_admin=True,
         )
-        await nx.sys_write("/workspace/deleted-agent.txt", b"secret", context=admin_ctx)
+        await nx.write("/workspace/deleted-agent.txt", b"secret", context=admin_ctx)
 
         from unittest.mock import MagicMock
 

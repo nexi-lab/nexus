@@ -202,26 +202,26 @@ class TestKernelSanity:
 
     @pytest.mark.asyncio
     async def test_write_read_roundtrip(self, nx):
-        await nx.sys_write("/test.txt", b"hello world")
+        await nx.write("/test.txt", b"hello world")
         data = await nx.sys_read("/test.txt")
         assert data == b"hello world"
 
     @pytest.mark.asyncio
     async def test_mkdir_and_list(self, nx):
         await nx.sys_mkdir("/mydir", parents=True, exist_ok=True)
-        await nx.sys_write("/mydir/file.txt", b"content")
+        await nx.write("/mydir/file.txt", b"content")
         entries = await nx.sys_readdir("/mydir", recursive=False)
         assert "/mydir/file.txt" in entries
 
     @pytest.mark.asyncio
     async def test_delete_file(self, nx):
-        await nx.sys_write("/del.txt", b"bye")
+        await nx.write("/del.txt", b"bye")
         await nx.sys_unlink("/del.txt")
         assert not await nx.sys_access("/del.txt")
 
     @pytest.mark.asyncio
     async def test_exists(self, nx):
-        await nx.sys_write("/exists.txt", b"yes")
+        await nx.write("/exists.txt", b"yes")
         assert await nx.sys_access("/exists.txt")
         assert not await nx.sys_access("/nope.txt")
 
@@ -232,7 +232,7 @@ class TestKernelSanity:
 
     @pytest.mark.asyncio
     async def test_get_metadata(self, nx):
-        await nx.sys_write("/meta.txt", b"metadata test")
+        await nx.write("/meta.txt", b"metadata test")
         meta = await nx.sys_stat("/meta.txt")
         assert meta is not None
         assert meta["size"] == 13
@@ -240,7 +240,7 @@ class TestKernelSanity:
 
     @pytest.mark.asyncio
     async def test_get_etag(self, nx):
-        await nx.sys_write("/etag.txt", b"etag test")
+        await nx.write("/etag.txt", b"etag test")
         etag = nx.get_etag("/etag.txt")
         assert etag is not None
         assert isinstance(etag, str)
@@ -304,7 +304,7 @@ class TestVersionDelegation:
     async def test_list_versions_after_write(self, nx):
         """list_versions should return version history after writes."""
         path = f"/ver-{uuid.uuid4().hex[:8]}.txt"
-        await nx.sys_write(path, b"v1")
+        await nx.write(path, b"v1")
         from nexus.lib.sync_bridge import run_sync
 
         versions = run_sync(nx.version_service.list_versions(path))
@@ -317,7 +317,7 @@ class TestVersionDelegation:
         from nexus.lib.sync_bridge import run_sync
 
         path = f"/ver2-{uuid.uuid4().hex[:8]}.txt"
-        await nx.sys_write(path, b"version-one")
+        await nx.write(path, b"version-one")
         versions = run_sync(nx.version_service.list_versions(path))
         assert len(versions) >= 1
         ver_num = versions[0].get("version", 1)
@@ -330,8 +330,8 @@ class TestVersionDelegation:
         from nexus.lib.sync_bridge import run_sync
 
         path = f"/multi-ver-{uuid.uuid4().hex[:8]}.txt"
-        await nx.sys_write(path, b"v1")
-        await nx.sys_write(path, b"v2")
+        await nx.write(path, b"v1")
+        await nx.write(path, b"v2")
         versions = run_sync(nx.version_service.list_versions(path))
         assert len(versions) >= 2
 
@@ -355,7 +355,7 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-test-{uuid.uuid4().hex[:8]}.txt"
-        await nx_perms.sys_write(path, b"admin write", context=ctx)
+        await nx_perms.write(path, b"admin write", context=ctx)
         data = await nx_perms.sys_read(path, context=ctx)
         assert data == b"admin write"
 
@@ -384,7 +384,7 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-rw-{uuid.uuid4().hex[:8]}.txt"
-        await nx_perms.sys_write(path, b"perm data", context=ctx)
+        await nx_perms.write(path, b"perm data", context=ctx)
         result = await nx_perms.sys_read(path, context=ctx)
         assert result == b"perm data"
 
@@ -399,7 +399,7 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         path = f"/perm-ver-{uuid.uuid4().hex[:8]}.txt"
-        await nx_perms.sys_write(path, b"version with perms", context=ctx)
+        await nx_perms.write(path, b"version with perms", context=ctx)
         from nexus.lib.sync_bridge import run_sync
 
         versions = run_sync(nx_perms.version_service.list_versions(path, ctx))

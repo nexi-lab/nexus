@@ -232,9 +232,9 @@ class TestWaitThenRead:
         async def agent_b_write_files():
             """Agent B: Write .txt first, then .json."""
             await asyncio.sleep(0.2)
-            await second_nexus_fs.sys_write(txt_path, b"readme content")
+            await second_nexus_fs.write(txt_path, b"readme content")
             await asyncio.sleep(0.1)
-            await second_nexus_fs.sys_write(json_path, b'{"key": "value"}')
+            await second_nexus_fs.write(json_path, b'{"key": "value"}')
 
         await asyncio.gather(agent_a_wait_json(), agent_b_write_files())
 
@@ -277,7 +277,7 @@ class TestLockThenWrite:
         assert lock_id is not None
 
         try:
-            await nexus_fs.sys_write(test_path, b'{"version": 1}')
+            await nexus_fs.write(test_path, b'{"version": 1}')
             content = await nexus_fs.sys_read(test_path)
             assert content == b'{"version": 1}'
         finally:
@@ -324,7 +324,7 @@ class TestConcurrentAccess:
         """Multiple agents can read same file concurrently without lock."""
         test_path = "/shared/data.txt"
         await nexus_fs.sys_mkdir("/shared", parents=True)
-        await nexus_fs.sys_write(test_path, b"shared content")
+        await nexus_fs.write(test_path, b"shared content")
 
         results = []
 
@@ -351,7 +351,7 @@ class TestConcurrentAccess:
 
         async def write_content(nexus, content, delay):
             await asyncio.sleep(delay)
-            await nexus.sys_write(test_path, content)
+            await nexus.write(test_path, content)
 
         # Both try to write around the same time
         await asyncio.gather(
@@ -372,7 +372,7 @@ class TestConcurrentAccess:
 
         # Create initial content
         initial_content = b"A" * 10000
-        await nexus_fs.sys_write(test_path, initial_content)
+        await nexus_fs.write(test_path, initial_content)
 
         new_content = b"B" * 10000
         read_results = []
@@ -388,7 +388,7 @@ class TestConcurrentAccess:
 
         async def writer():
             await asyncio.sleep(0.02)
-            await second_nexus_fs.sys_write(test_path, new_content)
+            await second_nexus_fs.write(test_path, new_content)
 
         await asyncio.gather(reader(), writer())
 
@@ -428,7 +428,7 @@ class TestEventNotification:
 
         async def writer():
             await asyncio.sleep(0.2)
-            await second_nexus_fs.sys_write(test_path, b"notification content")
+            await second_nexus_fs.write(test_path, b"notification content")
 
         await asyncio.gather(waiter(), writer())
 
@@ -447,7 +447,7 @@ class TestEventNotification:
         test_id = uuid.uuid4().hex[:8]
         test_path = f"/notify_del/file_{test_id}.txt"
         await nexus_fs.sys_mkdir("/notify_del", parents=True)
-        await nexus_fs.sys_write(test_path, b"to be deleted")
+        await nexus_fs.write(test_path, b"to be deleted")
 
         # Wait for setup write event to propagate and drain
         await asyncio.sleep(0.1)
@@ -486,7 +486,7 @@ class TestEventNotification:
         old_path = f"/notify_ren/old_{test_id}.txt"
         new_path = f"/notify_ren/new_{test_id}.txt"
         await nexus_fs.sys_mkdir("/notify_ren", parents=True)
-        await nexus_fs.sys_write(old_path, b"to be renamed")
+        await nexus_fs.write(old_path, b"to be renamed")
 
         # Wait for setup write event to propagate and drain
         await asyncio.sleep(0.1)

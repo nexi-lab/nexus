@@ -1,0 +1,250 @@
+"""Thin NexusFS facade for the slim package.
+
+Exposes ~10 public methods from the kernel NexusFS. Internal methods
+(sandbox, workflows, bulk operations, dispatch hooks) are hidden.
+
+The facade also provides optimized implementations where the full kernel
+path is unnecessarily heavy for slim-package use (e.g., single-lookup stat).
+
+Usage:
+    from nexus.fs._facade import SlimNexusFS
+
+    facade = SlimNexusFS(kernel_fs)
+    content = await facade.read("/s3/bucket/file.txt")
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.types import OperationContext
+from nexus.core.nexus_fs import NexusFS
+
+logger = logging.getLogger(__name__)
+
+# Default context for slim-mode (single-user, no auth)
+_SLIM_CONTEXT = OperationContext(
+    user_id="local",
+    groups=[],
+    zone_id=ROOT_ZONE_ID,
+    is_admin=True,
+)
+
+
+class SlimNexusFS:
+    """Slim facade over the NexusFS kernel.
+
+    Provides a clean, minimal API surface for the standalone nexus-fs package.
+    All methods use a default local context (no auth, single-user).
+
+    Public API (~10 methods):
+        read, write, ls, stat, delete, mkdir, rmdir, rename, exists, copy
+    """
+
+    def __init__(self, kernel: NexusFS) -> None:
+        self._kernel = kernel
+        self._ctx = _SLIM_CONTEXT
+
+    @property
+    def kernel(self) -> NexusFS:
+        """Escape hatch: access the underlying kernel for advanced use."""
+        return self._kernel
+
+    # -- Read operations --
+
+    async def read(self, path: str) -> bytes:
+        """Read file content.
+
+        Args:
+            path: Virtual file path (e.g., "/s3/my-bucket/file.txt")
+
+        Returns:
+            File content as bytes.
+
+        Raises:
+            NexusFileNotFoundError: If file does not exist.
+        """
+        return await self._kernel.sys_read(path, context=self._ctx)
+
+    # -- Write operations --
+
+    async def write(self, path: str, content: bytes) -> dict[str, Any]:
+        """Write content to a file (creates or overwrites).
+
+        Args:
+            path: Virtual file path.
+            content: File content as bytes.
+
+        Returns:
+            Dict with path, size, etag, version.
+        """
+        return await self._kernel.sys_write(path, content, context=self._ctx)
+
+    # -- Directory operations --
+
+    async def ls(
+        self,
+        path: str = "/",
+        detail: bool = False,
+        recursive: bool = False,
+    ) -> list[str] | list[dict[str, Any]]:
+        """List directory contents.
+
+        Args:
+            path: Directory path to list.
+            detail: If True, return dicts with metadata. If False, return paths.
+            recursive: If True, list recursively.
+
+        Returns:
+            List of paths (detail=False) or list of metadata dicts (detail=True).
+        """
+        return await self._kernel.sys_readdir(
+            path,
+            recursive=recursive,
+            details=detail,
+            context=self._ctx,
+        )
+
+    async def mkdir(self, path: str, parents: bool = True) -> None:
+        """Create a directory.
+
+        Args:
+            path: Directory path to create.
+            parents: If True, create parent directories as needed (mkdir -p).
+        """
+        await self._kernel.sys_mkdir(
+            path,
+            parents=parents,
+            exist_ok=True,
+            context=self._ctx,
+        )
+
+    async def rmdir(self, path: str, recursive: bool = False) -> None:
+        """Remove a directory.
+
+        Args:
+            path: Directory path to remove.
+            recursive: If True, remove contents recursively (rm -rf).
+        """
+        await self._kernel.sys_rmdir(path, recursive=recursive, context=self._ctx)
+
+    # -- File operations --
+
+    async def delete(self, path: str) -> None:
+        """Delete a file.
+
+        Args:
+            path: Virtual file path to delete.
+
+        Raises:
+            NexusFileNotFoundError: If file does not exist.
+        """
+        await self._kernel.sys_unlink(path, context=self._ctx)
+
+    async def rename(self, old_path: str, new_path: str) -> None:
+        """Rename/move a file.
+
+        Args:
+            old_path: Current file path.
+            new_path: New file path.
+        """
+        await self._kernel.sys_rename(old_path, new_path, context=self._ctx)
+
+    async def exists(self, path: str) -> bool:
+        """Check if a path exists.
+
+        Args:
+            path: Virtual file path.
+
+        Returns:
+            True if the path exists (file or directory).
+        """
+        return await self._kernel.sys_access(path, context=self._ctx)
+
+    async def copy(self, src: str, dst: str) -> dict[str, Any]:
+        """Copy a file from src to dst.
+
+        Args:
+            src: Source file path.
+            dst: Destination file path.
+
+        Returns:
+            Dict with path, size, etag of the new file.
+        """
+        content = await self.read(src)
+        return await self.write(dst, content)
+
+    # -- Metadata (optimized single-lookup) --
+
+    async def stat(self, path: str) -> dict[str, Any] | None:
+        """Get file/directory metadata with a single metadata lookup.
+
+        Optimized for the slim package — avoids the kernel's double-lookup
+        pattern (sys_is_directory + metadata.get) by doing one read and
+        deriving directory status from the result.
+
+        Args:
+            path: Virtual file path.
+
+        Returns:
+            Metadata dict, or None if path does not exist.
+        """
+        from nexus.lib.path_utils import validate_path
+
+        normalized = validate_path(path, allow_root=True)
+
+        # Single metadata lookup
+        meta: FileMetadata | None = self._kernel.metadata.get(normalized)
+
+        if meta is not None:
+            is_dir = meta.is_dir or meta.is_mount or meta.mime_type == "inode/directory"
+            return {
+                "path": meta.path,
+                "size": meta.size or (4096 if is_dir else 0),
+                "etag": meta.etag,
+                "mime_type": meta.mime_type
+                or ("inode/directory" if is_dir else "application/octet-stream"),
+                "created_at": meta.created_at.isoformat() if meta.created_at else None,
+                "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
+                "is_directory": is_dir,
+                "version": meta.version,
+                "zone_id": meta.zone_id,
+                "entry_type": meta.entry_type,
+            }
+
+        # No explicit entry — check if it's an implicit directory
+        if self._kernel.metadata.is_implicit_directory(normalized):
+            return {
+                "path": normalized,
+                "size": 4096,
+                "etag": None,
+                "mime_type": "inode/directory",
+                "created_at": None,
+                "modified_at": None,
+                "is_directory": True,
+                "version": 0,
+                "zone_id": ROOT_ZONE_ID,
+                "entry_type": 1,
+            }
+
+        return None
+
+    # -- Mount management (delegated to kernel router) --
+
+    def list_mounts(self) -> list[str]:
+        """List all mount points.
+
+        Returns:
+            Sorted list of mount point paths.
+        """
+        return sorted(m.mount_point for m in self._kernel.router.list_mounts())
+
+    # -- Lifecycle --
+
+    async def close(self) -> None:
+        """Close the filesystem and release resources."""
+        if hasattr(self._kernel, "close"):
+            await self._kernel.close()

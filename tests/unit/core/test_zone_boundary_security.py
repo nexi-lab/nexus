@@ -77,7 +77,7 @@ class TestZoneBoundarySecurity:
         await nx.sys_mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
-        await nx.sys_write(test_file, b"secret acme data", context=system_admin)
+        await nx.write(test_file, b"secret acme data", context=system_admin)
 
         # Zone admin from zone2 (techcorp) tries to access zone1 (acme) file
         zone_admin_techcorp = OperationContext(
@@ -118,7 +118,7 @@ class TestZoneBoundarySecurity:
         await nx.sys_mkdir("/zone/acme", context=system_admin_setup)
 
         test_file = "/zone/acme/doc.txt"
-        await nx.sys_write(test_file, b"secret acme data", context=system_admin_setup)
+        await nx.write(test_file, b"secret acme data", context=system_admin_setup)
 
         # System admin from zone2 should be able to access zone1 file
         system_admin_zone2 = OperationContext(
@@ -159,7 +159,7 @@ class TestZoneBoundarySecurity:
         await nx.sys_mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
-        await nx.sys_write(test_file, b"acme data", context=system_admin)
+        await nx.write(test_file, b"acme data", context=system_admin)
 
         # Add alice as zone admin for acme
         add_user_to_zone(nx._system_services.rebac_manager, "alice", "acme", role="admin")
@@ -203,7 +203,7 @@ class TestZoneBoundarySecurity:
         await nx.sys_mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
-        await nx.sys_write(test_file, b"original", context=system_admin)
+        await nx.write(test_file, b"original", context=system_admin)
 
         # Zone admin from zone2 tries to write to zone1 file
         zone_admin_techcorp = OperationContext(
@@ -219,7 +219,7 @@ class TestZoneBoundarySecurity:
 
         # Should be denied - cross-zone write without MANAGE_ZONES
         with pytest.raises(PermissionError, match="Access denied"):
-            await nx.sys_write(test_file, b"hacked!", context=zone_admin_techcorp)
+            await nx.write(test_file, b"hacked!", context=zone_admin_techcorp)
 
     @pytest.mark.asyncio
     async def test_system_admin_without_manage_zones_denied(self, nx: NexusFS) -> None:
@@ -243,7 +243,7 @@ class TestZoneBoundarySecurity:
         await nx.sys_mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
-        await nx.sys_write(test_file, b"secret", context=system_admin)
+        await nx.write(test_file, b"secret", context=system_admin)
 
         # Admin without MANAGE_ZONES tries to access different zone
         limited_admin = OperationContext(

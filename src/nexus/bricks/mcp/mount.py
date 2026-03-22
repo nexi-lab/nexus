@@ -246,7 +246,7 @@ class MCPMountManager:
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount_dir, e)
 
-                await self._filesystem.sys_write(mount_json_path, content.encode("utf-8"))
+                await self._filesystem.write(mount_json_path, content.encode("utf-8"))
             else:
                 mount_path = Path(mount_json_path.lstrip("/"))
                 mount_path.parent.mkdir(parents=True, exist_ok=True)
@@ -823,7 +823,7 @@ class MCPMountManager:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
 
             # Write tool.json
-            await self._filesystem.sys_write(tool_json_path, tool_json.encode("utf-8"))
+            await self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
         else:
             # Local filesystem
             if mount.tools_path:
@@ -857,7 +857,7 @@ class MCPMountManager:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
-            await self._filesystem.sys_write(skill_md_path, skill_md.encode("utf-8"))
+            await self._filesystem.write(skill_md_path, skill_md.encode("utf-8"))
         else:
             if mount.tools_path:
                 tools_dir = Path(mount.tools_path.lstrip("/"))

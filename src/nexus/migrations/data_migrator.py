@@ -200,7 +200,7 @@ class DataMigrator:
                 content = response["Body"].read()
 
                 # Write to Nexus
-                await self.nx.sys_write(full_target, content)
+                await self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)
@@ -291,7 +291,7 @@ class DataMigrator:
                 content = blob.download_as_bytes()
 
                 # Write to Nexus
-                await self.nx.sys_write(full_target, content)
+                await self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)
@@ -364,7 +364,7 @@ class DataMigrator:
                 content = local_path.read_bytes()
 
                 # Write to Nexus
-                await self.nx.sys_write(full_target, content)
+                await self.nx.write(full_target, content)
 
                 result.files_imported += 1
                 result.bytes_transferred += len(content)

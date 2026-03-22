@@ -88,13 +88,13 @@ class TestWriteBatchVersioning:
 
     @pytest.mark.asyncio
     async def test_overwrite_increments_version(self, nx):
-        await nx.sys_write("/files/a.txt", b"v1")
+        await nx.write("/files/a.txt", b"v1")
         results = await nx.write_batch([("/files/a.txt", b"v2")])
         assert results[0]["version"] == 2
 
     @pytest.mark.asyncio
     async def test_batch_overwrite_mixed_new_and_existing(self, nx):
-        await nx.sys_write("/files/existing.txt", b"old")
+        await nx.write("/files/existing.txt", b"old")
         results = await nx.write_batch(
             [
                 ("/files/existing.txt", b"updated"),

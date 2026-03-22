@@ -697,7 +697,7 @@ def cp(
             assert isinstance(content, bytes), "Expected bytes from read()"
 
             # Write to destination
-            await nx.sys_write(dest, content)
+            await nx.write(dest, content)
 
             nx.close()
 

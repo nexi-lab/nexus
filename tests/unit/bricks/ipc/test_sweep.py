@@ -50,7 +50,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_expired", old_ts, ttl_seconds=60)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        await vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -68,7 +68,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_valid", now, ttl_seconds=3600)
         filename = f"{now.strftime('%Y%m%dT%H%M%S')}_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        await vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -84,7 +84,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_no_ttl", old_ts)  # No TTL
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        await vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -99,7 +99,7 @@ class TestTTLSweeper:
             msg = _make_message(f"msg_{agent_id}", old_ts, ttl_seconds=1)
             filename = f"20200101T000000_msg_{agent_id}.json"
             msg_path = f"{inbox_path(agent_id)}/{filename}"
-            await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+            await vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()
@@ -124,7 +124,7 @@ class TestTTLSweeper:
         # Use current timestamp in filename — sweeper should skip this
         filename = f"{now.strftime('%Y%m%dT%H%M%S')}_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        await vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         # Sweep interval = 60s, filename timestamp = now → should skip
         sweeper = TTLSweeper(vfs, zone_id=ZONE, interval=60)
@@ -143,7 +143,7 @@ class TestTTLSweeper:
         msg = _make_message("msg_old_filename", old_ts, ttl_seconds=60)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        await vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, interval=60)
         expired_count = await sweeper.sweep_once()
@@ -210,7 +210,7 @@ class TestTTLSweeperLifecycle:
         msg = _make_message("msg_loop_test", old_ts, ttl_seconds=1)
         filename = f"20200101T000000_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
-        await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
+        await vfs.write(msg_path, msg.to_bytes(), ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE, interval=0.05)
         await sweeper.start()

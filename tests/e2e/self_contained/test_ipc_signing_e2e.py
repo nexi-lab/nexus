@@ -326,7 +326,7 @@ class TestSignedIPCE2E:
 
         # Write tampered envelope directly to inbox
         msg_path = message_path_in_inbox("agent:bob", tampered.id, tampered.timestamp)
-        await vfs.sys_write(msg_path, tampered.to_bytes(), ZONE)
+        await vfs.write(msg_path, tampered.to_bytes(), ZONE)
 
         handler_called = False
 

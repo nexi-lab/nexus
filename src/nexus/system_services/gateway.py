@@ -101,6 +101,27 @@ class NexusFSGateway:
         """
         return await self._fs.sys_write(path, buf, context=context)
 
+    async def write(
+        self,
+        path: str,
+        buf: bytes | str,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Write content to file with create-on-write semantics (Tier 2).
+
+        Unlike sys_write, this creates the file if it doesn't exist.
+
+        Args:
+            path: Virtual path for file
+            buf: File content (bytes or str, str auto-encoded to UTF-8)
+            context: Operation context for permissions
+
+        Returns:
+            Dict with path, bytes_written, and created flag.
+        """
+        return await self._fs.write(path, buf, context=context)
+
     async def sys_read(
         self,
         path: str,

@@ -186,7 +186,7 @@ class MCPConnectionManager:
                 filename = f"{conn.provider}_{conn.user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
                 content = json.dumps(conn.to_dict(), indent=2)
-                await self.filesystem.sys_write(path, content.encode("utf-8"))
+                await self.filesystem.write(path, content.encode("utf-8"))
 
         except Exception as e:
             logger.error(f"Failed to save connection: {e}")

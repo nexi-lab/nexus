@@ -57,7 +57,7 @@ class TestMountSyncOptimization:
         test_file.write_text("content")
 
         # Write file to NexusFS (creates parent tuples)
-        await nx_with_hierarchy.sys_write("/test.txt", b"content")
+        await nx_with_hierarchy.write("/test.txt", b"content")
 
         # Create a mock backend with the file
         mock_backend = Mock()
@@ -138,7 +138,7 @@ class TestMountSyncOptimization:
             file.write_text(f"content{i}")
             files.append(f"file{i}.txt")
             # Pre-create in NexusFS metadata
-            await nx_with_hierarchy.sys_write(f"/file{i}.txt", f"content{i}".encode())
+            await nx_with_hierarchy.write(f"/file{i}.txt", f"content{i}".encode())
 
         # Create mock backend
         mock_backend = Mock()

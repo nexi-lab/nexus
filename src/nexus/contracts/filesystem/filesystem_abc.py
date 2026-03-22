@@ -93,10 +93,10 @@ class NexusFilesystemABC(ABC):
         offset: int = 0,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Write content to a file (POSIX pwrite(2)).
+        """Write content to a file (POSIX write(2)).
 
-        Content-only primitive with create-on-write semantics.
-        CAS and locking are driver/application concerns — not kernel.
+        Tier 1 kernel primitive — file must exist. Use write() (Tier 2)
+        for create-on-write semantics.
 
         Args:
             path: Virtual file path.
@@ -106,7 +106,10 @@ class NexusFilesystemABC(ABC):
             context: Operation context.
 
         Returns:
-            Dict with path, bytes_written, and created flag.
+            Dict with path and bytes_written.
+
+        Raises:
+            NexusFileNotFoundError: If file does not exist.
         """
         ...
 

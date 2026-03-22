@@ -139,7 +139,7 @@ class MessageSender:
             raise InboxFullError(envelope.recipient, inbox_count, self._max_inbox_size)
 
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
-        await self._storage.sys_write(msg_path, data, self._zone_id)
+        await self._storage.write(msg_path, data, self._zone_id)
 
         # Outbox copy (best-effort)
         outbox_dir = outbox_path(envelope.sender)
@@ -148,7 +148,7 @@ class MessageSender:
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )
-                await self._storage.sys_write(outbox_msg_path, data, self._zone_id)
+                await self._storage.write(outbox_msg_path, data, self._zone_id)
         except Exception as exc:
             logger.warning(
                 "Failed to write outbox copy",
@@ -628,7 +628,7 @@ class MessageProcessor:
                     indent=2,
                 ).encode("utf-8")
                 reason_path = dest + ".reason.json"
-                await self._storage.sys_write(reason_path, reason_data, self._zone_id)
+                await self._storage.write(reason_path, reason_data, self._zone_id)
             except Exception:
                 logger.debug(
                     "Failed to write .reason.json for dead-lettered message at %s",

@@ -110,7 +110,7 @@ async def copy_file(
         if parent and parent != "/" and parent != ".":
             await nx.sys_mkdir(parent, parents=True, exist_ok=True)
 
-        await nx.sys_write(dest, content)
+        await nx.write(dest, content)
         return len(content)
 
     elif not is_source_local and is_dest_local:
@@ -158,7 +158,7 @@ async def copy_file(
         if parent and parent != "/" and parent != ".":
             await nx.sys_mkdir(parent, parents=True, exist_ok=True)
 
-        await nx.sys_write(dest, content)
+        await nx.write(dest, content)
         return len(content)
 
 
@@ -350,7 +350,7 @@ async def move_file(
             except Exception:
                 # Fallback: copy content then delete source
                 content = await nx.sys_read(source)
-                await nx.sys_write(dest, content)
+                await nx.write(dest, content)
                 await nx.sys_unlink(source)
                 return True
 

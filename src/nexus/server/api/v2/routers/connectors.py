@@ -342,7 +342,7 @@ async def mount_connector(
             skill_base = f"/skills/{connector_name}"
             skill_content = temp_backend.generate_skill_doc(mp)
             if skill_content:
-                await nx.sys_write(
+                await nx.write(
                     f"{skill_base}/SKILL.md",
                     skill_content.encode("utf-8"),
                     context=mount_context,
@@ -354,7 +354,7 @@ async def mount_connector(
                     for op_name, schema_cls in schemas.items():
                         try:
                             schema_yaml = doc_gen._generate_annotated_schema(op_name, schema_cls)
-                            await nx.sys_write(
+                            await nx.write(
                                 f"{skill_base}/schemas/{op_name}.yaml",
                                 schema_yaml.encode("utf-8"),
                                 context=mount_context,
@@ -691,7 +691,7 @@ async def write_to_connector(
     nx = _get_nx(request)
     try:
         data = req.yaml_content.encode("utf-8")
-        result = await nx.sys_write(mount_path, data, context=write_context)
+        result = await nx.write(mount_path, data, context=write_context)
 
         return WriteResponse(
             success=True,

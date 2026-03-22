@@ -26,11 +26,11 @@ class InMemoryStorageDriver:
     # Alias for backward compatibility
     read = sys_read
 
-    async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
+    async def write(self, path: str, data: bytes, zone_id: str) -> None:
         self._files[(path, zone_id)] = data
 
     # Alias for backward compatibility
-    write = sys_write
+    sys_write = write
 
     async def list_dir(self, path: str, zone_id: str) -> list[str]:
         if (path, zone_id) not in self._dirs:

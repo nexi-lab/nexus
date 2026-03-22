@@ -50,7 +50,7 @@ class MutationHandler:
 
         await check_namespace_visible(ctx, original_path)
 
-        await ctx.nexus_fs.sys_write(original_path, b"", context=ctx.context)
+        await ctx.nexus_fs.write(original_path, b"", context=ctx.context)
 
         # Invalidate caches
         ctx.cache.invalidate_path(original_path)

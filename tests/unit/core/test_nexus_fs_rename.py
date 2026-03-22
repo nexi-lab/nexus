@@ -24,7 +24,7 @@ class TestRenameHappyPath:
 
     @pytest.mark.asyncio
     async def test_rename_file(self, nx):
-        await nx.sys_write("/files/old.txt", b"hello")
+        await nx.write("/files/old.txt", b"hello")
         result = await nx.sys_rename("/files/old.txt", "/files/new.txt")
         assert result == {}
         assert await nx.sys_read("/files/new.txt") == b"hello"
@@ -33,14 +33,14 @@ class TestRenameHappyPath:
     @pytest.mark.asyncio
     async def test_rename_preserves_content(self, nx):
         content = b"preserved content with special chars: \xff\x00\xfe"
-        await nx.sys_write("/files/src.bin", content)
+        await nx.write("/files/src.bin", content)
         await nx.sys_rename("/files/src.bin", "/files/dst.bin")
         assert await nx.sys_read("/files/dst.bin") == content
 
     @pytest.mark.asyncio
     async def test_rename_preserves_metadata_version(self, nx):
-        await nx.sys_write("/files/v1.txt", b"v1")
-        await nx.sys_write("/files/v1.txt", b"v2")  # version 2
+        await nx.write("/files/v1.txt", b"v1")
+        await nx.write("/files/v1.txt", b"v2")  # version 2
         meta_before = nx.stat("/files/v1.txt")
         await nx.sys_rename("/files/v1.txt", "/files/v2.txt")
         meta_after = nx.stat("/files/v2.txt")
@@ -48,7 +48,7 @@ class TestRenameHappyPath:
 
     @pytest.mark.asyncio
     async def test_rename_to_different_directory(self, nx):
-        await nx.sys_write("/files/dir-a/file.txt", b"moved")
+        await nx.write("/files/dir-a/file.txt", b"moved")
         await nx.sys_rename("/files/dir-a/file.txt", "/files/dir-b/file.txt")
         assert await nx.sys_read("/files/dir-b/file.txt") == b"moved"
         assert not await nx.sys_access("/files/dir-a/file.txt")
@@ -64,8 +64,8 @@ class TestRenameDirectoryWithChildren:
         Recursive rename in DictMetastore and PathLocalBackend ensures children
         are moved to the new path.
         """
-        await nx.sys_write("/files/folder/a.txt", b"a")
-        await nx.sys_write("/files/folder/b.txt", b"b")
+        await nx.write("/files/folder/a.txt", b"a")
+        await nx.write("/files/folder/b.txt", b"b")
         # /files/folder/ is an implicit directory
         await nx.sys_rename("/files/folder", "/files/renamed")
 
@@ -90,8 +90,8 @@ class TestRenameErrorPaths:
 
     @pytest.mark.asyncio
     async def test_rename_to_existing_destination(self, nx):
-        await nx.sys_write("/files/src.txt", b"source")
-        await nx.sys_write("/files/dst.txt", b"destination")
+        await nx.write("/files/src.txt", b"source")
+        await nx.write("/files/dst.txt", b"destination")
         with pytest.raises(FileExistsError, match="already exists"):
             await nx.sys_rename("/files/src.txt", "/files/dst.txt")
 
@@ -107,7 +107,7 @@ class TestRenameErrorPaths:
         """Invalid paths should raise InvalidPathError."""
         from nexus.contracts.exceptions import InvalidPathError
 
-        await nx.sys_write("/files/valid.txt", b"content")
+        await nx.write("/files/valid.txt", b"content")
         with pytest.raises(InvalidPathError):
             await nx.sys_rename("", "/files/new.txt")
 
@@ -128,12 +128,12 @@ class TestRenameWithFailingBackend:
         )
         nx = make_test_nexus(tmp_path / "nx", backend=failing)
         # First write succeeds
-        await nx.sys_write("/files/a.txt", b"data")
+        await nx.write("/files/a.txt", b"data")
         # Second write fails due to backend
         from nexus.contracts.exceptions import BackendError
 
         with pytest.raises(BackendError):
-            await nx.sys_write("/files/b.txt", b"data2")
+            await nx.write("/files/b.txt", b"data2")
 
 
 class TestRenameMetadataConsistency:
@@ -141,7 +141,7 @@ class TestRenameMetadataConsistency:
 
     @pytest.mark.asyncio
     async def test_old_path_metadata_removed(self, nx):
-        await nx.sys_write("/files/old.txt", b"content")
+        await nx.write("/files/old.txt", b"content")
         await nx.sys_rename("/files/old.txt", "/files/new.txt")
         assert nx.stat("/files/new.txt") is not None
         from nexus.contracts.exceptions import NexusFileNotFoundError
@@ -151,7 +151,7 @@ class TestRenameMetadataConsistency:
 
     @pytest.mark.asyncio
     async def test_rename_updates_path_in_metadata(self, nx):
-        await nx.sys_write("/files/original.txt", b"content")
+        await nx.write("/files/original.txt", b"content")
         original_etag = nx.stat("/files/original.txt")["etag"]
         await nx.sys_rename("/files/original.txt", "/files/renamed.txt")
         meta = nx.stat("/files/renamed.txt")

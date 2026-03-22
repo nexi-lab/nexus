@@ -2152,10 +2152,10 @@ class NexusFS(  # type: ignore[misc]
         lock_timeout: float = 30.0,
         consistency: str = "sc",
     ) -> dict[str, Any]:
-        """Write content to a file (POSIX pwrite(2)).
+        """Write content to a file (POSIX write(2)).
 
-        Kernel primitive — content-only with create-on-write semantics.
-        CAS, locking, and OCC are driver/application concerns.
+        Tier 1 kernel primitive — file must exist. Use write() (Tier 2)
+        for create-on-write semantics.
 
         Args:
             path: Virtual path to write.
@@ -2165,13 +2165,14 @@ class NexusFS(  # type: ignore[misc]
             context: Optional operation context for permission checks.
 
         Returns:
-            Dict with path, bytes_written, and created flag.
+            Dict with path and bytes_written.
 
         Raises:
-            InvalidPathError: If path is invalid
-            BackendError: If write operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If path is read-only or user doesn't have write permission
+            NexusFileNotFoundError: If file does not exist.
+            InvalidPathError: If path is invalid.
+            BackendError: If write operation fails.
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace).
+            PermissionError: If path is read-only or user doesn't have write permission.
         """
         # DT_PIPE fast-path: skip ALL preprocessing + validate/metastore/dispatch.
         # Pipe is a byte FIFO — callers always pass bytes, count/offset are file concepts.
@@ -2181,13 +2182,13 @@ class NexusFS(  # type: ignore[misc]
             _buf = _pm._buffers.get(path)
             if _buf is not None:
                 n = _buf.write_nowait(buf if isinstance(buf, bytes) else buf.encode("utf-8"))
-                return {"path": path, "bytes_written": n, "created": False}
+                return {"path": path, "bytes_written": n}
         # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
         if path in self._stream_manager._buffers:
             if isinstance(buf, str):
                 buf = buf.encode("utf-8")
             offset = self._stream_write(path, buf)
-            return {"path": path, "bytes_written": len(buf), "created": False, "offset": offset}
+            return {"path": path, "bytes_written": len(buf), "offset": offset}
 
         # Auto-convert str to bytes for convenience
         if isinstance(buf, str):
@@ -2202,7 +2203,7 @@ class NexusFS(  # type: ignore[misc]
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _result = self._dispatch.resolve_write(path, buf)
         if _handled:
-            base = {"path": path, "bytes_written": len(buf), "created": False}
+            base = {"path": path, "bytes_written": len(buf)}
             if isinstance(_result, dict):
                 base.update(_result)
             return base
@@ -2212,13 +2213,17 @@ class NexusFS(  # type: ignore[misc]
         if _meta is not None and _meta.is_pipe:
             # Fallback for pipes not in PipeManager (e.g. federation remote pipes)
             n = self._pipe_write(path, buf)
-            return {"path": path, "bytes_written": n, "created": False}
+            return {"path": path, "bytes_written": n}
         if _meta is not None and _meta.is_stream:
             offset = self._stream_write(path, buf)
-            return {"path": path, "bytes_written": len(buf), "created": False, "offset": offset}
+            return {"path": path, "bytes_written": len(buf), "offset": offset}
 
+        if _meta is None:
+            raise NexusFileNotFoundError(
+                path, "sys_write requires existing file — use write() for create-on-write"
+            )
         await self._write_internal(path=path, content=buf, context=context)
-        return {"path": path, "bytes_written": len(buf), "created": _meta is None}
+        return {"path": path, "bytes_written": len(buf)}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
 

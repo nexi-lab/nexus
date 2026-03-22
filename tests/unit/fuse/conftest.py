@@ -22,6 +22,7 @@ def mock_nexus_fs() -> MagicMock:
     fs.sys_is_directory = AsyncMock(return_value=False)
     fs.sys_read = AsyncMock(return_value=b"hello world")
     fs.sys_write = AsyncMock(return_value=None)
+    fs.write = AsyncMock(return_value=None)
     fs.sys_readdir = AsyncMock(return_value=[])
     fs.sys_stat = AsyncMock(return_value=None)
     fs.sys_setattr = AsyncMock(return_value=None)

@@ -27,7 +27,7 @@ async def test_directory_rename_path_local(tmp_path: Path):
 
     # Create a directory and a file inside it (large content to ensure backend storage)
     await nx.sys_mkdir("/old_dir")
-    await nx.sys_write("/old_dir/test.txt", _LARGE_CONTENT)
+    await nx.write("/old_dir/test.txt", _LARGE_CONTENT)
 
     # Check physical existence
     assert (data_dir / "old_dir").is_dir()

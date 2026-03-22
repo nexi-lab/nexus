@@ -15,7 +15,7 @@ class TestCreate:
         fd = fuse_ops.create("/new.txt", 0o644)
         assert isinstance(fd, int)
         assert fd > 0
-        mock_nexus_fs.sys_write.assert_called_once_with("/new.txt", b"", context=None)
+        mock_nexus_fs.write.assert_called_once_with("/new.txt", b"", context=None)
 
     def test_create_rejects_virtual_view(self, fuse_ops: Any) -> None:
         # _parsed.*.md virtual views should be read-only

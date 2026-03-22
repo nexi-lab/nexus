@@ -96,7 +96,7 @@ class TestKernelVFSAdapter:
         # Protocol check: all required methods exist (sys_ prefixed names)
         for method in (
             "sys_read",
-            "sys_write",
+            "write",
             "list_dir",
             "count_dir",
             "rename",

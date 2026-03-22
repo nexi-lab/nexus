@@ -112,7 +112,7 @@ class AttrHandler:
         else:
             content += b"\x00" * (length - len(content))
 
-        await ctx.nexus_fs.sys_write(original_path, content, context=ctx.context)
+        await ctx.nexus_fs.write(original_path, content, context=ctx.context)
 
         ctx.cache.invalidate_path(original_path)
         if path != original_path:

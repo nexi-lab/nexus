@@ -746,7 +746,7 @@ class MCPService:
             try:
                 if self._filesystem is not None:
                     await self._filesystem.sys_mkdir(skill_path, parents=True, exist_ok=True)
-                    await self._filesystem.sys_write(
+                    await self._filesystem.write(
                         skill_file, skill_md.encode("utf-8"), context=context
                     )
                     logger.info("Generated MCP skill: %s", skill_file)
@@ -773,7 +773,7 @@ class MCPService:
                         tier="user",
                     )
                     mount_json = json_module.dumps(mount_config.to_dict(), indent=2)
-                    await self._filesystem.sys_write(
+                    await self._filesystem.write(
                         mount_file, mount_json.encode("utf-8"), context=context
                     )
                     logger.info("Generated mount config: %s", mount_file)
@@ -800,7 +800,7 @@ class MCPService:
                         )
                         tool_file = f"{skill_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
-                        await self._filesystem.sys_write(
+                        await self._filesystem.write(
                             tool_file,
                             tool_json.encode("utf-8"),
                             context=context,

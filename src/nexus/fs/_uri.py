@@ -31,7 +31,19 @@ from nexus.contracts.exceptions import InvalidPathError
 # Constants
 # ---------------------------------------------------------------------------
 
-SUPPORTED_SCHEMES: frozenset[str] = frozenset({"s3", "gcs", "local", "gdrive"})
+# Built-in storage schemes with dedicated backend implementations.
+BUILTIN_SCHEMES: frozenset[str] = frozenset({"s3", "gcs", "local", "gdrive"})
+
+# All recognized schemes including connector-based ones.
+# This set is extended at runtime when connectors register themselves.
+# Using a mutable set so _register_connector_scheme() can add to it.
+SUPPORTED_SCHEMES: set[str] = set(BUILTIN_SCHEMES)
+
+
+def _register_connector_scheme(scheme: str) -> None:
+    """Register an additional URI scheme (called by connector discovery)."""
+    SUPPORTED_SCHEMES.add(scheme)
+
 
 RESERVED_PATHS: frozenset[str] = frozenset({"/__sys__", "/__pipes__"})
 
@@ -88,19 +100,18 @@ def parse_uri(uri: str) -> MountSpec:
             f"Missing scheme in URI '{uri}'. "
             f"Supported schemes: {', '.join(sorted(SUPPORTED_SCHEMES))}"
         )
-    if scheme not in SUPPORTED_SCHEMES:
-        raise InvalidPathError(
-            f"Unknown scheme '{scheme}' in URI '{uri}'. "
-            f"Supported schemes: {', '.join(sorted(SUPPORTED_SCHEMES))}"
-        )
+    # Accept any scheme — built-in storage schemes have dedicated backends,
+    # other schemes are resolved via the connector registry at mount time.
+    # Only reject truly empty schemes (handled above).
 
     # --- authority -------------------------------------------------------
     authority = parsed.netloc
     if not authority:
-        # For local:// with an absolute path (e.g. local:///tmp/nexus),
-        # urlparse puts everything into path and leaves netloc empty.
-        # We treat the first path segment as the authority stand-in.
-        if scheme == "local" and parsed.path:
+        # urlparse puts everything into path when authority is empty.
+        # This happens with local:///tmp/nexus and gws://sheets (where
+        # "sheets" is treated as netloc by urlparse if the URI has //).
+        # Treat the first path segment as the authority stand-in.
+        if parsed.path:
             authority, _, remainder = parsed.path.lstrip("/").partition("/")
             if not authority:
                 raise InvalidPathError(
@@ -179,7 +190,8 @@ def derive_mount_point(spec: MountSpec, at: str | None = None) -> str:
     elif spec.scheme == "gdrive":
         mount = f"/gdrive/{spec.authority}"
     else:
-        raise InvalidPathError(f"Cannot derive mount point for scheme '{spec.scheme}'")
+        # Generic: /<scheme>/<authority> — works for any connector scheme
+        mount = f"/{spec.scheme}/{spec.authority}"
 
     # Strip trailing slash for consistent comparisons, but keep root slash.
     mount = mount.rstrip("/") or "/"

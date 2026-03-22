@@ -215,18 +215,20 @@ class TestInvalidURIs:
             parse_uri("://bucket")
 
     @pytest.mark.parametrize(
-        "uri",
+        "uri,expected_scheme",
         [
-            "ftp://host/path",
-            "hdfs://namenode/path",
-            "http://example.com",
-            "xyz://foo",
+            ("ftp://host/path", "ftp"),
+            ("hdfs://namenode/path", "hdfs"),
+            ("http://example.com", "http"),
+            ("gws://sheets", "gws"),
+            ("github://repo", "github"),
         ],
-        ids=["ftp", "hdfs", "http", "xyz"],
+        ids=["ftp", "hdfs", "http", "gws", "github"],
     )
-    def test_unknown_scheme(self, uri: str) -> None:
-        with pytest.raises(InvalidPathError, match="Unknown scheme"):
-            parse_uri(uri)
+    def test_non_builtin_schemes_accepted(self, uri: str, expected_scheme: str) -> None:
+        """Non-builtin schemes are accepted — resolved via connector registry at mount time."""
+        spec = parse_uri(uri)
+        assert spec.scheme == expected_scheme
 
     def test_empty_authority_s3(self) -> None:
         with pytest.raises(InvalidPathError, match="Empty authority"):

@@ -220,10 +220,82 @@ def _create_backend(spec: Any) -> Any:
         return CASLocalBackend(root_path=root)
 
     else:
+        # Fall through to the connector registry for any other scheme.
+        # Connectors register themselves via @register_connector at import
+        # time. We try to discover connector modules for the requested
+        # scheme, then look up the registry.
+        return _create_connector_backend(spec)
+
+
+def _create_connector_backend(spec: Any) -> Any:
+    """Create a backend from the connector registry.
+
+    Attempts to import connector modules for the scheme and look up a
+    matching connector in the ConnectorRegistry. The lookup convention:
+    ``{scheme}_{authority}`` first, then ``{scheme}_connector`` as fallback.
+
+    This is lazy — connector modules are only imported when the scheme is
+    actually requested, so unused connectors add zero startup cost.
+    """
+    scheme = spec.scheme
+    authority = spec.authority
+
+    # Lazily import connector modules for this scheme.
+    # Convention: nexus.backends.connectors.<scheme>/
+    _discover_connector_module(scheme)
+
+    from nexus.backends.base.registry import ConnectorRegistry
+
+    # Try specific connector first: gws_sheets, gws_docs, etc.
+    connector_name = f"{scheme}_{authority}" if authority else scheme
+    # Also try gws_connector, gdrive_connector as fallback
+    fallback_name = f"{scheme}_connector"
+
+    connector_cls = None
+    for name in [connector_name, f"gws_{authority}" if scheme == "gws" else None, fallback_name]:
+        if name is None:
+            continue
+        try:
+            connector_cls = ConnectorRegistry.get(name)
+            break
+        except KeyError:
+            continue
+
+    if connector_cls is None:
         from nexus.contracts.exceptions import NexusURIError
 
+        available = ConnectorRegistry.list_available()
         raise NexusURIError(
             spec.uri,
-            f"No backend available for scheme '{spec.scheme}://'. "
-            f"Supported: s3://, gcs://, local://",
+            f"No backend or connector found for scheme '{scheme}://'. "
+            f"Built-in: s3://, gcs://, local://. "
+            f"Registered connectors: {', '.join(available) if available else 'none'}",
         )
+
+    # Instantiate the connector. CLIConnectors accept config via kwargs.
+    return connector_cls()
+
+
+def _discover_connector_module(scheme: str) -> None:
+    """Try to import the connector module for a given scheme.
+
+    Connector modules register themselves via @register_connector when
+    imported. This is a no-op if the module doesn't exist or has already
+    been imported.
+    """
+    import importlib
+
+    # Map scheme to module path. Convention:
+    #   gws    -> nexus.backends.connectors.gws.connector
+    #   gdrive -> nexus.backends.connectors.gdrive.connector
+    #   github -> nexus.backends.connectors.github.connector
+    module_paths = [
+        f"nexus.backends.connectors.{scheme}.connector",
+        f"nexus.backends.connectors.{scheme}",
+    ]
+    for mod_path in module_paths:
+        try:
+            importlib.import_module(mod_path)
+            return
+        except ImportError:
+            continue

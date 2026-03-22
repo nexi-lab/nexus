@@ -140,4 +140,6 @@ def discover_credentials(scheme: str) -> dict[str, str]:
         # gdrive: deferred to explicit auth step
         return {"source": "none", "scheme": scheme}
     else:
-        return {"source": "unknown", "scheme": scheme}
+        # Connector-based schemes (gws, github, slack, etc.) handle
+        # their own auth — CLI tools manage credentials externally.
+        return {"source": "connector", "scheme": scheme}

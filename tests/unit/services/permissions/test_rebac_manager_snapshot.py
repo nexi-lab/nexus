@@ -42,6 +42,11 @@ def engine():
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
+        # AUTOCOMMIT avoids stale-transaction issues that arise when the
+        # writer commits via raw DBAPI while SQLAlchemy manages the shared
+        # StaticPool connection.  Production uses PostgreSQL where proper
+        # connection pooling prevents this class of bug.
+        isolation_level="AUTOCOMMIT",
     )
     Base.metadata.create_all(engine)
     # Also create rebac_group_closure table for Leopard

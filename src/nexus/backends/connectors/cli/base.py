@@ -275,6 +275,7 @@ class CLIConnector(
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write content by validating YAML and executing CLI command.

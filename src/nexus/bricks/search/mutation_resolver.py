@@ -44,6 +44,10 @@ class MutationResolver:
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache: dict[str, tuple[float, ResolvedMutation]] = {}
 
+    @staticmethod
+    def _path_key(zone_id: str, virtual_path: str) -> tuple[str, str]:
+        return (zone_id, virtual_path)
+
     def set_file_reader(self, file_reader: Any | None) -> None:
         self._file_reader = file_reader
 
@@ -64,7 +68,7 @@ class MutationResolver:
         now = time.monotonic()
         resolved: list[ResolvedMutation | None] = [None] * len(events)
         unresolved_indices: list[int] = []
-        unresolved_vpaths: list[str] = []
+        unresolved_keys: list[tuple[str, str]] = []
 
         for idx, event in enumerate(events):
             cached = self._cache.get(event.event_id)
@@ -72,15 +76,15 @@ class MutationResolver:
                 resolved[idx] = cached[1]
                 continue
             unresolved_indices.append(idx)
-            unresolved_vpaths.append(event.virtual_path)
+            unresolved_keys.append(self._path_key(event.zone_id, event.virtual_path))
 
-        path_id_map = await self._lookup_path_ids(unresolved_vpaths)
+        path_id_map = await self._lookup_path_ids(unresolved_keys)
         content_map = await self._lookup_content(events, unresolved_indices)
 
         for idx in unresolved_indices:
             event = events[idx]
             virtual_path = event.virtual_path
-            path_id = path_id_map.get(virtual_path, virtual_path)
+            path_id = path_id_map.get(self._path_key(event.zone_id, virtual_path), virtual_path)
             zone_id = event.zone_id
             doc_id = f"{zone_id}:{virtual_path}" if zone_id != "root" else virtual_path
             mutation = ResolvedMutation(
@@ -96,21 +100,34 @@ class MutationResolver:
 
         return [item for item in resolved if item is not None]
 
-    async def _lookup_path_ids(self, virtual_paths: list[str]) -> dict[str, str]:
-        if not virtual_paths or self._async_session_factory is None:
+    async def _lookup_path_ids(
+        self,
+        path_keys: list[tuple[str, str]],
+    ) -> dict[tuple[str, str], str]:
+        if not path_keys or self._async_session_factory is None:
             return {}
 
-        path_id_map: dict[str, str] = {}
-        unique_paths = list(dict.fromkeys(virtual_paths))
+        path_id_map: dict[tuple[str, str], str] = {}
+        unique_keys = list(dict.fromkeys(path_keys))
+        where_clauses = []
+        params: dict[str, str] = {}
+        for idx, (zone_id, virtual_path) in enumerate(unique_keys):
+            where_clauses.append(
+                f"(zone_id = :zone_id_{idx} AND virtual_path = :virtual_path_{idx})"
+            )
+            params[f"zone_id_{idx}"] = zone_id
+            params[f"virtual_path_{idx}"] = virtual_path
         async with self._async_session_factory() as session:
             result = await session.execute(
                 sa_text(
-                    "SELECT virtual_path, path_id FROM file_paths WHERE virtual_path = ANY(:vpaths)"
+                    "SELECT zone_id, virtual_path, path_id "
+                    "FROM file_paths "
+                    "WHERE deleted_at IS NULL AND (" + " OR ".join(where_clauses) + ")"
                 ),
-                {"vpaths": unique_paths},
+                params,
             )
             for row in result.fetchall():
-                path_id_map[str(row[0])] = str(row[1])
+                path_id_map[self._path_key(str(row[0]), str(row[1]))] = str(row[2])
         return path_id_map
 
     async def _lookup_content(
@@ -135,10 +152,10 @@ class MutationResolver:
 
         if missing_events and self._async_session_factory is not None:
             db_content = await self._lookup_content_cache(
-                [event.virtual_path for event in missing_events]
+                [self._path_key(event.zone_id, event.virtual_path) for event in missing_events]
             )
             for event in missing_events:
-                content = db_content.get(event.virtual_path)
+                content = db_content.get(self._path_key(event.zone_id, event.virtual_path))
                 if content:
                     content_map[event.event_id] = content
 
@@ -157,24 +174,35 @@ class MutationResolver:
                 return virtual_content if isinstance(virtual_content, str) else None
         return None
 
-    async def _lookup_content_cache(self, virtual_paths: list[str]) -> dict[str, str]:
-        if not virtual_paths or self._async_session_factory is None:
+    async def _lookup_content_cache(
+        self,
+        path_keys: list[tuple[str, str]],
+    ) -> dict[tuple[str, str], str]:
+        if not path_keys or self._async_session_factory is None:
             return {}
 
-        content_map: dict[str, str] = {}
-        unique_paths = list(dict.fromkeys(virtual_paths))
+        content_map: dict[tuple[str, str], str] = {}
+        unique_keys = list(dict.fromkeys(path_keys))
+        where_clauses = []
+        params: dict[str, str] = {}
+        for idx, (zone_id, virtual_path) in enumerate(unique_keys):
+            where_clauses.append(
+                f"(fp.zone_id = :zone_id_{idx} AND fp.virtual_path = :virtual_path_{idx})"
+            )
+            params[f"zone_id_{idx}"] = zone_id
+            params[f"virtual_path_{idx}"] = virtual_path
         async with self._async_session_factory() as session:
             result = await session.execute(
                 sa_text(
-                    "SELECT fp.virtual_path, cc.content_text "
+                    "SELECT fp.zone_id, fp.virtual_path, cc.content_text "
                     "FROM content_cache cc "
                     "JOIN file_paths fp ON cc.path_id = fp.path_id "
-                    "WHERE fp.virtual_path = ANY(:vpaths) "
+                    "WHERE fp.deleted_at IS NULL AND (" + " OR ".join(where_clauses) + ") "
                     "AND cc.content_text IS NOT NULL"
                 ),
-                {"vpaths": unique_paths},
+                params,
             )
             for row in result.fetchall():
-                if row[1]:
-                    content_map[str(row[0])] = str(row[1])
+                if row[2]:
+                    content_map[self._path_key(str(row[0]), str(row[1]))] = str(row[2])
         return content_map

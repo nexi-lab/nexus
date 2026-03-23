@@ -36,13 +36,19 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import text as sa_text
 
 from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
-from nexus.bricks.search.mutation_events import SearchMutationEvent, SearchMutationOp
+from nexus.bricks.search.mutation_events import (
+    SearchMutationEvent,
+    SearchMutationOp,
+    extract_zone_id,
+    strip_zone_prefix,
+)
 from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMutation
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.lib.env import get_database_url
@@ -721,12 +727,12 @@ class SearchDaemon:
                         SELECT
                             fp.zone_id,
                             fp.virtual_path,
-                            string_agg(c.chunk_text, E'\n' ORDER BY c.chunk_index) AS content
+                            c.chunk_index,
+                            c.chunk_text
                         FROM document_chunks c
                         JOIN file_paths fp ON c.path_id = fp.path_id
                         WHERE fp.deleted_at IS NULL
-                        GROUP BY fp.zone_id, fp.virtual_path
-                        ORDER BY fp.zone_id, fp.virtual_path
+                        ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
                         """
                     )
                 )
@@ -737,10 +743,14 @@ class SearchDaemon:
                 return
 
             docs_by_zone: dict[str, list[dict[str, Any]]] = {}
+            grouped_content: dict[tuple[str, str], list[str]] = {}
             for row in rows:
                 zone = row.zone_id or "root"
                 path = row.virtual_path
-                content = row.content or ""
+                grouped_content.setdefault((zone, path), []).append(row.chunk_text or "")
+
+            for (zone, path), parts in grouped_content.items():
+                content = "\n".join(part for part in parts if part)
                 if not path or not content.strip():
                     continue
                 doc_id = f"{zone}:{path}" if zone != "root" else path
@@ -1204,7 +1214,7 @@ class SearchDaemon:
                     self._pending_delete_paths.clear()
 
                 if delete_paths:
-                    await self._refresh_indexes(delete_paths)
+                    await self._delete_indexes_for_paths(delete_paths)
                 if refresh_paths:
                     await self._refresh_indexes(refresh_paths)
             except asyncio.CancelledError:
@@ -1213,16 +1223,43 @@ class SearchDaemon:
                 logger.warning("Legacy search refresh loop failed: %s", exc)
                 await asyncio.sleep(1)
 
-    @staticmethod
-    def _strip_zone_prefix(path: str) -> str:
-        """Strip /zone/{zone_id} prefix from a path for DB virtual_path lookup.
+    async def _delete_indexes_for_paths(self, paths: list[str]) -> None:
+        """Best-effort delete propagation for fallback stacks without op-log delivery."""
+        if not paths:
+            return
 
-        DB stores virtual_path as '/test-search/...' not '/zone/root/test-search/...'.
-        """
-        import re
+        events = [
+            SearchMutationEvent(
+                event_id=f"legacy-delete:{path}",
+                operation_id=f"legacy-delete:{path}",
+                op=SearchMutationOp.DELETE,
+                path=path,
+                zone_id=extract_zone_id(path),
+                timestamp=datetime.now(UTC).replace(tzinfo=None),
+                sequence_number=0,
+            )
+            for path in paths
+        ]
+        resolved = await self._resolve_mutations(events)
+        if not resolved:
+            return
 
-        m = re.match(r"^/zone/[^/]+(/.*)", path)
-        return m.group(1) if m else path
+        if self._chunk_store is not None:
+            for mutation in resolved:
+                if mutation.path_id != mutation.virtual_path:
+                    await self._chunk_store.delete_document_chunks(mutation.path_id)
+
+        if self._backend is not None:
+            deletes_by_zone: dict[str, list[str]] = {}
+            for mutation in resolved:
+                deletes_by_zone.setdefault(mutation.zone_id, []).append(mutation.doc_id)
+            for zone_id, ids in deletes_by_zone.items():
+                await self._backend.delete(ids, zone_id=zone_id)
+
+        if self._bm25s_index is not None and hasattr(self._bm25s_index, "delete_document"):
+            for mutation in resolved:
+                with contextlib.suppress(Exception):
+                    await self._bm25s_index.delete_document(mutation.path_id)
 
     @staticmethod
     def _coalesce_subtrees(
@@ -1569,7 +1606,7 @@ class SearchDaemon:
         for path in paths:
             try:
                 # Strip /zone/{zone_id} prefix for DB virtual_path lookup
-                virtual_path = self._strip_zone_prefix(path)
+                virtual_path = strip_zone_prefix(path)
 
                 # Read file content via file reader or database
                 content: str | None = None
@@ -1771,12 +1808,17 @@ class SearchDaemon:
         async with self._async_session() as session:
             for batch_start in range(0, len(unique_vpaths), 100):
                 batch_vpaths = unique_vpaths[batch_start : batch_start + 100]
+                where_clauses = []
+                params: dict[str, str] = {}
+                for idx, vpath in enumerate(batch_vpaths):
+                    where_clauses.append(f"virtual_path = :vpath_{idx}")
+                    params[f"vpath_{idx}"] = vpath
                 result = await session.execute(
                     text(
                         "SELECT path_id, virtual_path FROM file_paths "
-                        "WHERE virtual_path = ANY(:vpaths) AND deleted_at IS NULL"
+                        "WHERE deleted_at IS NULL AND (" + " OR ".join(where_clauses) + ")"
                     ),
-                    {"vpaths": batch_vpaths},
+                    params,
                 )
                 for row in result.fetchall():
                     existing_pids[row[1]] = row[0]

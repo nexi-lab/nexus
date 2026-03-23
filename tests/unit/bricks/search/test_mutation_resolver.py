@@ -17,7 +17,7 @@ class _Result:
 
 class _SessionCtx:
     def __init__(self, rows):
-        self._rows = list(rows)
+        self._rows = rows
 
     async def __aenter__(self):
         return self
@@ -35,7 +35,7 @@ async def test_resolver_batches_path_lookup_and_reuses_cache() -> None:
     file_reader.read_text.side_effect = ["alpha", "beta"]
     session_factory = lambda: _SessionCtx(  # noqa: E731
         [
-            [("/docs/a.txt", "pid-a"), ("/docs/b.txt", "pid-b")],
+            [("root", "/docs/a.txt", "pid-a"), ("root", "/docs/b.txt", "pid-b")],
         ]
     )
 
@@ -71,3 +71,48 @@ async def test_resolver_batches_path_lookup_and_reuses_cache() -> None:
     resolved_again = await resolver.resolve_batch(events)
     assert [item.path_id for item in resolved_again] == ["pid-a", "pid-b"]
     assert file_reader.read_text.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_resolver_keeps_zone_isolation_for_duplicate_virtual_paths() -> None:
+    file_reader = AsyncMock()
+    file_reader.read_text.side_effect = [OSError("missing"), OSError("missing")]
+    rows = [
+        [("root", "/docs/readme.md", "pid-root"), ("other", "/docs/readme.md", "pid-other")],
+        [
+            ("root", "/docs/readme.md", "root content"),
+            ("other", "/docs/readme.md", "other content"),
+        ],
+    ]
+    session_factory = lambda: _SessionCtx(rows)  # noqa: E731
+
+    resolver = MutationResolver(
+        file_reader=file_reader,
+        async_session_factory=session_factory,
+    )
+    events = [
+        SearchMutationEvent(
+            event_id="evt-root",
+            operation_id="op-root",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/root/docs/readme.md",
+            zone_id="root",
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=1,
+        ),
+        SearchMutationEvent(
+            event_id="evt-other",
+            operation_id="op-other",
+            op=SearchMutationOp.UPSERT,
+            path="/zone/other/docs/readme.md",
+            zone_id="other",
+            timestamp=SimpleNamespace(tzinfo=None),
+            sequence_number=2,
+        ),
+    ]
+
+    resolved = await resolver.resolve_batch(events)
+    assert [(item.zone_id, item.path_id, item.content) for item in resolved] == [
+        ("root", "pid-root", "root content"),
+        ("other", "pid-other", "other content"),
+    ]

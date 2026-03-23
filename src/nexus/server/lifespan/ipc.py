@@ -50,9 +50,21 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
 
     zone_id = svc.zone_id or ROOT_ZONE_ID
 
-    # --- Issue #3197: DT_PIPE wakeup notifier + notify pipe factory ---
+    # --- Issue #3197: DT_PIPE wakeup + EventPublisher + CacheStore ---
     wakeup_notifiers = []
     cache_store = getattr(svc.nexus_fs, "cache_store", None)
+    event_publisher = None
+
+    # Wire EventPublisher via CacheStore pub/sub so MessageSender publishes
+    # ipc.inbox.{agent_id} events that MessageProcessor can subscribe to.
+    if cache_store is not None:
+        try:
+            from nexus.bricks.ipc.wakeup import CacheStoreEventPublisher
+
+            event_publisher = CacheStoreEventPublisher(cache_store)
+            logger.info("[IPC] EventPublisher wired via CacheStore pub/sub")
+        except Exception as exc:
+            logger.warning("[IPC] EventPublisher unavailable: %s", exc)
 
     if svc.pipe_manager is not None:
         try:
@@ -75,6 +87,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     app.state.ipc_provisioner = ipc_provisioner
     app.state.ipc_wakeup_notifiers = wakeup_notifiers
     app.state.ipc_cache_store = cache_store
+    app.state.ipc_event_publisher = event_publisher
     # Create MessageProcessorRegistry with pipe_manager for receiver-side
     # DT_PIPE wakeup (Issue #3197). Agent runtimes use
     # registry.create_processor() to get a MessageProcessor with

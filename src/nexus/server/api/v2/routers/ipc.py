@@ -144,6 +144,11 @@ def _get_ipc_cache_store(request: Request) -> Any:
     return getattr(request.app.state, "ipc_cache_store", None)
 
 
+def _get_ipc_event_publisher(request: Request) -> Any:
+    """Get IPC EventPublisher from app.state for inbox notifications."""
+    return getattr(request.app.state, "ipc_event_publisher", None)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -157,6 +162,7 @@ async def send_message(
     zone_id: str = Depends(_get_zone_id),
     wakeup_notifiers: list[Any] = Depends(_get_ipc_wakeup_notifiers),
     cache_store: Any = Depends(_get_ipc_cache_store),
+    event_publisher: Any = Depends(_get_ipc_event_publisher),
 ) -> SendMessageResponse:
     """Send a message to an agent's inbox.
 
@@ -195,6 +201,7 @@ async def send_message(
 
     sender = MessageSender(
         storage,
+        event_publisher,
         zone_id=zone_id,
         wakeup_notifiers=wakeup_notifiers or None,
         cache_store=cache_store,

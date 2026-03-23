@@ -46,6 +46,7 @@ from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
 from nexus.bricks.ipc.sweep import TTLSweeper
 from nexus.bricks.ipc.wakeup import (
+    CacheStoreEventPublisher,
     PipeNotifyFactory,
     PipeWakeupListener,
     PipeWakeupNotifier,

@@ -137,3 +137,31 @@ class PipeNotifyFactory:
         except Exception:
             # Already exists — idempotent provisioning
             logger.debug("Notify pipe already exists for agent %s", agent_id)
+
+
+class CacheStoreEventPublisher:
+    """Bridges CacheStoreABC pub/sub to the IPC EventPublisher protocol.
+
+    MessageSender uses EventPublisher.publish(channel, data) to notify
+    recipients of new inbox messages.  This adapter serializes the event
+    dict to JSON and publishes it via CacheStore (Dragonfly/Redis) pub/sub,
+    enabling cross-node EventBus notifications without requiring a separate
+    EventBus service for IPC.
+
+    Satisfies the ``EventPublisher`` protocol from ``protocols.py``.
+    """
+
+    def __init__(self, cache_store: Any) -> None:
+        self._cs = cache_store
+
+    async def publish(self, channel: str, data: dict) -> None:
+        """Publish an IPC event to a CacheStore pub/sub channel."""
+        import json
+
+        try:
+            await self._cs.publish(channel, json.dumps(data).encode())
+        except Exception:
+            logger.debug(
+                "CacheStore EventPublisher failed for channel %s (best-effort)",
+                channel,
+            )

@@ -153,13 +153,17 @@ jobs:
           echo "NEXUS_API_KEY=${ADMIN_KEY}" >> "$GITHUB_ENV"
           echo "Admin key obtained: ${ADMIN_KEY:0:10}..."
 
+      - name: Copy test scripts into container
+        run: |
+          docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/
+          docker cp scripts/test_build_perf_e2e.py nexus-e2e:/tmp/
+
       - name: Run permissions demo
         run: |
-          # Run inside the container where nexus CLI and all deps exist
           docker exec \
             -e NEXUS_URL=http://localhost:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
-            nexus-e2e bash /app/permissions_demo_enhanced.sh
+            nexus-e2e bash /tmp/permissions_demo_enhanced.sh
 
       - name: Run build perf e2e
         run: |
@@ -167,7 +171,7 @@ jobs:
             -e NEXUS_URL=http://localhost:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
             -e NEXUS_GRPC_PORT=2029 \
-            nexus-e2e python3 /app/scripts/test_build_perf_e2e.py
+            nexus-e2e python3 /tmp/test_build_perf_e2e.py
 
       - name: Collect container logs on failure
         if: failure()

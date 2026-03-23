@@ -515,7 +515,7 @@ def up(
 
         from nexus.cli.commands.init_cmd import init as init_cmd
 
-        init_result = CliRunner(mix_stderr=False).invoke(
+        init_result = CliRunner().invoke(
             init_cmd, ["--preset", "shared", "--force"], catch_exceptions=False
         )
         if init_result.exit_code != 0:

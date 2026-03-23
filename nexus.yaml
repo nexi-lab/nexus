@@ -1,0 +1,24 @@
+preset: shared
+data_dir: /Users/tafeng/nexus/.claude/worktrees/inherited-beaming-waterfall/nexus-data
+auth: static
+tls: false
+services:
+- nexus
+- postgres
+- dragonfly
+- zoekt
+ports:
+  http: 2026
+  grpc: 2028
+  postgres: 5432
+  dragonfly: 6379
+  zoekt: 6070
+compose_profiles:
+- core
+- cache
+- search
+api_key: sk-RWwvgXpK8TwH-1lW99eYI6PwKG7X5zgMmVPUwI9EFwY
+compose_file: /Users/tafeng/nexus/.claude/worktrees/inherited-beaming-waterfall/nexus-stack.yml
+image_accelerator: cpu
+image_ref: ghcr.io/nexi-lab/nexus:edge
+image_channel: edge

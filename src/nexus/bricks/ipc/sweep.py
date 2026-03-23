@@ -78,7 +78,8 @@ class TTLSweeper:
         self._sub_task: asyncio.Task[None] | None = None
         self._pending_agents: set[str] = set()
         self._sweep_event = asyncio.Event()
-        self._debounce_task: asyncio.Task[None] | None = None
+        self._next_expiry: float | None = None  # earliest expires_at across pending events
+        self._expiry_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Start the background sweep loop and optional pub/sub listener."""
@@ -101,11 +102,11 @@ class TTLSweeper:
         """Stop the background sweep loop and pub/sub listener."""
         self._running = False
 
-        if self._debounce_task is not None:
-            self._debounce_task.cancel()
+        if self._expiry_task is not None:
+            self._expiry_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._debounce_task
-            self._debounce_task = None
+                await self._expiry_task
+            self._expiry_task = None
 
         if self._sub_task is not None:
             self._sub_task.cancel()
@@ -187,7 +188,9 @@ class TTLSweeper:
         """Subscribe to CacheStore pub/sub for TTL schedule events.
 
         Receives events from MessageSender when messages with TTLs are
-        created. Each event triggers a debounced targeted sweep.
+        created. Uses the ``expires_at`` field to schedule a sweep at the
+        right time — the sweeper sleeps until the earliest pending expiry,
+        then wakes to sweep targeted agents.
 
         Auto-reconnects with exponential backoff on failure (consistent
         with the delivery.py listener pattern).
@@ -207,9 +210,10 @@ class TTLSweeper:
                         try:
                             data = json.loads(msg)
                             agent_id = data.get("agent_id")
+                            expires_at = data.get("expires_at")
                             if agent_id:
                                 self._pending_agents.add(agent_id)
-                                self._schedule_debounced_sweep()
+                                self._schedule_expiry_sweep(expires_at)
                         except Exception:
                             logger.debug("Invalid TTL schedule event", exc_info=True)
             except asyncio.CancelledError:
@@ -234,23 +238,46 @@ class TTLSweeper:
                 )
                 await asyncio.sleep(delay)
 
-    def _schedule_debounced_sweep(self) -> None:
-        """Schedule a sweep after debounce delay, resetting if already pending.
+    def _schedule_expiry_sweep(self, expires_at: float | None) -> None:
+        """Schedule a sweep at the message's expiry time.
 
-        Each new event cancels any pending debounce timer and starts a fresh
-        one. The sweep fires only after ``debounce_seconds`` with no new events.
+        If ``expires_at`` is provided (epoch seconds), the sweeper sleeps
+        until that time plus a small buffer, then wakes to sweep.  If a
+        new event arrives with an earlier expiry, the timer is rescheduled.
+
+        When ``expires_at`` is None (shouldn't happen for TTL messages but
+        handle defensively), falls back to a debounce-style immediate sweep.
         """
-        if self._debounce_task is not None:
-            self._debounce_task.cancel()
-        self._debounce_task = asyncio.create_task(self._debounced_sweep())
+        import time
 
-    async def _debounced_sweep(self) -> None:
-        """Wait for debounce period, then signal the sweep loop."""
+        now = time.time()
+
+        if expires_at is None:
+            # No expiry info — fall back to debounce-style sweep
+            expires_at = now + self._debounce_seconds
+
+        # Only reschedule if this expiry is sooner than any pending one
+        if self._next_expiry is not None and expires_at >= self._next_expiry:
+            return  # Already have an earlier timer
+
+        self._next_expiry = expires_at
+
+        if self._expiry_task is not None:
+            self._expiry_task.cancel()
+        self._expiry_task = asyncio.create_task(self._wait_and_sweep(expires_at))
+
+    async def _wait_and_sweep(self, expires_at: float) -> None:
+        """Sleep until expiry time, then signal the sweep loop."""
+        import time
+
         try:
-            await asyncio.sleep(self._debounce_seconds)
+            delay = max(0, expires_at - time.time() + 0.1)  # +100ms buffer
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._next_expiry = None
             self._sweep_event.set()
         except asyncio.CancelledError:
-            pass  # Debounce was reset by a newer event
+            pass  # Rescheduled by a sooner expiry
 
     # ------------------------------------------------------------------
     # Per-agent sweep

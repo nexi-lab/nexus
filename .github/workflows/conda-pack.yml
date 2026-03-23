@@ -39,60 +39,63 @@ permissions:
   contents: write
 
 jobs:
-  # Determine which profiles to build based on trigger type
-  determine-profiles:
-    name: Determine profiles to build
+  # Generate full matrix: all platforms × all profiles
+  generate-matrix:
+    name: Generate build matrix
     runs-on: ubuntu-latest
     outputs:
-      profiles: ${{ steps.set-profiles.outputs.profiles }}
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Set profiles
-        id: set-profiles
+      - name: Set matrix
+        id: set-matrix
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PROFILE="${{ github.event.inputs.profile }}"
             case "$PROFILE" in
               remote)
-                echo 'profiles=[{"name":"-remote","requirements":"requirements-remote.txt"}]' >> $GITHUB_OUTPUT
+                PROFILES='[{"name":"-remote","requirements":"requirements-remote.txt"}]'
                 ;;
               minimal)
-                echo 'profiles=[{"name":"-minimal","requirements":"requirements-minimal.txt"}]' >> $GITHUB_OUTPUT
+                PROFILES='[{"name":"-minimal","requirements":"requirements-minimal.txt"}]'
                 ;;
               full)
-                echo 'profiles=[{"name":"","requirements":""}]' >> $GITHUB_OUTPUT
+                PROFILES='[{"name":"","requirements":""}]'
                 ;;
               *)  # all
-                echo 'profiles=[{"name":"","requirements":""},{"name":"-remote","requirements":"requirements-remote.txt"},{"name":"-minimal","requirements":"requirements-minimal.txt"}]' >> $GITHUB_OUTPUT
+                PROFILES='[{"name":"","requirements":""},{"name":"-remote","requirements":"requirements-remote.txt"},{"name":"-minimal","requirements":"requirements-minimal.txt"}]'
                 ;;
             esac
           else
             # Tag trigger: build all profiles
-            echo 'profiles=[{"name":"","requirements":""},{"name":"-remote","requirements":"requirements-remote.txt"},{"name":"-minimal","requirements":"requirements-minimal.txt"}]' >> $GITHUB_OUTPUT
+            PROFILES='[{"name":"","requirements":""},{"name":"-remote","requirements":"requirements-remote.txt"},{"name":"-minimal","requirements":"requirements-minimal.txt"}]'
           fi
 
+          # Platforms (Windows, Intel Mac, ARM Mac)
+          PLATFORMS='[{"os":"windows-latest","artifact_name":"nexus-windows-x86_64"},{"os":"macos-13","artifact_name":"nexus-macos-x86_64"},{"os":"macos-15","artifact_name":"nexus-macos-arm64"}]'
+
+          # Build cartesian product using Python
+          MATRIX=$(python3 -c "
+          import json
+          profiles = json.loads('''$PROFILES''')
+          platforms = json.loads('''$PLATFORMS''')
+          matrix = []
+          for p in profiles:
+            for plat in platforms:
+              entry = dict(plat)
+              entry['profile'] = p
+              matrix.append(entry)
+          print(json.dumps({'include': matrix}))
+          ")
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
   conda-pack:
-    needs: determine-profiles
+    needs: generate-matrix
     name: conda-pack / ${{ matrix.artifact_name }}${{ matrix.profile.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90        # Rust compilation can be slow on macOS/Windows runners
+    timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        profile: ${{ fromJson(needs.determine-profiles.outputs.profiles) }}
-        include:
-          # nexus_pyo3 (shm_pipe/shm_stream) uses POSIX-only APIs (fcntl, pipe,
-          # O_NONBLOCK) that do not exist on Windows. That wheel is skipped on
-          # Windows via `if: matrix.os != 'windows-latest'` below.
-          - os: windows-latest
-            artifact_name: nexus-windows-x86_64
-
-          # Intel Mac (x86_64) — macos-13 is the last Intel runner
-          - os: macos-13
-            artifact_name: nexus-macos-x86_64
-
-          # Apple Silicon (arm64)
-          - os: macos-15
-            artifact_name: nexus-macos-arm64
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout code

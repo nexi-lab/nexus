@@ -465,55 +465,10 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] SchedulerService unavailable: %s", exc)
 
-    # (PipeManager + StreamManager are kernel-internal primitives,
-    # constructed in NexusFS.__init__ — not booted here.)
-
-    # --- AgentRegistry (Issue #1509: kernel process lifecycle) ---
-    agent_registry: Any = None
-    try:
-        from nexus.core.agent_registry import AgentRegistry
-
-        agent_registry = AgentRegistry()
-        logger.debug("[BOOT:SYSTEM] AgentRegistry created (in-memory)")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] AgentRegistry unavailable: %s", exc)
-
-    # --- Eviction Manager (Issues #2170, #2171) ---
-    eviction_manager: Any = None
-    if agent_registry is not None:
-        try:
-            from nexus.system_services.agents.eviction_manager import EvictionManager
-            from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
-            from nexus.system_services.agents.resource_monitor import ResourceMonitor
-
-            eviction_tuning = ctx.profile_tuning.eviction
-            resource_monitor = ResourceMonitor(tuning=eviction_tuning)
-            eviction_policy = QoSEvictionPolicy()
-            eviction_manager = EvictionManager(
-                agent_registry=agent_registry,
-                monitor=resource_monitor,
-                policy=eviction_policy,
-                tuning=eviction_tuning,
-            )
-            logger.debug("[BOOT:SYSTEM] EvictionManager created (QoS-aware)")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
-
-    # --- ACP Service (Stateless coding agent CLI caller) ---
-    acp_service: Any = None
-    if not _on("acp"):
-        logger.debug("[BOOT:SYSTEM] AcpService disabled by profile")
-    elif agent_registry is not None:
-        try:
-            from nexus.system_services.acp.service import AcpService
-
-            acp_service = AcpService(
-                agent_registry=agent_registry,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-            )
-            logger.debug("[BOOT:SYSTEM] AcpService created")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] AcpService unavailable: %s", exc)
+    # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
+    # constructed in NexusFS.__init__ — not booted here.
+    # EvictionManager + AcpService are deferred to _do_link() where they can
+    # reference nx._agent_registry.  See Issue #1792.)
 
     # =====================================================================
     # Assemble result
@@ -526,7 +481,6 @@ def _boot_system_services(
         "entity_registry": entity_registry,
         "permission_enforcer": permission_enforcer,
         "write_observer": write_observer,
-        "agent_registry": agent_registry,
         # Former-kernel degradable
         "dir_visibility_cache": dir_visibility_cache,
         "hierarchy_manager": hierarchy_manager,
@@ -544,10 +498,8 @@ def _boot_system_services(
         "context_branch_service": context_branch_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
         "brick_reconciler": brick_reconciler,
-        "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
-        "acp_service": acp_service,
     }
 
     elapsed = time.perf_counter() - t0

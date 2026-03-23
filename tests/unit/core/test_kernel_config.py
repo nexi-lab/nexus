@@ -314,7 +314,6 @@ class TestSystemServices:
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "eviction_manager",
             "namespace_manager",
             "async_namespace_manager",
             "context_branch_service",
@@ -324,9 +323,7 @@ class TestSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "zone_lifecycle",
-            "agent_registry",
             "scheduler_service",
-            "acp_service",
             # Distributed event bus — promoted from Tier 2 (Issue #1701)
             "event_bus",
             # Distributed lock manager — promoted from Tier 2 (Issue #1702)

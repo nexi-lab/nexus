@@ -60,7 +60,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "mount_manager",
         "workspace_manager",
         # Original system services
-        "eviction_manager",
         "namespace_manager",
         "async_namespace_manager",
         "delivery_worker",
@@ -70,9 +69,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "brick_lifecycle_manager",
         "brick_reconciler",
         "zone_lifecycle",
-        "agent_registry",
         "scheduler_service",
-        "acp_service",
         "event_signal",
     }
 )

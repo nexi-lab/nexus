@@ -194,15 +194,12 @@ def create_nexus_services(
         delivery_worker=system_dict["delivery_worker"],
         observability_subsystem=system_dict["observability_subsystem"],
         resiliency_manager=system_dict["resiliency_manager"],
-        eviction_manager=system_dict.get("eviction_manager"),
         zone_lifecycle=system_dict.get("zone_lifecycle"),
-        # (PipeManager + StreamManager are kernel-internal primitives §4.2,
-        # constructed in NexusFS.__init__ — not injected via SystemServices.)
+        # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives §4.2,
+        # constructed in NexusFS.__init__ — not injected via SystemServices.
+        # EvictionManager + AcpService deferred to _do_link() — Issue #1792.)
         # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
-        # Process table + ACP
-        agent_registry=system_dict.get("agent_registry"),
-        acp_service=system_dict.get("acp_service"),
         # Distributed event bus — Tier 1 infrastructure (Issue #1701)
         event_bus=brick_dict["event_bus"],
         # Distributed lock manager — Tier 1 infrastructure (Issue #1702)
@@ -386,7 +383,7 @@ async def create_nexus_fs(
     from nexus.contracts.types import OperationContext as _OC
 
     nx._default_context = _OC(user_id="system", groups=[], is_admin=is_admin)
-    nx._link_fn = functools.partial(_do_link, system_services=system_services)
+    nx._link_fn = functools.partial(_do_link, system_services=system_services, zone_id=zone_id)
     nx._initialize_fn = _do_initialize
     # Backward compat: server/CLI/tests may read nx._system_services directly.
     nx._system_services = system_services
@@ -549,7 +546,7 @@ async def _register_vfs_hooks(
     await _enlist("virtual_view", _vview_resolver)
 
     # ── ProcResolver (procfs virtual filesystem for AgentRegistry — Issue #1570) ──
-    _proc_table = getattr(system_services, "agent_registry", None) if system_services else None
+    _proc_table = getattr(nx, "_agent_registry", None)
     if _proc_table is not None:
         try:
             from nexus.system_services.proc.proc_resolver import ProcResolver

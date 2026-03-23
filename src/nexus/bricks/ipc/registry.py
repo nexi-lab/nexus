@@ -3,15 +3,18 @@
 Maps agent_id → MessageProcessor instances, handles start/stop lifecycle.
 Enables POST_WRITE hooks to trigger the correct processor for each agent.
 
+Issue #3197: Optionally injects PipeWakeupListener into MessageProcessor
+instances for receiver-side DT_PIPE wakeup when pipe_manager is available.
+
 Architecture: Tier 3 System Service per NEXUS-LEGO-ARCHITECTURE.md §2.4.
 """
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.bricks.ipc.delivery import MessageProcessor
+    from nexus.bricks.ipc.delivery import MessageHandler, MessageProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -22,19 +25,68 @@ class MessageProcessorRegistry:
     Maps agent_id → MessageProcessor and manages lifecycle (start/stop).
     Thread-safe for async concurrent access via asyncio.Lock.
 
+    When ``pipe_manager`` is provided, ``create_processor()`` automatically
+    attaches a ``PipeWakeupListener`` for receiver-side DT_PIPE wakeup
+    (Issue #3197).
+
     Example:
-        >>> registry = MessageProcessorRegistry()
-        >>> processor = MessageProcessor(storage, "agent_a", handler, zone_id="root")
+        >>> registry = MessageProcessorRegistry(pipe_manager=pm)
+        >>> processor = registry.create_processor(storage, "agent_a", handler, zone_id="root")
         >>> await registry.register("agent_a", processor)
         >>> await registry.start_all()
-        >>> # Later...
-        >>> processor = registry.get("agent_a")
-        >>> await registry.stop_all()
     """
 
-    def __init__(self) -> None:
+    def __init__(self, pipe_manager: Any = None) -> None:
         self._processors: dict[str, MessageProcessor] = {}
         self._lock = asyncio.Lock()
+        self._pipe_manager = pipe_manager
+
+    def create_processor(
+        self,
+        storage: Any,
+        agent_id: str,
+        handler: "MessageHandler",
+        *,
+        zone_id: str,
+        **kwargs: Any,
+    ) -> "MessageProcessor":
+        """Create a MessageProcessor with DT_PIPE wakeup auto-wired.
+
+        If ``pipe_manager`` was provided to the registry, a
+        ``PipeWakeupListener`` is created for this agent and attached
+        to the processor.  Otherwise the processor works without
+        DT_PIPE (poll/EventBus fallback).
+
+        Args:
+            storage: VFSOperations storage driver.
+            agent_id: Agent whose inbox to process.
+            handler: Async callback for each message.
+            zone_id: Zone ID for multi-tenant isolation.
+            **kwargs: Additional MessageProcessor keyword arguments
+                (cache_store, verifier, signing_mode, etc.).
+
+        Returns:
+            A configured MessageProcessor instance.
+        """
+        from nexus.bricks.ipc.delivery import MessageProcessor
+
+        wakeup_listener = None
+        if self._pipe_manager is not None and "wakeup_listener" not in kwargs:
+            try:
+                from nexus.bricks.ipc.wakeup import PipeWakeupListener
+
+                wakeup_listener = PipeWakeupListener(self._pipe_manager, agent_id)
+            except Exception:
+                logger.debug("Could not create PipeWakeupListener for agent %s", agent_id)
+
+        return MessageProcessor(
+            storage,
+            agent_id,
+            handler,
+            zone_id=zone_id,
+            wakeup_listener=wakeup_listener,
+            **kwargs,
+        )
 
     async def register(self, agent_id: str, processor: "MessageProcessor") -> None:
         """Register a MessageProcessor for an agent.

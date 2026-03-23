@@ -222,3 +222,4 @@ deploy/
 # Build tools (binary)
 tools/
 tls/
+nexus.yaml

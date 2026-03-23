@@ -75,8 +75,19 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     app.state.ipc_provisioner = ipc_provisioner
     app.state.ipc_wakeup_notifiers = wakeup_notifiers
     app.state.ipc_cache_store = cache_store
-    # Expose pipe_manager so MessageProcessor instances can create
-    # PipeWakeupListeners for receiver-side DT_PIPE wakeup (Issue #3197).
+    # Create MessageProcessorRegistry with pipe_manager for receiver-side
+    # DT_PIPE wakeup (Issue #3197). Agent runtimes use
+    # registry.create_processor() to get a MessageProcessor with
+    # PipeWakeupListener auto-wired.
+    try:
+        from nexus.bricks.ipc.registry import MessageProcessorRegistry
+
+        processor_registry = MessageProcessorRegistry(pipe_manager=svc.pipe_manager)
+        app.state.ipc_processor_registry = processor_registry
+        if svc.pipe_manager is not None:
+            logger.info("[IPC] MessageProcessorRegistry wired with DT_PIPE wakeup")
+    except Exception as exc:
+        logger.warning("[IPC] MessageProcessorRegistry unavailable: %s", exc)
     app.state.ipc_pipe_manager = svc.pipe_manager
 
     # Enlist IPC driver + provisioner (Q1 — restart-required, no lifecycle)

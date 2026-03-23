@@ -198,6 +198,9 @@ def test_all_public_methods_are_exposed_or_excluded():
         "remove_mount",  # ABC stub → mount_service.remove_mount_sync()
         "list_mounts",  # ABC stub → mount_service.list_mounts_sync()
         "get_mount",  # ABC stub → mount_service.get_mount_sync()
+        # Tier 2 convenience wrappers — delegate to Tier 1 sys_* which are already @rpc_expose
+        "mkdir",  # Tier 2 → sys_mkdir(parents=True, exist_ok=True)
+        "rmdir",  # Tier 2 → sys_rmdir(recursive=True)
         # Search/list — delegates to search_service
         "list",  # ABC stub → overrides NexusFS.list()
         "glob",  # ABC stub → search_service.glob()

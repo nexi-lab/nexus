@@ -171,13 +171,50 @@ class NexusFilesystemABC(ABC):
         exist_ok: bool = False,
         context: Any = None,
     ) -> None:
-        """Create a directory (POSIX mkdir(2))."""
+        """Create a directory (POSIX mkdir(2)).
+
+        Tier 1 defaults: parents=False, exist_ok=False (fail-fast).
+        Use mkdir() (Tier 2) for parents=True, exist_ok=True defaults.
+        """
         ...
 
     @abstractmethod
     async def sys_rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:
-        """Remove a directory (POSIX rmdir(2))."""
+        """Remove a directory (POSIX rmdir(2)).
+
+        Tier 1 default: recursive=False (empty dir only).
+        Use rmdir() (Tier 2) for recursive=True default.
+        """
         ...
+
+    # ── Directory (Tier 2 convenience) ───────────────────────────
+
+    async def mkdir(
+        self,
+        path: str,
+        parents: bool = True,
+        exist_ok: bool = True,
+        context: Any = None,
+    ) -> None:
+        """Create a directory with lenient defaults (Tier 2).
+
+        Delegates to sys_mkdir with caller-friendly defaults:
+        parents=True, exist_ok=True (mkdir -p semantics).
+        """
+        await self.sys_mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
+
+    async def rmdir(
+        self,
+        path: str,
+        recursive: bool = True,
+        context: Any = None,
+    ) -> None:
+        """Remove a directory with lenient defaults (Tier 2).
+
+        Delegates to sys_rmdir with caller-friendly defaults:
+        recursive=True (rm -rf semantics).
+        """
+        await self.sys_rmdir(path, recursive=recursive, context=context)
 
     @abstractmethod
     async def sys_readdir(

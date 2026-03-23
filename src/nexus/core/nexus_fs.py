@@ -2225,6 +2225,34 @@ class NexusFS(  # type: ignore[misc]
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
 
+    async def mkdir(
+        self,
+        path: str,
+        parents: bool = True,
+        exist_ok: bool = True,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Create a directory with lenient defaults (Tier 2 convenience).
+
+        Unlike sys_mkdir (parents=False, exist_ok=False), this defaults to
+        parents=True + exist_ok=True — the behavior most callers want.
+        Delegates to sys_mkdir.
+        """
+        await self.sys_mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
+
+    async def rmdir(
+        self,
+        path: str,
+        recursive: bool = True,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Remove a directory with lenient defaults (Tier 2 convenience).
+
+        Unlike sys_rmdir (recursive=False), this defaults to recursive=True
+        — rm -rf semantics. Delegates to sys_rmdir.
+        """
+        await self.sys_rmdir(path, recursive=recursive, context=context)
+
     @rpc_expose(description="Read file with optional metadata")
     async def read(
         self,

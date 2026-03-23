@@ -45,7 +45,7 @@ Every kernel interface belongs to exactly one of four categories:
         │  │  PRIMITIVES — internal (§4)                 │ │
         │  │  PathValidator, ZoneAccessGuard, VFSRouter, │ │
         │  │  VFSLockManager, KernelDispatch,            │ │
-        │  │  PipeManager, FileEvent                     │ │
+        │  │  PipeManager, FileEvent, AgentRegistry      │ │
         │  └─────────────────────────────────────────────┘ │
         └──────────────┬───────────────────────────────────┘
                        │  ↓ HAL — DRIVER CONTRACT (§3)
@@ -393,6 +393,7 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
 | **DistributedLockManager** | `core.nexus_fs` (sentinel) | `fs/locks.c` | Factory-injected sentinel (`_distributed_lock_manager`). Advisory distributed locks (Raft-backed). Kernel knows but doesn't own |
 | **ServiceLifecycleCoordinator** | `system_services.lifecycle` | `init/main.c` + `module.c` | Kernel-owned bridge: ServiceRegistry + BrickLifecycleManager. Manages enlist/swap/shutdown for all 4 service quadrants |
+| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.4 |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock
@@ -444,6 +445,30 @@ See `federation-memo.md` §7j for design rationale.
 | Structure | Frozen dataclass: path, etag, size, version, zone_id, agent_id, user_id, vector_clock |
 | Consumer paths | KernelDispatch OBSERVE (local), EventBus (distributed) |
 | Emission point | Always AFTER lock release |
+
+### 4.4 AgentRegistry — Kernel Process Table
+
+| Property | Value |
+|----------|-------|
+| Linux analogue | `task_struct` list (`for_each_process()`) |
+| Package | `core.agent_registry` |
+| Storage | In-memory dict (process heap) — no persistence |
+| Lifecycle | Created in `NexusFS.__init__()`, closed via factory close callback |
+
+The AgentRegistry is the kernel's process table — an in-memory registry of all
+active agent descriptors (spawn, status, close). Like Linux's `task_struct`,
+it is kernel-owned infrastructure that services consume but never create.
+
+**Why kernel-owned (Issue #1792):** AgentRegistry was previously created in the
+system-services boot tier and injected via `SystemServices.agent_registry`.
+This caused a layering violation: the kernel needed to read `_system_services`
+to access its own process table. Moving it to `NexusFS.__init__()` (alongside
+PipeManager and StreamManager) makes it a true kernel primitive — available
+before any service boots, with no upward dependency.
+
+**Consumers:** EvictionManager, AcpService, ProcResolver (all service-layer).
+These are created at factory link-time (`_do_link()`) where `nx._agent_registry`
+is already available.
 
 
 ---

@@ -242,8 +242,8 @@ class SystemServices:
     # Resiliency policies (Issue #1366)
     resiliency_manager: Any = None
 
-    # Agent eviction under resource pressure (Issue #2170)
-    eviction_manager: Any = None
+    # (EvictionManager is deferred to _do_link() — depends on kernel-owned
+    # AgentRegistry.  Stored on nx._eviction_manager, not SystemServices.)
 
     # Brick reconciler — drift detection and self-healing (Issue #2060)
     brick_reconciler: Any = None
@@ -251,17 +251,14 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
-    # (PipeManager + StreamManager are kernel-internal primitives,
+    # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
     # constructed in NexusFS.__init__ — not injected via SystemServices.)
-
-    # Process lifecycle — kernel process table (Issue #1509)
-    agent_registry: Any = None
 
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
 
-    # ACP — stateless coding agent CLI caller
-    acp_service: Any = None
+    # (AcpService is deferred to _do_link() — depends on kernel-owned
+    # AgentRegistry.  Stored on nx._acp_service, not SystemServices.)
 
     # Distributed event bus — infrastructure messaging (Issue #1701: promoted from Tier 2)
     # EventBusObserver (VFSObserver hook) publishes KernelDispatch OBSERVE events to Redis/NATS.

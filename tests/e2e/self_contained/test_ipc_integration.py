@@ -587,3 +587,128 @@ class TestEventDrivenSweepIntegration:
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         reason_files = [f for f in dl_files if f.endswith(".reason.json")]
         assert len(reason_files) == 1  # .reason.json sidecar written by shared helper
+
+
+# ===========================================================================
+# Issue #3197: SSE stream + EventPublisher end-to-end
+# ===========================================================================
+
+
+class TestSSEStreamIntegration:
+    """Integration: CacheStore pub/sub event -> SSE stream delivery."""
+
+    @pytest.mark.asyncio
+    async def test_event_publisher_delivers_to_subscriber(self, vfs: InMemoryVFS) -> None:
+        """Full flow: send with EventPublisher -> subscriber receives event."""
+        import asyncio
+        import json
+
+        from nexus.bricks.ipc.wakeup import CacheStoreEventPublisher
+        from nexus.cache.inmemory import InMemoryCacheStore
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob")
+        cache_store = InMemoryCacheStore()
+
+        # Simulate SSE subscriber (what the /stream endpoint does)
+        received_events: list[dict] = []
+
+        async def sse_subscriber():
+            async with cache_store.subscribe("ipc.inbox.agent:bob") as messages:
+                async for msg in messages:
+                    received_events.append(json.loads(msg))
+                    if len(received_events) >= 2:
+                        break
+
+        subscriber_task = asyncio.create_task(sse_subscriber())
+        await asyncio.sleep(0.02)  # Let subscriber register
+
+        # Send via MessageSender with EventPublisher (same as REST API)
+        event_pub = CacheStoreEventPublisher(cache_store)
+        sender = MessageSender(vfs, event_pub, zone_id=ZONE)
+
+        env1 = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            id="msg_sse_1",
+            payload={"action": "first"},
+        )
+        env2 = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            id="msg_sse_2",
+            payload={"action": "second"},
+        )
+        await sender.send(env1)
+        await sender.send(env2)
+
+        # Wait for subscriber to receive both
+        await asyncio.wait_for(subscriber_task, timeout=2.0)
+
+        assert len(received_events) == 2
+        assert received_events[0]["event"] == "message_delivered"
+        assert received_events[0]["sender"] == "agent:alice"
+        assert received_events[0]["message_id"] == "msg_sse_1"
+        assert received_events[1]["message_id"] == "msg_sse_2"
+
+    @pytest.mark.asyncio
+    async def test_multiple_agents_receive_own_events(self, vfs: InMemoryVFS) -> None:
+        """Each agent's SSE stream only receives events for their inbox."""
+        import asyncio
+        import json
+
+        from nexus.bricks.ipc.wakeup import CacheStoreEventPublisher
+        from nexus.cache.inmemory import InMemoryCacheStore
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob", "agent:carol")
+        cache_store = InMemoryCacheStore()
+
+        bob_events: list[dict] = []
+        carol_events: list[dict] = []
+
+        async def bob_sub():
+            async with cache_store.subscribe("ipc.inbox.agent:bob") as msgs:
+                async for msg in msgs:
+                    bob_events.append(json.loads(msg))
+                    break
+
+        async def carol_sub():
+            async with cache_store.subscribe("ipc.inbox.agent:carol") as msgs:
+                async for msg in msgs:
+                    carol_events.append(json.loads(msg))
+                    break
+
+        bob_task = asyncio.create_task(bob_sub())
+        carol_task = asyncio.create_task(carol_sub())
+        await asyncio.sleep(0.02)
+
+        event_pub = CacheStoreEventPublisher(cache_store)
+        sender = MessageSender(vfs, event_pub, zone_id=ZONE)
+
+        # Send to bob only
+        await sender.send(
+            MessageEnvelope(
+                sender="agent:alice",
+                recipient="agent:bob",
+                type=MessageType.TASK,
+                payload={"for": "bob"},
+            )
+        )
+        # Send to carol only
+        await sender.send(
+            MessageEnvelope(
+                sender="agent:alice",
+                recipient="agent:carol",
+                type=MessageType.TASK,
+                payload={"for": "carol"},
+            )
+        )
+
+        await asyncio.wait_for(bob_task, timeout=2.0)
+        await asyncio.wait_for(carol_task, timeout=2.0)
+
+        assert len(bob_events) == 1
+        assert bob_events[0]["recipient"] == "agent:bob"
+        assert len(carol_events) == 1
+        assert carol_events[0]["recipient"] == "agent:carol"

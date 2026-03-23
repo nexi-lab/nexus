@@ -5,12 +5,16 @@ Provides REST access to the IPC subsystem:
     GET  /api/v2/ipc/inbox/{agent_id}       — List messages in an agent's inbox
     GET  /api/v2/ipc/inbox/{agent_id}/count — Count messages in an agent's inbox
     POST /api/v2/ipc/provision/{agent_id}   — Provision IPC directories for an agent
+    GET  /api/v2/ipc/stream/{agent_id}      — SSE stream for real-time inbox notifications
 """
 
+import asyncio
+import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from nexus.bricks.ipc.conventions import validate_agent_id
@@ -287,3 +291,85 @@ async def provision_agent(
         raise HTTPException(status_code=500, detail=f"Failed to provision agent: {exc}") from exc
 
     return ProvisionResponse(agent_id=agent_id)
+
+
+@router.get("/stream/{agent_id}")
+async def stream_inbox(
+    agent_id: str,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    cache_store: Any = Depends(_get_ipc_cache_store),
+) -> StreamingResponse:
+    """SSE stream for real-time inbox notifications (Issue #3197).
+
+    Opens a long-lived Server-Sent Events connection. When a message is
+    sent to this agent's inbox, the sender's ``CacheStoreEventPublisher``
+    publishes to ``ipc.inbox.{agent_id}`` via Redis/Dragonfly pub/sub.
+    This endpoint subscribes to that channel and pushes events to the
+    client as SSE.
+
+    The SSE event contains notification metadata (message_id, sender,
+    type). To read the actual message content, the client calls
+    ``GET /api/v2/ipc/inbox/{agent_id}`` after receiving the event.
+
+    Supports automatic reconnection via the SSE ``Last-Event-ID`` header.
+
+    Usage::
+
+        curl -N -H "Authorization: Bearer sk-..." \\
+          http://localhost:2026/api/v2/ipc/stream/agent:bob
+
+    Event format::
+
+        event: message_delivered
+        data: {"message_id":"msg_123","sender":"agent:alice","type":"task"}
+
+    """
+    _validate_agent_id(agent_id)
+    _check_agent_access(auth_result, agent_id)
+
+    if cache_store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="SSE streaming requires CacheStore (Dragonfly/Redis)",
+        )
+
+    channel = f"ipc.inbox.{agent_id}"
+
+    async def event_generator():
+        """Subscribe to pub/sub and yield SSE events."""
+        # Initial connection event
+        yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'channel': channel})}\n\n"
+
+        try:
+            async with cache_store.subscribe(channel) as messages:
+                async for msg in messages:
+                    # Check if client disconnected
+                    if await request.is_disconnected():
+                        break
+
+                    try:
+                        data = json.loads(msg)
+                        event_type = data.get("event", "message")
+                        yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+                    except Exception:
+                        logger.debug("Invalid event on channel %s", channel)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.warning(
+                "SSE stream error for agent %s",
+                agent_id,
+                exc_info=True,
+            )
+            yield f"event: error\ndata: {json.dumps({'error': 'stream_interrupted'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable NGINX buffering
+        },
+    )

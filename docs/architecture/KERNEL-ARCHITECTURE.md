@@ -90,14 +90,14 @@ through factory-injected closures (`functools.partial`) or KernelDispatch hooks.
 
 `factory/` acts as the init system (like systemd): creates selected services
 and injects them via DI. Different distros select different service sets at
-startup — `nexus-server` loads all 22+, `nexus-embedded` loads zero.
+startup — `nexus-server` loads all 22+, MINIMAL profile loads zero.
 
 Factory boot sequence (6 phases, strictly ordered):
 
 | Phase | Name | Side effects | Key actions |
 |-------|------|-------------|-------------|
 | 1 | `create_nexus_services()` | None | Build 3-tier service containers (Kernel/System/Brick) |
-| 2 | `NexusFS()` constructor | None | Kernel primitives only (MetastoreABC, VFSRouter, KernelDispatch, PipeManager, StreamManager) |
+| 2 | `NexusFS()` constructor | None | Kernel primitives only (MetastoreABC, VFSRouter, KernelDispatch, PipeManager, StreamManager, AgentRegistry) + `init_cred` (kernel process identity, like Linux `init_task.cred`) |
 | 3 | `link()` | None (memory only) | Wire service topology via `_do_link()`. `functools.partial` bakes `system_services` into closures — kernel never stores the reference for reads |
 | 4 | `initialize()` | None | Register VFS hooks (INTERCEPT + OBSERVE), IPC adapter bind |
 | 5 | `bootstrap()` | Yes (I/O, threads) | `mark_bootstrapped()` → auto-start PersistentServices, activate HotSwappable hooks |

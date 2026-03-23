@@ -71,9 +71,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ---------------------------------------------------------------------------
-  # E2E smoke tests against the edge image (develop only, non-blocking)
+  # E2E smoke tests against the edge image (develop only)
   # Starts a Nexus container, runs init, then exercises the permissions demo
-  # and build-perf e2e scripts.
+  # and build-perf e2e scripts.  Failures block the workflow so issues are
+  # caught early.
   # ---------------------------------------------------------------------------
   e2e-edge:
     name: E2E edge smoke tests
@@ -155,14 +156,12 @@ jobs:
       - name: Run permissions demo
         run: |
           bash permissions_demo_enhanced.sh
-        continue-on-error: true  # Non-blocking — report but don't fail the workflow
 
       - name: Run build perf e2e
         run: |
           export NEXUS_URL=${NEXUS_URL:-http://localhost:2026}
           export NEXUS_GRPC_PORT=2029
           python scripts/test_build_perf_e2e.py
-        continue-on-error: true  # Non-blocking
 
       - name: Collect container logs on failure
         if: failure()

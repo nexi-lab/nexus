@@ -25,7 +25,7 @@ protobuf>=4.25.0
 # HTTP server
 fastapi>=0.124.0
 uvicorn[standard]>=0.38.0
-uvloop>=0.22.1
+uvloop>=0.22.1; sys_platform != "win32"
 watchfiles>=1.0.0
 
 # Database (RecordStore — imports exist even if skipped at runtime)

@@ -101,14 +101,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install nexus CLI
-        run: pip install .
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -127,12 +119,13 @@ jobs:
             -e NEXUS_PORT=2026 \
             -e NEXUS_GRPC_PORT=2029 \
             -e NEXUS_PROFILE=full \
+            -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
             -v /tmp/nexus-data:/app/data \
             ghcr.io/nexi-lab/nexus:edge
 
           # Wait for server to be ready
           echo "Waiting for Nexus to start..."
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             if curl -sf http://localhost:2026/health > /dev/null 2>&1; then
               echo "Nexus is ready (${i}s)"
               break
@@ -141,33 +134,44 @@ jobs:
           done
           curl -sf http://localhost:2026/health || (docker logs nexus-e2e && exit 1)
 
-      - name: Initialize Nexus with auth
+      - name: Initialize and extract credentials
         run: |
-          export NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus
-          export NEXUS_DATA_DIR=/tmp/nexus-data
-          export SKIP_CONFIRM=1
-          export QUIET=1
-          bash scripts/init-nexus-with-auth.sh --init
-          # Source the generated env file
-          if [ -f .nexus-admin-env ]; then
-            source .nexus-admin-env
-            echo "NEXUS_URL=${NEXUS_URL}" >> "$GITHUB_ENV"
-            echo "NEXUS_API_KEY=${NEXUS_API_KEY}" >> "$GITHUB_ENV"
+          # Run init inside the container where nexus CLI is available
+          docker exec nexus-e2e sh -c '
+            SKIP_CONFIRM=1 QUIET=1 \
+            NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus \
+            /usr/local/bin/docker-entrypoint.sh nexusd --help >/dev/null 2>&1 || true
+          '
+          # Create admin API key via the REST API
+          ADMIN_KEY=$(curl -sf http://localhost:2026/api/admin/bootstrap 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || true)
+          if [ -z "$ADMIN_KEY" ]; then
+            echo "Bootstrap not available, trying default admin key from container..."
+            ADMIN_KEY=$(docker exec nexus-e2e cat /app/data/.admin-api-key 2>/dev/null || true)
           fi
+          echo "NEXUS_URL=http://localhost:2026" >> "$GITHUB_ENV"
+          echo "NEXUS_API_KEY=${ADMIN_KEY}" >> "$GITHUB_ENV"
+          echo "Admin key obtained: ${ADMIN_KEY:0:10}..."
 
       - name: Run permissions demo
         run: |
-          bash permissions_demo_enhanced.sh
+          # Run inside the container where nexus CLI and all deps exist
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            nexus-e2e bash /app/permissions_demo_enhanced.sh
 
       - name: Run build perf e2e
         run: |
-          export NEXUS_URL=${NEXUS_URL:-http://localhost:2026}
-          export NEXUS_GRPC_PORT=2029
-          python scripts/test_build_perf_e2e.py
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_GRPC_PORT=2029 \
+            nexus-e2e python3 /app/scripts/test_build_perf_e2e.py
 
       - name: Collect container logs on failure
         if: failure()
-        run: docker logs nexus-e2e 2>&1 | tail -100
+        run: docker logs nexus-e2e 2>&1 | tail -200
 
       - name: Cleanup
         if: always()

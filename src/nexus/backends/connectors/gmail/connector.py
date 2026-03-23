@@ -330,7 +330,7 @@ class GmailConnectorBackend(
             logger.warning(f"Failed to load static SKILL.md: {e}, using auto-generated")
             return super().generate_skill_doc(mount_path)
 
-    def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
+    async def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
         """Write SKILL.md to filesystem using static template.
 
         Overrides SkillDocMixin.write_skill_docs to use the static SKILL.md
@@ -353,11 +353,11 @@ class GmailConnectorBackend(
         skill_dir = posixpath.join(mount_path.rstrip("/"), self.SKILL_DIR)
 
         try:
-            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+            await filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
 
             skill_md_path = posixpath.join(skill_dir, "SKILL.md")
             content = self.generate_skill_doc(mount_path)
-            filesystem.write(skill_md_path, content.encode("utf-8"))
+            await filesystem.write(skill_md_path, content.encode("utf-8"))
             result["skill_md"] = skill_md_path
 
             return result

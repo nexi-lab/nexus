@@ -220,7 +220,7 @@ class TestCoreFileOperations:
         """Test delete with path scoping."""
         await scoped_fs.sys_unlink("/workspace/file.txt")
         mock_fs.sys_unlink.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", None
+            "/zones/team_12/users/user_1/workspace/file.txt", context=None
         )
 
     @pytest.mark.asyncio
@@ -230,7 +230,7 @@ class TestCoreFileOperations:
         mock_fs.sys_rename.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/old.txt",
             "/zones/team_12/users/user_1/workspace/new.txt",
-            None,
+            context=None,
         )
 
     @pytest.mark.asyncio
@@ -239,7 +239,7 @@ class TestCoreFileOperations:
         mock_fs.sys_access.return_value = True
         result = await scoped_fs.sys_access("/workspace/file.txt")
         mock_fs.sys_access.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/file.txt", None
+            "/zones/team_12/users/user_1/workspace/file.txt", context=None
         )
         assert result is True
 
@@ -302,7 +302,7 @@ class TestDirectoryOperations:
         """Test mkdir with path scoping."""
         await scoped_fs.sys_mkdir("/workspace/new_dir", parents=True, exist_ok=True)
         mock_fs.sys_mkdir.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/new_dir", True, True, None
+            "/zones/team_12/users/user_1/workspace/new_dir", True, True, context=None
         )
 
     @pytest.mark.asyncio
@@ -310,7 +310,7 @@ class TestDirectoryOperations:
         """Test rmdir with path scoping."""
         await scoped_fs.sys_rmdir("/workspace/old_dir", recursive=True)
         mock_fs.sys_rmdir.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/old_dir", True, None
+            "/zones/team_12/users/user_1/workspace/old_dir", True, context=None
         )
 
     @pytest.mark.asyncio
@@ -319,7 +319,7 @@ class TestDirectoryOperations:
         mock_fs.sys_is_directory.return_value = True
         result = await scoped_fs.sys_is_directory("/workspace/dir")
         mock_fs.sys_is_directory.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/dir", None
+            "/zones/team_12/users/user_1/workspace/dir", context=None
         )
         assert result is True
 

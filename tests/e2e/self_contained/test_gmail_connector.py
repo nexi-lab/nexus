@@ -334,7 +334,7 @@ class TestSkillDocGeneration:
 
         try:
             # Write SKILL.md
-            result = gmail_backend.write_skill_docs("/mnt/gmail/", filesystem=nx)
+            result = await gmail_backend.write_skill_docs("/mnt/gmail/", filesystem=nx)
             assert isinstance(result, dict)
             skill_path = result.get("skill_md")
 

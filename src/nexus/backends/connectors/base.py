@@ -284,10 +284,10 @@ class SkillDocMixin:
         """Get the full path to the .skill directory."""
         return self._get_doc_generator().get_skill_path(mount_path)
 
-    def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, str]:
+    async def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, str]:
         """Generate and write .skill/ directory to the filesystem."""
         self._mount_path = mount_path
-        return self._get_doc_generator().write_skill_docs(mount_path, filesystem)
+        return await self._get_doc_generator().write_skill_docs(mount_path, filesystem)
 
     def format_error_with_skill_ref(
         self,

@@ -23,7 +23,7 @@ class _StubFS:
         self.metadata = metadata
         self.router = router
         self._enforce_permissions = False
-        self._default_context = OperationContext(user_id="test", groups=[], zone_id=ROOT_ZONE_ID)
+        self._init_cred = OperationContext(user_id="test", groups=[], zone_id=ROOT_ZONE_ID)
         self._dispatch = MagicMock()  # KernelDispatch stub — intercept_pre_* are no-ops
         self._dispatch.read_hook_count = 0
         self._dispatch.resolve_read.return_value = (False, None)

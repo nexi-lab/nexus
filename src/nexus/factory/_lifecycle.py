@@ -95,7 +95,7 @@ async def _do_link(
     _permission_checker = _PC(
         permission_enforcer=_sys.permission_enforcer,
         metadata_store=nx.metadata,
-        default_context=nx._default_context,
+        default_context=nx._init_cred,
         enforce_permissions=nx._enforce_permissions,
     )
 

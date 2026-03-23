@@ -110,7 +110,7 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
     )
-    nx._default_context = TEST_CONTEXT
+    nx._init_cred = TEST_CONTEXT
 
     db_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))
     auth_provider = DiscriminatingAuthProvider(

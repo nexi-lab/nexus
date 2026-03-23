@@ -53,7 +53,7 @@ class TestWirableFSConformance:
             metadata_store=mock_metadata,
             parsing=ParseConfig(auto_parse=False),
         )
-        nx._default_context = TEST_CONTEXT
+        nx._init_cred = TEST_CONTEXT
         assert isinstance(nx, WirableFS)
 
 

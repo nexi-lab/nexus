@@ -113,7 +113,7 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
     )
-    nx._default_context = TEST_CONTEXT
+    nx._init_cred = TEST_CONTEXT
 
     # Wire database auth
     from types import SimpleNamespace

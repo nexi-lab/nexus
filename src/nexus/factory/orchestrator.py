@@ -365,7 +365,10 @@ async def create_nexus_fs(
 
     import functools
 
+    from nexus.contracts.types import OperationContext as _OC
     from nexus.factory._lifecycle import _do_initialize, _do_link
+
+    _init_cred = _OC(user_id="system", groups=[], is_admin=is_admin)
 
     nx = NexusFS(
         metadata_store=metadata_store,
@@ -378,11 +381,8 @@ async def create_nexus_fs(
         parsing=parsing,
         kernel_services=kernel_services,
         brick_services=brick_services,
+        init_cred=_init_cred,
     )
-    # Issue #1801: factory owns identity — kernel never fabricates it.
-    from nexus.contracts.types import OperationContext as _OC
-
-    nx._default_context = _OC(user_id="system", groups=[], is_admin=is_admin)
     nx._link_fn = functools.partial(_do_link, system_services=system_services, zone_id=zone_id)
     nx._initialize_fn = _do_initialize
     # Backward compat: server/CLI/tests may read nx._system_services directly.
@@ -442,7 +442,7 @@ async def _register_vfs_hooks(
         _perm_hook = PermissionCheckHook(
             checker=permission_checker,
             metadata_store=nx.metadata,
-            default_context=nx._default_context,
+            default_context=nx._init_cred,
             enforce_permissions=nx._enforce_permissions,
             permission_enforcer=system_services.permission_enforcer if system_services else None,
             descendant_checker=getattr(nx, "_descendant_checker", None),

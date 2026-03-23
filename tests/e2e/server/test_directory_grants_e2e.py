@@ -124,7 +124,7 @@ async def nexus_fs_with_tiger(db_with_migrations, tmp_path):
         zone_id="root",
         is_admin=True,
     )
-    nx._default_context = admin_context
+    nx._init_cred = admin_context
 
     yield nx
 

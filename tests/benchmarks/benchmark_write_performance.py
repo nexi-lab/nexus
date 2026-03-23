@@ -110,7 +110,7 @@ async def run_benchmark(enable_deferred: bool = False):
             enable_tiger_cache=False,  # SQLite doesn't support Tiger Cache
             enable_deferred_permissions=enable_deferred,  # Issue #1071
         )
-        nx._default_context = TEST_CONTEXT
+        nx._init_cred = TEST_CONTEXT
 
         # Create user context
         ctx = OperationContext(

@@ -76,7 +76,7 @@ def slim_fs(tmp_path: Path):
         kernel_services=KernelServices(router=router),
         brick_services=BrickServices(),
     )
-    kernel._default_context = OperationContext(
+    kernel._init_cred = OperationContext(
         user_id="test",
         groups=[],
         zone_id=ROOT_ZONE_ID,
@@ -135,7 +135,7 @@ def dual_fs(tmp_path: Path):
         kernel_services=KernelServices(router=router),
         brick_services=BrickServices(),
     )
-    kernel._default_context = OperationContext(
+    kernel._init_cred = OperationContext(
         user_id="test",
         groups=[],
         zone_id=ROOT_ZONE_ID,

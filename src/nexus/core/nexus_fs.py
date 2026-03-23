@@ -814,8 +814,34 @@ class NexusFS(  # type: ignore[misc]
         # Check if it's a directory first
         is_dir = await self.sys_is_directory(normalized, context=ctx)
 
+        # Try to get explicit metadata from metastore first (preserves custom attrs)
+        file_meta = self.metadata.get(normalized)
+
         if is_dir:
-            # Return directory metadata
+            if file_meta is not None:
+                # Explicit directory metadata exists — use it (preserves custom attrs from sys_setattr)
+                return {
+                    "path": file_meta.path,
+                    "backend_name": file_meta.backend_name,
+                    "physical_path": file_meta.physical_path,
+                    "size": file_meta.size or 4096,
+                    "etag": file_meta.etag,
+                    "mime_type": file_meta.mime_type or "inode/directory",
+                    "created_at": file_meta.created_at.isoformat()
+                    if file_meta.created_at
+                    else None,
+                    "modified_at": file_meta.modified_at.isoformat()
+                    if file_meta.modified_at
+                    else None,
+                    "is_directory": True,
+                    "entry_type": file_meta.entry_type,
+                    "owner": ctx.user_id,
+                    "group": ctx.user_id,
+                    "mode": 0o755,  # drwxr-xr-x
+                    "version": file_meta.version,
+                    "zone_id": file_meta.zone_id,
+                }
+            # Synthesize for implicit directories (no explicit metadata)
             return {
                 "path": normalized,
                 "backend_name": "",
@@ -831,8 +857,6 @@ class NexusFS(  # type: ignore[misc]
                 "mode": 0o755,  # drwxr-xr-x
             }
 
-        # Try to get file metadata from store
-        file_meta = self.metadata.get(normalized)
         if file_meta is None:
             return None
 
@@ -908,6 +932,9 @@ class NexusFS(  # type: ignore[misc]
 
         _MUTABLE_FIELDS = frozenset({"mime_type", "modified_at"})
         valid_attrs = {k: v for k, v in attrs.items() if k in _MUTABLE_FIELDS}
+        invalid_attrs = {k for k in attrs if k not in _MUTABLE_FIELDS and k != "entry_type"}
+        if invalid_attrs and not valid_attrs:
+            raise ValueError(f"Cannot update immutable fields: {invalid_attrs}")
         if not valid_attrs:
             return {"path": path, "created": False, "updated": []}
 

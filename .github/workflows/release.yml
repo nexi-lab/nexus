@@ -289,9 +289,14 @@ jobs:
           cache-from: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }}
           cache-to: type=registry,ref=ghcr.io/nexi-lab/nexus:buildcache-release-${{ matrix.variant }},mode=max,ignore-error=true
 
+      # Smoke tests run on CPU only — CUDA PyTorch ships binaries with
+      # instructions (e.g. AVX-512) not available on GitHub Actions runners,
+      # causing SIGILL.  CUDA images are validated on GPU machines post-release.
       - name: Smoke test — critical imports
+        if: matrix.variant == 'cpu'
         run: |
           docker run --rm --entrypoint "" \
+            -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
             ghcr.io/nexi-lab/nexus:smoke-test \
             python3 -c "
           import nexus_fast
@@ -305,12 +310,14 @@ jobs:
           "
 
       - name: Smoke test — CLI entrypoints
+        if: matrix.variant == 'cpu'
         run: |
           docker run --rm --entrypoint "" \
             ghcr.io/nexi-lab/nexus:smoke-test \
             sh -c "nexus --version && nexusd --help > /dev/null 2>&1 && echo 'CLI OK'"
 
       - name: Smoke test — env-var config (no config file)
+        if: matrix.variant == 'cpu'
         run: |
           docker run --rm --entrypoint "" \
             ghcr.io/nexi-lab/nexus:smoke-test \

@@ -103,9 +103,12 @@ class IsolatedBackend(Backend):
     # ── Content operations (CAS) ────────────────────────────────────────
 
     def write_content(
-        self, content: bytes, content_id: str = "", *, context: "Any | None" = None
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: "Any | None" = None
     ) -> WriteResult:
-        return cast(WriteResult, self._call("write_content", content, content_id, context=context))
+        return cast(
+            WriteResult,
+            self._call("write_content", content, content_id, offset=offset, context=context),
+        )
 
     def read_content(self, content_id: str, context: "Any | None" = None) -> bytes:
         return cast(bytes, self._call("read_content", content_id, context=context))

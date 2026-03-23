@@ -329,7 +329,9 @@ class GmailConnector(CLIConnector):
         args.extend(["--format", "yaml"])
         return args
 
-    def write_content(self, content: bytes, context: Any = None) -> Any:
+    def write_content(
+        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
+    ) -> Any:
         """Override to use flag-based CLI args instead of stdin YAML for gws helpers."""
         import yaml as _yaml
 

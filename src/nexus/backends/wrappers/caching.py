@@ -186,10 +186,16 @@ class CachingBackendWrapper(DelegatingBackend):
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """Write content to inner backend, then handle cache based on strategy."""
-        result = self._inner.write_content(content, content_id, context=context)
+        result = self._inner.write_content(content, content_id, offset=offset, context=context)
+
+        # Offset writes always invalidate (content changed partially)
+        if offset > 0:
+            self._invalidate(result.content_id)
+            return result
 
         content_hash = result.content_id
 

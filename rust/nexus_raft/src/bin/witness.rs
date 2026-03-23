@@ -147,18 +147,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let server = RaftWitnessServer::new(registry.clone(), server_config);
 
-        // If no certs, spawn a background task to call JoinCluster with token
+        // If no certs, read join token from file and spawn TLS bootstrap task.
+        // Token is file-only (no env var) — consistent with file-based design.
         if needs_bootstrap && !peers.is_empty() {
-            // Parse join token from NEXUS_JOIN_TOKEN (K3s-style: K10<password>::server:<fingerprint>)
-            let join_token = env::var("NEXUS_JOIN_TOKEN").unwrap_or_default();
-            let password = if let Some(body) = join_token.strip_prefix("K10") {
-                body.split("::server:").next().unwrap_or("").to_string()
-            } else {
-                if !join_token.is_empty() {
-                    tracing::warn!("NEXUS_JOIN_TOKEN has invalid format (expected K10...)");
+            let token_path = tls_dir.join("join-token");
+            let password = if token_path.exists() {
+                let token = std::fs::read_to_string(&token_path).unwrap_or_default();
+                let token = token.trim();
+                if let Some(body) = token.strip_prefix("K10") {
+                    body.split("::server:").next().unwrap_or("").to_string()
                 } else {
-                    tracing::warn!("NEXUS_JOIN_TOKEN not set — cannot join cluster for TLS certs");
+                    tracing::warn!("Join token file has invalid format (expected K10...)");
+                    String::new()
                 }
+            } else {
+                tracing::warn!(
+                    "No join token at {} — cannot provision TLS certs",
+                    token_path.display()
+                );
                 String::new()
             };
 

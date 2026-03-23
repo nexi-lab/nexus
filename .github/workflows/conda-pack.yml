@@ -12,23 +12,73 @@ name: Conda Pack
 #   3. Compile nexus_raft  (rust/nexus_raft --features full) via maturin
 #   4. pip install both .whl files into the nexus env
 #   5. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
+#
+# Profiles:
+#   - full:    Complete dependencies + Rust extensions (default)
+#   - minimal: Storage-only dependencies + Rust extensions (for embedded metastore)
+#   - remote:  SDK/CLI client only, no Rust extensions (pure gRPC client)
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Build profile (all/remote/minimal/full)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - remote
+          - minimal
+          - full
 
 permissions:
   contents: write
 
 jobs:
+  # Determine which profiles to build based on trigger type
+  determine-profiles:
+    name: Determine profiles to build
+    runs-on: ubuntu-latest
+    outputs:
+      profiles: ${{ steps.set-profiles.outputs.profiles }}
+    steps:
+      - name: Set profiles
+        id: set-profiles
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PROFILE="${{ github.event.inputs.profile }}"
+            case "$PROFILE" in
+              remote)
+                echo 'profiles=[{"name":"-remote","requirements":"requirements-remote.txt"}]' >> $GITHUB_OUTPUT
+                ;;
+              minimal)
+                echo 'profiles=[{"name":"-minimal","requirements":"requirements-minimal.txt"}]' >> $GITHUB_OUTPUT
+                ;;
+              full)
+                echo 'profiles=[{"name":"","requirements":""}]' >> $GITHUB_OUTPUT
+                ;;
+              *)  # all
+                echo 'profiles=[{"name":"","requirements":""},{"name":"-remote","requirements":"requirements-remote.txt"},{"name":"-minimal","requirements":"requirements-minimal.txt"}]' >> $GITHUB_OUTPUT
+                ;;
+            esac
+          else
+            # Tag trigger: build all profiles
+            echo 'profiles=[{"name":"","requirements":""},{"name":"-remote","requirements":"requirements-remote.txt"},{"name":"-minimal","requirements":"requirements-minimal.txt"}]' >> $GITHUB_OUTPUT
+          fi
+
   conda-pack:
-    name: conda-pack / ${{ matrix.artifact_name }}
+    needs: determine-profiles
+    name: conda-pack / ${{ matrix.artifact_name }}${{ matrix.profile.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90        # Rust compilation can be slow on macOS/Windows runners
     strategy:
       fail-fast: false
       matrix:
+        profile: ${{ fromJson(needs.determine-profiles.outputs.profiles) }}
         include:
           # nexus_pyo3 (shm_pipe/shm_stream) uses POSIX-only APIs (fcntl, pipe,
           # O_NONBLOCK) that do not exist on Windows. That wheel is skipped on
@@ -69,26 +119,41 @@ jobs:
       - name: Install project into nexus environment
         shell: bash -el {0}
         run: |
-          conda run -n nexus pip install .
+          if [ -n "${{ matrix.profile.requirements }}" ]; then
+            echo "Installing dependencies from ${{ matrix.profile.requirements }} (lightweight profile)"
+            conda run -n nexus pip install -r ${{ matrix.profile.requirements }}
+            # Install project itself (without deps, already installed above) to get CLI entrypoints (nexus, nexusd)
+            echo "Installing project package for CLI entrypoints"
+            conda run -n nexus pip install --no-deps .
+          else
+            echo "Installing full dependencies from pyproject.toml"
+            conda run -n nexus pip install .
+          fi
 
       # ── Rust toolchain ────────────────────────────────────────────────────
       # Reads the required toolchain version from rust-toolchain.toml
       # automatically. No need to specify the version explicitly.
+      # Only remote profile skips Rust (pure gRPC client).
+      # Both full and minimal profiles need nexus_raft for embedded metastore.
       - name: Setup Rust toolchain
+        if: matrix.profile.name != '-remote'
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Add rustfmt and clippy components
+        if: matrix.profile.name != '-remote'
         shell: bash -el {0}
         run: rustup component add rustfmt clippy
 
       # raft-proto build.rs requires protoc >= 3.1.0 for codegen
       - name: Install protoc
+        if: matrix.profile.name != '-remote'
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Cache compiled Rust artifacts across runs to speed up re-builds.
       - name: Rust build cache
+        if: matrix.profile.name != '-remote'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: conda-pack-rust-${{ matrix.os }}
@@ -100,13 +165,15 @@ jobs:
       # Install maturin inside the nexus env so it automatically uses the
       # correct Python interpreter when building the extension modules.
       - name: Install maturin into nexus environment
+        if: matrix.profile.name != '-remote'
         shell: bash -el {0}
         run: |
           conda run -n nexus pip install maturin
 
       # Skipped on Windows: shm_pipe.rs / shm_stream.rs use POSIX-only APIs.
+      # Skipped on remote: pure gRPC client, no local Rust extensions needed.
       - name: Build nexus_fast wheel  (rust/nexus_pyo3)
-        if: matrix.os != 'windows-latest'
+        if: matrix.profile.name != '-remote' && matrix.os != 'windows-latest'
         shell: bash -el {0}
         run: |
           mkdir -p build/dist
@@ -115,19 +182,22 @@ jobs:
             -m rust/nexus_pyo3/Cargo.toml
 
       # Use --features python only: consensus + grpc are EXPERIMENTAL and
-      # "not used in production" (see Cargo.toml). Skipping them avoids
-      # the protobuf-build protoc version-check bug entirely.
+      # "not used in production" (see Cargo.toml). --no-default-features is
+      # required because default = ["full"] pulls in grpc which needs protoc.
+      # Both full and minimal profiles need nexus_raft for embedded metastore.
       - name: Build nexus_raft wheel  (rust/nexus_raft --features python)
+        if: matrix.profile.name != '-remote'
         shell: bash -el {0}
         run: |
           mkdir -p build/dist
           conda run -n nexus maturin build --release \
-            --features python \
+            --no-default-features --features python \
             --out build/dist \
             -m rust/nexus_raft/Cargo.toml
 
       # ── Install wheels into the nexus env ────────────────────────────────
       - name: Install Rust wheels into nexus environment
+        if: matrix.profile.name != '-remote'
         shell: bash -el {0}
         run: |
           echo "=== Built wheels ==="
@@ -143,8 +213,14 @@ jobs:
       - name: Pack nexus environment
         shell: bash -el {0}
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          OUTPUT="${{ matrix.artifact_name }}.tar.gz"
+          # Get version from tag or pyproject.toml
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+            VERSION="${VERSION}-dev"  # Mark as dev build for non-tag builds
+          fi
+          OUTPUT="${{ matrix.artifact_name }}${{ matrix.profile.name }}.tar.gz"
 
           # Write a VERSION file into the conda env so users know what
           # version they downloaded after extraction.
@@ -158,17 +234,19 @@ jobs:
       - name: Upload packed artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}.tar.gz
+          name: ${{ matrix.artifact_name }}${{ matrix.profile.name }}
+          path: ${{ matrix.artifact_name }}${{ matrix.profile.name }}.tar.gz
           if-no-files-found: error
 
   # ── Attach to GitHub Release ──────────────────────────────────────────────
-  # Runs after all three conda-pack jobs succeed. The release itself is
-  # created by release.yml — this job simply appends the three tarballs.
+  # Runs after all conda-pack jobs succeed. The release itself is
+  # created by release.yml — this job simply appends the tarballs.
+  # Only runs on tag pushes (not manual triggers).
   attach-to-release:
     name: Attach conda packs to GitHub Release
     needs: conda-pack
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download all conda-pack artifacts
         uses: actions/download-artifact@v4

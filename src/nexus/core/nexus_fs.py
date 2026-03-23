@@ -597,40 +597,26 @@ class NexusFS(  # type: ignore[misc]
     ) -> None:
         """Remove a directory (recursive=True for rm -rf)."""
         import errno
+        import warnings
 
         path = self._validate_path(path)
 
-        # Block writes during zone deprovisioning (Issue #2061)
-
-        # P0 Fixes: Create OperationContext
-        if context is not None:
-            ctx = (
-                context
-                if isinstance(context, OperationContext)
-                else OperationContext(
-                    user_id=context.user_id,
-                    groups=context.groups,
-                    zone_id=context.zone_id or zone_id,
-                    agent_id=context.agent_id or agent_id,
-                    is_admin=context.is_admin if is_admin is None else is_admin,
-                    is_system=context.is_system,
-                    admin_capabilities=set(),
-                )
+        # Build context: prefer OperationContext, deprecate legacy kwargs
+        if context is None and subject is not None:
+            warnings.warn(
+                "sys_rmdir subject/zone_id/agent_id/is_admin kwargs are deprecated. "
+                "Pass an OperationContext instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
-        elif subject is not None:
-            ctx = OperationContext(
+            context = OperationContext(
                 user_id=subject[1],
                 groups=[],
                 zone_id=zone_id,
                 agent_id=agent_id,
                 is_admin=is_admin or False,
-                is_system=False,
-                admin_capabilities=set(),
             )
-        else:
-            ctx = self._require_context(None)
-
-        # Check write permission on directory
+        ctx = self._require_context(context)
 
         logger.debug(
             f"rmdir: path={path}, recursive={recursive}, user={ctx.user_id}, is_admin={ctx.is_admin}"
@@ -880,7 +866,8 @@ class NexusFS(  # type: ignore[misc]
         - Path missing + entry_type provided → CREATE inode
         - Path missing + no entry_type → NexusFileNotFoundError
         - Path exists + no entry_type → UPDATE mutable fields
-        - Path exists + entry_type → ValueError (immutable after creation)
+        - Path exists + same entry_type (DT_PIPE/DT_STREAM) → IDEMPOTENT OPEN (recover buffer)
+        - Path exists + different entry_type → ValueError (immutable after creation)
 
         Args:
             path: Virtual file path.
@@ -901,9 +888,20 @@ class NexusFS(  # type: ignore[misc]
                 raise NexusFileNotFoundError(path)
             return self._setattr_create(path, entry_type, attrs)
 
-        # --- REJECT: entry_type is immutable after creation ---
+        # --- IDEMPOTENT OPEN: same entry_type → recover buffer ---
         if "entry_type" in attrs:
-            raise ValueError(f"entry_type is immutable after creation (current={meta.entry_type})")
+            from nexus.contracts.metadata import DT_PIPE, DT_STREAM
+
+            requested_type = attrs["entry_type"]
+            if meta.entry_type == requested_type and requested_type == DT_PIPE:
+                self._pipe_manager.open(path, capacity=attrs.get("capacity", 65_536))
+                return {"path": path, "created": False, "entry_type": requested_type}
+            if meta.entry_type == requested_type and requested_type == DT_STREAM:
+                self._stream_manager.open(path, capacity=attrs.get("capacity", 65_536))
+                return {"path": path, "created": False, "entry_type": requested_type}
+            raise ValueError(
+                f"entry_type is immutable (cannot change {meta.entry_type} → {requested_type})"
+            )
 
         # --- UPDATE path (existing inode, mutable fields only) ---
         from dataclasses import replace
@@ -2161,7 +2159,7 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual path to write.
             buf: File content as bytes or str (str will be UTF-8 encoded).
             count: Max bytes to write (None = len(buf)).
-            offset: Byte offset to start writing at (currently ignored — whole-file).
+            offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Optional operation context for permission checks.
 
         Returns:
@@ -2222,7 +2220,7 @@ class NexusFS(  # type: ignore[misc]
             raise NexusFileNotFoundError(
                 path, "sys_write requires existing file — use write() for create-on-write"
             )
-        await self._write_internal(path=path, content=buf, context=context)
+        await self._write_internal(path=path, content=buf, offset=offset, context=context)
         return {"path": path, "bytes_written": len(buf)}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
@@ -2296,7 +2294,7 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual file path.
             buf: File content as bytes or str.
             count: Max bytes to write (None = len(buf)).
-            offset: Byte offset (currently ignored — whole-file).
+            offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Operation context.
 
         Returns:
@@ -2314,7 +2312,7 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return _result
 
-        return await self._write_internal(path=path, content=buf, context=context)
+        return await self._write_internal(path=path, content=buf, offset=offset, context=context)
 
     async def _write_internal(
         self,
@@ -2325,6 +2323,7 @@ class NexusFS(  # type: ignore[misc]
         if_none_match: bool = False,
         force: bool = False,
         consistency: str = "sc",
+        offset: int = 0,
     ) -> dict[str, Any]:
         """Kernel write implementation — OCC-free.
 
@@ -2390,7 +2389,12 @@ class NexusFS(  # type: ignore[misc]
         _backend_caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
         _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
         if "external_content" in _backend_caps:
-            wr = route.backend.write_content(content, context=context)
+            wr = route.backend.write_content(
+                content,
+                content_id=meta.physical_path if (offset > 0 and meta) else "",
+                offset=offset,
+                context=context,
+            )
             content_hash = wr.content_id
             new_version = (meta.version + 1) if meta else 1
             ctx = self._require_context(context)
@@ -2399,7 +2403,7 @@ class NexusFS(  # type: ignore[misc]
                 path=path,
                 backend_name=route.backend.name,
                 physical_path=content_hash,
-                size=len(content),
+                size=wr.size if offset > 0 else len(content),
                 etag=content_hash,
                 created_at=meta.created_at if meta else now,
                 modified_at=now,
@@ -2415,7 +2419,13 @@ class NexusFS(  # type: ignore[misc]
             # VFS I/O Lock: exclusive write lock around backend write + metadata put.
             # Like Linux i_rwsem: held for I/O duration only, released before observers.
             with self._vfs_locked(path, "write"):
-                content_hash = route.backend.write_content(content, context=context).content_id
+                _wr = route.backend.write_content(
+                    content,
+                    content_id=meta.physical_path if (offset > 0 and meta) else "",
+                    offset=offset,
+                    context=context,
+                )
+                content_hash = _wr.content_id
 
                 # NOTE: sys_write does NOT release old content on overwrite.
                 # HDFS/GFS pattern: content cleanup is async via background GC.
@@ -2433,7 +2443,7 @@ class NexusFS(  # type: ignore[misc]
                     path=path,
                     backend_name=route.backend.name,
                     physical_path=content_hash,
-                    size=len(content),
+                    size=_wr.size if offset > 0 else len(content),
                     etag=content_hash,
                     created_at=meta.created_at if meta else now,
                     modified_at=now,
@@ -2455,7 +2465,7 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=zone_id or ROOT_ZONE_ID,
                 agent_id=agent_id,
                 etag=content_hash,
-                size=len(content),
+                size=metadata.size,
                 version=new_version,
                 is_new=(meta is None),
             )
@@ -2483,7 +2493,7 @@ class NexusFS(  # type: ignore[misc]
             "etag": content_hash,
             "version": new_version,
             "modified_at": now,
-            "size": len(content),
+            "size": metadata.size,
         }
 
     async def atomic_update(
@@ -4411,6 +4421,29 @@ class NexusFS(  # type: ignore[misc]
 
     # --- Search (sys_readdir/glob/grep) ---
 
+    def _entry_to_detail_dict(self, entry: FileMetadata, recursive: bool) -> dict[str, Any]:
+        """Convert a FileMetadata entry to a detail dict for sys_readdir.
+
+        Promotes entry_type=0 (DT_REG) to 1 (DT_DIR) for implicit directories
+        in non-recursive listings, matching ls -l semantics.
+        """
+        return {
+            "path": entry.path,
+            "size": entry.size,
+            "etag": entry.etag,
+            "entry_type": 1
+            if (
+                not recursive
+                and entry.entry_type == 0
+                and self.metadata.is_implicit_directory(entry.path)
+            )
+            else entry.entry_type,
+            "zone_id": entry.zone_id,
+            "owner_id": entry.owner_id,
+            "modified_at": entry.modified_at.isoformat() if entry.modified_at else None,
+            "version": entry.version,
+        }
+
     @rpc_expose(description="List directory entries")
     async def sys_readdir(
         self,
@@ -4432,50 +4465,14 @@ class NexusFS(  # type: ignore[misc]
             items_iter = self.metadata.list_iter(prefix=prefix, recursive=recursive)
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
             if details:
-                result.items = [
-                    {
-                        "path": e.path,
-                        "size": e.size,
-                        "etag": e.etag,
-                        "entry_type": 1
-                        if (
-                            not recursive
-                            and e.entry_type == 0
-                            and self.metadata.is_implicit_directory(e.path)
-                        )
-                        else e.entry_type,
-                        "zone_id": e.zone_id,
-                        "owner_id": e.owner_id,
-                        "modified_at": e.modified_at.isoformat() if e.modified_at else None,
-                        "version": e.version,
-                    }
-                    for e in result.items
-                ]
+                result.items = [self._entry_to_detail_dict(e, recursive) for e in result.items]
             else:
                 result.items = [e.path for e in result.items]
             return result
 
         entries = self.metadata.list(prefix=prefix, recursive=recursive)
         if details:
-            return [
-                {
-                    "path": e.path,
-                    "size": e.size,
-                    "etag": e.etag,
-                    "entry_type": 1
-                    if (
-                        not recursive
-                        and e.entry_type == 0
-                        and self.metadata.is_implicit_directory(e.path)
-                    )
-                    else e.entry_type,
-                    "zone_id": e.zone_id,
-                    "owner_id": e.owner_id,
-                    "modified_at": e.modified_at.isoformat() if e.modified_at else None,
-                    "version": e.version,
-                }
-                for e in entries
-            ]
+            return [self._entry_to_detail_dict(e, recursive) for e in entries]
         return [e.path for e in entries]
 
     # _run_async: replaced by direct run_sync() calls (Issue #1381)

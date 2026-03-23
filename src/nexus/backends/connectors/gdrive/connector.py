@@ -759,6 +759,7 @@ class GoogleDriveConnectorBackend(Backend, SkillDocMixin, ValidatedMixin, TraitB
         content: bytes,
         content_id: str = "",
         *,
+        offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
         """

@@ -23,6 +23,20 @@ if [ "$(uname -m)" = "aarch64" ]; then
     export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
 fi
 
+# ---------------------------------------------------------------------------
+# TLS block exhaustion fix (ggml, numpy, etc.)
+# CPU: LD_PRELOAD loads libgomp before TLS slots fill up.
+# CUDA: LD_PRELOAD conflicts with NVIDIA's libgomp (SIGILL); use
+#       GLIBC_TUNABLES to expand the static TLS reservation instead.
+# ---------------------------------------------------------------------------
+if [ -d /usr/local/cuda ]; then
+    export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.optional_static_tls=16384}"
+elif [ -z "${LD_PRELOAD:-}" ]; then
+    _gomp=$(find /usr/lib -name 'libgomp.so.1' -print -quit 2>/dev/null || true)
+    [ -n "$_gomp" ] && export LD_PRELOAD="$_gomp"
+    unset _gomp
+fi
+
 # Load helpers (same directory as this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=dockerfiles/entrypoint-helpers.sh
@@ -457,8 +471,8 @@ main() {
     setup_admin_api_key
     init_semantic_search_if_enabled
     start_zoekt_if_enabled
-    # Note: cluster join is now handled by nexusd itself when
-    # NEXUS_JOIN_TOKEN + NEXUS_PEER env vars are set.
+    # Note: TLS provisioning is file-based. If {data_dir}/tls/join-token
+    # exists, nexusd reads it and provisions certs from the leader.
     start_nexus_server
 }
 

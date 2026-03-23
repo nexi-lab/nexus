@@ -65,7 +65,7 @@ class MockBackend:
 
     # ── content ops ──
 
-    def write_content(self, content, content_id: str = "", *, context=None):
+    def write_content(self, content, content_id: str = "", *, offset: int = 0, context=None):
         from nexus.core.object_store import WriteResult
 
         h = hashlib.sha256(content).hexdigest()

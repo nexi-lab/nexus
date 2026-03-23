@@ -57,7 +57,7 @@ class SysModulesMutator:
 
     # Stubs for abstract methods (unused in boundary tests).
     # Return direct values per ObjectStoreABC contract.
-    def write_content(self, content, content_id: str = "", *, context=None):
+    def write_content(self, content, content_id: str = "", *, offset: int = 0, context=None):
         import hashlib
 
         from nexus.core.object_store import WriteResult

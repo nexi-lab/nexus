@@ -416,6 +416,109 @@ class TestOnWriteCallback:
 # === Properties ===
 
 
+class TestOffsetWrite:
+    """Offset write (POSIX pwrite semantics) for CAS single-blob files."""
+
+    def test_offset_write_splice(self, backend):
+        """Write at offset splices into existing content."""
+        r1 = backend.write_content(b"Hello World")
+        r2 = backend.write_content(b"Earth", r1.content_id, offset=6)
+        result = backend.read_content(r2.content_id)
+        assert result == b"Hello Earth"
+
+    def test_offset_write_beyond_eof_zero_fills(self, backend):
+        """Offset beyond EOF zero-fills the gap."""
+        r1 = backend.write_content(b"ABC")
+        r2 = backend.write_content(b"XY", r1.content_id, offset=5)
+        result = backend.read_content(r2.content_id)
+        assert result == b"ABC\x00\x00XY"
+
+    def test_offset_zero_unchanged(self, backend):
+        """offset=0 (default) behaves as whole-file replace — backward compat."""
+        backend.write_content(b"original")
+        r2 = backend.write_content(b"replaced", offset=0)
+        result = backend.read_content(r2.content_id)
+        assert result == b"replaced"
+
+    def test_offset_write_extends_file(self, backend):
+        """Writing past the end extends the file."""
+        r1 = backend.write_content(b"Hello")
+        r2 = backend.write_content(b" World!", r1.content_id, offset=5)
+        result = backend.read_content(r2.content_id)
+        assert result == b"Hello World!"
+        assert r2.size == 12
+
+
+class TestOffsetWriteCDC:
+    """Offset write for CAS+CDC chunked files."""
+
+    @pytest.fixture
+    def cdc_backend(self, tmp_path):
+        b = CASLocalBackend(root_path=tmp_path)
+        b._cdc.threshold = 1024  # 1KB threshold
+        b._cdc.min_chunk = 256
+        b._cdc.avg_chunk = 512
+        b._cdc.max_chunk = 1024
+        return b
+
+    def test_partial_write_in_one_chunk(self, cdc_backend):
+        """Partial write affecting a single chunk."""
+        # Write a chunked file: 2KB of 'A's
+        content = b"A" * 2048
+        r1 = cdc_backend.write_content(content)
+        assert cdc_backend._cdc.is_chunked(r1.content_id)
+
+        # Overwrite 10 bytes at offset 100 (within first chunk)
+        r2 = cdc_backend.write_content(b"BBBBBBBBBB", r1.content_id, offset=100)
+
+        # Read back and verify splice
+        result = cdc_backend.read_content(r2.content_id)
+        assert len(result) == 2048
+        assert result[100:110] == b"BBBBBBBBBB"
+        assert result[:100] == b"A" * 100
+        assert result[110:] == b"A" * (2048 - 110)
+
+    def test_partial_write_spanning_chunks(self, cdc_backend):
+        """Partial write that spans across chunk boundaries."""
+        # Write a chunked file: first half 'A', second half 'B'
+        content = b"A" * 1024 + b"B" * 1024
+        r1 = cdc_backend.write_content(content)
+
+        # Write across the boundary (around offset 1020)
+        patch = b"X" * 20
+        r2 = cdc_backend.write_content(patch, r1.content_id, offset=1014)
+
+        result = cdc_backend.read_content(r2.content_id)
+        assert len(result) == 2048
+        assert result[1014:1034] == patch
+        assert result[:1014] == b"A" * 1014
+        assert result[1034:] == b"B" * (2048 - 1034)
+
+    def test_unaffected_chunks_reused(self, cdc_backend):
+        """Chunks not touched by the partial write should have same hash (reused)."""
+        from nexus.backends.engines.cdc import ChunkedReference
+
+        # Use fixed-size chunks for predictable boundaries
+        content = b"A" * 512 + b"B" * 512 + b"C" * 512 + b"D" * 512
+        r1 = cdc_backend.write_content(content)
+
+        # Get chunk hashes from original manifest
+        m1_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r1.content_id))[0]
+        m1 = ChunkedReference.from_json(m1_data)
+
+        # Write 10 bytes at offset 10 (within first chunk region only)
+        r2 = cdc_backend.write_content(b"Z" * 10, r1.content_id, offset=10)
+
+        m2_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r2.content_id))[0]
+        m2 = ChunkedReference.from_json(m2_data)
+
+        # Suffix chunks (after the affected region) should have the same hashes
+        # The last chunks should be identical since we only modified the beginning
+        suffix_hashes_m1 = {ci.chunk_hash for ci in m1.chunks if ci.offset >= 512}
+        suffix_hashes_m2 = {ci.chunk_hash for ci in m2.chunks if ci.offset >= 512}
+        assert suffix_hashes_m1 == suffix_hashes_m2, "Unaffected suffix chunks should be reused"
+
+
 class TestProperties:
     def test_name(self, backend):
         assert backend.name == "local"

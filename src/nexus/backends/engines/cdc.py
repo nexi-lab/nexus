@@ -98,6 +98,16 @@ class ChunkingStrategy(Protocol):
         """Delete chunked content, handling chunk reference counts."""
         ...
 
+    def write_chunked_partial(
+        self,
+        old_manifest_hash: str,
+        buf: bytes,
+        offset: int,
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """Partial write into chunked content. Returns new manifest hash."""
+        ...
+
 
 # =============================================================================
 # Data Classes
@@ -306,6 +316,143 @@ class CDCEngine:
             b._bloom.add(chunk_hash)
         return chunk_hash, deduped
 
+    def write_chunked_partial(
+        self,
+        old_manifest_hash: str,
+        buf: bytes,
+        offset: int,
+        context: OperationContext | None = None,
+    ) -> str:
+        """Partial write: splice ``buf`` at ``offset`` within chunked content.
+
+        Only rewrites affected chunks. Unaffected chunks are reused
+        (ref_count incremented for the new manifest).
+
+        Returns new manifest hash.
+        """
+        b = self._backend
+
+        # Read old manifest
+        key = b._blob_key(old_manifest_hash)
+        manifest_data, _ = b._transport.get_blob(key)
+        old_manifest = ChunkedReference.from_json(manifest_data)
+
+        write_end = offset + len(buf)
+
+        # Classify chunks: prefix (before write), affected (overlap), suffix (after write)
+        prefix_chunks: list[ChunkInfo] = []
+        affected_chunks: list[ChunkInfo] = []
+        suffix_chunks: list[ChunkInfo] = []
+
+        for ci in old_manifest.chunks:
+            chunk_end = ci.offset + ci.length
+            if chunk_end <= offset:
+                prefix_chunks.append(ci)
+            elif ci.offset >= write_end:
+                suffix_chunks.append(ci)
+            else:
+                affected_chunks.append(ci)
+
+        if not affected_chunks:
+            # Write extends beyond all existing chunks — append scenario
+            # Read nothing, just write the new data as new chunks
+            affected_data = b"\x00" * max(0, offset - old_manifest.total_size) + buf
+            new_chunk_tuples = self._chunk_content(affected_data)
+            new_chunk_infos: list[ChunkInfo] = []
+            base_offset = old_manifest.total_size if not suffix_chunks else offset
+            for _co, _cl, chunk_bytes in new_chunk_tuples:
+                chunk_hash, _ = self._write_single_chunk(chunk_bytes)
+                new_chunk_infos.append(
+                    ChunkInfo(chunk_hash=chunk_hash, offset=base_offset + _co, length=_cl)
+                )
+        else:
+            # Read affected region, splice buf in, re-chunk
+            first_affected = affected_chunks[0]
+            last_affected = affected_chunks[-1]
+            region_start = first_affected.offset
+            region_end = last_affected.offset + last_affected.length
+
+            # Extend region to include write that goes beyond
+            region_end = max(region_end, write_end)
+
+            # Read affected chunk data
+            affected_data_parts: dict[int, bytes] = {}
+            for ci in affected_chunks:
+                chunk_data = self._read_single_chunk(ci.chunk_hash)
+                affected_data_parts[ci.offset] = chunk_data
+
+            # Assemble old data for the affected region
+            assembled = b""
+            for ci in affected_chunks:
+                assembled += affected_data_parts[ci.offset]
+
+            # Splice: replace [offset - region_start, offset - region_start + len(buf))
+            splice_start = offset - region_start
+            # Zero-fill if offset goes beyond assembled data
+            if splice_start > len(assembled):
+                assembled = assembled + b"\x00" * (splice_start - len(assembled))
+            new_region = assembled[:splice_start] + buf + assembled[splice_start + len(buf) :]
+
+            # Re-chunk the affected region
+            new_chunk_tuples = self._chunk_content(new_region)
+            new_chunk_infos = []
+            for _co, _cl, chunk_bytes in new_chunk_tuples:
+                chunk_hash, _ = self._write_single_chunk(chunk_bytes)
+                new_chunk_infos.append(
+                    ChunkInfo(chunk_hash=chunk_hash, offset=region_start + _co, length=_cl)
+                )
+
+        # Increment ref_count for reused prefix/suffix chunks
+        for ci in prefix_chunks + suffix_chunks:
+
+            def _inc_ref(meta: dict[str, Any]) -> dict[str, Any]:
+                meta["ref_count"] = meta.get("ref_count", 0) + 1
+                return meta
+
+            b._meta_update_locked(ci.chunk_hash, _inc_ref)
+
+        # Build new manifest
+        all_chunks = tuple(prefix_chunks) + tuple(new_chunk_infos) + tuple(suffix_chunks)
+        total_size = max(
+            (ci.offset + ci.length for ci in all_chunks),
+            default=0,
+        )
+
+        new_manifest = ChunkedReference(
+            total_size=total_size,
+            chunk_count=len(all_chunks),
+            avg_chunk_size=total_size // len(all_chunks) if all_chunks else 0,
+            content_hash="",  # Skip full-file hash for partial writes
+            chunks=all_chunks,
+        )
+        manifest_bytes = new_manifest.to_json()
+        manifest_hash = hash_content(manifest_bytes)
+
+        # Store manifest blob
+        mkey = b._blob_key(manifest_hash)
+        b._transport.put_blob(mkey, manifest_bytes)
+
+        def _update_manifest(meta: dict[str, Any]) -> dict[str, Any]:
+            meta["ref_count"] = meta.get("ref_count", 0) + 1
+            meta["size"] = total_size
+            meta["is_chunked_manifest"] = True
+            meta["chunk_count"] = len(all_chunks)
+            return meta
+
+        updated = b._meta_update_locked(manifest_hash, _update_manifest)
+        if updated.get("ref_count", 0) == 1 and b._bloom is not None:
+            b._bloom.add(manifest_hash)
+
+        logger.info(
+            "Partial write: offset=%d len=%d -> %d chunks (%d reused) total_size=%d",
+            offset,
+            len(buf),
+            len(all_chunks),
+            len(prefix_chunks) + len(suffix_chunks),
+            total_size,
+        )
+        return manifest_hash
+
     # === Read ===
 
     def read_chunked(self, content_hash: str, context: OperationContext | None = None) -> bytes:
@@ -326,11 +473,15 @@ class CDCEngine:
 
         content = b"".join(chunk_data[o] for o in sorted(chunk_data.keys()))
 
-        actual_hash = hash_content(content)
-        if actual_hash != manifest.content_hash:
-            raise ValueError(
-                f"Content hash mismatch: expected {manifest.content_hash}, got {actual_hash}"
-            )
+        # Verify full-content hash when available.
+        # Partial writes (write_chunked_partial) set content_hash="" — skip check,
+        # relying on per-chunk hash verification instead (Issue #1395).
+        if manifest.content_hash:
+            actual_hash = hash_content(content)
+            if actual_hash != manifest.content_hash:
+                raise ValueError(
+                    f"Content hash mismatch: expected {manifest.content_hash}, got {actual_hash}"
+                )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.debug(

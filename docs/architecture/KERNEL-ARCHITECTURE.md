@@ -79,7 +79,9 @@ Follows Linux's monolithic kernel model, not microkernel:
 | Services | Init-time DI + runtime hot-swap | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
-The kernel operates with zero services loaded.
+The kernel operates with zero services loaded. Kernel code (`core/nexus_fs.py`)
+has **zero reads** of `_system_services` attributes — all service wiring flows
+through factory-injected closures (`functools.partial`) or KernelDispatch hooks.
 
 **Drivers** use constructor DI at startup — same binary, different config
 (`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). Immutable after init.
@@ -90,13 +92,16 @@ The kernel operates with zero services loaded.
 and injects them via DI. Different distros select different service sets at
 startup — `nexus-server` loads all 22+, `nexus-embedded` loads zero.
 
-Factory boot sequence (3 tiers, strictly ordered):
+Factory boot sequence (6 phases, strictly ordered):
 
-| Tier | Name | When | What gets built | Depends on |
-|------|------|------|-----------------|------------|
-| 0 | KERNEL | First | `NexusFS` + kernel primitives | MetastoreABC (sole required param) |
-| 1 | SYSTEM | After kernel | Critical services (ReBAC, Audit, Permissions) | Kernel + storage pillars |
-| 2 | BRICK | After system | Auto-discovered bricks (`nexus/bricks/*/brick_factory.py`) | Kernel + system services |
+| Phase | Name | Side effects | Key actions |
+|-------|------|-------------|-------------|
+| 1 | `create_nexus_services()` | None | Build 3-tier service containers (Kernel/System/Brick) |
+| 2 | `NexusFS()` constructor | None | Kernel primitives only (MetastoreABC, VFSRouter, KernelDispatch, PipeManager, StreamManager) |
+| 3 | `link()` | None (memory only) | Wire service topology via `_do_link()`. `functools.partial` bakes `system_services` into closures — kernel never stores the reference for reads |
+| 4 | `initialize()` | None | Register VFS hooks (INTERCEPT + OBSERVE), IPC adapter bind |
+| 5 | `bootstrap()` | Yes (I/O, threads) | `mark_bootstrapped()` → auto-start PersistentServices, activate HotSwappable hooks |
+| 6 | Runtime | Yes | Syscalls live, hooks fire, observers emit |
 
 Services needing kernel syscalls declare `KERNEL_DEPS` in `brick_factory.py`;
 `ServiceRegistry` resolves via kernel symbol table (`EXPORT_SYMBOL()` pattern).
@@ -129,6 +134,13 @@ One-click contract: implement protocol → `coordinator.enlist()` →
 kernel handles the rest. `ServiceLifecycleCoordinator` (kernel-owned, created by
 factory at link time) scans the registry and auto-calls the appropriate methods during
 `NexusFS.bootstrap()` / `NexusFS.close()`.
+
+**Service → Kernel wiring pattern:** Factory captures service references in
+`functools.partial` closures (same pattern as `_brick_on`, `_parse_fn`).
+The kernel receives injected callables/sentinels — never reads service
+containers directly. Example: `flush_write_observer` uses
+`_flush_write_observer_fn` (closure over `write_observer.flush()`), not
+`_system_services.write_observer`.
 
 **Source of truth:** `contracts/protocols/service_lifecycle.py`
 
@@ -242,8 +254,10 @@ first match handles entire operation. Each resolver owns its own permission
 semantics.
 
 **INTERCEPT**: Per-operation hook lists (`VFS*Hook` protocols, one per syscall).
-Hooks receive a typed context dataclass, can modify context or abort. Audit is a
-factory-registered interceptor, not a kernel built-in.
+Hooks receive a typed context dataclass, can modify context or abort. PRE hooks
+are synchronous. POST hooks support both sync (serial, fault-isolated) and async
+(parallel with timeout) — classified at registration by Rust `HookRegistry`.
+Audit is a factory-registered interceptor, not a kernel built-in.
 
 **OBSERVE**: `VFSObserver` instances receive frozen `FileEvent` (§4.3) on all
 mutations. Used for cache invalidation, workflow triggers, telemetry.
@@ -373,11 +387,11 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 |-----------|---------|---------------|------|
 | **VFSRouter** | `core.protocols.vfs_router` | VFS `lookup_slow()` | `route(path)` → `ResolvedPath` (backend, backend_path, mount_point). ~5μs redb lookup. Resolution only — mount CRUD is `MountProtocol` (service) |
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path read/write lock with hierarchy-aware conflict detection. Details in §4.1 |
-| **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase callback mechanism implementing §2.4. Per-op callback lists; empty = zero overhead. Hook contracts (§2.4) and registration API (§2.5) are User Contract; this is the plumbing |
+| **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase callback mechanism implementing §2.4. Rust `PathTrie` (O(depth) resolver routing) + Rust `HookRegistry` (cached sync/async classification). Per-op callback lists; empty = zero overhead |
 | **PipeManager + RingBuffer** | `system_services` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `system_services` + `core.stream` | append-only log | VFS named streams — inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
-| **ZoneWriteGuardHook** | `system_services.lifecycle` | `fs/namespace.c` mount readonly | Zone write permission check via KernelDispatch PRE hook (Issue #1790). Rejects writes to terminating zones |
+| **DistributedLockManager** | `core.nexus_fs` (sentinel) | `fs/locks.c` | Factory-injected sentinel (`_distributed_lock_manager`). Advisory distributed locks (Raft-backed). Kernel knows but doesn't own |
 | **ServiceLifecycleCoordinator** | `system_services.lifecycle` | `init/main.c` + `module.c` | Kernel-owned bridge: ServiceRegistry + BrickLifecycleManager. Manages enlist/swap/shutdown for all 4 service quadrants |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 

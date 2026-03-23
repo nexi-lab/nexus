@@ -507,9 +507,26 @@ def up(
     """
     config = _load_project_config_optional()
 
-    # Auto-init: if no nexus.yaml exists, run the equivalent of
-    # `nexus init --preset shared` so `nexus up` is the only command needed.
+    # Auto-init: if no nexus.yaml in CWD, search parent directories first
+    # to avoid creating a nested project inside an existing workspace.
     if not config:
+        from nexus.cli.state import CONFIG_SEARCH_PATHS
+
+        cwd = Path.cwd()
+        for parent in cwd.parents:
+            for name in CONFIG_SEARCH_PATHS:
+                candidate = parent / Path(name).name
+                if candidate.exists():
+                    console.print(
+                        f"[yellow]No nexus.yaml in current directory, "
+                        f"but found {candidate}[/yellow]"
+                    )
+                    console.print(
+                        f"  Run `nexus up` from {parent} or "
+                        f"`nexus init --preset shared` here to create a new project."
+                    )
+                    raise SystemExit(1)
+
         console.print("[bold]No nexus.yaml found — initializing with preset 'shared'...[/bold]")
         from click.testing import CliRunner
 
@@ -556,14 +573,14 @@ def up(
     prev_project = prev_state.get("project_name", "")
     no_force_flags = build is None and force_pull is None and not addons
 
-    # Detect config drift: if image, services, profiles, or auth changed
-    # since the last run, skip the fast path — `docker compose up` must
-    # reconcile the new config into running containers.
+    # Detect config drift: compare the compose environment that would be
+    # generated from current nexus.yaml against what was used last time.
+    # This catches changes to image, auth, ports, TLS, API key, etc.
     config_changed = False
     if prev_project and no_force_flags:
-        prev_image = prev_state.get("image_used", "")
-        curr_image = _resolve_image_ref_from_config(config)
-        if prev_image and curr_image and prev_image != curr_image:
+        curr_compose_env = _derive_project_env(config)
+        prev_compose_env = prev_state.get("compose_env", {})
+        if prev_compose_env and curr_compose_env != prev_compose_env:
             config_changed = True
 
     if prev_project and no_force_flags and not config_changed:
@@ -863,12 +880,14 @@ def up(
     _save_project_config(config)
 
     # Write runtime state to {data_dir}/.state.json (NOT nexus.yaml)
+    # compose_env snapshot enables config-drift detection on next `nexus up`.
     runtime_state: dict[str, Any] = {
         "ports": resolved_ports,
         "api_key": admin_api_key or "",
         "image_used": effective_image_used,
         "build_mode": effective_build_mode,
         "project_name": compose_env["COMPOSE_PROJECT_NAME"],
+        "compose_env": compose_env,
         "started_at": datetime.now(UTC).isoformat(),
     }
     if tls_state:

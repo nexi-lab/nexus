@@ -70,6 +70,108 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ---------------------------------------------------------------------------
+  # E2E smoke tests against the edge image (develop only, non-blocking)
+  # Starts a Nexus container, runs init, then exercises the permissions demo
+  # and build-perf e2e scripts.
+  # ---------------------------------------------------------------------------
+  e2e-edge:
+    name: E2E edge smoke tests
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install nexus CLI
+        run: pip install .
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start Nexus edge container
+        run: |
+          docker run -d --name nexus-e2e \
+            --network host \
+            -e NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus \
+            -e NEXUS_HOST=0.0.0.0 \
+            -e NEXUS_PORT=2026 \
+            -e NEXUS_GRPC_PORT=2029 \
+            -e NEXUS_PROFILE=full \
+            -v /tmp/nexus-data:/app/data \
+            ghcr.io/nexi-lab/nexus:edge
+
+          # Wait for server to be ready
+          echo "Waiting for Nexus to start..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:2026/health > /dev/null 2>&1; then
+              echo "Nexus is ready (${i}s)"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:2026/health || (docker logs nexus-e2e && exit 1)
+
+      - name: Initialize Nexus with auth
+        run: |
+          export NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus
+          export NEXUS_DATA_DIR=/tmp/nexus-data
+          export SKIP_CONFIRM=1
+          export QUIET=1
+          bash scripts/init-nexus-with-auth.sh --init
+          # Source the generated env file
+          if [ -f .nexus-admin-env ]; then
+            source .nexus-admin-env
+            echo "NEXUS_URL=${NEXUS_URL}" >> "$GITHUB_ENV"
+            echo "NEXUS_API_KEY=${NEXUS_API_KEY}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run permissions demo
+        run: |
+          bash permissions_demo_enhanced.sh
+        continue-on-error: true  # Non-blocking — report but don't fail the workflow
+
+      - name: Run build perf e2e
+        run: |
+          export NEXUS_URL=${NEXUS_URL:-http://localhost:2026}
+          export NEXUS_GRPC_PORT=2029
+          python scripts/test_build_perf_e2e.py
+        continue-on-error: true  # Non-blocking
+
+      - name: Collect container logs on failure
+        if: failure()
+        run: docker logs nexus-e2e 2>&1 | tail -100
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f nexus-e2e 2>/dev/null || true
+
   build-zoekt:
     name: Build & push multi-arch zoekt image
     runs-on: ubuntu-latest

@@ -108,14 +108,13 @@ class FederationIPCResolver:
         self,
         path: str,
         *,
-        return_metadata: bool = False,
         context: Any = None,
-    ) -> bytes | dict[str, Any] | None:
+    ) -> bytes | None:
         """Read from remote DT_PIPE/DT_STREAM via gRPC Call RPC.
 
         Returns None if path is not a remote IPC inode (decline).
         """
-        _ = (return_metadata, context)  # Protocol-required; not used for IPC
+        _ = context  # Protocol-required; not used for IPC
         resolved = self._resolve_remote(path)
         if resolved is None:
             return None

@@ -105,14 +105,13 @@ class FederationContentResolver:
         self,
         path: str,
         *,
-        return_metadata: bool = False,
         context: Any = None,
-    ) -> bytes | dict | None:
+    ) -> bytes | None:
         """Single-call resolve: metadata lookup + local/remote decision.
 
         Returns:
-            bytes or dict — handled: content fetched from remote peer.
-            None          — not handled: local content or no metadata.
+            bytes — handled: content fetched from remote peer.
+            None  — not handled: local content or no metadata.
         """
         _ = context  # unused, present for protocol conformance
         meta = self._metastore.get(path)
@@ -130,17 +129,7 @@ class FederationContentResolver:
 
         for origin in addr.origins:
             try:
-                content = self._read_from_origin(origin, path, content_hash, file_size)
-
-                if return_metadata:
-                    return {
-                        "content": content,
-                        "etag": meta.etag,
-                        "version": meta.version,
-                        "modified_at": meta.modified_at,
-                        "size": len(content),
-                    }
-                return content
+                return self._read_from_origin(origin, path, content_hash, file_size)
             except NexusFileNotFoundError as exc:
                 last_err = exc
                 logger.warning("Federation read from %s failed, trying next origin", origin)

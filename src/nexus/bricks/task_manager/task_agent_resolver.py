@@ -57,9 +57,8 @@ class TaskAgentResolver:
         self,
         path: str,
         *,
-        return_metadata: bool = False,
         context: Any = None,
-    ) -> bytes | dict | None:
+    ) -> bytes | None:
         """Return agent status JSON for the task's worker, or None."""
         _ = context
         task_id = self._match_task_id(path)
@@ -77,15 +76,7 @@ class TaskAgentResolver:
                 payload = proc.to_dict()
                 payload["task_id"] = task_id
 
-        body = json.dumps(payload, ensure_ascii=False).encode()
-
-        if return_metadata:
-            return {
-                "content": body,
-                "size": len(body),
-                "entry_type": 0,  # DT_REG
-            }
-        return body
+        return json.dumps(payload, ensure_ascii=False).encode()
 
     def try_write(self, path: str, _content: bytes) -> dict[str, Any] | None:
         """Reject writes on agent status paths (read-only virtual path)."""

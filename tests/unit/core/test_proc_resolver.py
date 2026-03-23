@@ -44,17 +44,15 @@ class TestTryRead:
         assert data["name"] == "agent-1"
         assert data["owner_id"] == OWNER
 
-    def test_read_with_return_metadata(self) -> None:
+    def test_read_returns_bytes(self) -> None:
         pt, resolver = _make_resolver()
         desc = pt.spawn("agent-1", OWNER, ZONE)
         path = f"/{ZONE}/proc/{desc.pid}/status"
 
-        result = resolver.try_read(path, return_metadata=True)
-        assert isinstance(result, dict)
-        assert "content" in result
-        assert "size" in result
-        assert result["entry_type"] == 0  # DT_REG
-        assert result["size"] == len(result["content"])
+        result = resolver.try_read(path)
+        assert isinstance(result, bytes)
+        data = json.loads(result)
+        assert data["pid"] == desc.pid
 
     def test_read_nonexistent_returns_none(self) -> None:
         _, resolver = _make_resolver()

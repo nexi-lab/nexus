@@ -68,9 +68,8 @@ class ProcResolver:
         self,
         path: str,
         *,
-        return_metadata: bool = False,
         context: Any = None,
-    ) -> bytes | dict | None:
+    ) -> bytes | None:
         """Generate process status JSON from in-memory state, or None."""
         _ = context
         pid = self._match_pid(path)
@@ -81,15 +80,7 @@ class ProcResolver:
         if desc is None:
             return None
 
-        body = json.dumps(desc.to_dict(), ensure_ascii=False, indent=2).encode()
-
-        if return_metadata:
-            return {
-                "content": body,
-                "size": len(body),
-                "entry_type": 0,  # DT_REG
-            }
-        return body
+        return json.dumps(desc.to_dict(), ensure_ascii=False, indent=2).encode()
 
     def try_write(self, path: str, _content: bytes) -> dict[str, Any] | None:
         """Reject writes on proc paths (read-only, like Linux /proc)."""

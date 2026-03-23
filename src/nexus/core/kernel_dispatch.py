@@ -180,9 +180,8 @@ class KernelDispatch:
         self,
         path: str,
         *,
-        return_metadata: bool = False,
         context: Any = None,
-    ) -> tuple[bool, Any]:
+    ) -> tuple[bool, bytes | None]:
         """PRE-DISPATCH: first-match resolver for read (#1665).
 
         Returns (handled, result):
@@ -197,14 +196,12 @@ class KernelDispatch:
             if idx is not None:
                 resolver = self._trie_resolvers.get(idx)
                 if resolver is not None:
-                    result = resolver.try_read(
-                        path, return_metadata=return_metadata, context=context
-                    )
+                    result = resolver.try_read(path, context=context)
                     if result is not None:
                         return True, result
         # Phase 2: fallback linear scan
         for r in self._fallback_resolvers:
-            result = r.try_read(path, return_metadata=return_metadata, context=context)
+            result = r.try_read(path, context=context)
             if result is not None:
                 return True, result
         return False, None

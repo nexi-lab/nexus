@@ -117,19 +117,17 @@ class TestTryReadRemoteContent:
         mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/file.txt")
 
     @patch.object(FederationContentResolver, "_fetch_from_peer")
-    def test_remote_with_metadata(self, mock_fetch):
+    def test_remote_returns_bytes(self, mock_fetch):
         mock_fetch.return_value = b"data"
         meta = _make_meta(f"local@{REMOTE_ADDR}", etag="xyz789", version=3, size=4)
         metastore = MagicMock()
         metastore.get.return_value = meta
 
         resolver = _make_resolver(metastore=metastore)
-        result = resolver.try_read("/test/file.txt", return_metadata=True)
+        result = resolver.try_read("/test/file.txt")
 
-        assert result["content"] == b"data"
-        assert result["etag"] == "xyz789"
-        assert result["version"] == 3
-        assert result["size"] == 4
+        assert isinstance(result, bytes)
+        assert result == b"data"
 
     @patch.object(FederationContentResolver, "_fetch_from_peer_streaming")
     def test_large_file_uses_streaming(self, mock_stream):
@@ -641,8 +639,8 @@ class TestCDCAwareFederationRead:
         assert result == b"fallback content"
         mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/file.txt")
 
-    def test_blob_fetch_with_return_metadata(self):
-        """CDC-aware read with return_metadata=True."""
+    def test_blob_fetch_returns_bytes(self):
+        """CDC-aware read returns bytes (not dict)."""
         meta = _make_meta(f"local@{REMOTE_ADDR}", etag="hash123", size=50)
         metastore = MagicMock()
         metastore.get.return_value = meta
@@ -659,8 +657,7 @@ class TestCDCAwareFederationRead:
             peer_blob_client=mock_client,
             local_object_store=mock_store,
         )
-        result = resolver.try_read("/test/file.txt", return_metadata=True)
+        result = resolver.try_read("/test/file.txt")
 
-        assert isinstance(result, dict)
-        assert result["content"] == b"data"
-        assert result["etag"] == "hash123"
+        assert isinstance(result, bytes)
+        assert result == b"data"

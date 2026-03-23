@@ -3080,27 +3080,26 @@ class NexusFS(  # type: ignore[misc]
     async def sys_unlink(
         self, path: str, context: OperationContext | None = None
     ) -> dict[str, Any]:
-        """
-        Delete a file or memory.
+        """Remove a directory entry (POSIX unlink(2)).
 
         Removes file from backend and metadata store.
         Decrements reference count in CAS (only deletes when ref_count=0).
 
-        Supports memory virtual paths.
-
         Args:
-            path: Virtual path to delete (supports memory paths)
-            context: Optional operation context for permission checks (uses default if not provided)
+            path: Virtual path to delete (supports memory and pipe paths).
+            context: Optional operation context for permission checks.
 
         Returns:
-            Empty dict on success.
+            Dict on success. When operating in overlay mode and the file
+            exists only in the base layer, creates a whiteout marker instead
+            of deleting. Returns ``{"overlay_whiteout": True}`` in that case.
 
         Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            BackendError: If delete operation fails
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
-            PermissionError: If path is read-only or user doesn't have write permission
+            NexusFileNotFoundError: If file doesn't exist.
+            InvalidPathError: If path is invalid.
+            BackendError: If delete operation fails.
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace).
+            PermissionError: If path is read-only or user doesn't have write permission.
         """
         # DT_PIPE fast-path: skip validate/zone_check/resolve/metastore.get
         if self._pipe_manager is not None and path in self._pipe_manager._buffers:
@@ -3261,62 +3260,18 @@ class NexusFS(  # type: ignore[misc]
         if new_route.readonly:
             raise PermissionError(f"Cannot rename to read-only path: {new_path}")
 
-        # Check if source exists (explicit metadata or implicit directory)
-        is_implicit_dir = not self.metadata.exists(
-            old_path
-        ) and self.metadata.is_implicit_directory(old_path)
-        if not self.metadata.exists(old_path) and not is_implicit_dir:
+        # ── Fast-fail (unlocked, optimization only) ──
+        # Avoids lock acquisition for the common "file not found" error case.
+        # Not authoritative — re-checked under lock below.
+        if not self.metadata.exists(old_path) and not self.metadata.is_implicit_directory(old_path):
             raise NexusFileNotFoundError(old_path)
 
         meta = self.metadata.get(old_path)
+        is_directory = (
+            meta and meta.mime_type == "inode/directory"
+        ) or self.metadata.is_implicit_directory(old_path)
 
-        # Check if destination already exists
-        # For connector backends, also verify the file exists in backend storage
-        # (metadata might be stale if previous operations failed)
-        if self.metadata.exists(new_path):
-            if new_route.backend.supports_rename is True:
-                # Connector backend - verify file actually exists in storage
-                # If metadata says it exists but storage doesn't, clean up stale metadata
-                try:
-                    # Check if this is a GCS connector backend (has bucket attribute)
-                    # NOTE: bucket/blob access is GCS-specific, kept as hasattr for now
-                    if (
-                        hasattr(new_route.backend, "bucket")
-                        and hasattr(new_route.backend, "_get_blob_path")
-                        and new_route.backend.name == "path_gcs"
-                    ):
-                        # GCS-specific attributes (dynamically checked with hasattr above)
-                        dest_blob = new_route.backend.bucket.blob(
-                            new_route.backend._get_blob_path(new_route.backend_path)
-                        )
-                        if not dest_blob.exists():
-                            # Stale metadata - clean it up
-                            import logging
-
-                            log = logging.getLogger(__name__)
-                            log.warning(
-                                f"Cleaning up stale metadata for {new_path} (file not in backend storage)"
-                            )
-                            self.metadata.delete(new_path)
-                        else:
-                            # File really exists
-                            raise FileExistsError(f"Destination path already exists: {new_path}")
-                    else:
-                        # Not a GCS connector backend, just check metadata
-                        raise FileExistsError(f"Destination path already exists: {new_path}")
-                except AttributeError:
-                    # Not a GCS connector backend, just check metadata
-                    raise FileExistsError(f"Destination path already exists: {new_path}") from None
-            else:
-                # CAS backend - metadata is source of truth
-                raise FileExistsError(f"Destination path already exists: {new_path}")
-
-        # Check if this is a directory BEFORE renaming (important!)
-        # After rename, the old path won't have children anymore
-        # is_implicit_dir was already computed above - also check for explicit directory
-        is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
-
-        # PRE-INTERCEPT: pre-rename hooks (Issue #900 / #1312)
+        # ── PRE-INTERCEPT (unlocked — hooks may be slow) ──
         from nexus.contracts.vfs_hooks import RenameHookContext
 
         _rename_ctx = RenameHookContext(
@@ -3330,15 +3285,40 @@ class NexusFS(  # type: ignore[misc]
         )
         self._dispatch.intercept_pre_rename(_rename_ctx)
 
-        # VFS I/O Lock: exclusive write lock on BOTH paths (sorted order = deadlock-free).
-        # Like Linux i_rwsem on both source and destination inodes.
+        # ── VFS I/O Lock: exclusive write lock on BOTH paths ──
+        # Sorted order = deadlock-free (like Linux i_rwsem on both inodes).
         _first, _second = sorted([old_path, new_path])
         _h1 = self._vfs_acquire(_first, "write")
         try:
             _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
             try:
-                # For path-based connector backends, move actual file/directory in storage
-                # CAS backends have supports_rename = False
+                # ── Authoritative checks (under lock, TOCTOU-safe) ──
+                is_implicit_dir = not self.metadata.exists(
+                    old_path
+                ) and self.metadata.is_implicit_directory(old_path)
+                if not self.metadata.exists(old_path) and not is_implicit_dir:
+                    raise NexusFileNotFoundError(old_path)
+
+                meta = self.metadata.get(old_path)
+                is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
+
+                # Check destination — use backend.file_exists() for connector backends
+                if self.metadata.exists(new_path):
+                    if new_route.backend.supports_rename is True and hasattr(
+                        new_route.backend, "file_exists"
+                    ):
+                        if new_route.backend.file_exists(new_route.backend_path):
+                            raise FileExistsError(f"Destination path already exists: {new_path}")
+                        # Stale metadata — file gone from backend, clean up
+                        logger.warning(
+                            "Cleaning up stale metadata for %s (file not in backend storage)",
+                            new_path,
+                        )
+                        self.metadata.delete(new_path)
+                    else:
+                        raise FileExistsError(f"Destination path already exists: {new_path}")
+
+                # ── Backend rename (under lock) ──
                 if old_route.backend.supports_rename is True:
                     try:
                         old_route.backend.rename_file(
@@ -3352,7 +3332,7 @@ class NexusFS(  # type: ignore[misc]
                             backend=old_route.backend.name,
                         ) from e
 
-                # Perform metadata rename (recursively for directories)
+                # ── Metadata rename (under lock) ──
                 self.metadata.rename_path(old_path, new_path)
             finally:
                 if _h2:
@@ -3616,16 +3596,19 @@ class NexusFS(  # type: ignore[misc]
 
     @rpc_expose(description="Check if file exists")
     async def sys_access(self, path: str, context: OperationContext | None = None) -> bool:
-        """
-        Check if a file or directory exists.
+        """Check if a file or directory exists and is accessible (POSIX access(2)).
+
+        Tier 1 — combines existence check with permission visibility.
+        Returns False (not raises) when permission denied, hiding the
+        distinction between "not found" and "no access".
 
         Args:
-            path: Virtual path to check
-            context: Operation context for permission checks (uses default if None)
+            path: Virtual path to check.
+            context: Operation context for permission checks (uses default if None).
 
         Returns:
-            True if file or implicit directory exists AND user has read permission on it
-            OR any descendant (enables hierarchical navigation), False otherwise
+            True if path exists (explicit metadata or implicit directory) AND
+            user has read permission (or TRAVERSE for implicit dirs), False otherwise.
 
         Note:
             With permissions enabled, directories are visible if user has access to ANY
@@ -3636,7 +3619,6 @@ class NexusFS(  # type: ignore[misc]
         Performance:
             For implicit directories (directories without explicit files, like /zones),
             uses TRAVERSE permission check (O(1)) instead of descendant access check (O(n)).
-            This is a major optimization for FUSE path resolution operations.
         """
         try:
             path = self._validate_path(path)

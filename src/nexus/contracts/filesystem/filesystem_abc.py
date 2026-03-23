@@ -153,6 +153,10 @@ class NexusFilesystemABC(ABC):
 
         NOT "delete" — unlink is precise: removes directory entry,
         CAS refcount decrements. Content freed only when refcount=0.
+
+        When operating in overlay mode and the file exists only in the
+        base layer, creates a whiteout marker instead of deleting.
+        Returns ``{"overlay_whiteout": True}`` in that case.
         """
         ...
 
@@ -240,10 +244,10 @@ class NexusFilesystemABC(ABC):
 
     @abstractmethod
     async def sys_access(self, path: str, context: Any = None) -> bool:
-        """Check if a file exists (POSIX access(2)).
+        """Check if a file exists and is accessible (POSIX access(2)).
 
-        Simplified to existence check. Permission checks handled
-        separately by ReBAC service.
+        Combines existence with permission visibility — returns False
+        (not raises) when path doesn't exist or user lacks permission.
         """
         ...
 

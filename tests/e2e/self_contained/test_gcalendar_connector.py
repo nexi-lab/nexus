@@ -306,7 +306,7 @@ class TestSkillDocGeneration:
 
         try:
             # Write SKILL.md
-            result = calendar_backend.write_skill_docs("/mnt/calendar/", filesystem=nx)
+            result = await calendar_backend.write_skill_docs("/mnt/calendar/", filesystem=nx)
             assert isinstance(result, dict)
             skill_path = result.get("skill_md")
 

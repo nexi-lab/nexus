@@ -1,6 +1,6 @@
 """Tests for SkillDocGenerator — schema-to-doc generation extracted from SkillDocMixin."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -112,8 +112,8 @@ def empty_generator() -> SkillDocGenerator:
 @pytest.fixture()
 def mock_filesystem() -> MagicMock:
     fs = MagicMock()
-    fs.mkdir = MagicMock()
-    fs.write = MagicMock()
+    fs.mkdir = AsyncMock()
+    fs.write = AsyncMock()
     return fs
 
 
@@ -176,10 +176,11 @@ class TestGenerateSkillDoc:
 
 
 class TestWriteSkillDocs:
-    def test_writes_skill_md(
+    @pytest.mark.asyncio
+    async def test_writes_skill_md(
         self, generator: SkillDocGenerator, mock_filesystem: MagicMock
     ) -> None:
-        result = generator.write_skill_docs("/mnt/calendar", filesystem=mock_filesystem)
+        result = await generator.write_skill_docs("/mnt/calendar", filesystem=mock_filesystem)
 
         assert result["skill_md"] == "/mnt/calendar/.skill/SKILL.md"
         mock_filesystem.mkdir.assert_any_call("/mnt/calendar/.skill", parents=True, exist_ok=True)
@@ -189,10 +190,11 @@ class TestWriteSkillDocs:
         assert skill_md_call[0][0] == "/mnt/calendar/.skill/SKILL.md"
         assert isinstance(skill_md_call[0][1], bytes)
 
-    def test_writes_examples(
+    @pytest.mark.asyncio
+    async def test_writes_examples(
         self, generator: SkillDocGenerator, mock_filesystem: MagicMock
     ) -> None:
-        result = generator.write_skill_docs("/mnt/calendar", filesystem=mock_filesystem)
+        result = await generator.write_skill_docs("/mnt/calendar", filesystem=mock_filesystem)
 
         assert "/mnt/calendar/.skill/examples/create_meeting.yaml" in result["examples"]
         mock_filesystem.mkdir.assert_any_call(
@@ -203,12 +205,14 @@ class TestWriteSkillDocs:
         assert example_call[0][0] == "/mnt/calendar/.skill/examples/create_meeting.yaml"
         assert example_call[0][1] == b"summary: Team Standup\n"
 
-    def test_no_filesystem_returns_empty_result(self, generator: SkillDocGenerator) -> None:
-        result = generator.write_skill_docs("/mnt/calendar", filesystem=None)
+    @pytest.mark.asyncio
+    async def test_no_filesystem_returns_empty_result(self, generator: SkillDocGenerator) -> None:
+        result = await generator.write_skill_docs("/mnt/calendar", filesystem=None)
         assert result["skill_md"] is None
         assert result["examples"] == []
 
-    def test_empty_skill_name_returns_empty_result(self, mock_filesystem: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_skill_name_returns_empty_result(self, mock_filesystem: MagicMock) -> None:
         gen = SkillDocGenerator(
             skill_name="",
             schemas={},
@@ -216,12 +220,13 @@ class TestWriteSkillDocs:
             error_registry={},
             examples={},
         )
-        result = gen.write_skill_docs("/mnt/x", filesystem=mock_filesystem)
+        result = await gen.write_skill_docs("/mnt/x", filesystem=mock_filesystem)
         assert result["skill_md"] is None
         assert result["examples"] == []
         mock_filesystem.write.assert_not_called()
 
-    def test_no_examples_skips_examples_dir(self, mock_filesystem: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_no_examples_skips_examples_dir(self, mock_filesystem: MagicMock) -> None:
         gen = SkillDocGenerator(
             skill_name="test",
             schemas=_DEFAULT_SCHEMAS,
@@ -229,14 +234,17 @@ class TestWriteSkillDocs:
             error_registry=_DEFAULT_ERRORS,
             examples={},
         )
-        result = gen.write_skill_docs("/mnt/x", filesystem=mock_filesystem)
+        result = await gen.write_skill_docs("/mnt/x", filesystem=mock_filesystem)
         assert result["skill_md"] is not None
         assert result["examples"] == []
         # Only the .skill dir mkdir, not examples/
         mkdir_paths = [c[0][0] for c in mock_filesystem.mkdir.call_args_list]
         assert "/mnt/x/.skill/examples" not in mkdir_paths
 
-    def test_filesystem_error_returns_partial_result(self, mock_filesystem: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_filesystem_error_returns_partial_result(
+        self, mock_filesystem: MagicMock
+    ) -> None:
         mock_filesystem.mkdir.side_effect = OSError("permission denied")
         gen = SkillDocGenerator(
             skill_name="test",
@@ -245,11 +253,12 @@ class TestWriteSkillDocs:
             error_registry={},
             examples={},
         )
-        result = gen.write_skill_docs("/mnt/x", filesystem=mock_filesystem)
+        result = await gen.write_skill_docs("/mnt/x", filesystem=mock_filesystem)
         assert result["skill_md"] is None
         assert result["examples"] == []
 
-    def test_custom_skill_dir(self, mock_filesystem: MagicMock) -> None:
+    @pytest.mark.asyncio
+    async def test_custom_skill_dir(self, mock_filesystem: MagicMock) -> None:
         gen = SkillDocGenerator(
             skill_name="test",
             schemas={},
@@ -258,7 +267,7 @@ class TestWriteSkillDocs:
             examples={},
             skill_dir=".docs",
         )
-        gen.write_skill_docs("/mnt/x", filesystem=mock_filesystem)
+        await gen.write_skill_docs("/mnt/x", filesystem=mock_filesystem)
         mock_filesystem.mkdir.assert_any_call("/mnt/x/.docs", parents=True, exist_ok=True)
 
 

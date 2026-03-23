@@ -423,8 +423,9 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
 - **PipeManager (mkpipe)** — VFS named pipe lifecycle (created via `sys_setattr`
   upsert, read/write via `sys_read`/`sys_write`, destroyed via `sys_unlink`),
   per-pipe lock for MPMC safety. Reads are destructive (consumed on read).
-- **RingBuffer (kpipe)** — Lock-free SPSC kernel primitive (`kfifo` analogue),
-  GIL-atomic. PipeManager wraps with `asyncio.Lock` for MPMC.
+- **RingBuffer (kpipe)** — Lock-free **SPSC** kernel primitive (`kfifo` analogue),
+  no internal synchronization. PipeManager wraps with per-pipe `asyncio.Lock`
+  for **MPMC** safety. Direct RingBuffer access is kernel-internal only.
 
 **DT_STREAM (StreamManager + StreamBuffer):**
 

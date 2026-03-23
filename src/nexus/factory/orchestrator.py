@@ -633,6 +633,19 @@ async def _register_vfs_hooks(
     # EventsService observer: self-registered via HotSwappable.hook_spec()
     # at bootstrap() → activate_hot_swappable_services() (Issue #1611).
 
+    # CASRefCountObserver: decrements CAS ref_count on delete/overwrite.
+    # Issue #1320: sys_unlink is metadata-only — this observer handles content cleanup.
+    # Registered for each CAS backend mounted in the router.
+    from nexus.backends.base.cas_addressing_engine import CASAddressingEngine as _CASEngine
+
+    for _mount_path, _mount_entry in nx.router._backends.items():
+        _backend = _mount_entry.backend
+        if isinstance(_backend, _CASEngine):
+            _spec = _backend.hook_spec()
+            if _spec and _spec.observers:
+                for _obs in _spec.observers:
+                    await _enlist(f"cas_ref_count_{_mount_path}", _obs)
+
     # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
     # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).
     from nexus.lib.revision_notifier import RevisionNotifier

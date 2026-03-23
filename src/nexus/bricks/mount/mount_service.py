@@ -143,7 +143,7 @@ class MountService:
             if hasattr(backend, "has_capability") and backend.has_capability(
                 ConnectorCapability.SKILL_DOC
             ):
-                await asyncio.to_thread(self._generate_skill_docs, mount_point, backend)
+                await self._generate_skill_docs(mount_point, backend)
 
             # Search indexing — index the mount point so content is discoverable.
             # Uses search_service DI (Issue #3148 Phase 1).
@@ -171,10 +171,10 @@ class MountService:
                 "Post-mount hooks failed for %s (mount still active)", mount_point, exc_info=True
             )
 
-    def _generate_skill_docs(self, mount_point: str, backend: Any) -> None:
-        """Generate .skill/ directory for a connector backend (sync).
+    async def _generate_skill_docs(self, mount_point: str, backend: Any) -> None:
+        """Generate .skill/ directory for a connector backend.
 
-        Called from post-mount hooks and sync completion.
+        Called from post-mount hooks.
         """
         from nexus.backends.connectors.base import SkillDocMixin
 
@@ -194,7 +194,7 @@ class MountService:
 
         if fs is not None:
             try:
-                result = backend.write_skill_docs(mount_point, fs)
+                result = await backend.write_skill_docs(mount_point, fs)
                 if result.get("skill_md"):
                     logger.info(
                         "Generated skill docs for %s at %s", mount_point, result["skill_md"]
@@ -1558,7 +1558,7 @@ class MountService:
             try:
                 route = self.router.route(mount_point)
                 if route:
-                    await asyncio.to_thread(self._generate_skill_docs, mount_point, route.backend)
+                    await self._generate_skill_docs(mount_point, route.backend)
             except Exception:
                 logger.warning(
                     "Post-sync skill doc regeneration failed for %s",

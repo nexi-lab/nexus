@@ -103,7 +103,7 @@ class SkillDocGenerator:
         """Get the full path to the .skill directory."""
         return posixpath.join(mount_path.rstrip("/"), self._skill_dir)
 
-    def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
+    async def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
         """Generate and write .skill/ directory to the filesystem.
 
         Creates:
@@ -134,35 +134,35 @@ class SkillDocGenerator:
             return result
 
         try:
-            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+            await filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
 
             # Write SKILL.md
             skill_md_path = posixpath.join(skill_dir, "SKILL.md")
             content = self.generate_skill_doc(mount_path)
-            filesystem.write(skill_md_path, content.encode("utf-8"))
+            await filesystem.write(skill_md_path, content.encode("utf-8"))
             result["skill_md"] = skill_md_path
             logger.info("Generated SKILL.md at %s", skill_md_path)
 
             # Write example files
             if self._examples:
                 examples_dir = posixpath.join(skill_dir, "examples")
-                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
+                await filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
 
                 for filename, file_content in self._examples.items():
                     example_path = posixpath.join(examples_dir, filename)
-                    filesystem.write(example_path, file_content.encode("utf-8"))
+                    await filesystem.write(example_path, file_content.encode("utf-8"))
                     result["examples"].append(example_path)
                     logger.debug("Generated example at %s", example_path)
 
             # Write individual schema files (Issue #3148, Decision #7B)
             if self._schemas:
                 schemas_dir = posixpath.join(skill_dir, "schemas")
-                filesystem.mkdir(schemas_dir, parents=True, exist_ok=True)
+                await filesystem.mkdir(schemas_dir, parents=True, exist_ok=True)
 
                 for op_name, schema in self._schemas.items():
                     schema_content = self._generate_annotated_schema(op_name, schema)
                     schema_path = posixpath.join(schemas_dir, f"{op_name}.yaml")
-                    filesystem.write(schema_path, schema_content.encode("utf-8"))
+                    await filesystem.write(schema_path, schema_content.encode("utf-8"))
                     result["schemas"].append(schema_path)
                     logger.debug("Generated schema at %s", schema_path)
 

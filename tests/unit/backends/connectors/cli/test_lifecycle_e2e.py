@@ -142,12 +142,16 @@ class TestConnectorLifecycleE2E:
         assert "# Github Connector" in skill_doc or "# GitHub Connector" in skill_doc.title()
         assert "create_issue" in skill_doc.lower() or "Create Issue" in skill_doc
 
-    def test_step2_skill_doc_writes_to_filesystem(self) -> None:
+    async def test_step2_skill_doc_writes_to_filesystem(self) -> None:
         """Step 2: Skill docs written to .skill/ directory with schema files."""
+        from unittest.mock import AsyncMock
+
         connector = FakeGHConnector()
         fs = MagicMock()
+        fs.mkdir = AsyncMock()
+        fs.write = AsyncMock()
 
-        result = connector.write_skill_docs("/mnt/github", fs)
+        result = await connector.write_skill_docs("/mnt/github", fs)
 
         # SKILL.md should be written
         assert result["skill_md"] == "/mnt/github/.skill/SKILL.md"

@@ -195,7 +195,7 @@ class CDCEngine:
 
     Uses CASAddressingEngine's internal methods directly:
     ``_transport``, ``_blob_key()``, ``_read_meta()``, ``_write_meta()``,
-    ``_meta_update_locked()``, ``_stripe_lock``, ``_bloom``.
+    ``_meta_update_locked()``, ``_meta_semaphore``, ``_bloom``.
     """
 
     __slots__ = ("_backend", "threshold", "min_chunk", "avg_chunk", "max_chunk", "workers")
@@ -649,11 +649,7 @@ class CDCEngine:
             b._write_meta(content_hash, meta)
             return False
 
-        if b._stripe_lock is not None:
-            lock = b._stripe_lock.acquire_for(content_hash)
-            with lock:
-                return _do_release()
-        return _do_release()
+        return b._with_meta_lock(content_hash, _do_release)
 
     # === Chunking algorithms ===
 

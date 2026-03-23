@@ -24,11 +24,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
-from nexus.backends.base.stripe_lock import _StripeLock
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
+from nexus.core.semaphore import PythonVFSSemaphore
 
 
 @pytest.fixture
@@ -46,14 +46,14 @@ def backend_with_features(transport):
     """CASAddressingEngine with all Feature DI enabled."""
     cache = SimpleCache()
     bloom = SimpleBloom()
-    stripe = _StripeLock(num_stripes=16)
+    semaphore = PythonVFSSemaphore()
     callback = MagicMock()
     return CASAddressingEngine(
         transport,
         backend_name="test-local-features",
         bloom_filter=bloom,
         content_cache=cache,
-        stripe_lock=stripe,
+        meta_semaphore=semaphore,
         on_write_callback=callback,
     )
 
@@ -303,12 +303,14 @@ class TestContentCache:
 # === Feature DI: Stripe Lock ===
 
 
-class TestStripeLock:
+class TestMetaSemaphore:
     def test_concurrent_writes_safe(self, tmp_path):
         """50 threads writing same content should produce ref_count=50."""
         transport = LocalBlobTransport(root_path=tmp_path, fsync=False)
-        stripe = _StripeLock(num_stripes=16)
-        backend = CASAddressingEngine(transport, backend_name="concurrent", stripe_lock=stripe)
+        semaphore = PythonVFSSemaphore()
+        backend = CASAddressingEngine(
+            transport, backend_name="concurrent", meta_semaphore=semaphore
+        )
 
         content = b"concurrent-content"
         results = []
@@ -342,8 +344,10 @@ class TestStripeLock:
     def test_concurrent_different_content(self, tmp_path):
         """50 threads writing different content should all succeed."""
         transport = LocalBlobTransport(root_path=tmp_path, fsync=False)
-        stripe = _StripeLock(num_stripes=16)
-        backend = CASAddressingEngine(transport, backend_name="concurrent", stripe_lock=stripe)
+        semaphore = PythonVFSSemaphore()
+        backend = CASAddressingEngine(
+            transport, backend_name="concurrent", meta_semaphore=semaphore
+        )
 
         results = []
         errors = []

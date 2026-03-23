@@ -387,13 +387,14 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 |-----------|---------|---------------|------|
 | **VFSRouter** | `core.protocols.vfs_router` | VFS `lookup_slow()` | `route(path)` → `ResolvedPath` (backend, backend_path, mount_point). ~5μs redb lookup. Resolution only — mount CRUD is `MountProtocol` (service) |
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path read/write lock with hierarchy-aware conflict detection. Details in §4.1 |
+| **VFSSemaphore** | `core.semaphore` | POSIX `sem_t` | Named counting semaphore + TTL + holder tracking. Used by advisory lock layer (`SemaphoreAdvisoryLockManager`) and CAS metadata RMW (replaces `_StripeLock`). ~200ns Rust / ~500ns Python |
 | **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase callback mechanism implementing §2.4. Rust `PathTrie` (O(depth) resolver routing) + Rust `HookRegistry` (cached sync/async classification). Per-op callback lists; empty = zero overhead |
 | **PipeManager + RingBuffer** | `system_services` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `system_services` + `core.stream` | append-only log | VFS named streams — inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
-| **DistributedLockManager** | `core.nexus_fs` (sentinel) | `fs/locks.c` | Factory-injected sentinel (`_distributed_lock_manager`). Advisory distributed locks (Raft-backed). Kernel knows but doesn't own |
+| **DistributedLockManager** | `core.nexus_fs` (sentinel) | `fs/locks.c` | Factory-injected sentinel (`_distributed_lock_manager`). Advisory locks via `AdvisoryLockManager` (`SemaphoreAdvisoryLockManager` standalone, `RaftLockManager` federation). Always available after factory boot |
 | **ServiceLifecycleCoordinator** | `system_services.lifecycle` | `init/main.c` + `module.c` | Kernel-owned bridge: ServiceRegistry + BrickLifecycleManager. Manages enlist/swap/shutdown for all 4 service quadrants |
-| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.4 |
+| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.5 |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock
@@ -447,7 +448,21 @@ See `federation-memo.md` §7j for design rationale.
 | Consumer paths | KernelDispatch OBSERVE (local), EventBus (distributed) |
 | Emission point | Always AFTER lock release |
 
-### 4.4 AgentRegistry — Kernel Process Table
+### 4.4 VFSSemaphore — Named Counting Semaphore
+
+| Property | Value |
+|----------|-------|
+| POSIX analogue | `sem_t` (named semaphore, extended with TTL + holder tracking) |
+| Modes | Counting (N holders), mutex (max_holders=1) |
+| Latency | ~200ns (Rust PyO3) / ~500ns–1μs (Python fallback) |
+| Scope | In-memory, process-scoped, TTL-based lazy expiry |
+| Users | Advisory lock layer (SemaphoreAdvisoryLockManager), CAS metadata RMW |
+
+Replaced `_StripeLock` (ad-hoc 64-stripe mutex) for CAS metadata coordination.
+Advisory lock layer uses two semaphores per path for RW gate pattern
+(shared/exclusive). See `lock-architecture.md` §3.
+
+### 4.5 AgentRegistry — Kernel Process Table
 
 | Property | Value |
 |----------|-------|
@@ -470,7 +485,6 @@ before any service boots, with no upward dependency.
 **Consumers:** EvictionManager, AcpService, ProcResolver (all service-layer).
 These are created at factory link-time (`_do_link()`) where `nx._agent_registry`
 is already available.
-
 
 ---
 

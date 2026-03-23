@@ -16,9 +16,10 @@ References:
 import asyncio
 import logging
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from nexus.lib.distributed_lock import (
+    AdvisoryLockManager,
     ExtendResult,
     HolderInfo,
     LockInfo,
@@ -101,8 +102,9 @@ class RaftLockManager(LockManagerBase):
     async def acquire(
         self,
         path: str,
-        timeout: float = LockManagerBase.DEFAULT_TIMEOUT,
-        ttl: float = LockManagerBase.DEFAULT_TTL,
+        mode: Literal["exclusive", "shared"] = "exclusive",  # noqa: ARG002 (Raft store has no shared mode yet)
+        timeout: float = AdvisoryLockManager.DEFAULT_TIMEOUT,
+        ttl: float = AdvisoryLockManager.DEFAULT_TTL,
         max_holders: int = 1,
     ) -> str | None:
         if max_holders < 1:
@@ -160,7 +162,7 @@ class RaftLockManager(LockManagerBase):
         self,
         lock_id: str,
         path: str,
-        ttl: float = LockManagerBase.DEFAULT_TTL,
+        ttl: float = AdvisoryLockManager.DEFAULT_TTL,
     ) -> ExtendResult:
         lock_key = self._lock_key(path)
         ttl_secs = max(1, int(ttl))

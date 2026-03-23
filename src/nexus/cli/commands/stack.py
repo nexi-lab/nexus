@@ -550,18 +550,29 @@ def up(
 
     # ---------------------------------------------------------------
     # Smart resume: detect existing container state and take fast path
-    # when no flags request a rebuild/pull/force-recreate.
+    # when no flags request a rebuild/pull/force-recreate AND the
+    # config has not changed since the last `nexus up`.
     # ---------------------------------------------------------------
     prev_project = prev_state.get("project_name", "")
     no_force_flags = build is None and force_pull is None and not addons
+
+    # Detect config drift: if image, services, profiles, or auth changed
+    # since the last run, skip the fast path — `docker compose up` must
+    # reconcile the new config into running containers.
+    config_changed = False
     if prev_project and no_force_flags:
+        prev_image = prev_state.get("image_used", "")
+        curr_image = _resolve_image_ref_from_config(config)
+        if prev_image and curr_image and prev_image != curr_image:
+            config_changed = True
+
+    if prev_project and no_force_flags and not config_changed:
         container_state = _detect_container_state(prev_project)
 
         if container_state == "running":
             # Already running — print status and exit
             console.print()
             console.print("[green]Nexus stack is already running.[/green]")
-            prev_ports = prev_state.get("ports", {})
             conn_env = resolve_connection_env(config, prev_state)
             console.print()
             console.print("[bold]Connection:[/bold]")
@@ -575,15 +586,36 @@ def up(
             return
 
         if container_state == "stopped":
-            # Containers exist but stopped — fast resume via docker compose start
+            # Containers exist but stopped — fast resume via docker compose up
+            # (not `start`) so config changes are reconciled, then health-poll.
             console.print()
             console.print("[bold]Resuming stopped Nexus stack...[/bold]")
             profiles = _resolve_profiles(config)
-            compose_env = _derive_project_env(config, resolved_ports=prev_state.get("ports"))
-            result = _run_compose(cf, profiles, "start", extra_env=compose_env)
+            prev_ports = prev_state.get("ports", config.get("ports", {}))
+            compose_env = _derive_project_env(config, resolved_ports=prev_ports)
+            result = _run_compose(cf, profiles, "up", "-d", extra_env=compose_env)
             if result.returncode != 0:
                 console.print("[red]Error:[/red] Failed to resume stack.")
                 raise SystemExit(result.returncode)
+
+            # Health polling — same guarantees as a fresh start
+            active_services = config.get("services", [])
+            health_services = [s for s in active_services if s in HEALTH_ENDPOINTS]
+            console.print("[bold]Waiting for services...[/bold]")
+            health_results = asyncio.run(_poll_all_services(health_services, prev_ports, timeout))
+            all_healthy = True
+            for service, elapsed, healthy in health_results:
+                if healthy:
+                    console.print(f"  [green]✓[/green] {service} ({elapsed:.1f}s)")
+                else:
+                    console.print(f"  [red]✗[/red] {service} (timed out after {elapsed:.0f}s)")
+                    all_healthy = False
+            if not all_healthy:
+                console.print()
+                console.print("[yellow]Some services did not become healthy.[/yellow]")
+                console.print("  Run `nexus logs` to investigate.")
+                raise SystemExit(1)
+
             console.print("[green]✓[/green] Stack resumed.")
             conn_env = resolve_connection_env(config, prev_state)
             console.print()

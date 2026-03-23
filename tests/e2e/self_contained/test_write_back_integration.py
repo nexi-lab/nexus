@@ -76,6 +76,7 @@ def mock_gateway(record_store):
     gw.metadata_get.return_value = MagicMock(mtime=datetime.now(UTC), content_hash="abc", size=1024)
     gw.sys_read = AsyncMock(return_value=b"hello world")
     gw.sys_write = AsyncMock()
+    gw.write = AsyncMock()
     return gw
 
 
@@ -376,8 +377,8 @@ class TestConflictIntegration:
         await service._process_all_backends()
 
         # Both conflict copy AND backend write should happen
-        mock_gateway.sys_write.assert_called_once()
-        conflict_path = mock_gateway.sys_write.call_args[0][0]
+        mock_gateway.write.assert_called_once()
+        conflict_path = mock_gateway.write.call_args[0][0]
         assert ".sync-conflict-" in conflict_path
 
         backend.write_content.assert_called_once()

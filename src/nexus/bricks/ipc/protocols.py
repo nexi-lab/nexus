@@ -30,7 +30,7 @@ class VFSOperations(Protocol):
         """Read file contents at the given path."""
         ...
 
-    async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
+    async def write(self, path: str, data: bytes, zone_id: str) -> None:
         """Write data to the given path (create or overwrite)."""
         ...
 

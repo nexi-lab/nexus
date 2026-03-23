@@ -168,7 +168,7 @@ class TestVersionHistoryGC:
 
         # Create multiple versions
         for i in range(5):
-            await nx.sys_write(path, f"Version {i + 1}".encode())
+            await nx.write(path, f"Version {i + 1}".encode())
         await _flush(nx)
 
         # Run GC with very aggressive settings (0 retention, 1 max version)
@@ -194,7 +194,7 @@ class TestVersionHistoryGC:
 
         # Create multiple versions
         for i in range(3):
-            await nx.sys_write(path, f"Version {i + 1}".encode())
+            await nx.write(path, f"Version {i + 1}".encode())
         await _flush(nx)
 
         # Get initial version count
@@ -224,7 +224,7 @@ class TestVersionHistoryGC:
 
         # Create 10 versions
         for i in range(10):
-            await nx.sys_write(path, f"Version {i + 1}".encode())
+            await nx.write(path, f"Version {i + 1}".encode())
         await _flush(nx)
 
         # Get the resource_id (path_id) for this file
@@ -269,7 +269,7 @@ class TestVersionHistoryGC:
         """Test that GC reports accurate statistics."""
         # Create a file
         path = "/workspace/stats_test.txt"
-        await nx.sys_write(path, b"Content")
+        await nx.write(path, b"Content")
         await _flush(nx)
 
         gc = VersionHistoryGC(record_store)
@@ -291,7 +291,7 @@ class TestVersionHistoryGC:
         for file_num in range(3):
             path = f"/workspace/file{file_num}.txt"
             for version in range(5):
-                await nx.sys_write(path, f"File {file_num} Version {version}".encode())
+                await nx.write(path, f"File {file_num} Version {version}".encode())
         await _flush(nx)
 
         # Run GC with max 2 versions
@@ -317,7 +317,7 @@ class TestVersionHistoryGC:
         """Test parameter override functionality."""
         path = "/workspace/override_test.txt"
         for i in range(5):
-            await nx.sys_write(path, f"V{i}".encode())
+            await nx.write(path, f"V{i}".encode())
         await _flush(nx)
 
         gc = VersionHistoryGC(record_store)

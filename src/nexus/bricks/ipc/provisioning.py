@@ -80,7 +80,7 @@ class AgentProvisioner:
         }
         card_data = json.dumps(card, indent=2).encode("utf-8")
         card_file = agent_card_path(agent_id)
-        await self._storage.sys_write(card_file, card_data, self._zone_id)
+        await self._storage.write(card_file, card_data, self._zone_id)
 
         logger.info(
             "Provisioned IPC directories for agent %s (%d subdirs + AGENT.json)",
@@ -111,7 +111,7 @@ class AgentProvisioner:
                 },
                 indent=2,
             ).encode("utf-8")
-            await self._storage.sys_write(card_file, card_data, self._zone_id)
+            await self._storage.write(card_file, card_data, self._zone_id)
             logger.info("Deprovisioned IPC for agent %s", agent_id)
         except Exception:
             logger.warning(

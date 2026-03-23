@@ -217,7 +217,7 @@ class TestNexusFSOverlayWrite:
     async def test_write_new_file_in_overlay_workspace(self, nexus_fs):
         """Writing a new file creates an upper layer entry."""
         new_content = b"print('new file')\n"
-        await nexus_fs.sys_write("/ws/agent-a/new_module.py", new_content)
+        await nexus_fs.write("/ws/agent-a/new_module.py", new_content)
 
         # Should be readable back
         content = await nexus_fs.sys_read("/ws/agent-a/new_module.py")
@@ -232,7 +232,7 @@ class TestNexusFSOverlayWrite:
 
         # Write new content
         new_content = b"debug: false\nport: 9090\n"
-        await nexus_fs.sys_write("/ws/agent-a/config.yaml", new_content)
+        await nexus_fs.write("/ws/agent-a/config.yaml", new_content)
 
         # Should now return new content
         content = await nexus_fs.sys_read("/ws/agent-a/config.yaml")
@@ -241,7 +241,7 @@ class TestNexusFSOverlayWrite:
     @pytest.mark.asyncio
     async def test_write_then_read_base_files_still_work(self, nexus_fs, base_content):
         """Writing one file doesn't affect other base layer files."""
-        await nexus_fs.sys_write("/ws/agent-a/config.yaml", b"updated config\n")
+        await nexus_fs.write("/ws/agent-a/config.yaml", b"updated config\n")
 
         # Other base files should still be readable
         assert await nexus_fs.sys_read("/ws/agent-a/src/utils.py") == base_content["src/utils.py"]
@@ -276,7 +276,7 @@ class TestNexusFSOverlayDelete:
     async def test_delete_upper_file_removes_normally(self, nexus_fs):
         """Deleting a file that exists only in upper layer removes it normally."""
         # Write a new file (upper only)
-        await nexus_fs.sys_write("/ws/agent-a/temp.py", b"temp content\n")
+        await nexus_fs.write("/ws/agent-a/temp.py", b"temp content\n")
         assert await nexus_fs.sys_read("/ws/agent-a/temp.py") == b"temp content\n"
 
         # Delete it — this is a normal delete (not whiteout)
@@ -299,14 +299,14 @@ class TestNonOverlayPathUnaffected:
     @pytest.mark.asyncio
     async def test_write_and_read_non_overlay_path(self, nexus_fs):
         """Paths outside the overlay workspace go through normal NexusFS flow."""
-        await nexus_fs.sys_write("/regular/test.txt", b"hello world\n")
+        await nexus_fs.write("/regular/test.txt", b"hello world\n")
         content = await nexus_fs.sys_read("/regular/test.txt")
         assert content == b"hello world\n"
 
     @pytest.mark.asyncio
     async def test_delete_non_overlay_path(self, nexus_fs):
         """Delete on non-overlay path works normally."""
-        await nexus_fs.sys_write("/regular/to_delete.txt", b"goodbye\n")
+        await nexus_fs.write("/regular/to_delete.txt", b"goodbye\n")
         result = await nexus_fs.sys_unlink("/regular/to_delete.txt")
         assert result is not None
         assert "overlay_whiteout" not in (result or {})

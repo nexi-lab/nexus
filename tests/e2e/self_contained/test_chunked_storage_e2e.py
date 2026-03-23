@@ -16,7 +16,7 @@ class TestChunkedStorageE2E:
         content = b"This is a small test file content."
 
         # Write
-        await nexus_fs.sys_write("/test_small.txt", content)
+        await nexus_fs.write("/test_small.txt", content)
 
         # Read back
         read_content = await nexus_fs.sys_read("/test_small.txt")
@@ -34,7 +34,7 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
         # Write
-        await nexus_fs.sys_write("/test_large.bin", large_content)
+        await nexus_fs.write("/test_large.bin", large_content)
 
         # Verify it was chunked
         etag = nexus_fs.get_etag("/test_large.bin")
@@ -54,7 +54,7 @@ class TestChunkedStorageE2E:
 
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
-        await nexus_fs.sys_write("/chunks_test.bin", large_content)
+        await nexus_fs.write("/chunks_test.bin", large_content)
 
         etag = nexus_fs.get_etag("/chunks_test.bin")
         backend = nexus_fs.router.route("/").backend
@@ -77,7 +77,7 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
         # Write
-        await nexus_fs.sys_write("/delete_test.bin", large_content)
+        await nexus_fs.write("/delete_test.bin", large_content)
         content_hash = nexus_fs.get_etag("/delete_test.bin")
 
         backend = nexus_fs.router.route("/").backend
@@ -110,7 +110,7 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 2_000_000)
         original_size = len(large_content)
 
-        await nexus_fs.sys_write("/size_test.bin", large_content)
+        await nexus_fs.write("/size_test.bin", large_content)
 
         metadata = await nexus_fs.sys_stat("/size_test.bin")
         assert metadata["size"] == original_size
@@ -121,8 +121,8 @@ class TestChunkedStorageE2E:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
         # Write same content twice
-        await nexus_fs.sys_write("/dedup_a.bin", large_content)
-        await nexus_fs.sys_write("/dedup_b.bin", large_content)
+        await nexus_fs.write("/dedup_a.bin", large_content)
+        await nexus_fs.write("/dedup_b.bin", large_content)
 
         etag_a = nexus_fs.get_etag("/dedup_a.bin")
         etag_b = nexus_fs.get_etag("/dedup_b.bin")
@@ -149,8 +149,8 @@ class TestChunkedStorageBackwardCompatibility:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
 
         # Write both types
-        await nexus_fs.sys_write("/small.txt", small_content)
-        await nexus_fs.sys_write("/large.bin", large_content)
+        await nexus_fs.write("/small.txt", small_content)
+        await nexus_fs.write("/large.bin", large_content)
 
         backend = nexus_fs.router.route("/").backend
 
@@ -185,14 +185,14 @@ class TestChunkedStorageBackwardCompatibility:
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 500_000)
 
         # Write small
-        await nexus_fs.sys_write("/overwrite.bin", small_content)
+        await nexus_fs.write("/overwrite.bin", small_content)
         etag1 = nexus_fs.get_etag("/overwrite.bin")
 
         backend = nexus_fs.router.route("/").backend
         assert not backend._cdc.is_chunked(etag1)
 
         # Overwrite with large
-        await nexus_fs.sys_write("/overwrite.bin", large_content)
+        await nexus_fs.write("/overwrite.bin", large_content)
         etag2 = nexus_fs.get_etag("/overwrite.bin")
 
         assert backend._cdc.is_chunked(etag2)
@@ -205,14 +205,14 @@ class TestChunkedStorageBackwardCompatibility:
         small_content = b"New small content"
 
         # Write large
-        await nexus_fs.sys_write("/overwrite2.bin", large_content)
+        await nexus_fs.write("/overwrite2.bin", large_content)
         etag1 = nexus_fs.get_etag("/overwrite2.bin")
 
         backend = nexus_fs.router.route("/").backend
         assert backend._cdc.is_chunked(etag1)
 
         # Overwrite with small
-        await nexus_fs.sys_write("/overwrite2.bin", small_content)
+        await nexus_fs.write("/overwrite2.bin", small_content)
         etag2 = nexus_fs.get_etag("/overwrite2.bin")
 
         assert not backend._cdc.is_chunked(etag2)
@@ -235,8 +235,8 @@ class TestChunkedStorageCDCBehavior:
         content_a = common_prefix + suffix_a
         content_b = common_prefix + suffix_b
 
-        await nexus_fs.sys_write("/similar_a.bin", content_a)
-        await nexus_fs.sys_write("/similar_b.bin", content_b)
+        await nexus_fs.write("/similar_a.bin", content_a)
+        await nexus_fs.write("/similar_b.bin", content_b)
 
         etag_a = nexus_fs.get_etag("/similar_a.bin")
         etag_b = nexus_fs.get_etag("/similar_b.bin")

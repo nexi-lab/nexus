@@ -57,7 +57,7 @@ class TestTruncate:
         mock_nexus_fs.sys_read.return_value = b"hello world"
 
         fuse_ops.truncate("/file.txt", 5)
-        mock_nexus_fs.sys_write.assert_called_once_with("/file.txt", b"hello", context=None)
+        mock_nexus_fs.write.assert_called_once_with("/file.txt", b"hello", context=None)
 
     def test_truncate_pads(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
         mock_nexus_fs.sys_access.return_value = True
@@ -65,7 +65,7 @@ class TestTruncate:
 
         fuse_ops.truncate("/file.txt", 5)
         expected = b"hi\x00\x00\x00"
-        mock_nexus_fs.sys_write.assert_called_once_with("/file.txt", expected, context=None)
+        mock_nexus_fs.write.assert_called_once_with("/file.txt", expected, context=None)
 
     def test_truncate_invalidates_cache(
         self, fuse_ops: Any, mock_nexus_fs: MagicMock, mock_cache: MagicMock

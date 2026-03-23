@@ -401,7 +401,7 @@ async def set_agent_spec(
     spec_data["spec_generation"] = existing_gen + 1
 
     ctx = parse_operation_context(None)
-    await vfs.sys_write(spec_path, _json.dumps(spec_data).encode(), context=ctx)
+    await vfs.write(spec_path, _json.dumps(spec_data).encode(), context=ctx)
 
     return AgentSpecResponse(
         agent_type=body.agent_type,

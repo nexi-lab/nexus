@@ -218,7 +218,7 @@ async def _seed_files(
             parent = "/".join(path.split("/")[:-1])
             if parent:
                 await nx.sys_mkdir(parent, parents=True, exist_ok=True)
-            await nx.sys_write(path, content.encode(), consistency="ec")
+            await nx.write(path, content.encode())
             seeded.append(path)
             created += 1
         except Exception as e:
@@ -237,7 +237,7 @@ async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     plan_path = "/workspace/demo/plan.md"
     for version_content in PLAN_VERSIONS:
         try:
-            await nx.sys_write(plan_path, version_content.encode())
+            await nx.write(plan_path, version_content.encode())
             created += 1
         except Exception:
             break
@@ -246,7 +246,7 @@ async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     final = next((c for p, c, _ in DEMO_FILES if p == plan_path), None)
     if final:
         try:
-            await nx.sys_write(plan_path, final.encode())
+            await nx.write(plan_path, final.encode())
             created += 1
         except Exception:
             pass

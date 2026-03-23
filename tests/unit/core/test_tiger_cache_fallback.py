@@ -221,6 +221,12 @@ class TestStatsTracking:
 class TestBloomFilterIntegration:
     """Tests for BloomFilter L2 pre-gate on TigerCache (Issue #3192)."""
 
+    @pytest.fixture(autouse=True)
+    def _require_bloom_filter(self, tiger_cache):
+        """Skip all tests in this class if BloomFilter (fastbloom_rs) is not available."""
+        if tiger_cache._l2_bloom is None:
+            pytest.skip("fastbloom_rs not installed — BloomFilter unavailable")
+
     def test_bloom_rejects_unknown_key(self, tiger_cache):
         """BloomFilter rejects keys never added — skips L2 Dragonfly round-trip."""
         unknown = CacheKey("user", "nobody", "read", "file", "zone-x")

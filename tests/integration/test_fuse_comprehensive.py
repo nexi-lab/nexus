@@ -66,7 +66,7 @@ async def test_thread_safety() -> bool:
         # Create test files
         print("Creating test files...")
         for i in range(10):
-            await nx.sys_write(f"/thread_test_{i}.txt", f"Content {i}".encode())
+            await nx.write(f"/thread_test_{i}.txt", f"Content {i}".encode())
 
         # Mount FUSE
         mount_point = tempfile.mkdtemp(prefix="nexus-fuse-test-")
@@ -183,7 +183,7 @@ async def test_rust_integration() -> bool:
             }
         )
 
-        await nx.sys_write("/rust_test.txt", b"Test content")
+        await nx.write("/rust_test.txt", b"Test content")
         content = await nx.sys_read("/rust_test.txt")
         assert content == b"Test content", "Python mode read failed"
         print("✓ Python-only mode works")
@@ -240,7 +240,7 @@ async def test_permissions() -> bool:
 
         # Test basic read/write with permissions enabled
         print("\nTesting basic operations with permissions...")
-        await nx.sys_write("/perm_test.txt", b"Permission test")
+        await nx.write("/perm_test.txt", b"Permission test")
         content = await nx.sys_read("/perm_test.txt")
         assert content == b"Permission test", "Permission-enabled read failed"
         print("✓ Permissions work correctly")

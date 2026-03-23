@@ -599,9 +599,7 @@ class SyncService:
                                 write_path = virtual_path
                                 if fetch.relative_path and fetch.relative_path != rel_path:
                                     write_path = f"{ctx.mount_point}/{fetch.relative_path}"
-                                loop.run_until_complete(
-                                    self._gw.sys_write(write_path, fetch.content)
-                                )
+                                loop.run_until_complete(self._gw.write(write_path, fetch.content))
                                 result.cache_synced += 1
                         except Exception:
                             logger.debug(

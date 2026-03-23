@@ -106,7 +106,7 @@ class TaskManagerService:
 
     async def _write_json(self, path: str, data: dict[str, Any]) -> None:
         await self._ensure_dirs()
-        await self._fs.sys_write(path, json.dumps(data, default=str))
+        await self._fs.write(path, json.dumps(data, default=str))
 
     @staticmethod
     def _audit_dir(task_id: str) -> str:

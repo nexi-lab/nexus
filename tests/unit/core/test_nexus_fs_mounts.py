@@ -759,7 +759,7 @@ class TestMountIntegration:
         )
 
         # Write to the mount
-        await nx.sys_write("/mnt/write/test.txt", b"Hello from mount!")
+        await nx.write("/mnt/write/test.txt", b"Hello from mount!")
 
         # Read back
         content = await nx.sys_read("/mnt/write/test.txt")
@@ -778,8 +778,8 @@ class TestMountIntegration:
         )
 
         # Write some files
-        await nx.sys_write("/mnt/list/file1.txt", b"Content 1")
-        await nx.sys_write("/mnt/list/file2.txt", b"Content 2")
+        await nx.write("/mnt/list/file1.txt", b"Content 1")
+        await nx.write("/mnt/list/file2.txt", b"Content 2")
 
         # List files
         files = await nx.sys_readdir("/mnt/list", recursive=True)
@@ -812,8 +812,8 @@ class TestMountIntegration:
         assert nx.service("mount").has_mount_sync("/mnt/two")
 
         # Write to each
-        await nx.sys_write("/mnt/one/file.txt", b"Mount 1")
-        await nx.sys_write("/mnt/two/file.txt", b"Mount 2")
+        await nx.write("/mnt/one/file.txt", b"Mount 1")
+        await nx.write("/mnt/two/file.txt", b"Mount 2")
 
         # Read from each
         assert await nx.sys_read("/mnt/one/file.txt") == b"Mount 1"

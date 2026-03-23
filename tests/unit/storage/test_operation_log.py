@@ -64,7 +64,7 @@ async def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecor
     content = b"Test content"
 
     # Write file
-    await nx.sys_write(path, content)
+    await nx.write(path, content)
     await _flush(nx)
 
     # Check operation log
@@ -94,7 +94,7 @@ async def test_write_update_operation_logged(
     old_hash = result1["etag"]
 
     # Update file
-    await nx.sys_write(path, content2)
+    await nx.write(path, content2)
     await _flush(nx)
 
     # Check operation log
@@ -161,7 +161,7 @@ async def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyReco
     content = b"Test content"
 
     # Write and then rename
-    await nx.sys_write(old_path, content)
+    await nx.write(old_path, content)
     await nx.sys_rename(old_path, new_path)
     await _flush(nx)
 
@@ -194,10 +194,10 @@ async def test_operation_log_filtering_by_agent(
 
     # Use context parameter with different agent IDs
     context1 = OperationContext(user_id="test", groups=[], agent_id="agent-1")
-    await nx.sys_write("/file1.txt", b"Content 1", context=context1)
+    await nx.write("/file1.txt", b"Content 1", context=context1)
 
     context2 = OperationContext(user_id="test", groups=[], agent_id="agent-2")
-    await nx.sys_write("/file2.txt", b"Content 2", context=context2)
+    await nx.write("/file2.txt", b"Content 2", context=context2)
     await _flush(nx)
 
     # Check operation log filtering
@@ -223,8 +223,8 @@ async def test_operation_log_filtering_by_type(
     path = "/test.txt"
 
     # Perform various operations
-    await nx.sys_write(path, b"Content")
-    await nx.sys_write(path, b"Updated")
+    await nx.write(path, b"Content")
+    await nx.write(path, b"Updated")
     await nx.sys_rename(path, "/renamed.txt")
     await nx.sys_unlink("/renamed.txt")
     await _flush(nx)
@@ -255,9 +255,9 @@ async def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore
     path = "/test.txt"
 
     # Perform multiple operations on same path
-    await nx.sys_write(path, b"Version 1")
-    await nx.sys_write(path, b"Version 2")
-    await nx.sys_write(path, b"Version 3")
+    await nx.write(path, b"Version 1")
+    await nx.write(path, b"Version 2")
+    await nx.write(path, b"Version 3")
     await _flush(nx)
 
     # Check path history
@@ -274,8 +274,8 @@ async def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore
 async def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting the last operation."""
     # Perform operations
-    await nx.sys_write("/file1.txt", b"Content 1")
-    await nx.sys_write("/file2.txt", b"Content 2")
+    await nx.write("/file1.txt", b"Content 1")
+    await nx.write("/file2.txt", b"Content 2")
     await _flush(nx)
 
     # Get last operation
@@ -295,7 +295,7 @@ async def test_undo_write_new_file(nx: NexusFS) -> None:
     content = b"Test content"
 
     # Write file
-    await nx.sys_write(path, content)
+    await nx.write(path, content)
     assert await nx.sys_access(path)
 
     # Undo by deleting the file
@@ -317,7 +317,7 @@ async def test_undo_write_update(
     old_hash = result1["etag"]
 
     # Update file
-    await nx.sys_write(path, content2)
+    await nx.write(path, content2)
     await _flush(nx)
 
     # Get the update operation
@@ -331,7 +331,7 @@ async def test_undo_write_update(
 
         # Undo by restoring old content
         old_content = local_backend.read_content(last_op.snapshot_hash)
-        await nx.sys_write(path, old_content)
+        await nx.write(path, old_content)
 
         # Verify restoration
         restored_content = await nx.sys_read(path)
@@ -364,7 +364,7 @@ async def test_undo_delete(
 
         # Undo by restoring from snapshot
         restored_content = local_backend.read_content(last_op.snapshot_hash)
-        await nx.sys_write(path, restored_content)
+        await nx.write(path, restored_content)
 
         # Verify restoration
         assert await nx.sys_access(path)
@@ -384,7 +384,7 @@ async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
     content = b"Test content"
 
     # Write and rename
-    await nx.sys_write(old_path, content)
+    await nx.write(old_path, content)
     await nx.sys_rename(old_path, new_path)
     await _flush(nx)
     assert not await nx.sys_access(old_path)

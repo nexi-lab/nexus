@@ -50,10 +50,10 @@ async def nexus_fs(temp_dir):
     )
 
     # Create test files
-    await fs.sys_write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
-    await fs.sys_write("/workspace/src/main.py", b'print("Hello, World!")')
-    await fs.sys_write("/workspace/src/utils.py", b"def helper(): pass")
-    await fs.sys_write("/docs/guide.txt", b"User guide content here.")
+    await fs.write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
+    await fs.write("/workspace/src/main.py", b'print("Hello, World!")')
+    await fs.write("/workspace/src/utils.py", b"def helper(): pass")
+    await fs.write("/docs/guide.txt", b"User guide content here.")
 
     yield fs
     fs.close()

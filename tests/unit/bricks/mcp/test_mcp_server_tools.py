@@ -51,6 +51,7 @@ def mock_nx_basic():
     nx = Mock()
     nx.sys_read = AsyncMock(return_value=b"test content")
     nx.sys_write = AsyncMock()
+    nx.write = AsyncMock()
     nx.sys_unlink = AsyncMock()
     nx.sys_readdir = AsyncMock(return_value=["/file1.txt", "/file2.txt"])
     _mock_search = Mock()
@@ -167,6 +168,7 @@ def mock_nx_full():
     # Basic file operations (async syscalls)
     nx.sys_read = AsyncMock(return_value=b"test content")
     nx.sys_write = AsyncMock()
+    nx.write = AsyncMock()
     nx.sys_unlink = AsyncMock()
     nx.sys_readdir = AsyncMock(return_value=["/file1.txt"])
     nx.glob = Mock(return_value=["test.py"])
@@ -260,16 +262,16 @@ class TestFileOperationTools:
 
         assert "Successfully wrote" in result
         assert "/test.txt" in result
-        mock_nx_basic.sys_write.assert_called_once()
+        mock_nx_basic.write.assert_called_once()
 
         # Verify content was encoded
-        call_args = mock_nx_basic.sys_write.call_args[0]
+        call_args = mock_nx_basic.write.call_args[0]
         assert call_args[0] == "/test.txt"
         assert call_args[1] == b"new content"
 
     async def test_write_file_error(self, mock_nx_basic):
         """Test write file error handling."""
-        mock_nx_basic.sys_write.side_effect = PermissionError("Permission denied")
+        mock_nx_basic.write.side_effect = PermissionError("Permission denied")
         server = await create_mcp_server(nx=mock_nx_basic)
 
         write_tool = get_tool(server, "nexus_write_file")
@@ -1220,6 +1222,7 @@ class TestServerCreation:
             mock_nx = Mock()
             mock_nx.sys_read = AsyncMock(return_value=b"test")
             mock_nx.sys_write = AsyncMock()
+            mock_nx.write = AsyncMock()
             mock_connect.return_value = mock_nx
 
             server = await create_mcp_server()

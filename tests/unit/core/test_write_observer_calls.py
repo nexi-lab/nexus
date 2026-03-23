@@ -84,7 +84,7 @@ class TestWriteCallsDispatch:
     async def test_new_file_notifies_with_is_new_true(
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
-        await nx.sys_write("/new.txt", b"hello")
+        await nx.write("/new.txt", b"hello")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -96,10 +96,10 @@ class TestWriteCallsDispatch:
     async def test_update_file_notifies_with_is_new_false(
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
-        await nx.sys_write("/file.txt", b"v1")
+        await nx.write("/file.txt", b"v1")
         mock_notify.reset_mock()
 
-        await nx.sys_write("/file.txt", b"v2")
+        await nx.write("/file.txt", b"v2")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -109,7 +109,7 @@ class TestWriteCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_notify_receives_etag_and_size(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.sys_write("/test.txt", b"content")
+        await nx.write("/test.txt", b"content")
 
         event = mock_notify.call_args.args[0]
         assert event.path == "/test.txt"
@@ -122,7 +122,7 @@ class TestDeleteCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_delete_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.sys_write("/test.txt", b"content")
+        await nx.write("/test.txt", b"content")
         mock_notify.reset_mock()
 
         await nx.sys_unlink("/test.txt")
@@ -149,7 +149,7 @@ class TestRenameCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_rename_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.sys_write("/old.txt", b"content")
+        await nx.write("/old.txt", b"content")
         mock_notify.reset_mock()
 
         await nx.sys_rename("/old.txt", "/new.txt")
@@ -259,7 +259,7 @@ class TestRmdirCallsDispatch:
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
         await nx.sys_mkdir("/mydir")
-        await nx.sys_write("/mydir/file.txt", b"content")
+        await nx.write("/mydir/file.txt", b"content")
         mock_notify.reset_mock()
 
         await nx.sys_rmdir("/mydir", recursive=True)
@@ -301,7 +301,7 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        await nx_with_hook.sys_write("/file.txt", b"hello")
+        await nx_with_hook.write("/file.txt", b"hello")
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.FILE_WRITE
@@ -309,7 +309,7 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        await nx_with_hook.sys_write("/file.txt", b"hello")
+        await nx_with_hook.write("/file.txt", b"hello")
         hook.reset_mock()
         await nx_with_hook.sys_unlink("/file.txt")
         hook.on_mutation.assert_called_once()
@@ -318,7 +318,7 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        await nx_with_hook.sys_write("/old.txt", b"hello")
+        await nx_with_hook.write("/old.txt", b"hello")
         hook.reset_mock()
         await nx_with_hook.sys_rename("/old.txt", "/new.txt")
         hook.on_mutation.assert_called_once()

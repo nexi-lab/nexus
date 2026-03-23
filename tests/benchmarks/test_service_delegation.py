@@ -91,6 +91,7 @@ def mock_gateway():
     mock_fs = MagicMock()
     mock_fs.sys_read = AsyncMock(return_value=b"data")
     mock_fs.sys_write = AsyncMock()
+    mock_fs.write = AsyncMock()
     mock_fs.sys_mkdir = AsyncMock()
     mock_fs.sys_readdir = AsyncMock(return_value=["a.txt", "b.txt"])
     mock_fs.sys_access = AsyncMock(return_value=True)
@@ -287,21 +288,21 @@ class TestGatewayDelegationOverhead:
         benchmark(run)
 
     def test_gateway_write_bytes(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.sys_write() delegation with bytes."""
+        """Benchmark gateway.write() delegation with bytes."""
 
         def run():
             delegation_loop.run_until_complete(
-                mock_gateway.sys_write("/test/file.txt", b"content", context=context)
+                mock_gateway.write("/test/file.txt", b"content", context=context)
             )
 
         benchmark(run)
 
     def test_gateway_write_str_conversion(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.sys_write() with str->bytes conversion."""
+        """Benchmark gateway.write() with str->bytes conversion."""
 
         def run():
             delegation_loop.run_until_complete(
-                mock_gateway.sys_write("/test/file.txt", "text content", context=context)
+                mock_gateway.write("/test/file.txt", "text content", context=context)
             )
 
         benchmark(run)

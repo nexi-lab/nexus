@@ -492,7 +492,7 @@ class WriteBackService:
         try:
             content = await self._read_nexus_content(original_path)
             if content is not None:
-                await self._gw.sys_write(conflict_path, content)
+                await self._gw.write(conflict_path, content)
         except Exception as e:
             logger.warning(f"[WRITE_BACK] Failed to create conflict copy: {e}")
 

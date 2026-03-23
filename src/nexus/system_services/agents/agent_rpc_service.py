@@ -118,7 +118,7 @@ class AgentRPCService:
 
         config_yaml = yaml.dump(config_data, default_flow_style=False, sort_keys=False)
         ctx = parse_operation_context(context)
-        await self._vfs.sys_write(config_path, config_yaml.encode("utf-8"), context=ctx)
+        await self._vfs.write(config_path, config_yaml.encode("utf-8"), context=ctx)
 
     # ------------------------------------------------------------------
     # Directory & Permission Helpers
@@ -288,7 +288,7 @@ class AgentRPCService:
             identity_dir = f"{agent_dir}/.identity"
             ctx = parse_operation_context(context)
             await self._vfs.sys_mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
-            await self._vfs.sys_write(
+            await self._vfs.write(
                 f"{identity_dir}/did.json", json.dumps(did_doc, indent=2), context=ctx
             )
             _logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
@@ -454,7 +454,7 @@ class AgentRPCService:
             existing_config["metadata"].update(metadata)
 
         updated_yaml = yaml.dump(existing_config, default_flow_style=False, sort_keys=False)
-        await self._vfs.sys_write(config_path, updated_yaml.encode("utf-8"), context=ctx)
+        await self._vfs.write(config_path, updated_yaml.encode("utf-8"), context=ctx)
 
         if self._entity_registry and (name is not None or description is not None):
             entity = self._entity_registry.get_entity("agent", agent_id)

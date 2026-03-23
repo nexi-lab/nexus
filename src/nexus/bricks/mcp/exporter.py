@@ -636,8 +636,8 @@ class MCPToolExporter:
                 logger.warning("Failed to create directory %s: %s", tool_dir, e)
 
             # Write files
-            await self._filesystem.sys_write(tool_json_path, tool_json.encode("utf-8"))
-            await self._filesystem.sys_write(skill_md_path, skill_md.encode("utf-8"))
+            await self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
+            await self._filesystem.write(skill_md_path, skill_md.encode("utf-8"))
         else:
             # Local filesystem
             tool_dir_path = Path(tool_dir.lstrip("/"))

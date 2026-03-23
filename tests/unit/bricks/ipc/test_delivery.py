@@ -208,7 +208,7 @@ class TestMessageProcessor:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope()
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 
@@ -232,7 +232,7 @@ class TestMessageProcessor:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope()
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
 
         async def failing_handler(msg: MessageEnvelope) -> None:
             raise RuntimeError("Handler exploded")
@@ -253,7 +253,7 @@ class TestMessageProcessor:
         old_ts = datetime(2020, 1, 1, tzinfo=UTC)
         env = _make_envelope(timestamp=old_ts, ttl_seconds=60)
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -274,7 +274,7 @@ class TestMessageProcessor:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope(msg_id="msg_dup")
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
 
         call_count = 0
 
@@ -294,7 +294,7 @@ class TestMessageProcessor:
         ts2 = datetime.now(UTC) + timedelta(seconds=1)
         env2 = _make_envelope(msg_id="msg_dup", timestamp=ts2)
         msg_path2 = message_path_in_inbox("agent:bob", env2.id, env2.timestamp)
-        await vfs.sys_write(msg_path2, env2.to_bytes(), ZONE)
+        await vfs.write(msg_path2, env2.to_bytes(), ZONE)
 
         # Process again — should skip duplicate
         await processor.process_inbox()
@@ -304,7 +304,7 @@ class TestMessageProcessor:
     async def test_process_malformed_message(self, vfs: InMemoryVFS) -> None:
         await _provision_agent(vfs, "agent:bob")
         msg_path = "/agents/agent:bob/inbox/20260212T100000_msg_bad.json"
-        await vfs.sys_write(msg_path, b"not valid json {{{", ZONE)
+        await vfs.write(msg_path, b"not valid json {{{", ZONE)
 
         async def handler(msg: MessageEnvelope) -> None:
             pass  # Should never be called
@@ -343,7 +343,7 @@ class TestMessageProcessor:
         for ts, mid in [(ts1, "msg_01"), (ts2, "msg_02"), (ts3, "msg_03")]:
             env = _make_envelope(msg_id=mid, timestamp=ts)
             path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-            await vfs.sys_write(path, env.to_bytes(), ZONE)
+            await vfs.write(path, env.to_bytes(), ZONE)
 
         async def handler(msg: MessageEnvelope) -> None:
             received_ids.append(msg.id)
@@ -416,7 +416,7 @@ class TestConcurrentProcessing:
         await _provision_agent(vfs, "agent:bob")
         env = _make_envelope(msg_id="msg_concurrent")
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
 
         call_count = 0
 
@@ -535,7 +535,7 @@ class TestSignedDelivery:
         env = _make_envelope()
         signed_env = signer.sign(env)
         msg_path = message_path_in_inbox("agent:bob", signed_env.id, signed_env.timestamp)
-        await vfs.sys_write(msg_path, signed_env.to_bytes(), ZONE)
+        await vfs.write(msg_path, signed_env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 
@@ -568,7 +568,7 @@ class TestSignedDelivery:
         # Tamper with payload after signing
         tampered = signed_env.model_copy(update={"payload": {"action": "tampered"}})
         msg_path = message_path_in_inbox("agent:bob", tampered.id, tampered.timestamp)
-        await vfs.sys_write(msg_path, tampered.to_bytes(), ZONE)
+        await vfs.write(msg_path, tampered.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -601,7 +601,7 @@ class TestSignedDelivery:
 
         env = _make_envelope()  # unsigned
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
 
         handler_called = False
 
@@ -634,7 +634,7 @@ class TestSignedDelivery:
 
         env = _make_envelope()  # unsigned
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 
@@ -663,7 +663,7 @@ class TestSignedDelivery:
 
         env = _make_envelope()  # unsigned
         msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+        await vfs.write(msg_path, env.to_bytes(), ZONE)
 
         received: list[MessageEnvelope] = []
 

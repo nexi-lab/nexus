@@ -82,10 +82,10 @@ class KernelVFSAdapter:
         result: bytes = await self._nx.sys_read(path, context=ctx)
         return result
 
-    async def sys_write(self, path: str, data: bytes, zone_id: str) -> None:
+    async def write(self, path: str, data: bytes, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        await self._nx.sys_write(path, data, context=ctx)
+        await self._nx.write(path, data, context=ctx)
 
     async def list_dir(self, path: str, zone_id: str) -> list[str]:  # noqa: ARG002
         self._require_bound()

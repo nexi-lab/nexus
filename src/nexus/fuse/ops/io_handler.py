@@ -191,7 +191,7 @@ class IOHandler:
             # Write via Rust or Python
             ok, _ = try_rust(ctx, "WRITE", "sys_write", original_path, new_content)
             if not ok:
-                await ctx.nexus_fs.sys_write(original_path, new_content, context=ctx.context)
+                await ctx.nexus_fs.write(original_path, new_content, context=ctx.context)
 
         # Invalidate caches
         ctx.cache.invalidate_path(original_path)

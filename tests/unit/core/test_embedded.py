@@ -75,7 +75,7 @@ async def test_write_and_read(embedded: NexusFS) -> None:
     path = "/test/file.txt"
 
     # Write file
-    await embedded.sys_write(path, content)
+    await embedded.write(path, content)
 
     # Read file
     result = await embedded.sys_read(path)
@@ -88,7 +88,7 @@ async def test_write_creates_metadata(embedded: NexusFS) -> None:
     content = b"Test content"
     path = "/test.txt"
 
-    await embedded.sys_write(path, content)
+    await embedded.write(path, content)
 
     # Check metadata exists
     assert await embedded.sys_access(path)
@@ -112,13 +112,13 @@ async def test_write_updates_version(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Write initial version
-    await embedded.sys_write(path, b"Version 1")
+    await embedded.write(path, b"Version 1")
     meta1 = embedded.metadata.get(path)
     assert meta1 is not None
     assert meta1.version == 1
 
     # Rewrite file - version should increment
-    await embedded.sys_write(path, b"Version 2")
+    await embedded.write(path, b"Version 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
     assert meta2.version == 2  # Version tracking enabled in v0.3.5
@@ -126,7 +126,7 @@ async def test_write_updates_version(embedded: NexusFS) -> None:
     assert meta2.modified_at > meta1.modified_at
 
     # Rewrite again - version should increment again
-    await embedded.sys_write(path, b"Version 3")
+    await embedded.write(path, b"Version 3")
     meta3 = embedded.metadata.get(path)
     assert meta3 is not None
     assert meta3.version == 3  # Version tracking enabled in v0.3.5
@@ -149,7 +149,7 @@ async def test_delete(embedded: NexusFS) -> None:
     content = b"Test content"
 
     # Create file
-    await embedded.sys_write(path, content)
+    await embedded.write(path, content)
     assert await embedded.sys_access(path)
 
     # Delete file
@@ -176,7 +176,7 @@ async def test_delete_removes_metadata(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Create file
-    await embedded.sys_write(path, b"Content")
+    await embedded.write(path, b"Content")
     assert embedded.metadata.exists(path)
 
     # Delete file
@@ -196,7 +196,7 @@ async def test_exists(embedded: NexusFS) -> None:
     assert not await embedded.sys_access(path)
 
     # Create file
-    await embedded.sys_write(path, b"Content")
+    await embedded.write(path, b"Content")
     assert await embedded.sys_access(path)
 
     # Delete file
@@ -208,9 +208,9 @@ async def test_exists(embedded: NexusFS) -> None:
 async def test_list_files(embedded: NexusFS) -> None:
     """Test listing files."""
     # Create multiple files
-    await embedded.sys_write("/file1.txt", b"Content 1")
-    await embedded.sys_write("/dir/file2.txt", b"Content 2")
-    await embedded.sys_write("/dir/subdir/file3.txt", b"Content 3")
+    await embedded.write("/file1.txt", b"Content 1")
+    await embedded.write("/dir/file2.txt", b"Content 2")
+    await embedded.write("/dir/subdir/file3.txt", b"Content 3")
 
     # List all files (filter out system mount-point entries)
     files = [f for f in await embedded.sys_readdir() if f not in _SYSTEM_PATHS]
@@ -225,10 +225,10 @@ async def test_list_files(embedded: NexusFS) -> None:
 async def test_list_with_prefix(embedded: NexusFS) -> None:
     """Test listing files with prefix."""
     # Create multiple files
-    await embedded.sys_write("/file1.txt", b"Content 1")
-    await embedded.sys_write("/dir/file2.txt", b"Content 2")
-    await embedded.sys_write("/dir/subdir/file3.txt", b"Content 3")
-    await embedded.sys_write("/other/file4.txt", b"Content 4")
+    await embedded.write("/file1.txt", b"Content 1")
+    await embedded.write("/dir/file2.txt", b"Content 2")
+    await embedded.write("/dir/subdir/file3.txt", b"Content 3")
+    await embedded.write("/other/file4.txt", b"Content 4")
 
     # List with path filter
     files = await embedded.sys_readdir(path="/dir")
@@ -258,7 +258,7 @@ async def test_path_validation_empty_path(embedded: NexusFS) -> None:
 async def test_path_validation_null_byte(embedded: NexusFS) -> None:
     """Test that path with null byte raises error."""
     with pytest.raises(InvalidPathError) as exc_info:
-        await embedded.sys_write("/bad\x00path.txt", b"Content")
+        await embedded.write("/bad\x00path.txt", b"Content")
 
     assert "invalid character" in str(exc_info.value).lower()
 
@@ -278,7 +278,7 @@ async def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
     content = b"Test content"
 
     # Write without leading slash
-    await embedded.sys_write("test.txt", content)
+    await embedded.write("test.txt", content)
 
     # Read with leading slash
     result = await embedded.sys_read("/test.txt")
@@ -295,7 +295,7 @@ async def test_binary_content(embedded: NexusFS) -> None:
     # Create binary content with various byte values
     content = bytes(range(256))
 
-    await embedded.sys_write("/binary.bin", content)
+    await embedded.write("/binary.bin", content)
 
     result = await embedded.sys_read("/binary.bin")
     assert result == content
@@ -304,7 +304,7 @@ async def test_binary_content(embedded: NexusFS) -> None:
 @pytest.mark.asyncio
 async def test_empty_file(embedded: NexusFS) -> None:
     """Test handling of empty files."""
-    await embedded.sys_write("/empty.txt", b"")
+    await embedded.write("/empty.txt", b"")
 
     result = await embedded.sys_read("/empty.txt")
     assert result == b""
@@ -321,7 +321,7 @@ async def test_large_file(embedded: NexusFS) -> None:
     # Create 1MB of data
     content = b"x" * (1024 * 1024)
 
-    await embedded.sys_write("/large.bin", content)
+    await embedded.write("/large.bin", content)
 
     result = await embedded.sys_read("/large.bin")
     assert len(result) == len(content)
@@ -334,7 +334,7 @@ async def test_unicode_paths(embedded: NexusFS) -> None:
     content = b"Unicode content"
     path = "/测试/файл/αρχείο.txt"
 
-    await embedded.sys_write(path, content)
+    await embedded.write(path, content)
 
     result = await embedded.sys_read(path)
     assert result == content
@@ -347,13 +347,13 @@ async def test_etag_changes_on_update(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Write initial content
-    await embedded.sys_write(path, b"Content 1")
+    await embedded.write(path, b"Content 1")
     meta1 = embedded.metadata.get(path)
     assert meta1 is not None
     etag1 = meta1.etag
 
     # Update content
-    await embedded.sys_write(path, b"Content 2")
+    await embedded.write(path, b"Content 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
     etag2 = meta2.etag
@@ -370,8 +370,8 @@ async def test_etag_same_for_same_content(embedded: NexusFS) -> None:
     content = b"Same content"
 
     # Write same content to two files
-    await embedded.sys_write(path1, content)
-    await embedded.sys_write(path2, content)
+    await embedded.write(path1, content)
+    await embedded.write(path2, content)
 
     # ETags should be the same
     meta1 = embedded.metadata.get(path1)
@@ -396,7 +396,7 @@ async def test_context_manager(temp_dir: Path) -> None:
         ),  # Disable permissions for basic functionality test
     )
     try:
-        await nx.sys_write("/test.txt", content)
+        await nx.write("/test.txt", content)
         result = await nx.sys_read("/test.txt")
         assert result == content
     finally:
@@ -410,7 +410,7 @@ async def test_modified_at_updates(embedded: NexusFS) -> None:
         path = "/test.txt"
 
         # Write initial content
-        await embedded.sys_write(path, b"Content 1")
+        await embedded.write(path, b"Content 1")
         meta1 = embedded.metadata.get(path)
         assert meta1 is not None
         modified1 = meta1.modified_at
@@ -419,7 +419,7 @@ async def test_modified_at_updates(embedded: NexusFS) -> None:
         frozen_time.tick(delta=timedelta(seconds=1))
 
         # Update content
-        await embedded.sys_write(path, b"Content 2")
+        await embedded.write(path, b"Content 2")
         meta2 = embedded.metadata.get(path)
         assert meta2 is not None
         modified2 = meta2.modified_at
@@ -436,13 +436,13 @@ async def test_created_at_persists(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Write initial content
-    await embedded.sys_write(path, b"Content 1")
+    await embedded.write(path, b"Content 1")
     meta1 = embedded.metadata.get(path)
     assert meta1 is not None
     created1 = meta1.created_at
 
     # Update content
-    await embedded.sys_write(path, b"Content 2")
+    await embedded.write(path, b"Content 2")
     meta2 = embedded.metadata.get(path)
     assert meta2 is not None
     created2 = meta2.created_at
@@ -458,7 +458,7 @@ async def test_multiple_operations(embedded: NexusFS) -> None:
     """Test multiple file operations in sequence."""
     # Create multiple files
     for i in range(10):
-        await embedded.sys_write(f"/file{i}.txt", f"Content {i}".encode())
+        await embedded.write(f"/file{i}.txt", f"Content {i}".encode())
 
     # Verify all exist
     for i in range(10):
@@ -487,10 +487,10 @@ async def test_overwrite_preserves_path(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Write initial content
-    await embedded.sys_write(path, b"Content 1")
+    await embedded.write(path, b"Content 1")
 
     # Overwrite
-    await embedded.sys_write(path, b"Content 2")
+    await embedded.write(path, b"Content 2")
 
     # Should be accessible at same path
     assert await embedded.sys_access(path)
@@ -513,10 +513,10 @@ async def test_list_recursive(embedded: NexusFS) -> None:
     in the relative path after the prefix).
     """
     # Create directory structure
-    await embedded.sys_write("/file1.txt", b"Content 1")
-    await embedded.sys_write("/dir1/file2.txt", b"Content 2")
-    await embedded.sys_write("/dir1/subdir/file3.txt", b"Content 3")
-    await embedded.sys_write("/dir2/file4.txt", b"Content 4")
+    await embedded.write("/file1.txt", b"Content 1")
+    await embedded.write("/dir1/file2.txt", b"Content 2")
+    await embedded.write("/dir1/subdir/file3.txt", b"Content 3")
+    await embedded.write("/dir2/file4.txt", b"Content 4")
 
     # Non-recursive list of root — only direct-child *files* are returned
     # (virtual directories like /dir1, /dir2 are NOT materialised in the metastore)
@@ -553,8 +553,8 @@ async def test_list_with_details(embedded: NexusFS) -> None:
     readdir detail dict.
     """
     # Create files
-    await embedded.sys_write("/file1.txt", b"Hello")
-    await embedded.sys_write("/file2.txt", b"World!")
+    await embedded.write("/file1.txt", b"Hello")
+    await embedded.write("/file2.txt", b"World!")
 
     # List with details (filter out system mount-point entries)
     files = [
@@ -580,10 +580,10 @@ async def test_list_with_details(embedded: NexusFS) -> None:
 async def test_glob_simple_pattern(embedded: NexusFS) -> None:
     """Test glob with simple wildcard patterns."""
     # Create test files
-    await embedded.sys_write("/test1.txt", b"Content")
-    await embedded.sys_write("/test2.txt", b"Content")
-    await embedded.sys_write("/file.py", b"Content")
-    await embedded.sys_write("/data.csv", b"Content")
+    await embedded.write("/test1.txt", b"Content")
+    await embedded.write("/test2.txt", b"Content")
+    await embedded.write("/file.py", b"Content")
+    await embedded.write("/data.csv", b"Content")
 
     # Glob for .txt files
     files = embedded.service("search").glob("*.txt")
@@ -607,10 +607,10 @@ async def test_glob_simple_pattern(embedded: NexusFS) -> None:
 async def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     """Test glob with recursive ** pattern."""
     # Create nested structure
-    await embedded.sys_write("/src/main.py", b"Content")
-    await embedded.sys_write("/src/utils/helper.py", b"Content")
-    await embedded.sys_write("/tests/test_main.py", b"Content")
-    await embedded.sys_write("/README.md", b"Content")
+    await embedded.write("/src/main.py", b"Content")
+    await embedded.write("/src/utils/helper.py", b"Content")
+    await embedded.write("/tests/test_main.py", b"Content")
+    await embedded.write("/README.md", b"Content")
 
     # Find all Python files recursively
     files = embedded.service("search").glob("**/*.py")
@@ -628,9 +628,9 @@ async def test_glob_recursive_pattern(embedded: NexusFS) -> None:
 async def test_glob_with_base_path(embedded: NexusFS) -> None:
     """Test glob with a base path."""
     # Create files
-    await embedded.sys_write("/data/file1.csv", b"Content")
-    await embedded.sys_write("/data/file2.csv", b"Content")
-    await embedded.sys_write("/other/file3.csv", b"Content")
+    await embedded.write("/data/file1.csv", b"Content")
+    await embedded.write("/data/file2.csv", b"Content")
+    await embedded.write("/other/file3.csv", b"Content")
 
     # Glob in data directory
     files = embedded.service("search").glob("*.csv", path="/data")
@@ -643,9 +643,9 @@ async def test_glob_with_base_path(embedded: NexusFS) -> None:
 async def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
     """Test glob with ? wildcard."""
     # Create files
-    await embedded.sys_write("/file1.txt", b"Content")
-    await embedded.sys_write("/file2.txt", b"Content")
-    await embedded.sys_write("/file10.txt", b"Content")
+    await embedded.write("/file1.txt", b"Content")
+    await embedded.write("/file2.txt", b"Content")
+    await embedded.write("/file10.txt", b"Content")
 
     # Match single character
     files = embedded.service("search").glob("file?.txt")
@@ -659,8 +659,8 @@ async def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
 async def test_grep_simple_search(embedded: NexusFS) -> None:
     """Test basic grep search."""
     # Create test files
-    await embedded.sys_write("/file1.txt", b"Hello World\nFoo Bar\nHello Again")
-    await embedded.sys_write("/file2.txt", b"Goodbye\nWorld Peace")
+    await embedded.write("/file1.txt", b"Hello World\nFoo Bar\nHello Again")
+    await embedded.write("/file2.txt", b"Goodbye\nWorld Peace")
 
     # Search for "Hello"
     results = await embedded.service("search").grep("Hello")
@@ -680,7 +680,7 @@ async def test_grep_simple_search(embedded: NexusFS) -> None:
 async def test_grep_regex_pattern(embedded: NexusFS) -> None:
     """Test grep with regex patterns."""
     # Create test file
-    await embedded.sys_write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
+    await embedded.write("/code.py", b"def foo():\n    pass\ndef bar():\n    return 42")
 
     # Search for function definitions
     results = await embedded.service("search").grep(r"def \w+")
@@ -694,9 +694,9 @@ async def test_grep_regex_pattern(embedded: NexusFS) -> None:
 async def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     """Test grep with file filtering."""
     # Create test files
-    await embedded.sys_write("/file1.py", b"import os\nimport sys")
-    await embedded.sys_write("/file2.py", b"import re")
-    await embedded.sys_write("/file.txt", b"import nothing")
+    await embedded.write("/file1.py", b"import os\nimport sys")
+    await embedded.write("/file2.py", b"import re")
+    await embedded.write("/file.txt", b"import nothing")
 
     # Search only in .py files
     results = await embedded.service("search").grep("import", file_pattern="*.py")
@@ -710,7 +710,7 @@ async def test_grep_with_file_pattern(embedded: NexusFS) -> None:
 async def test_grep_case_insensitive(embedded: NexusFS) -> None:
     """Test case-insensitive grep search."""
     # Create test file
-    await embedded.sys_write(
+    await embedded.write(
         "/file.txt", b"ERROR: Something went wrong\nError in processing\nerror detected"
     )
 
@@ -728,7 +728,7 @@ async def test_grep_max_results(embedded: NexusFS) -> None:
     """Test grep result limiting."""
     # Create file with many matches
     content = "\n".join([f"Line {i} with MATCH" for i in range(100)])
-    await embedded.sys_write("/file.txt", content.encode())
+    await embedded.write("/file.txt", content.encode())
 
     # Limit results
     results = await embedded.service("search").grep("MATCH", max_results=10)
@@ -739,10 +739,10 @@ async def test_grep_max_results(embedded: NexusFS) -> None:
 async def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     """Test that grep skips binary files."""
     # Create binary file
-    await embedded.sys_write("/binary.bin", bytes(range(256)))
+    await embedded.write("/binary.bin", bytes(range(256)))
 
     # Create text file
-    await embedded.sys_write("/text.txt", b"findme")
+    await embedded.write("/text.txt", b"findme")
 
     # Search should only find text file
     results = await embedded.service("search").grep("findme")
@@ -753,7 +753,7 @@ async def test_grep_skips_binary_files(embedded: NexusFS) -> None:
 @pytest.mark.asyncio
 async def test_grep_empty_results(embedded: NexusFS) -> None:
     """Test grep with no matches."""
-    await embedded.sys_write("/file.txt", b"Hello World")
+    await embedded.write("/file.txt", b"Hello World")
 
     results = await embedded.service("search").grep("nonexistent")
     assert len(results) == 0
@@ -762,8 +762,8 @@ async def test_grep_empty_results(embedded: NexusFS) -> None:
 @pytest.mark.asyncio
 async def test_list_returns_list_type(embedded: NexusFS) -> None:
     """Test that list() returns a list."""
-    await embedded.sys_write("/file1.txt", b"Content")
-    await embedded.sys_write("/file2.txt", b"Content")
+    await embedded.write("/file1.txt", b"Content")
+    await embedded.write("/file2.txt", b"Content")
 
     files = await embedded.sys_readdir()
     assert isinstance(files, list)

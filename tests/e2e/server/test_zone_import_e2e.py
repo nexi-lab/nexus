@@ -48,10 +48,10 @@ async def source_nexus_fs(temp_dir):
     )
 
     # Create test files
-    await fs.sys_write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
-    await fs.sys_write("/workspace/src/main.py", b'print("Hello, World!")')
-    await fs.sys_write("/workspace/src/utils.py", b"def helper(): pass")
-    await fs.sys_write("/docs/guide.txt", b"User guide content here.")
+    await fs.write("/workspace/readme.md", b"# Test Project\n\nThis is a test.")
+    await fs.write("/workspace/src/main.py", b'print("Hello, World!")')
+    await fs.write("/workspace/src/utils.py", b"def helper(): pass")
+    await fs.write("/docs/guide.txt", b"User guide content here.")
 
     yield fs
     fs.close()
@@ -159,7 +159,7 @@ class TestConflictResolution:
     async def test_conflict_skip(self, exported_bundle, target_nexus_fs):
         """Test SKIP mode keeps existing files."""
         # Create an existing file
-        await target_nexus_fs.sys_write("/workspace/readme.md", b"Existing content")
+        await target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
         options = ZoneImportOptions(
             bundle_path=exported_bundle,
@@ -181,7 +181,7 @@ class TestConflictResolution:
     async def test_conflict_overwrite(self, exported_bundle, target_nexus_fs):
         """Test OVERWRITE mode replaces existing files."""
         # Create an existing file
-        await target_nexus_fs.sys_write("/workspace/readme.md", b"Existing content")
+        await target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
         options = ZoneImportOptions(
             bundle_path=exported_bundle,
@@ -203,7 +203,7 @@ class TestConflictResolution:
     async def test_conflict_fail(self, exported_bundle, target_nexus_fs):
         """Test FAIL mode stops on first conflict."""
         # Create an existing file
-        await target_nexus_fs.sys_write("/workspace/readme.md", b"Existing content")
+        await target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
         options = ZoneImportOptions(
             bundle_path=exported_bundle,

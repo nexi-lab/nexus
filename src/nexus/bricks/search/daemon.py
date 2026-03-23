@@ -621,7 +621,9 @@ class SearchDaemon:
                     return zoekt_results
 
             # Delegate to txtai backend for all search types (Issue #2663)
-            if self._backend is not None and self._txtai_bootstrapped:
+            if self._backend is not None and (
+                self._txtai_bootstrapped or self._txtai_bootstrap_task is None
+            ):
                 backend_start = time.perf_counter()
                 backend_results = await self._backend.search(
                     query,

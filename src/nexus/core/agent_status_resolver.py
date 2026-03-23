@@ -1,15 +1,19 @@
-"""ProcResolver — procfs virtual filesystem for AgentRegistry.
+"""AgentStatusResolver — procfs virtual filesystem for AgentRegistry.
 
 Implements VFSPathResolver ``try_*`` protocol (#1665) to provide
 ``/{zone}/proc/{pid}/status`` as virtual files generated from
 AgentRegistry's in-memory state at read time.  Like Linux ``/proc``,
 nothing is stored on disk.
 
-    system_services/proc/proc_resolver.py = fs/proc/ (procfs)
-    core/agent_registry.py                = kernel/fork.c (task_struct table)
+    core/agent_status_resolver.py = fs/proc/ (procfs)
+    core/agent_registry.py        = kernel/fork.c (task_struct table)
 
-Registration: factory/orchestrator.py registers ProcResolver via
+Registration: factory/orchestrator.py registers AgentStatusResolver via
 coordinator.enlist() at boot, after AgentRegistry creation.
+
+Issue #1810: Renamed from ProcResolver and migrated from
+system_services/proc/ to core/ — resolving agent status is a kernel
+concern (reads kernel-owned AgentRegistry), not a system service.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ logger = logging.getLogger(__name__)
 _PROC_STATUS_RE = re.compile(r"^/([^/]+)/proc/([^/]+)/status$")
 
 
-class ProcResolver:
+class AgentStatusResolver:
     """VFSPathResolver for /{zone}/proc/{pid}/status (procfs model).
 
     Single-call ``try_*`` pattern (#1665): each method returns ``None``

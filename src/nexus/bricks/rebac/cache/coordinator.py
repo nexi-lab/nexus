@@ -372,6 +372,13 @@ class CacheCoordinator:
         # Disable eager recompute — prevents new background DB queries
         self._async_recompute_enabled = False
 
+        # Shut down the recompute executor — wait for in-flight tasks to finish
+        # before nulling connection callbacks, preventing 'Cannot operate on a
+        # closed database' errors from background threads (macOS CI flake).
+        if self._recompute_executor is not None:
+            self._recompute_executor.shutdown(wait=True, cancel_futures=True)
+            self._recompute_executor = None
+
         # Release database connection callbacks — prevents any future DB access
         self._connection_factory = None
         self._get_connection = None

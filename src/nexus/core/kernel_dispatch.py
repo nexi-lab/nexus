@@ -429,8 +429,17 @@ class KernelDispatch:
 
     # ── OBSERVE dispatch ───────────────────────────────────────────────
 
-    async def notify(self, event: FileEvent) -> None:
-        """OBSERVE phase — fire-and-forget to all registered observers."""
+    def notify(self, event: FileEvent) -> None:
+        """OBSERVE phase — fire-and-forget to all registered observers.
+
+        Synchronous: all VFSObserver.on_mutation() implementations are sync
+        by protocol contract.  Observers that need async dispatch (e.g.
+        EventBusObserver) use internal fire_and_forget().
+
+        Issue #1812: was ``async def`` but never awaited anything internally —
+        the ``async`` keyword forced callers to ``await`` a no-op coroutine,
+        violating the fire-and-forget contract.
+        """
         for obs in self._observers:
             try:
                 obs.on_mutation(event)

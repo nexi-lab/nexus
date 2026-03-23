@@ -574,7 +574,7 @@ class NexusFS(  # type: ignore[misc]
                 agent_id=ctx.agent_id,
             )
         )
-        await self._dispatch.notify(
+        self._dispatch.notify(
             FileEvent(
                 type=FileEventType.DIR_CREATE,
                 path=path,
@@ -692,7 +692,7 @@ class NexusFS(  # type: ignore[misc]
                 recursive=recursive,
             )
         )
-        await self._dispatch.notify(
+        self._dispatch.notify(
             FileEvent(
                 type=FileEventType.DIR_DELETE,
                 path=path,
@@ -2472,7 +2472,7 @@ class NexusFS(  # type: ignore[misc]
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        await self._dispatch.notify(
+        self._dispatch.notify(
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=path,
@@ -3064,7 +3064,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         for metadata in metadata_list:
             is_new = existing_metadata.get(metadata.path) is None
-            await self._dispatch.notify(
+            self._dispatch.notify(
                 FileEvent(
                     type=FileEventType.FILE_WRITE,
                     path=metadata.path,
@@ -3196,7 +3196,7 @@ class NexusFS(  # type: ignore[misc]
         # --- Lock released — event dispatch (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        await self._dispatch.notify(
+        self._dispatch.notify(
             FileEvent(
                 type=FileEventType.FILE_DELETE,
                 path=path,
@@ -3348,7 +3348,7 @@ class NexusFS(  # type: ignore[misc]
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        await self._dispatch.notify(
+        self._dispatch.notify(
             FileEvent(
                 type=FileEventType.FILE_RENAME,
                 path=old_path,

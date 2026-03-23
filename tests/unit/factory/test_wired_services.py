@@ -60,7 +60,7 @@ class TestEnlistWiredServices:
             kernel_services=KernelServices(),
             parsing=ParseConfig(auto_parse=False),
         )
-        nx._default_context = TEST_CONTEXT
+        nx._init_cred = TEST_CONTEXT
         return nx
 
     @pytest.fixture()

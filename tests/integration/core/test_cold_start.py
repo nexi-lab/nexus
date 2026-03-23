@@ -77,7 +77,7 @@ class TestColdStartNexusFSConstruction:
             metadata_store=mock_metadata,
             parsing=ParseConfig(auto_parse=False),
         )
-        nx._default_context = TEST_CONTEXT
+        nx._init_cred = TEST_CONTEXT
 
         # ServiceRegistry should be empty (no factory wiring)
         assert nx.service("rebac") is None
@@ -103,7 +103,7 @@ class TestColdStartNexusFSConstruction:
             metadata_store=mock_metadata,
             parsing=ParseConfig(auto_parse=False),
         )
-        nx._default_context = TEST_CONTEXT
+        nx._init_cred = TEST_CONTEXT
 
         coordinator = ServiceLifecycleCoordinator(nx._service_registry, None, nx._dispatch)
         mock_svc = MagicMock()

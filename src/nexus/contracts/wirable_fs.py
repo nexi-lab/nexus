@@ -39,5 +39,5 @@ class WirableFS(Protocol):
     _enforce_permissions: bool
     _permission_enforcer: Any  # PermissionEnforcerProtocol (services tier — typed as Any)
     _record_store: "RecordStoreABC | None"
-    _default_context: "OperationContext | None"
+    _init_cred: "OperationContext | None"
     _config: Any

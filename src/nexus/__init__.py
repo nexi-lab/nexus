@@ -287,6 +287,7 @@ async def connect(
         _router = _PathRouter(remote_metastore)
         _router.add_mount("/", remote_backend)
 
+        from nexus.contracts.types import OperationContext as _RemoteOC
         from nexus.core.config import KernelServices as _KernelServices
 
         nfs = _RemoteNexusFS(
@@ -294,11 +295,8 @@ async def connect(
             permissions=_PermissionConfig(enforce=False),
             kernel_services=_KernelServices(router=_router),
             brick_services=_BrickServices(),
+            init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
-        # Issue #1801: inject default context for REMOTE profile
-        from nexus.contracts.types import OperationContext as _RemoteOC
-
-        nfs._default_context = _RemoteOC(user_id="remote", groups=[], is_admin=False)
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards

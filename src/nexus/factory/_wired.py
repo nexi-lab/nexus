@@ -203,7 +203,7 @@ async def _boot_wired_services(
             router=router,
             rebac_manager=system_services.rebac_manager,
             enforce_permissions=getattr(nx, "_enforce_permissions", True),
-            default_context=getattr(nx, "_default_context", None),
+            default_context=nx._init_cred,
             record_store=getattr(nx, "_record_store", None),
             gateway=gateway,
         )
@@ -278,7 +278,7 @@ async def _boot_wired_services(
 
     # --- RPC / helper services (Issue #2133) ---
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
-    _nx_default_context: Any = getattr(nx, "_default_context", None)
+    _nx_init_cred: Any = nx._init_cred
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
     workspace_rpc_service: Any = None
     try:
@@ -288,7 +288,7 @@ async def _boot_wired_services(
             workspace_manager=system_services.workspace_manager,
             workspace_registry=system_services.workspace_registry,
             vfs=nx,
-            default_context=_nx_default_context,
+            default_context=_nx_init_cred,
             snapshot_service=brick_services.snapshot_service,
         )
         logger.debug("[BOOT:WIRED] WorkspaceRPCService created")
@@ -385,7 +385,7 @@ async def _boot_wired_services(
 
             sandbox_rpc_service = SandboxRPCService(
                 session_factory=_nx_session_factory,
-                default_context=_nx_default_context,
+                default_context=_nx_init_cred,
                 config=nx._config,
             )
             logger.debug("[BOOT:WIRED] SandboxRPCService created")
@@ -427,7 +427,7 @@ async def _boot_wired_services(
             time_travel_service = TimeTravelService(
                 session_factory=_nx_session_factory,
                 backend=_root_backend,
-                default_zone_id=getattr(_nx_default_context, "zone_id", None),
+                default_zone_id=getattr(_nx_init_cred, "zone_id", None),
             )
             logger.debug("[BOOT:WIRED] TimeTravelService created")
         except Exception as exc:

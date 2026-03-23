@@ -104,7 +104,6 @@ def make_test_nexus(
     memory=None,
     distributed=None,
     services=None,
-    system_services=None,
     is_admin=False,
     record_store=None,
     use_raft=False,
@@ -166,6 +165,14 @@ def make_test_nexus(
 
             metadata_store = DictMetastore()
 
+    # Issue #1801: pass init_cred at construction (immutable kernel identity)
+    from tests.helpers.test_context import TEST_ADMIN_CONTEXT, TEST_CONTEXT
+
+    if context is not None:
+        _init_cred = context
+    else:
+        _init_cred = TEST_ADMIN_CONTEXT if is_admin else TEST_CONTEXT
+
     nx = NexusFS(
         metadata_store=metadata_store,
         record_store=record_store,
@@ -175,15 +182,13 @@ def make_test_nexus(
         memory=memory,
         distributed=distributed,
         kernel_services=services,
-        system_services=system_services,
+        init_cred=_init_cred,
     )
-    # Issue #1801: inject default context externally (kernel never fabricates identity)
-    from tests.helpers.test_context import TEST_ADMIN_CONTEXT, TEST_CONTEXT
+    # Backward compat: some tests read nx._system_services directly.
+    # Factory sets this post-construction too (orchestrator.py line 389).
+    from nexus.core.config import SystemServices as _SystemServices
 
-    if context is not None:
-        nx._default_context = context
-    else:
-        nx._default_context = TEST_ADMIN_CONTEXT if is_admin else TEST_CONTEXT
+    nx._system_services = _SystemServices()
 
     # Mount backend at root (same as factory/orchestrator.py: router.add_mount("/", backend))
     if backend is None:
@@ -203,13 +208,13 @@ def make_test_nexus(
     _checker = PermissionChecker(
         permission_enforcer=nx._permission_enforcer,
         metadata_store=nx.metadata,
-        default_context=nx._default_context,
+        default_context=nx._init_cred,
         enforce_permissions=nx._enforce_permissions,
     )
     _perm_hook = PermissionCheckHook(
         checker=_checker,
         metadata_store=nx.metadata,
-        default_context=nx._default_context,
+        default_context=nx._init_cred,
         enforce_permissions=nx._enforce_permissions,
         permission_enforcer=nx._permission_enforcer,
         descendant_checker=getattr(nx, "_descendant_checker", None),

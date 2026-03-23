@@ -42,7 +42,7 @@ def nexus_fs_local(tmp_path: Path):
         record_store=record_store,
         permissions=PermissionConfig(enforce=False),
     )
-    nx._default_context = TEST_CONTEXT
+    nx._init_cred = TEST_CONTEXT
     yield nx
     nx.close()
 

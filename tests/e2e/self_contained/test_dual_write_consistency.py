@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from nexus import CASLocalBackend, NexusFS
-from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 from nexus.storage.operation_logger import OperationLogger
@@ -59,21 +59,19 @@ async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[N
     raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
     if raft_store is None:
         # Fallback to DictMetastore with factory-style wiring
-        from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
         from tests.helpers.dict_metastore import DictMetastore
 
         metadata_store = DictMetastore()
-        write_observer = RecordStoreWriteObserver(record_store)
 
+        _backend = CASLocalBackend(str(temp_dir / "data"))
         nx = NexusFS(
-            backend=CASLocalBackend(str(temp_dir / "data")),
             metadata_store=metadata_store,
             record_store=record_store,
             permissions=PermissionConfig(enforce=False),
             parsing=ParseConfig(auto_parse=False),
-            system_services=SystemServices(write_observer=write_observer),
+            init_cred=TEST_CONTEXT,
         )
-        nx._default_context = TEST_CONTEXT
+        nx.router.add_mount("/", _backend)
     else:
         nx = await create_nexus_fs(
             backend=CASLocalBackend(str(temp_dir / "data")),

@@ -87,7 +87,7 @@ def _setup(tmp_dir: Path):
         metadata_store=metastore,
         parsing=ParseConfig(auto_parse=False),
     )
-    nx._default_context = TEST_ADMIN_CONTEXT
+    nx._init_cred = TEST_ADMIN_CONTEXT
 
     # Create the benchmark pipe
     pipe_manager.create(_BENCH_PIPE_PATH, capacity=_BENCH_PIPE_CAPACITY, owner_id="bench")

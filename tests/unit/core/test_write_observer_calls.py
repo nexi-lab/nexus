@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus import CASLocalBackend, NexusFS
-from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.file_events import FileEventType
 from tests.helpers.dict_metastore import DictMetastore
 from tests.helpers.test_context import TEST_CONTEXT
@@ -43,9 +43,8 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
         parsing=ParseConfig(auto_parse=False),
-        system_services=SystemServices(),
+        init_cred=TEST_CONTEXT,
     )
-    nx._default_context = TEST_CONTEXT
     nx.router.add_mount("/", backend)
     yield nx
     nx.close()
@@ -291,9 +290,8 @@ class TestVFSObserverCoverage:
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
             parsing=ParseConfig(auto_parse=False),
-            system_services=SystemServices(),
+            init_cred=TEST_CONTEXT,
         )
-        nx._default_context = TEST_CONTEXT
         nx.router.add_mount("/", backend)
         nx.register_observe(hook)
         yield nx

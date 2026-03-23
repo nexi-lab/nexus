@@ -147,15 +147,14 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     # Build kernel (minimal — no factory, no bricks)
     from nexus.core.config import BrickServices, KernelServices, PermissionConfig
 
+    ctx = OperationContext(user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True)
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
         kernel_services=KernelServices(router=router),
         brick_services=BrickServices(),
+        init_cred=ctx,
     )
-
-    ctx = OperationContext(user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True)
-    kernel._default_context = ctx
 
     return SlimNexusFS(kernel)
 

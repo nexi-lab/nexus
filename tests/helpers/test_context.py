@@ -1,8 +1,8 @@
 """Shared test context constants for NexusFS tests.
 
 After #1801, NexusFS no longer fabricates identity — callers must provide
-an OperationContext.  Tests inject one of these shared constants via
-``nx._default_context = TEST_CONTEXT`` after construction.
+an OperationContext.  Tests pass one of these shared constants via
+``init_cred=TEST_CONTEXT`` at construction time.
 """
 
 from nexus.contracts.types import OperationContext

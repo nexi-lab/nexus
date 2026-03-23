@@ -70,8 +70,8 @@ class NexusFS(  # type: ignore[misc]
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
         kernel_services: KernelServices | None = None,
-        system_services: Any = None,
         brick_services: BrickServices | None = None,
+        init_cred: OperationContext | None = None,
     ):
         """Initialize NexusFS kernel.
 
@@ -79,10 +79,11 @@ class NexusFS(  # type: ignore[misc]
         (via KernelServices). Backends are mounted externally via
         ``router.add_mount()`` — like Linux VFS, no global backend.
 
-        .. deprecated:: Issue #1771
-            ``system_services`` is accepted for backward compatibility but the
-            kernel no longer reads it.  The factory layer sets
-            ``nx._system_services`` post-construction instead.
+        Args:
+            init_cred: Kernel process credential — like Linux ``init_task.cred``.
+                Used as fallback identity for internal operations (audit pipe
+                writes, service bootstrap mkdir). Immutable after construction.
+                Pass ``None`` only for bare-kernel tests that never call syscalls.
         """
         # Config defaults
         cache = cache or CacheConfig()
@@ -106,16 +107,6 @@ class NexusFS(  # type: ignore[misc]
         self._parse_config = parsing
         # Issue #1767: _kernel_services wrapper removed — only field was router,
         # which is already stored as self.router (set a few lines below).
-        # Issue #1771: _system_services removed from kernel logic — accepted
-        # only for backward compat (tests/server/CLI may still pass it).
-        # The factory layer re-sets this post-construction via setattr.
-        # Default to SystemServices() for backward compat with tests that
-        # call dataclasses.replace(nx._system_services, ...).
-        if system_services is None:
-            from nexus.core.config import SystemServices as _SystemServices
-
-            system_services = _SystemServices()
-        self._system_services = system_services
         self._brick_services = brk_svc
         self._config: Any | None = None
 
@@ -150,9 +141,10 @@ class NexusFS(  # type: ignore[misc]
         else:
             self.router = PathRouter(metadata_store)
 
-        # Issue #1801: kernel never fabricates identity.
-        # Factory / tests inject a default context after construction.
-        self._default_context: OperationContext | None = None
+        # Issue #1801: kernel process credential — like Linux init_task.cred.
+        # Immutable after construction. Used as fallback identity for internal
+        # operations. External callers should pass explicit context= to syscalls.
+        self._init_cred: OperationContext | None = init_cred
 
         # Issue #1706: sentinel — real value wired by factory._do_link().
         # Kept as sentinel (not deleted) because 8 kernel methods access without hasattr guard.
@@ -359,26 +351,28 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the runtime configuration object."""
         return self._config
 
-    def _require_context(self, context: OperationContext | None) -> OperationContext:
-        """Return *context* or the injected default; raise if neither available.
+    def _resolve_cred(self, context: OperationContext | None) -> OperationContext:
+        """Return *context* or the kernel init_cred; raise if neither available.
 
         Issue #1801: kernel never fabricates identity — like Linux VFS,
-        every syscall requires credentials from the caller.
+        every syscall requires credentials from the caller.  Renamed from
+        ``_require_context`` to reflect its role: resolve the credential
+        chain (explicit → init_cred → error).
         """
         if context is not None:
             return context
-        if self._default_context is not None:
-            return self._default_context
+        if self._init_cred is not None:
+            return self._init_cred
         raise ValueError(
-            "No operation context provided and no default context configured. "
-            "Use factory create_nexus_fs() or inject nx._default_context after construction."
+            "No operation context provided and no init_cred configured. "
+            "Use factory create_nexus_fs(init_cred=...) or pass context= to each syscall."
         )
 
     def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
         """Get the created_by value for version history tracking."""
         from nexus.lib.context_utils import get_created_by
 
-        fallback = self._require_context(context if isinstance(context, OperationContext) else None)
+        fallback = self._resolve_cred(context if isinstance(context, OperationContext) else None)
         return get_created_by(context, fallback)
 
     def _get_context_identity(
@@ -386,10 +380,10 @@ class NexusFS(  # type: ignore[misc]
     ) -> tuple[str | None, str | None, bool]:
         """Extract (zone_id, agent_id, is_admin) from context."""
         if context is None:
-            ctx = self._require_context(None)
+            ctx = self._resolve_cred(None)
             return (ctx.zone_id, ctx.agent_id, ctx.is_admin)
         if isinstance(context, dict):
-            fallback = self._require_context(None)
+            fallback = self._resolve_cred(None)
             return (
                 context.get("zone_id", fallback.zone_id),
                 context.get("agent_id", fallback.agent_id),
@@ -468,7 +462,7 @@ class NexusFS(  # type: ignore[misc]
         now = datetime.now(UTC)
 
         # Use provided context or default
-        ctx = self._require_context(context)
+        ctx = self._resolve_cred(context)
 
         # Note: UNIX permissions (owner/group/mode) are deprecated.
         # All permissions are now managed through ReBAC relationships.
@@ -512,7 +506,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # Use provided context or default
-        ctx = self._require_context(context)
+        ctx = self._resolve_cred(context)
 
         # Block writes during zone deprovisioning (Issue #2061)
 
@@ -560,7 +554,7 @@ class NexusFS(  # type: ignore[misc]
         # Create explicit metadata entry for the directory
         self._create_directory_metadata(path, context=ctx)
 
-        ctx = self._require_context(context)
+        ctx = self._resolve_cred(context)
 
         # Issue #900/#1682: Unified two-phase dispatch for mkdir
         # Hierarchy tuples + owner grants moved to post_mkdir hooks.
@@ -597,7 +591,7 @@ class NexusFS(  # type: ignore[misc]
 
         path = self._validate_path(path)
 
-        ctx = self._require_context(context)
+        ctx = self._resolve_cred(context)
 
         logger.debug(
             f"rmdir: path={path}, recursive={recursive}, user={ctx.user_id}, is_admin={ctx.is_admin}"
@@ -698,7 +692,7 @@ class NexusFS(  # type: ignore[misc]
             path = self._validate_path(path)
 
             # Use provided context or default
-            ctx = self._require_context(context)
+            ctx = self._resolve_cred(context)
 
             # Check if it's an implicit directory first (for optimization)
             is_implicit_dir = self.metadata.is_implicit_directory(path)
@@ -745,7 +739,7 @@ class NexusFS(  # type: ignore[misc]
         truth for mount points). Admin-only filtering uses the runtime
         mount table which carries mount options.
         """
-        ctx = self._require_context(context)
+        ctx = self._resolve_cred(context)
         # Build admin_only set from runtime mount table (mount options)
         admin_only = {m.mount_point for m in self.router.list_mounts() if m.admin_only}
 
@@ -769,7 +763,7 @@ class NexusFS(  # type: ignore[misc]
         context: OperationContext | None = None,
     ) -> dict[str, Any] | None:
         """Get file metadata without reading content (FUSE getattr)."""
-        ctx = self._require_context(context)
+        ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
 
         # Check if it's a directory first
@@ -1511,7 +1505,7 @@ class NexusFS(  # type: ignore[misc]
                 # Note: filter_list assumes READ permission, which is what we want
                 from nexus.contracts.types import OperationContext
 
-                ctx = self._require_context(context)
+                ctx = self._resolve_cred(context)
                 assert isinstance(ctx, OperationContext), "Context must be OperationContext"
                 allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
                 allowed_set = set(allowed_paths)
@@ -2389,7 +2383,7 @@ class NexusFS(  # type: ignore[misc]
             )
             content_hash = wr.content_id
             new_version = (meta.version + 1) if meta else 1
-            ctx = self._require_context(context)
+            ctx = self._resolve_cred(context)
             owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
             metadata = FileMetadata(
                 path=path,
@@ -2428,7 +2422,7 @@ class NexusFS(  # type: ignore[misc]
 
                 # Store metadata with content hash as both etag and physical_path
                 # Issue #920: Set owner_id for O(1) permission checks (only on new files)
-                ctx = self._require_context(context)
+                ctx = self._resolve_cred(context)
                 owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
 
                 metadata = FileMetadata(
@@ -3373,7 +3367,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Check permission: TRAVERSE for implicit directories, READ for files
         # This enables `stat /skills` to work for authenticated users (TRAVERSE is auto-allowed)
-        ctx = self._require_context(context)
+        ctx = self._resolve_cred(context)
         if is_implicit_dir:
             # Only check permissions if enforcement is enabled
             if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
@@ -3500,7 +3494,7 @@ class NexusFS(  # type: ignore[misc]
             try:
                 from nexus.contracts.types import OperationContext
 
-                ctx = self._require_context(context)
+                ctx = self._resolve_cred(context)
                 assert isinstance(ctx, OperationContext), "Context must be OperationContext"
                 allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
                 allowed_set = set(allowed_paths)
@@ -3604,7 +3598,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Check permission if enforcement enabled
             if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                ctx = self._require_context(context)
+                ctx = self._resolve_cred(context)
 
                 # OPTIMIZATION: For implicit directories, use TRAVERSE permission (O(1))
                 # instead of expensive descendant access check (O(n))
@@ -3732,7 +3726,7 @@ class NexusFS(  # type: ignore[misc]
 
                 # Check permission if enforcement enabled
                 if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                    ctx = self._require_context(context)
+                    ctx = self._resolve_cred(context)
                     if not self._descendant_checker.has_access(path, Permission.READ, ctx):
                         results[path] = None
                         continue

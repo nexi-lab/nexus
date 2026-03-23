@@ -1,0 +1,118 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nexus-fs"
+version = "0.1.0"
+description = "Unified filesystem abstraction for cloud storage — mount S3, GCS, and local storage with two lines of Python"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    { name = "Nexi Lab Team" },
+]
+keywords = ["filesystem", "s3", "gcs", "cloud", "storage", "vfs", "ai", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Filesystems",
+    "Typing :: Typed",
+]
+
+# ~15 base dependencies — slim by design
+dependencies = [
+    "pydantic>=2.0",
+    "click>=8.0",
+    "rich>=13.0",
+    "orjson>=3.9",
+    "blake3>=0.4",
+    "anyio>=4.0",
+    "aiofiles>=23.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+s3 = ["boto3>=1.28"]
+gcs = ["google-cloud-storage>=2.0"]
+gdrive = [
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+]
+fsspec = ["fsspec>=2024.0"]
+tui = ["textual>=1.0"]
+langchain = ["langchain-core>=0.2"]
+all = [
+    "nexus-fs[s3,gcs,gdrive,fsspec,tui,langchain]",
+]
+dev = [
+    "nexus-fs[all]",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "moto[s3]>=5.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/nexi-lab/nexus"
+Documentation = "https://nexus-fs.dev"
+Repository = "https://github.com/nexi-lab/nexus"
+Issues = "https://github.com/nexi-lab/nexus/issues"
+
+[project.entry-points."fsspec.specs"]
+nexus = "nexus.fs._fsspec:NexusFileSystem"
+
+[project.scripts]
+nexus-fs = "nexus.fs._cli:main"
+
+[tool.hatch.build.targets.wheel]
+# Slim package: only include the core/contracts/backends/lib/storage/fs layers.
+# Excludes bricks/, server/, factory/, raft/, cli/ (those live in nexus-ai-fs).
+packages = ["../../src/nexus"]
+include = [
+    "nexus/__init__.py",
+    "nexus/py.typed",
+    "nexus/fs/**",
+    "nexus/core/**",
+    "nexus/contracts/**",
+    "nexus/backends/**",
+    "nexus/lib/**",
+    "nexus/storage/**",
+    "nexus/config.py",
+]
+exclude = [
+    "nexus/bricks/**",
+    "nexus/server/**",
+    "nexus/factory/**",
+    "nexus/raft/**",
+    "nexus/cli/**",
+    "nexus/fuse/**",
+    "nexus/remote/**",
+    "nexus/system_services/**",
+    "nexus/grpc/**",
+    "nexus/security/**",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["../../tests/unit/fs"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true

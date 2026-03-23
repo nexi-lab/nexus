@@ -111,6 +111,9 @@ _LAZY_IMPORTS = {
     # Core - heavy
     "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
+    # Slim package top-level API (nexus.mount / nexus.mount_sync)
+    "mount": ("nexus.fs", "mount"),
+    "mount_sync": ("nexus.fs", "mount_sync"),
 }
 
 
@@ -691,8 +694,10 @@ async def _restore_mounts(nx_fs: "NexusFS") -> None:
 __all__ = [
     # Version
     "__version__",
-    # Main entry point
+    # Main entry points
     "connect",
+    "mount",
+    "mount_sync",
     # Configuration
     "NexusConfig",
     "load_config",

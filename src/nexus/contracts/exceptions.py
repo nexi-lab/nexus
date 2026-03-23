@@ -569,6 +569,89 @@ class CredentialError(NexusError):
         super().__init__(message)
 
 
+class NexusURIError(InvalidPathError):
+    """Invalid URI format for nexus.mount().
+
+    This is an expected error — the user provided a malformed or unsupported
+    mount URI (e.g., missing scheme, unknown scheme, empty authority).
+
+    Examples:
+        >>> raise NexusURIError("bucket-name", "Missing scheme. Did you mean 's3://bucket-name'?")
+        >>> raise NexusURIError("xyz://foo", "Unsupported scheme: xyz://")
+    """
+
+    is_expected = True
+    status_code = 400
+    error_type = "Bad Request"
+
+    def __init__(self, uri: str, message: str | None = None):
+        self.uri = uri
+        msg = message or f"Invalid URI: {uri}"
+        super().__init__(path=uri, message=msg)
+
+
+class CloudCredentialError(NexusError):
+    """Missing or invalid credentials for a cloud storage backend.
+
+    This is an expected error — the user needs to configure credentials
+    for the cloud backend (AWS, GCP, etc.).
+
+    Distinct from CredentialError which is for JWS/internal credential operations.
+
+    Examples:
+        >>> raise CloudCredentialError("s3", "AWS credentials not found. Run `aws configure` or set AWS_ACCESS_KEY_ID")
+        >>> raise CloudCredentialError("gcs", "GCP ADC not found. Run `gcloud auth application-default login`")
+    """
+
+    is_expected = True
+    status_code = 401
+    error_type = "Unauthorized"
+
+    def __init__(self, backend: str, message: str | None = None):
+        self.backend = backend
+        msg = message or f"Credentials not found for {backend}. Run `nexus doctor` for details"
+        super().__init__(msg)
+
+
+class BackendNotFoundError(BackendError):
+    """Cloud resource (bucket, container, project) not found.
+
+    This is an expected error — the user referenced a cloud resource
+    that doesn't exist or isn't accessible.
+
+    Examples:
+        >>> raise BackendNotFoundError("my-buket", "s3", "Bucket 'my-buket' not found")
+    """
+
+    is_expected = True
+    status_code = 404
+    error_type = "Not Found"
+
+    def __init__(self, resource: str, backend: str | None = None, message: str | None = None):
+        self.resource = resource
+        msg = message or f"Backend resource not found: {resource}"
+        super().__init__(msg, backend=backend)
+
+
+class BackendPermissionError(NexusPermissionError):
+    """IAM-level permission denied by cloud provider.
+
+    This is an expected error — the cloud provider's IAM rejected the
+    operation. Distinct from ReBAC permission errors (PermissionDeniedError).
+
+    Examples:
+        >>> raise BackendPermissionError("/s3/bucket/file.txt", "Access denied by AWS IAM")
+    """
+
+    is_expected = True
+    status_code = 403
+    error_type = "Forbidden"
+
+    def __init__(self, path: str, message: str | None = None):
+        msg = message or "Access denied by backend IAM"
+        super().__init__(path=path, message=msg)
+
+
 class ZoneTerminatingError(NexusError):
     """Raised when a write is attempted on a zone in Terminating phase.
 

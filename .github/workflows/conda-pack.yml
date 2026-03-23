@@ -120,8 +120,11 @@ jobs:
         shell: bash -el {0}
         run: |
           if [ -n "${{ matrix.profile.requirements }}" ]; then
-            echo "Installing from ${{ matrix.profile.requirements }} (lightweight profile)"
+            echo "Installing dependencies from ${{ matrix.profile.requirements }} (lightweight profile)"
             conda run -n nexus pip install -r ${{ matrix.profile.requirements }}
+            # Install project itself (without deps, already installed above) to get CLI entrypoints (nexus, nexusd)
+            echo "Installing project package for CLI entrypoints"
+            conda run -n nexus pip install --no-deps .
           else
             echo "Installing full dependencies from pyproject.toml"
             conda run -n nexus pip install .

@@ -1092,15 +1092,8 @@ class NexusFS(  # type: ignore[misc]
             if "event loop detected" in str(e):
                 raise
 
-        zone_id = (
-            context.zone_id
-            if context and hasattr(context, "zone_id") and context.zone_id
-            else ROOT_ZONE_ID
-        )
-
         async def acquire_lock() -> str | None:
             return await _lm.acquire(
-                zone_id=zone_id,
                 path=path,
                 timeout=timeout,
             )
@@ -1128,14 +1121,8 @@ class NexusFS(  # type: ignore[misc]
         if _lm is None:
             return
 
-        zone_id = (
-            context.zone_id
-            if context and hasattr(context, "zone_id") and context.zone_id
-            else ROOT_ZONE_ID
-        )
-
         async def release_lock() -> None:
-            await _lm.release(lock_id, zone_id, path)
+            await _lm.release(lock_id, path)
 
         from nexus.lib.sync_bridge import run_sync
 

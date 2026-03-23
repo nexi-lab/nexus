@@ -49,17 +49,21 @@ class TestCASHoldConcurrent:
 
     def test_concurrent_hold_reference(self) -> None:
         """Multiple threads calling hold_reference on same hash."""
-        from nexus.backends.base.stripe_lock import _StripeLock
+        from nexus.core.semaphore import PythonVFSSemaphore
 
-        # Create a mock CAS store with real stripe locks
-        lock = _StripeLock(num_stripes=64)
+        # Create a mock CAS store with real VFS semaphore
+        sem = PythonVFSSemaphore()
         ref_count = {"count": 1}
 
         def mock_hold_reference(content_hash: str) -> bool:
-            stripe = lock.acquire_for(content_hash)
-            with stripe:
+            holder = sem.acquire(content_hash, max_holders=1, timeout_ms=5000)
+            if holder is None:
+                return False
+            try:
                 ref_count["count"] += 1
                 return True
+            finally:
+                sem.release(content_hash, holder)
 
         num_threads = 20
 

@@ -2,11 +2,11 @@
 
 Composes CASAddressingEngine (addressing) + LocalBlobTransport (I/O) +
 MultipartUpload (resumable uploads) using Feature DI for Bloom filter,
-content cache, stripe lock, and CDCEngine (chunking).
+content cache, VFSSemaphore, and CDCEngine (chunking).
 
     CASLocalBackend = CASAddressingEngine(LocalBlobTransport)
                     + MultipartUpload     (resumable uploads, ABC)
-                    + Feature DI          (Bloom, cache, stripe lock, CDC)
+                    + Feature DI          (Bloom, cache, VFSSemaphore, CDC)
 
 CDC routing is handled by CASAddressingEngine base class via Feature DI —
 CASLocalBackend only instantiates and passes CDCEngine.
@@ -28,13 +28,13 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.base.stripe_lock import _StripeLock
 from nexus.backends.engines.cdc import CDCEngine
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.semaphore import create_vfs_semaphore
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -126,7 +126,7 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         # Build components
         transport = LocalBlobTransport(root_path=self.root_path, fsync=True)
         bloom = _init_bloom(self.cas_root, bloom_capacity, bloom_fp_rate)
-        stripe = _StripeLock()
+        meta_semaphore = create_vfs_semaphore()
 
         # Feature DI: LRU metadata cache for hot-path _read_meta()
         import cachetools
@@ -142,7 +142,7 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
             bloom_filter=bloom,
             content_cache=content_cache,
             meta_cache=meta_cache,
-            stripe_lock=stripe,
+            meta_semaphore=meta_semaphore,
             on_write_callback=on_write_callback,
         )
 

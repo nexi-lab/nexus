@@ -71,7 +71,13 @@ class TestChunkedStorageE2E:
 
     @pytest.mark.asyncio
     async def test_large_file_delete_cleans_chunks(self, nexus_fs) -> None:
-        """Test that deleting chunked files cleans up chunks."""
+        """Test that deleting chunked files cleans up chunks.
+
+        Issue #1320: sys_unlink is now metadata-only — content cleanup is
+        deferred to CAS GC via OBSERVE observer.  After sys_unlink removes
+        VFS metadata, we call backend.delete_content() directly to simulate
+        the GC cleanup and verify that chunks are properly removed.
+        """
         from nexus.backends.engines.cdc import ChunkedReference
 
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 100_000)
@@ -92,11 +98,14 @@ class TestChunkedStorageE2E:
         for ch in chunk_hashes:
             assert backend._transport._resolve(backend._blob_key(ch)).exists()
 
-        # Delete
+        # Delete VFS metadata
         await nexus_fs.sys_unlink("/delete_test.bin")
 
-        # Verify file is gone
+        # Verify file is gone from VFS
         assert await nexus_fs.sys_stat("/delete_test.bin") is None
+
+        # Simulate GC cleanup: delete_content handles chunk ref-counting
+        backend.delete_content(content_hash)
 
         # Verify chunks are deleted (ref_count was 1)
         for ch in chunk_hashes:

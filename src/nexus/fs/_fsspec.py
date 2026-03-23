@@ -67,7 +67,7 @@ class NexusFileSystem:
                 (NexusFileSystem, AbstractFileSystem),
                 {},
             )
-            AbstractFileSystem.__init__(self, **kwargs)
+            super().__init__(**kwargs)
         self._nexus = nexus_fs
         self._sync = _get_sync_caller()
 

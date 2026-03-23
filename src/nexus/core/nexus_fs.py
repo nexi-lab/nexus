@@ -633,30 +633,8 @@ class NexusFS(  # type: ignore[misc]
             # Use batch delete for better performance (single transaction instead of N queries)
             file_paths = [file_meta.path for file_meta in files_in_dir]
 
-            # Delete content from backend for each file
-            _errors: list[str] = []
-            for file_meta in files_in_dir:
-                if file_meta.etag:
-                    try:
-                        _file_route = self.router.route(file_meta.path)
-                        if ctx:
-                            _del_ctx = _dc_replace(ctx, backend_path=_file_route.backend_path)
-                        else:
-                            _del_ctx = OperationContext(
-                                user_id="anonymous",
-                                groups=[],
-                                backend_path=_file_route.backend_path,
-                            )
-                        _file_route.backend.delete_content(file_meta.etag, context=_del_ctx)
-                    except Exception as e:
-                        if len(_errors) < 100:
-                            _errors.append(f"{file_meta.path}: {e}")
-            if _errors:
-                logger.debug(
-                    "Bulk content delete: %d error(s) (showing up to 100): %s",
-                    len(_errors),
-                    "; ".join(_errors),
-                )
+            # Issue #1320: Content cleanup deferred to CAS GC via OBSERVE
+            # observer (CASRefCountObserver). Kernel only deletes metadata.
 
             # Batch delete from metadata store
             self.metadata.delete_batch(file_paths)
@@ -3177,18 +3155,8 @@ class NexusFS(  # type: ignore[misc]
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
         # Like Linux i_rwsem: held for I/O duration only, released before observers.
         with self._vfs_locked(path, "write"):
-            if meta.etag and meta.mime_type != "inode/directory":
-                # CAS file: delete from routed backend (decrements ref count)
-                # Content is only physically deleted when ref_count reaches 0
-                # Skip content deletion for directories (no CAS entry)
-                # Add backend_path to context for path-based backends
-                if context:
-                    _del_ctx = _dc_replace(context, backend_path=route.backend_path)
-                else:
-                    _del_ctx = OperationContext(
-                        user_id="anonymous", groups=[], backend_path=route.backend_path
-                    )
-                route.backend.delete_content(meta.etag, context=_del_ctx)
+            # Issue #1320: Content cleanup deferred to CAS GC via OBSERVE
+            # observer (CASRefCountObserver). Kernel only deletes metadata.
 
             # Remove from metadata
             self.metadata.delete(path)
@@ -3904,30 +3872,8 @@ class NexusFS(  # type: ignore[misc]
             raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
 
         if recursive and files_in_dir:
-            # Delete content from backend for each file
-            _errors: list[str] = []
-            for file_meta in files_in_dir:
-                if file_meta.etag and file_meta.mime_type != "inode/directory":
-                    try:
-                        _file_route = self.router.route(file_meta.path)
-                        if context:
-                            _del_ctx = _dc_replace(context, backend_path=_file_route.backend_path)
-                        else:
-                            _del_ctx = OperationContext(
-                                user_id="anonymous",
-                                groups=[],
-                                backend_path=_file_route.backend_path,
-                            )
-                        _file_route.backend.delete_content(file_meta.etag, context=_del_ctx)
-                    except Exception as e:
-                        if len(_errors) < 100:
-                            _errors.append(f"{file_meta.path}: {e}")
-            if _errors:
-                logger.debug(
-                    "Bulk content delete: %d error(s) (showing up to 100): %s",
-                    len(_errors),
-                    "; ".join(_errors),
-                )
+            # Issue #1320: Content cleanup deferred to CAS GC via OBSERVE
+            # observer (CASRefCountObserver). Kernel only deletes metadata.
 
             # Batch delete from metadata store
             file_paths = [file_meta.path for file_meta in files_in_dir]

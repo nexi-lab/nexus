@@ -32,11 +32,24 @@ Issue: #951
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from sqlalchemy import text as sa_text
+
+from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
+from nexus.bricks.search.mutation_events import (
+    SearchMutationEvent,
+    SearchMutationOp,
+    extract_zone_id,
+    strip_zone_prefix,
+)
+from nexus.bricks.search.mutation_resolver import MutationResolver, ResolvedMutation
 from nexus.bricks.search.results import BaseSearchResult
 from nexus.lib.env import get_database_url
 
@@ -66,6 +79,7 @@ class DaemonStats:
     last_index_refresh: float | None = None
     zoekt_available: bool = False
     embedding_cache_connected: bool = False
+    mutation_consumers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -99,6 +113,8 @@ class DaemonConfig:
     # Index refresh settings
     refresh_debounce_seconds: float = 5.0
     refresh_enabled: bool = True
+    mutation_poll_seconds: float = 2.0
+    mutation_batch_size: int = 100
 
     # Performance settings
     query_timeout_seconds: float = 10.0
@@ -140,6 +156,7 @@ class SearchDaemon:
         async_session_factory: Any | None = None,
         zoekt_client: Any | None = None,
         cache_brick: Any | None = None,
+        settings_store: Any | None = None,
     ):
         """Initialize the search daemon.
 
@@ -149,11 +166,14 @@ class SearchDaemon:
                 When provided, skips creating a private engine (Issue #1597).
             zoekt_client: Injected ZoektClient instance (Issue #2188).
             cache_brick: Injected CacheBrick for embedding cache health checks.
+            settings_store: Optional SystemSettingsStoreProtocol for durable
+                consumer checkpoints.
         """
         self.config = config or DaemonConfig()
         self.stats = DaemonStats()
         self._zoekt_client = zoekt_client
         self._cache_brick = cache_brick
+        self._settings_store = settings_store
 
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
@@ -180,9 +200,21 @@ class SearchDaemon:
 
         # Index refresh task
         self._refresh_task: asyncio.Task | None = None
+        self._legacy_refresh_task: asyncio.Task | None = None
+        self._mutation_wakeup = asyncio.Event()
         self._pending_refresh_paths: set[str] = set()
         self._pending_delete_paths: set[str] = set()
         self._refresh_lock = asyncio.Lock()
+        self._mutation_resolver: MutationResolver | None = None
+        self._chunk_store: ChunkStore | None = None
+        self._consumer_tasks: dict[str, asyncio.Task[None]] = {}
+        self._consumer_failures: dict[str, int] = {}
+        self._consumer_last_error: dict[str, str | None] = {}
+        self._consumer_last_sequence: dict[str, int] = {}
+        self._checkpoint_file = (
+            Path(self.config.bm25s_index_dir).parent / "mutation-checkpoints.json"
+        )
+        self._checkpoint_lock = asyncio.Lock()
 
         # FileReaderProtocol reference for reading file content (set by FastAPI server)
         # Issue #1520: Replaces direct NexusFS dependency
@@ -193,6 +225,8 @@ class SearchDaemon:
 
         # txtai backend (Issue #2663) — used for semantic/hybrid search + graph
         self._backend: Any = None
+        self._txtai_bootstrap_task: asyncio.Task[None] | None = None
+        self._txtai_bootstrapped = False
         self.last_search_timing: dict[str, float] = {}
 
         # Latency tracking (circular buffer)
@@ -248,13 +282,15 @@ class SearchDaemon:
                 reranker_model=self.config.txtai_reranker,
                 sparse=self.config.txtai_sparse,
             )
-            await self._backend.startup()
-            logger.info("txtai backend initialized successfully")
+            self._backend.kickoff_startup()
+            self._txtai_bootstrap_task = asyncio.create_task(self._bootstrap_txtai_backend())
+            logger.info("txtai backend startup kicked off in background")
         except Exception:
             logger.warning(
                 "txtai backend init failed, falling back to legacy search", exc_info=True
             )
             self._backend = None
+            self._txtai_bootstrapped = False
 
         # Initialize entropy-aware chunker if enabled (Issue #1024)
         if self.config.entropy_filtering:
@@ -288,10 +324,20 @@ class SearchDaemon:
             max_concurrency=self.config.max_indexing_concurrency,
             cross_doc_batching=True,
         )
+        if self._async_session is not None:
+            self._chunk_store = ChunkStore(
+                async_session_factory=self._async_session,
+                db_type=_db_type,
+            )
+        self._mutation_resolver = MutationResolver(
+            file_reader=self._file_reader,
+            async_session_factory=self._async_session,
+        )
 
-        # Start index refresh background task
+        # Start durable mutation consumers
         if self.config.refresh_enabled:
             self._refresh_task = asyncio.create_task(self._index_refresh_loop())
+            self._legacy_refresh_task = asyncio.create_task(self._legacy_refresh_loop())
 
         # If BM25S not loaded, count existing DB documents for stats
         if not self._bm25s_index and self._async_session:
@@ -331,10 +377,22 @@ class SearchDaemon:
         logger.info("Shutting down SearchDaemon...")
 
         # Cancel refresh task
+        for task in self._consumer_tasks.values():
+            task.cancel()
+        if self._txtai_bootstrap_task and not self._txtai_bootstrap_task.done():
+            self._txtai_bootstrap_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._txtai_bootstrap_task
+        self._txtai_bootstrap_task = None
+        if self._legacy_refresh_task:
+            self._legacy_refresh_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._legacy_refresh_task
         if self._refresh_task:
             self._refresh_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
+        self._consumer_tasks.clear()
 
         # Shutdown txtai backend (Issue #2663)
         if self._backend is not None:
@@ -343,6 +401,7 @@ class SearchDaemon:
             except Exception as e:
                 logger.debug("txtai backend shutdown error: %s", e)
             self._backend = None
+        self._txtai_bootstrapped = False
 
         # Close database connections (only if we created them)
         if self._owns_engine:
@@ -562,7 +621,9 @@ class SearchDaemon:
                     return zoekt_results
 
             # Delegate to txtai backend for all search types (Issue #2663)
-            if self._backend is not None:
+            if self._backend is not None and (
+                self._txtai_bootstrapped or self._txtai_bootstrap_task is None
+            ):
                 backend_start = time.perf_counter()
                 backend_results = await self._backend.search(
                     query,
@@ -651,6 +712,72 @@ class SearchDaemon:
         if count:
             self.stats.last_index_refresh = time.time()
         return count
+
+    async def _bootstrap_txtai_backend(self) -> None:
+        """Populate txtai from canonical SQL chunks so restarts keep semantic search."""
+        if self._backend is None or self._async_session is None:
+            self._txtai_bootstrapped = self._backend is None
+            return
+
+        from sqlalchemy import text as sa_text
+
+        try:
+            async with self._async_session() as session:
+                result = await session.execute(
+                    sa_text(
+                        """
+                        SELECT
+                            fp.zone_id,
+                            fp.virtual_path,
+                            c.chunk_index,
+                            c.chunk_text
+                        FROM document_chunks c
+                        JOIN file_paths fp ON c.path_id = fp.path_id
+                        WHERE fp.deleted_at IS NULL
+                        ORDER BY fp.zone_id, fp.virtual_path, c.chunk_index
+                        """
+                    )
+                )
+                rows = result.fetchall()
+
+            if not rows:
+                self._txtai_bootstrapped = True
+                return
+
+            docs_by_zone: dict[str, list[dict[str, Any]]] = {}
+            grouped_content: dict[tuple[str, str], list[str]] = {}
+            for row in rows:
+                zone = row.zone_id or "root"
+                path = row.virtual_path
+                grouped_content.setdefault((zone, path), []).append(row.chunk_text or "")
+
+            for (zone, path), parts in grouped_content.items():
+                content = "\n".join(part for part in parts if part)
+                if not path or not content.strip():
+                    continue
+                doc_id = f"{zone}:{path}" if zone != "root" else path
+                docs_by_zone.setdefault(zone, []).append(
+                    {
+                        "id": doc_id,
+                        "text": content,
+                        "path": path,
+                        "zone_id": zone,
+                    }
+                )
+
+            total = 0
+            for zone_id, docs in docs_by_zone.items():
+                total += int(await self._backend.upsert(docs, zone_id=zone_id))
+
+            self._txtai_bootstrapped = True
+            if total:
+                self.stats.last_index_refresh = time.time()
+            logger.info("txtai bootstrap indexed %d existing documents", total)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._txtai_bootstrapped = False
+            logger.warning("txtai bootstrap failed, continuing with legacy search: %s", exc)
 
     async def delete_documents(
         self,
@@ -1033,76 +1160,108 @@ class SearchDaemon:
     # =========================================================================
 
     async def notify_file_change(self, path: str, change_type: str = "update") -> None:
-        """Notify the daemon of a file change for index refresh.
+        """Wake durable mutation consumers after a filesystem change.
 
-        Changes are debounced and batched for efficiency.
-
-        Args:
-            path: File path that changed
-            change_type: Type of change ("create", "update", "delete")
+        The durable source of truth is the operation log. Hooks only wake the
+        consumer loop so successful writes are reflected quickly. A legacy
+        in-process fallback queue is kept for stacks where the operation log
+        is absent or not populated for local file mutations.
         """
         if not self.config.refresh_enabled:
             return
 
-        async with self._refresh_lock:
-            if change_type == "delete":
-                self._pending_delete_paths.add(path)
-                self._pending_refresh_paths.discard(path)
-            else:
-                self._pending_refresh_paths.add(path)
-                self._pending_delete_paths.discard(path)
+        if self._mutation_resolver is not None:
+            self._mutation_resolver.invalidate_path(path)
+        if change_type == "delete":
+            self._pending_delete_paths.add(path)
+            self._pending_refresh_paths.discard(path)
+        else:
+            self._pending_refresh_paths.add(path)
+            self._pending_delete_paths.discard(path)
+        self._mutation_wakeup.set()
 
     async def _index_refresh_loop(self) -> None:
-        """Background task to refresh indexes for changed files."""
+        """Background task to drive durable per-indexer mutation consumers."""
+        consumer_specs = {
+            "bm25": self._consume_bm25_mutations,
+            "fts": self._consume_fts_mutations,
+            "embedding": self._consume_embedding_mutations,
+            "txtai": self._consume_txtai_mutations,
+        }
+        self._consumer_tasks = {
+            name: asyncio.create_task(
+                self._run_mutation_consumer(name, handler), name=f"search-{name}"
+            )
+            for name, handler in consumer_specs.items()
+        }
+        try:
+            await asyncio.gather(*self._consumer_tasks.values())
+        finally:
+            self._consumer_tasks.clear()
+
+    async def _legacy_refresh_loop(self) -> None:
+        """Fallback hook-driven refresh path for stacks without usable op-log events."""
         while not self._shutting_down:
             try:
+                await self._mutation_wakeup.wait()
                 await asyncio.sleep(self.config.refresh_debounce_seconds)
+                self._mutation_wakeup.clear()
 
                 async with self._refresh_lock:
-                    if not self._pending_refresh_paths and not self._pending_delete_paths:
+                    refresh_paths = sorted(self._pending_refresh_paths)
+                    delete_paths = sorted(self._pending_delete_paths)
+                    if not refresh_paths and not delete_paths:
                         continue
-
-                    paths = self._coalesce_subtrees(self._pending_refresh_paths)
                     self._pending_refresh_paths.clear()
-                    delete_paths = list(self._pending_delete_paths)
                     self._pending_delete_paths.clear()
 
-                # Delete removed files from the index
-                # Doc IDs are "zone:path" for non-root, plain path for root
-                if delete_paths and self._backend is not None:
-                    from nexus.contracts.constants import ROOT_ZONE_ID
-
-                    delete_ids = []
-                    for dp in delete_paths:
-                        vp = self._strip_zone_prefix(dp)
-                        # Infer zone from the scoped path prefix
-                        import re as _re_del
-
-                        zm = _re_del.match(r"^/zone/([^/]+)/", dp)
-                        zone = zm.group(1) if zm else ROOT_ZONE_ID
-                        delete_ids.append(f"{zone}:{vp}" if zone != ROOT_ZONE_ID else vp)
-                    await self.delete_documents(delete_ids, zone_id=ROOT_ZONE_ID)
-
-                # Refresh indexes for changed paths
-                if paths:
-                    await self._refresh_indexes(paths)
-                self.stats.last_index_refresh = time.time()
-
+                if delete_paths:
+                    await self._delete_indexes_for_paths(delete_paths)
+                if refresh_paths:
+                    await self._refresh_indexes(refresh_paths)
             except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Index refresh error: {e}")
+                raise
+            except Exception as exc:
+                logger.warning("Legacy search refresh loop failed: %s", exc)
+                await asyncio.sleep(1)
 
-    @staticmethod
-    def _strip_zone_prefix(path: str) -> str:
-        """Strip /zone/{zone_id} prefix from a path for DB virtual_path lookup.
+    async def _delete_indexes_for_paths(self, paths: list[str]) -> None:
+        """Best-effort delete propagation for fallback stacks without op-log delivery."""
+        if not paths:
+            return
 
-        DB stores virtual_path as '/test-search/...' not '/zone/root/test-search/...'.
-        """
-        import re
+        events = [
+            SearchMutationEvent(
+                event_id=f"legacy-delete:{path}",
+                operation_id=f"legacy-delete:{path}",
+                op=SearchMutationOp.DELETE,
+                path=path,
+                zone_id=extract_zone_id(path),
+                timestamp=datetime.now(UTC).replace(tzinfo=None),
+                sequence_number=0,
+            )
+            for path in paths
+        ]
+        resolved = await self._resolve_mutations(events)
+        if not resolved:
+            return
 
-        m = re.match(r"^/zone/[^/]+(/.*)", path)
-        return m.group(1) if m else path
+        if self._chunk_store is not None:
+            for mutation in resolved:
+                if mutation.path_id != mutation.virtual_path:
+                    await self._chunk_store.delete_document_chunks(mutation.path_id)
+
+        if self._backend is not None:
+            deletes_by_zone: dict[str, list[str]] = {}
+            for mutation in resolved:
+                deletes_by_zone.setdefault(mutation.zone_id, []).append(mutation.doc_id)
+            for zone_id, ids in deletes_by_zone.items():
+                await self._backend.delete(ids, zone_id=zone_id)
+
+        if self._bm25s_index is not None and hasattr(self._bm25s_index, "delete_document"):
+            for mutation in resolved:
+                with contextlib.suppress(Exception):
+                    await self._bm25s_index.delete_document(mutation.path_id)
 
     @staticmethod
     def _coalesce_subtrees(
@@ -1155,61 +1314,279 @@ class SearchDaemon:
 
     async def _index_to_document_chunks(self, path_id: str, path: str, content: str) -> None:
         """Insert content as document_chunks for FTS search."""
-        if not self._async_session:
+        if self._chunk_store is None:
             return
 
         try:
-            import uuid
-            from datetime import UTC, datetime
-
-            from sqlalchemy import text as sa_text
-
             # Split into chunks (~1000 chars each for search granularity)
             chunk_size = 1000
             chunks = [content[i : i + chunk_size] for i in range(0, len(content), chunk_size)]
-            now = datetime.now(UTC).replace(tzinfo=None)
-
-            async with self._async_session() as sess:
-                # Delete existing chunks for this path
-                await sess.execute(
-                    sa_text("DELETE FROM document_chunks WHERE path_id = :pid"),
-                    {"pid": path_id},
-                )
-
-                for idx, chunk_text in enumerate(chunks):
-                    if not chunk_text.strip():
-                        continue
-                    # Compute approximate line numbers
-                    preceding = content[: idx * chunk_size]
-                    line_start = preceding.count("\n") + 1
-                    line_end = line_start + chunk_text.count("\n")
-                    # Approximate token count (~4 chars per token)
-                    chunk_tokens = max(1, len(chunk_text) // 4)
-
-                    await sess.execute(
-                        sa_text(
-                            "INSERT INTO document_chunks "
-                            "(chunk_id, path_id, chunk_index, chunk_text, chunk_tokens, "
-                            "start_offset, end_offset, line_start, line_end, created_at) "
-                            "VALUES (:cid, :pid, :idx, :txt, :tokens, "
-                            ":s_off, :e_off, :ls, :le, :created)"
-                        ),
-                        {
-                            "cid": str(uuid.uuid4()),
-                            "pid": path_id,
-                            "idx": idx,
-                            "txt": chunk_text,
-                            "tokens": chunk_tokens,
-                            "s_off": idx * chunk_size,
-                            "e_off": idx * chunk_size + len(chunk_text),
-                            "ls": line_start,
-                            "le": line_end,
-                            "created": now,
-                        },
+            records: list[ChunkRecord] = []
+            for idx, chunk_text in enumerate(chunks):
+                if not chunk_text.strip():
+                    continue
+                preceding = content[: idx * chunk_size]
+                line_start = preceding.count("\n") + 1
+                line_end = line_start + chunk_text.count("\n")
+                records.append(
+                    ChunkRecord(
+                        chunk_text=chunk_text,
+                        chunk_tokens=max(1, len(chunk_text) // 4),
+                        start_offset=idx * chunk_size,
+                        end_offset=idx * chunk_size + len(chunk_text),
+                        line_start=line_start,
+                        line_end=line_end,
                     )
-                await sess.commit()
+                )
+            await self._chunk_store.replace_document_chunks(path_id, records)
         except Exception as e:
             logger.debug("Failed to index %s to document_chunks: %s", path, e)
+
+    def _checkpoint_key(self, consumer_name: str) -> str:
+        return f"search_mutation_checkpoint:{consumer_name}"
+
+    async def _load_checkpoint_file(self) -> dict[str, int]:
+        def _read() -> dict[str, int]:
+            if not self._checkpoint_file.exists():
+                return {}
+            try:
+                payload = json.loads(self._checkpoint_file.read_text())
+            except (OSError, json.JSONDecodeError):
+                return {}
+            if not isinstance(payload, dict):
+                return {}
+            checkpoints: dict[str, int] = {}
+            for key, value in payload.items():
+                with contextlib.suppress(TypeError, ValueError):
+                    checkpoints[str(key)] = int(value)
+            return checkpoints
+
+        return await asyncio.to_thread(_read)
+
+    async def _write_checkpoint_file(self, checkpoints: dict[str, int]) -> None:
+        def _write() -> None:
+            self._checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+            self._checkpoint_file.write_text(json.dumps(checkpoints, sort_keys=True))
+
+        await asyncio.to_thread(_write)
+
+    async def _read_persisted_checkpoint(self, consumer_name: str) -> int | None:
+        if self._settings_store is not None:
+            try:
+                setting = self._settings_store.get_setting(self._checkpoint_key(consumer_name))
+                if setting is not None:
+                    with contextlib.suppress(ValueError):
+                        return int(setting.value)
+            except Exception as exc:
+                logger.warning(
+                    "Search mutation checkpoints falling back to file storage: %s",
+                    exc,
+                )
+                self._settings_store = None
+
+        async with self._checkpoint_lock:
+            checkpoints = await self._load_checkpoint_file()
+        return checkpoints.get(consumer_name)
+
+    async def _persist_checkpoint(self, consumer_name: str, sequence_number: int) -> None:
+        if self._settings_store is not None:
+            try:
+                self._settings_store.set_setting(
+                    self._checkpoint_key(consumer_name),
+                    str(sequence_number),
+                    description=f"Search mutation checkpoint for {consumer_name}",
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Search mutation checkpoints falling back to file storage: %s",
+                    exc,
+                )
+                self._settings_store = None
+
+        async with self._checkpoint_lock:
+            checkpoints = await self._load_checkpoint_file()
+            checkpoints[consumer_name] = sequence_number
+            await self._write_checkpoint_file(checkpoints)
+
+    async def _initialize_consumer_checkpoint(self, consumer_name: str) -> int:
+        persisted = await self._read_persisted_checkpoint(consumer_name)
+        if persisted is not None:
+            return persisted
+
+        max_sequence = 0
+        if self._async_session is not None:
+            async with self._async_session() as session:
+                row = (
+                    await session.execute(
+                        sa_text("SELECT COALESCE(MAX(sequence_number), 0) FROM operation_log")
+                    )
+                ).first()
+                max_sequence = int(row[0]) if row and row[0] is not None else 0
+        await self._save_consumer_checkpoint(consumer_name, max_sequence)
+        return max_sequence
+
+    async def _save_consumer_checkpoint(self, consumer_name: str, sequence_number: int) -> None:
+        self._consumer_last_sequence[consumer_name] = sequence_number
+        await self._persist_checkpoint(consumer_name, sequence_number)
+
+    async def _fetch_mutation_events(
+        self,
+        consumer_name: str,
+    ) -> list[SearchMutationEvent]:
+        if self._async_session is None:
+            return []
+
+        last_sequence = self._consumer_last_sequence.get(consumer_name)
+        if last_sequence is None:
+            last_sequence = await self._initialize_consumer_checkpoint(consumer_name)
+
+        async with self._async_session() as session:
+            result = await session.execute(
+                sa_text(
+                    "SELECT operation_id, operation_type, zone_id, path, new_path, "
+                    "created_at, sequence_number, change_type "
+                    "FROM operation_log "
+                    "WHERE status = 'success' "
+                    "AND sequence_number > :last_sequence "
+                    "AND operation_type IN ('write', 'delete', 'rename') "
+                    "ORDER BY sequence_number "
+                    "LIMIT :limit"
+                ),
+                {
+                    "last_sequence": last_sequence,
+                    "limit": self.config.mutation_batch_size,
+                },
+            )
+            rows = result.fetchall()
+
+        events: list[SearchMutationEvent] = []
+        for row in rows:
+            event = SearchMutationEvent.from_operation_log_row(row)
+            if event is not None:
+                events.append(event)
+        return events
+
+    async def _run_mutation_consumer(
+        self,
+        consumer_name: str,
+        handler: Any,
+    ) -> None:
+        while not self._shutting_down:
+            try:
+                events = await self._fetch_mutation_events(consumer_name)
+                if events:
+                    await handler(events)
+                    await self._save_consumer_checkpoint(consumer_name, events[-1].sequence_number)
+                    self._consumer_failures[consumer_name] = 0
+                    self._consumer_last_error[consumer_name] = None
+                    self.stats.mutation_consumers[consumer_name] = {
+                        "last_sequence": events[-1].sequence_number,
+                        "last_success_at": time.time(),
+                        "failures": 0,
+                    }
+                    self.stats.last_index_refresh = time.time()
+                    continue
+
+                self._mutation_wakeup.clear()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self._mutation_wakeup.wait(),
+                        timeout=self.config.mutation_poll_seconds,
+                    )
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._consumer_failures[consumer_name] = (
+                    self._consumer_failures.get(consumer_name, 0) + 1
+                )
+                self._consumer_last_error[consumer_name] = str(exc)
+                self.stats.mutation_consumers[consumer_name] = {
+                    "last_sequence": self._consumer_last_sequence.get(consumer_name, 0),
+                    "last_success_at": self.stats.mutation_consumers.get(consumer_name, {}).get(
+                        "last_success_at"
+                    ),
+                    "failures": self._consumer_failures[consumer_name],
+                    "last_error": str(exc),
+                }
+                logger.warning("Search mutation consumer %s failed: %s", consumer_name, exc)
+                await asyncio.sleep(self.config.mutation_poll_seconds)
+
+    async def _resolve_mutations(
+        self,
+        events: list[SearchMutationEvent],
+    ) -> list[ResolvedMutation]:
+        if self._mutation_resolver is None:
+            return []
+        return await self._mutation_resolver.resolve_batch(events)
+
+    async def _consume_bm25_mutations(self, events: list[SearchMutationEvent]) -> None:
+        if self._bm25s_index is None:
+            return
+        resolved = await self._resolve_mutations(events)
+        for mutation in resolved:
+            if mutation.event.op != SearchMutationOp.UPSERT or not mutation.content:
+                continue
+            await self._bm25s_index.index_document(
+                mutation.path_id,
+                mutation.event.path,
+                mutation.content,
+            )
+
+    async def _consume_fts_mutations(self, events: list[SearchMutationEvent]) -> None:
+        if self._chunk_store is None:
+            return
+        resolved = await self._resolve_mutations(events)
+        for mutation in resolved:
+            if mutation.event.op == SearchMutationOp.DELETE:
+                await self._chunk_store.delete_document_chunks(mutation.path_id)
+                continue
+            if mutation.content:
+                await self._index_to_document_chunks(
+                    mutation.path_id,
+                    mutation.event.path,
+                    mutation.content,
+                )
+
+    async def _consume_embedding_mutations(self, events: list[SearchMutationEvent]) -> None:
+        if self._indexing_pipeline is None or self._embedding_provider is None:
+            return
+        resolved = await self._resolve_mutations(events)
+        for mutation in resolved:
+            if mutation.event.op != SearchMutationOp.UPSERT or not mutation.content:
+                continue
+            await self._indexing_pipeline.index_document(
+                mutation.event.path,
+                mutation.content,
+                mutation.path_id,
+            )
+
+    async def _consume_txtai_mutations(self, events: list[SearchMutationEvent]) -> None:
+        if self._backend is None:
+            return
+
+        resolved = await self._resolve_mutations(events)
+        deletes_by_zone: dict[str, list[str]] = {}
+        upserts_by_zone: dict[str, list[dict[str, Any]]] = {}
+
+        for mutation in resolved:
+            if mutation.event.op == SearchMutationOp.DELETE:
+                deletes_by_zone.setdefault(mutation.zone_id, []).append(mutation.doc_id)
+                continue
+            if mutation.content:
+                upserts_by_zone.setdefault(mutation.zone_id, []).append(
+                    {
+                        "id": mutation.doc_id,
+                        "text": mutation.content,
+                        "path": mutation.virtual_path,
+                        "zone_id": mutation.zone_id,
+                    }
+                )
+
+        for zone_id, ids in deletes_by_zone.items():
+            await self._backend.delete(ids, zone_id=zone_id)
+        for zone_id, docs in upserts_by_zone.items():
+            await self._backend.upsert(docs, zone_id=zone_id)
 
     async def _refresh_indexes(self, paths: list[str]) -> None:
         """Refresh indexes for a batch of changed files.
@@ -1231,7 +1608,7 @@ class SearchDaemon:
         for path in paths:
             try:
                 # Strip /zone/{zone_id} prefix for DB virtual_path lookup
-                virtual_path = self._strip_zone_prefix(path)
+                virtual_path = strip_zone_prefix(path)
 
                 # Read file content via file reader or database
                 content: str | None = None
@@ -1433,12 +1810,17 @@ class SearchDaemon:
         async with self._async_session() as session:
             for batch_start in range(0, len(unique_vpaths), 100):
                 batch_vpaths = unique_vpaths[batch_start : batch_start + 100]
+                where_clauses = []
+                params: dict[str, str] = {}
+                for idx, vpath in enumerate(batch_vpaths):
+                    where_clauses.append(f"virtual_path = :vpath_{idx}")
+                    params[f"vpath_{idx}"] = vpath
                 result = await session.execute(
                     text(
                         "SELECT path_id, virtual_path FROM file_paths "
-                        "WHERE virtual_path = ANY(:vpaths) AND deleted_at IS NULL"
+                        "WHERE deleted_at IS NULL AND (" + " OR ".join(where_clauses) + ")"
                     ),
-                    {"vpaths": batch_vpaths},
+                    params,
                 )
                 for row in result.fetchall():
                     existing_pids[row[1]] = row[0]
@@ -1541,6 +1923,7 @@ class SearchDaemon:
             "txtai_model": self.config.txtai_model,
             "txtai_reranker": self.config.txtai_reranker,
             "txtai_graph": self.config.txtai_graph,
+            "mutation_consumers": self.stats.mutation_consumers,
         }
 
     def get_health(self) -> dict[str, Any]:

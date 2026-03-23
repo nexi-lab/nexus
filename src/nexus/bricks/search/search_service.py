@@ -2481,7 +2481,7 @@ class SearchService:
             db_path = _unscope(path) if path != "/" else None
             daemon_results = await daemon.search(
                 query=query,
-                search_type=search_mode if search_mode != "semantic" else "hybrid",
+                search_type=search_mode,
                 limit=fetch_limit,
                 path_filter=db_path,
                 zone_id=zone_id,

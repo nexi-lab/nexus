@@ -115,14 +115,16 @@ class ZoektPipeConsumer:
         if self._nx is None:
             return  # CLI mode
 
-        from nexus.contracts.metadata import DT_PIPE
-
-        with contextlib.suppress(Exception):
-            await self._nx.sys_setattr(
+        pipe_manager = getattr(self._nx, "_pipe_manager", None)
+        if pipe_manager is not None:
+            pipe_manager.ensure(
                 _ZOEKT_PIPE_PATH,
-                entry_type=DT_PIPE,
                 owner_id="kernel",
             )
+        else:
+            # Test/degraded path: fall back to direct syscall-based pipe creation
+            # when NexusFS exposes DT_PIPE syscalls but no PipeManager object.
+            await self._nx.sys_setattr(_ZOEKT_PIPE_PATH)
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())

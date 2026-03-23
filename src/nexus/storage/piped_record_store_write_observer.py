@@ -126,17 +126,17 @@ class PipedRecordStoreWriteObserver:
         if self._nx is None:
             return  # CLI mode — no NexusFS
 
-        from nexus.contracts.metadata import DT_PIPE
-        from nexus.contracts.types import OperationContext
-
-        ctx = OperationContext(user_id="system", groups=[], is_system=True)
-        with contextlib.suppress(Exception):
-            await self._nx.sys_setattr(
+        pipe_manager = getattr(self._nx, "_pipe_manager", None)
+        if pipe_manager is not None:
+            pipe_manager.ensure(
                 _AUDIT_PIPE_PATH,
-                context=ctx,
-                entry_type=DT_PIPE,
+                capacity=_AUDIT_PIPE_CAPACITY,
                 owner_id="kernel",
             )
+        else:
+            # Test/degraded path: fall back to direct syscall-based pipe creation
+            # when NexusFS exposes DT_PIPE syscalls but no PipeManager object.
+            await self._nx.sys_setattr(_AUDIT_PIPE_PATH)
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())

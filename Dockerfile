@@ -238,7 +238,7 @@ ENV PYTHONUNBUFFERED=1 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data \
     NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2 \
-    NEXUS_TXTAI_SPARSE=true
+    NEXUS_TXTAI_SPARSE=false
 
 EXPOSE 2026 2126 6070
 

@@ -1186,15 +1186,9 @@ class NexusFS(  # type: ignore[misc]
         context = self._parse_context(context)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        _handled, _resolve_hint = self._dispatch.resolve_read(
-            path, return_metadata=False, context=context
-        )
+        _handled, _resolve_hint = self._dispatch.resolve_read(path, context=context)
         if _handled:
-            if isinstance(_resolve_hint, dict):
-                _resolve_hint = _resolve_hint.get("content", b"")
-            if isinstance(_resolve_hint, str):
-                _resolve_hint = _resolve_hint.encode("utf-8")
-            return (_resolve_hint, None, None, None, None)
+            return (_resolve_hint or b"", None, None, None, None)
 
         # PRE-INTERCEPT: pre-read hooks (Issue #899)
         perm_check_start = time.time()
@@ -1334,16 +1328,9 @@ class NexusFS(  # type: ignore[misc]
         context = self._parse_context(context)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        _handled, _resolve_hint = self._dispatch.resolve_read(
-            path, return_metadata=False, context=context
-        )
+        _handled, _resolve_hint = self._dispatch.resolve_read(path, context=context)
         if _handled:
-            # Normalize resolver results to bytes
-            if isinstance(_resolve_hint, dict):
-                _resolve_hint = _resolve_hint.get("content", b"")
-            if isinstance(_resolve_hint, str):
-                _resolve_hint = _resolve_hint.encode("utf-8")
-            content = _resolve_hint
+            content = _resolve_hint or b""
             if offset or count is not None:
                 content = (
                     content[offset : offset + count] if count is not None else content[offset:]
@@ -1871,15 +1858,9 @@ class NexusFS(  # type: ignore[misc]
         context = self._parse_context(context)
 
         # FAST PATH: check virtual path resolvers first
-        _handled, _resolve_hint = self._dispatch.resolve_read(
-            path, return_metadata=False, context=context
-        )
+        _handled, _resolve_hint = self._dispatch.resolve_read(path, context=context)
         if _handled:
-            if isinstance(_resolve_hint, dict):
-                _resolve_hint = _resolve_hint.get("content", b"")
-            if isinstance(_resolve_hint, str):
-                _resolve_hint = _resolve_hint.encode("utf-8")
-            return _resolve_hint[start:end]
+            return (_resolve_hint or b"")[start:end]
 
         # OPTIMISED PATH: no post-read hooks + backend has read_content_range
         from nexus.contracts.vfs_hooks import ReadHookContext as _RHC

@@ -2460,6 +2460,7 @@ class NexusFS(  # type: ignore[misc]
                 size=metadata.size,
                 version=new_version,
                 is_new=(meta is None),
+                old_etag=meta.etag if meta else None,
             )
         )
 
@@ -3041,7 +3042,8 @@ class NexusFS(  # type: ignore[misc]
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         for metadata in metadata_list:
-            is_new = existing_metadata.get(metadata.path) is None
+            old_meta = existing_metadata.get(metadata.path)
+            is_new = old_meta is None
             self._dispatch.notify(
                 FileEvent(
                     type=FileEventType.FILE_WRITE,
@@ -3052,6 +3054,7 @@ class NexusFS(  # type: ignore[misc]
                     size=metadata.size,
                     version=metadata.version,
                     is_new=is_new,
+                    old_etag=old_meta.etag if old_meta else None,
                 )
             )
 

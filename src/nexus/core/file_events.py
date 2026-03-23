@@ -61,6 +61,7 @@ class FileEvent:
     version: int | None = None  # write-specific: file version counter
     is_new: bool = False  # write-specific: True if file was created (not overwritten)
     new_path: str | None = None  # rename-specific: destination path
+    old_etag: str | None = None  # write-specific: previous content hash (for overwrite detection)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -93,6 +94,8 @@ class FileEvent:
             result["is_new"] = self.is_new
         if self.new_path is not None:
             result["new_path"] = self.new_path
+        if self.old_etag is not None:
+            result["old_etag"] = self.old_etag
         return result
 
     def to_json(self) -> str:
@@ -118,6 +121,7 @@ class FileEvent:
             version=data.get("version"),
             is_new=data.get("is_new", False),
             new_path=data.get("new_path"),
+            old_etag=data.get("old_etag"),
         )
 
     @classmethod

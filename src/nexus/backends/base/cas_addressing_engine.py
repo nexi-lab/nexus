@@ -545,15 +545,25 @@ class CASAddressingEngine(Backend):
         return int(meta.get("ref_count", 0))
 
     def hook_spec(self) -> "HookSpec":
-        """Declare OBSERVE observer for CAS ref_count management.
+        """Declare VFS hooks for CAS lifecycle.
 
-        Called by the factory/orchestrator at mount time to register
-        CASRefCountObserver with KernelDispatch.
+        - OBSERVE: CASRefCountObserver — decrements ref_count on overwrite/delete
+        - MOUNT: on_mount — mount-time logging
+
+        Called by DriverLifecycleCoordinator at mount time to register
+        hooks with KernelDispatch (Issue #1811, #1320).
         """
         from nexus.backends.observers.cas_ref_count_observer import CASRefCountObserver
         from nexus.contracts.protocols.service_hooks import HookSpec
 
-        return HookSpec(observers=(CASRefCountObserver(self),))
+        return HookSpec(
+            observers=(CASRefCountObserver(self),),
+            mount_hooks=(self,),
+        )
+
+    def on_mount(self, ctx: Any) -> None:
+        """VFSMountHook: receive mount notification from KernelDispatch."""
+        logger.info("CAS engine mounted at %s (backend=%s)", ctx.mount_point, self._backend_name)
 
     def stream_content(
         self,

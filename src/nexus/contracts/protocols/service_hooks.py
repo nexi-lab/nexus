@@ -37,6 +37,8 @@ class HookSpec:
     rmdir_hooks: tuple[Any, ...] = ()
     observers: tuple[Any, ...] = ()
     resolvers: tuple[Any, ...] = ()
+    mount_hooks: tuple[Any, ...] = ()
+    unmount_hooks: tuple[Any, ...] = ()
 
     @property
     def is_empty(self) -> bool:
@@ -52,6 +54,8 @@ class HookSpec:
                 self.rmdir_hooks,
                 self.observers,
                 self.resolvers,
+                self.mount_hooks,
+                self.unmount_hooks,
             )
         )
 
@@ -68,4 +72,6 @@ class HookSpec:
             + len(self.rmdir_hooks)
             + len(self.observers)
             + len(self.resolvers)
+            + len(self.mount_hooks)
+            + len(self.unmount_hooks)
         )

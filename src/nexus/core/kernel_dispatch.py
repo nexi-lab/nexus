@@ -55,15 +55,19 @@ except ImportError:  # pragma: no cover — Rust extension not built
 from nexus.contracts.vfs_hooks import (
     DeleteHookContext,
     MkdirHookContext,
+    MountHookContext,
     ReadHookContext,
     RenameHookContext,
     RmdirHookContext,
+    UnmountHookContext,
     VFSDeleteHook,
     VFSMkdirHook,
+    VFSMountHook,
     VFSObserver,
     VFSReadHook,
     VFSRenameHook,
     VFSRmdirHook,
+    VFSUnmountHook,
     VFSWriteBatchHook,
     VFSWriteHook,
     WriteBatchHookContext,
@@ -141,6 +145,8 @@ class KernelDispatch:
         "_next_resolver_idx",
         "_registry",
         "_observers",
+        "_mount_hooks",
+        "_unmount_hooks",
     )
 
     def __init__(self) -> None:
@@ -157,6 +163,10 @@ class KernelDispatch:
 
         # OBSERVE: generic mutation observers
         self._observers: list[VFSObserver] = []
+
+        # MOUNT/UNMOUNT: driver lifecycle hooks (Issue #1811)
+        self._mount_hooks: list[VFSMountHook] = []
+        self._unmount_hooks: list[VFSUnmountHook] = []
 
     # ── PRE-DISPATCH: virtual path resolvers (Issue #889, #1317) ──────
 
@@ -446,6 +456,50 @@ class KernelDispatch:
             except Exception as exc:
                 logger.warning("Observer %s failed: %s", type(obs).__name__, exc)
 
+    # ── MOUNT/UNMOUNT hooks (Issue #1811) ──────────────────────────────
+
+    def register_mount_hook(self, hook: VFSMountHook) -> None:
+        self._mount_hooks.append(hook)
+
+    def register_unmount_hook(self, hook: VFSUnmountHook) -> None:
+        self._unmount_hooks.append(hook)
+
+    def unregister_mount_hook(self, hook: VFSMountHook) -> bool:
+        try:
+            self._mount_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_unmount_hook(self, hook: VFSUnmountHook) -> bool:
+        try:
+            self._unmount_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def notify_mount(self, mount_point: str, backend: Any) -> None:
+        """Fire-and-forget mount notification to all registered hooks."""
+        if not self._mount_hooks:
+            return
+        ctx = MountHookContext(mount_point=mount_point, backend=backend)
+        for hook in self._mount_hooks:
+            try:
+                hook.on_mount(ctx)
+            except Exception as exc:
+                logger.warning("Mount hook %s failed: %s", type(hook).__name__, exc)
+
+    def notify_unmount(self, mount_point: str, backend: Any) -> None:
+        """Fire-and-forget unmount notification to all registered hooks."""
+        if not self._unmount_hooks:
+            return
+        ctx = UnmountHookContext(mount_point=mount_point, backend=backend)
+        for hook in self._unmount_hooks:
+            try:
+                hook.on_unmount(ctx)
+            except Exception as exc:
+                logger.warning("Unmount hook %s failed: %s", type(hook).__name__, exc)
+
     # ── Hook counts ────────────────────────────────────────────────────
 
     @property
@@ -479,3 +533,11 @@ class KernelDispatch:
     @property
     def observer_count(self) -> int:
         return len(self._observers)
+
+    @property
+    def mount_hook_count(self) -> int:
+        return len(self._mount_hooks)
+
+    @property
+    def unmount_hook_count(self) -> int:
+        return len(self._unmount_hooks)

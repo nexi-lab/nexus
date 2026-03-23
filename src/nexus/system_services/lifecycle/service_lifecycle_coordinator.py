@@ -636,6 +636,10 @@ class ServiceLifecycleCoordinator:
             d.register_intercept_rmdir(h)
         for h in spec.observers:
             d.register_observe(h)
+        for h in spec.mount_hooks:
+            d.register_mount_hook(h)
+        for h in spec.unmount_hooks:
+            d.register_unmount_hook(h)
 
     def _unregister_hooks(self, name: str) -> None:
         spec = self._hook_specs.get(name)
@@ -663,3 +667,7 @@ class ServiceLifecycleCoordinator:
             d.unregister_intercept_rmdir(h)
         for h in spec.observers:
             d.unregister_observe(h)
+        for h in spec.mount_hooks:
+            d.unregister_mount_hook(h)
+        for h in spec.unmount_hooks:
+            d.unregister_unmount_hook(h)

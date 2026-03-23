@@ -18,7 +18,7 @@ Usage:
 from __future__ import annotations
 
 import functools
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from anyio.from_thread import BlockingPortalProvider
 
@@ -28,7 +28,7 @@ T = TypeVar("T")
 def run_sync(coro: Any) -> Any:
     """Run an async coroutine synchronously.
 
-    Uses anyio's BlockingPortalProvider for safe sync→async bridging.
+    Uses anyio's BlockingPortalProvider for safe sync->async bridging.
     Works in all three scenarios: no event loop, existing loop (Jupyter),
     and multi-threaded contexts.
     """
@@ -60,47 +60,50 @@ class SyncNexusFS:
 
     def read(self, path: str) -> bytes:
         with self._portal_provider as portal:
-            return portal.call(self._async.read, path)
+            return cast(bytes, portal.call(self._async.read, path))
 
-    def write(self, path: str, content: bytes) -> dict:
+    def write(self, path: str, content: bytes) -> dict[str, Any]:
         with self._portal_provider as portal:
-            return portal.call(self._async.write, path, content)
+            return cast(dict[str, Any], portal.call(self._async.write, path, content))
 
-    def ls(self, path: str = "/", detail: bool = False) -> list:
+    def ls(self, path: str = "/", detail: bool = False) -> list[Any]:
         with self._portal_provider as portal:
-            return portal.call(functools.partial(self._async.ls, path, detail=detail))
+            return cast(
+                list[Any],
+                portal.call(functools.partial(self._async.ls, path, detail=detail)),
+            )
 
-    def stat(self, path: str) -> dict | None:
+    def stat(self, path: str) -> dict[str, Any] | None:
         with self._portal_provider as portal:
-            return portal.call(self._async.stat, path)
+            return cast(dict[str, Any] | None, portal.call(self._async.stat, path))
 
     def delete(self, path: str) -> None:
         with self._portal_provider as portal:
-            return portal.call(self._async.delete, path)
+            portal.call(self._async.delete, path)
 
     def mkdir(self, path: str, parents: bool = True) -> None:
         with self._portal_provider as portal:
-            return portal.call(functools.partial(self._async.mkdir, path, parents=parents))
+            portal.call(functools.partial(self._async.mkdir, path, parents=parents))
 
     def rename(self, old_path: str, new_path: str) -> None:
         with self._portal_provider as portal:
-            return portal.call(self._async.rename, old_path, new_path)
+            portal.call(self._async.rename, old_path, new_path)
 
     def exists(self, path: str) -> bool:
         with self._portal_provider as portal:
-            return portal.call(self._async.exists, path)
+            return cast(bool, portal.call(self._async.exists, path))
 
-    def copy(self, src: str, dst: str) -> dict:
+    def copy(self, src: str, dst: str) -> dict[str, Any]:
         with self._portal_provider as portal:
-            return portal.call(self._async.copy, src, dst)
+            return cast(dict[str, Any], portal.call(self._async.copy, src, dst))
 
     def read_range(self, path: str, start: int, end: int) -> bytes:
         with self._portal_provider as portal:
-            return portal.call(self._async.read_range, path, start, end)
+            return cast(bytes, portal.call(self._async.read_range, path, start, end))
 
-    def list_mounts(self) -> list:
-        """List all mount points (synchronous — no portal needed)."""
-        return self._async.list_mounts()
+    def list_mounts(self) -> list[str]:
+        """List all mount points (synchronous -- no portal needed)."""
+        return cast(list[str], self._async.list_mounts())
 
     def close(self) -> None:
         """Clean up resources held by the underlying async facade."""

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import logging
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 MAX_CAT_FILE_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
 
 
-def _get_fs_class():
+def _get_fs_class() -> tuple[type, type]:
     """Lazy-import fsspec base classes to avoid hard dependency."""
     try:
         from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
@@ -144,7 +145,7 @@ class NexusFileSystem:
                 f"Use open() for streaming access."
             )
 
-        content = self._sync(self._nexus.read(path))
+        content: bytes = self._sync(self._nexus.read(path))
 
         if start is not None or end is not None:
             content = content[start:end]
@@ -256,7 +257,7 @@ class NexusBufferedFile:
         end = self.size if length == -1 else min(self._pos + length, self.size)
 
         # Fetch only the requested byte range — NOT the full file
-        data = self._sync(self._nexus.read_range(self.path, self._pos, end))
+        data: bytes = self._sync(self._nexus.read_range(self.path, self._pos, end))
         self._pos = end
         return data
 
@@ -348,7 +349,10 @@ class NexusWriteFile:
         self.close()
 
 
-def _get_sync_caller():
+SyncCaller = Callable[[Coroutine[Any, Any, Any]], Any]
+
+
+def _get_sync_caller() -> SyncCaller:
     """Get a sync caller that runs async code synchronously.
 
     Uses anyio if available, falls back to asyncio.run().
@@ -358,7 +362,7 @@ def _get_sync_caller():
 
         _portal = BlockingPortalProvider()
 
-        def sync_call(coro):
+        def sync_call(coro: Coroutine[Any, Any, Any]) -> Any:
             with _portal as portal:
                 return portal.call(lambda: coro)
 
@@ -366,7 +370,7 @@ def _get_sync_caller():
     except ImportError:
         import asyncio
 
-        def sync_call(coro):
+        def sync_call(coro: Coroutine[Any, Any, Any]) -> Any:
             try:
                 asyncio.get_running_loop()
                 # If there's a running loop, we can't use asyncio.run()

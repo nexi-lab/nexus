@@ -230,8 +230,11 @@ class SlimNexusFS:
                 "entry_type": meta.entry_type,
             }
 
-        # No explicit entry — check if it's an implicit directory
-        if self._kernel.metadata.is_implicit_directory(normalized):
+        # No explicit entry — check if it's an implicit directory.
+        # is_implicit_directory is on concrete metastore classes, not the ABC.
+        _meta = self._kernel.metadata
+        _is_implicit = getattr(_meta, "is_implicit_directory", None)
+        if _is_implicit is not None and _is_implicit(normalized):
             return {
                 "path": normalized,
                 "size": 4096,
@@ -261,5 +264,9 @@ class SlimNexusFS:
 
     async def close(self) -> None:
         """Close the filesystem and release resources."""
-        if hasattr(self._kernel, "close"):
-            await self._kernel.close()
+        _close = getattr(self._kernel, "close", None)
+        if _close is not None:
+            result = _close()
+            # Handle both sync and async close implementations
+            if result is not None:
+                await result

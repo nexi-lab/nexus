@@ -27,10 +27,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.core.semaphore import VFSSemaphoreProtocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +284,7 @@ class SemaphoreAdvisoryLockManager(AdvisoryLockManager):
 
     def __init__(
         self,
-        semaphore: VFSSemaphoreProtocol,
+        semaphore: Any,
         *,
         zone_id: str = "root",
     ) -> None:
@@ -424,7 +421,7 @@ class SemaphoreAdvisoryLockManager(AdvisoryLockManager):
         if entry is None:
             return False
         sem_name, holder_id = entry
-        released = self._sem.release(sem_name, holder_id)
+        released: bool = self._sem.release(sem_name, holder_id)
         if released:
             logger.debug("Lock released: %s (sem=%s)", lock_id, sem_name)
         return released

@@ -440,6 +440,32 @@ class CASAddressingEngine(Backend):
                 path=content_hash,
             ) from e
 
+    def release_content(self, content_id: str) -> None:
+        """Decrement ref_count without physical delete (GC does that later).
+
+        Used by OBSERVE-phase observers to release content references
+        on write-overwrite or file delete.  Physical cleanup of blobs
+        with ref_count=0 is handled by CASGarbageCollector (PR #1320).
+
+        Safe to call with a nonexistent content_id (no-op).
+        """
+        content_hash = content_id
+
+        # Feature DI: CDC chunked content
+        if self._cdc is not None and self._cdc.is_chunked(content_hash):
+            self._cdc.release_chunked(content_hash)
+            return
+
+        key = self._blob_key(content_hash)
+        if not self._transport.blob_exists(key):
+            return  # Already gone — idempotent
+
+        def _dec_ref(meta: dict[str, Any]) -> dict[str, Any]:
+            meta["ref_count"] = max(meta.get("ref_count", 1) - 1, 0)
+            return meta
+
+        self._meta_update_locked(content_hash, _dec_ref)
+
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
         try:

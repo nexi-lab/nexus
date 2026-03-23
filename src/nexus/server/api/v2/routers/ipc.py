@@ -11,6 +11,7 @@ Provides REST access to the IPC subsystem:
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -336,7 +337,7 @@ async def stream_inbox(
 
     channel = f"ipc.inbox.{agent_id}"
 
-    async def event_generator():
+    async def event_generator() -> AsyncIterator[str]:
         """Subscribe to pub/sub and yield SSE events."""
         # Initial connection event
         yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'channel': channel})}\n\n"

@@ -62,7 +62,7 @@ async def dead_letter_message(
                 indent=2,
             ).encode("utf-8")
             reason_path = dest + ".reason.json"
-            await storage.sys_write(reason_path, reason_data, zone_id)
+            await storage.write(reason_path, reason_data, zone_id)
         except Exception:
             logger.debug(
                 "Failed to write .reason.json for dead-lettered message at %s",

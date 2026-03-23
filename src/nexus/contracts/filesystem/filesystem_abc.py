@@ -33,6 +33,8 @@ class NexusFilesystemABC(ABC):
     this interface. Service-layer concerns (workspace, memory, sandbox)
     are deliberately excluded — they belong to their respective service
     protocols, not the kernel.
+
+    Error pattern: mutations raise, queries return False/None, stat returns None if not found.
     """
 
     # ── Service Registry ──────────────────────────────────────────
@@ -116,7 +118,9 @@ class NexusFilesystemABC(ABC):
     # ── Metadata I/O ───────────────────────────────────────────────
 
     @abstractmethod
-    async def sys_stat(self, path: str, context: Any = None) -> dict[str, Any] | None:
+    async def sys_stat(
+        self, path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any] | None:
         """Read all file metadata (POSIX stat(2)).
 
         Returns:
@@ -125,7 +129,9 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    async def sys_setattr(self, path: str, context: Any = None, **attrs: Any) -> dict[str, Any]:
+    async def sys_setattr(
+        self, path: str, *, context: OperationContext | None = None, **attrs: Any
+    ) -> dict[str, Any]:
         """Upsert file metadata (chmod/chown/utimensat + mknod analog).
 
         Upsert semantics — create-on-write for metadata:
@@ -148,7 +154,9 @@ class NexusFilesystemABC(ABC):
     # ── Namespace ──────────────────────────────────────────────────
 
     @abstractmethod
-    async def sys_unlink(self, path: str, context: Any = None) -> dict[str, Any]:
+    async def sys_unlink(
+        self, path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any]:
         """Remove a directory entry (POSIX unlink(2)).
 
         NOT "delete" — unlink is precise: removes directory entry,
@@ -161,7 +169,9 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    async def sys_rename(self, old_path: str, new_path: str, context: Any = None) -> dict[str, Any]:
+    async def sys_rename(
+        self, old_path: str, new_path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any]:
         """Rename/move a file (POSIX rename(2))."""
         ...
 
@@ -173,7 +183,8 @@ class NexusFilesystemABC(ABC):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: Any = None,
+        *,
+        context: OperationContext | None = None,
     ) -> None:
         """Create a directory (POSIX mkdir(2)).
 
@@ -183,7 +194,9 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    async def sys_rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:
+    async def sys_rmdir(
+        self, path: str, recursive: bool = False, *, context: OperationContext | None = None
+    ) -> None:
         """Remove a directory (POSIX rmdir(2)).
 
         Tier 1 default: recursive=False (empty dir only).
@@ -198,7 +211,8 @@ class NexusFilesystemABC(ABC):
         path: str,
         parents: bool = True,
         exist_ok: bool = True,
-        context: Any = None,
+        *,
+        context: OperationContext | None = None,
     ) -> None:
         """Create a directory with lenient defaults (Tier 2).
 
@@ -211,7 +225,8 @@ class NexusFilesystemABC(ABC):
         self,
         path: str,
         recursive: bool = True,
-        context: Any = None,
+        *,
+        context: OperationContext | None = None,
     ) -> None:
         """Remove a directory with lenient defaults (Tier 2).
 
@@ -227,7 +242,8 @@ class NexusFilesystemABC(ABC):
         recursive: bool = True,
         details: bool = False,
         show_parsed: bool = True,
-        context: Any = None,
+        *,
+        context: OperationContext | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
@@ -243,7 +259,7 @@ class NexusFilesystemABC(ABC):
     # ── Query ──────────────────────────────────────────────────────
 
     @abstractmethod
-    async def sys_access(self, path: str, context: Any = None) -> bool:
+    async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if a file exists and is accessible (POSIX access(2)).
 
         Combines existence with permission visibility — returns False
@@ -252,7 +268,7 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    async def sys_is_directory(self, path: str, context: OperationContext | None = None) -> bool:
+    async def sys_is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if path is a directory.
 
         Linux uses stat(2) + S_ISDIR macro — we provide direct check

@@ -422,12 +422,12 @@ class ConflictError(NexusError):
 
     Examples:
         >>> try:
-        ...     await nx.sys_write(path, content, if_match=old_etag)
+        ...     await nx.write(path, content)
         ... except ConflictError as e:
         ...     print(f"Conflict: expected {e.expected_etag}, got {e.current_etag}")
         ...     # Retry with fresh read
-        ...     result = await nx.sys_read(path, return_metadata=True)
-        ...     await nx.sys_write(path, content, if_match=result['etag'])
+        ...     result = await nx.read(path, return_metadata=True)
+        ...     await nx.write(path, result['content'])
     """
 
     is_expected = True  # Normal condition in concurrent systems

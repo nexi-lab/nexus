@@ -505,6 +505,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
+        *,
         context: OperationContext | None = None,
     ) -> None:
         """Create a directory (parents=True for mkdir -p)."""
@@ -588,34 +589,14 @@ class NexusFS(  # type: ignore[misc]
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | None = None,
         *,
-        subject: tuple[str, str] | None = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-        is_admin: bool | None = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Remove a directory (recursive=True for rm -rf)."""
         import errno
-        import warnings
 
         path = self._validate_path(path)
 
-        # Build context: prefer OperationContext, deprecate legacy kwargs
-        if context is None and subject is not None:
-            warnings.warn(
-                "sys_rmdir subject/zone_id/agent_id/is_admin kwargs are deprecated. "
-                "Pass an OperationContext instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            context = OperationContext(
-                user_id=subject[1],
-                groups=[],
-                zone_id=zone_id,
-                agent_id=agent_id,
-                is_admin=is_admin or False,
-            )
         ctx = self._require_context(context)
 
         logger.debug(
@@ -725,6 +706,7 @@ class NexusFS(  # type: ignore[misc]
     async def sys_is_directory(
         self,
         path: str,
+        *,
         context: OperationContext | None = None,
     ) -> bool:
         """Check if path is a directory (explicit or implicit).
@@ -805,6 +787,7 @@ class NexusFS(  # type: ignore[misc]
     async def sys_stat(
         self,
         path: str,
+        *,
         context: OperationContext | None = None,
     ) -> dict[str, Any] | None:
         """Get file metadata without reading content (FUSE getattr)."""
@@ -881,6 +864,7 @@ class NexusFS(  # type: ignore[misc]
     async def sys_setattr(
         self,
         path: str,
+        *,
         context: OperationContext | None = None,
         **attrs: Any,
     ) -> dict[str, Any]:
@@ -2151,12 +2135,6 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-        if_match: str | None = None,
-        if_none_match: bool = False,
-        force: bool = False,
-        lock: bool = False,
-        lock_timeout: float = 30.0,
-        consistency: str = "sc",
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
@@ -3105,7 +3083,7 @@ class NexusFS(  # type: ignore[misc]
 
     @rpc_expose(description="Delete file")
     async def sys_unlink(
-        self, path: str, context: OperationContext | None = None
+        self, path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """Remove a directory entry (POSIX unlink(2)).
 
@@ -3233,7 +3211,7 @@ class NexusFS(  # type: ignore[misc]
 
     @rpc_expose(description="Rename/move file")
     async def sys_rename(
-        self, old_path: str, new_path: str, context: OperationContext | None = None
+        self, old_path: str, new_path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """
         Rename/move a file by updating its path in metadata.
@@ -3622,7 +3600,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Check if file exists")
-    async def sys_access(self, path: str, context: OperationContext | None = None) -> bool:
+    async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if a file or directory exists and is accessible (POSIX access(2)).
 
         Tier 1 — combines existence check with permission visibility.
@@ -4293,7 +4271,8 @@ class NexusFS(  # type: ignore[misc]
         recursive: bool = True,
         details: bool = False,
         show_parsed: bool = True,
-        context: Any = None,
+        *,
+        context: OperationContext | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:

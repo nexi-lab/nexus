@@ -330,6 +330,14 @@ async def _do_initialize(
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
+    # Get root backend for hook_spec registration (Issue #1320: CAS ref_count observer)
+    _root_backend = None
+    try:
+        _root_route = nx.router.route("/")
+        _root_backend = _root_route.backend
+    except Exception:
+        pass
+
     await _register_vfs_hooks(
         nx,
         system_services=system_services,
@@ -337,6 +345,7 @@ async def _do_initialize(
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
         brick_on=brick_on,
         parse_fn=parse_fn,
+        backend=_root_backend,
     )
 
     # --- BLM registration for late bricks (Issue #1704, #2991) ---

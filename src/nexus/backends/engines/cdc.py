@@ -581,6 +581,8 @@ class CDCEngine:
 
         def _dec_ref(meta: dict[str, Any]) -> dict[str, Any]:
             meta["ref_count"] = max(meta.get("ref_count", 1) - 1, 0)
+            if meta["ref_count"] == 0:
+                meta["released_at"] = time.time()
             return meta
 
         updated = b._meta_update_locked(content_hash, _dec_ref)

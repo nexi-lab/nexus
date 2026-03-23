@@ -404,6 +404,7 @@ async def _register_vfs_hooks(
     auto_parse: bool = True,
     brick_on: "Callable[[str], bool] | None" = None,
     parse_fn: Any = None,
+    backend: Any = None,
 ) -> None:
     """Register hooks + observers via coordinator.enlist() (Issue #900, #1709).
 
@@ -641,6 +642,13 @@ async def _register_vfs_hooks(
     _rev_notifier = RevisionNotifier()
     _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
     await _enlist("revision_tracking", _rev_observer)
+
+    # ── CAS ref_count observer (Issue #1320) ────────────────────────
+    # Backend declares its own OBSERVE observer via hook_spec().
+    # CASAddressingEngine.hook_spec() returns CASRefCountObserver which
+    # decrements ref_count on write-overwrite and delete events.
+    if backend is not None and hasattr(backend, "hook_spec"):
+        await _enlist("cas_ref_count_observer", backend)
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.

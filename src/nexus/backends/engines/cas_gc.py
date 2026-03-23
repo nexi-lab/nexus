@@ -108,7 +108,7 @@ class CASGarbageCollector:
 
         # list_blobs returns (blob_keys, common_prefixes)
         try:
-            blob_keys, _ = transport.list_blobs(prefix="cas/")
+            blob_keys, _ = transport.list_blobs(prefix="cas/", delimiter="")
         except Exception:
             logger.debug("CAS GC: list_blobs failed for %s", engine.name, exc_info=True)
             return

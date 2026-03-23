@@ -461,8 +461,12 @@ class CASAddressingEngine(Backend):
         if not self._transport.blob_exists(key):
             return  # Already gone — idempotent
 
+        import time as _time
+
         def _dec_ref(meta: dict[str, Any]) -> dict[str, Any]:
             meta["ref_count"] = max(meta.get("ref_count", 1) - 1, 0)
+            if meta["ref_count"] == 0:
+                meta["released_at"] = _time.time()
             return meta
 
         self._meta_update_locked(content_hash, _dec_ref)

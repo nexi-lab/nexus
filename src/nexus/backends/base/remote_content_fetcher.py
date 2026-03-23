@@ -1,4 +1,4 @@
-"""RemoteContentFetcher — addressing-agnostic protocol for federation content fetch.
+"""RemoteContentFetcher — addressing-agnostic protocol for remote content fetch.
 
 FederationContentResolver delegates to this protocol so it never needs to know
 about CAS, CDC, manifests, or chunks.  Each addressing mode provides its own

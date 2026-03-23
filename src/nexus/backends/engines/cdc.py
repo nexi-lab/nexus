@@ -98,6 +98,10 @@ class ChunkingStrategy(Protocol):
         """Delete chunked content, handling chunk reference counts."""
         ...
 
+    def release_chunked(self, content_hash: str) -> None:
+        """Decrement ref_count for manifest + cascade to chunks (no physical delete)."""
+        ...
+
     def write_chunked_partial(
         self,
         old_manifest_hash: str,
@@ -564,6 +568,42 @@ class CDCEngine:
     def get_size(self, content_hash: str) -> int:
         """Get original file size from manifest metadata."""
         return int(self._backend._read_meta(content_hash).get("size", 0))
+
+    # === Release (ref_count-- only, no physical delete) ===
+
+    def release_chunked(self, content_hash: str) -> None:
+        """Decrement ref_count for manifest; cascade to chunks if manifest reaches 0.
+
+        Unlike ``delete_chunked``, this never physically removes blobs.
+        Physical cleanup is deferred to CASGarbageCollector (PR #1320).
+        """
+        b = self._backend
+
+        def _dec_ref(meta: dict[str, Any]) -> dict[str, Any]:
+            meta["ref_count"] = max(meta.get("ref_count", 1) - 1, 0)
+            return meta
+
+        updated = b._meta_update_locked(content_hash, _dec_ref)
+
+        if updated.get("ref_count", 0) > 0:
+            return
+
+        # Manifest reached 0 — cascade ref_count-- to all chunks
+        key = b._blob_key(content_hash)
+        try:
+            manifest_data, _ = b._transport.get_blob(key)
+        except Exception:
+            logger.warning("release_chunked: manifest blob missing for %s", content_hash[:16])
+            return
+        manifest = ChunkedReference.from_json(manifest_data)
+
+        with ThreadPoolExecutor(max_workers=self.workers) as executor:
+            futures = [
+                executor.submit(b._meta_update_locked, ci.chunk_hash, _dec_ref)
+                for ci in manifest.chunks
+            ]
+            for future in as_completed(futures):
+                future.result()  # propagate exceptions
 
     # === Delete ===
 

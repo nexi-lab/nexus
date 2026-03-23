@@ -71,6 +71,7 @@ def _validate_hash(content_hash: str) -> None:
 
 if TYPE_CHECKING:
     from nexus.backends.engines.cdc import ChunkingStrategy
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -440,6 +441,32 @@ class CASAddressingEngine(Backend):
                 path=content_hash,
             ) from e
 
+    def release_content(self, content_id: str) -> None:
+        """Decrement ref_count without physical delete (GC does that later).
+
+        Used by OBSERVE-phase observers to release content references
+        on write-overwrite or file delete.  Physical cleanup of blobs
+        with ref_count=0 is handled by CASGarbageCollector (PR #1320).
+
+        Safe to call with a nonexistent content_id (no-op).
+        """
+        content_hash = content_id
+
+        # Feature DI: CDC chunked content
+        if self._cdc is not None and self._cdc.is_chunked(content_hash):
+            self._cdc.release_chunked(content_hash)
+            return
+
+        key = self._blob_key(content_hash)
+        if not self._transport.blob_exists(key):
+            return  # Already gone — idempotent
+
+        def _dec_ref(meta: dict[str, Any]) -> dict[str, Any]:
+            meta["ref_count"] = max(meta.get("ref_count", 1) - 1, 0)
+            return meta
+
+        self._meta_update_locked(content_hash, _dec_ref)
+
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
         try:
@@ -507,6 +534,17 @@ class CASAddressingEngine(Backend):
 
         meta = self._read_meta(content_id)
         return int(meta.get("ref_count", 0))
+
+    def hook_spec(self) -> "HookSpec":
+        """Declare OBSERVE observer for CAS ref_count management.
+
+        Called by the factory/orchestrator at mount time to register
+        CASRefCountObserver with KernelDispatch.
+        """
+        from nexus.backends.observers.cas_ref_count_observer import CASRefCountObserver
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(observers=(CASRefCountObserver(self),))
 
     def stream_content(
         self,

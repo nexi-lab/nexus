@@ -118,6 +118,8 @@ jobs:
 
       - name: Start Nexus edge container
         run: |
+          # Container runs as nexus (UID 1000) — match host volume ownership
+          mkdir -p /tmp/nexus-data && sudo chown -R 1000:1000 /tmp/nexus-data
           docker run -d --name nexus-e2e \
             --network host \
             -e NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus \

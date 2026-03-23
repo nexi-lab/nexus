@@ -96,7 +96,7 @@ class SlimNexusFS:
         Returns:
             Dict with path, size, etag, version.
         """
-        return await self._kernel.sys_write(path, content, context=self._ctx)
+        return await self._kernel.write(path, content, context=self._ctx)
 
     # -- Directory operations --
 

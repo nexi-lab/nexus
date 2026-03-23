@@ -100,7 +100,7 @@ class TestUnregisterObserve:
         from nexus.core.file_events import FileEvent, FileEventType
 
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
-        await dispatch.notify(event)
+        dispatch.notify(event)
         obs1.on_mutation.assert_called_once_with(event)
         obs3.on_mutation.assert_called_once_with(event)
         obs2.on_mutation.assert_not_called()

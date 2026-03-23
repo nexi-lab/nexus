@@ -167,7 +167,7 @@ class TestAsyncNotify:
         obs = MagicMock()
         dispatch.register_observe(obs)
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
-        await dispatch.notify(event)
+        dispatch.notify(event)
         obs.on_mutation.assert_called_once_with(event)
 
     async def test_notify_fault_isolation(self, dispatch: KernelDispatch) -> None:
@@ -180,6 +180,6 @@ class TestAsyncNotify:
         dispatch.register_observe(good)
 
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
-        await dispatch.notify(event)
+        dispatch.notify(event)
 
         good.on_mutation.assert_called_once_with(event)

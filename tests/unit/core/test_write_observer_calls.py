@@ -61,7 +61,7 @@ def mock_notify(nx: NexusFS) -> AsyncMock:
     mock_dispatch.resolve_write.return_value = (False, None)
     mock_dispatch.resolve_delete.return_value = (False, None)
     # All post-dispatch and notify methods are now async
-    mock_dispatch.notify = AsyncMock()
+    mock_dispatch.notify = MagicMock()  # sync after #1812
     mock_dispatch.intercept_post_write = AsyncMock()
     mock_dispatch.intercept_post_delete = AsyncMock()
     mock_dispatch.intercept_post_rename = AsyncMock()
@@ -203,7 +203,7 @@ class TestWriteStreamCallsDispatch:
         mock_dispatch.resolve_delete.return_value = (False, None)
         # All post-dispatch methods are now async
         mock_dispatch.intercept_post_write = AsyncMock()
-        mock_dispatch.notify = AsyncMock()
+        mock_dispatch.notify = MagicMock()  # sync after #1812
         nx._dispatch = mock_dispatch
 
         await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]))

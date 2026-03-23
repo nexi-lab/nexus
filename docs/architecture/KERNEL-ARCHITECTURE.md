@@ -482,7 +482,7 @@ to access its own process table. Moving it to `NexusFS.__init__()` (alongside
 PipeManager and StreamManager) makes it a true kernel primitive — available
 before any service boots, with no upward dependency.
 
-**Consumers:** EvictionManager, AcpService, ProcResolver (all service-layer).
+**Consumers:** EvictionManager, AcpService, AgentStatusResolver (all service-layer).
 These are created at factory link-time (`_do_link()`) where `nx._agent_registry`
 is already available.
 

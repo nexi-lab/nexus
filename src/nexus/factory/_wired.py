@@ -318,7 +318,7 @@ async def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] AgentRPCService unavailable: %s", exc)
 
-    # ProcResolver moved to orchestrator._register_vfs_hooks() (Issue #1570)
+    # AgentStatusResolver moved to orchestrator._register_vfs_hooks() (Issue #1570, #1810)
 
     acp_rpc_service: Any = None
     # Issue #1792: AcpService is created in _do_link() using kernel-owned

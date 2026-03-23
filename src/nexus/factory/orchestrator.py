@@ -546,16 +546,16 @@ async def _register_vfs_hooks(
     )
     await _enlist("virtual_view", _vview_resolver)
 
-    # ── ProcResolver (procfs virtual filesystem for AgentRegistry — Issue #1570) ──
+    # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──
     _proc_table = getattr(nx, "_agent_registry", None)
     if _proc_table is not None:
         try:
-            from nexus.system_services.proc.proc_resolver import ProcResolver
+            from nexus.core.agent_status_resolver import AgentStatusResolver
 
-            _proc_resolver = ProcResolver(_proc_table)
-            await _enlist("proc", _proc_resolver)
+            _agent_status_resolver = AgentStatusResolver(_proc_table)
+            await _enlist("agent_status", _agent_status_resolver)
         except Exception as exc:
-            logger.debug("[BOOT:HOOKS] ProcResolver unavailable: %s", exc)
+            logger.debug("[BOOT:HOOKS] AgentStatusResolver unavailable: %s", exc)
 
     # ── TaskWriteHook + TaskDispatchPipeConsumer + TaskAgentResolver ───────────
     if _on("task_manager"):

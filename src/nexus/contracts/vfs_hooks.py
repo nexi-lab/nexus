@@ -265,3 +265,47 @@ class VFSPathResolver(Protocol):
     def try_read(self, path: str, *, context: Any = None) -> bytes | None: ...
     def try_write(self, path: str, content: bytes) -> dict[str, Any] | None: ...
     def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None: ...
+
+
+# ---------------------------------------------------------------------------
+# MOUNT/UNMOUNT hooks — driver lifecycle notifications (Issue #1811)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MountHookContext:
+    """Context passed to mount hooks when a backend is mounted."""
+
+    mount_point: str
+    backend: Any  # ObjectStoreABC
+
+
+@dataclass
+class UnmountHookContext:
+    """Context passed to unmount hooks when a backend is unmounted."""
+
+    mount_point: str
+    backend: Any  # ObjectStoreABC
+
+
+@runtime_checkable
+class VFSMountHook(Protocol):
+    """Hook that runs when a backend is mounted (Issue #1811).
+
+    Linux analogue: ``file_system_type.mount()``.
+    Fire-and-forget — failures are caught and logged by KernelDispatch.
+    Dispatched by DriverLifecycleCoordinator via KernelDispatch.
+    """
+
+    def on_mount(self, ctx: MountHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSUnmountHook(Protocol):
+    """Hook that runs when a backend is unmounted (Issue #1811).
+
+    Linux analogue: ``kill_sb()``.
+    Fire-and-forget — failures are caught and logged by KernelDispatch.
+    """
+
+    def on_unmount(self, ctx: UnmountHookContext) -> None: ...

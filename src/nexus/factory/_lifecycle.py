@@ -131,6 +131,16 @@ async def _do_link(
     nx._service_coordinator = coordinator
     await enlist_wired_services(coordinator, _wired)
 
+    # Issue #1811: Create DriverLifecycleCoordinator and adopt root mount.
+    # Root mount ("/") was added to PathRouter in create_nexus_fs() before
+    # KernelDispatch existed.  adopt_existing_mount() retroactively registers
+    # the backend's hook_spec (fixes CAS ref_count wiring bug #1320).
+    from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
+
+    driver_coordinator = DriverLifecycleCoordinator(nx.router, nx._dispatch)
+    nx._driver_coordinator = driver_coordinator
+    driver_coordinator.adopt_existing_mount("/")
+
     # Issue #1666: Register system-tier PersistentService instances.
     # These are Q3 (PersistentService) — enlist() defers start() because
     # coordinator is not yet bootstrapped (mark_bootstrapped at bootstrap).
@@ -330,14 +340,9 @@ async def _do_initialize(
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    # Get root backend for hook_spec registration (Issue #1320: CAS ref_count observer)
-    _root_backend = None
-    try:
-        _root_route = nx.router.route("/")
-        _root_backend = _root_route.backend
-    except Exception:
-        pass
-
+    # Issue #1811: CAS ref_count observer is now registered via
+    # DriverLifecycleCoordinator.adopt_existing_mount() in _do_link().
+    # The `backend` parameter has been removed from _register_vfs_hooks().
     await _register_vfs_hooks(
         nx,
         system_services=system_services,
@@ -345,7 +350,6 @@ async def _do_initialize(
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
         brick_on=brick_on,
         parse_fn=parse_fn,
-        backend=_root_backend,
     )
 
     # --- BLM registration for late bricks (Issue #1704, #2991) ---

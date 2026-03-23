@@ -394,6 +394,7 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
 | **DistributedLockManager** | `core.nexus_fs` (sentinel) | `fs/locks.c` | Factory-injected sentinel (`_distributed_lock_manager`). Advisory locks via `AdvisoryLockManager` (`SemaphoreAdvisoryLockManager` standalone, `RaftLockManager` federation). Always available after factory boot |
 | **ServiceLifecycleCoordinator** | `system_services.lifecycle` | `init/main.c` + `module.c` | Kernel-owned bridge: ServiceRegistry + BrickLifecycleManager. Manages enlist/swap/shutdown for all 4 service quadrants |
+| **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Manages driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceLifecycleCoordinator (drivers vs services) |
 | **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.5 |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 

@@ -13,14 +13,11 @@ Features:
 
 import asyncio
 import logging
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
-
+from nexus.bricks.search.chunk_store import ChunkRecord, ChunkStore
 from nexus.bricks.search.chunking import DocumentChunker, EntropyAwareChunker
 from nexus.bricks.search.contextual_chunking import (
     ContextualChunker,
@@ -324,150 +321,27 @@ class IndexingPipeline:
             raise RuntimeError("async_session_factory required for bulk insert")
 
         embeddings: list[list[float]] | None = getattr(doc, "_embeddings", None)
-
-        if self._db_type == "postgresql":
-            await self._pg_bulk_insert(doc, embeddings)
-        else:
-            await self._sqlite_bulk_insert(doc, embeddings)
-
-    async def _pg_bulk_insert(
-        self,
-        doc: _ChunkedDoc,
-        embeddings: list[list[float]] | None,
-    ) -> None:
-        """PostgreSQL bulk insert using batched INSERT with unnest."""
-        assert self._async_session_factory is not None  # guarded by _bulk_insert
-        now = datetime.now(UTC).replace(tzinfo=None)
         embedding_model = (
             self._embedding_provider.__class__.__name__ if self._embedding_provider else None
         )
-
-        async with self._async_session_factory() as session:
-            # Delete existing chunks
-            await session.execute(
-                text("DELETE FROM document_chunks WHERE path_id = :path_id"),
-                {"path_id": doc.path_id},
-            )
-
-            if embeddings:
-                insert_sql = text("""
-                    INSERT INTO document_chunks
-                    (chunk_id, path_id, chunk_index, chunk_text, chunk_tokens,
-                     start_offset, end_offset, line_start, line_end,
-                     embedding_model, embedding,
-                     chunk_context, chunk_position, source_document_id,
-                     created_at)
-                    VALUES
-                    (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
-                     :start_offset, :end_offset, :line_start, :line_end,
-                     :embedding_model, CAST(:embedding AS halfvec),
-                     :chunk_context, :chunk_position, :source_document_id,
-                     :created_at)
-                """)
-            else:
-                insert_sql = text("""
-                    INSERT INTO document_chunks
-                    (chunk_id, path_id, chunk_index, chunk_text, chunk_tokens,
-                     start_offset, end_offset, line_start, line_end,
-                     embedding_model,
-                     chunk_context, chunk_position, source_document_id,
-                     created_at)
-                    VALUES
-                    (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
-                     :start_offset, :end_offset, :line_start, :line_end,
-                     :embedding_model,
-                     :chunk_context, :chunk_position, :source_document_id,
-                     :created_at)
-                """)
-
-            params_list = []
-            for i, chunk in enumerate(doc.chunks):
-                params: dict[str, Any] = {
-                    "chunk_id": str(uuid.uuid4()),
-                    "path_id": doc.path_id,
-                    "chunk_index": i,
-                    "chunk_text": chunk.text,
-                    "chunk_tokens": chunk.tokens,
-                    "start_offset": chunk.start_offset,
-                    "end_offset": chunk.end_offset,
-                    "line_start": chunk.line_start,
-                    "line_end": chunk.line_end,
-                    "embedding_model": embedding_model,
-                    "chunk_context": doc.context_jsons[i] if doc.context_jsons else None,
-                    "chunk_position": doc.context_positions[i] if doc.context_positions else None,
-                    "source_document_id": doc.source_document_id,
-                    "created_at": now,
-                }
-                if embeddings:
-                    # Convert to pgvector string format for asyncpg compatibility
-                    emb = embeddings[i]
-                    params["embedding"] = "[" + ",".join(str(v) for v in emb) + "]"
-                params_list.append(params)
-
-            # executemany-style: execute each row (SA text doesn't support executemany directly)
-            for params in params_list:
-                await session.execute(insert_sql, params)
-
-            await session.commit()
-
-    async def _sqlite_bulk_insert(
-        self,
-        doc: _ChunkedDoc,
-        _embeddings: list[list[float]] | None,
-    ) -> None:
-        """SQLite bulk insert using executemany."""
-        assert self._async_session_factory is not None  # guarded by _bulk_insert
-        now = datetime.now(UTC).replace(tzinfo=None)
-        embedding_model = (
-            self._embedding_provider.__class__.__name__ if self._embedding_provider else None
+        chunk_store = ChunkStore(
+            async_session_factory=self._async_session_factory,
+            db_type=self._db_type,
         )
-
-        async with self._async_session_factory() as session:
-            # Delete existing chunks
-            await session.execute(
-                text("DELETE FROM document_chunks WHERE path_id = :path_id"),
-                {"path_id": doc.path_id},
+        records = [
+            ChunkRecord(
+                chunk_text=chunk.text,
+                chunk_tokens=chunk.tokens,
+                start_offset=chunk.start_offset,
+                end_offset=chunk.end_offset,
+                line_start=chunk.line_start,
+                line_end=chunk.line_end,
+                embedding=embeddings[i] if embeddings else None,
+                embedding_model=embedding_model,
+                chunk_context=doc.context_jsons[i] if doc.context_jsons else None,
+                chunk_position=doc.context_positions[i] if doc.context_positions else None,
+                source_document_id=doc.source_document_id,
             )
-
-            insert_sql = text("""
-                INSERT INTO document_chunks
-                (chunk_id, path_id, chunk_index, chunk_text, chunk_tokens,
-                 start_offset, end_offset, line_start, line_end,
-                 embedding_model,
-                 chunk_context, chunk_position, source_document_id,
-                 created_at)
-                VALUES
-                (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
-                 :start_offset, :end_offset, :line_start, :line_end,
-                 :embedding_model,
-                 :chunk_context, :chunk_position, :source_document_id,
-                 :created_at)
-            """)
-
-            params_list = []
-            for i, chunk in enumerate(doc.chunks):
-                params_list.append(
-                    {
-                        "chunk_id": str(uuid.uuid4()),
-                        "path_id": doc.path_id,
-                        "chunk_index": i,
-                        "chunk_text": chunk.text,
-                        "chunk_tokens": chunk.tokens,
-                        "start_offset": chunk.start_offset,
-                        "end_offset": chunk.end_offset,
-                        "line_start": chunk.line_start,
-                        "line_end": chunk.line_end,
-                        "embedding_model": embedding_model,
-                        "chunk_context": doc.context_jsons[i] if doc.context_jsons else None,
-                        "chunk_position": doc.context_positions[i]
-                        if doc.context_positions
-                        else None,
-                        "source_document_id": doc.source_document_id,
-                        "created_at": now,
-                    }
-                )
-
-            for params in params_list:
-                await session.execute(insert_sql, params)
-
-            await session.commit()
+            for i, chunk in enumerate(doc.chunks)
+        ]
+        await chunk_store.replace_document_chunks(doc.path_id, records)

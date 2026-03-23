@@ -91,14 +91,32 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
             brk = svc.brick_services
             cache_brick = getattr(brk, "cache_brick", None) if brk else None
 
-        if cache_brick is None:
+        from nexus.cache.settings import CacheSettings
+
+        cache_settings = CacheSettings.from_env()
+        needs_env_cache_brick = cache_brick is None
+        if cache_brick is not None and not cache_brick.has_cache_store:
+            needs_env_cache_brick = cache_settings.should_use_dragonfly()
+
+        if needs_env_cache_brick:
             # Fallback: create CacheBrick from env settings (standalone mode)
             from nexus.cache.brick import CacheBrick
-            from nexus.cache.settings import CacheSettings
+            from nexus.cache.dragonfly import DragonflyCacheStore, DragonflyClient
 
-            cache_settings = CacheSettings.from_env()
             record_store = svc.record_store
             cache_store = getattr(svc.nexus_fs, "_cache_store", None)
+            if cache_settings.should_use_dragonfly() and cache_settings.dragonfly_url:
+                client = DragonflyClient(
+                    url=cache_settings.dragonfly_url,
+                    pool_size=cache_settings.dragonfly_pool_size,
+                    timeout=cache_settings.dragonfly_timeout,
+                    connect_timeout=cache_settings.dragonfly_connect_timeout,
+                    pool_timeout=cache_settings.dragonfly_pool_timeout,
+                    socket_keepalive=cache_settings.dragonfly_keepalive,
+                    retry_on_timeout=cache_settings.dragonfly_retry_on_timeout,
+                )
+                await client.connect()
+                cache_store = DragonflyCacheStore(client)
             cache_brick = CacheBrick(
                 cache_store=cache_store,
                 settings=cache_settings,

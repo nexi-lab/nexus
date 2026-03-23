@@ -130,8 +130,12 @@ def _derive_project_env(
     # rely on auto-detection, which can surprise users.
     if config.get("tls"):
         env["NEXUS_GRPC_TLS"] = "true"
+        env.pop("NEXUS_GRPC_BIND_ALL", None)
     else:
         env["NEXUS_GRPC_TLS"] = "false"
+        # Standalone demo/shared stacks expose gRPC through a published Docker
+        # port, so the server must not stay bound to container loopback.
+        env["NEXUS_GRPC_BIND_ALL"] = "true"
 
     return env
 
@@ -214,6 +218,19 @@ def _compose_has_build(compose_file: str) -> bool:
         return False
     nexus_svc = (stack.get("services") or {}).get("nexus")
     return isinstance(nexus_svc, dict) and "build" in nexus_svc
+
+
+def _resolve_pgvector_init_sql(compose_file: str) -> str | None:
+    """Resolve an absolute pgvector init SQL path for portable compose stacks."""
+    sibling = Path(compose_file).with_name("001-enable-pgvector.sql")
+    if sibling.exists():
+        return str(sibling.resolve())
+
+    bundled = Path(__file__).resolve().parent.parent / "data" / "001-enable-pgvector.sql"
+    if bundled.exists():
+        return str(bundled.resolve())
+
+    return None
 
 
 def _is_channel_following(config: dict[str, Any]) -> bool:
@@ -545,6 +562,9 @@ def up(
 
     # Build environment from config (project name, ports, data dir, auth, image, TLS)
     compose_env = _derive_project_env(config, resolved_ports=resolved_ports)
+    pgvector_init_sql = _resolve_pgvector_init_sql(cf)
+    if pgvector_init_sql:
+        compose_env["NEXUS_PGVECTOR_INIT_SQL"] = pgvector_init_sql
 
     # Track effective image and build mode for state.json
     effective_build_mode = "remote"
@@ -662,11 +682,12 @@ def up(
             if admin_api_key:
                 config["api_key"] = admin_api_key
 
-    # Auto-discover TLS certs (Raft 2-phase bootstrap writes to data_dir/tls/)
-    # and persist them so downstream commands auto-discover mTLS credentials.
+    # Auto-discover TLS certs only for TLS-enabled stacks. Demo/shared stacks
+    # can create a tls/ directory for internal services without exposing
+    # gRPC TLS on the host port, and advertising those files to the host CLI
+    # causes clients to attempt TLS against a plain-text port.
     tls_state: dict[str, str] = {}
     tls_dir = Path(data_dir) / "tls"
-    # Only persist TLS config when the server is configured to use mTLS.
     if config.get("tls") and tls_dir.exists():
         # Raft-style certs
         if (tls_dir / "ca.pem").exists():

@@ -135,6 +135,36 @@ class PipeManager:
         logger.debug("pipe created: %s (capacity=%d)", path, capacity)
         return buf
 
+    def ensure(
+        self,
+        path: str,
+        *,
+        capacity: int = 65_536,
+        owner_id: str | None = None,
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> PipeBackend:
+        """Ensure a named pipe has both an inode and a live in-memory buffer.
+
+        This is the idempotent startup path for long-lived DT_PIPE services.
+        It handles three cases:
+
+        1. pipe already open in-memory -> return existing buffer
+        2. no inode yet -> create inode + buffer
+        3. inode persisted but buffer lost after restart -> reopen buffer
+        """
+        if path in self._buffers and not self._buffers[path].closed:
+            return self._buffers[path]
+
+        try:
+            return self.create(
+                path,
+                capacity=capacity,
+                owner_id=owner_id,
+                zone_id=zone_id,
+            )
+        except PipeError:
+            return self.open(path, capacity=capacity)
+
     def open(self, path: str, *, capacity: int = 65_536) -> PipeBackend:
         """Open an existing pipe, or recover its buffer after restart.
 

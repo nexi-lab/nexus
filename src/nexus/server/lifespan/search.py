@@ -56,6 +56,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         if _record_store is not None:
             with contextlib.suppress(AttributeError):
                 _async_sf = _record_store.async_session_factory
+        _settings_store = None
+        with contextlib.suppress(ImportError, AttributeError):
+            from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+
+            _settings_store = MetastoreSettingsStore(svc.nexus_fs.metadata)
 
         # Issue #2188: Create ZoektClient + embedding provider via DI
         _zoekt_client = None
@@ -80,6 +85,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             async_session_factory=_async_sf,
             zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
+            settings_store=_settings_store,
         )
 
         # Embeddings are now handled by txtai backend (Issue #2663).
@@ -97,6 +103,10 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             from nexus.factory import _NexusFSFileReader
 
             app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
+            if getattr(app.state.search_daemon, "_mutation_resolver", None) is not None:
+                app.state.search_daemon._mutation_resolver.set_file_reader(  # noqa: SLF001
+                    app.state.search_daemon._file_reader
+                )
 
         # Wire SearchDaemon into SearchService so semantic_search queries
         # use the txtai backend instead of falling back to SQL ILIKE.

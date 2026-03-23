@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_INTERNAL_PIPE_PREFIX = "/nexus/pipes/"
+
 
 class SyncAuditWriteInterceptor:
     """Sync VFS interceptor: call RecordStoreWriteObserver methods directly.
@@ -79,6 +81,8 @@ class SyncAuditWriteInterceptor:
     # ── Sync POST hooks (called by KernelDispatch serial path) ─────────
 
     def on_post_write(self, ctx: "WriteHookContext") -> None:
+        if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
+            return
         self._observer.on_write(
             ctx.metadata,
             is_new=ctx.is_new_file,
@@ -89,13 +93,22 @@ class SyncAuditWriteInterceptor:
         )
 
     def on_post_write_batch(self, ctx: "WriteBatchHookContext") -> None:
+        filtered_items = [
+            (metadata, is_new)
+            for metadata, is_new in ctx.items
+            if not metadata.path.startswith(_INTERNAL_PIPE_PREFIX)
+        ]
+        if not filtered_items:
+            return
         self._observer.on_write_batch(
-            ctx.items,
+            filtered_items,
             zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
         )
 
     def on_post_delete(self, ctx: "DeleteHookContext") -> None:
+        if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
+            return
         self._observer.on_delete(
             path=ctx.path,
             metadata=ctx.metadata,
@@ -104,6 +117,10 @@ class SyncAuditWriteInterceptor:
         )
 
     def on_post_rename(self, ctx: "RenameHookContext") -> None:
+        if ctx.old_path.startswith(_INTERNAL_PIPE_PREFIX) or ctx.new_path.startswith(
+            _INTERNAL_PIPE_PREFIX
+        ):
+            return
         self._observer.on_rename(
             old_path=ctx.old_path,
             new_path=ctx.new_path,
@@ -113,6 +130,8 @@ class SyncAuditWriteInterceptor:
         )
 
     def on_post_mkdir(self, ctx: "MkdirHookContext") -> None:
+        if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
+            return
         self._observer.on_mkdir(
             path=ctx.path,
             zone_id=ctx.zone_id,
@@ -120,6 +139,8 @@ class SyncAuditWriteInterceptor:
         )
 
     def on_post_rmdir(self, ctx: "RmdirHookContext") -> None:
+        if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
+            return
         self._observer.on_rmdir(
             path=ctx.path,
             zone_id=ctx.zone_id,
@@ -171,6 +192,8 @@ class AuditWriteInterceptor:
     # ── VFSWriteHook ──────────────────────────────────────────────────
 
     async def on_post_write(self, ctx: "WriteHookContext") -> None:
+        if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
+            return
         event = {
             "op": "write",
             "path": ctx.path,
@@ -187,6 +210,8 @@ class AuditWriteInterceptor:
 
     async def on_post_write_batch(self, ctx: "WriteBatchHookContext") -> None:
         for metadata, is_new in ctx.items:
+            if metadata.path.startswith(_INTERNAL_PIPE_PREFIX):
+                continue
             event = {
                 "op": "write",
                 "path": metadata.path,
@@ -201,6 +226,8 @@ class AuditWriteInterceptor:
     # ── VFSDeleteHook ─────────────────────────────────────────────────
 
     async def on_post_delete(self, ctx: "DeleteHookContext") -> None:
+        if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
+            return
         event = {
             "op": "delete",
             "path": ctx.path,
@@ -214,6 +241,10 @@ class AuditWriteInterceptor:
     # ── VFSRenameHook ─────────────────────────────────────────────────
 
     async def on_post_rename(self, ctx: "RenameHookContext") -> None:
+        if ctx.old_path.startswith(_INTERNAL_PIPE_PREFIX) or ctx.new_path.startswith(
+            _INTERNAL_PIPE_PREFIX
+        ):
+            return
         event = {
             "op": "rename",
             "path": ctx.old_path,
@@ -228,6 +259,8 @@ class AuditWriteInterceptor:
     # ── VFSMkdirHook ─────────────────────────────────────────────────
 
     async def on_post_mkdir(self, ctx: "MkdirHookContext") -> None:
+        if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
+            return
         event = {
             "op": "mkdir",
             "path": ctx.path,
@@ -239,6 +272,8 @@ class AuditWriteInterceptor:
     # ── VFSRmdirHook ─────────────────────────────────────────────────
 
     async def on_post_rmdir(self, ctx: "RmdirHookContext") -> None:
+        if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
+            return
         event = {
             "op": "rmdir",
             "path": ctx.path,

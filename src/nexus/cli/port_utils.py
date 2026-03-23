@@ -2,12 +2,18 @@
 
 Provides pre-flight port checking for `nexus up` and related commands.
 Supports three resolution strategies: auto, prompt, and fail.
+
+Port derivation: when multiple instances run in different directories,
+``derive_ports()`` hashes the ``data_dir`` path to produce deterministic,
+stable port assignments that don't shift across restarts.
 """
 
 from __future__ import annotations
 
+import hashlib
 import socket
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,6 +29,15 @@ DEFAULT_PORTS: dict[str, int] = {
     "zoekt": 6070,
 }
 
+# Port range for hash-derived ports (10000–59999 gives 50k usable ports,
+# well above the ephemeral range and below common system services).
+_DERIVED_PORT_MIN = 10000
+_DERIVED_PORT_RANGE = 50000
+
+# Slot spacing — each instance gets 10 consecutive ports so services
+# within the same project are contiguous and predictable.
+_SLOT_SIZE = 10
+
 # Human-readable labels for port display
 PORT_LABELS: dict[str, str] = {
     "http": "Nexus HTTP",
@@ -34,6 +49,37 @@ PORT_LABELS: dict[str, str] = {
 
 # Strategies for resolving port conflicts
 VALID_STRATEGIES = ("auto", "prompt", "fail")
+
+
+def derive_ports(data_dir: str | Path) -> dict[str, int]:
+    """Derive deterministic port assignments from *data_dir*.
+
+    Hashes the absolute path of *data_dir* to produce a stable offset
+    into the 10000–59999 range.  The same directory always maps to the
+    same ports, regardless of start order or how many other instances
+    are running.
+
+    The port layout within a slot (10 consecutive ports):
+        +0  http
+        +1  grpc
+        +2  postgres
+        +3  dragonfly
+        +4  zoekt
+        +5…+9  reserved for future services
+    """
+    abs_path = str(Path(data_dir).resolve())
+    digest = hashlib.sha256(abs_path.encode()).hexdigest()
+    # Use first 8 hex chars → 0..4294967295, mod by available slots
+    slot = int(digest[:8], 16) % (_DERIVED_PORT_RANGE // _SLOT_SIZE)
+    base = _DERIVED_PORT_MIN + slot * _SLOT_SIZE
+
+    return {
+        "http": base,
+        "grpc": base + 1,
+        "postgres": base + 2,
+        "dragonfly": base + 3,
+        "zoekt": base + 4,
+    }
 
 
 def check_port_available(port: int, host: str = "0.0.0.0") -> bool:

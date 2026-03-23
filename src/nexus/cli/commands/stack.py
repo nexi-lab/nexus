@@ -40,6 +40,9 @@ from nexus.cli.state import (
     load_project_config as _load_project_config,
 )
 from nexus.cli.state import (
+    load_project_config_optional as _load_project_config_optional,
+)
+from nexus.cli.state import (
     load_runtime_state,
     resolve_connection_env,
     save_runtime_state,
@@ -368,6 +371,55 @@ async def _poll_all_services(
 
 
 # ---------------------------------------------------------------------------
+# Container state detection
+# ---------------------------------------------------------------------------
+
+
+def _detect_container_state(
+    project_name: str,
+) -> str:
+    """Detect the state of containers for a compose project.
+
+    Returns one of:
+        "running"  — all containers are running (or healthy)
+        "stopped"  — containers exist but are stopped/exited
+        "absent"   — no containers found for this project
+    """
+    try:
+        # Get all containers (including stopped) for this project
+        result = subprocess.run(
+            [
+                *_find_docker_compose().split(),
+                "-p",
+                project_name,
+                "ps",
+                "-a",
+                "--format",
+                "{{.State}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return "absent"
+
+        states = [s.strip().lower() for s in result.stdout.strip().splitlines() if s.strip()]
+        if not states:
+            return "absent"
+
+        # If all containers are running, the stack is up
+        if all(s in ("running",) for s in states):
+            return "running"
+
+        # If any container exists (running, exited, paused, etc.), it's "stopped"
+        return "stopped"
+
+    except (subprocess.TimeoutExpired, OSError):
+        return "absent"
+
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
@@ -453,7 +505,27 @@ def up(
         nexus up --build                # force rebuild images
         nexus up --pull                 # discard local build, pull remote
     """
-    config = _load_project_config()
+    config = _load_project_config_optional()
+
+    # Auto-init: if no nexus.yaml exists, run the equivalent of
+    # `nexus init --preset shared` so `nexus up` is the only command needed.
+    if not config:
+        console.print("[bold]No nexus.yaml found — initializing with preset 'shared'...[/bold]")
+        from click.testing import CliRunner
+
+        from nexus.cli.commands.init_cmd import init as init_cmd
+
+        init_result = CliRunner(mix_stderr=False).invoke(
+            init_cmd, ["--preset", "shared", "--force"], catch_exceptions=False
+        )
+        if init_result.exit_code != 0:
+            console.print("[red]Error:[/red] Auto-init failed.")
+            if init_result.output:
+                console.print(init_result.output)
+            raise SystemExit(1)
+        console.print(init_result.output)
+        config = _load_project_config()
+
     preset = config.get("preset", "local")
 
     if preset == "local":
@@ -475,6 +547,52 @@ def up(
 
     # Check previous runtime state for local build reuse
     prev_state = load_runtime_state(data_dir)
+
+    # ---------------------------------------------------------------
+    # Smart resume: detect existing container state and take fast path
+    # when no flags request a rebuild/pull/force-recreate.
+    # ---------------------------------------------------------------
+    prev_project = prev_state.get("project_name", "")
+    no_force_flags = build is None and force_pull is None and not addons
+    if prev_project and no_force_flags:
+        container_state = _detect_container_state(prev_project)
+
+        if container_state == "running":
+            # Already running — print status and exit
+            console.print()
+            console.print("[green]Nexus stack is already running.[/green]")
+            prev_ports = prev_state.get("ports", {})
+            conn_env = resolve_connection_env(config, prev_state)
+            console.print()
+            console.print("[bold]Connection:[/bold]")
+            for key, value in sorted(conn_env.items()):
+                console.print(f"  export {key}='{value}'")
+            console.print()
+            console.print(
+                "[dim]Use `nexus up --pull` to update, "
+                "or `nexus down && nexus up` to recreate.[/dim]"
+            )
+            return
+
+        if container_state == "stopped":
+            # Containers exist but stopped — fast resume via docker compose start
+            console.print()
+            console.print("[bold]Resuming stopped Nexus stack...[/bold]")
+            profiles = _resolve_profiles(config)
+            compose_env = _derive_project_env(config, resolved_ports=prev_state.get("ports"))
+            result = _run_compose(cf, profiles, "start", extra_env=compose_env)
+            if result.returncode != 0:
+                console.print("[red]Error:[/red] Failed to resume stack.")
+                raise SystemExit(result.returncode)
+            console.print("[green]✓[/green] Stack resumed.")
+            conn_env = resolve_connection_env(config, prev_state)
+            console.print()
+            console.print("[bold]Connection:[/bold]")
+            for key, value in sorted(conn_env.items()):
+                console.print(f"  export {key}='{value}'")
+            return
+
+    # Fall through: containers absent or force flags set — full start
     using_local_build = False
 
     # Default: pull prebuilt image.  Only build when explicitly requested

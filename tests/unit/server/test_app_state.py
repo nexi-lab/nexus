@@ -95,6 +95,7 @@ class TestInitAppState:
         mock_fs._brick_services = "brk"
         mock_fs._write_observer = "wo"
         mock_fs._permission_enforcer = "pe"
+        mock_fs.service = lambda name: {"event_bus": "eb"}.get(name)
 
         init_app_state(app, nexus_fs=mock_fs)
 

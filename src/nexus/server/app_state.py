@@ -182,7 +182,8 @@ def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
     app.state.system_services = getattr(nexus_fs, "_system_services", None)
     app.state.brick_services = getattr(nexus_fs, "_brick_services", None)
     # Issue #1771: event_bus now enlisted in ServiceRegistry
-    app.state.event_bus = nexus_fs.service("event_bus")
+    _svc_fn = getattr(nexus_fs, "service", None)
+    app.state.event_bus = _svc_fn("event_bus") if callable(_svc_fn) else None
     app.state.write_observer = getattr(nexus_fs, "_write_observer", None)
     app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
 

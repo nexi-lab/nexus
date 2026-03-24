@@ -24,6 +24,7 @@ def _make_app(**state_attrs) -> MagicMock:
 
 def _make_nexus_fs(**attrs) -> SimpleNamespace:
     """Create a NexusFS stub with given attributes."""
+    _service_map = attrs.pop("_service_map", {})
     defaults = {
         "_system_services": None,
         "_brick_services": None,
@@ -41,7 +42,9 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
         "service_coordinator": None,
     }
     defaults.update(attrs)
-    return SimpleNamespace(**defaults)
+    ns = SimpleNamespace(**defaults)
+    ns.service = lambda name: _service_map.get(name)
+    return ns
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +229,7 @@ class TestFromAppEdgeCases:
         """NexusFS missing some private attrs doesn't crash."""
         # Use a SimpleNamespace with only _system_services
         nx = SimpleNamespace(_system_services=None, _brick_services=None)
+        nx.service = lambda name: None
         app = _make_app(nexus_fs=nx)
 
         # Should not raise even though nx has no SessionLocal, etc.

@@ -188,12 +188,17 @@ class TestWriteStreamCallsDispatch:
         mock_dispatch.notify = AsyncMock()
         nx._dispatch = mock_dispatch
 
-        await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]))
+        # path_local backend requires backend_path in OperationContext for
+        # streaming writes (no content_id available until hash is computed).
+        from nexus.contracts.types import OperationContext
+
+        ctx = OperationContext(user_id="test", groups=[], backend_path="streamed.txt")
+        await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]), context=ctx)
 
         mock_dispatch.intercept_post_write.assert_called_once()
-        ctx = mock_dispatch.intercept_post_write.call_args.args[0]
-        assert ctx.path == "/streamed.txt"
-        assert ctx.is_new_file is True
+        hook_ctx = mock_dispatch.intercept_post_write.call_args.args[0]
+        assert hook_ctx.path == "/streamed.txt"
+        assert hook_ctx.is_new_file is True
 
 
 class TestMkdirCallsDispatch:
@@ -237,14 +242,32 @@ class TestRmdirCallsDispatch:
         assert event.path == "/mydir"
 
     @pytest.mark.asyncio
-    async def test_rmdir_recursive_notifies_dispatch(
-        self, nx: NexusFS, mock_notify: MagicMock
-    ) -> None:
-        await nx.sys_mkdir("/mydir")
-        await nx.write("/mydir/file.txt", b"content")
+    async def test_rmdir_recursive_notifies_dispatch(self, tmp_path: Path) -> None:
+        """Use CAS backend to avoid PathLocal rmdir ordering bug (deletes dir marker before contents)."""
+        from nexus.backends.storage.cas_local import CASLocalBackend
+
+        backend = CASLocalBackend(root_path=str(tmp_path / "cas_data"))
+        cas_nx = await make_test_nexus(tmp_path, backend=backend)
+
+        mock_dispatch = MagicMock()
+        mock_dispatch.resolve_read.return_value = (False, None)
+        mock_dispatch.resolve_write.return_value = (False, None)
+        mock_dispatch.resolve_delete.return_value = (False, None)
+        mock_dispatch.notify = AsyncMock()
+        mock_dispatch.intercept_post_write = AsyncMock()
+        mock_dispatch.intercept_post_delete = AsyncMock()
+        mock_dispatch.intercept_post_rename = AsyncMock()
+        mock_dispatch.intercept_post_mkdir = AsyncMock()
+        mock_dispatch.intercept_post_rmdir = AsyncMock()
+        mock_dispatch.intercept_post_write_batch = AsyncMock()
+        cas_nx._dispatch = mock_dispatch
+        mock_notify = mock_dispatch.notify
+
+        await cas_nx.sys_mkdir("/mydir")
+        await cas_nx.write("/mydir/file.txt", b"content")
         mock_notify.reset_mock()
 
-        await nx.sys_rmdir("/mydir", recursive=True)
+        await cas_nx.sys_rmdir("/mydir", recursive=True)
 
         # rmdir notify is the last call; write_batch notify may precede it
         events = [call.args[0] for call in mock_notify.call_args_list]

@@ -54,8 +54,18 @@ class TestEnlistWiredServices:
 
     @pytest.fixture()
     def registry(self, nx: Any) -> Any:
-        """Return the ServiceRegistry (now has lifecycle methods, Issue #1814)."""
-        return nx._service_registry
+        """Return the ServiceRegistry (now has lifecycle methods, Issue #1814).
+
+        Clears any wired-service keys that the factory boot path already
+        registered, so tests can call enlist_wired_services() without
+        hitting 'already registered' errors.
+        """
+        from nexus.factory.service_routing import _CANONICAL_NAMES
+
+        reg = nx._service_registry
+        for canonical in _CANONICAL_NAMES.values():
+            reg.unregister(canonical)
+        return reg
 
     def test_enlist_from_dataclass(self, nx: Any, registry: Any) -> None:
         mock_svc = MagicMock()

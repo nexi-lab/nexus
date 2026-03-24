@@ -888,6 +888,8 @@ layers = [
 # Ratchet baseline — known violations. Remove entries as fixes land.
 # Run: lint-imports --contract four-tier-layers to check.
 ignore_imports = [
+    # --- core importing system_services (ServiceRegistry shutdown needs BrickLifecycleManager type) ---
+    "nexus.core.service_registry -> nexus.system_services.lifecycle.brick_lifecycle",
     # --- tier-neutral (contracts) importing core ---
     "nexus.contracts.metadata -> nexus.core._compact_generated",
     # --- tier-neutral (contracts/protocols) importing bricks ---

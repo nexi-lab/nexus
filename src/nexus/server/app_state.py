@@ -173,16 +173,20 @@ def init_app_state(app: "FastAPI", nexus_fs: Any = None, **overrides: Any) -> No
 
 
 def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
-    """Flatten NexusFS private attrs onto app.state for typed access."""
+    """Flatten NexusFS internals onto app.state for typed access.
+
+    Issue #1771: Uses nx.service() for enlisted services, falls back to
+    _system_services for infrastructure fields not yet in ServiceRegistry.
+    """
     # Direct NexusFS attrs
     app.state.system_services = getattr(nexus_fs, "_system_services", None)
     app.state.brick_services = getattr(nexus_fs, "_brick_services", None)
-    _sys = getattr(nexus_fs, "_system_services", None)
-    app.state.event_bus = getattr(_sys, "event_bus", None) if _sys is not None else None
+    # Issue #1771: event_bus now enlisted in ServiceRegistry
+    app.state.event_bus = nexus_fs.service("event_bus")
     app.state.write_observer = getattr(nexus_fs, "_write_observer", None)
     app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
 
-    # Flatten from SystemServices
+    # Flatten from SystemServices — infrastructure fields not in ServiceRegistry
     _sys = app.state.system_services
     if _sys is not None:
         app.state.observability_subsystem = getattr(_sys, "observability_subsystem", None)

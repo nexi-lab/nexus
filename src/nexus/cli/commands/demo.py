@@ -294,8 +294,8 @@ def _seed_permissions(nx: Any, config: dict[str, Any], manifest: dict[str, Any])
             # Fallback: admin RPC (requires server built from this branch)
             created = _seed_permissions_rpc(config, tuples)
     else:
-        # Local path — direct rebac_manager access
-        rebac = getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
+        # Local path — rebac_manager via ServiceRegistry
+        rebac = nx.service("rebac") if nx else None
         if rebac is None:
             logger.debug("No rebac_manager available — skipping permission seeding")
             manifest["permissions_seeded"] = True
@@ -1041,8 +1041,8 @@ def _delete_permissions(nx: Any, config: dict[str, Any]) -> int:
         deleted = _delete_permissions_docker(config)
         return max(deleted, 0)
 
-    # Local path — direct rebac_manager access
-    rebac = getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
+    # Local path — rebac_manager via ServiceRegistry (Issue #1771)
+    rebac = nx.service("rebac_manager") if nx else None
     if rebac is None:
         return 0
 

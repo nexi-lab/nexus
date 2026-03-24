@@ -192,8 +192,8 @@ def stats(
                 if cc and hasattr(cc, "get_stats"):
                     cache_stats["content_cache"] = cc.get_stats()
 
-            # Permission cache stats
-            rm = getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
+            # Permission cache stats (Issue #1771: nx.service() replaces _system_services)
+            rm = nx.service("rebac_manager") if hasattr(nx, "service") else None
             if rm is not None:
                 if hasattr(rm, "_permission_cache") and rm._permission_cache:
                     pc = rm._permission_cache
@@ -311,7 +311,7 @@ def clear(
 
         # Clear permission cache
         if permissions or clear_all:
-            rm = getattr(getattr(nx, "_system_services", None), "rebac_manager", None)
+            rm = nx.service("rebac_manager") if hasattr(nx, "service") else None  # Issue #1771
             if rm is not None:
                 if hasattr(rm, "_permission_cache") and rm._permission_cache:
                     pc = rm._permission_cache

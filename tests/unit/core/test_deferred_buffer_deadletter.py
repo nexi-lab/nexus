@@ -14,6 +14,9 @@ import time
 from unittest.mock import MagicMock
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from sqlalchemy.exc import OperationalError
 
 from nexus.bricks.rebac.deferred_permission_buffer import DeferredPermissionBuffer

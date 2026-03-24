@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.rebac_service import ReBACService
 
 

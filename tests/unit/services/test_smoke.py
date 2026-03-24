@@ -8,6 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.contracts.types import OperationContext
 
 

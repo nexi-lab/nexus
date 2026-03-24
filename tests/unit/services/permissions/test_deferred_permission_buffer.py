@@ -8,7 +8,10 @@ import threading
 import time
 from unittest.mock import MagicMock
 
+import pytest
 from sqlalchemy.exc import OperationalError
+
+pytest.importorskip("pyroaring")
 
 from nexus.bricks.rebac.deferred_permission_buffer import (
     DeferredPermissionBuffer,

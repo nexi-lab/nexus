@@ -6,6 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
 from nexus.contracts.vfs_hooks import WriteHookContext
 

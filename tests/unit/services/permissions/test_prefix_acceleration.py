@@ -5,6 +5,9 @@ Tests both the Rust functions (when available) and the Python fallback path.
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.contracts.types import OperationContext
 

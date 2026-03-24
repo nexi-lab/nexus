@@ -16,6 +16,9 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.rebac_service import ReBACService
 from nexus.lib.context_utils import get_subject_from_context
 

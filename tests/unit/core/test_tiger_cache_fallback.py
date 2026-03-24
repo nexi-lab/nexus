@@ -8,6 +8,9 @@ import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import create_engine
 

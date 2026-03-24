@@ -10,6 +10,9 @@ This prevents system operations from accidentally modifying user data.
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.contracts.types import OperationContext, Permission
 

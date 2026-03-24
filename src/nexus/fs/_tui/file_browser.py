@@ -105,6 +105,7 @@ class FileBrowser(Widget):
     async def load_directory(self, path: str) -> None:
         """Load directory contents from the filesystem."""
         self.is_loading = True
+        self.loading = True  # Textual built-in: shows LoadingIndicator overlay
         self._error = None
 
         table = self.query_one("#file-table", DataTable)
@@ -149,6 +150,7 @@ class FileBrowser(Widget):
             overflow.update(f"[red]Error: {self._error}[/red]")
 
         self.is_loading = False
+        self.loading = False  # Hide Textual's LoadingIndicator overlay
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection (Enter key)."""

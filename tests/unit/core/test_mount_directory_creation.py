@@ -71,10 +71,12 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     assert await nx.sys_is_directory("/mnt/test")
     test_meta = nx.metadata.get("/mnt/test")
     assert test_meta is not None
-    # Note: mkdir creates a regular directory (entry_type=0), not DT_MOUNT.
+    # mkdir creates a DT_DIR entry (entry_type=1), not DT_MOUNT.
     # DT_MOUNT is set by topology/zone-manager code, not by raw mkdir.
     # The key invariant is that the path exists and is directory-like.
-    assert test_meta.entry_type == 0 or test_meta.is_mount
+    from nexus.contracts.metadata import DT_DIR
+
+    assert test_meta.entry_type == DT_DIR or test_meta.is_mount
 
 
 @pytest.mark.asyncio
@@ -169,8 +171,10 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
     # PathRouter.add_mount() is pure in-memory; mkdir creates DT_DIR.
     mount_meta = nx.metadata.get("/a/b/c/mount")
     assert mount_meta is not None
-    # mkdir creates entry_type=0 (regular dir); DT_MOUNT is set by topology code.
-    assert mount_meta.entry_type == 0 or mount_meta.is_mount
+    # mkdir creates DT_DIR (entry_type=1); DT_MOUNT is set by topology code.
+    from nexus.contracts.metadata import DT_DIR
+
+    assert mount_meta.entry_type == DT_DIR or mount_meta.is_mount
 
 
 @pytest.mark.asyncio

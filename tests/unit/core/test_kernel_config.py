@@ -259,14 +259,12 @@ class TestSystemServices:
         assert ss.permission_enforcer is None
         assert ss.write_observer is None
         # Former-kernel degradable
-        assert ss.dir_visibility_cache is None
-        assert ss.hierarchy_manager is None
+        # hierarchy_manager, dir_visibility_cache, namespace_manager now rebac-internal
         assert ss.deferred_permission_buffer is None
         assert ss.workspace_registry is None
         assert ss.mount_manager is None
         assert ss.workspace_manager is None
         # Original system services
-        assert ss.namespace_manager is None
         assert ss.async_namespace_manager is None
         assert ss.context_branch_service is None
         assert ss.brick_lifecycle_manager is None
@@ -278,12 +276,12 @@ class TestSystemServices:
     def test_frozen(self) -> None:
         ss = SystemServices()
         with pytest.raises(dataclasses.FrozenInstanceError):
-            ss.namespace_manager = "x"
+            ss.async_namespace_manager = "x"
 
     def test_construct_with_values(self) -> None:
         sentinel = object()
-        ss = SystemServices(namespace_manager=sentinel, resiliency_manager=sentinel)
-        assert ss.namespace_manager is sentinel
+        ss = SystemServices(async_namespace_manager=sentinel, resiliency_manager=sentinel)
+        assert ss.async_namespace_manager is sentinel
         assert ss.resiliency_manager is sentinel
         assert ss.delivery_worker is None
 
@@ -307,14 +305,12 @@ class TestSystemServices:
             "permission_enforcer",
             "write_observer",
             # Former-kernel degradable
-            "dir_visibility_cache",
-            "hierarchy_manager",
+            # hierarchy_manager, dir_visibility_cache, namespace_manager → rebac-internal
             "deferred_permission_buffer",
             "workspace_registry",
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "namespace_manager",
             "async_namespace_manager",
             "context_branch_service",
             "brick_lifecycle_manager",
@@ -335,9 +331,6 @@ class TestSystemServices:
 
     def test_protocol_type_annotations(self) -> None:
         annotations = SystemServices.__annotations__
-        ns_ann = str(annotations.get("namespace_manager", ""))
-        assert "NamespaceManagerProtocol" in ns_ann
-        assert "None" in ns_ann
         # Issue #2193: write_observer moved from KernelServices
         wo_ann = str(annotations.get("write_observer", ""))
         assert "WriteObserverProtocol" in wo_ann

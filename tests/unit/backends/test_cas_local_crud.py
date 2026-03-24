@@ -28,7 +28,7 @@ from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
-from nexus.core.semaphore import PythonVFSSemaphore
+from nexus.lib.semaphore import PythonVFSSemaphore
 
 
 @pytest.fixture

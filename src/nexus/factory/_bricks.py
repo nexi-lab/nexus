@@ -360,8 +360,8 @@ def _boot_independent_bricks(
         # VFSSemaphore directly (no LockStoreProtocol capability check needed).
         if lock_manager is None:
             try:
-                from nexus.core.semaphore import create_vfs_semaphore
                 from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
+                from nexus.lib.semaphore import create_vfs_semaphore
 
                 _zone = ctx.zone_id or ROOT_ZONE_ID
                 lock_manager = SemaphoreAdvisoryLockManager(create_vfs_semaphore(), zone_id=_zone)

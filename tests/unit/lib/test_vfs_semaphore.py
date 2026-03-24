@@ -9,9 +9,9 @@ import time
 
 import pytest
 
-from nexus.core.semaphore import (
+from nexus.contracts.protocols.semaphore import VFSSemaphoreProtocol
+from nexus.lib.semaphore import (
     PythonVFSSemaphore,
-    VFSSemaphoreProtocol,
     create_vfs_semaphore,
 )
 
@@ -22,7 +22,7 @@ from nexus.core.semaphore import (
 _IMPLEMENTATIONS: list[type] = [PythonVFSSemaphore]
 
 try:
-    from nexus.core.semaphore import RustVFSSemaphore
+    from nexus.lib.semaphore import RustVFSSemaphore
 
     _IMPLEMENTATIONS.append(RustVFSSemaphore)
 except (ImportError, Exception):

@@ -135,6 +135,7 @@ jobs:
         shell: bash
 
       - name: Run unit tests
+        timeout-minutes: 20
         run: |
           start=$(date +%s)
           uv run pytest tests/unit -v --durations=10 -n auto --dist loadgroup \

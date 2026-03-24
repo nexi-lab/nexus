@@ -122,8 +122,19 @@ class PlaygroundApp(App[None]):
         await self._build_browser_ui()
 
     async def _resolve_filesystem(self) -> Any:
-        """Mount backends from URIs or auto-discover from state dir."""
+        """Mount backends from URIs or auto-discover from state dir.
+
+        For local:// URIs, uses direct filesystem passthrough so users
+        can browse real files on disk without seeding through the API.
+        Cloud URIs (s3://, gcs://) go through the full NexusFS mount.
+        """
         if self._uris:
+            # Check if ALL URIs are local:// — use direct passthrough
+            all_local = all(u.startswith("local://") for u in self._uris)
+            if all_local:
+                return self._resolve_local_direct(self._uris)
+
+            # Mixed or cloud URIs — use full NexusFS mount
             try:
                 from nexus.fs import mount
 
@@ -133,7 +144,7 @@ class PlaygroundApp(App[None]):
                 empty.update(f"[red]Mount failed:[/red] {exc}")
                 return None
 
-        # Auto-discover from state dir
+        # Auto-discover from state dir (fallback when no URIs given)
         state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
             __import__("tempfile").gettempdir(), "nexus-fs"
         )
@@ -176,6 +187,29 @@ class PlaygroundApp(App[None]):
             empty.update(f"[red]Auto-discover failed:[/red] {exc}")
             return None
 
+    def _resolve_local_direct(self, uris: tuple[str, ...]) -> Any:
+        """Create a LocalDirectFS for local:// URIs (direct filesystem passthrough).
+
+        This lets users browse real files on disk without writing through the API.
+        For a single URI, returns a LocalDirectFS. For multiple, returns a
+        MultiLocalFS that combines them.
+        """
+        from pathlib import Path as _Path
+
+        from nexus.fs._tui.local_fs import LocalDirectFS
+
+        if len(uris) == 1:
+            raw = uris[0].removeprefix("local://")
+            root = _Path(raw).expanduser().resolve()
+            if not root.exists():
+                root.mkdir(parents=True, exist_ok=True)
+            name = root.name or "local"
+            return LocalDirectFS(root, f"/local/{name}")
+
+        # Multiple local mounts — use the first one
+        # (multi-local support can be added later)
+        return self._resolve_local_direct((uris[0],))
+
     async def _build_browser_ui(self) -> None:
         """Build the file browser UI after mounts are resolved."""
         main = self.query_one("#main-area", Horizontal)
@@ -197,11 +231,12 @@ class PlaygroundApp(App[None]):
         empty = self.query_one("#empty-state", Static)
         empty.display = False
 
-        # Load first mount
+        # Load first mount and focus the file table
         if self._mount_points:
             await browser.load_directory(self._mount_points[0])
             self._current_path = self._mount_points[0]
-            self._update_status_bar()
+            self._update_status_bar(announce=False)
+            browser.query_one("#file-table").focus()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -397,10 +432,16 @@ class PlaygroundApp(App[None]):
             pass
 
     async def action_preview_file(self) -> None:
-        """Preview the currently selected file."""
+        """Preview the currently selected file (skip directories)."""
         try:
             browser = self.query_one("#file-browser", FileBrowser)
-            path = browser.copy_current_path()
+            idx = browser.query_one("#file-table").cursor_row
+            if idx >= len(browser._entries):
+                return
+            entry = browser._entries[idx]
+            if entry.get("is_directory", False):
+                return
+            path = entry.get("path")
             if path:
                 preview = self.query_one("#file-preview", FilePreview)
                 preview.display = True

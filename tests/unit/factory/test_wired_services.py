@@ -69,6 +69,12 @@ class TestEnlistWiredServices:
 
     def test_enlist_from_dataclass(self, nx: Any, registry: Any) -> None:
         mock_svc = MagicMock()
+        # Factory boot may have pre-registered these; clear them for a clean test.
+        for key in ("rebac", "mount"):
+            try:
+                registry.unregister(key)
+            except KeyError:
+                pass
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
         asyncio.run(enlist_wired_services(registry, ws))
         assert nx.service("rebac")._service_instance is mock_svc
@@ -77,6 +83,12 @@ class TestEnlistWiredServices:
 
     def test_enlist_from_dict(self, nx: Any, registry: Any) -> None:
         mock_svc = MagicMock()
+        # Factory boot may have pre-registered these; clear them for a clean test.
+        for key in ("rebac", "mount"):
+            try:
+                registry.unregister(key)
+            except KeyError:
+                pass
         asyncio.run(
             enlist_wired_services(registry, {"rebac_service": mock_svc, "mount_service": mock_svc})
         )

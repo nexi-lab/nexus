@@ -407,8 +407,8 @@ def create_app(
             # Issue #914: Inject getter into delivery worker (fixes services→server import)
             from nexus.server.subscriptions import get_subscription_manager
 
-            _sys = getattr(nexus_fs, "_system_services", None)
-            _dw = getattr(_sys, "delivery_worker", None)
+            # Issue #1771: access delivery_worker via ServiceRegistry
+            _dw = nexus_fs.service("delivery_worker") if nexus_fs else None
             if _dw is not None:
                 _dw._subscription_manager_getter = get_subscription_manager
             logger.info("Subscription manager initialized and injected into NexusFS")

@@ -146,6 +146,18 @@ async def _do_link(
     if _dw is not None:
         await nx._service_registry.enlist("delivery_worker", _dw)
 
+    # Issue #1771: Enlist SystemServices fields that are read externally via
+    # getattr(nx, "_system_services", None).field — migrate to nx.service("name").
+    for _attr, _canonical in (
+        ("event_bus", "event_bus"),
+        ("context_branch_service", "context_branch"),
+        ("rebac_manager", "rebac_manager"),
+        ("resiliency_manager", "resiliency_manager"),
+    ):
+        _val = getattr(system_services, _attr, None)
+        if _val is not None:
+            await nx._service_registry.enlist(_canonical, _val)
+
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.
     _dc = getattr(_wired, "descendant_checker", None)

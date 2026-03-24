@@ -81,7 +81,7 @@ class PlaygroundApp(App[None]):
     """
 
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
+        Binding("q", "request_quit", "Quit", priority=True),
         Binding("b", "go_back", "Back"),
         Binding("/", "toggle_search", "Search", key_display="/"),
         Binding("c", "copy_path", "Copy path"),
@@ -205,10 +205,12 @@ class PlaygroundApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static(
+        empty = Static(
             "[dim]Loading mounts…[/dim]",
             id="empty-state",
         )
+        empty.can_focus = True
+        yield empty
         yield Horizontal(id="main-area")
         yield Input(
             placeholder="Search files… (Enter to search, Escape to cancel)",
@@ -358,6 +360,10 @@ class PlaygroundApp(App[None]):
 
     # -- Actions --
 
+    def action_request_quit(self) -> None:
+        """Quit immediately without confirmation dialog."""
+        self.exit()
+
     def action_go_back(self) -> None:
         """Navigate back."""
         try:
@@ -443,7 +449,10 @@ class PlaygroundApp(App[None]):
             self.show_mount_panel = True
 
     async def on_key(self, event: Any) -> None:
-        """Handle escape key to close preview/search."""
+        """Handle global key events (quit, escape)."""
+        if event.key == "q":
+            self.exit()
+            return
         if event.key == "escape":
             if self.search_visible:
                 self.search_visible = False

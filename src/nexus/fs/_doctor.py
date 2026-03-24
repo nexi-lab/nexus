@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 # Check result model (4-state, independent of main CLI's 3-state enum)
 # ---------------------------------------------------------------------------
 
-_CHECK_TIMEOUT_S = 2.0
-_OVERALL_TIMEOUT_S = 2.0
+_CHECK_TIMEOUT_S = 3.0
+_OVERALL_TIMEOUT_S = 5.0
 
 
 class DoctorStatus(Enum):

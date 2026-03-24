@@ -134,7 +134,9 @@ def validate_aws_credentials() -> dict[str, object]:
         return {"valid": False, "error": "boto3 not installed"}
 
     try:
-        sts = boto3.client("sts")
+        from botocore.config import Config
+
+        sts = boto3.client("sts", config=Config(connect_timeout=2, read_timeout=2))
         identity = sts.get_caller_identity()
         return {
             "valid": True,
@@ -163,13 +165,30 @@ def validate_gcs_credentials() -> dict[str, object]:
         return {"valid": False, "error": "google-auth not installed"}
 
     try:
+        import requests as _requests_lib
+
         credentials, project = google.auth.default()
-        credentials.refresh(google.auth.transport.requests.Request())
+        # Use a short timeout for the token refresh HTTP call
+        session = _requests_lib.Session()
+        session.timeout = 2
+        credentials.refresh(google.auth.transport.requests.Request(session=session))
         return {
             "valid": True,
             "project": project or "unknown",
             "credential_type": type(credentials).__name__,
         }
+    except ImportError:
+        # requests not installed — try without timeout
+        try:
+            credentials, project = google.auth.default()
+            credentials.refresh(google.auth.transport.requests.Request())
+            return {
+                "valid": True,
+                "project": project or "unknown",
+                "credential_type": type(credentials).__name__,
+            }
+        except Exception as exc:
+            return {"valid": False, "error": str(exc)}
     except Exception as exc:
         return {"valid": False, "error": str(exc)}
 

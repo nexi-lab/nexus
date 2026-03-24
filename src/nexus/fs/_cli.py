@@ -73,8 +73,11 @@ def doctor(mount_uris: tuple[str, ...]) -> None:
     has_failure = any(
         r.status == DoctorStatus.FAIL for section in results.values() for r in section
     )
-    if has_failure:
-        sys.exit(1)
+    # Force-exit to avoid blocking on orphaned thread-pool threads from
+    # credential validation calls (asyncio.to_thread threads can't be cancelled).
+    import os
+
+    os._exit(1 if has_failure else 0)
 
 
 @main.command()

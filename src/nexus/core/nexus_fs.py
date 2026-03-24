@@ -158,14 +158,11 @@ class NexusFS(  # type: ignore[misc]
         self._descendant_checker: Any = None
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
-        # Issue #1791: factory-injected overlay config resolver (captures workspace_registry)
-        self._overlay_config_fn: Callable[..., Any] | None = None
         # Issue #1788: distributed lock manager — kernel knows (like _permission_enforcer).
         # In-process locks use _vfs_lock_manager (kernel owns); distributed locks use this.
         self._distributed_lock_manager: Any = None
-        # Issue #1771: factory-injected async flush fn — replaces _system_services read
-        # in flush_write_observer(). Captures write_observer via closure.
-        self._flush_write_observer_fn: Any = None
+        # Issue #1801: _flush_write_observer_fn and _overlay_config_fn closures removed —
+        # kernel now reads services directly from service registry.
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
 
         # Lazy-init sentinels
@@ -903,15 +900,28 @@ class NexusFS(  # type: ignore[misc]
     def _get_overlay_config(self, path: str) -> Any:
         """Get overlay config for a path, if overlay is active.
 
-        Issue #1791: Delegates to factory-injected callable. Kernel does NOT
-        read workspace_registry from _system_services — the factory captures
-        the registry reference in a closure at link() time.
+        Issue #1801: Reads workspace_registry from service registry.
 
         Returns:
             OverlayConfig if overlay active for this path, None otherwise
         """
-        fn = self._overlay_config_fn
-        return fn(path) if fn is not None else None
+        ws_reg = self.service("workspace_registry")
+        if ws_reg is None:
+            return None
+        ws_config = ws_reg.find_workspace_for_path(path)
+        if ws_config is None:
+            return None
+        overlay_data = ws_config.metadata.get("overlay_config")
+        if overlay_data is None:
+            return None
+        from nexus.contracts.overlay_config import OverlayConfig
+
+        return OverlayConfig(
+            enabled=overlay_data.get("enabled", False),
+            base_manifest_hash=overlay_data.get("base_manifest_hash"),
+            workspace_path=ws_config.path,
+            agent_id=overlay_data.get("agent_id"),
+        )
 
     # =========================================================================
     # VFS I/O Lock — kernel-internal path-level read/write protection
@@ -4250,12 +4260,11 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Dict with ``flushed`` count.
         """
-        # Issue #1771: use factory-injected _flush_write_observer_fn instead of
-        # reading _system_services directly.  Captures write_observer via closure.
-        _flush_fn = self._flush_write_observer_fn
-        if _flush_fn is None:
+        # Issue #1801: use service registry to find write_observer — no closure needed.
+        _wo = self.service("write_observer")
+        if _wo is None or not hasattr(_wo, "flush"):
             return {"flushed": 0}
-        flushed: int = NexusFS._run_async(_flush_fn())
+        flushed: int = NexusFS._run_async(_wo.flush())
         return {"flushed": flushed}
 
     # ------------------------------------------------------------------

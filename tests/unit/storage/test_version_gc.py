@@ -119,8 +119,9 @@ class TestVersionGCSettings:
 
 async def _flush(nx) -> None:
     """Flush async write observer so version_history is up to date."""
-    if nx._flush_write_observer_fn:
-        await nx._flush_write_observer_fn()
+    wo = nx.service("write_observer") if hasattr(nx, "service") else None
+    if wo is not None and hasattr(wo, "flush"):
+        await wo.flush()
 
 
 class TestVersionHistoryGC:

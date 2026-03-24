@@ -205,7 +205,7 @@ async def connect_local_workspace(data_dir: str) -> NexusFilesystem:
     with _isolated_local_workspace_env(data_dir):
         filesystem = await nexus.connect(
             config={
-                "profile": "minimal",
+                "profile": "slim",
                 "backend": "local",
                 "data_dir": data_dir,
                 "db_path": None,
@@ -285,7 +285,7 @@ async def get_filesystem(
                     "NEXUS_DATA_DIR",
                     str(Path(nexus.NEXUS_STATE_DIR) / "data"),
                 )
-                return await nexus.connect(config={"profile": "minimal", "data_dir": data_dir})
+                return await nexus.connect(config={"profile": "slim", "data_dir": data_dir})
 
             console.print("[red]Error:[/red] NEXUS_URL or --remote-url is required")
             console.print(

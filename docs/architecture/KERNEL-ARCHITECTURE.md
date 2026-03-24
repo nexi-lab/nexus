@@ -613,14 +613,14 @@ which bricks to enable and which drivers to inject.
 
 | Profile | Target | Bricks | Metastore | Linux Analogue |
 |---------|--------|--------|-----------|----------------|
-| **minimal** | Bare minimum runnable | 1 (storage only) | redb (embedded) | initramfs |
+| **slim** | Bare minimum runnable | 1 (storage only) | redb (embedded) | initramfs |
 | **embedded** | MCU, WASM (<1 MB) | 2 (storage + eventlog) | redb (embedded) | BusyBox |
 | **lite** | Pi, Jetson, mobile | 8 (+namespace, agent, permissions, ...) | redb (embedded) | Alpine |
 | **full** | Desktop, laptop | 21 (all except federation) | redb (embedded) | Ubuntu Desktop |
 | **cloud** | k8s, serverless | 22 (all, incl. federation) | redb (Raft) | Ubuntu Server |
 | **remote** | Client-side proxy | 0 (zero local bricks) | RemoteMetastore | NFS client |
 
-Profile hierarchy: `minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`.
+Profile hierarchy: `slim ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`.
 REMOTE is orthogonal — stateless proxy, all operations via gRPC to server.
 
 Same kernel binary, different driver injection. See §1 `connect()`.

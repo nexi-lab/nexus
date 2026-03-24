@@ -43,9 +43,9 @@ Every kernel interface belongs to exactly one of four categories:
         │               KERNEL                             │
         │  ┌─────────────────────────────────────────────┐ │
         │  │  PRIMITIVES — internal (§4)                 │ │
-        │  │  PathValidator, ZoneAccessGuard, VFSRouter, │ │
-        │  │  VFSLockManager, KernelDispatch,            │ │
-        │  │  PipeManager, FileEvent, AgentRegistry      │ │
+        │  │  VFSRouter, VFSLockManager,                │ │
+        │  │  KernelDispatch, PipeManager, StreamManager,│ │
+        │  │  FileEvent, ServiceRegistry                │ │
         │  └─────────────────────────────────────────────┘ │
         └──────────────┬───────────────────────────────────┘
                        │  ↓ HAL — DRIVER CONTRACT (§3)
@@ -97,7 +97,7 @@ Factory boot sequence (6 phases, strictly ordered):
 | Phase | Name | Side effects | Key actions |
 |-------|------|-------------|-------------|
 | 1 | `create_nexus_services()` | None | Build 3-tier service containers (Kernel/System/Brick) |
-| 2 | `NexusFS()` constructor | None | Kernel primitives only (MetastoreABC, VFSRouter, KernelDispatch, PipeManager, StreamManager, AgentRegistry) + `init_cred` (kernel process identity, like Linux `init_task.cred`) |
+| 2 | `NexusFS()` constructor | None | Kernel primitives only (MetastoreABC, VFSRouter, KernelDispatch, PipeManager, StreamManager, AgentRegistry, ServiceRegistry) + `init_cred` (kernel process identity, like Linux `init_task.cred`) |
 | 3 | `link()` | None (memory only) | Wire service topology via `_do_link()`. `functools.partial` bakes `system_services` into closures — kernel never stores the reference for reads |
 | 4 | `initialize()` | None | Register VFS hooks (INTERCEPT + OBSERVE), IPC adapter bind |
 | 5 | `bootstrap()` | Yes (I/O, threads) | `mark_bootstrapped()` → auto-start PersistentServices, activate HotSwappable hooks |
@@ -130,9 +130,9 @@ required (structural typing).
 | `HotSwappable` | `hook_spec()`, `drain()`, `activate()` | Hook registration into KernelDispatch + activate on bootstrap; drain + unregister on shutdown |
 | `PersistentService` | `start()`, `stop()` | `start()` on bootstrap (dependency order); `stop()` on shutdown (reverse order) |
 
-One-click contract: implement protocol → `coordinator.enlist()` →
-kernel handles the rest. `ServiceRegistry` (kernel-owned, lifecycle orchestration
-integrated) scans the registry and auto-calls the appropriate methods during
+One-click contract: implement protocol → `ServiceRegistry.enlist()` →
+kernel handles the rest. `ServiceRegistry` (kernel-owned, lifecycle integrated)
+scans the registry and auto-calls the appropriate methods during
 `NexusFS.bootstrap()` / `NexusFS.close()`.
 
 **Service → Kernel wiring pattern:** Factory captures service references in
@@ -387,15 +387,12 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 |-----------|---------|---------------|------|
 | **VFSRouter** | `core.protocols.vfs_router` | VFS `lookup_slow()` | `route(path)` → `ResolvedPath` (backend, backend_path, mount_point). ~5μs redb lookup. Resolution only — mount CRUD is `MountProtocol` (service) |
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path read/write lock with hierarchy-aware conflict detection. Details in §4.1 |
-| **VFSSemaphore** | `core.semaphore` | POSIX `sem_t` | Named counting semaphore + TTL + holder tracking. Used by advisory lock layer (`SemaphoreAdvisoryLockManager`) and CAS metadata RMW (replaces `_StripeLock`). ~200ns Rust / ~500ns Python |
 | **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase callback mechanism implementing §2.4. Rust `PathTrie` (O(depth) resolver routing) + Rust `HookRegistry` (cached sync/async classification). Per-op callback lists; empty = zero overhead |
 | **PipeManager + RingBuffer** | `system_services` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `system_services` + `core.stream` | append-only log | VFS named streams — inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
-| **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
-| **DistributedLockManager** | `core.nexus_fs` (sentinel) | `fs/locks.c` | Factory-injected sentinel (`_distributed_lock_manager`). Advisory locks via `AdvisoryLockManager` (`SemaphoreAdvisoryLockManager` standalone, `RaftLockManager` federation). Always available after factory boot |
-| **ServiceRegistry** (lifecycle) | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration. Manages enlist/swap/shutdown for all 4 service quadrants |
+| **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). Manages all 4 service quadrants — subsumes former ServiceLifecycleCoordinator |
 | **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Manages driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry lifecycle (drivers vs services) |
-| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.5 |
+| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.4 |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock
@@ -449,21 +446,7 @@ See `federation-memo.md` §7j for design rationale.
 | Consumer paths | KernelDispatch OBSERVE (local), EventBus (distributed) |
 | Emission point | Always AFTER lock release |
 
-### 4.4 VFSSemaphore — Named Counting Semaphore
-
-| Property | Value |
-|----------|-------|
-| POSIX analogue | `sem_t` (named semaphore, extended with TTL + holder tracking) |
-| Modes | Counting (N holders), mutex (max_holders=1) |
-| Latency | ~200ns (Rust PyO3) / ~500ns–1μs (Python fallback) |
-| Scope | In-memory, process-scoped, TTL-based lazy expiry |
-| Users | Advisory lock layer (SemaphoreAdvisoryLockManager), CAS metadata RMW |
-
-Replaced `_StripeLock` (ad-hoc 64-stripe mutex) for CAS metadata coordination.
-Advisory lock layer uses two semaphores per path for RW gate pattern
-(shared/exclusive). See `lock-architecture.md` §3.
-
-### 4.5 AgentRegistry — Kernel Process Table
+### 4.4 AgentRegistry — Kernel Process Table
 
 | Property | Value |
 |----------|-------|
@@ -511,6 +494,7 @@ automatically with any service that conforms.
 |---------------|--------------------|--------------------|----------------------|
 | `RecordStoreABC` | Session factory + read replica interface | PostgreSQL, SQLite drivers | Services get pooling, error translation, replica routing |
 | `VFS*Hook` protocols | Hook shapes (context dataclasses) | Service-layer hook implementations | KernelDispatch calls any conforming hook uniformly |
+| `VFSSemaphoreProtocol` | Named counting semaphore interface | `lib.semaphore` implementation | Advisory locks + CAS coordination use uniform semaphore API |
 | Service Protocols | `@runtime_checkable` typed interfaces | Concrete service implementations | Typed contracts for service implementors |
 
 **Integration mechanisms:** Factory auto-discovers bricks via `brick_factory.py`
@@ -544,6 +528,28 @@ bilateral interface conformance, not from kernel providing these features direct
 (Permission, Search, Mount, Agent, Events, Memory, Domain, Audit, Cross-Cutting).
 
 See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matching.
+
+### 5.4 VFSSemaphore — Named Counting Semaphore
+
+**Package:** `lib.semaphore` | **Protocol:** `contracts.protocols.semaphore.VFSSemaphoreProtocol`
+
+| Property | Value |
+|----------|-------|
+| POSIX analogue | `sem_t` (named semaphore, extended with TTL + holder tracking) |
+| Kernel role | Kernel **defines** the protocol and provides the implementation in `lib/`; kernel does NOT own it as a primitive |
+| Modes | Counting (N holders), mutex (max_holders=1) |
+| Latency | ~200ns (Rust PyO3) / ~500ns-1us (Python fallback) |
+| Scope | In-memory, process-scoped, TTL-based lazy expiry |
+| Consumers | Advisory lock layer (`SemaphoreAdvisoryLockManager`), CAS metadata RMW |
+
+Replaced `_StripeLock` (ad-hoc 64-stripe mutex) for CAS metadata coordination.
+Advisory lock layer uses two semaphores per path for RW gate pattern
+(shared/exclusive). See `lock-architecture.md` §3.
+
+Previously lived in `core.semaphore` as a kernel primitive. Moved to `lib/`
+(PR #3298) because it has no kernel dependencies and is consumed by
+service-layer components — making it a kernel-authored standard, not a
+kernel-owned primitive.
 
 ---
 

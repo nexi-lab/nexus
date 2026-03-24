@@ -237,7 +237,7 @@ async def _boot_wired_services(
                 mount_service=mount_service,
                 router=router,
             )
-            nx._connector_sync_loop = connector_sync  # Keep reference for shutdown
+            await nx._service_registry.enlist("connector_sync_loop", connector_sync)
             logger.debug("[BOOT:WIRED] ConnectorSyncLoop created (starts on first request)")
         except Exception:
             logger.debug("[BOOT:WIRED] ConnectorSyncLoop not available")
@@ -323,7 +323,8 @@ async def _boot_wired_services(
     acp_rpc_service: Any = None
     # Issue #1792: AcpService is created in _do_link() using kernel-owned
     # nx._agent_registry. Retrieve from nx (set by _do_link).
-    _acp_service = getattr(nx, "_acp_service", None)
+    _acp_ref = nx._service_registry.service("acp_service")
+    _acp_service = _acp_ref._service_instance if _acp_ref is not None else None
     if _acp_service is None:
         # Fallback: construct inline using kernel-owned AgentRegistry.
         _acp_pt = getattr(nx, "_agent_registry", None)

@@ -219,7 +219,7 @@ async def _startup_connector_sync(app: "FastAPI", svc: "LifespanServices") -> No
     if not svc.nexus_fs:
         return
 
-    sync_loop = getattr(svc.nexus_fs, "_connector_sync_loop", None)
+    sync_loop = svc.nexus_fs.service("connector_sync_loop")
     if sync_loop is not None:
         try:
             await sync_loop.start()

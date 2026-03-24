@@ -58,14 +58,9 @@ class PlaygroundApp(App[None]):
         padding: 0 1;
         color: $text-muted;
     }
-    #search-container {
-        dock: bottom;
-        height: 3;
-        display: none;
-        padding: 0 1;
-    }
-    #search-input {
+    #search-input, #crud-input {
         width: 100%;
+        display: none;
     }
     #empty-state {
         width: 100%;
@@ -87,10 +82,15 @@ class PlaygroundApp(App[None]):
         Binding("c", "copy_path", "Copy path"),
         Binding("p", "preview_file", "Preview"),
         Binding("m", "toggle_mount_panel", "Mounts"),
+        Binding("n", "new_file", "New file"),
+        Binding("N", "new_dir", "New dir", key_display="N"),
+        Binding("d", "delete_selected", "Delete"),
+        Binding("r", "rename_selected", "Rename"),
     ]
 
     show_mount_panel: reactive[bool] = reactive(True)
     search_visible: reactive[bool] = reactive(False)
+    _crud_mode: str = ""  # "", "new_file", "new_dir", "rename", "delete_confirm"
 
     def __init__(self, uris: tuple[str, ...] = (), **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -98,6 +98,7 @@ class PlaygroundApp(App[None]):
         self._fs: Any = None
         self._mount_points: list[str] = []
         self._current_path: str = "/"
+        self._crud_rename_source: str = ""
 
     async def on_mount(self) -> None:
         """Initialize filesystem and load mounts."""
@@ -224,6 +225,7 @@ class PlaygroundApp(App[None]):
             placeholder="Search files… (Enter to search, Escape to cancel)",
             id="search-input",
         )
+        yield Input(placeholder="", id="crud-input")
         yield Static("", id="status-bar")
         yield Footer()
 
@@ -283,12 +285,13 @@ class PlaygroundApp(App[None]):
             pass
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle search submission.
+        """Route input submissions to search or CRUD handler."""
+        # CRUD input
+        if event.input.id == "crud-input":
+            await self._on_crud_input_submitted(event.value.strip())
+            return
 
-        Searches across all mounts concurrently. Shows partial results
-        with green/red indicators for which backends responded.
-        Highlights matching text in filenames.
-        """
+        # Search input
         query = event.value.strip()
         if not query:
             self.search_visible = False
@@ -366,11 +369,130 @@ class PlaygroundApp(App[None]):
 
         overflow.update("  ".join(parts))
 
+    # -- CRUD input handler --
+
+    async def _on_crud_input_submitted(self, value: str) -> None:
+        """Handle CRUD input submissions (new file, new dir, rename)."""
+        crud_input = self.query_one("#crud-input", Input)
+        crud_input.display = False
+        crud_input.value = ""
+        mode = self._crud_mode
+        self._crud_mode = ""
+
+        if not value or not self._fs:
+            self._refocus_table()
+            return
+
+        try:
+            browser = self.query_one("#file-browser", FileBrowser)
+        except Exception:
+            return
+
+        if mode == "new_file":
+            path = f"{self._current_path.rstrip('/')}/{value}"
+            try:
+                await self._fs.write(path, b"")
+                self.notify(f"Created: {value}", timeout=2)
+                await browser.load_directory(self._current_path)
+                self._update_status_bar()
+            except Exception as exc:
+                self.notify(f"Create failed: {exc}", severity="error", timeout=3)
+
+        elif mode == "new_dir":
+            path = f"{self._current_path.rstrip('/')}/{value}"
+            try:
+                await self._fs.mkdir(path)
+                self.notify(f"Created directory: {value}", timeout=2)
+                await browser.load_directory(self._current_path)
+                self._update_status_bar()
+            except Exception as exc:
+                self.notify(f"Mkdir failed: {exc}", severity="error", timeout=3)
+
+        elif mode == "rename":
+            old_path = self._crud_rename_source
+            new_name = value
+            parent = old_path.rstrip("/").rsplit("/", 1)[0]
+            new_path = f"{parent}/{new_name}"
+            try:
+                await self._fs.rename(old_path, new_path)
+                self.notify(f"Renamed → {new_name}", timeout=2)
+                await browser.load_directory(self._current_path)
+                self._update_status_bar()
+            except Exception as exc:
+                self.notify(f"Rename failed: {exc}", severity="error", timeout=3)
+
+        self._refocus_table()
+
+    def _refocus_table(self) -> None:
+        """Return focus to the file table after CRUD operations."""
+        try:
+            self.query_one("#file-table").focus()
+        except Exception:
+            pass
+
+    def _show_crud_input(self, mode: str, placeholder: str, prefill: str = "") -> None:
+        """Show the CRUD input with a given mode and placeholder."""
+        self._crud_mode = mode
+        crud_input = self.query_one("#crud-input", Input)
+        crud_input.placeholder = placeholder
+        crud_input.value = prefill
+        crud_input.display = True
+        crud_input.focus()
+
     # -- Actions --
 
     def action_request_quit(self) -> None:
         """Quit immediately without confirmation dialog."""
         self.exit()
+
+    def action_new_file(self) -> None:
+        """Create a new empty file in the current directory."""
+        self._show_crud_input("new_file", "New file name (Enter to create, Escape to cancel)")
+
+    def action_new_dir(self) -> None:
+        """Create a new directory in the current directory."""
+        self._show_crud_input("new_dir", "New directory name (Enter to create, Escape to cancel)")
+
+    async def action_delete_selected(self) -> None:
+        """Delete the currently selected file or directory."""
+        if not self._fs:
+            return
+        try:
+            browser = self.query_one("#file-browser", FileBrowser)
+            idx = browser.query_one("#file-table").cursor_row
+            if idx >= len(browser._entries):
+                return
+            entry = browser._entries[idx]
+            path = entry.get("path", "")
+            name = path.rstrip("/").rsplit("/", 1)[-1]
+            is_dir = entry.get("is_directory", False)
+
+            if is_dir:
+                await self._fs.rmdir(path, recursive=True)
+                self.notify(f"Deleted directory: {name}", timeout=2)
+            else:
+                await self._fs.delete(path)
+                self.notify(f"Deleted: {name}", timeout=2)
+
+            await browser.load_directory(self._current_path)
+            self._update_status_bar()
+        except Exception as exc:
+            self.notify(f"Delete failed: {exc}", severity="error", timeout=3)
+
+    def action_rename_selected(self) -> None:
+        """Rename the currently selected file or directory."""
+        try:
+            browser = self.query_one("#file-browser", FileBrowser)
+            idx = browser.query_one("#file-table").cursor_row
+            if idx >= len(browser._entries):
+                return
+            entry = browser._entries[idx]
+            path = entry.get("path", "")
+            name = path.rstrip("/").rsplit("/", 1)[-1]
+            self._crud_rename_source = path
+            self._show_crud_input("rename", "New name (Enter to rename, Escape to cancel)", name)
+        except Exception:
+            pass
 
     def action_go_back(self) -> None:
         """Navigate back."""
@@ -465,11 +587,26 @@ class PlaygroundApp(App[None]):
     async def on_key(self, event: Any) -> None:
         """Handle global key events (quit, escape)."""
         if event.key == "q":
+            # Don't quit if user is typing in an input
+            focused = self.focused
+            if isinstance(focused, Input):
+                return
             self.exit()
             return
         if event.key == "escape":
+            # Close CRUD input
+            if self._crud_mode:
+                self._crud_mode = ""
+                crud = self.query_one("#crud-input", Input)
+                crud.display = False
+                crud.value = ""
+                self._refocus_table()
+                event.prevent_default()
+                return
+
             if self.search_visible:
                 self.search_visible = False
+                self._refocus_table()
                 event.prevent_default()
                 return
 
@@ -478,6 +615,7 @@ class PlaygroundApp(App[None]):
                 if preview.display:
                     preview.display = False
                     preview.clear_preview()
+                    self._refocus_table()
                     event.prevent_default()
             except Exception:
                 pass

@@ -22,6 +22,7 @@ import contextlib
 import logging
 import os
 import shutil
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -79,7 +80,7 @@ class LocalBlobTransport:
         Returns None (local FS has no versioning).
         """
         path = self._resolve(key)
-        tmp = str(path) + ".tmp." + str(os.getpid())
+        tmp = str(path) + f".tmp.{os.getpid()}.{threading.get_ident()}"
         fd = -1
         try:
             self._ensure_parent(path)

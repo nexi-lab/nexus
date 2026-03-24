@@ -4264,7 +4264,9 @@ class NexusFS(  # type: ignore[misc]
         _wo = self.service("write_observer")
         if _wo is None or not hasattr(_wo, "flush"):
             return {"flushed": 0}
-        flushed: int = NexusFS._run_async(_wo.flush())
+        from nexus.lib.sync_bridge import run_sync
+
+        flushed: int = run_sync(_wo.flush())
         return {"flushed": flushed}
 
     # ------------------------------------------------------------------

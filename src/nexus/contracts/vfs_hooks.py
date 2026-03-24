@@ -9,12 +9,14 @@ Two-phase dispatch model (Issue #900):
     INTERCEPT — synchronous, ordered.  Can abort (raise) or modify context.
     OBSERVE   — fire-and-forget (``FileEvent``).  Cannot abort.
 
-All six operations are covered:
-    read / write / delete / rename / mkdir / rmdir
+All eight operations are covered:
+    read / write / delete / rename / mkdir / rmdir / stat / access
 
 Issue #625: Extracted from ``core/vfs_hooks.py``.
 Issue #900: Added MkdirHookContext, RmdirHookContext, VFSMkdirHook,
             VFSRmdirHook.  Unified under KernelDispatch.
+Issue #1815: Added StatHookContext, AccessHookContext, VFSStatHook,
+             VFSAccessHook for permission enforcement migration.
 """
 
 from dataclasses import dataclass, field
@@ -117,6 +119,32 @@ class RmdirHookContext:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class StatHookContext:
+    """Context for stat/is_directory permission check (Issue #1815).
+
+    Hooks raise ``PermissionDeniedError`` to deny access.
+    """
+
+    path: str
+    context: OperationContext | None
+    permission: str = "TRAVERSE"  # TRAVERSE or READ
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AccessHookContext:
+    """Context for sys_access permission check (Issue #1815).
+
+    Hooks raise ``PermissionDeniedError`` to deny access.
+    """
+
+    path: str
+    context: OperationContext | None
+    permission: str = "TRAVERSE"  # TRAVERSE or READ
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # Hook protocols — implemented by services that plug into VFS operations
 # ---------------------------------------------------------------------------
@@ -200,6 +228,28 @@ class VFSRmdirHook(Protocol):
     def name(self) -> str: ...
 
     def on_post_rmdir(self, ctx: RmdirHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSStatHook(Protocol):
+    """INTERCEPT hook for stat/is_directory permission check (Issue #1815).
+
+    ``on_pre_stat`` is called before stat operations.  Raise
+    ``PermissionDeniedError`` to deny access.
+    """
+
+    def on_pre_stat(self, ctx: StatHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSAccessHook(Protocol):
+    """INTERCEPT hook for sys_access permission check (Issue #1815).
+
+    ``on_pre_access`` is called before access checks.  Raise
+    ``PermissionDeniedError`` to deny access.
+    """
+
+    def on_pre_access(self, ctx: AccessHookContext) -> None: ...
 
 
 @dataclass

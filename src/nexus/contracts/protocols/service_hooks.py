@@ -35,6 +35,8 @@ class HookSpec:
     rename_hooks: tuple[Any, ...] = ()
     mkdir_hooks: tuple[Any, ...] = ()
     rmdir_hooks: tuple[Any, ...] = ()
+    stat_hooks: tuple[Any, ...] = ()
+    access_hooks: tuple[Any, ...] = ()
     observers: tuple[Any, ...] = ()
     resolvers: tuple[Any, ...] = ()
     mount_hooks: tuple[Any, ...] = ()
@@ -52,6 +54,8 @@ class HookSpec:
                 self.rename_hooks,
                 self.mkdir_hooks,
                 self.rmdir_hooks,
+                self.stat_hooks,
+                self.access_hooks,
                 self.observers,
                 self.resolvers,
                 self.mount_hooks,
@@ -70,6 +74,8 @@ class HookSpec:
             + len(self.rename_hooks)
             + len(self.mkdir_hooks)
             + len(self.rmdir_hooks)
+            + len(self.stat_hooks)
+            + len(self.access_hooks)
             + len(self.observers)
             + len(self.resolvers)
             + len(self.mount_hooks)

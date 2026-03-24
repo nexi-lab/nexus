@@ -53,13 +53,16 @@ except ImportError:  # pragma: no cover — Rust extension not built
     _HookRegistry = None
 
 from nexus.contracts.vfs_hooks import (
+    AccessHookContext,
     DeleteHookContext,
     MkdirHookContext,
     MountHookContext,
     ReadHookContext,
     RenameHookContext,
     RmdirHookContext,
+    StatHookContext,
     UnmountHookContext,
+    VFSAccessHook,
     VFSDeleteHook,
     VFSMkdirHook,
     VFSMountHook,
@@ -67,6 +70,7 @@ from nexus.contracts.vfs_hooks import (
     VFSReadHook,
     VFSRenameHook,
     VFSRmdirHook,
+    VFSStatHook,
     VFSUnmountHook,
     VFSWriteBatchHook,
     VFSWriteHook,
@@ -275,6 +279,12 @@ class KernelDispatch:
     def register_intercept_rmdir(self, hook: VFSRmdirHook) -> None:
         self._registry.register("rmdir", hook)
 
+    def register_intercept_stat(self, hook: VFSStatHook) -> None:
+        self._registry.register("stat", hook)
+
+    def register_intercept_access(self, hook: VFSAccessHook) -> None:
+        self._registry.register("access", hook)
+
     # ── unregister ─────────────────────────────────────────────────────
 
     def unregister_resolver(self, resolver: "VFSPathResolver") -> bool:
@@ -311,6 +321,12 @@ class KernelDispatch:
 
     def unregister_intercept_rmdir(self, hook: VFSRmdirHook) -> bool:
         return bool(self._registry.unregister("rmdir", hook))
+
+    def unregister_intercept_stat(self, hook: VFSStatHook) -> bool:
+        return bool(self._registry.unregister("stat", hook))
+
+    def unregister_intercept_access(self, hook: VFSAccessHook) -> bool:
+        return bool(self._registry.unregister("access", hook))
 
     # ── register_observe: generic OBSERVE observers ────────────────────
 
@@ -357,6 +373,16 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for rmdir — hooks may abort by raising."""
         for hook in self._registry.get_pre_hooks("rmdir"):
             hook.on_pre_rmdir(ctx)
+
+    def intercept_pre_stat(self, ctx: StatHookContext) -> None:
+        """PRE-INTERCEPT phase for stat — hooks may abort by raising."""
+        for hook in self._registry.get_pre_hooks("stat"):
+            hook.on_pre_stat(ctx)
+
+    def intercept_pre_access(self, ctx: AccessHookContext) -> None:
+        """PRE-INTERCEPT phase for access — hooks may abort by raising."""
+        for hook in self._registry.get_pre_hooks("access"):
+            hook.on_pre_access(ctx)
 
     # ── POST-INTERCEPT dispatch ────────────────────────────────────────
 
@@ -529,6 +555,14 @@ class KernelDispatch:
     @property
     def rmdir_hook_count(self) -> int:
         return int(self._registry.count("rmdir"))
+
+    @property
+    def stat_hook_count(self) -> int:
+        return int(self._registry.count("stat"))
+
+    @property
+    def access_hook_count(self) -> int:
+        return int(self._registry.count("access"))
 
     @property
     def observer_count(self) -> int:

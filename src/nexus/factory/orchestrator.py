@@ -179,14 +179,13 @@ def create_nexus_services(
         permission_enforcer=system_dict["permission_enforcer"],
         write_observer=system_dict["write_observer"],
         # Former-kernel degradable (Issue #2193)
-        dir_visibility_cache=system_dict["dir_visibility_cache"],
-        hierarchy_manager=system_dict["hierarchy_manager"],
+        # hierarchy_manager, dir_visibility_cache, namespace_manager
+        # now internalized into ReBACManager — access via rebac_manager properties
         deferred_permission_buffer=system_dict["deferred_permission_buffer"],
         workspace_registry=system_dict["workspace_registry"],
         mount_manager=system_dict["mount_manager"],
         workspace_manager=system_dict["workspace_manager"],
         # Original system services
-        namespace_manager=system_dict["namespace_manager"],
         async_namespace_manager=system_dict["async_namespace_manager"],
         context_branch_service=system_dict.get("context_branch_service"),
         brick_lifecycle_manager=system_dict.get("brick_lifecycle_manager"),
@@ -603,7 +602,7 @@ async def _register_vfs_hooks(
         )
     else:
         # Sync fallback — same logic, runs as post-write hook instead of inline kernel code
-        _hier = getattr(system_services, "hierarchy_manager", None) if system_services else None
+        _hier = getattr(_rebac_for_perm, "hierarchy_manager", None) if _rebac_for_perm else None
         if _hier is not None or _rebac_for_perm is not None:
             from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
 

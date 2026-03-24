@@ -164,14 +164,12 @@ class TestBootSystemServices:
             "permission_enforcer",
             "write_observer",
             # Former-kernel degradable
-            "dir_visibility_cache",
-            "hierarchy_manager",
+            # hierarchy_manager, dir_visibility_cache, namespace_manager → rebac-internal
             "deferred_permission_buffer",
             "workspace_registry",
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "namespace_manager",
             "async_namespace_manager",
             "delivery_worker",
             "observability_subsystem",
@@ -215,10 +213,11 @@ class TestBootSystemServices:
         ):
             result = _boot_system_services(ctx)
 
-        # Namespace manager failed, but others should still work
-        assert result["namespace_manager"] is None
+        # Namespace manager is now rebac-internal — verify via rebac_manager property
+        rebac = result["rebac_manager"]
+        assert rebac is not None
+        assert getattr(rebac, "namespace_manager", None) is None
         # Critical services should still be created
-        assert result["rebac_manager"] is not None
         assert result["permission_enforcer"] is not None
 
     def test_critical_services_are_not_none(self) -> None:

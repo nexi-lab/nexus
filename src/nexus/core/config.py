@@ -28,7 +28,6 @@ from nexus.contracts.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
-    from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.protocols.entity_registry import EntityRegistryProtocol
     from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
@@ -209,9 +208,9 @@ class SystemServices:
     # Former-kernel DEGRADABLE services (WARNING + None on failure)
     # =================================================================
 
-    # ReBAC caching / hierarchy — degradable
-    dir_visibility_cache: Any = None
-    hierarchy_manager: Any = None
+    # ReBAC caching / hierarchy — now internalized into ReBACManager:
+    # hierarchy_manager, dir_visibility_cache → rebac_manager.hierarchy_manager, .dir_visibility_cache
+    # namespace_manager → rebac_manager.namespace_manager (created via .create_namespace_manager())
     deferred_permission_buffer: Any = None
 
     # Workspace subsystem — degradable
@@ -223,8 +222,7 @@ class SystemServices:
     # Original system services (all degradable)
     # =================================================================
 
-    # Namespace visibility (Issue #1502)
-    namespace_manager: NamespaceManagerProtocol | None = None
+    # Namespace visibility (Issue #1502) — async wrapper still needed at system level
     async_namespace_manager: Any = None
 
     # Workspace branching (Issue #1315)

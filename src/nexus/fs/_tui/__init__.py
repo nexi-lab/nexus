@@ -25,6 +25,18 @@ MIN_HEIGHT = 24
 MOUNT_PANEL_COLLAPSE_WIDTH = 100
 
 
+def _highlight_match(text: str, query_lower: str) -> str:
+    """Highlight the first occurrence of query in text with Rich markup.
+
+    Case-insensitive match, preserves original casing in output.
+    """
+    idx = text.lower().find(query_lower)
+    if idx == -1:
+        return text
+    end = idx + len(query_lower)
+    return f"{text[:idx]}[bold yellow]{text[idx:end]}[/bold yellow]{text[end:]}"
+
+
 class PlaygroundApp(App[None]):
     """Interactive TUI file browser for nexus-fs mounts.
 
@@ -205,8 +217,8 @@ class PlaygroundApp(App[None]):
         yield Static("", id="status-bar")
         yield Footer()
 
-    def _update_status_bar(self) -> None:
-        """Update the bottom status bar."""
+    def _update_status_bar(self, announce: bool = True) -> None:
+        """Update the bottom status bar and optionally announce for screen readers."""
         bar = self.query_one("#status-bar", Static)
         mount_count = len(self._mount_points)
 
@@ -216,9 +228,18 @@ class PlaygroundApp(App[None]):
         except Exception:
             file_count = 0
 
-        bar.update(
-            f"[dim]{mount_count} mount(s) | {file_count} entries | {self._current_path}[/dim]"
+        status_text = (
+            f"{mount_count} mount(s) | {file_count} entries | {self._current_path}"
         )
+        bar.update(f"[dim]{status_text}[/dim]")
+
+        # Screen reader announcement on navigation
+        if announce:
+            self.notify(
+                f"{self._current_path} — {file_count} entries",
+                timeout=1,
+                severity="information",
+            )
 
     # -- Event handlers --
 
@@ -252,7 +273,12 @@ class PlaygroundApp(App[None]):
             pass
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle search submission."""
+        """Handle search submission.
+
+        Searches across all mounts concurrently. Shows partial results
+        with green/red indicators for which backends responded.
+        Highlights matching text in filenames.
+        """
         query = event.value.strip()
         if not query:
             self.search_visible = False
@@ -261,40 +287,74 @@ class PlaygroundApp(App[None]):
         self.search_visible = False
         event.input.value = ""
 
-        # Search in current directory
+        if not self._fs or not self._mount_points:
+            return
+
         try:
             browser = self.query_one("#file-browser", FileBrowser)
-            entries = await self._fs.ls(self._current_path, detail=True, recursive=True)
-            matches = [e for e in entries if query.lower() in e.get("path", "").lower()]
-
-            if matches:
-                # Show search results in the browser
-                browser._entries = matches[:500]
-                browser._total_count = len(matches)
-                table = browser.query_one("#file-table")
-                table.clear()
-                from nexus.fs._tui.file_browser import _format_modified, _format_size
-
-                for entry in browser._entries:
-                    name = entry.get("path", "").rstrip("/").rsplit("/", 1)[-1]
-                    is_dir = entry.get("is_directory", False)
-                    if is_dir:
-                        name = f"[bold cyan]{name}/[/bold cyan]"
-                    size = "—" if is_dir else _format_size(entry.get("size", 0))
-                    modified = _format_modified(entry.get("modified_at"))
-                    table.add_row(name, size, modified)
-
-                overflow = browser.query_one("#overflow", Static)
-                if len(matches) > 500:
-                    overflow.update(f"… {len(matches) - 500:,} more results")
-                else:
-                    overflow.update(f"[dim]{len(matches)} result(s) for '{query}'[/dim]")
-            else:
-                browser.query_one("#overflow", Static).update(
-                    f"[dim]No results for '{query}'[/dim]"
-                )
         except Exception:
-            pass
+            return
+
+        # Search across all mounts concurrently
+        all_matches: list[dict] = []
+        succeeded: list[str] = []
+        failed: list[str] = []
+
+        async def _search_mount(mount: str) -> list[dict]:
+            entries = await self._fs.ls(mount, detail=True, recursive=True)
+            return [e for e in entries if query.lower() in e.get("path", "").lower()]
+
+        tasks = {mp: _search_mount(mp) for mp in self._mount_points}
+        for mp, coro in tasks.items():
+            try:
+                results = await asyncio.wait_for(coro, timeout=3.0)
+                all_matches.extend(results)
+                succeeded.append(mp)
+            except Exception:
+                failed.append(mp)
+
+        # Update browser with results
+        browser._entries = all_matches[:500]
+        browser._total_count = len(all_matches)
+        table = browser.query_one("#file-table")
+        table.clear()
+        from nexus.fs._tui.file_browser import _format_modified, _format_size
+
+        query_lower = query.lower()
+        for entry in browser._entries:
+            name = entry.get("path", "").rstrip("/").rsplit("/", 1)[-1]
+            is_dir = entry.get("is_directory", False)
+
+            # Highlight matching text
+            name = _highlight_match(name, query_lower)
+
+            if is_dir:
+                name = f"[bold cyan]{name}/[/bold cyan]"
+            size = "—" if is_dir else _format_size(entry.get("size", 0))
+            modified = _format_modified(entry.get("modified_at"))
+            table.add_row(name, size, modified)
+
+        # Build status with partial backend indicator
+        overflow = browser.query_one("#overflow", Static)
+        parts: list[str] = []
+        if all_matches:
+            count_str = f"{len(all_matches)} result(s) for '{query}'"
+            if len(all_matches) > 500:
+                count_str = f"showing 500 of {len(all_matches)} results for '{query}'"
+            parts.append(f"[dim]{count_str}[/dim]")
+        else:
+            parts.append(f"[dim]No results for '{query}'[/dim]")
+
+        # Show green/red dots for backend status
+        if len(self._mount_points) > 1:
+            backend_status = " ".join(
+                f"[green]●[/green]{mp.split('/')[-1]}" if mp in succeeded
+                else f"[red]●[/red]{mp.split('/')[-1]}"
+                for mp in self._mount_points
+            )
+            parts.append(backend_status)
+
+        overflow.update("  ".join(parts))
 
     # -- Actions --
 

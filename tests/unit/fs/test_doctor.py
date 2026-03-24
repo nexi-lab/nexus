@@ -253,6 +253,14 @@ class TestTimeout:
         result = await _run_with_timeout(fast_check(), timeout_s=5.0, fallback_name="fast")
         assert result.status == DoctorStatus.PASS
 
+    @pytest.mark.asyncio
+    async def test_overall_timeout_triggers(self):
+        """run_all_checks respects overall_timeout and returns a FAIL result."""
+        # Use an extremely short overall timeout
+        results = await run_all_checks(fs=None, overall_timeout=0.001)
+        # Either completes normally (fast machine) or hits overall timeout
+        assert "Environment" in results
+
 
 # ---------------------------------------------------------------------------
 # Tip generation

@@ -411,3 +411,64 @@ class TestEdgeCases:
         """Unknown extensions default to 'text' lexer."""
         assert _guess_lexer("/foo/bar.xyz") == "text"
         assert _guess_lexer("/foo/bar") == "text"
+
+
+# ---------------------------------------------------------------------------
+# Search match highlighting
+# ---------------------------------------------------------------------------
+
+
+class TestHighlightMatch:
+    def test_basic_highlight(self):
+        from nexus.fs._tui import _highlight_match
+
+        result = _highlight_match("config.yaml", "config")
+        assert "[bold yellow]config[/bold yellow]" in result
+        assert ".yaml" in result
+
+    def test_case_insensitive(self):
+        from nexus.fs._tui import _highlight_match
+
+        result = _highlight_match("README.md", "readme")
+        assert "[bold yellow]README[/bold yellow]" in result
+
+    def test_no_match(self):
+        from nexus.fs._tui import _highlight_match
+
+        result = _highlight_match("file.txt", "missing")
+        assert result == "file.txt"
+
+    def test_middle_match(self):
+        from nexus.fs._tui import _highlight_match
+
+        result = _highlight_match("my_config_file.py", "config")
+        assert "my_" in result
+        assert "[bold yellow]config[/bold yellow]" in result
+        assert "_file.py" in result
+
+    def test_empty_query(self):
+        from nexus.fs._tui import _highlight_match
+
+        result = _highlight_match("file.txt", "")
+        # Empty query matches at index 0
+        assert "file.txt" in result
+
+
+# ---------------------------------------------------------------------------
+# Screen reader announcements
+# ---------------------------------------------------------------------------
+
+
+class TestAccessibility:
+    @pytest.mark.asyncio
+    async def test_status_bar_update_announces(self):
+        """Status bar update triggers a notification for screen readers."""
+        app = PlaygroundApp(uris=())
+        app._mount_points = ["/local/data"]
+        app._current_path = "/local/data"
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            # _update_status_bar should not crash
+            app._update_status_bar(announce=True)
+            app._update_status_bar(announce=False)

@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 # Check result model (4-state, independent of main CLI's 3-state enum)
 # ---------------------------------------------------------------------------
 
-_CHECK_TIMEOUT_S = 3.0
+_CHECK_TIMEOUT_S = 2.0
+_OVERALL_TIMEOUT_S = 2.0
 
 
 class DoctorStatus(Enum):
@@ -293,18 +294,10 @@ async def _run_with_timeout(
         )
 
 
-async def run_all_checks(
+async def _run_all_checks_inner(
     fs: Any | None = None,
 ) -> dict[str, list[DoctorCheckResult]]:
-    """Run all diagnostic checks concurrently.
-
-    Args:
-        fs: Optional SlimNexusFS instance for mount connectivity checks.
-            If None, mount checks are skipped.
-
-    Returns:
-        Dict mapping section name to list of check results.
-    """
+    """Core check logic — called within the overall timeout wrapper."""
     # Section 1: Environment (sync checks, run in thread pool)
     env_checks = [check_python_version, check_nexus_fs_version, check_nexus_fast_version]
     env_coros = [asyncio.to_thread(fn) for fn in env_checks]
@@ -314,7 +307,7 @@ async def run_all_checks(
     backend_install_coros = [asyncio.to_thread(check_backend_installed, s) for s in schemes]
     backend_cred_coros = [asyncio.to_thread(check_backend_credentials, s) for s in schemes]
 
-    # Run env + backend checks concurrently with timeouts
+    # Run env + backend checks concurrently with per-check timeouts
     all_coros = env_coros + backend_install_coros + backend_cred_coros
     all_names = (
         ["python", "nexus-fs", "nexus-fast"]
@@ -394,6 +387,42 @@ async def run_all_checks(
         "Backends": backends_combined,
         "Mounts": mount_results,
     }
+
+
+async def run_all_checks(
+    fs: Any | None = None,
+    overall_timeout: float = _OVERALL_TIMEOUT_S,
+) -> dict[str, list[DoctorCheckResult]]:
+    """Run all diagnostic checks with an overall timeout.
+
+    Guarantees completion within ``overall_timeout`` seconds.
+
+    Args:
+        fs: Optional SlimNexusFS instance for mount connectivity checks.
+            If None, mount checks are skipped.
+        overall_timeout: Maximum wall-clock seconds for the entire run.
+
+    Returns:
+        Dict mapping section name to list of check results.
+    """
+    try:
+        return await asyncio.wait_for(
+            _run_all_checks_inner(fs=fs),
+            timeout=overall_timeout,
+        )
+    except TimeoutError:
+        return {
+            "Environment": [
+                DoctorCheckResult(
+                    name="doctor",
+                    status=DoctorStatus.FAIL,
+                    message=f"overall timeout after {overall_timeout:.0f}s",
+                    fix_hint="Some checks are slow. Check network connectivity.",
+                )
+            ],
+            "Backends": [],
+            "Mounts": [],
+        }
 
 
 # ---------------------------------------------------------------------------

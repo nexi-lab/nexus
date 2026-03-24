@@ -145,8 +145,8 @@ RUN set -eux; \
 ARG TARGETARCH
 RUN set -eux; \
     ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
-    curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/gws-${ARCH}-unknown-linux-gnu.tar.gz" \
-        | tar -xz --strip-components=1 -C /usr/local/bin "gws-${ARCH}-unknown-linux-gnu/gws" \
+    curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/local/bin "google-workspace-cli-${ARCH}-unknown-linux-gnu/gws" \
     && chmod +x /usr/local/bin/gws; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \

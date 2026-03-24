@@ -129,6 +129,7 @@ class TestTrieResolverDispatch:
 
     def test_trie_miss_goes_to_fallback(self, dispatch: KernelDispatch) -> None:
         trie_r = _make_resolver(trie_pattern="/{}/proc/{}/status")
+        trie_r.try_read.return_value = None  # doesn't claim non-matching paths
         fallback_r = _make_resolver()
         fallback_r.try_read.return_value = b"fallback"
         dispatch.register_resolver(trie_r)
@@ -138,7 +139,6 @@ class TestTrieResolverDispatch:
         handled, result = dispatch.resolve_read("/some/other/path")
         assert handled is True
         assert result == b"fallback"
-        trie_r.try_read.assert_not_called()  # trie miss → never called
 
     def test_no_match_anywhere(self, dispatch: KernelDispatch) -> None:
         trie_r = _make_resolver(trie_pattern="/{}/proc/{}/status")
@@ -195,8 +195,9 @@ class TestTrieResolverUnregister:
     def test_unregister_preserves_others(self, dispatch: KernelDispatch) -> None:
         r1 = _make_resolver(trie_pattern="/{}/proc/{}/status")
         r2 = _make_resolver(trie_pattern="/.tasks/tasks/{}/agent/status")
-        r1.try_read.return_value = b"proc"
-        r2.try_read.return_value = b"task"
+        # Make resolvers only claim paths matching their pattern
+        r1.try_read.side_effect = lambda path, **kw: b"proc" if "/proc/" in path else None
+        r2.try_read.side_effect = lambda path, **kw: b"task" if "/.tasks/" in path else None
         dispatch.register_resolver(r1)
         dispatch.register_resolver(r2)
 

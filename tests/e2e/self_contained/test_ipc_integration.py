@@ -517,6 +517,7 @@ class TestEventDrivenSweepIntegration:
 
         await asyncio.sleep(0.3)  # Wait for debounce + sweep
         await sweeper.stop()
+        await cache_store.close()
 
         # Expired message should have been swept
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
@@ -580,6 +581,7 @@ class TestEventDrivenSweepIntegration:
 
         await asyncio.sleep(0.3)
         await sweeper.stop()
+        await cache_store.close()
 
         # Expired message swept, with reason sidecar
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
@@ -652,6 +654,8 @@ class TestSSEStreamIntegration:
         assert received_events[0]["message_id"] == "msg_sse_1"
         assert received_events[1]["message_id"] == "msg_sse_2"
 
+        await cache_store.close()
+
     @pytest.mark.asyncio
     async def test_multiple_agents_receive_own_events(self, vfs: InMemoryVFS) -> None:
         """Each agent's SSE stream only receives events for their inbox."""
@@ -712,3 +716,5 @@ class TestSSEStreamIntegration:
         assert bob_events[0]["recipient"] == "agent:bob"
         assert len(carol_events) == 1
         assert carol_events[0]["recipient"] == "agent:carol"
+
+        await cache_store.close()

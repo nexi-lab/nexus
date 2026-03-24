@@ -152,6 +152,7 @@ async def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
 
     yield {"app": application, "admin_key": admin_raw}
 
+    nx.close()
     metadata_store.close()
     shutil.rmtree(tmpdir, ignore_errors=True)
 

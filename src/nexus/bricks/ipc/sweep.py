@@ -81,6 +81,11 @@ class TTLSweeper:
         self._next_expiry: float | None = None  # earliest expires_at across pending events
         self._expiry_task: asyncio.Task[None] | None = None
 
+        # Lazy import to avoid circular deps at module level
+        from nexus.contracts.cache_store import NullCacheStore
+
+        self._null_cache_type = NullCacheStore
+
     async def start(self) -> None:
         """Start the background sweep loop and optional pub/sub listener."""
         if self._running:
@@ -88,13 +93,19 @@ class TTLSweeper:
         self._running = True
         self._task = asyncio.create_task(self._sweep_loop())
 
-        if self._cache_store is not None:
+        # Only start pub/sub listener if cache_store supports real pub/sub.
+        # NullCacheStore.subscribe() returns an empty stream immediately —
+        # no point starting a listener for it.
+        event_driven = self._cache_store is not None and not isinstance(
+            self._cache_store, self._null_cache_type
+        )
+        if event_driven:
             self._sub_task = asyncio.create_task(self._subscribe_loop())
 
         logger.info(
             "TTL sweeper started (poll_interval: %.0fs, event_driven: %s, debounce: %.1fs)",
             self._interval,
-            self._cache_store is not None,
+            event_driven,
             self._debounce_seconds,
         )
 

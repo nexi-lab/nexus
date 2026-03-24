@@ -511,7 +511,13 @@ def _initialize_wired_ipc(nx: Any, brick_services: "BrickServices") -> None:
             _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
             _ipc_data_dir.mkdir(parents=True, exist_ok=True)
             _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
-            nx.router.add_mount("/agents", _ipc_connector)
+            # Use DriverLifecycleCoordinator if available (registers hook_spec +
+            # broadcasts mount event). Falls back to raw router for REMOTE profile.
+            _dc = getattr(nx, "_driver_coordinator", None)
+            if _dc is not None:
+                _dc.mount("/agents", _ipc_connector)
+            else:
+                nx.router.add_mount("/agents", _ipc_connector)
 
             # Ensure the /agents metadata entry has target_zone_id set so
             # ZonePathResolver doesn't fail on it. mkdir creates a DT_DIR

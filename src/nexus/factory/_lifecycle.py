@@ -136,6 +136,12 @@ async def _do_link(
     await nx._service_registry.enlist("driver_coordinator", driver_coordinator)
     driver_coordinator.adopt_existing_mount("/")
 
+    # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
+    # mounts go through coordinator (hook_spec registration + KernelDispatch).
+    _mount_svc = getattr(_wired, "mount_service", None)
+    if _mount_svc is not None:
+        _mount_svc._driver_coordinator = driver_coordinator
+
     # Issue #1666: Register system-tier PersistentService instances.
     # These are Q3 (PersistentService) — enlist() defers start() because
     # coordinator is not yet bootstrapped (mark_bootstrapped at bootstrap).

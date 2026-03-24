@@ -36,7 +36,7 @@ class TestDeploymentProfileEnum:
     """Tests for DeploymentProfile enum values."""
 
     def test_enum_values(self) -> None:
-        assert DeploymentProfile.MINIMAL == "minimal"
+        assert DeploymentProfile.SLIM == "slim"
         assert DeploymentProfile.EMBEDDED == "embedded"
         assert DeploymentProfile.LITE == "lite"
         assert DeploymentProfile.FULL == "full"
@@ -248,7 +248,7 @@ class TestNexusConfigProfile:
     def test_valid_profiles(self) -> None:
         from nexus.config import NexusConfig
 
-        for p in ["minimal", "embedded", "lite", "full", "cloud", "innovation"]:
+        for p in ["slim", "embedded", "lite", "full", "cloud", "innovation"]:
             cfg = NexusConfig(profile=p)
             assert cfg.profile == p
         # "remote" requires url

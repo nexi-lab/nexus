@@ -88,7 +88,7 @@ USER nexus
 # ---------- Environment variables ----------
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    NEXUS_PROFILE=minimal \
+    NEXUS_PROFILE=slim \
     NEXUS_HOST=0.0.0.0 \
     NEXUS_PORT=2026 \
     NEXUS_DATA_DIR=/app/data

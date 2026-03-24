@@ -87,14 +87,14 @@ def api_keys(session_factory: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any:
+async def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any:
     """FastAPI app with permissions enabled, database auth, identity + credentials."""
     from types import SimpleNamespace
 
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.factory import create_nexus_fs
     from nexus.server.fastapi_server import create_app
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -103,14 +103,14 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     metadata_store = DictMetastore()
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{db_path}")
 
-    nx = NexusFS(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
         permissions=PermissionConfig(enforce=True),
         parsing=ParseConfig(auto_parse=False),
+        init_cred=TEST_CONTEXT,
     )
-    nx._init_cred = TEST_CONTEXT
 
     db_key_auth = DatabaseAPIKeyAuth(record_store=SimpleNamespace(session_factory=session_factory))
     auth_provider = DiscriminatingAuthProvider(

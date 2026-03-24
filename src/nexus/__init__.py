@@ -5,7 +5,7 @@ Nexus combines a VFS-style filesystem interface with deployment-aware context,
 storage, and service composition for agent systems.
 
 Deployment profiles control which bricks are enabled:
-- minimal: Bare VFS, storage only
+- slim: Bare VFS, storage only
 - embedded: Storage + eventlog
 - lite: Core services
 - full: All bricks (default)
@@ -19,7 +19,7 @@ For programmatic access (building tools, libraries, integrations), use the SDK:
 
     from nexus.sdk import connect
 
-    nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
+    nx = connect(config={"profile": "slim", "data_dir": "./nexus-data"})
     await nx.sys_write("/workspace/data.txt", b"Hello World")
     content = await nx.sys_read("/workspace/data.txt")
 

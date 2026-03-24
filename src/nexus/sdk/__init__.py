@@ -16,7 +16,7 @@ The SDK interface is stable and semantic-versioned separately from CLI changes.
 Quick Start (Local - Verified):
     >>> from nexus.sdk import connect
     >>>
-    >>> nx = connect(config={"profile": "minimal", "data_dir": "./nexus-data"})
+    >>> nx = connect(config={"profile": "slim", "data_dir": "./nexus-data"})
     >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
     >>> content = await nx.sys_read("/workspace/file.txt")
 
@@ -55,7 +55,7 @@ Configuration:
     >>>
     >>> # Local mode
     >>> nx = connect(config={
-    ...     "profile": "minimal",
+    ...     "profile": "slim",
     ...     "data_dir": "./nexus-data"
     ... })
     >>>

@@ -6,7 +6,7 @@ circular import errors or missing dependencies. Does NOT require a database.
 
 import importlib
 
-from tests.helpers.test_context import TEST_CONTEXT
+import pytest
 
 
 class TestColdStartImports:
@@ -61,48 +61,31 @@ class TestColdStartImports:
 
 
 class TestColdStartNexusFSConstruction:
-    """Verify NexusFS can be constructed without factory (test mode)."""
+    """Verify NexusFS can be constructed via factory (test mode)."""
 
-    def test_nexus_fs_minimal_construction(self) -> None:
-        """NexusFS should construct with just metadata_store."""
-        from unittest.mock import MagicMock
+    @pytest.mark.asyncio
+    async def test_nexus_fs_minimal_construction(self, tmp_path) -> None:
+        """NexusFS should construct via make_test_nexus with defaults."""
+        from tests.conftest import make_test_nexus
 
-        from nexus.core.config import ParseConfig
-        from nexus.core.nexus_fs import NexusFS
+        nx = await make_test_nexus(tmp_path)
 
-        mock_metadata = MagicMock()
-        mock_metadata.list = MagicMock(return_value=[])
-
-        nx = NexusFS(
-            metadata_store=mock_metadata,
-            parsing=ParseConfig(auto_parse=False),
-        )
-        nx._init_cred = TEST_CONTEXT
-
-        # ServiceRegistry should be empty (no factory wiring)
+        # ServiceRegistry should be empty (SLIM profile — no bricks)
         assert nx.service("rebac") is None
         assert nx.service("mount") is None
         assert nx.service("mcp") is None
 
-    def test_enlist_wired_services(self) -> None:
+    @pytest.mark.asyncio
+    async def test_enlist_wired_services(self, tmp_path) -> None:
         """enlist_wired_services should register services via registry (#1708)."""
-        import asyncio
         from unittest.mock import MagicMock
 
-        from nexus.core.config import ParseConfig
-        from nexus.core.nexus_fs import NexusFS
         from nexus.factory.service_routing import enlist_wired_services
+        from tests.conftest import make_test_nexus
 
-        mock_metadata = MagicMock()
-        mock_metadata.list = MagicMock(return_value=[])
-
-        nx = NexusFS(
-            metadata_store=mock_metadata,
-            parsing=ParseConfig(auto_parse=False),
-        )
-        nx._init_cred = TEST_CONTEXT
+        nx = await make_test_nexus(tmp_path)
 
         reg = nx._service_registry  # ServiceRegistry now has lifecycle methods
         mock_svc = MagicMock()
-        asyncio.run(enlist_wired_services(reg, {"rebac_service": mock_svc}))
+        await enlist_wired_services(reg, {"rebac_service": mock_svc})
         assert nx.service("rebac")._service_instance is mock_svc

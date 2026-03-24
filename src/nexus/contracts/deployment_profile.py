@@ -11,7 +11,7 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    minimal ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation
+    slim ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation
 
 INNOVATION extends CLOUD with all bricks enabled + experimental validation.
 Requires explicit opt-in (``nexusd --innovation`` or ``--profile innovation``).
@@ -124,7 +124,7 @@ class DeploymentProfile(StrEnum):
     """Deployment profile controlling which bricks are enabled by default.
 
     Profiles define capability tiers for different deployment targets:
-    - minimal: Bare minimum runnable — storage only, no system services (Issue #2194)
+    - slim: Bare minimum runnable — storage only, no system services (Issue #1801)
     - embedded: MCU / WASM (<1 MB) — storage + eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
@@ -133,7 +133,7 @@ class DeploymentProfile(StrEnum):
     - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
     """
 
-    MINIMAL = "minimal"
+    SLIM = "slim"
     EMBEDDED = "embedded"
     LITE = "lite"
     FULL = "full"
@@ -163,13 +163,13 @@ class DeploymentProfile(StrEnum):
 # Profile-to-brick mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 
-_MINIMAL_BRICKS: frozenset[str] = frozenset(
+_SLIM_BRICKS: frozenset[str] = frozenset(
     {
         BRICK_STORAGE,
     }
 )
 
-_EMBEDDED_BRICKS: frozenset[str] = _MINIMAL_BRICKS | frozenset(
+_EMBEDDED_BRICKS: frozenset[str] = _SLIM_BRICKS | frozenset(
     {
         BRICK_EVENTLOG,
     }
@@ -228,7 +228,7 @@ _INNOVATION_BRICKS: frozenset[str] = (
 _REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client model
 
 _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
-    DeploymentProfile.MINIMAL: _MINIMAL_BRICKS,
+    DeploymentProfile.SLIM: _SLIM_BRICKS,
     DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
     DeploymentProfile.LITE: _LITE_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,

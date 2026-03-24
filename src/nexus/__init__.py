@@ -612,7 +612,7 @@ async def connect(
 
         # Register federation content resolver (PRE-DISPATCH, Issue #163)
         # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
-        await _register_federation_resolver(nx_fs, zone_mgr)
+        await _register_federation_resolver(nx_fs, zone_mgr, backend)
 
     # Restore saved mounts (application-layer startup I/O)
     await _restore_mounts(nx_fs)
@@ -620,7 +620,7 @@ async def connect(
     return nx_fs
 
 
-async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None:
+async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend: Any) -> None:
     """Register federation resolvers via coordinator.enlist() (#163, #1625, #1710).
 
     Registration order matters — IPC resolver is registered FIRST so remote
@@ -629,6 +629,10 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None
 
     Both resolvers implement HotSwappable and are enlisted via the unified
     coordinator.enlist() entry point (#1710).
+
+    When the local backend supports CAS (content_exists/read_content), a
+    CASRemoteContentFetcher is wired for hash-based scatter-gather fetch.
+    Otherwise the resolver falls back to path-based gRPC Read/StreamRead.
     """
     from nexus.raft.federation_content_resolver import FederationContentResolver
     from nexus.raft.federation_ipc_resolver import FederationIPCResolver
@@ -643,11 +647,26 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None
     )
     await _coordinator.enlist("federation_ipc", ipc_resolver)
 
+    # Build CAS remote content fetcher if backend supports CAS (#1744)
+    remote_content_fetcher = None
+    if hasattr(backend, "content_exists") and hasattr(backend, "read_content"):
+        from nexus.backends.base.remote_content_fetcher import CASRemoteContentFetcher
+        from nexus.remote.peer_blob_client import PeerBlobClient
+
+        peer_blob_client = PeerBlobClient(tls_config=zone_mgr.tls_config)
+        remote_content_fetcher = CASRemoteContentFetcher(
+            peer_blob_client=peer_blob_client,
+            local_object_store=backend,
+        )
+        logger.info("CAS remote content fetcher wired for federation scatter-gather")
+
     # Content resolver — remote CAS content (#163)
     content_resolver = FederationContentResolver(
         metastore=nx_fs.metadata,
         self_address=zone_mgr.advertise_addr,
         tls_config=zone_mgr.tls_config,
+        remote_content_fetcher=remote_content_fetcher,
+        local_object_store=backend,
     )
     await _coordinator.enlist("federation_content", content_resolver)
 

@@ -91,7 +91,6 @@ class AcpService:
         self._agent_registry = agent_registry
         self._zone_id = zone_id
         self._nexus_fs: VFSOperations | None = None
-        self._pipe_manager: Any | None = None
         self._connections: dict[str, _ActiveAgent] = {}
 
     # ------------------------------------------------------------------
@@ -115,14 +114,10 @@ class AcpService:
         self._nexus_fs = nexus_fs
         logger.debug("AcpService: NexusFS bound for VFS-backed file I/O")
 
-    def bind_pipe_manager(self, pipe_manager: Any) -> None:
-        """Bind PipeManager for DT_PIPE registration of agent stdio.
-
-        Called after NexusFS construction (factory ``_wired.py`` phase).
-        When not bound, agent pipes are not visible in the VFS (degraded).
-        """
-        self._pipe_manager = pipe_manager
-        logger.debug("AcpService: PipeManager bound for DT_PIPE registration")
+    @property
+    def _pipe_manager(self) -> Any | None:
+        """Get PipeManager from bound NexusFS (lazy, no separate binding needed)."""
+        return getattr(self._nexus_fs, "_pipe_manager", None) if self._nexus_fs else None
 
     # ------------------------------------------------------------------
     # Public API

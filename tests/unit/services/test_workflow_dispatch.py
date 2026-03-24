@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -48,16 +49,49 @@ class MockMetastore:
         pass
 
 
+def _make_nx_stub(metastore: MockMetastore | None = None) -> Any:
+    """Create a NexusFS stub with a real PipeManager for testing."""
+    from types import SimpleNamespace
+
+    ms = metastore or MockMetastore()
+    pm = PipeManager(ms)
+    nx = SimpleNamespace(_pipe_manager=pm)
+
+    # Wire sys_write/sys_read/sys_unlink through PipeManager
+    async def sys_write(path: str, data: bytes, **_: Any) -> dict:
+        pm.pipe_write_nowait(path, data)
+        return {"path": path}
+
+    async def sys_read(path: str, **_: Any) -> bytes:
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
+
+        try:
+            return await pm.pipe_read(path)
+        except (PipeClosedError, PipeNotFoundError):
+            raise NexusFileNotFoundError(path=path) from None
+
+    async def sys_unlink(path: str, **_: Any) -> dict:
+        pm.signal_close(path)
+        return {"path": path}
+
+    nx.sys_write = sys_write
+    nx.sys_read = sys_read
+    nx.sys_unlink = sys_unlink
+    return nx, pm
+
+
 def _make_service(
-    *, enable_workflows: bool = True, pipe_manager: PipeManager | None = None
-) -> tuple[WorkflowDispatchService, PipeManager | None]:
-    pm = pipe_manager or PipeManager(MockMetastore())
+    *,
+    enable_workflows: bool = True,
+) -> tuple[WorkflowDispatchService, Any, PipeManager]:
+    nx, pm = _make_nx_stub()
     engine = AsyncMock()
     svc = WorkflowDispatchService(
-        pipe_manager=pm,
         workflow_engine=engine,
         enable_workflows=enable_workflows,
     )
+    svc.bind_fs(nx)
     return svc, pm
 
 
@@ -88,22 +122,21 @@ class TestFire:
     async def test_drops_on_full(self) -> None:
         """Overflow should log warning, not raise."""
         svc, pm = _make_service()
-        # Create pipe with small capacity
-        pm.create("/nexus/pipes/workflow-events", capacity=256, owner_id="kernel")
-        svc._pipe_ready = True
+        await svc.start()
 
-        # Fill the pipe
-        pm.pipe_write_nowait("/nexus/pipes/workflow-events", b"x" * 256)
+        # Fill the pipe to capacity
+        for _ in range(100):
+            pm.pipe_write_nowait("/nexus/pipes/workflow-events", b"x" * 256)
 
-        # Should not raise
+        # Should not raise — fire() catches exceptions
         await svc.fire("file_write", {"path": "/big.txt"}, "file_write:/big.txt")
+        await svc.stop()
 
     @pytest.mark.asyncio
-    async def test_fallback_without_pipe_manager(self) -> None:
-        """No pipe manager -> direct async call fallback."""
+    async def test_fallback_without_nx(self) -> None:
+        """No NexusFS bound -> direct async call fallback."""
         engine = AsyncMock()
         svc = WorkflowDispatchService(
-            pipe_manager=None,
             workflow_engine=engine,
             enable_workflows=True,
         )
@@ -113,7 +146,7 @@ class TestFire:
 
     @pytest.mark.asyncio
     async def test_fallback_before_start(self) -> None:
-        """Pipe manager exists but start() not called yet."""
+        """NexusFS bound but start() not called yet."""
         svc, _ = _make_service()
 
         await svc.fire("file_write", {"path": "/y"}, "file_write:/y")
@@ -297,11 +330,10 @@ class TestLifecycle:
         await svc.stop()
 
     @pytest.mark.asyncio
-    async def test_start_noop_without_pipe_manager(self) -> None:
-        """No pipe manager (CLI mode) -> no-op."""
+    async def test_start_noop_without_nx(self) -> None:
+        """No NexusFS (CLI mode) -> no-op."""
         engine = AsyncMock()
         svc = WorkflowDispatchService(
-            pipe_manager=None,
             workflow_engine=engine,
             enable_workflows=True,
         )

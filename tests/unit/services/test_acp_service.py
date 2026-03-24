@@ -78,12 +78,15 @@ class TestAcpServiceConstruction:
         assert svc._pipe_manager is None
         assert svc._nexus_fs is None
 
-    def test_bind_pipe_manager(self):
+    def test_pipe_manager_from_nx(self):
+        """_pipe_manager property derives from bound NexusFS."""
         pt = MockAgentRegistry()
         svc = AcpService(agent_registry=pt)
 
         pm = MockPipeManager()
-        svc.bind_pipe_manager(pm)
+        mock_nx = MagicMock()
+        mock_nx._pipe_manager = pm
+        svc.bind_fs(mock_nx)
         assert svc._pipe_manager is pm
 
     def test_bind_fs(self):
@@ -145,7 +148,9 @@ class TestAcpServiceKillAgent:
         pt = MockAgentRegistry()
         pm = MockPipeManager()
         svc = AcpService(agent_registry=pt)
-        svc.bind_pipe_manager(pm)
+        mock_nx = MagicMock()
+        mock_nx._pipe_manager = pm
+        svc.bind_fs(mock_nx)
 
         # Set up an active agent
         mock_conn = MagicMock()
@@ -208,7 +213,9 @@ class TestAcpServiceCloseAll:
         pt = MockAgentRegistry()
         pm = MockPipeManager()
         svc = AcpService(agent_registry=pt)
-        svc.bind_pipe_manager(pm)
+        mock_nx = MagicMock()
+        mock_nx._pipe_manager = pm
+        svc.bind_fs(mock_nx)
 
         for i in range(3):
             mock_conn = MagicMock()
@@ -240,7 +247,9 @@ class TestAcpServiceCallAgent:
         pt = MockAgentRegistry()
         pm = MockPipeManager()
         svc = AcpService(agent_registry=pt)
-        svc.bind_pipe_manager(pm)
+        mock_nx = MagicMock()
+        mock_nx._pipe_manager = pm
+        svc.bind_fs(mock_nx)
 
         # Mock NexusFS with agent config file
         agent_config = {

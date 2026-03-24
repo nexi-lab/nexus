@@ -342,9 +342,6 @@ async def _boot_wired_services(
         # Late-bind NexusFS for VFS-routed file I/O (``everything is a file``).
         if hasattr(_acp_service, "bind_fs"):
             _acp_service.bind_fs(nx)
-        # Late-bind PipeManager for DT_PIPE registration of agent stdio.
-        if hasattr(_acp_service, "bind_pipe_manager"):
-            _acp_service.bind_pipe_manager(getattr(nx, "_pipe_manager", None))
         try:
             from nexus.system_services.acp.acp_rpc_service import AcpRPCService
 

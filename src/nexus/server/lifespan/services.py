@@ -586,6 +586,9 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
     wds = app.state.workflow_dispatch
     if wds is not None:
         try:
+            nx = getattr(app.state, "nexus_fs", None)
+            if hasattr(wds, "bind_fs") and nx is not None:
+                wds.bind_fs(nx)
             await wds.start()
             logger.info("Workflow dispatch service started")
         except Exception as e:
@@ -679,9 +682,10 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
                 logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
         except Exception as e:
             logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
-    if tdc is not None and hasattr(tdc, "set_pipe_manager") and pipe_manager is not None:
+    if tdc is not None and nx is not None:
         try:
-            tdc.set_pipe_manager(pipe_manager)
+            if hasattr(tdc, "bind_fs"):
+                tdc.bind_fs(nx)
             # Inject server base URL so enriched worker prompts can reference the API
             if hasattr(tdc, "set_server_info"):
                 _port = os.environ.get("NEXUS_PORT", "2026")

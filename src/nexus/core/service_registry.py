@@ -344,35 +344,26 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         name: str,
         instance: Any,
         *,
-        dependencies: tuple[str, ...] = (),
         exports: tuple[str, ...] = (),
-        is_remote: bool = False,
-        hook_spec: HookSpec | None = None,
         depends_on: tuple[str, ...] = (),
-        protocol_name: str = "",
     ) -> None:
         """Register a service in both ServiceRegistry and BrickLifecycleManager."""
         self.register_service(
             name,
             instance,
-            dependencies=dependencies,
             exports=exports,
-            is_remote=is_remote,
         )
         if self._blm is not None:
             self._blm.register(
                 name,
                 instance,
-                protocol_name=protocol_name or type(instance).__name__,
+                protocol_name=type(instance).__name__,
                 depends_on=depends_on,
             )
-        if hook_spec is not None:
-            self._hook_specs[name] = hook_spec
         logger.info(
-            "[COORDINATOR] insmod %r (exports=%d, hooks=%d)",
+            "[COORDINATOR] insmod %r (exports=%d)",
             name,
             len(exports),
-            hook_spec.total_hooks if hook_spec else 0,
         )
 
     # -- enlist — the ONE entry point for all four quadrants ---------------

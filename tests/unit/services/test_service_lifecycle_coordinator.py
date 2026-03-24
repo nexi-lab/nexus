@@ -155,25 +155,24 @@ class TestRegisterService:
         blm: BrickLifecycleManager,
     ) -> None:
         svc = _FakeService()
-        coordinator._register_service(
-            "search", svc, exports=("glob", "grep"), protocol_name="SearchProtocol"
-        )
+        coordinator._register_service("search", svc, exports=("glob", "grep"))
         # ServiceRegistry
         info = coordinator.service_info("search")
         assert info is not None
         assert info.instance is svc
         assert info.exports == ("glob", "grep")
-        # BLM
+        # BLM — protocol_name is now always type(instance).__name__
         status = blm.get_status("search")
         assert status is not None
         assert status.state == BrickState.REGISTERED
-        assert status.protocol_name == "SearchProtocol"
+        assert status.protocol_name == "_FakeService"
 
     def test_stores_hook_spec(self, coordinator: ServiceRegistry) -> None:
         svc = _FakeService()
         hook = MagicMock()
         spec = HookSpec(read_hooks=(hook,))
-        coordinator._register_service("search", svc, hook_spec=spec)
+        coordinator._register_service("search", svc)
+        coordinator._set_hook_spec("search", spec)
         assert coordinator._get_hook_spec("search") is spec
 
 
@@ -191,7 +190,8 @@ class TestMountService:
         read_hook = MagicMock()
         observer = MagicMock()
         spec = HookSpec(read_hooks=(read_hook,), observers=(observer,))
-        coordinator._register_service("search", svc, hook_spec=spec)
+        coordinator._register_service("search", svc)
+        coordinator._set_hook_spec("search", spec)
         await coordinator._mount_service("search")
 
         assert dispatch.read_hook_count == 1
@@ -221,7 +221,8 @@ class TestUnmountService:
         svc = _FakeService()
         read_hook = MagicMock()
         spec = HookSpec(read_hooks=(read_hook,))
-        coordinator._register_service("search", svc, hook_spec=spec)
+        coordinator._register_service("search", svc)
+        coordinator._set_hook_spec("search", spec)
         await coordinator._mount_service("search")
         assert dispatch.read_hook_count == 1
 
@@ -267,7 +268,8 @@ class TestSwapService:
         hook1 = MagicMock()
         spec1 = HookSpec(read_hooks=(hook1,))
         svc1 = _HotSwappableService(hook_spec_value=spec1)
-        coordinator._register_service("search", svc1, exports=("glob",), hook_spec=spec1)
+        coordinator._register_service("search", svc1, exports=("glob",))
+        coordinator._set_hook_spec("search", spec1)
         await coordinator._mount_service("search")
         assert dispatch.read_hook_count == 1
 
@@ -331,8 +333,9 @@ class TestSwapService:
         hook1 = MagicMock()
         spec1 = HookSpec(read_hooks=(hook1,))
         svc1 = _HotSwappableService(hook_spec_value=spec1)
-        # Register WITH explicit hook_spec (retroactive capture)
-        coordinator._register_service("search", svc1, hook_spec=spec1)
+        # Register then set hook_spec separately (retroactive capture)
+        coordinator._register_service("search", svc1)
+        coordinator._set_hook_spec("search", spec1)
         await coordinator._mount_service("search")
         assert dispatch.read_hook_count == 1
 
@@ -467,7 +470,8 @@ class TestSwapWithFullHookSpec:
             observers=(old_observer,),
         )
         svc1 = _HotSwappableService(hook_spec_value=spec1)
-        coordinator._register_service("rebac", svc1, hook_spec=spec1)
+        coordinator._register_service("rebac", svc1)
+        coordinator._set_hook_spec("rebac", spec1)
         await coordinator._mount_service("rebac")
 
         assert dispatch.read_hook_count == 1
@@ -500,7 +504,8 @@ class TestSwapWithFullHookSpec:
         old_hook = MagicMock()
         spec1 = HookSpec(read_hooks=(old_hook,))
         svc1 = _HotSwappableService(hook_spec_value=spec1)
-        coordinator._register_service("parser", svc1, hook_spec=spec1)
+        coordinator._register_service("parser", svc1)
+        coordinator._set_hook_spec("parser", spec1)
         await coordinator._mount_service("parser")
         assert dispatch.read_hook_count == 1
 
@@ -695,7 +700,8 @@ class TestAutoLifecycleHotSwappable:
         hook = MagicMock()
         spec = HookSpec(read_hooks=(hook,))
         svc = _HotSwappableService(hook_spec_value=spec)
-        coordinator._register_service("rebac", svc, hook_spec=spec)
+        coordinator._register_service("rebac", svc)
+        coordinator._set_hook_spec("rebac", spec)
         await coordinator.activate_hot_swappable_services()
         assert dispatch.read_hook_count == 1
 

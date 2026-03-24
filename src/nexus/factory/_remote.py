@@ -48,19 +48,14 @@ async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) ->
 
     proxy = RemoteServiceProxy(call_rpc, service_name="universal")
 
-    # Issue #1708: Create coordinator for REMOTE profile (BLM=None).
-    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-        ServiceLifecycleCoordinator,
-    )
+    # Issue #1708: ServiceRegistry now has integrated lifecycle.
+    # REMOTE profile: no BLM needed.
 
-    coordinator = ServiceLifecycleCoordinator(nfs._service_registry, None, nfs._dispatch)
-    setattr(nfs, "_service_coordinator", coordinator)  # noqa: B010
-
-    # Enlist all canonical services via coordinator (Issue #1708)
+    # Enlist all canonical services via service_registry (Issue #1708)
     from nexus.factory.service_routing import _CANONICAL_NAMES, enlist_wired_services
 
     wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
-    await enlist_wired_services(coordinator, wired_dict)
+    await enlist_wired_services(nfs._service_registry, wired_dict)
 
     # BrickServices field not covered by WiredServices
     # Issue #1570: version_service is a facade attr wired by _do_link()

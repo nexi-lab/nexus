@@ -627,7 +627,7 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
                 "[PIPE] PipedRecordStoreWriteObserver start failed: %s", e, exc_info=True
             )
 
-    # Issue #3193: EventDeliveryWorker is started by ServiceLifecycleCoordinator
+    # Issue #3193: EventDeliveryWorker is started by ServiceRegistry
     # (PersistentService auto-start). We only expose it + event_signal on
     # app.state so the API layer (EventReplayService) can access the signal.
     if svc.delivery_worker is not None:
@@ -698,7 +698,7 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     """Stop DT_PIPE consumers (Issue #809, #810).
 
     Note: EventDeliveryWorker (Issue #3193) is stopped by
-    ServiceLifecycleCoordinator.stop_persistent_services() — no
+    ServiceRegistry.stop_persistent_services() — no
     explicit stop here to avoid double-stop.
     """
     # Issue #809: PipedRecordStoreWriteObserver

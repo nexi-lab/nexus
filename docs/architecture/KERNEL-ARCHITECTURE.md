@@ -131,8 +131,8 @@ required (structural typing).
 | `PersistentService` | `start()`, `stop()` | `start()` on bootstrap (dependency order); `stop()` on shutdown (reverse order) |
 
 One-click contract: implement protocol → `coordinator.enlist()` →
-kernel handles the rest. `ServiceLifecycleCoordinator` (kernel-owned, created by
-factory at link time) scans the registry and auto-calls the appropriate methods during
+kernel handles the rest. `ServiceRegistry` (kernel-owned, lifecycle orchestration
+integrated) scans the registry and auto-calls the appropriate methods during
 `NexusFS.bootstrap()` / `NexusFS.close()`.
 
 **Service → Kernel wiring pattern:** Factory captures service references in
@@ -393,8 +393,8 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **StreamManager + StreamBuffer** | `system_services` + `core.stream` | append-only log | VFS named streams — inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **PathValidator** | `core.nexus_fs` (to extract) | `fs/namei.c` path validation | Path format validation on every syscall entry. Rejects malformed paths before routing or HAL access |
 | **DistributedLockManager** | `core.nexus_fs` (sentinel) | `fs/locks.c` | Factory-injected sentinel (`_distributed_lock_manager`). Advisory locks via `AdvisoryLockManager` (`SemaphoreAdvisoryLockManager` standalone, `RaftLockManager` federation). Always available after factory boot |
-| **ServiceLifecycleCoordinator** | `system_services.lifecycle` | `init/main.c` + `module.c` | Kernel-owned bridge: ServiceRegistry + BrickLifecycleManager. Manages enlist/swap/shutdown for all 4 service quadrants |
-| **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Manages driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceLifecycleCoordinator (drivers vs services) |
+| **ServiceRegistry** (lifecycle) | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration. Manages enlist/swap/shutdown for all 4 service quadrants |
+| **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Manages driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry lifecycle (drivers vs services) |
 | **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.5 |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 

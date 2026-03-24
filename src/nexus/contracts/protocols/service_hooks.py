@@ -1,8 +1,8 @@
 """Declarative VFS hook specification for service lifecycle.
 
 Services declare which VFS hooks they need at mount time via ``HookSpec``.
-The ``ServiceLifecycleCoordinator`` registers/unregisters these hooks
-during mount/unmount/swap, enabling clean hook teardown on hot-swap.
+The ``ServiceRegistry`` registers/unregisters these hooks during
+mount/unmount/swap, enabling clean hook teardown on hot-swap.
 
 Issue #1452 Phase 3.
 """

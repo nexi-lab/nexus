@@ -120,16 +120,11 @@ async def _do_link(
         _brick_on,
     )
 
-    # Issue #1708: Coordinator is always created — BLM is optional.
-    # Single entry point for all service registration (no fallback path).
-    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-        ServiceLifecycleCoordinator,
-    )
-
+    # Issue #1708: ServiceRegistry now has integrated lifecycle (formerly SLC).
+    # BLM is optional — inject via set_lifecycle_manager().
     _blm = getattr(system_services, "brick_lifecycle_manager", None)
-    coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
-    nx._service_coordinator = coordinator
-    await enlist_wired_services(coordinator, _wired)
+    nx._service_registry.set_lifecycle_manager(_blm)
+    await enlist_wired_services(nx._service_registry, _wired)
 
     # Issue #1811: Create DriverLifecycleCoordinator and adopt root mount.
     # Root mount ("/") was added to PathRouter in create_nexus_fs() before
@@ -146,10 +141,10 @@ async def _do_link(
     # coordinator is not yet bootstrapped (mark_bootstrapped at bootstrap).
     _dpb = getattr(system_services, "deferred_permission_buffer", None)
     if _dpb is not None:
-        await coordinator.enlist("deferred_permission_buffer", _dpb)
+        await nx._service_registry.enlist("deferred_permission_buffer", _dpb)
     _dw = getattr(system_services, "delivery_worker", None)
     if _dw is not None:
-        await coordinator.enlist("delivery_worker", _dw)
+        await nx._service_registry.enlist("delivery_worker", _dw)
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.

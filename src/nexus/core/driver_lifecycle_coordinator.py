@@ -1,7 +1,7 @@
 """DriverLifecycleCoordinator — kernel primitive for driver mount lifecycle.
 
 Linux analogue: ``register_filesystem()`` + ``kern_mount()`` + ``kill_sb()``.
-Orthogonal to ``ServiceLifecycleCoordinator`` (services vs drivers).
+Orthogonal to ``ServiceRegistry`` lifecycle orchestration (services vs drivers).
 
 Services have singleton cardinality and are boot-triggered.
 Drivers have N-per-type cardinality and are mount-triggered.
@@ -40,7 +40,7 @@ class DriverLifecycleCoordinator:
     Manages driver mount lifecycle: routing table + VFS hook registration
     + mount/unmount notification via KernelDispatch.
 
-    Parallel to ServiceLifecycleCoordinator (services vs drivers).
+    Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
     """
 
     __slots__ = ("_router", "_dispatch", "_mount_specs")
@@ -133,7 +133,7 @@ class DriverLifecycleCoordinator:
         return True
 
     # ------------------------------------------------------------------
-    # Internal hook registration (mirrors ServiceLifecycleCoordinator)
+    # Internal hook registration (mirrors ServiceRegistry lifecycle)
     # ------------------------------------------------------------------
 
     def _register_backend_hooks(self, mount_point: str, backend: Any) -> None:

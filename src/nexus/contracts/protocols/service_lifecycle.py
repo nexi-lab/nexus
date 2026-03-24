@@ -139,7 +139,7 @@ class ServiceQuadrant(enum.Enum):
 
 @runtime_checkable
 class HotSwappable(Protocol):
-    """Service that supports runtime hot-swap via ServiceLifecycleCoordinator.
+    """Service that supports runtime hot-swap via ServiceRegistry.
 
     A HotSwappable service declares its VFS hooks and supports graceful
     drain (stop accepting new work) and activate (start serving) transitions.

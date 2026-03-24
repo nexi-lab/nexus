@@ -633,7 +633,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any) -> None
     from nexus.raft.federation_content_resolver import FederationContentResolver
     from nexus.raft.federation_ipc_resolver import FederationIPCResolver
 
-    _coordinator = nx_fs._service_coordinator
+    _coordinator = nx_fs.service_coordinator
 
     # IPC resolver — remote DT_PIPE/DT_STREAM (#1625)
     ipc_resolver = FederationIPCResolver(

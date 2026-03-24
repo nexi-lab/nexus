@@ -461,10 +461,10 @@ class TestEventDrivenSweeper:
 
         await _provision_agent(vfs, "agent:bob")
 
-        # Create a message with TTL=1s. The sweeper receives an event with
+        # Create a message with short TTL. The sweeper receives an event with
         # expires_at=now+0.2s, should sleep until that time, then sweep.
         now = datetime.now(UTC)
-        msg = _make_message("msg_future_expiry", now, ttl_seconds=1)
+        msg = _make_message("msg_future_expiry", now, ttl_seconds=0.2)
         filename = f"{now.strftime('%Y%m%dT%H%M%S')}_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
         await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)

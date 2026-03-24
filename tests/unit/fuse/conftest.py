@@ -28,7 +28,7 @@ def mock_nexus_fs() -> MagicMock:
     fs.sys_setattr = AsyncMock(return_value=None)
     fs.sys_unlink = AsyncMock(return_value=None)
     fs.sys_rename = AsyncMock(return_value=None)
-    fs.sys_mkdir = AsyncMock(return_value=None)
+    fs.mkdir = AsyncMock(return_value=None)
     fs.sys_rmdir = AsyncMock(return_value=None)
     fs.zone_id = "test-zone"
     return fs

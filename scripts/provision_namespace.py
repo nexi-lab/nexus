@@ -183,7 +183,7 @@ async def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
     # First, create and grant permissions on the parent user directory
     try:
         user_dir_path = f"/zone/{zone_id}/user:{admin_user_id}"
-        await nx.sys_mkdir(user_dir_path, parents=True, exist_ok=True, context=context)
+        await nx.mkdir(user_dir_path, parents=True, exist_ok=True, context=context)
 
         # Create placeholder file to make directory discoverable
         placeholder_path = f"{user_dir_path}/.placeholder"
@@ -208,7 +208,7 @@ async def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
             folder_path = f"/zone/{zone_id}/user:{admin_user_id}/{resource_type}"
 
             # Create the directory
-            await nx.sys_mkdir(folder_path, parents=True, exist_ok=True, context=context)
+            await nx.mkdir(folder_path, parents=True, exist_ok=True, context=context)
 
             # Create a placeholder file to make the directory visible in listings
             placeholder_path = f"{folder_path}/.placeholder"
@@ -241,7 +241,7 @@ async def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
         workspace_path = user_path(zone_id, admin_user_id, "workspace", workspace_id)
 
         # Create the workspace directory first
-        await nx.sys_mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
+        await nx.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
 
         # Register the workspace (this will auto-grant ownership via ReBAC if rebac_manager is available)
         workspace_info = nx._workspace_rpc_service.register_workspace(

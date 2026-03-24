@@ -67,7 +67,7 @@ class TestMkdir:
 
     def test_mkdir_calls_fs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
         fuse_ops.mkdir("/newdir", 0o755)
-        mock_nexus_fs.sys_mkdir.assert_called_once_with(
+        mock_nexus_fs.mkdir.assert_called_once_with(
             "/newdir", parents=True, exist_ok=True, context=None
         )
 

@@ -343,7 +343,7 @@ class TestProvisionUserPartialFailure:
         the workspace creation fails, the path is still in the result dict.
         The key assertion is that provisioning doesn't abort.
         """
-        with patch.object(nx_with_db, "sys_mkdir", side_effect=Exception("workspace error")):
+        with patch.object(nx_with_db, "mkdir", side_effect=Exception("workspace error")):
             result = await nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",
                 email="alice@example.com",

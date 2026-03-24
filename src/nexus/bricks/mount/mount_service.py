@@ -354,7 +354,7 @@ class MountService:
         logger.info(f"Setting up mount point: {mount_point}")
 
         # Create directory entries for mount point AND parent directories
-        # via sync metadata_put (gateway.sys_mkdir is async and can't be
+        # via sync metadata_put (gateway.mkdir is async and can't be
         # called from this sync context).
         if self._gw is not None:
             from datetime import UTC, datetime

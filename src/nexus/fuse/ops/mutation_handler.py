@@ -106,9 +106,9 @@ class MutationHandler:
 
         await check_namespace_visible(ctx, path)
 
-        ok, _ = try_rust(ctx, "MKDIR", "sys_mkdir", path)
+        ok, _ = try_rust(ctx, "MKDIR", "mkdir", path)
         if not ok:
-            await ctx.nexus_fs.sys_mkdir(path, parents=True, exist_ok=True, context=ctx.context)
+            await ctx.nexus_fs.mkdir(path, parents=True, exist_ok=True, context=ctx.context)
 
         invalidate_dir_cache(ctx, path)
 
@@ -193,7 +193,7 @@ class MutationHandler:
         logger.debug(f"Renaming directory {old_path} to {new_path}")
 
         try:
-            await ctx.nexus_fs.sys_mkdir(new_path, parents=True, exist_ok=True, context=ctx.context)
+            await ctx.nexus_fs.mkdir(new_path, parents=True, exist_ok=True, context=ctx.context)
         except Exception as e:
             logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
 

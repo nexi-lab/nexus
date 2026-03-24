@@ -174,7 +174,7 @@ class TestIsolatedBackendWithFastAPI:
                 json={
                     "jsonrpc": "2.0",
                     "id": "1",
-                    "method": "sys_mkdir",
+                    "method": "mkdir",
                     "params": {"path": "/isolated-dir"},
                 },
             )

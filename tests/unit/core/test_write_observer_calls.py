@@ -201,7 +201,7 @@ class TestMkdirCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_mkdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.sys_mkdir("/testdir")
+        await nx.mkdir("/testdir")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -212,7 +212,7 @@ class TestMkdirCallsDispatch:
     async def test_mkdir_parents_notifies_dispatch(
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
-        await nx.sys_mkdir("/a/b/c", parents=True)
+        await nx.mkdir("/a/b/c", parents=True)
 
         # notify is called once for the final directory
         mock_notify.assert_called_once()
@@ -226,7 +226,7 @@ class TestRmdirCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_rmdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.sys_mkdir("/mydir")
+        await nx.mkdir("/mydir")
         mock_notify.reset_mock()
 
         await nx.sys_rmdir("/mydir")
@@ -240,7 +240,7 @@ class TestRmdirCallsDispatch:
     async def test_rmdir_recursive_notifies_dispatch(
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
-        await nx.sys_mkdir("/mydir")
+        await nx.mkdir("/mydir")
         await nx.write("/mydir/file.txt", b"content")
         mock_notify.reset_mock()
 
@@ -318,7 +318,7 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
-        await nx_with_hook.sys_mkdir("/newdir")
+        await nx_with_hook.mkdir("/newdir")
 
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
@@ -327,7 +327,7 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
-        await nx_with_hook.sys_mkdir("/mydir")
+        await nx_with_hook.mkdir("/mydir")
 
         hook.reset_mock()
         await nx_with_hook.sys_rmdir("/mydir")

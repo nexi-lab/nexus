@@ -251,7 +251,7 @@ class UserProvisioningService:
             workspace_path = f"/zone/{zone_id}/user/{user_id}/workspace/{workspace_id}"
 
             if not await self._vfs.sys_access(workspace_path, context=admin_context):
-                await self._vfs.sys_mkdir(
+                await self._vfs.mkdir(
                     workspace_path, parents=True, exist_ok=True, context=admin_context
                 )
                 if self._register_workspace_fn:
@@ -677,7 +677,7 @@ class UserProvisioningService:
         for resource_type in all_types:
             folder_path = f"/zone/{zone_id}/user/{user_id}/{resource_type}"
             try:
-                await self._vfs.sys_mkdir(folder_path, parents=True, exist_ok=True, context=context)
+                await self._vfs.mkdir(folder_path, parents=True, exist_ok=True, context=context)
                 if self._rebac_create_fn:
                     try:
                         self._rebac_create_fn(

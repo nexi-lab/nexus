@@ -378,7 +378,7 @@ class TestAutoDispatchedMethods:
     @pytest.mark.asyncio
     async def test_mkdir_and_rmdir(self, admin_client: NexusFilesystemABC) -> None:
         """mkdir and rmdir via auto-dispatch."""
-        await admin_client.sys_mkdir("/workspace/proxy-dir")
+        await admin_client.mkdir("/workspace/proxy-dir")
         assert await admin_client.sys_is_directory("/workspace/proxy-dir") is True
         await admin_client.sys_rmdir("/workspace/proxy-dir")
 

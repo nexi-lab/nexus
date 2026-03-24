@@ -112,9 +112,9 @@ class TestOfflineQueueReplay:
         try:
             # These should fail and be queued
             with pytest.raises(OfflineQueuedError):
-                await proxy.sys_mkdir("/dir1", "z1")
+                await proxy.mkdir("/dir1", "z1")
             with pytest.raises(OfflineQueuedError):
-                await proxy.sys_mkdir("/dir2", "z1")
+                await proxy.mkdir("/dir2", "z1")
 
             assert await proxy.pending_count() == 2
 

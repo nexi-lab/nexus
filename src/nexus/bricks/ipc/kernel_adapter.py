@@ -107,13 +107,10 @@ class KernelVFSAdapter:
         ctx = self._ctx(zone_id)
         await self._nx.rename(src, dst, context=ctx)
 
-    async def sys_mkdir(self, path: str, zone_id: str) -> None:
+    async def mkdir(self, path: str, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        await self._nx.sys_mkdir(path, parents=True, exist_ok=True, context=ctx)
-
-    # Alias for backward compatibility
-    mkdir = sys_mkdir
+        await self._nx.mkdir(path, parents=True, exist_ok=True, context=ctx)
 
     async def sys_access(self, path: str, zone_id: str) -> bool:  # noqa: ARG002
         self._require_bound()

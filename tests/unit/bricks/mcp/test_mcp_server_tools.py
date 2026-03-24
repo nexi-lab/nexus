@@ -64,7 +64,7 @@ def mock_nx_basic():
     nx._mock_search = _mock_search  # internal alias for assertion access
     nx.sys_access = AsyncMock(return_value=True)
     nx.sys_is_directory = AsyncMock(return_value=False)
-    nx.sys_mkdir = AsyncMock()
+    nx.mkdir = AsyncMock()
     nx.sys_rmdir = AsyncMock()
     nx.edit = Mock(
         return_value={
@@ -175,7 +175,7 @@ def mock_nx_full():
     nx.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
     nx.sys_access = AsyncMock(return_value=True)
     nx.sys_is_directory = AsyncMock(return_value=False)
-    nx.sys_mkdir = AsyncMock()
+    nx.mkdir = AsyncMock()
     nx.sys_rmdir = AsyncMock()
 
     # Memory system via service("memory_provider") (get_memory_api() reads this)
@@ -546,11 +546,11 @@ class TestDirectoryOperationTools:
 
         assert "Successfully created directory" in result
         assert "/new_dir" in result
-        mock_nx_basic.sys_mkdir.assert_called_once_with("/new_dir")
+        mock_nx_basic.mkdir.assert_called_once_with("/new_dir")
 
     async def test_mkdir_error(self, mock_nx_basic):
         """Test mkdir error handling."""
-        mock_nx_basic.sys_mkdir.side_effect = PermissionError("Permission denied")
+        mock_nx_basic.mkdir.side_effect = PermissionError("Permission denied")
         server = await create_mcp_server(nx=mock_nx_basic)
 
         mkdir_tool = get_tool(server, "nexus_mkdir")

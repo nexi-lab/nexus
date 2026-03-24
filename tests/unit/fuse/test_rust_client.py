@@ -185,7 +185,7 @@ class TestStat:
 class TestOtherOps:
     def test_mkdir(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({})
-        mock_client.sys_mkdir("/new-dir")
+        mock_client.mkdir("/new-dir")
         sent = json.loads(mock_client.sock.sendall.call_args[0][0].decode())
         assert sent["method"] == "mkdir"
 

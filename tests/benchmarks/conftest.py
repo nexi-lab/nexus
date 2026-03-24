@@ -118,9 +118,9 @@ def populated_nexus(benchmark_nexus, sample_files, benchmark_loop):
     async def _populate():
         # Create directory structure
         for i in range(10):
-            await nx.sys_mkdir(f"/dir_{i}", parents=True)
+            await nx.mkdir(f"/dir_{i}", parents=True)
             for j in range(10):
-                await nx.sys_mkdir(f"/dir_{i}/subdir_{j}", parents=True)
+                await nx.mkdir(f"/dir_{i}/subdir_{j}", parents=True)
 
         # Create files of various sizes
         for size_name, content in sample_files.items():
@@ -149,7 +149,7 @@ def deep_directory_nexus(benchmark_nexus, benchmark_loop):
         current_path = ""
         for i in range(20):
             current_path += f"/level_{i}"
-            await nx.sys_mkdir(current_path, parents=True)
+            await nx.mkdir(current_path, parents=True)
             await nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
 
     benchmark_loop.run_until_complete(_populate())

@@ -558,8 +558,8 @@ def init(
             import nexus
 
             nx = await nexus.connect(config={"data_dir": str(d_dir)})
-            await nx.sys_mkdir("/workspace", exist_ok=True)
-            await nx.sys_mkdir("/shared", exist_ok=True)
+            await nx.mkdir("/workspace", exist_ok=True)
+            await nx.mkdir("/shared", exist_ok=True)
             nx.close()
 
         try:

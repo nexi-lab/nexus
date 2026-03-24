@@ -42,7 +42,7 @@ class VFSOperations(Protocol):
         """Atomically rename/move a file from src to dst."""
         ...
 
-    async def sys_mkdir(self, path: str, zone_id: str) -> None:
+    async def mkdir(self, path: str, zone_id: str) -> None:
         """Create a directory (including parents if needed)."""
         ...
 

@@ -160,7 +160,7 @@ class TestBackwardCompatibility:
     async def test_existing_tests_still_pass(self, nexus_fs):
         """Existing list() behavior should be unchanged."""
         # Create directories and files
-        await nexus_fs.sys_mkdir("/test/sub", exist_ok=True, parents=True)
+        await nexus_fs.mkdir("/test/sub", exist_ok=True, parents=True)
         await nexus_fs.write("/test/a.txt", "a")
         await nexus_fs.write("/test/b.txt", "b")
         await nexus_fs.write("/test/sub/c.txt", "c")

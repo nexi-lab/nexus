@@ -29,19 +29,20 @@ Nexus:   Client      → nx.read()    →                  → NexusFS.sys_read(
 
 All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern).
 
-### Metadata Plane (9)
+### Metadata Plane (8)
 
 | # | Syscall | Signature | POSIX Ref |
 |---|---------|-----------|-----------|
 | 1 | `sys_stat` | `(path) → FileMetadata \| None` | `stat(2)` |
-| 2 | `sys_setattr` | `(path, **attrs) → FileMetadata` | `chmod/chown/utimes` |
-| 3 | `sys_mkdir` | `(path, mode=0o755, parents=False, exist_ok=False) → None` | `mkdir(2)` |
-| 4 | `sys_rmdir` | `(path, recursive=False) → None` | `rmdir(2)` |
-| 5 | `sys_readdir` | `(path, recursive=True) → list` | `readdir(3)` |
-| 6 | `sys_access` | `(path, mode=F_OK) → bool` | `access(2)` |
-| 7 | `sys_rename` | `(old, new) → None` | `rename(2)` |
-| 8 | `sys_unlink` | `(path) → None` | `unlink(2)` |
-| 9 | `sys_is_directory` | `(path) → bool` | `S_ISDIR` macro |
+| 2 | `sys_setattr` | `(path, **attrs) → FileMetadata` | `chmod/chown/utimes` + `mknod` (DT_DIR, DT_PIPE, DT_STREAM) |
+| 3 | `sys_rmdir` | `(path, recursive=False) → None` | `rmdir(2)` |
+| 4 | `sys_readdir` | `(path, recursive=True) → list` | `readdir(3)` |
+| 5 | `sys_access` | `(path, mode=F_OK) → bool` | `access(2)` |
+| 6 | `sys_rename` | `(old, new) → None` | `rename(2)` |
+| 7 | `sys_unlink` | `(path) → None` | `unlink(2)` |
+| 8 | `sys_is_directory` | `(path) → bool` | `S_ISDIR` macro |
+
+`mkdir(path, parents, exist_ok)` is Tier 2 convenience over `sys_setattr(path, entry_type=DT_DIR)`.
 
 ### Content Plane (2)
 
@@ -75,7 +76,7 @@ NexusFS inherits them — callers use `nx.read(path)` directly.
 | `read(path, count, offset)` | `sys_stat` + `sys_read` | POSIX pread semantics |
 | `write(path, buf, count, offset)` | `sys_write` + `sys_setattr` | POSIX pwrite + metadata update |
 | `stat(path)` | `sys_stat` | Thin wrapper |
-| `mkdir(path, ...)` | `sys_mkdir` | Thin wrapper |
+| `mkdir(path, parents, exist_ok)` | `sys_setattr(entry_type=DT_DIR)` | Directory creation with hooks + events |
 | `unlink(path)` | `sys_unlink` | Thin wrapper |
 | `append(path, content)` | `read` + `write` | Shell `>>` semantics |
 | `edit(path, edits)` | `read` + transform + `write` | Apply diffs |
@@ -160,8 +161,7 @@ between DataNodes — separate from NameNode API).
 | Syscall | Aligned? | Notes |
 |---------|----------|-------|
 | `sys_stat` | ✅ | dict vs struct stat (Pythonic) |
-| `sys_setattr` | ✅ | Bundles chmod/chown/utimes (acceptable) |
-| `sys_mkdir` | ✅ | `parents`/`exist_ok` are non-conflicting extensions |
+| `sys_setattr` | ✅ | Bundles chmod/chown/utimes + mknod (DT_DIR, DT_PIPE, DT_STREAM) |
 | `sys_rmdir` | ✅ | `recursive` is extension |
 | `sys_readdir` | ✅ | No opendir/closedir (acceptable simplification) |
 | `sys_access` | ⚠️→✅ | Adding mode flags (F_OK/R_OK/W_OK/X_OK) |

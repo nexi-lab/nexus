@@ -53,7 +53,7 @@ class TestWatchAPIEndpoint:
         """Test that watch returns a valid response (200 or 501)."""
         from nexus.server.fastapi_server import create_app
 
-        await nexus_fs.sys_mkdir("/inbox")
+        await nexus_fs.mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
@@ -89,7 +89,7 @@ class TestWatchAPIEndpoint:
         """Test watch with glob pattern."""
         from nexus.server.fastapi_server import create_app
 
-        await nexus_fs.sys_mkdir("/inbox")
+        await nexus_fs.mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
@@ -109,7 +109,7 @@ class TestWatchAPIEndpoint:
         """Test that response has correct format when events are available."""
         from nexus.server.fastapi_server import create_app
 
-        await nexus_fs.sys_mkdir("/inbox")
+        await nexus_fs.mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:
@@ -141,7 +141,7 @@ class TestWatchAPIWithEvents:
         """Test that watch detects file write events (requires event infrastructure)."""
         from nexus.server.fastapi_server import create_app
 
-        await nexus_fs.sys_mkdir("/inbox")
+        await nexus_fs.mkdir("/inbox")
         app = create_app(nexus_fs)
 
         with TestClient(app) as client:

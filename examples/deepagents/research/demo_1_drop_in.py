@@ -123,7 +123,7 @@ async def main():
     workspace = "/research-demo"
     print(f"📂 Creating workspace: {workspace}")
     with contextlib.suppress(Exception):
-        await nx.sys_mkdir(workspace, parents=True)  # Directory may already exist
+        await nx.mkdir(workspace, parents=True)  # Directory may already exist
     print()
 
     # Create agent

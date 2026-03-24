@@ -130,7 +130,7 @@ class SlimNexusFS:
             path: Directory path to create.
             parents: If True, create parent directories as needed (mkdir -p).
         """
-        await self._kernel.sys_mkdir(
+        await self._kernel.mkdir(
             path,
             parents=parents,
             exist_ok=True,

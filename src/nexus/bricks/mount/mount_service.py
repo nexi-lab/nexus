@@ -582,21 +582,12 @@ class MountService:
         # broadcasts mount event), then setup -- rollback on failure (#2754).
         # If _setup_mount_point fails after the mount is active in the router,
         # the mount would be accessible without proper permissions configured.
-        coord = self._driver_coordinator
-        if coord is not None:
-            coord.mount(
-                mount_point,
-                backend,
-                readonly=readonly,
-                io_profile=io_profile,
-            )
-        else:
-            self.router.add_mount(
-                mount_point=mount_point,
-                backend=backend,
-                readonly=readonly,
-                io_profile=io_profile,
-            )
+        self._driver_coordinator.mount(
+            mount_point,
+            backend,
+            readonly=readonly,
+            io_profile=io_profile,
+        )
         try:
             self._setup_mount_point(mount_point, context)
         except Exception:
@@ -604,10 +595,7 @@ class MountService:
                 "Mount setup failed for %s, rolling back router registration",
                 mount_point,
             )
-            if coord is not None:
-                coord.unmount(mount_point)
-            else:
-                self.router.remove_mount(mount_point)
+            self._driver_coordinator.unmount(mount_point)
             raise
 
         return mount_point
@@ -642,11 +630,7 @@ class MountService:
 
         # Remove from router via DriverLifecycleCoordinator (unregisters hooks +
         # broadcasts unmount event).
-        coord = self._driver_coordinator
-        if coord is not None:
-            removed = coord.unmount(mount_point)
-        else:
-            removed = self.router.remove_mount(mount_point)
+        removed = self._driver_coordinator.unmount(mount_point)
         if not removed:
             result["errors"].append(f"Mount not found: {mount_point}")
             return result

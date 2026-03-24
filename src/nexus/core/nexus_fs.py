@@ -214,6 +214,16 @@ class NexusFS(  # type: ignore[misc]
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
+        # Driver lifecycle coordinator — /proc/mounts of Nexus (Issue #1811).
+        # Manages mount lifecycle: routing table + hook_spec registration +
+        # KernelDispatch mount/unmount notification. Kernel-owned, like
+        # ServiceRegistry. MountService and factory delegate to this.
+        from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
+
+        self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
+            self.router, self._dispatch
+        )
+
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
         self._initialized: bool = False

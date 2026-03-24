@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import text as sa_text
+from sqlalchemy.exc import ProgrammingError
 
 from nexus.bricks.search.mutation_events import SearchMutationEvent
 
@@ -38,10 +39,12 @@ class MutationResolver:
         file_reader: Any | None,
         async_session_factory: Any | None,
         cache_ttl_seconds: float = 30.0,
+        lookup_batch_size: int = 250,
     ) -> None:
         self._file_reader = file_reader
         self._async_session_factory = async_session_factory
         self._cache_ttl_seconds = cache_ttl_seconds
+        self._lookup_batch_size = max(1, int(lookup_batch_size))
         self._cache: dict[str, tuple[float, ResolvedMutation]] = {}
 
     @staticmethod
@@ -109,25 +112,28 @@ class MutationResolver:
 
         path_id_map: dict[tuple[str, str], str] = {}
         unique_keys = list(dict.fromkeys(path_keys))
-        where_clauses = []
-        params: dict[str, str] = {}
-        for idx, (zone_id, virtual_path) in enumerate(unique_keys):
-            where_clauses.append(
-                f"(zone_id = :zone_id_{idx} AND virtual_path = :virtual_path_{idx})"
-            )
-            params[f"zone_id_{idx}"] = zone_id
-            params[f"virtual_path_{idx}"] = virtual_path
         async with self._async_session_factory() as session:
-            result = await session.execute(
-                sa_text(
-                    "SELECT zone_id, virtual_path, path_id "
-                    "FROM file_paths "
-                    "WHERE deleted_at IS NULL AND (" + " OR ".join(where_clauses) + ")"
-                ),
-                params,
-            )
-            for row in result.fetchall():
-                path_id_map[self._path_key(str(row[0]), str(row[1]))] = str(row[2])
+            for offset in range(0, len(unique_keys), self._lookup_batch_size):
+                batch = unique_keys[offset : offset + self._lookup_batch_size]
+                values_sql, params = self._build_lookup_values(batch)
+                result = await session.execute(
+                    sa_text(
+                        f"""
+                        WITH lookup(zone_id, virtual_path) AS (
+                            VALUES {values_sql}
+                        )
+                        SELECT fp.zone_id, fp.virtual_path, fp.path_id
+                        FROM file_paths fp
+                        JOIN lookup l
+                          ON fp.zone_id = l.zone_id
+                         AND fp.virtual_path = l.virtual_path
+                        WHERE fp.deleted_at IS NULL
+                        """
+                    ),
+                    params,
+                )
+                for row in result.fetchall():
+                    path_id_map[self._path_key(str(row[0]), str(row[1]))] = str(row[2])
         return path_id_map
 
     async def _lookup_content(
@@ -183,26 +189,51 @@ class MutationResolver:
 
         content_map: dict[tuple[str, str], str] = {}
         unique_keys = list(dict.fromkeys(path_keys))
-        where_clauses = []
+        async with self._async_session_factory() as session:
+            try:
+                for offset in range(0, len(unique_keys), self._lookup_batch_size):
+                    batch = unique_keys[offset : offset + self._lookup_batch_size]
+                    values_sql, params = self._build_lookup_values(batch)
+                    result = await session.execute(
+                        sa_text(
+                            f"""
+                            WITH lookup(zone_id, virtual_path) AS (
+                                VALUES {values_sql}
+                            )
+                            SELECT fp.zone_id, fp.virtual_path, cc.content_text
+                            FROM lookup l
+                            JOIN file_paths fp
+                              ON fp.zone_id = l.zone_id
+                             AND fp.virtual_path = l.virtual_path
+                            JOIN content_cache cc
+                              ON cc.path_id = fp.path_id
+                            WHERE fp.deleted_at IS NULL
+                              AND cc.content_text IS NOT NULL
+                            """
+                        ),
+                        params,
+                    )
+                    for row in result.fetchall():
+                        if row[2]:
+                            content_map[self._path_key(str(row[0]), str(row[1]))] = str(row[2])
+            except ProgrammingError as exc:
+                if self._is_missing_table_error(exc):
+                    return {}
+                raise
+        return content_map
+
+    def _build_lookup_values(self, path_keys: list[tuple[str, str]]) -> tuple[str, dict[str, str]]:
         params: dict[str, str] = {}
-        for idx, (zone_id, virtual_path) in enumerate(unique_keys):
-            where_clauses.append(
-                f"(fp.zone_id = :zone_id_{idx} AND fp.virtual_path = :virtual_path_{idx})"
-            )
+        values_parts: list[str] = []
+        for idx, (zone_id, virtual_path) in enumerate(path_keys):
             params[f"zone_id_{idx}"] = zone_id
             params[f"virtual_path_{idx}"] = virtual_path
-        async with self._async_session_factory() as session:
-            result = await session.execute(
-                sa_text(
-                    "SELECT fp.zone_id, fp.virtual_path, cc.content_text "
-                    "FROM content_cache cc "
-                    "JOIN file_paths fp ON cc.path_id = fp.path_id "
-                    "WHERE fp.deleted_at IS NULL AND (" + " OR ".join(where_clauses) + ") "
-                    "AND cc.content_text IS NOT NULL"
-                ),
-                params,
-            )
-            for row in result.fetchall():
-                if row[2]:
-                    content_map[self._path_key(str(row[0]), str(row[1]))] = str(row[2])
-        return content_map
+            values_parts.append(f"(:zone_id_{idx}, :virtual_path_{idx})")
+        return ", ".join(values_parts), params
+
+    @staticmethod
+    def _is_missing_table_error(exc: ProgrammingError) -> bool:
+        message = str(getattr(exc, "orig", exc)).lower()
+        return "content_cache" in message and (
+            "does not exist" in message or "no such table" in message or "undefinedtable" in message
+        )

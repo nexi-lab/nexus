@@ -127,6 +127,7 @@ class DaemonConfig:
 
     # txtai backend config (Issue #2663)
     txtai_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    txtai_vectors: dict[str, Any] | None = None
     txtai_reranker: str | None = None  # e.g. "cross-encoder/ms-marco-MiniLM-L-2-v2"
     txtai_sparse: bool = False  # Enable SPLADE learned sparse retrieval
     txtai_graph: bool = True  # Enable semantic graph
@@ -208,6 +209,7 @@ class SearchDaemon:
         self._mutation_resolver: MutationResolver | None = None
         self._chunk_store: ChunkStore | None = None
         self._consumer_tasks: dict[str, asyncio.Task[None]] = {}
+        self._consumer_names: tuple[str, ...] = ()
         self._consumer_failures: dict[str, int] = {}
         self._consumer_last_error: dict[str, str | None] = {}
         self._consumer_last_sequence: dict[str, int] = {}
@@ -215,6 +217,10 @@ class SearchDaemon:
             Path(self.config.bm25s_index_dir).parent / "mutation-checkpoints.json"
         )
         self._checkpoint_lock = asyncio.Lock()
+        self._shared_mutation_lock = asyncio.Lock()
+        self._shared_mutation_events: list[SearchMutationEvent] = []
+        self._shared_mutation_floor_sequence = 0
+        self._shared_mutation_loaded_at = 0.0
 
         # FileReaderProtocol reference for reading file content (set by FastAPI server)
         # Issue #1520: Replaces direct NexusFS dependency
@@ -277,6 +283,7 @@ class SearchDaemon:
             self._backend = TxtaiBackend(
                 database_url=self.config.database_url,
                 model=self.config.txtai_model,
+                vectors=self.config.txtai_vectors,
                 hybrid=True,
                 graph=self.config.txtai_graph,
                 reranker_model=self.config.txtai_reranker,
@@ -1188,6 +1195,12 @@ class SearchDaemon:
             "embedding": self._consume_embedding_mutations,
             "txtai": self._consume_txtai_mutations,
         }
+        self._consumer_names = tuple(consumer_specs.keys())
+        for consumer_name in self._consumer_names:
+            if consumer_name not in self._consumer_last_sequence:
+                self._consumer_last_sequence[
+                    consumer_name
+                ] = await self._initialize_consumer_checkpoint(consumer_name)
         self._consumer_tasks = {
             name: asyncio.create_task(
                 self._run_mutation_consumer(name, handler), name=f"search-{name}"
@@ -1430,16 +1443,14 @@ class SearchDaemon:
         self._consumer_last_sequence[consumer_name] = sequence_number
         await self._persist_checkpoint(consumer_name, sequence_number)
 
-    async def _fetch_mutation_events(
+    async def _fetch_operation_log_events(
         self,
-        consumer_name: str,
+        after_sequence: int,
+        *,
+        limit: int,
     ) -> list[SearchMutationEvent]:
         if self._async_session is None:
             return []
-
-        last_sequence = self._consumer_last_sequence.get(consumer_name)
-        if last_sequence is None:
-            last_sequence = await self._initialize_consumer_checkpoint(consumer_name)
 
         async with self._async_session() as session:
             result = await session.execute(
@@ -1454,8 +1465,8 @@ class SearchDaemon:
                     "LIMIT :limit"
                 ),
                 {
-                    "last_sequence": last_sequence,
-                    "limit": self.config.mutation_batch_size,
+                    "last_sequence": after_sequence,
+                    "limit": limit,
                 },
             )
             rows = result.fetchall()
@@ -1466,6 +1477,86 @@ class SearchDaemon:
             if event is not None:
                 events.append(event)
         return events
+
+    async def _fetch_shared_mutation_window(self) -> list[SearchMutationEvent]:
+        if self._async_session is None or not self._consumer_names:
+            return []
+
+        now = time.monotonic()
+        consumer_sequences = {
+            name: self._consumer_last_sequence.get(name, 0) for name in self._consumer_names
+        }
+        min_sequence = min(consumer_sequences.values(), default=0)
+        cache_is_fresh = (
+            self._shared_mutation_events
+            and self._shared_mutation_floor_sequence <= min_sequence
+            and (now - self._shared_mutation_loaded_at) < 0.25
+        )
+        if cache_is_fresh:
+            return self._shared_mutation_events
+
+        async with self._shared_mutation_lock:
+            now = time.monotonic()
+            consumer_sequences = {
+                name: self._consumer_last_sequence.get(name, 0) for name in self._consumer_names
+            }
+            min_sequence = min(consumer_sequences.values(), default=0)
+            cache_is_fresh = (
+                self._shared_mutation_events
+                and self._shared_mutation_floor_sequence <= min_sequence
+                and (now - self._shared_mutation_loaded_at) < 0.25
+            )
+            if cache_is_fresh:
+                return self._shared_mutation_events
+
+            page_size = self.config.mutation_batch_size * max(2, len(consumer_sequences))
+            max_window_rows = page_size * 8
+            remaining = dict.fromkeys(consumer_sequences.keys(), self.config.mutation_batch_size)
+            cursor = min_sequence
+            window: list[SearchMutationEvent] = []
+
+            while True:
+                page = await self._fetch_operation_log_events(cursor, limit=page_size)
+                if not page:
+                    break
+
+                window.extend(page)
+                for event in page:
+                    for name, sequence in consumer_sequences.items():
+                        if remaining[name] > 0 and event.sequence_number > sequence:
+                            remaining[name] -= 1
+
+                cursor = page[-1].sequence_number
+                if all(count == 0 for count in remaining.values()):
+                    break
+                if len(page) < page_size or len(window) >= max_window_rows:
+                    break
+
+            self._shared_mutation_events = window
+            self._shared_mutation_floor_sequence = min_sequence
+            self._shared_mutation_loaded_at = now
+            return window
+
+    async def _fetch_mutation_events(
+        self,
+        consumer_name: str,
+    ) -> list[SearchMutationEvent]:
+        last_sequence = self._consumer_last_sequence.get(consumer_name)
+        if last_sequence is None:
+            last_sequence = await self._initialize_consumer_checkpoint(consumer_name)
+            self._consumer_last_sequence[consumer_name] = last_sequence
+
+        shared_window = await self._fetch_shared_mutation_window()
+        events = [event for event in shared_window if event.sequence_number > last_sequence][
+            : self.config.mutation_batch_size
+        ]
+        if events:
+            return events
+
+        return await self._fetch_operation_log_events(
+            last_sequence,
+            limit=self.config.mutation_batch_size,
+        )
 
     async def _run_mutation_consumer(
         self,
@@ -1520,10 +1611,31 @@ class SearchDaemon:
             return []
         return await self._mutation_resolver.resolve_batch(events)
 
+    def _collapse_resolved_mutations(
+        self,
+        resolved: list[ResolvedMutation],
+    ) -> list[ResolvedMutation]:
+        """Collapse multiple mutations for the same document within one batch.
+
+        Shared op-log windows can surface several writes for the same document
+        together. For downstream consumers, the last mutation in sequence order
+        is the only one that matters.
+        """
+        seen: set[tuple[str, str]] = set()
+        collapsed: list[ResolvedMutation] = []
+        for mutation in reversed(resolved):
+            key = (mutation.zone_id, mutation.doc_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            collapsed.append(mutation)
+        collapsed.reverse()
+        return collapsed
+
     async def _consume_bm25_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._bm25s_index is None:
             return
-        resolved = await self._resolve_mutations(events)
+        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
             if mutation.event.op != SearchMutationOp.UPSERT or not mutation.content:
                 continue
@@ -1536,7 +1648,7 @@ class SearchDaemon:
     async def _consume_fts_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._chunk_store is None:
             return
-        resolved = await self._resolve_mutations(events)
+        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
             if mutation.event.op == SearchMutationOp.DELETE:
                 await self._chunk_store.delete_document_chunks(mutation.path_id)
@@ -1551,7 +1663,7 @@ class SearchDaemon:
     async def _consume_embedding_mutations(self, events: list[SearchMutationEvent]) -> None:
         if self._indexing_pipeline is None or self._embedding_provider is None:
             return
-        resolved = await self._resolve_mutations(events)
+        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         for mutation in resolved:
             if mutation.event.op != SearchMutationOp.UPSERT or not mutation.content:
                 continue
@@ -1565,7 +1677,7 @@ class SearchDaemon:
         if self._backend is None:
             return
 
-        resolved = await self._resolve_mutations(events)
+        resolved = self._collapse_resolved_mutations(await self._resolve_mutations(events))
         deletes_by_zone: dict[str, list[str]] = {}
         upserts_by_zone: dict[str, list[dict[str, Any]]] = {}
 

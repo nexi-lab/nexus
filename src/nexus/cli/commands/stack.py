@@ -122,6 +122,18 @@ def _derive_project_env(
     if api_key:
         env["NEXUS_API_KEY"] = api_key
 
+    # Forward optional search embedding env so Docker stacks can use
+    # provider-backed txtai embeddings without local model warmup.
+    for key in (
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "NEXUS_TXTAI_MODEL",
+        "NEXUS_TXTAI_USE_API_EMBEDDINGS",
+    ):
+        value = os.environ.get(key, "").strip()
+        if value:
+            env[key] = value
+
     # Resolve the image reference (supports new image_ref and deprecated image_tag)
     image_ref = _resolve_image_ref_from_config(config)
     if image_ref:
@@ -141,6 +153,27 @@ def _derive_project_env(
         env["NEXUS_GRPC_BIND_ALL"] = "true"
 
     return env
+
+
+def _docker_build_args(extra_env: dict[str, str]) -> list[str]:
+    """Return build args for local Docker builds.
+
+    Keep the contract explicit so image builds can drop unnecessary local
+    embedding dependencies when API-backed embeddings are requested.
+    """
+    api_embeddings_requested = extra_env.get(
+        "NEXUS_TXTAI_USE_API_EMBEDDINGS", ""
+    ).strip().lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    has_openai_key = bool(extra_env.get("OPENAI_API_KEY", "").strip())
+    api_embeddings = api_embeddings_requested and has_openai_key
+    return [
+        "--build-arg",
+        f"NEXUS_TXTAI_USE_API_EMBEDDINGS={'true' if api_embeddings else 'false'}",
+    ]
 
 
 def _resolve_profiles(
@@ -767,6 +800,7 @@ def up(
                     [
                         "docker",
                         "build",
+                        *_docker_build_args(compose_env),
                         "-t",
                         local_tag,
                         "-f",

@@ -13,6 +13,7 @@ from click.testing import CliRunner
 from nexus.cli.commands.stack import (
     _compose_profiles,
     _derive_project_env,
+    _docker_build_args,
     _resolve_image_ref_from_config,
     _resolve_profiles,
     down,
@@ -349,6 +350,53 @@ class TestDeriveProjectEnv:
         env1 = _derive_project_env({"data_dir": str(tmp_path / "a"), "ports": {}})
         env2 = _derive_project_env({"data_dir": str(tmp_path / "b"), "ports": {}})
         assert env1["COMPOSE_PROJECT_NAME"] != env2["COMPOSE_PROJECT_NAME"]
+
+    def test_forwards_optional_txtai_api_embedding_env(self, tmp_path: Path) -> None:
+        config = {"data_dir": str(tmp_path / "data"), "ports": {}}
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "sk-test",
+                "OPENAI_BASE_URL": "https://api.openai.example/v1",
+                "NEXUS_TXTAI_MODEL": "openai/text-embedding-3-small",
+                "NEXUS_TXTAI_USE_API_EMBEDDINGS": "true",
+            },
+            clear=False,
+        ):
+            env = _derive_project_env(config)
+
+        assert env["OPENAI_API_KEY"] == "sk-test"
+        assert env["OPENAI_BASE_URL"] == "https://api.openai.example/v1"
+        assert env["NEXUS_TXTAI_MODEL"] == "openai/text-embedding-3-small"
+        assert env["NEXUS_TXTAI_USE_API_EMBEDDINGS"] == "true"
+
+
+class TestDockerBuildArgs:
+    def test_api_embeddings_enabled_sets_build_arg(self) -> None:
+        args = _docker_build_args(
+            {
+                "NEXUS_TXTAI_USE_API_EMBEDDINGS": "true",
+                "OPENAI_API_KEY": "sk-test",
+            }
+        )
+        assert args == [
+            "--build-arg",
+            "NEXUS_TXTAI_USE_API_EMBEDDINGS=true",
+        ]
+
+    def test_api_embeddings_disabled_sets_false_build_arg(self) -> None:
+        args = _docker_build_args({})
+        assert args == [
+            "--build-arg",
+            "NEXUS_TXTAI_USE_API_EMBEDDINGS=false",
+        ]
+
+    def test_api_embeddings_without_key_keeps_local_build(self) -> None:
+        args = _docker_build_args({"NEXUS_TXTAI_USE_API_EMBEDDINGS": "true"})
+        assert args == [
+            "--build-arg",
+            "NEXUS_TXTAI_USE_API_EMBEDDINGS=false",
+        ]
 
 
 # ---------------------------------------------------------------------------

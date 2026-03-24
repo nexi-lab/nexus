@@ -246,6 +246,7 @@ semantic-search = [
 semantic-search-remote = [
     # Remote embedding providers (lightweight, requires API keys)
     # Recommended: OpenAI embeddings (default for semantic search)
+    "litellm>=1.74.0",
     "openai>=1.0.0",
 ]
 
@@ -296,6 +297,7 @@ all = [
     "psycopg2-binary>=2.9.9",
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
+    "litellm>=1.74.0",
     "openai>=1.0.0",
     "e2b-code-interpreter>=1.0.0",
 ]

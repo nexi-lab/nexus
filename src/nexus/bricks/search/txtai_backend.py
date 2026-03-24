@@ -112,6 +112,7 @@ class TxtaiBackend:
         *,
         database_url: str | None = None,
         model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        vectors: dict[str, Any] | None = None,
         hybrid: bool = True,
         graph: bool = True,
         reranker_model: str | None = None,
@@ -119,6 +120,7 @@ class TxtaiBackend:
     ) -> None:
         self._database_url = database_url
         self._model = model
+        self._vectors = dict(vectors or {})
         self._hybrid = hybrid
         self._graph = graph
         self._reranker_model = reranker_model
@@ -203,6 +205,8 @@ class TxtaiBackend:
             "hybrid": self._hybrid,
             "objects": True,
         }
+        if self._vectors:
+            config["vectors"] = dict(self._vectors)
 
         if gpu_device:
             config["gpu"] = gpu_device

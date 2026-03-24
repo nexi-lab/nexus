@@ -2668,6 +2668,12 @@ class SearchService:
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
         """Get semantic search indexing statistics."""
+        daemon = getattr(self, "_search_daemon", None)
+        if daemon is not None:
+            stats = dict(daemon.get_stats())
+            stats.setdefault("engine", stats.get("backend", "txtai"))
+            return stats
+
         if self._indexing_service is not None:
             return await self._indexing_service.get_index_stats()
 

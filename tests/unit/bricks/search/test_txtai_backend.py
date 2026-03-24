@@ -226,6 +226,43 @@ class TestTxtaiBackendLifecycle:
         assert cfg["content"] == "postgresql://u:p@localhost:5432/nexus"
         assert cfg["content"] is not True
 
+    def test_startup_passes_optional_vectors_config(self) -> None:
+        import asyncio
+
+        mock_embeddings_cls = MagicMock()
+        captured_configs: list[dict] = []
+        mock_embeddings_cls.side_effect = lambda cfg: (
+            captured_configs.append(dict(cfg)) or MagicMock()
+        )
+
+        mock_mps = MagicMock()
+        mock_mps.is_available.return_value = False
+        mock_backends = MagicMock()
+        mock_backends.mps = mock_mps
+        mock_torch = MagicMock()
+        mock_torch.cuda.is_available.return_value = False
+        mock_torch.backends = mock_backends
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "txtai": MagicMock(Embeddings=mock_embeddings_cls),
+                "torch": mock_torch,
+            },
+        ):
+            backend = TxtaiBackend(
+                model="openai/text-embedding-3-small",
+                vectors={"api_key": "sk-test", "api_base": "https://api.openai.example/v1"},
+            )
+            asyncio.run(backend.startup())
+
+        cfg = captured_configs[0]
+        assert cfg["path"] == "openai/text-embedding-3-small"
+        assert cfg["vectors"] == {
+            "api_key": "sk-test",
+            "api_base": "https://api.openai.example/v1",
+        }
+
     @pytest.mark.asyncio
     async def test_shutdown_when_not_started(self) -> None:
         backend = TxtaiBackend()

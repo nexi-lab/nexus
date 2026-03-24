@@ -80,6 +80,7 @@ class _RowsResult:
 class _SessionCtx:
     def __init__(self, rows):
         self._rows = rows
+        self.execute_count = 0
 
     async def __aenter__(self):
         return self
@@ -88,6 +89,7 @@ class _SessionCtx:
         return False
 
     async def execute(self, _stmt, _params=None):
+        self.execute_count += 1
         return _RowsResult(self._rows)
 
 
@@ -133,4 +135,84 @@ async def test_txtai_bootstrap_groups_chunks_without_postgres_aggregates() -> No
             }
         ],
         zone_id="other",
+    )
+
+
+@pytest.mark.asyncio
+async def test_consumers_share_one_fetched_mutation_window() -> None:
+    daemon = SearchDaemon()
+    daemon.config.mutation_batch_size = 2
+    daemon._consumer_names = ("bm25", "txtai")
+    daemon._consumer_last_sequence = {"bm25": 0, "txtai": 0}
+    session = _SessionCtx(
+        [
+            SimpleNamespace(
+                operation_id="op-1",
+                operation_type="write",
+                zone_id="root",
+                path="/zone/root/docs/a.md",
+                new_path=None,
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                sequence_number=1,
+                change_type=None,
+            ),
+            SimpleNamespace(
+                operation_id="op-2",
+                operation_type="write",
+                zone_id="root",
+                path="/zone/root/docs/b.md",
+                new_path=None,
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+                sequence_number=2,
+                change_type=None,
+            ),
+        ]
+    )
+    daemon._async_session = lambda: session  # noqa: E731
+
+    first = await daemon._fetch_mutation_events("bm25")
+    second = await daemon._fetch_mutation_events("txtai")
+
+    assert [event.sequence_number for event in first] == [1, 2]
+    assert [event.sequence_number for event in second] == [1, 2]
+    assert session.execute_count == 1
+
+
+@pytest.mark.asyncio
+async def test_txtai_consumer_collapses_duplicate_document_mutations() -> None:
+    daemon = SearchDaemon()
+    daemon._backend = AsyncMock()
+    daemon._resolve_mutations = AsyncMock(
+        return_value=[
+            SimpleNamespace(
+                zone_id="root",
+                doc_id="/docs/plan.md",
+                path_id="pid-1",
+                virtual_path="/docs/plan.md",
+                content="older",
+                event=SimpleNamespace(op=SearchMutationOp.UPSERT),
+            ),
+            SimpleNamespace(
+                zone_id="root",
+                doc_id="/docs/plan.md",
+                path_id="pid-1",
+                virtual_path="/docs/plan.md",
+                content="newer",
+                event=SimpleNamespace(op=SearchMutationOp.UPSERT),
+            ),
+        ]
+    )
+
+    await daemon._consume_txtai_mutations([])
+
+    daemon._backend.upsert.assert_awaited_once_with(
+        [
+            {
+                "id": "/docs/plan.md",
+                "text": "newer",
+                "path": "/docs/plan.md",
+                "zone_id": "root",
+            }
+        ],
+        zone_id="root",
     )

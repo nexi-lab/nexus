@@ -50,29 +50,48 @@ class ChunkStore:
                 {"path_id": path_id},
             )
 
+            plain_rows: list[dict[str, Any]] = []
+            embedded_rows: list[dict[str, Any]] = []
             for index, chunk in enumerate(chunks):
-                params: dict[str, Any] = {
-                    "chunk_id": str(uuid.uuid4()),
-                    "path_id": path_id,
-                    "chunk_index": index,
-                    "chunk_text": chunk.chunk_text,
-                    "chunk_tokens": chunk.chunk_tokens,
-                    "start_offset": chunk.start_offset,
-                    "end_offset": chunk.end_offset,
-                    "line_start": chunk.line_start,
-                    "line_end": chunk.line_end,
-                    "embedding_model": chunk.embedding_model,
-                    "chunk_context": chunk.chunk_context,
-                    "chunk_position": chunk.chunk_position,
-                    "source_document_id": chunk.source_document_id,
-                    "created_at": now,
-                }
-                insert_sql = self._insert_sql(include_embedding=chunk.embedding is not None)
+                params = self._build_insert_params(path_id, index, chunk, now)
                 if chunk.embedding is not None and self._db_type == "postgresql":
-                    params["embedding"] = "[" + ",".join(str(v) for v in chunk.embedding) + "]"
-                await session.execute(insert_sql, params)
+                    embedded_rows.append(params)
+                else:
+                    plain_rows.append(params)
+
+            if plain_rows:
+                await session.execute(self._insert_sql(include_embedding=False), plain_rows)
+            if embedded_rows:
+                await session.execute(self._insert_sql(include_embedding=True), embedded_rows)
 
             await session.commit()
+
+    def _build_insert_params(
+        self,
+        path_id: str,
+        index: int,
+        chunk: ChunkRecord,
+        now: datetime,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "chunk_id": str(uuid.uuid4()),
+            "path_id": path_id,
+            "chunk_index": index,
+            "chunk_text": chunk.chunk_text,
+            "chunk_tokens": chunk.chunk_tokens,
+            "start_offset": chunk.start_offset,
+            "end_offset": chunk.end_offset,
+            "line_start": chunk.line_start,
+            "line_end": chunk.line_end,
+            "embedding_model": chunk.embedding_model,
+            "chunk_context": chunk.chunk_context,
+            "chunk_position": chunk.chunk_position,
+            "source_document_id": chunk.source_document_id,
+            "created_at": now,
+        }
+        if chunk.embedding is not None and self._db_type == "postgresql":
+            params["embedding"] = "[" + ",".join(str(v) for v in chunk.embedding) + "]"
+        return params
 
     def _insert_sql(self, *, include_embedding: bool) -> Any:
         if include_embedding and self._db_type == "postgresql":

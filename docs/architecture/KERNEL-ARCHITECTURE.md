@@ -261,7 +261,11 @@ Audit is a factory-registered interceptor, not a kernel built-in.
 
 **OBSERVE**: `VFSObserver` instances receive frozen `FileEvent` (§4.3) on all
 mutations. Used for cache invalidation, workflow triggers, telemetry.
-Failures logged, never abort.
+Strictly fire-and-forget: observers are dispatched concurrently (no ordering
+guarantees between observers), failures are logged but never abort the syscall.
+`notify()` returns immediately — observer execution is non-blocking to the
+caller.  Observers that need causal ordering with the mutation belong in
+INTERCEPT post-hooks, not OBSERVE.
 
 All 9 hook protocols + 7 context dataclasses defined in `contracts/vfs_hooks.py`
 (tier-neutral). Concrete implementations live in `services/hooks/` (policy,

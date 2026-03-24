@@ -60,7 +60,7 @@ def mock_notify(nx: NexusFS) -> AsyncMock:
     mock_dispatch.resolve_write.return_value = (False, None)
     mock_dispatch.resolve_delete.return_value = (False, None)
     # All post-dispatch and notify methods are now async
-    mock_dispatch.notify = MagicMock()  # sync after #1812
+    mock_dispatch.notify = AsyncMock()
     mock_dispatch.intercept_post_write = AsyncMock()
     mock_dispatch.intercept_post_delete = AsyncMock()
     mock_dispatch.intercept_post_rename = AsyncMock()
@@ -202,7 +202,7 @@ class TestWriteStreamCallsDispatch:
         mock_dispatch.resolve_delete.return_value = (False, None)
         # All post-dispatch methods are now async
         mock_dispatch.intercept_post_write = AsyncMock()
-        mock_dispatch.notify = MagicMock()  # sync after #1812
+        mock_dispatch.notify = AsyncMock()
         nx._dispatch = mock_dispatch
 
         await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]))
@@ -279,11 +279,14 @@ class TestVFSObserverCoverage:
     """Verify KernelDispatch OBSERVE fires for all mutation operations."""
 
     @pytest.fixture
-    def hook(self) -> MagicMock:
-        return MagicMock()
+    def hook(self) -> AsyncMock:
+        """Async observer mock — on_mutation must be async."""
+        mock = AsyncMock()
+        mock.event_mask = (1 << 10) - 1  # ALL_FILE_EVENTS
+        return mock
 
     @pytest.fixture
-    def nx_with_hook(self, temp_dir: Path, hook: MagicMock) -> Generator[NexusFS, None, None]:
+    def nx_with_hook(self, temp_dir: Path, hook: AsyncMock) -> Generator[NexusFS, None, None]:
         metastore = DictMetastore()
         backend = CASLocalBackend(str(temp_dir / "data"))
         nx = NexusFS(
@@ -298,7 +301,7 @@ class TestVFSObserverCoverage:
         nx.close()
 
     @pytest.mark.asyncio
-    async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+    async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
         await nx_with_hook.write("/file.txt", b"hello")
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
@@ -306,19 +309,23 @@ class TestVFSObserverCoverage:
         assert event.path == "/file.txt"
 
     @pytest.mark.asyncio
-    async def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+    async def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
         await nx_with_hook.write("/file.txt", b"hello")
+
         hook.reset_mock()
         await nx_with_hook.sys_unlink("/file.txt")
+
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.FILE_DELETE
 
     @pytest.mark.asyncio
-    async def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+    async def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
         await nx_with_hook.write("/old.txt", b"hello")
+
         hook.reset_mock()
         await nx_with_hook.sys_rename("/old.txt", "/new.txt")
+
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.FILE_RENAME
@@ -326,27 +333,31 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_write_batch_fires_hook_per_file(
-        self, nx_with_hook: NexusFS, hook: MagicMock
+        self, nx_with_hook: NexusFS, hook: AsyncMock
     ) -> None:
         files = [("/a.txt", b"aaa"), ("/b.txt", b"bbb"), ("/c.txt", b"ccc")]
         await nx_with_hook.write_batch(files)
+
         assert hook.on_mutation.call_count == 3
         paths = {call.args[0].path for call in hook.on_mutation.call_args_list}
         assert paths == {"/a.txt", "/b.txt", "/c.txt"}
 
     @pytest.mark.asyncio
-    async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+    async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
         await nx_with_hook.sys_mkdir("/newdir")
+
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.DIR_CREATE
         assert event.path == "/newdir"
 
     @pytest.mark.asyncio
-    async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+    async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
         await nx_with_hook.sys_mkdir("/mydir")
+
         hook.reset_mock()
         await nx_with_hook.sys_rmdir("/mydir")
+
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.DIR_DELETE

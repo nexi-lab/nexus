@@ -352,6 +352,95 @@ impl HookRegistry {
     }
 }
 
+// ── ObserverRegistry (Phase 3 — Issue #1748) ─────────────────────────
+
+/// Cached entry for one OBSERVE-phase observer.
+struct ObserverEntry {
+    observer: Py<PyAny>,
+    name: String,
+    event_mask: u32,
+}
+
+/// Rust-side observer registry with event-type bitmask filtering.
+///
+/// Observers are registered with a ``u32`` bitmask of ``FileEventType``
+/// positions.  ``get_matching(bit)`` returns only those observers whose
+/// mask includes the given event type — O(N) bitmask scan, but N is
+/// typically ≤5 and the filter avoids crossing to Python for irrelevant
+/// observers.
+///
+/// Example::
+///
+///     reg = ObserverRegistry()
+///     reg.register(obs, 0x03)          # FILE_WRITE | FILE_DELETE
+///     matches = reg.get_matching(0x01) # FILE_WRITE bit → returns obs
+///     misses  = reg.get_matching(0x10) # DIR_CREATE bit → empty
+#[pyclass]
+pub struct ObserverRegistry {
+    observers: Vec<ObserverEntry>,
+}
+
+#[pymethods]
+impl ObserverRegistry {
+    #[new]
+    fn new() -> Self {
+        Self {
+            observers: Vec::new(),
+        }
+    }
+
+    /// Register observer with event_mask bitmask.
+    /// Name is cached from ``type(obs).__name__`` at registration time.
+    fn register(&mut self, py: Python<'_>, obs: Py<PyAny>, event_mask: u32) -> PyResult<()> {
+        let obs_ref = obs.bind(py);
+        let name: String = obs_ref
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "<?>".to_string());
+
+        self.observers.push(ObserverEntry {
+            observer: obs,
+            name,
+            event_mask,
+        });
+        Ok(())
+    }
+
+    /// Unregister by identity (``is`` check).  Returns ``True`` if found.
+    fn unregister(&mut self, py: Python<'_>, obs: &Bound<'_, PyAny>) -> bool {
+        let obs_ptr = obs.as_ptr();
+        if let Some(pos) = self
+            .observers
+            .iter()
+            .position(|e| e.observer.bind(py).as_ptr() == obs_ptr)
+        {
+            self.observers.remove(pos);
+            return true;
+        }
+        false
+    }
+
+    /// Return ``(observer, name)`` pairs whose ``event_mask`` includes ``event_type_bit``.
+    ///
+    /// Rust-side O(N) bitmask filter — only matching observers cross to Python.
+    fn get_matching(&self, py: Python<'_>, event_type_bit: u32) -> Vec<(Py<PyAny>, String)> {
+        self.observers
+            .iter()
+            .filter(|e| e.event_mask & event_type_bit != 0)
+            .map(|e| (e.observer.clone_ref(py), e.name.clone()))
+            .collect()
+    }
+
+    fn count(&self) -> usize {
+        self.observers.len()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ObserverRegistry(count={})", self.observers.len())
+    }
+}
+
 // ── Tests (TrieNode only — no PyO3 linking required) ───────────────────
 
 #[cfg(test)]

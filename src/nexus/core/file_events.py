@@ -34,6 +34,23 @@ class FileEventType(StrEnum):
     CONFLICT_DETECTED = "conflict_detected"
 
 
+# ── Bitmask positions for Rust ObserverRegistry filtering (Issue #1748) ──
+
+FILE_EVENT_BIT: dict[FileEventType, int] = {
+    FileEventType.FILE_WRITE: 1 << 0,
+    FileEventType.FILE_DELETE: 1 << 1,
+    FileEventType.FILE_RENAME: 1 << 2,
+    FileEventType.METADATA_CHANGE: 1 << 3,
+    FileEventType.DIR_CREATE: 1 << 4,
+    FileEventType.DIR_DELETE: 1 << 5,
+    FileEventType.SYNC_TO_BACKEND_REQUESTED: 1 << 6,
+    FileEventType.SYNC_TO_BACKEND_COMPLETED: 1 << 7,
+    FileEventType.SYNC_TO_BACKEND_FAILED: 1 << 8,
+    FileEventType.CONFLICT_DETECTED: 1 << 9,
+}
+ALL_FILE_EVENTS: int = (1 << 10) - 1  # 0x3FF — matches all event types
+
+
 @dataclass(frozen=True)
 class FileEvent:
     """Frozen kernel I/O event — immutable once created.

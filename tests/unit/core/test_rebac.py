@@ -231,53 +231,6 @@ def test_caching(rebac_manager):
     assert cached is True
 
 
-def test_cache_invalidation_on_write(rebac_manager):
-    """Test that L1/L2 cache is invalidated when tuples for the same subject-object pair are added.
-
-    Write path: rebac_write → invalidate_zone_graph_cache (clears L1/L2)
-                            → Tiger Cache write-through (separate layer)
-    The L1/L2 check cache is invalidated on write; the next rebac_check repopulates it.
-    """
-    # Create initial relationship
-    rebac_manager.rebac_write(
-        subject=("agent", "alice"),
-        relation="viewer-of",
-        object=("file", "file123"),
-    )
-
-    # Check and cache result
-    result = rebac_manager.rebac_check(
-        subject=("agent", "alice"),
-        permission="viewer-of",
-        object=("file", "file123"),
-    )
-    assert result is True
-
-    # Add another relationship for same subject-object pair
-    # This invalidates the L1/L2 check cache for the affected zone
-    rebac_manager.rebac_write(
-        subject=("agent", "alice"),
-        relation="editor-of",
-        object=("file", "file123"),
-    )
-
-    # L1/L2 check cache is invalidated after write — returns None
-    cached = rebac_manager._get_cached_check(
-        Entity("agent", "alice"),
-        "viewer-of",
-        Entity("file", "file123"),
-    )
-    assert cached is None  # Cache invalidated on write
-
-    # Next rebac_check repopulates the cache
-    result = rebac_manager.rebac_check(
-        subject=("agent", "alice"),
-        permission="viewer-of",
-        object=("file", "file123"),
-    )
-    assert result is True
-
-
 def test_write_invalidates_then_check_repopulates(rebac_manager):
     """Test write-then-read cycle: write invalidates L1/L2, next check repopulates.
 

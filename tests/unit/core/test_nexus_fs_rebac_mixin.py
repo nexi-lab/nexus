@@ -207,6 +207,28 @@ class TestRebacCreate:
 
         assert tuple_id is not None
 
+    def test_create_prevents_cycles(self, nx: NexusFS) -> None:
+        """Test that cycle detection prevents circular parent relations."""
+        nx.service("rebac").rebac_create_sync(
+            subject=("file", "/a"),
+            relation="parent",
+            object=("file", "/b"),
+            zone_id="root",
+        )
+        nx.service("rebac").rebac_create_sync(
+            subject=("file", "/b"),
+            relation="parent",
+            object=("file", "/c"),
+            zone_id="root",
+        )
+        with pytest.raises(ValueError, match="[Cc]ycle"):
+            nx.service("rebac").rebac_create_sync(
+                subject=("file", "/c"),
+                relation="parent",
+                object=("file", "/a"),
+                zone_id="root",
+            )
+
 
 class TestRebacCheck:
     """Tests for rebac_check method."""
@@ -848,6 +870,101 @@ class TestDynamicViewer:
         )
 
         assert config is None
+
+
+class TestCacheBehavior:
+    """Tests for cache behavior."""
+
+    def test_cache_invalidated_on_write(self, nx: NexusFS) -> None:
+        """Test that cache is invalidated when tuples are written."""
+        # Initially no access
+        assert not nx.service("rebac").rebac_check_sync(
+            subject=("user", "cache_alice"),
+            permission="read",
+            object=("file", "/cache_doc.txt"),
+            zone_id="root",
+        )
+        # Write tuple
+        nx.service("rebac").rebac_create_sync(
+            subject=("user", "cache_alice"),
+            relation="direct_owner",
+            object=("file", "/cache_doc.txt"),
+            zone_id="root",
+        )
+        # Now should have access (cache invalidated)
+        assert nx.service("rebac").rebac_check_sync(
+            subject=("user", "cache_alice"),
+            permission="read",
+            object=("file", "/cache_doc.txt"),
+            zone_id="root",
+        )
+
+    def test_cache_hit_on_repeated_check(self, nx: NexusFS) -> None:
+        """Test that repeated checks use cache."""
+        nx.service("rebac").rebac_create_sync(
+            subject=("user", "repeat_alice"),
+            relation="direct_owner",
+            object=("file", "/repeat_doc.txt"),
+            zone_id="root",
+        )
+        # Multiple checks should all succeed (using cache)
+        for _ in range(5):
+            assert nx.service("rebac").rebac_check_sync(
+                subject=("user", "repeat_alice"),
+                permission="read",
+                object=("file", "/repeat_doc.txt"),
+                zone_id="root",
+            )
+
+
+class TestConcurrency:
+    """Tests for concurrent operations.
+
+    Note: SQLite has limitations with concurrent writes, so we use
+    sequential operations for reliability in tests.
+    """
+
+    def test_sequential_creates(self, nx: NexusFS) -> None:
+        """Test that multiple creates work correctly."""
+        results = []
+        for i in range(5):
+            result = nx.service("rebac").rebac_create_sync(
+                subject=("user", f"seq_user_{i}"),
+                relation="direct_owner",
+                object=("file", f"/seq_doc_{i}.txt"),
+                zone_id="root",
+            )
+            results.append(result)
+        assert len(results) == 5
+        assert all(isinstance(r, dict) for r in results)
+
+    def test_sequential_checks(self, nx: NexusFS) -> None:
+        """Test that multiple permission checks work correctly."""
+        import time
+
+        # Pre-create tuples with small delay to avoid SQLite locking
+        for i in range(3):
+            nx.service("rebac").rebac_create_sync(
+                subject=("user", f"seqcheck_user_{i}"),
+                relation="direct_owner",
+                object=("file", f"/seqcheck_doc_{i}.txt"),
+                zone_id="root",
+            )
+            time.sleep(0.05)  # Small delay to let background cache operations complete
+
+        # Check permissions
+        results = []
+        for i in range(3):
+            result = nx.service("rebac").rebac_check_sync(
+                subject=("user", f"seqcheck_user_{i}"),
+                permission="read",
+                object=("file", f"/seqcheck_doc_{i}.txt"),
+                zone_id="root",
+            )
+            results.append(result)
+            time.sleep(0.05)  # Small delay for cache sync
+        assert len(results) == 3
+        assert all(r is True for r in results)
 
 
 class TestRebacWithoutManager:

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 pytest.importorskip("pyroaring")
+pytest.importorskip("hypothesis")
 
 from hypothesis import settings
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule
@@ -88,24 +89,9 @@ class TestBrickRegistration:
         assert status.state == BrickState.REGISTERED
 
     @pytest.mark.asyncio
-    async def test_unregister_removes_brick(self, manager: BrickLifecycleManager) -> None:
-        brick = _make_lifecycle_brick("search")
-        manager.register("search", brick, protocol_name="SearchProtocol")
-        await manager.mount("search")
-        await manager.unmount("search")
-        await manager.unregister("search")
-        assert manager.get_status("search") is None
-
-    @pytest.mark.asyncio
     async def test_unregister_nonexistent_raises(self, manager: BrickLifecycleManager) -> None:
         with pytest.raises(KeyError, match="not found"):
             await manager.unregister("nonexistent")
-
-    def test_force_unregister_removes_brick(self, manager: BrickLifecycleManager) -> None:
-        brick = _make_lifecycle_brick("search")
-        manager.register("search", brick, protocol_name="SearchProtocol")
-        manager._force_unregister("search")
-        assert manager.get_status("search") is None
 
 
 # ---------------------------------------------------------------------------

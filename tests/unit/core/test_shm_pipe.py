@@ -8,6 +8,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
+pytest.importorskip("nexus_fast")
+
 from nexus_fast import SharedRingBufferCore
 
 from nexus.core.pipe import PipeBackend, PipeEmptyError, PipeFullError

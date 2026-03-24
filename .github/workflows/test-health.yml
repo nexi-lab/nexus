@@ -1,0 +1,163 @@
+name: Test Health
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Monday 9am UTC
+  workflow_dispatch:       # Manual trigger
+
+concurrency:
+  group: test-health-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-health:
+    name: Test Suite Health Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Build Rust extensions
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: dev
+          rust-cache-shared-key: "rust-health"
+          output-dir: dist
+          github-token: ${{ github.token }}
+
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev,test]"
+          uv pip install vulture
+
+      # --- 1. Collection errors (broken imports / deleted modules) ---
+      - name: Check for collection errors
+        run: |
+          echo "## Collection Errors" > collection-errors.txt
+          echo "" >> collection-errors.txt
+          uv run pytest tests/unit/ --collect-only -q -o "addopts=" 2>&1 \
+            | grep -E "ERROR|ImportError|ModuleNotFoundError|AttributeError" \
+            >> collection-errors.txt || true
+          if [ -s collection-errors.txt ] && grep -q "ERROR\|ImportError\|ModuleNotFoundError" collection-errors.txt; then
+            echo "::warning::Found collection errors — some tests reference deleted code"
+            cat collection-errors.txt
+          else
+            echo "No collection errors found." > collection-errors.txt
+          fi
+
+      # --- 2. Dead test code (vulture) ---
+      - name: Scan for dead test code
+        run: |
+          echo "## Dead Test Code (vulture)" > dead-test-code.txt
+          echo "" >> dead-test-code.txt
+          echo "Unused functions, classes, and imports in test files:" >> dead-test-code.txt
+          echo "" >> dead-test-code.txt
+          uv run vulture tests/ --min-confidence 90 \
+            --exclude "conftest.py" \
+            >> dead-test-code.txt 2>&1 || true
+          lines=$(wc -l < dead-test-code.txt)
+          echo "Found $((lines - 4)) potential dead code items"
+          cat dead-test-code.txt
+
+      # --- 3. Slow test report ---
+      - name: Identify slowest tests
+        run: |
+          echo "## Slowest Unit Tests" > slow-tests.txt
+          echo "" >> slow-tests.txt
+          uv run pytest tests/unit/ --durations=50 -q --tb=no \
+            -n auto --dist loadgroup -o "addopts=" 2>&1 \
+            | grep -E "^[0-9]" \
+            >> slow-tests.txt || true
+          cat slow-tests.txt
+
+      # --- 4. Coverage overlap analysis ---
+      - name: Run coverage with per-test contexts
+        run: |
+          uv run pytest tests/unit/ \
+            --cov=nexus --cov-context=test --cov-report=json \
+            -q --tb=no -o "addopts=" \
+            -n0 \
+            --timeout=600 || true
+        timeout-minutes: 15
+
+      - name: Analyze redundant tests
+        if: always()
+        run: |
+          if [ -f coverage.json ]; then
+            echo "## Redundant Test Analysis" > redundant-tests.txt
+            uv run python scripts/find_redundant_tests.py coverage.json \
+              >> redundant-tests.txt 2>&1
+            cat redundant-tests.txt
+          else
+            echo "Coverage data not available — skipping overlap analysis" > redundant-tests.txt
+          fi
+
+      # --- 5. Test count trends ---
+      - name: Count tests by directory
+        run: |
+          echo "## Test Counts by Directory" > test-counts.txt
+          echo "" >> test-counts.txt
+          echo "Date: $(date -u +%Y-%m-%d)" >> test-counts.txt
+          echo "" >> test-counts.txt
+          for dir in tests/unit/core tests/unit/services tests/unit/backends \
+                     tests/unit/bricks tests/unit/server tests/unit/cli \
+                     tests/unit/storage tests/e2e/server tests/e2e/self_contained; do
+            if [ -d "$dir" ]; then
+              count=$(grep -r "def test_" "$dir" --include="*.py" 2>/dev/null | wc -l)
+              files=$(find "$dir" -name "test_*.py" -o -name "*_test.py" 2>/dev/null | wc -l)
+              echo "  $dir: $count tests in $files files" >> test-counts.txt
+            fi
+          done
+          echo "" >> test-counts.txt
+          total=$(grep -r "def test_" tests/ --include="*.py" 2>/dev/null | wc -l)
+          echo "  TOTAL: $total tests" >> test-counts.txt
+          cat test-counts.txt
+
+      # --- Summary ---
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "# Test Health Report — $(date -u +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          for f in collection-errors.txt dead-test-code.txt slow-tests.txt \
+                   redundant-tests.txt test-counts.txt; do
+            if [ -f "$f" ]; then
+              echo "<details><summary>$(head -1 "$f")</summary>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              cat "$f" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "</details>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+      - name: Upload health reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-health-report
+          path: |
+            collection-errors.txt
+            dead-test-code.txt
+            slow-tests.txt
+            redundant-tests.txt
+            test-counts.txt
+          retention-days: 30

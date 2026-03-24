@@ -136,6 +136,8 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         # Initialize CASAddressingEngine with Feature DI (including CDC)
         # CDCEngine requires a reference to the backend, so we create a
         # temporary instance and wire it after super().__init__().
+        # verify_on_read=False: local disk bit rot is rare; skip re-hash
+        # on every read (~10μs saving). GCS/S3 transports keep True.
         super().__init__(
             transport,
             backend_name="local",
@@ -144,6 +146,7 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
             meta_cache=meta_cache,
             meta_semaphore=meta_semaphore,
             on_write_callback=on_write_callback,
+            verify_on_read=False,
         )
 
         # CDCEngine needs self (CASAddressingEngine internals) — wire after init

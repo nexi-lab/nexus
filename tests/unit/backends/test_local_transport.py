@@ -279,3 +279,73 @@ class TestCASKeyPattern:
         key = "dirs/workspace/"
         transport.create_directory_marker(key)
         assert transport.blob_exists(key)
+
+
+# === _ensure_parent cache ===
+
+
+class TestEnsureParentCache:
+    def test_known_parents_populated(self, transport, tmp_path):
+        transport.put_blob("cas/ab/cd/hash1", b"data")
+        parent = str(tmp_path / "cas" / "ab" / "cd")
+        assert parent in transport._known_parents
+
+    def test_known_parents_skip_redundant_mkdir(self, transport, tmp_path):
+        """Second put_blob to same dir should skip mkdir (cached)."""
+        transport.put_blob("cas/ab/cd/hash1", b"v1")
+        transport.put_blob("cas/ab/cd/hash2", b"v2")
+        data, _ = transport.get_blob("cas/ab/cd/hash2")
+        assert data == b"v2"
+
+    def test_known_parents_evict_on_external_delete(self, transport, tmp_path):
+        """If parent dir is externally deleted, put_blob retries after evicting cache."""
+        import shutil
+
+        transport.put_blob("cas/ab/cd/hash1", b"v1")
+        # Externally nuke the parent dir
+        shutil.rmtree(tmp_path / "cas" / "ab")
+        # Next write should recover by evicting + re-creating
+        transport.put_blob("cas/ab/cd/hash2", b"v2")
+        data, _ = transport.get_blob("cas/ab/cd/hash2")
+        assert data == b"v2"
+
+
+# === put_blob_nosync ===
+
+
+class TestPutBlobNosync:
+    def test_nosync_roundtrip(self, transport):
+        transport.put_blob_nosync("meta/key.json", b'{"ref_count": 1}')
+        data, _ = transport.get_blob("meta/key.json")
+        assert data == b'{"ref_count": 1}'
+
+    def test_nosync_overwrites(self, transport):
+        transport.put_blob_nosync("k", b"v1")
+        transport.put_blob_nosync("k", b"v2")
+        data, _ = transport.get_blob("k")
+        assert data == b"v2"
+
+    def test_nosync_creates_parents(self, transport, tmp_path):
+        transport.put_blob_nosync("a/b/c/file", b"deep")
+        assert (tmp_path / "a" / "b" / "c" / "file").exists()
+
+    def test_nosync_empty_data(self, transport):
+        transport.put_blob_nosync("empty", b"")
+        data, _ = transport.get_blob("empty")
+        assert data == b""
+
+
+# === EAFP get_blob ===
+
+
+class TestGetBlobEAFP:
+    def test_get_nonexistent_raises_without_stat(self, transport):
+        """get_blob should raise NexusFileNotFoundError without a prior stat."""
+        with pytest.raises(NexusFileNotFoundError):
+            transport.get_blob("does/not/exist")
+
+    def test_get_directory_key_raises(self, transport, tmp_path):
+        """get_blob on a directory path should raise NexusFileNotFoundError."""
+        (tmp_path / "some_dir").mkdir()
+        with pytest.raises(NexusFileNotFoundError):
+            transport.get_blob("some_dir")

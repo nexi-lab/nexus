@@ -22,7 +22,6 @@ import contextlib
 import logging
 import os
 import shutil
-import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -47,16 +46,32 @@ class LocalBlobTransport:
     def __init__(self, root_path: str | Path, *, fsync: bool = True) -> None:
         self._root = Path(root_path).resolve()
         self._fsync = fsync
+        self._known_parents: set[str] = set()
         self._root.mkdir(parents=True, exist_ok=True)
 
     def _resolve(self, key: str) -> Path:
         """Map a storage key to an absolute filesystem path."""
         return self._root / key
 
+    def _ensure_parent(self, path: Path) -> None:
+        """Ensure parent directory exists, with monotonic cache.
+
+        CAS has at most 65,536 two-level dirs (cas/ab/cd/). Once created,
+        they are never deleted during normal operation, so we cache the
+        result. On ENOENT from os.open we evict and retry (see put_blob).
+        """
+        parent = str(path.parent)
+        if parent not in self._known_parents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._known_parents.add(parent)
+
     # === BlobTransport Protocol Methods ===
 
     def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
-        """Atomic write: temp file → fsync → os.replace.
+        """Atomic write: raw fd → fsync → os.replace.
+
+        Uses raw os.open/os.write instead of NamedTemporaryFile to avoid
+        mkstemp_inner + functools.update_wrapper + buffered I/O overhead.
 
         Idempotent — overwrites existing blob silently (same content
         produces same key in CAS, so this is safe).
@@ -64,37 +79,55 @@ class LocalBlobTransport:
         Returns None (local FS has no versioning).
         """
         path = self._resolve(key)
+        tmp = str(path) + ".tmp." + str(os.getpid())
+        fd = -1
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path: Path | None = None
+            self._ensure_parent(path)
             try:
-                with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, delete=False) as tmp:
-                    tmp_path = Path(tmp.name)
-                    tmp.write(data)
-                    tmp.flush()
-                    if self._fsync:
-                        os.fsync(tmp.fileno())
-                os.replace(str(tmp_path), str(path))
-                tmp_path = None  # replaced successfully
-            except BaseException:
-                if tmp_path is not None and tmp_path.exists():
-                    with contextlib.suppress(OSError):
-                        tmp_path.unlink()
-                raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to write blob at {key}: {e}",
-                backend="local",
-                path=key,
-            ) from e
+                fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+            except FileNotFoundError:
+                # Parent dir was deleted externally — evict cache and retry
+                self._known_parents.discard(str(path.parent))
+                self._ensure_parent(path)
+                fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+            os.write(fd, data)
+            if self._fsync:
+                os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            os.replace(tmp, str(path))
+            tmp = ""  # replaced successfully
+        except BaseException:
+            if fd >= 0:
+                os.close(fd)
+            if tmp:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            raise
         return None
+
+    def put_blob_nosync(self, key: str, data: bytes) -> None:
+        """Direct write without fsync/atomic-rename — for reconstructable metadata.
+
+        Meta JSON is reconstructable from VFS metastore (stores ref_count and
+        size for GC only). Crash-losing the meta file means ref_count=0 → GC
+        collects after grace period. This is the same risk that exists today
+        if crash happens between content put_blob and _write_meta.
+        """
+        path = self._resolve(key)
+        self._ensure_parent(path)
+        fd = os.open(str(path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
 
     def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         path = self._resolve(key)
-        if not path.is_file():
-            raise NexusFileNotFoundError(key)
         try:
             return path.read_bytes(), None
+        except (FileNotFoundError, IsADirectoryError):
+            raise NexusFileNotFoundError(key) from None
         except OSError as e:
             raise BackendError(
                 f"Failed to read blob at {key}: {e}",

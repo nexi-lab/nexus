@@ -10,6 +10,7 @@ from nexus.cli.exit_codes import ExitCode
 from nexus.cli.utils import (
     connect_local_workspace,
     create_operation_context,
+    get_filesystem,
     get_zone_id,
     handle_error,
     parse_subject,
@@ -220,6 +221,44 @@ class TestConnectLocalWorkspace:
         assert os.environ["NEXUS_DATA_DIR"] == ambient_data_dir
         assert os.environ["NEXUS_DATABASE_URL"] == ambient_database_url
         assert os.environ["NEXUS_URL"] == "http://127.0.0.1:65535"
+
+    @pytest.mark.asyncio
+    async def test_remote_profile_skips_local_workspace_override(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: pytest.TempPathFactory,
+    ) -> None:
+        ambient_data_dir = str(tmp_path / "ambient-data")
+        seen: dict[str, object] = {}
+
+        class DummyFilesystem:
+            def close(self) -> None:
+                return None
+
+        async def _mock_connect(config):
+            seen["config"] = config
+            return DummyFilesystem()
+
+        async def _unexpected_local_connect(data_dir: str):
+            raise AssertionError(f"local workspace override should not run: {data_dir}")
+
+        monkeypatch.setenv("NEXUS_DATA_DIR", ambient_data_dir)
+        monkeypatch.setenv("NEXUS_PROFILE", "remote")
+        monkeypatch.setattr("nexus.connect", _mock_connect)
+        monkeypatch.setattr("nexus.cli.utils.connect_local_workspace", _unexpected_local_connect)
+
+        filesystem = await get_filesystem(
+            remote_url="http://127.0.0.1:2026",
+            remote_api_key="sk-test",
+            allow_local_default=True,
+        )
+
+        assert isinstance(filesystem, DummyFilesystem)
+        assert seen["config"] == {
+            "profile": "remote",
+            "url": "http://127.0.0.1:2026",
+            "api_key": "sk-test",
+        }
 
 
 # ---------------------------------------------------------------------------

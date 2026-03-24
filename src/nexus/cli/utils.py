@@ -258,11 +258,17 @@ async def get_filesystem(
             pass
 
         # Source-checkout quickstart: if a local data dir is explicitly set and
-        # the user did not explicitly pass --remote-url, prefer the local
-        # workspace over any ambient NEXUS_URL or saved CLI profile.
+        # the user did not explicitly request REMOTE mode, prefer the local
+        # workspace over ambient config. This preserves the documented local
+        # quickstart while still honoring containerized workflows that set
+        # NEXUS_PROFILE=remote and pass NEXUS_URL via environment.
+        remote_profile_requested = (
+            os.environ.get("NEXUS_PROFILE") or ""
+        ).strip().lower() == "remote" or profile_name == "remote"
         if (
             allow_local_default
             and explicit_local_data_dir
+            and not remote_profile_requested
             and remote_url_source is not ParameterSource.COMMANDLINE
         ):
             return await connect_local_workspace(explicit_local_data_dir)

@@ -15,39 +15,22 @@ Issue #900: Migrated from _write_observer to KernelDispatch.
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus import CASLocalBackend, NexusFS
-from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.core.file_events import FileEventType
-from tests.helpers.dict_metastore import DictMetastore
-from tests.helpers.test_context import TEST_CONTEXT
+from tests.conftest import make_test_nexus
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
-
-
-@pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
-    metastore = DictMetastore()
-    backend = CASLocalBackend(str(temp_dir / "data"))
-    nx = NexusFS(
-        metadata_store=metastore,
-        permissions=PermissionConfig(enforce=False),
-        parsing=ParseConfig(auto_parse=False),
-        init_cred=TEST_CONTEXT,
-    )
-    nx.router.add_mount("/", backend)
-    yield nx
-    nx.close()
+async def nx(tmp_path: Path) -> NexusFS:
+    return await make_test_nexus(tmp_path)
 
 
 @pytest.fixture
@@ -286,19 +269,10 @@ class TestVFSObserverCoverage:
         return mock
 
     @pytest.fixture
-    def nx_with_hook(self, temp_dir: Path, hook: AsyncMock) -> Generator[NexusFS, None, None]:
-        metastore = DictMetastore()
-        backend = CASLocalBackend(str(temp_dir / "data"))
-        nx = NexusFS(
-            metadata_store=metastore,
-            permissions=PermissionConfig(enforce=False),
-            parsing=ParseConfig(auto_parse=False),
-            init_cred=TEST_CONTEXT,
-        )
-        nx.router.add_mount("/", backend)
+    async def nx_with_hook(self, tmp_path: Path, hook: AsyncMock) -> NexusFS:
+        nx = await make_test_nexus(tmp_path)
         nx.register_observe(hook)
-        yield nx
-        nx.close()
+        return nx
 
     @pytest.mark.asyncio
     async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:

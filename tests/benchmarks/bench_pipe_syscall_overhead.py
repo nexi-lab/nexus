@@ -70,24 +70,28 @@ def _print_stats(label: str, idx: int, st: dict) -> None:
 # ── Setup ──────────────────────────────────────────────────────────────
 
 
-def _setup(tmp_dir: Path):
+async def _setup(tmp_dir: Path):
     """Create NexusFS + PipeManager with a single pipe for benchmarking."""
+    from nexus.backends.storage.path_local import PathLocalBackend
     from nexus.core.config import ParseConfig
-    from nexus.core.nexus_fs import NexusFS
     from nexus.core.pipe_manager import PipeManager
+    from nexus.factory import create_nexus_fs
     from nexus.storage.raft_metadata_store import RaftMetadataStore
     from tests.helpers.test_context import TEST_ADMIN_CONTEXT
 
     raft_path = tmp_dir / "raft"
+    data_dir = tmp_dir / "data"
+    data_dir.mkdir(exist_ok=True)
 
     metastore = RaftMetadataStore.embedded(str(raft_path))
     pipe_manager = PipeManager(metastore)
 
-    nx = NexusFS(
+    nx = await create_nexus_fs(
+        backend=PathLocalBackend(root_path=str(data_dir)),
         metadata_store=metastore,
         parsing=ParseConfig(auto_parse=False),
+        init_cred=TEST_ADMIN_CONTEXT,
     )
-    nx._init_cred = TEST_ADMIN_CONTEXT
 
     # Create the benchmark pipe
     pipe_manager.create(_BENCH_PIPE_PATH, capacity=_BENCH_PIPE_CAPACITY, owner_id="bench")
@@ -258,7 +262,7 @@ def _bench_ideal_fast_path(pm, path: str, data: bytes) -> list[float]:
 async def _run() -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        nx, pm, metastore = _setup(tmp_dir)
+        nx, pm, metastore = await _setup(tmp_dir)
 
         payload = json.dumps(
             {

@@ -11,16 +11,20 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-from nexus import CASLocalBackend, NexusFS
+from nexus import CASLocalBackend
 from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from tests.helpers.test_context import TEST_CONTEXT
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 # Try to import RaftMetadataStore — skip if native module unavailable
 try:
@@ -55,31 +59,23 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
+async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore):
     raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
     if raft_store is None:
-        # Fallback to DictMetastore with factory-style wiring
         from tests.helpers.dict_metastore import DictMetastore
 
         metadata_store = DictMetastore()
-
-        _backend = CASLocalBackend(str(temp_dir / "data"))
-        nx = NexusFS(
-            metadata_store=metadata_store,
-            record_store=record_store,
-            permissions=PermissionConfig(enforce=False),
-            parsing=ParseConfig(auto_parse=False),
-            init_cred=TEST_CONTEXT,
-        )
-        nx.router.add_mount("/", _backend)
     else:
-        nx = await create_nexus_fs(
-            backend=CASLocalBackend(str(temp_dir / "data")),
-            metadata_store=raft_store,
-            record_store=record_store,
-            parsing=ParseConfig(auto_parse=False),
-            permissions=PermissionConfig(enforce=False),
-        )
+        metadata_store = raft_store
+
+    nx = await create_nexus_fs(
+        backend=CASLocalBackend(str(temp_dir / "data")),
+        metadata_store=metadata_store,
+        record_store=record_store,
+        parsing=ParseConfig(auto_parse=False),
+        permissions=PermissionConfig(enforce=False),
+        init_cred=TEST_CONTEXT,
+    )
     yield nx
     nx.close()
 

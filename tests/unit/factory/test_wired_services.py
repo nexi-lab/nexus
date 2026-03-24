@@ -9,7 +9,6 @@ import pytest
 
 from nexus.core.config import WiredServices
 from nexus.factory.service_routing import enlist_wired_services
-from tests.helpers.test_context import TEST_CONTEXT
 
 
 class TestWiredServicesDataclass:
@@ -47,21 +46,11 @@ class TestEnlistWiredServices:
     """Test enlist_wired_services accepts both WiredServices and dict (#1708)."""
 
     @pytest.fixture()
-    def nx(self) -> Any:
-        """Minimal NexusFS with mocked pillars."""
-        from nexus.core.config import KernelServices, ParseConfig
-        from nexus.core.nexus_fs import NexusFS
+    async def nx(self, tmp_path: Any) -> Any:
+        """Minimal NexusFS via factory boot path."""
+        from tests.conftest import make_test_nexus
 
-        mock_metadata = MagicMock()
-        mock_metadata.list = MagicMock(return_value=[])
-
-        nx = NexusFS(
-            metadata_store=mock_metadata,
-            kernel_services=KernelServices(),
-            parsing=ParseConfig(auto_parse=False),
-        )
-        nx._init_cred = TEST_CONTEXT
-        return nx
+        return await make_test_nexus(tmp_path)
 
     @pytest.fixture()
     def registry(self, nx: Any) -> Any:

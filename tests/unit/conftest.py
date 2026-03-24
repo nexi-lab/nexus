@@ -127,10 +127,8 @@ def isolated_db(tmp_path, monkeypatch):
     The database is automatically cleaned up after the test completes.
 
     Usage:
-        def test_something(isolated_db):
-            metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-            nx = NexusFS(metadata_store=metadata_store)
-            nx._init_cred = TEST_CONTEXT
+        async def test_something(isolated_db, tmp_path):
+            nx = await make_test_nexus(tmp_path, use_raft=True)
             # Test code here
             nx.close()
 

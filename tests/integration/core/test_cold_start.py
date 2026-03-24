@@ -85,16 +85,13 @@ class TestColdStartNexusFSConstruction:
         assert nx.service("mcp") is None
 
     def test_enlist_wired_services(self) -> None:
-        """enlist_wired_services should register services via coordinator (#1708)."""
+        """enlist_wired_services should register services via registry (#1708)."""
         import asyncio
         from unittest.mock import MagicMock
 
         from nexus.core.config import ParseConfig
         from nexus.core.nexus_fs import NexusFS
         from nexus.factory.service_routing import enlist_wired_services
-        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-            ServiceLifecycleCoordinator,
-        )
 
         mock_metadata = MagicMock()
         mock_metadata.list = MagicMock(return_value=[])
@@ -105,7 +102,7 @@ class TestColdStartNexusFSConstruction:
         )
         nx._init_cred = TEST_CONTEXT
 
-        coordinator = ServiceLifecycleCoordinator(nx._service_registry, None, nx._dispatch)
+        reg = nx._service_registry  # ServiceRegistry now has lifecycle methods
         mock_svc = MagicMock()
-        asyncio.run(enlist_wired_services(coordinator, {"rebac_service": mock_svc}))
+        asyncio.run(enlist_wired_services(reg, {"rebac_service": mock_svc}))
         assert nx.service("rebac")._service_instance is mock_svc

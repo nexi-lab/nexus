@@ -64,28 +64,22 @@ class TestEnlistWiredServices:
         return nx
 
     @pytest.fixture()
-    def coordinator(self, nx: Any) -> Any:
-        """Create coordinator with BLM=None (Issue #1708)."""
-        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-            ServiceLifecycleCoordinator,
-        )
+    def registry(self, nx: Any) -> Any:
+        """Return the ServiceRegistry (now has lifecycle methods, Issue #1814)."""
+        return nx._service_registry
 
-        return ServiceLifecycleCoordinator(nx._service_registry, None, nx._dispatch)
-
-    def test_enlist_from_dataclass(self, nx: Any, coordinator: Any) -> None:
+    def test_enlist_from_dataclass(self, nx: Any, registry: Any) -> None:
         mock_svc = MagicMock()
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
-        asyncio.run(enlist_wired_services(coordinator, ws))
+        asyncio.run(enlist_wired_services(registry, ws))
         assert nx.service("rebac")._service_instance is mock_svc
         assert nx.service("mount")._service_instance is mock_svc
         assert nx.service("mcp") is None
 
-    def test_enlist_from_dict(self, nx: Any, coordinator: Any) -> None:
+    def test_enlist_from_dict(self, nx: Any, registry: Any) -> None:
         mock_svc = MagicMock()
         asyncio.run(
-            enlist_wired_services(
-                coordinator, {"rebac_service": mock_svc, "mount_service": mock_svc}
-            )
+            enlist_wired_services(registry, {"rebac_service": mock_svc, "mount_service": mock_svc})
         )
         assert nx.service("rebac")._service_instance is mock_svc
         assert nx.service("mount")._service_instance is mock_svc

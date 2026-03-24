@@ -1,4 +1,9 @@
-"""Unit tests for ServiceLifecycleCoordinator (Issue #1452 Phase 3, #1577)."""
+"""Unit tests for ServiceRegistry lifecycle orchestration (Issue #1452 Phase 3, #1577, #1814).
+
+These tests exercise the lifecycle methods (enlist, swap_service, start/stop,
+activate/deactivate) that were merged from ServiceLifecycleCoordinator into
+ServiceRegistry in Issue #1814.
+"""
 
 from __future__ import annotations
 
@@ -13,9 +18,6 @@ from nexus.contracts.protocols.service_lifecycle import HotSwappable, Persistent
 from nexus.core.kernel_dispatch import KernelDispatch
 from nexus.core.service_registry import ServiceRegistry
 from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
-from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-    ServiceLifecycleCoordinator,
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -38,10 +40,10 @@ def dispatch() -> KernelDispatch:
 
 
 @pytest.fixture()
-def coordinator(
-    registry: ServiceRegistry, blm: BrickLifecycleManager, dispatch: KernelDispatch
-) -> ServiceLifecycleCoordinator:
-    return ServiceLifecycleCoordinator(registry, blm, dispatch)
+def coordinator(blm: BrickLifecycleManager, dispatch: KernelDispatch) -> ServiceRegistry:
+    reg = ServiceRegistry(dispatch=dispatch)
+    reg.set_lifecycle_manager(blm)
+    return reg
 
 
 class _FakeService:
@@ -142,15 +144,14 @@ class _BothProtocolsService:
 
 
 # ---------------------------------------------------------------------------
-# insmod — register_service
+# insmod — _register_service
 # ---------------------------------------------------------------------------
 
 
 class TestRegisterService:
     def test_registers_in_both_registry_and_blm(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
         blm: BrickLifecycleManager,
     ) -> None:
         svc = _FakeService()
@@ -158,7 +159,7 @@ class TestRegisterService:
             "search", svc, exports=("glob", "grep"), protocol_name="SearchProtocol"
         )
         # ServiceRegistry
-        info = registry.service_info("search")
+        info = coordinator.service_info("search")
         assert info is not None
         assert info.instance is svc
         assert info.exports == ("glob", "grep")
@@ -168,7 +169,7 @@ class TestRegisterService:
         assert status.state == BrickState.REGISTERED
         assert status.protocol_name == "SearchProtocol"
 
-    def test_stores_hook_spec(self, coordinator: ServiceLifecycleCoordinator) -> None:
+    def test_stores_hook_spec(self, coordinator: ServiceRegistry) -> None:
         svc = _FakeService()
         hook = MagicMock()
         spec = HookSpec(read_hooks=(hook,))
@@ -177,14 +178,14 @@ class TestRegisterService:
 
 
 # ---------------------------------------------------------------------------
-# mount — mount_service
+# mount — _mount_service
 # ---------------------------------------------------------------------------
 
 
 class TestMountService:
     @pytest.mark.asyncio()
     async def test_mount_registers_hooks(
-        self, coordinator: ServiceLifecycleCoordinator, dispatch: KernelDispatch
+        self, coordinator: ServiceRegistry, dispatch: KernelDispatch
     ) -> None:
         svc = _FakeService()
         read_hook = MagicMock()
@@ -198,7 +199,7 @@ class TestMountService:
 
     @pytest.mark.asyncio()
     async def test_mount_no_hooks_if_no_spec(
-        self, coordinator: ServiceLifecycleCoordinator, dispatch: KernelDispatch
+        self, coordinator: ServiceRegistry, dispatch: KernelDispatch
     ) -> None:
         svc = _FakeService()
         coordinator._register_service("search", svc)
@@ -208,14 +209,14 @@ class TestMountService:
 
 
 # ---------------------------------------------------------------------------
-# umount — unmount_service
+# umount — _unmount_service
 # ---------------------------------------------------------------------------
 
 
 class TestUnmountService:
     @pytest.mark.asyncio()
     async def test_unmount_removes_hooks(
-        self, coordinator: ServiceLifecycleCoordinator, dispatch: KernelDispatch
+        self, coordinator: ServiceRegistry, dispatch: KernelDispatch
     ) -> None:
         svc = _FakeService()
         read_hook = MagicMock()
@@ -229,25 +230,24 @@ class TestUnmountService:
 
 
 # ---------------------------------------------------------------------------
-# rmmod — unregister_service
+# rmmod — unregister_service_full
 # ---------------------------------------------------------------------------
 
 
-class TestUnregisterService:
+class TestUnregisterServiceFull:
     @pytest.mark.asyncio()
     async def test_full_unregister(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
         blm: BrickLifecycleManager,
     ) -> None:
         svc = _FakeService()
         coordinator._register_service("search", svc)
         await coordinator._mount_service("search")
-        await coordinator.unregister_service("search")
+        await coordinator.unregister_service_full("search")
 
         # Gone from registry
-        assert registry.service("search") is None
+        assert coordinator.service("search") is None
         # Gone from BLM
         assert blm.get_status("search") is None
 
@@ -261,8 +261,7 @@ class TestSwapService:
     @pytest.mark.asyncio()
     async def test_basic_swap(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         hook1 = MagicMock()
@@ -278,7 +277,7 @@ class TestSwapService:
         await coordinator.swap_service("search", svc2, exports=("glob", "grep"), hook_spec=spec2)
 
         # New instance is served
-        ref = registry.service("search")
+        ref = coordinator.service("search")
         assert ref is not None
         assert ref._service_instance is svc2
 
@@ -292,27 +291,26 @@ class TestSwapService:
     @pytest.mark.asyncio()
     async def test_swap_no_none_window(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Verify that service(name) NEVER returns None during swap."""
         svc1 = _HotSwappableService()
         coordinator._register_service("search", svc1, exports=("glob",))
         await coordinator._mount_service("search")
 
-        assert registry.service("search") is not None
+        assert coordinator.service("search") is not None
 
         svc2 = _HotSwappableServiceV2()
         await coordinator.swap_service("search", svc2, exports=("glob",))
 
-        ref = registry.service("search")
+        ref = coordinator.service("search")
         assert ref is not None
         assert ref._service_instance is svc2
 
     @pytest.mark.asyncio()
     async def test_swap_rejects_non_hot_swappable(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Static (non-HotSwappable) services cannot be hot-swapped."""
         svc1 = _FakeService()  # NOT HotSwappable
@@ -326,8 +324,7 @@ class TestSwapService:
     @pytest.mark.asyncio()
     async def test_swap_auto_detects_hook_spec_from_protocol(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         """If no explicit hook_spec param, coordinator reads it from HotSwappable.hook_spec()."""
@@ -350,8 +347,7 @@ class TestSwapService:
     @pytest.mark.asyncio()
     async def test_swap_drains_in_flight_calls(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Verify swap waits for in-flight async calls to complete."""
         call_completed = asyncio.Event()
@@ -367,7 +363,7 @@ class TestSwapService:
         await coordinator._mount_service("search")
 
         # Start an in-flight call via ServiceRef
-        ref = registry.service("search")
+        ref = coordinator.service("search")
         assert ref is not None
         in_flight = asyncio.create_task(ref.glob("*.py"))
 
@@ -382,7 +378,7 @@ class TestSwapService:
         assert call_completed.is_set()
 
         await swap_task
-        new_ref = registry.service("search")
+        new_ref = coordinator.service("search")
         assert new_ref is not None
         assert new_ref._service_instance is svc2
 
@@ -393,12 +389,12 @@ class TestSwapService:
 
 
 class TestHookSpecManagement:
-    def test_set_and_get_hook_spec(self, coordinator: ServiceLifecycleCoordinator) -> None:
+    def test_set_and_get_hook_spec(self, coordinator: ServiceRegistry) -> None:
         spec = HookSpec(observers=(MagicMock(),))
         coordinator._set_hook_spec("events", spec)
         assert coordinator._get_hook_spec("events") is spec
 
-    def test_get_missing_returns_none(self, coordinator: ServiceLifecycleCoordinator) -> None:
+    def test_get_missing_returns_none(self, coordinator: ServiceRegistry) -> None:
         assert coordinator._get_hook_spec("nonexistent") is None
 
 
@@ -409,24 +405,20 @@ class TestHookSpecManagement:
 
 class TestDrain:
     @pytest.mark.asyncio()
-    async def test_drain_immediate_when_no_inflight(
-        self, coordinator: ServiceLifecycleCoordinator
-    ) -> None:
+    async def test_drain_immediate_when_no_inflight(self, coordinator: ServiceRegistry) -> None:
         """Drain should return immediately if refcount is 0."""
         # No in-flight calls — drain should not block
         await asyncio.wait_for(coordinator._drain("search", timeout=0.1), timeout=1.0)
 
     @pytest.mark.asyncio()
-    async def test_drain_timeout_when_stuck(
-        self, coordinator: ServiceLifecycleCoordinator, registry: ServiceRegistry
-    ) -> None:
+    async def test_drain_timeout_when_stuck(self, coordinator: ServiceRegistry) -> None:
         """Drain should timeout and warn if refcount doesn't reach 0."""
         # Manually set refcount > 0 to simulate stuck call
-        registry._refcounts["stuck"] = 5
+        coordinator._refcounts["stuck"] = 5
         # Should timeout, not hang forever
         await coordinator._drain("stuck", timeout=0.05)
         # Verify refcount wasn't magically cleared
-        assert registry._refcounts["stuck"] == 5
+        assert coordinator._refcounts["stuck"] == 5
 
 
 # ---------------------------------------------------------------------------
@@ -462,8 +454,7 @@ class TestSwapWithFullHookSpec:
     @pytest.mark.asyncio()
     async def test_swap_unregisters_old_hooks_registers_new(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         """Multi-channel spec: old hooks removed, new hooks installed on same channels."""
@@ -502,7 +493,7 @@ class TestSwapWithFullHookSpec:
     @pytest.mark.asyncio()
     async def test_swap_with_no_new_spec_clears_old(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         """Swap without new hook_spec should unregister old hooks and leave none."""
@@ -565,9 +556,7 @@ class TestAutoLifecyclePersistentService:
     """Auto start/stop for PersistentService (Q3 + Q4)."""
 
     @pytest.mark.asyncio()
-    async def test_start_calls_start_on_persistent(
-        self, coordinator: ServiceLifecycleCoordinator
-    ) -> None:
+    async def test_start_calls_start_on_persistent(self, coordinator: ServiceRegistry) -> None:
         svc = _PersistentFakeService()
         coordinator._register_service("worker", svc)
         started = await coordinator.start_persistent_services()
@@ -575,17 +564,13 @@ class TestAutoLifecyclePersistentService:
         assert svc.started is True
 
     @pytest.mark.asyncio()
-    async def test_start_skips_non_persistent(
-        self, coordinator: ServiceLifecycleCoordinator
-    ) -> None:
+    async def test_start_skips_non_persistent(self, coordinator: ServiceRegistry) -> None:
         coordinator._register_service("search", _FakeService())
         started = await coordinator.start_persistent_services()
         assert started == []
 
     @pytest.mark.asyncio()
-    async def test_stop_calls_stop_on_persistent(
-        self, coordinator: ServiceLifecycleCoordinator
-    ) -> None:
+    async def test_stop_calls_stop_on_persistent(self, coordinator: ServiceRegistry) -> None:
         svc = _PersistentFakeService()
         coordinator._register_service("worker", svc)
         stopped = await coordinator.stop_persistent_services()
@@ -593,7 +578,7 @@ class TestAutoLifecyclePersistentService:
         assert svc.stopped is True
 
     @pytest.mark.asyncio()
-    async def test_start_handles_exception(self, coordinator: ServiceLifecycleCoordinator) -> None:
+    async def test_start_handles_exception(self, coordinator: ServiceRegistry) -> None:
         """Exception during start() logs error, continues to next service."""
 
         class _FailStart:
@@ -612,7 +597,7 @@ class TestAutoLifecyclePersistentService:
         assert ok_svc.started is True
 
     @pytest.mark.asyncio()
-    async def test_stop_handles_exception(self, coordinator: ServiceLifecycleCoordinator) -> None:
+    async def test_stop_handles_exception(self, coordinator: ServiceRegistry) -> None:
         """Exception during stop() logs error, continues."""
 
         class _FailStop:
@@ -631,7 +616,7 @@ class TestAutoLifecyclePersistentService:
         assert ok_svc.stopped is True
 
     @pytest.mark.asyncio()
-    async def test_start_handles_timeout(self, coordinator: ServiceLifecycleCoordinator) -> None:
+    async def test_start_handles_timeout(self, coordinator: ServiceRegistry) -> None:
         """Timeout during start() logs error, continues."""
 
         class _SlowStart:
@@ -649,7 +634,7 @@ class TestAutoLifecyclePersistentService:
         assert "slow" not in started
 
     @pytest.mark.asyncio()
-    async def test_start_stop_idempotent(self, coordinator: ServiceLifecycleCoordinator) -> None:
+    async def test_start_stop_idempotent(self, coordinator: ServiceRegistry) -> None:
         svc = _PersistentFakeService()
         coordinator._register_service("worker", svc)
         await coordinator.start_persistent_services()
@@ -666,7 +651,7 @@ class TestAutoLifecycleHotSwappable:
     @pytest.mark.asyncio()
     async def test_activate_registers_hooks_and_calls_activate(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         hook = MagicMock()
@@ -681,7 +666,7 @@ class TestAutoLifecycleHotSwappable:
     @pytest.mark.asyncio()
     async def test_activate_auto_captures_hook_spec_from_protocol(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         """hook_spec is auto-detected from HotSwappable.hook_spec() if not set explicitly."""
@@ -696,9 +681,7 @@ class TestAutoLifecycleHotSwappable:
         assert dispatch.read_hook_count == 1
 
     @pytest.mark.asyncio()
-    async def test_activate_skips_non_hot_swappable(
-        self, coordinator: ServiceLifecycleCoordinator
-    ) -> None:
+    async def test_activate_skips_non_hot_swappable(self, coordinator: ServiceRegistry) -> None:
         coordinator._register_service("search", _FakeService())
         activated = await coordinator.activate_hot_swappable_services()
         assert activated == []
@@ -706,7 +689,7 @@ class TestAutoLifecycleHotSwappable:
     @pytest.mark.asyncio()
     async def test_deactivate_drains_and_unregisters_hooks(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         hook = MagicMock()
@@ -722,9 +705,7 @@ class TestAutoLifecycleHotSwappable:
         assert dispatch.read_hook_count == 0
 
     @pytest.mark.asyncio()
-    async def test_activate_handles_exception(
-        self, coordinator: ServiceLifecycleCoordinator
-    ) -> None:
+    async def test_activate_handles_exception(self, coordinator: ServiceRegistry) -> None:
         class _FailActivate:
             def hook_spec(self) -> HookSpec:
                 return HookSpec()
@@ -749,7 +730,7 @@ class TestAutoLifecycleQ4BothProtocols:
     @pytest.mark.asyncio()
     async def test_q4_activate_and_start(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         hook = MagicMock()
@@ -769,7 +750,7 @@ class TestAutoLifecycleQ4BothProtocols:
     @pytest.mark.asyncio()
     async def test_q4_stop_and_deactivate(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         hook = MagicMock()
@@ -791,7 +772,7 @@ class TestAutoLifecycleQ4BothProtocols:
     @pytest.mark.asyncio()
     async def test_q4_mixed_with_other_quadrants(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
         dispatch: KernelDispatch,
     ) -> None:
         """All four quadrants coexist — each gets its appropriate lifecycle."""
@@ -845,27 +826,25 @@ class TestAutoLifecycleQ4BothProtocols:
 
 
 class TestEnlist:
-    """Tests for ``coord.enlist()`` — the single entry point for all quadrants."""
+    """Tests for ``reg.enlist()`` — the single entry point for all quadrants."""
 
     @pytest.mark.asyncio
     async def test_enlist_q1_static(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Q1 service: enlist registers only, no start/activate."""
         svc = _FakeService()
         await coordinator.enlist("q1_svc", svc)
 
-        info = registry.service_info("q1_svc")
+        info = coordinator.service_info("q1_svc")
         assert info is not None
         assert info.instance is svc
 
     @pytest.mark.asyncio
     async def test_enlist_q3_persistent_pre_bootstrap(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Q3 service pre-bootstrap: enlist registers but defers start()."""
         svc = _PersistentFakeService()
@@ -874,14 +853,13 @@ class TestEnlist:
         await coordinator.enlist("q3_svc", svc)
 
         assert svc.started is False  # deferred — not yet bootstrapped
-        info = registry.service_info("q3_svc")
+        info = coordinator.service_info("q3_svc")
         assert info is not None
 
     @pytest.mark.asyncio
     async def test_enlist_q3_persistent_post_bootstrap(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Q3 service post-bootstrap: enlist registers + calls start() immediately."""
         coordinator.mark_bootstrapped()
@@ -891,14 +869,13 @@ class TestEnlist:
         await coordinator.enlist("q3_svc", svc)
 
         assert svc.started is True
-        info = registry.service_info("q3_svc")
+        info = coordinator.service_info("q3_svc")
         assert info is not None
 
     @pytest.mark.asyncio
     async def test_enlist_q2_hot_swappable(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Q2 service: enlist registers + captures hooks + activates."""
         svc = _HotSwappableService()
@@ -907,15 +884,14 @@ class TestEnlist:
         await coordinator.enlist("q2_svc", svc)
 
         assert svc.activated is True
-        info = registry.service_info("q2_svc")
+        info = coordinator.service_info("q2_svc")
         assert info is not None
         assert coordinator._get_hook_spec("q2_svc") is not None
 
     @pytest.mark.asyncio
     async def test_enlist_q4_both_pre_bootstrap(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Q4 pre-bootstrap: enlist registers + activate but defers start."""
         svc = _BothProtocolsService()
@@ -926,14 +902,13 @@ class TestEnlist:
 
         assert svc.started is False  # deferred — not yet bootstrapped
         assert svc.activated is True  # HotSwappable activate is always immediate
-        info = registry.service_info("q4_svc")
+        info = coordinator.service_info("q4_svc")
         assert info is not None
 
     @pytest.mark.asyncio
     async def test_enlist_q4_both_post_bootstrap(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Q4 post-bootstrap: enlist registers + start + activate."""
         coordinator.mark_bootstrapped()
@@ -943,14 +918,13 @@ class TestEnlist:
 
         assert svc.started is True
         assert svc.activated is True
-        info = registry.service_info("q4_svc")
+        info = coordinator.service_info("q4_svc")
         assert info is not None
 
     @pytest.mark.asyncio
     async def test_enlist_with_depends_on(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
         blm: BrickLifecycleManager,
     ) -> None:
         """enlist passes depends_on to BLM for dependency ordering."""
@@ -1008,7 +982,7 @@ class TestServiceQuadrant:
 
     def test_coordinator_classify_all(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
 
@@ -1030,7 +1004,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_swap_rejects_q1_with_quadrant_in_error(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Swapping Q1 service includes quadrant label in error."""
         coordinator._register_service("svc", _FakeService())
@@ -1042,7 +1016,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_swap_rejects_q3_with_quadrant_in_error(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Swapping Q3 (PersistentService) includes quadrant label in error."""
         coordinator._register_service("svc", _PersistentFakeService())
@@ -1054,8 +1028,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_swap_allows_q2(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Q2 service can be swapped."""
         svc1 = _HotSwappableService()
@@ -1065,15 +1038,14 @@ class TestQuadrantGuards:
         svc2 = _HotSwappableServiceV2()
         await coordinator.swap_service("svc", svc2)
 
-        ref = registry.service("svc")
+        ref = coordinator.service("svc")
         assert ref is not None
         assert ref._service_instance is svc2
 
     @pytest.mark.asyncio
     async def test_swap_allows_q4(
         self,
-        coordinator: ServiceLifecycleCoordinator,
-        registry: ServiceRegistry,
+        coordinator: ServiceRegistry,
     ) -> None:
         """Q4 service can be swapped."""
         svc1 = _BothProtocolsService()
@@ -1083,14 +1055,14 @@ class TestQuadrantGuards:
         svc2 = _BothProtocolsService()
         await coordinator.swap_service("svc", svc2)
 
-        ref = registry.service("svc")
+        ref = coordinator.service("svc")
         assert ref is not None
         assert ref._service_instance is svc2
 
     @pytest.mark.asyncio
     async def test_activate_rejects_q1(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """activate_service on Q1 raises TypeError with quadrant info."""
         coordinator._register_service("svc", _FakeService())
@@ -1100,7 +1072,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_activate_rejects_q3(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """activate_service on Q3 raises TypeError with quadrant info."""
         coordinator._register_service("svc", _PersistentFakeService())
@@ -1110,7 +1082,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_activate_allows_q2(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """activate_service on Q2 succeeds."""
         svc = _HotSwappableService()
@@ -1121,7 +1093,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_activate_allows_q4(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """activate_service on Q4 succeeds."""
         svc = _BothProtocolsService()
@@ -1132,7 +1104,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_deactivate_rejects_q1(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """deactivate_service on Q1 raises TypeError."""
         coordinator._register_service("svc", _FakeService())
@@ -1142,7 +1114,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_deactivate_rejects_q3(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """deactivate_service on Q3 raises TypeError."""
         coordinator._register_service("svc", _PersistentFakeService())
@@ -1152,7 +1124,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_deactivate_allows_q2(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         """deactivate_service on Q2 succeeds — calls drain + unregister hooks."""
         svc = _HotSwappableService()
@@ -1164,7 +1136,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_activate_not_found(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         with pytest.raises(KeyError, match="not registered"):
             await coordinator._activate_service("ghost")
@@ -1172,7 +1144,7 @@ class TestQuadrantGuards:
     @pytest.mark.asyncio
     async def test_deactivate_not_found(
         self,
-        coordinator: ServiceLifecycleCoordinator,
+        coordinator: ServiceRegistry,
     ) -> None:
         with pytest.raises(KeyError, match="not registered"):
             await coordinator._deactivate_service("ghost")

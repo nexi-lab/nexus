@@ -166,19 +166,15 @@ class TestEnlistWiredServices:
             _CANONICAL_NAMES,
             enlist_wired_services,
         )
-        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-            ServiceLifecycleCoordinator,
-        )
 
         # Build a dict with a unique mock per service
         wired_dict: dict[str, Any] = {}
         for src_key in _CANONICAL_NAMES:
             wired_dict[src_key] = MagicMock(name=f"mock_{src_key}")
 
-        reg = ServiceRegistry()
         dispatch = KernelDispatch()
-        coordinator = ServiceLifecycleCoordinator(reg, None, dispatch)
-        count = asyncio.run(enlist_wired_services(coordinator, wired_dict))
+        reg = ServiceRegistry(dispatch=dispatch)
+        count = asyncio.run(enlist_wired_services(reg, wired_dict))
         assert count == len(_CANONICAL_NAMES)
 
         # Every canonical name should map to the correct mock instance

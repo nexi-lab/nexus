@@ -21,11 +21,13 @@ from nexus.contracts.types import Permission
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.vfs_hooks import (
+        AccessHookContext,
         DeleteHookContext,
         MkdirHookContext,
         ReadHookContext,
         RenameHookContext,
         RmdirHookContext,
+        StatHookContext,
         WriteHookContext,
     )
 
@@ -58,6 +60,8 @@ class PermissionCheckHook:
             rename_hooks=(self,),
             mkdir_hooks=(self,),
             rmdir_hooks=(self,),
+            stat_hooks=(self,),
+            access_hooks=(self,),
         )
 
     async def drain(self) -> None:
@@ -137,6 +141,98 @@ class PermissionCheckHook:
     def on_pre_rmdir(self, ctx: RmdirHookContext) -> None:
         """Check WRITE permission before rmdir."""
         self._checker.check(ctx.path, Permission.WRITE, ctx.context)
+
+    def on_pre_stat(self, ctx: "StatHookContext") -> None:
+        """Permission check for stat/is_directory (Issue #1815).
+
+        Uses TRAVERSE or READ based on ctx.permission.
+        For implicit directories, falls back to descendant access check.
+        Raises ``PermissionDeniedError`` to deny.
+        """
+        if not self._enforce_permissions:
+            return
+        context = ctx.context or self._default_context
+        perm = Permission.TRAVERSE if ctx.permission == "TRAVERSE" else Permission.READ
+        is_implicit = ctx.extra.get("is_implicit_directory", False)
+
+        if is_implicit:
+            # Try TRAVERSE first, fall back to descendant access check
+            if self._permission_enforcer is not None:
+                has_perm = self._permission_enforcer.check(ctx.path, Permission.TRAVERSE, context)
+                if not has_perm and self._descendant_checker is not None:
+                    has_perm = self._descendant_checker.has_access(
+                        ctx.path, Permission.READ, context
+                    )
+                if not has_perm:
+                    from nexus.contracts.exceptions import PermissionDeniedError
+
+                    raise PermissionDeniedError(
+                        f"Access denied: User '{getattr(context, 'user_id', '?')}' does not have "
+                        f"TRAVERSE permission for '{ctx.path}'",
+                        path=ctx.path,
+                    )
+        else:
+            # Non-implicit: check the requested permission directly
+            if self._permission_enforcer is not None and not self._permission_enforcer.check(
+                ctx.path, perm, context
+            ):
+                from nexus.contracts.exceptions import PermissionDeniedError
+
+                raise PermissionDeniedError(
+                    f"Access denied: no {ctx.permission} permission for '{ctx.path}'",
+                    path=ctx.path,
+                )
+
+    def on_pre_access(self, ctx: "AccessHookContext") -> None:
+        """Permission check for sys_access (Issue #1815).
+
+        For implicit directories: TRAVERSE first, descendant fallback.
+        For files: direct permission check.
+        Raises ``PermissionDeniedError`` to deny.
+        """
+        if not self._enforce_permissions:
+            return
+        context = ctx.context or self._default_context
+        perm = Permission.TRAVERSE if ctx.permission == "TRAVERSE" else Permission.READ
+        is_implicit = ctx.extra.get("is_implicit_directory", False)
+
+        if is_implicit:
+            # Try TRAVERSE first
+            if self._permission_enforcer is not None:
+                if self._permission_enforcer.check(ctx.path, Permission.TRAVERSE, context):
+                    return  # allowed
+                # Fall back to descendant access check
+                if self._descendant_checker is not None and self._descendant_checker.has_access(
+                    ctx.path, Permission.READ, context
+                ):
+                    return  # allowed
+                from nexus.contracts.exceptions import PermissionDeniedError
+
+                raise PermissionDeniedError(
+                    f"Access denied for '{ctx.path}'",
+                    path=ctx.path,
+                )
+        else:
+            # Direct permission check for real files
+            if self._permission_enforcer is not None and not self._permission_enforcer.check(
+                ctx.path, perm, context
+            ):
+                from nexus.contracts.exceptions import PermissionDeniedError
+
+                raise PermissionDeniedError(
+                    f"Access denied: no {ctx.permission} permission for '{ctx.path}'",
+                    path=ctx.path,
+                )
+
+    def filter_stat_bulk(self, paths: list[str], context: Any) -> list[str]:
+        """Batch permission filter for stat_bulk/read_bulk (Issue #1815).
+
+        Returns the subset of *paths* where READ permission is granted.
+        """
+        if not self._enforce_permissions or self._permission_enforcer is None:
+            return paths
+        result: list[str] = self._permission_enforcer.filter_list(paths, context)
+        return result
 
     # ------------------------------------------------------------------
     # POST hooks — no-op (protocol compatibility)

@@ -108,7 +108,7 @@ class TestHotSwappableConformance:
 class TestHookSpecDeclarations:
     """Each hook declares the correct HookSpec channels."""
 
-    def test_permission_6_channels(self) -> None:
+    def test_permission_8_channels(self) -> None:
         from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
         hook = PermissionCheckHook(
@@ -123,7 +123,9 @@ class TestHookSpecDeclarations:
         assert spec.rename_hooks == (hook,)
         assert spec.mkdir_hooks == (hook,)
         assert spec.rmdir_hooks == (hook,)
-        assert spec.total_hooks == 6
+        assert spec.stat_hooks == (hook,)
+        assert spec.access_hooks == (hook,)
+        assert spec.total_hooks == 8
 
     def test_audit_6_channels(self) -> None:
         from nexus.storage.write_observer_hooks import AuditWriteInterceptor

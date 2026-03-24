@@ -116,6 +116,6 @@ async def enlist_wired_services(coordinator: Any, wired: Any) -> int:
         if val is None:
             continue
         exports = _CANONICAL_EXPORTS.get(canonical, ())
-        await coordinator.enlist(canonical, val, exports=exports)
+        await coordinator.enlist(canonical, val, exports=exports, allow_overwrite=True)
         count += 1
     return count

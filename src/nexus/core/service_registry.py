@@ -346,12 +346,14 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         *,
         exports: tuple[str, ...] = (),
         depends_on: tuple[str, ...] = (),
+        allow_overwrite: bool = False,
     ) -> None:
         """Register a service in both ServiceRegistry and BrickLifecycleManager."""
         self.register_service(
             name,
             instance,
             exports=exports,
+            allow_overwrite=allow_overwrite,
         )
         if self._blm is not None:
             self._blm.register(
@@ -375,6 +377,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         *,
         exports: tuple[str, ...] = (),
         depends_on: tuple[str, ...] = (),
+        allow_overwrite: bool = False,
     ) -> None:
         """Enlist a service into the four-quadrant lifecycle system.
 
@@ -390,7 +393,9 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         Post-bootstrap, Q3 services are auto-started immediately.
         Pre-bootstrap, Q3 start() is deferred to start_persistent_services().
         """
-        self._register_service(name, instance, exports=exports, depends_on=depends_on)
+        self._register_service(
+            name, instance, exports=exports, depends_on=depends_on, allow_overwrite=allow_overwrite
+        )
 
         # Q3 / Q4: auto-start persistent background work (only post-bootstrap)
         if isinstance(instance, PersistentService) and self._bootstrapped:

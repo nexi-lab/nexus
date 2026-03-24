@@ -65,6 +65,7 @@ async def nx_with_db(tmp_path):
             register_workspace_fn=MagicMock(),
             register_agent_fn=MagicMock(),
         ),
+        allow_overwrite=True,
     )
 
     return nx

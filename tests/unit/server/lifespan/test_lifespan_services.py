@@ -38,6 +38,7 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
         "_snapshot_service": None,
         "_namespace_manager": None,
         "config": None,
+        "service_coordinator": None,
     }
     defaults.update(attrs)
     return SimpleNamespace(**defaults)

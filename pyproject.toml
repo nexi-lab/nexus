@@ -855,7 +855,6 @@ ignore_imports = [
     # search -> rebac: permission enforcement + entity registry in search_service (moved from services/)
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
-    "nexus.bricks.search.search_service -> nexus.bricks.rebac.entity_registry",
     # search -> gateway (TYPE_CHECKING): NexusFSGateway type hint — transitive to workflows/parsers
     "nexus.bricks.search.search_service -> nexus.system_services.gateway",
     # mount -> permission_utils -> gateway: transitive chain to workflows/parsers
@@ -894,8 +893,6 @@ ignore_imports = [
     # --- tier-neutral (contracts/protocols) importing bricks ---
     # chunked_upload protocol TYPE_CHECKING import for UploadSession return type
     "nexus.contracts.protocols.chunked_upload -> nexus.bricks.upload.upload_session",
-    # process_manager protocol TYPE_CHECKING import for agent process types
-    "nexus.contracts.protocols.process_manager -> nexus.system_services.agent_runtime.types",
     # --- contracts importing lib (upward — legacy, to be fixed) ---
     "nexus.contracts.agent_utils -> nexus.storage.models",
     "nexus.contracts -> nexus.lib.validators",

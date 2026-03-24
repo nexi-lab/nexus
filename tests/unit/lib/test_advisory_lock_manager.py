@@ -7,8 +7,8 @@ import time
 
 import pytest
 
-from nexus.core.semaphore import PythonVFSSemaphore
 from nexus.lib.distributed_lock import ExtendResult, SemaphoreAdvisoryLockManager
+from nexus.lib.semaphore import PythonVFSSemaphore
 
 # ---------------------------------------------------------------------------
 # Fixtures

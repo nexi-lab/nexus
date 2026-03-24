@@ -11,7 +11,7 @@
 | What | Where | Latency | Scope |
 |------|-------|---------|-------|
 | **VFSLockManager** | `core/lock_fast.py` | ~200ns Rust / ~500ns Python | Local, path-level RW, hierarchical |
-| **VFSSemaphore** | `core/semaphore.py` | ~200ns Rust / Python | Local, holder-tracked counting semaphore |
+| **VFSSemaphore** | `lib/semaphore.py` | ~200ns Rust / Python | Local, holder-tracked counting semaphore |
 | **AdvisoryLockManager** | `lib/distributed_lock.py` | — | ABC: async advisory lock API (zone_id bound at construction) |
 | **SemaphoreAdvisoryLockManager** | `lib/distributed_lock.py` | ~500ns–1μs | Standalone advisory locks via VFSSemaphore |
 | **RaftLockManager** | `raft/lock_manager.py` | ~5-10ms | Distributed advisory locks, zone-scoped |
@@ -67,7 +67,7 @@ no TTL (held for syscall duration only), not user-visible (like `i_rwsem`).
 
 ### 2.2 VFSSemaphore — holder-tracked counting semaphore
 
-`core/semaphore.py`. Rust (PyO3) + Python fallback. Local kernel primitive.
+`lib/semaphore.py`. Rust (PyO3) + Python fallback. Kernel-authored standard library.
 
 Holder-tracked: each `acquire` returns unique `holder_id`, `release` requires it.
 Standard for distributed semaphores (Consul sessions, ZK ephemeral nodes).
@@ -125,7 +125,7 @@ TTL expires → auto-released. No orphans.
 
 ```python
 # factory/_bricks.py (actual pattern)
-from nexus.core.semaphore import create_vfs_semaphore
+from nexus.lib.semaphore import create_vfs_semaphore
 from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
 
 # Always available — no capability check needed
@@ -155,7 +155,7 @@ Callers see only `AdvisoryLockManager`. Same async API regardless of backend.
 | Primitive | Location | Latency | Visibility | TTL | Scope |
 |-----------|----------|---------|------------|-----|-------|
 | VFSLockManager | `core/lock_fast.py` | ~200ns | Kernel-internal | No | Local |
-| VFSSemaphore | `core/semaphore.py` | ~200ns | Kernel-internal | Yes | Local |
+| VFSSemaphore | `lib/semaphore.py` | ~200ns | Kernel-authored stdlib | Yes | Local |
 | SemaphoreAdvisoryLockManager | `lib/distributed_lock.py` | ~500ns–1μs | Internal | Yes | Local (standalone) |
 | RaftLockManager | `raft/lock_manager.py` | ~5-10ms | Internal | Yes | Distributed (zone) |
 

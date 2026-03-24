@@ -34,7 +34,7 @@ from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.core.semaphore import create_vfs_semaphore
+from nexus.lib.semaphore import create_vfs_semaphore
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext

@@ -49,7 +49,7 @@ class TestCASHoldConcurrent:
 
     def test_concurrent_hold_reference(self) -> None:
         """Multiple threads calling hold_reference on same hash."""
-        from nexus.core.semaphore import PythonVFSSemaphore
+        from nexus.lib.semaphore import PythonVFSSemaphore
 
         # Create a mock CAS store with real VFS semaphore
         sem = PythonVFSSemaphore()

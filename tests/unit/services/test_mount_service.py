@@ -59,13 +59,23 @@ def mock_nexus_fs():
 
 
 @pytest.fixture
-def mount_service(mock_router, mock_mount_manager, mock_nexus_fs):
+def mock_driver_coordinator():
+    """Mock DriverLifecycleCoordinator (kernel-owned, always available)."""
+    coord = MagicMock()
+    coord.unmount.return_value = True
+    return coord
+
+
+@pytest.fixture
+def mount_service(mock_router, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator):
     """Create a MountService with all mock dependencies."""
-    return MountService(
+    svc = MountService(
         router=mock_router,
         mount_manager=mock_mount_manager,
         nexus_fs=mock_nexus_fs,
     )
+    svc._driver_coordinator = mock_driver_coordinator
+    return svc
 
 
 @pytest.fixture
@@ -195,16 +205,16 @@ class TestRemoveMount:
 
     def test_remove_mount_success(self, mount_service, mock_router, mock_nexus_fs):
         """Removing an existing mount returns removed=True."""
-        mock_router.remove_mount.return_value = True
+        mount_service._driver_coordinator.unmount.return_value = True
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
         assert result["removed"] is True
-        mock_router.remove_mount.assert_called_once_with("/mnt/test")
+        mount_service._driver_coordinator.unmount.assert_called_once_with("/mnt/test")
 
     def test_remove_mount_not_found(self, mount_service, mock_router):
         """Removing a non-existent mount returns errors."""
-        mock_router.remove_mount.return_value = False
+        mount_service._driver_coordinator.unmount.return_value = False
 
         result = asyncio.run(mount_service.remove_mount("/mnt/nonexistent"))
 
@@ -213,7 +223,7 @@ class TestRemoveMount:
 
     def test_remove_mount_cleans_up_directory(self, mount_service, mock_router, mock_nexus_fs):
         """Removing a mount deletes the directory entry."""
-        mock_router.remove_mount.return_value = True
+        mount_service._driver_coordinator.unmount.return_value = True
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
 
@@ -223,7 +233,7 @@ class TestRemoveMount:
 
     def test_remove_mount_handles_cleanup_errors(self, mount_service, mock_router, mock_nexus_fs):
         """Errors during cleanup are reported but don't fail the removal."""
-        mock_router.remove_mount.return_value = True
+        mount_service._driver_coordinator.unmount.return_value = True
         mock_nexus_fs.metadata.delete.side_effect = RuntimeError("DB error")
 
         result = asyncio.run(mount_service.remove_mount("/mnt/test"))
